@@ -1,8 +1,10 @@
 //! CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds.
 
 use super::super::cms;
-use super::verify_chain_gates::{issuer_permits_crl_sign, key_usage_permits};
-use super::verify_dss_core::{EmbeddedCert, crl_signer_authorized, crl_signer_shadows};
+use super::verify_chain_gates::key_usage_permits;
+use super::verify_dss_core::{
+    EmbeddedCert, crl_signer_authorized, crl_signer_key_permits_crl_sign, crl_signer_shadows,
+};
 use crate::memory::{LedgerHold, MemoryLedger, SealMemoryRefusal};
 
 /// Seconds-since-epoch for an X.509 time choice.
@@ -167,9 +169,9 @@ pub(super) fn crl_entry_valid<'a>(
     else {
         return Ok(Err(EvidenceRejection::Unverifiable));
     };
-    // Key verification alone is not authorization: the issuer certificate
-    // must permit CRL signing (cRLSign) when it carries a KeyUsage.
-    if !issuer_permits_crl_sign(&issuer.cert) {
+    // cRLSign comes from an authenticated holder of the signer's key, not
+    // an unauthenticated same-key copy placed first in /Certs.
+    if !crl_signer_key_permits_crl_sign(issuer, embedded, anchors, covered, memory)? {
         return Ok(Err(EvidenceRejection::Unverifiable));
     }
     // Relevance and listings: for each covered non-anchor certificate under

@@ -392,6 +392,54 @@ fn names_covered_certificate(
     Ok(false)
 }
 
+/// Whether the signer's key permits CRL signing (RFC 5280 §6.3.3(f);
+/// #6944 review round 2). An authenticated holder has the signer's subject
+/// and public key and is an anchor or covered certificate (by DER), or was
+/// issued by an anchor or covered certificate other than itself. An
+/// unauthenticated copy in `/Certs` neither grants nor withholds cRLSign.
+/// When no authenticated holder exists, every certificate for the key is
+/// the presenter's word, so the selected signer's KeyUsage keeps today's rule.
+///
+/// # Errors
+/// The ledger's refusal while checking a holder's issuer.
+pub(super) fn crl_signer_key_permits_crl_sign(
+    signer: &EmbeddedCert,
+    embedded: &[EmbeddedCert],
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    let subject = &signer.cert.tbs_certificate.subject;
+    let key = &signer.cert.tbs_certificate.subject_public_key_info;
+    let mut authenticated_holder_found = false;
+    for holder in anchors.iter().chain(covered.iter()).chain(embedded.iter()) {
+        if holder.cert.tbs_certificate.subject != *subject
+            || holder.cert.tbs_certificate.subject_public_key_info != *key
+        {
+            continue;
+        }
+        let mut authenticated = anchors
+            .iter()
+            .chain(covered.iter())
+            .any(|voucher| voucher.der == holder.der);
+        if !authenticated {
+            for voucher in anchors.iter().chain(covered.iter()) {
+                if voucher.der != holder.der && issued_by(holder, voucher, memory)? {
+                    authenticated = true;
+                    break;
+                }
+            }
+        }
+        if authenticated {
+            authenticated_holder_found = true;
+            if issuer_permits_crl_sign(&holder.cert) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(!authenticated_holder_found && issuer_permits_crl_sign(&signer.cert))
+}
+
 /// Whether a valid CRL's `signer` has revocation authority over `cert`
 /// (RFC 5280 §5.1.1.3, §5.2.1, §6.3.3(f), §8): it issued `cert`, or it holds
 /// a key that `cert`'s own issuer certified under the signer's subject (a

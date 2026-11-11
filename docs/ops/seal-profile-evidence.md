@@ -176,7 +176,11 @@ certificate's own issuer certified with cRLSign is that issuer's revocation
 authority (RFC 5280 §5.1.1.3, §5.2.1): its listing of the certificate is a
 revocation, and fails, and its fresh complete CRL under the issuer's name covers
 the certificate. cRLSign counts only from the certificate the issuer gave the
-key, never from another certificate for the same key. A same-subject CA that
+key, never from another certificate for the same key. Whether any CRL signer's
+key may sign CRLs is read the same way: from a trust anchor, a covered chain
+certificate, or a certificate one of them issued for that subject and key. An
+unauthenticated copy in `/Certs` neither grants nor withholds cRLSign, wherever
+it is placed. A same-subject CA that
 only another trust anchor vouches for is no shadow, but two CAs may share a name
 (RFC 5280 §8): its CRL claims nothing about the other CA's certificates. When a
 timestamp's root is unavailable, the retry that treats covered certificates as
