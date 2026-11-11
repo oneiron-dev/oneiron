@@ -447,7 +447,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/legal_hold_doors.rs` | src | s | 9 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`… |
 | `src/api/facade/lens_selection_doors.rs` | src | s | 3 crate-vis | — | Frame-bound selections and result-set actions on a held card |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
-| `src/api/facade/live_run_doors.rs` | src | m | 9 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
+| `src/api/facade/live_run_doors.rs` | src | m | 11 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/live_voice_settlement.rs` | src | s | 2 crate-vis | — | Observes an already admitted connector call; never resends or answers it |
 | `src/api/facade/mail_pack_doors.rs` | src | s | 4 crate-vis | — | `vault.mail.pack.install`, `vault.mail.sources.sync`, `vault.mail.sources.search` and… |
