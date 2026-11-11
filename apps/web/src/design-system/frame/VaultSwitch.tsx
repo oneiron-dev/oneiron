@@ -28,6 +28,9 @@ export interface VaultSwitchProps extends Omit<React.ComponentPropsWithRef<'butt
   /* Further Menu parts under a separator: personas, devices, appearance,
      sign out. */
   children?: React.ReactNode
+  /* An element to open the menu in place of the name and chevron (a
+     MicroSidebar.Item); the rest of the props go onto it. */
+  trigger?: React.ReactElement
 }
 
 /* The control at the top left: the current vault's name and a chevron. It
@@ -44,18 +47,25 @@ export function VaultSwitch({
   onOpenChange,
   className,
   children,
+  trigger,
   ...props
 }: VaultSwitchProps) {
   const [currentId, setCurrentId] = useControllableState(currentProp, defaultCurrentId ?? vaults[0]?.id, onSwitch)
   const current = vaults.find((v) => v.id === currentId) ?? vaults[0]
   return (
     <Menu open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
-      <Menu.Trigger className={cx('sl-vault-switch', className)} {...props}>
-        <span className="sl-vault-switch-name">{current?.name}</span>
-        <svg className="sl-vault-switch-chevron" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
-          <path d="M2 3.5 L5 6.5 L8 3.5" />
-        </svg>
-      </Menu.Trigger>
+      {trigger ? (
+        <Menu.Trigger asChild className={className} {...props}>
+          {trigger}
+        </Menu.Trigger>
+      ) : (
+        <Menu.Trigger className={cx('sl-vault-switch', className)} {...props}>
+          <span className="sl-vault-switch-name">{current?.name}</span>
+          <svg className="sl-vault-switch-chevron" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+            <path d="M2 3.5 L5 6.5 L8 3.5" />
+          </svg>
+        </Menu.Trigger>
+      )}
       <Menu.Content width="wide" aria-label="vaults" className="sl-vault-switch-menu">
         <Menu.Heading>Vaults</Menu.Heading>
         {vaults.map((vault) => (

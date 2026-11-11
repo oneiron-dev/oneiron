@@ -1,0 +1,105 @@
+/* The frame: the microsidebar, the sidebar, then the work area taking the
+   rest of the width. Folding the sidebar hands its width to the work
+   area at once (a width change is layout, not a transform, so it is not
+   animated); the sidebar fades back in when the person opens it. */
+.sl-app-frame {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sl-app-frame-micro {
+  position: relative;
+  z-index: var(--sl-z-sheet);
+  display: flex;
+  flex: none;
+}
+
+.sl-app-frame-side {
+  display: flex;
+  flex: none;
+  min-height: 0;
+}
+
+.sl-app-frame[data-reopened] > .sl-app-frame-side {
+  animation: sl-frame-side-in 160ms var(--sl-ease-out);
+}
+
+.sl-app-frame[data-sidebar="folded"] > .sl-app-frame-side {
+  display: none;
+}
+
+.sl-app-frame-work {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding-left: 12px;
+}
+
+/* The fold control in the microsidebar shows only while the sidebar is
+   folded; inside a peek, and where the place has no sidebar, never. */
+.sl-app-frame[data-sidebar="open"] .sl-micro-sidebar .sl-app-frame-fold,
+.sl-app-frame[data-sidebar="none"] .sl-app-frame-fold,
+.sl-app-frame-peek .sl-app-frame-fold {
+  display: none;
+}
+
+/* The peek: an item's sidebar over the work area, on the popover tone
+   with the popover shadow (it floats; it is not a well). It sits flush
+   against the strip so the pointer crosses straight into it. */
+.sl-app-frame-peek {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 100%;
+  display: flex;
+  border-radius: 0 var(--sl-radius) var(--sl-radius) 0;
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+  animation: sl-frame-peek-in 160ms var(--sl-ease-out);
+}
+
+/* A sidebar shown in the peek prints in the plain inks of the popover,
+   not the on-field inks. */
+.sl-app-frame-peek .sl-sidebar[data-ground] {
+  --sl-sidebar-ink: var(--sl-ink-2);
+  --sl-sidebar-ink-on: var(--sl-ink-1);
+  --sl-sidebar-quiet: var(--sl-ink-3);
+  --sl-sidebar-hover: var(--sl-hover);
+  --sl-sidebar-lit: var(--sl-lit);
+  --sl-sidebar-text-shadow: none;
+  --sl-sidebar-symbol-shadow: none;
+  --sl-sidebar-badge: var(--sl-ink-1);
+  --sl-sidebar-badge-ink: var(--sl-on-primary);
+  --sl-sidebar-rule: var(--sl-rule);
+  --sl-mark-ground: var(--sl-pop);
+  background: none;
+}
+
+.sl-app-frame-peek .sl-sidebar .sl-glyph-line {
+  color: var(--sl-glyph-ink, var(--sl-ink-2));
+}
+
+@keyframes sl-frame-peek-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+
+@keyframes sl-frame-side-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-app-frame-peek,
+  .sl-app-frame[data-reopened] > .sl-app-frame-side {
+    animation: none;
+  }
+}
