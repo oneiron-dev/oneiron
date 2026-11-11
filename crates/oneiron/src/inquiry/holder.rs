@@ -9,7 +9,10 @@
 //! its `valid_until`. Each touch of the map (a send, a read,
 //! [`Vault::evict_inquiry_answers`]) first drops every entry whose task has
 //! ended or whose `valid_until` has come, so no read returns an ended task's
-//! answer.
+//! answer. Each housekeeping pass also calls [`Vault::evict_inquiry_answers`]
+//! (Engine ruling INQUIRE-HOLDER-EVICT), so on a server, whose lifecycle tick
+//! starts a pass every 60 s, an ended task's answer leaves memory within one
+//! tick even when nothing touches the map.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -50,6 +53,12 @@ impl InquiryAnswerHolder {
 
     fn tasks(&self) -> BTreeSet<EntityId> {
         self.lock().keys().map(|key| key.task).collect()
+    }
+
+    /// How many answers the map holds now, without dropping any.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn held_count(&self) -> usize {
+        self.lock().len()
     }
 }
 

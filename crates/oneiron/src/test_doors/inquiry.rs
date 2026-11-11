@@ -2,7 +2,8 @@
 //! member's log and the asking side's receipt, each in one write transaction
 //! at the vault's store clock. Until PR 3 calls the log writers, only this
 //! door does. `tests/inquiry_asking_side.rs` (PR 4) ends a TASK through
-//! [`cancel_task`].
+//! [`cancel_task`] and counts the held answers through
+//! [`held_inquiry_answer_count`].
 
 use crate::error::Result;
 use crate::inquiry::{
@@ -71,6 +72,14 @@ pub fn cancel_task(vault: &Vault, task: EntityId, actor: EntityId) -> Result<()>
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         crate::context_board::cancel_task_in_txn(vault, txn, task, actor, now)
     })
+}
+
+/// How many task-held inquiry answers `vault` holds now. Unlike
+/// `Vault::held_inquiry_answer`, it drops none first, so a test sees what a
+/// housekeeping pass dropped.
+#[must_use]
+pub fn held_inquiry_answer_count(vault: &Vault) -> usize {
+    vault.inquiry_answers.held_count()
 }
 
 /// The tables whose actor scrub [`erase_actor_in_inquiry_tables`] runs.

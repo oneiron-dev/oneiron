@@ -9,6 +9,8 @@
 //!   for the asking actor's task;
 //! - the held answer is gone once its task ends, and an answer past its
 //!   `valid_until` is not held;
+//! - a housekeeping pass drops an ended task's answer when nothing reads it
+//!   (Engine ruling INQUIRE-HOLDER-EVICT);
 //! - a stopped member vault, no route, and the member's leave each give
 //!   `unavailable`;
 //! - a re-send with the same id writes the next receipt of that inquiry.
@@ -25,6 +27,7 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::FederationGrantRole;
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::inquiry::{
     Inquiry, InquiryAnswer, InquiryEdge, InquiryEdgeRequest, InquiryKeep, InquiryOutcome,
     InquiryRouteRequest, InquirySendRequest, InquirySent, InquiryStatement, InquiryTransport,
@@ -489,6 +492,33 @@ fn the_held_answer_is_gone_once_its_task_ends() {
         format!("{refused:?}").contains("not an open TASK"),
         "{refused:?}"
     );
+}
+
+#[test]
+fn a_housekeeping_pass_drops_an_ended_tasks_answer_with_no_read() {
+    let fixture = asking();
+    let host = MemberHost::answering(&fixture.company);
+    let sent = fixture.send(&host, fixture.task);
+    let other = fixture.send(&host, fixture.other_task);
+    let vault = &fixture.company.vault;
+    assert_eq!(door::held_inquiry_answer_count(vault), 2);
+
+    door::cancel_task(vault, fixture.task, fixture.asker).expect("the task ends");
+    assert_eq!(
+        door::held_inquiry_answer_count(vault),
+        2,
+        "ending the task alone drops no held answer"
+    );
+    vault
+        .housekeeping(HousekeepingBudget::unbounded())
+        .expect("the pass runs");
+    assert_eq!(
+        door::held_inquiry_answer_count(vault),
+        1,
+        "the pass drops the ended task's answer and keeps the open task's"
+    );
+    assert_eq!(fixture.held(fixture.task, &sent), None);
+    assert!(fixture.held(fixture.other_task, &other).is_some());
 }
 
 #[test]
