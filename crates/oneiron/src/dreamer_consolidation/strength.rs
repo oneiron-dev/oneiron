@@ -146,7 +146,10 @@ impl Vault {
             .collect())
     }
 }
-fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ConsolidationStrengthPolicy> {
+pub(crate) fn policy_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<ConsolidationStrengthPolicy> {
     let policy = POLICY.get(&vault.store, txn, &())?.unwrap_or_default();
     policy.validate()?;
     Ok(policy)
@@ -266,22 +269,18 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
             }
             let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
             if body.predicate != observations.predicate
-                || body.source != Some(ClaimSource::Generated)
-                || body.lifecycle != ClaimLifecycleStatus::Active
-                || !matches!(
-                    body.approval,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                )
-                || crate::claim::session_claim_producer(&body) != Some(actor.entity_ref())
-                || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
-                || vault.store.pending_gate_consent_in_txn(txn, &id)?.is_some()
+                || archive_fence_in_txn(
+                    vault,
+                    txn,
+                    actor.entity_ref(),
+                    &id,
+                    &body,
+                    header.learned_at,
+                    now_ms,
+                    &policy,
+                )?
+                .is_some()
             {
-                continue;
-            }
-            let last_change = observations
-                .last_activity_ms
-                .max(header.learned_at.saturating_mul(1_000));
-            if now_ms < last_change || now_ms - last_change < policy.quiet_ms {
                 continue;
             }
             // Losing read authority or changing a cited revision is not weak
@@ -332,17 +331,7 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
                 selection: selection.clone(),
                 policy: policy.clone(),
             };
-            ARCHIVES.put(&vault.store, txn, &(id, now_ms), &snapshot)?;
-            let deleted_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let marker = crate::deletion::TombstoneValueV2 {
-                reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
-                deleted_at,
-                request_id: *attempt.as_bytes(),
-            };
-            // The archive drops a fact: its person's `about` lines hide
-            // until a wake pass reads the facts left (FIX 3196).
-            super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
-            vault.put_archive_tombstone_in_txn(txn, &id, &marker)?;
+            archive_claim_in_txn(vault, txn, id, &snapshot, *attempt.as_bytes())?;
             let link = vault.attempt_action_link_in_txn(&*txn, attempt);
             let receipt = archive_receipt(actor, id, &snapshot, now_ms, link, &verdict);
             vault.store.append_gate_decision_in_txn(txn, &receipt)?;
@@ -351,6 +340,120 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
         Ok(archived)
     })
 }
+/// Why the archive fence keeps a claim (untangle 6.7a): the nightly
+/// strength archive and a derivation batch's archive item meet the same
+/// fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArchiveFence {
+    /// The claim is not the archiving actor's own `Generated` claim.
+    NotOwnGenerated,
+    /// It is not active.
+    NotActive,
+    /// It is neither Auto nor Approved.
+    NotApproved,
+    /// A critical confirmation on it is not settled.
+    ConfirmOpen,
+    /// A gate consent on it is pending.
+    ConsentPending,
+    /// It gained evidence, or was learned, within the policy's quiet window.
+    NotQuiet,
+}
+
+impl ArchiveFence {
+    /// The stable reason token a derivation receipt names.
+    pub(crate) const fn token(self) -> &'static str {
+        match self {
+            Self::NotOwnGenerated => "gate.deny.derive.archive_not_own_generated",
+            Self::NotActive => "gate.deny.derive.archive_not_active",
+            Self::NotApproved => "gate.deny.derive.archive_not_approved",
+            Self::ConfirmOpen => "gate.deny.derive.archive_confirm_open",
+            Self::ConsentPending => "gate.deny.derive.archive_consent_pending",
+            Self::NotQuiet => "gate.deny.derive.archive_not_quiet",
+        }
+    }
+}
+
+/// The archive eligibility fence over the stored claim `id` (`body`,
+/// learned at `learned_at` seconds) for `actor` at `now_ms` under `policy`:
+/// `None` when it may be archived. Only the actor's own active `Generated`
+/// claim at Auto or Approved, with any critical confirmation settled,
+/// nothing pending, and quiet for the policy's window.
+///
+/// # Errors
+///
+/// Storage errors.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fence reads the claim's body, its learned time, the clock and the policy"
+)]
+pub(crate) fn archive_fence_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+    learned_at: u64,
+    now_ms: u64,
+    policy: &ConsolidationStrengthPolicy,
+) -> Result<Option<ArchiveFence>> {
+    if body.source != Some(ClaimSource::Generated)
+        || crate::claim::session_claim_producer(body) != Some(actor)
+    {
+        return Ok(Some(ArchiveFence::NotOwnGenerated));
+    }
+    if body.lifecycle != ClaimLifecycleStatus::Active {
+        return Ok(Some(ArchiveFence::NotActive));
+    }
+    if !matches!(
+        body.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) {
+        return Ok(Some(ArchiveFence::NotApproved));
+    }
+    if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, id)? {
+        return Ok(Some(ArchiveFence::ConfirmOpen));
+    }
+    if vault.store.pending_gate_consent_in_txn(txn, id)?.is_some() {
+        return Ok(Some(ArchiveFence::ConsentPending));
+    }
+    let last_activity = OBSERVATIONS
+        .get(&vault.store, txn, id)?
+        .map_or(0, |observations| observations.last_activity_ms);
+    let last_change = last_activity.max(learned_at.saturating_mul(1_000));
+    if now_ms < last_change || now_ms - last_change < policy.quiet_ms {
+        return Ok(Some(ArchiveFence::NotQuiet));
+    }
+    Ok(None)
+}
+
+/// Archives the claim `id` at `snapshot`: the snapshot row, the drop of its
+/// person's `about` lines, and the cleanup-archive tombstone the owner's
+/// cleanup restore lifts. `request_id` names the act (the attempt that
+/// scored it).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn archive_claim_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    snapshot: &ConsolidationStrengthSnapshot,
+    request_id: [u8; 16],
+) -> Result<()> {
+    ARCHIVES.put(&vault.store, txn, &(id, snapshot.at_ms), snapshot)?;
+    let deleted_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let marker = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::ArchivedByCleanup,
+        deleted_at,
+        request_id,
+    };
+    // The archive drops a fact: its person's `about` lines hide until a wake
+    // pass reads the facts left (FIX 3196).
+    super::mark_person_about_dropped_in_txn(&vault.store, txn, &id)?;
+    vault.put_archive_tombstone_in_txn(txn, &id, &marker)
+}
+
 /// The receipt one archive leaves (owner ruling 10-18: the Dreamer applies
 /// and the owner reverts): the Dreamer's, naming the claim and the revision
 /// its snapshot scored, so the owner finds it and restores the claim through
