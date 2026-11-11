@@ -53,12 +53,15 @@
   vertical-align: middle;
 }
 
-/* The picture, cropped round, with the image line just inside its edge. */
+/* The picture, cropped round, with the image line just inside its edge.
+   A picture with a clear ground shows the plate tone through it, so the
+   face still reads as a round portrait. */
 .sl-portrait-picture {
   display: block;
   width: 100%;
   height: 100%;
   border-radius: 50%;
+  background: var(--sl-plate);
   object-fit: cover;
   outline: 1px solid var(--sl-image-line);
   outline-offset: -1px;
