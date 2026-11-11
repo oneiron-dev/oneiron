@@ -835,7 +835,7 @@
      "path": "src/agent_def/widening.rs",
      "purpose": "Which puts hand an agent definition back authority it gave up",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -1199,7 +1199,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 2,
       "re-export": 31
      }
@@ -1420,6 +1420,16 @@
       "enum": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/research_root.rs",
+     "purpose": "A parentless, run-bearing research root through ordinary dispatch (`vault.research.create_root`…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -16343,7 +16353,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 6,
       "re-export": 1
      }
@@ -43403,7 +43413,7 @@
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 7,
       "re-export": 8
      }
@@ -53561,7 +53571,7 @@
      "path": "src/memory/diary_read/doors.rs",
      "purpose": "Diary read, review, grant, and reader-list doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 9
      }
     },
@@ -54868,6 +54878,16 @@
      "notable": [],
      "path": "src/memory/read_lane/hydrate_filtered.rs",
      "purpose": "Hydration with an additional reader-bound row filter before projection",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/read_lane/revisions_read.rs",
+     "purpose": "`vault.revisions.read`'s lane read: each ref's entity view with its live revision, in one snapshot under one…",
      "surface": {
       "crate-vis": 1
      }
@@ -71476,7 +71496,7 @@
      "path": "src/scope_summary/self_model.rs",
      "purpose": "A self-model SUMMARY as its own resident reads it (FIX 4570)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -94068,6 +94088,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DiaryPinnedEntry",
+      "DiaryPinnedOutcome"
+     ],
+     "path": "src/verbs/diary_pinned.rs",
+     "purpose": "`self.memory.diary.pinned`: the caller reads an agent's diary with each entry's live NOTE revision, stating…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DisclosureOfferRequest",
       "DisclosureOffered",
       "RevealAnswerRequest",
@@ -94299,6 +94333,33 @@
      "purpose": "`vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GateDecisionReadNotice",
+      "GateDecisionReadView"
+     ],
+     "path": "src/verbs/gate_decision_read.rs",
+     "purpose": "One gate decision under a live verb Grant and the explain door's visibility rule",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReadablePolicyManifestRows"
+     ],
+     "path": "src/verbs/gate_policy_read.rs",
+     "purpose": "Caller-readable policy contributors, not the policy in force",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -94756,7 +94817,7 @@
       "crate-vis": 1,
       "fn": 8,
       "mod": 1,
-      "re-export": 116,
+      "re-export": 122,
       "struct": 33
      }
     },
@@ -95145,6 +95206,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ResearchRootReceipt",
+      "ResearchRootWire"
+     ],
+     "path": "src/verbs/research_root.rs",
+     "purpose": "`vault.research.create_root` (CAMPAIGN-ROOT): the owner, or an agent whose live owner Grant names it and…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ReservoirSourcesRequest"
      ],
      "path": "src/verbs/reservoir_sources.rs",
@@ -95219,6 +95294,20 @@
       "fn": 17,
       "re-export": 1,
       "struct": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevisionEntry",
+      "RevisionsReadRequest"
+     ],
+     "path": "src/verbs/revisions_read.rs",
+     "purpose": "`vault.revisions.read`: each ref's entity view with its live revision, under the caller's lane and a live…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -95383,6 +95472,19 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SelfModelReadView"
+     ],
+     "path": "src/verbs/self_model_read.rs",
+     "purpose": "`self.memory.self_model`: the caller's own self-model SUMMARY text with its live revision, or why it is absent",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -101234,6 +101336,54 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_self_memory_diary_pinned.rs",
+     "purpose": "`self.memory.diary.pinned` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_self_memory_self_model.rs",
+     "purpose": "`self.memory.self_model` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_gate_decision_get.rs",
+     "purpose": "`vault.gate.decision.get` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_gate_policy_resolve.rs",
+     "purpose": "`vault.gate.policy.resolve` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_research_create_root.rs",
+     "purpose": "`vault.research.create_root` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_revisions_read.rs",
+     "purpose": "`vault.revisions.read`: an agent with no Grant is refused, the holder reads only its lane's rows with live…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101312,7 +101462,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 94,
+     "files": 95,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102201,7 +102351,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 395,
+     "files": 396,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102880,7 +103030,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 129,
+     "files": 135,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102945,8 +103095,8 @@
    },
    "over_bar": 250,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7336,
-   "test_files": 1017
+   "source_files": 7344,
+   "test_files": 1023
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -127285,9 +127435,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors/diary.rs",
-     "purpose": "The caller's own diary query door (`self.memory.diary.query`), and the sealed-pad doors on a person's own…",
+     "purpose": "The caller's own diary query doors (`self.memory.diary.query` and `self.memory.diary.pinned`), and the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
