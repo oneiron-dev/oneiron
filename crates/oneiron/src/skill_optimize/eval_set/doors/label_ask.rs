@@ -117,12 +117,23 @@ pub fn ask_label(
 }
 
 /// The person an admitted caller's ask goes to, in `txn`: the vault owner
-/// who calls, or the live owner whose Grant names the calling agent and
-/// lists [`ASK_VERB`].
+/// who calls while a live person, or the live owner whose Grant names the
+/// calling agent and lists [`ASK_VERB`]. The caller's actor binding and any
+/// credential it presented are checked here first, so a repeat that returns
+/// a stored ask is admitted on the same terms as a first ask.
 fn admit_asker_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
     let vault = memory.vault();
+    crate::memory::verify_actor_binding_in_txn(vault, txn, memory.actor(), memory.actor_class())?;
+    if let Some(slip) = memory.presented_credential()
+        && !vault.capability_slip_is_live_in_txn(txn, slip)?
+    {
+        return Err(refused("the caller's credential is no longer live"));
+    }
     if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
     {
+        if !crate::consent::person_is_live_in_txn(vault, txn, &memory.actor())? {
+            return Err(refused("the vault owner is not a live person"));
+        }
         return Ok(memory.actor());
     }
     if memory.actor_class() != EdgeActorClass::Agent {
