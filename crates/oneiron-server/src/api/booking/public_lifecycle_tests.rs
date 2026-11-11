@@ -762,7 +762,7 @@ async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_
         panic!("one booking EVENT, got {events:?}")
     };
     let now = now_secs().expect("clock");
-    let proposal = oneiron::ClaimBody::new(
+    let mut proposal = oneiron::ClaimBody::new(
         oneiron::booking::BOOKING_STATUS_PREDICATE,
         oneiron::ClaimSubject::Entity(*booking),
         rmpv::Value::Map(vec![
@@ -774,6 +774,7 @@ async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_
         oneiron::ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    proposal.scope_facet = fixture.server.vault.default_facet().expect("default facet");
     // The highest id scans last, where an approval-blind reader lets it win.
     fixture
         .server
