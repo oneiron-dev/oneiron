@@ -302,8 +302,9 @@ fn runner_caller_in(
 /// [`runner_caller_in`]'s actor derivation without its running-lease gate:
 /// who a runner's report on `record` runs as. Shared by the ordinary turn
 /// and the queued turn a withdrawn try's terminal report takes before it
-/// claims (FIX 11687): one derivation, never two.
-fn runner_report_actor_in(
+/// claims (FIX 11687): one derivation, never two. A met Done reads it to
+/// match its host run to the reporting actor (LEARN-CRITIC Q2).
+pub(super) fn runner_report_actor_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &AttemptRecord,

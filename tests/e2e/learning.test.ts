@@ -168,6 +168,8 @@ suite.todo(test, "LEARNING-03", "waits on typed experiment child creation, seale
 // LEARNING-04 — Multi-critic findings and seal audits should work. OF-352/544.
 // Waiting: typed confession/recheck/audit receipt readback and controlled public
 // completion/trigger. The Coach seal checker IS wired; do not call it absent.
+// A public tasks.update DONE through a host-bound run stamps that run's executor
+// model on the held try (LEARN-CRITIC Q2), so a public completion can be sealed.
 // Existing vault.critic.review takes CriticReviewSubmit and returns triage,
 // critique artifacts and decision receipts. Learned-setting seed/pin is public.
 // Set up two independently anchored critic histories, same task type and axis.
