@@ -346,4 +346,42 @@ class VerbRoleTests(unittest.TestCase):
         self.assertEqual(len(kinds), 36)
 
 
+class VerbActClassTests(unittest.TestCase):
+    """ARCH-0082 #act-table (ROLES-CHECKIN PR 2, P2.1): every verb row states its act class by a ruled name,
+    `read` only on a Read row, and the loader fills no missing class (PR2-SPLIT (a) and (b), 11 Nov 16:19)."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("verb_table", ROOT / "scripts/sdk/verb_table.py")
+        cls.table = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.table)
+
+    def load_one(self, row):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / f"{row['name']}.json").write_text(json.dumps(row))
+            return self.table.load_verbs(Path(folder))
+
+    def test_every_verb_row_states_a_ruled_act_class(self):
+        rows = self.table.load_verbs()
+        self.assertGreater(len(rows), 1000)
+        self.assertEqual([row["name"] for row in rows if row.get("act_class") not in self.table.ACT_CLASS_VALUES], [])
+        self.assertEqual([row["name"] for row in rows if row["act_class"] == "read" and row["scope"] != "Read"], [])
+
+    def test_the_loader_refuses_a_missing_unknown_or_old_class(self):
+        row = {"name": "fixture.verb", "scope": "Write", "act_class": "reversible_work"}
+        self.assertEqual(self.load_one(row), [row])
+        for value in (None, "", "READ", "spend_above_cap", "widen_own_grant", 7):
+            broken = {key: item for key, item in row.items() if key != "act_class"}
+            if value is not None:
+                broken["act_class"] = value
+            with self.assertRaisesRegex(ValueError, "act_class"):
+                self.load_one(broken)
+
+    def test_read_is_on_a_read_row_only(self):
+        self.assertEqual(len(self.load_one({"name": "fixture.read", "scope": "Read", "act_class": "read"})), 1)
+        with self.assertRaisesRegex(ValueError, "Read row only"):
+            self.load_one({"name": "fixture.write", "scope": "Write", "act_class": "read"})
+
+
 if __name__ == "__main__": unittest.main()
