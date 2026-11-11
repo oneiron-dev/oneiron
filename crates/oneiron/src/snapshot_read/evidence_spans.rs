@@ -1,5 +1,12 @@
 //! `vault.evidence.spans`: exact byte spans of one TURN's text, or one
 //! source's version, through the caller's scoped read.
+//!
+//! A reader other than the owner reads a lifted key in a TURN's text as its
+//! handle (`[secret sc12]`, OF-067), as `vault.snapshot.page` serves that
+//! text. Its spans are cut from that masked text: positions, words and hashes
+//! are the masked text's, and the answer says `masked`. A handle's length is
+//! its own, so no position tells where a secret was or how long it is (lead
+//! 12:4x, FIX-LIST EVIDENCE-SPANS-MASKED-COORDINATES).
 
 use std::fmt::Write as _;
 
@@ -7,12 +14,20 @@ use serde::{Deserialize, Serialize};
 
 use super::source_version::{SourceVersion, SourceVersionCheck, blake3_ref, source_version_in_txn};
 use crate::EntityId;
+use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
 use crate::dreamer_consolidation::TurnText;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 /// The most byte ranges one `vault.evidence.spans` request names.
 pub const EVIDENCE_SPANS_MAX_RANGES: usize = 64;
+
+/// The reason code of the refusal a reader other than the owner gets when a
+/// lifted key in a TURN's text runs across the line break between two of its
+/// MESSAGE rows: masked one row at a time, the text would not read as that
+/// reader reads it whole, so no masked span is served.
+pub const EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES: &str =
+    "evidence.spans.masked_key_crosses_messages";
 
 /// One `vault.evidence.spans` request.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -24,9 +39,9 @@ pub struct EvidenceSpansRequest {
     /// since, the answer serves no bytes.
     #[serde(default)]
     pub version: Option<SourceVersion>,
-    /// Byte ranges over a TURN's projected text, each from `start`
-    /// (inclusive) to `end` (exclusive); none reads the whole text. Any other
-    /// row takes none: its answer is its version.
+    /// Byte ranges over a TURN's projected text as the caller reads it, each
+    /// from `start` (inclusive) to `end` (exclusive); none reads the whole
+    /// text. Any other row takes none: its answer is its version.
     #[serde(default)]
     pub ranges: Vec<EvidenceRange>,
 }
@@ -64,6 +79,14 @@ pub struct EvidenceSpans {
     /// One span per requested range, or one over the whole text when none
     /// was named; empty unless the status is `current`.
     pub spans: Vec<EvidenceSpan>,
+    /// Whether the spans are cut from the TURN's text as this reader reads
+    /// it, with a lifted key as its handle, and not from the stored text:
+    /// each span's positions, text and hash are the masked text's, a range
+    /// with an end inside a handle is widened to that handle's edge, and a
+    /// MESSAGE slice's positions are within that MESSAGE's masked words.
+    /// Only a reader other than the owner gets `true`.
+    #[serde(default)]
+    pub masked: bool,
 }
 
 /// The exact bytes of one range of a TURN's projected text.
@@ -136,13 +159,18 @@ pub fn validate_evidence_spans(input: &EvidenceSpansRequest) -> MemoryResult<()>
 ///   own words, or its visible final MESSAGE rows joined with `"\n"`), with
 ///   the MESSAGE-local slices each covers. Any other row serves its version
 ///   only.
+/// - For a reader other than the owner, a TURN whose text holds a lifted key
+///   serves its spans over that text masked, as `vault.snapshot.page` serves
+///   it, and says `masked`; the owner's spans are the stored text's.
 ///
 /// # Errors
 ///
 /// A request that fails [`validate_evidence_spans`]; ranges over a row that
 /// is no TURN, over a TURN with no text, past the text's end, through a
-/// UTF-8 character or over only the line breaks between MESSAGE rows; the
-/// caller's read lane; and storage errors.
+/// UTF-8 character or over only the line breaks between MESSAGE rows; for a
+/// reader other than the owner, a TURN whose lifted key runs across two of
+/// its MESSAGE rows (reason [`EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES`]);
+/// the caller's read lane; and storage errors.
 pub fn evidence_spans(
     memory: &Memory<'_>,
     input: &EvidenceSpansRequest,
@@ -166,6 +194,7 @@ pub fn evidence_spans(
                             status: EvidenceSourceStatus::Moved,
                             version: Some(version),
                             spans: Vec::new(),
+                            masked: false,
                         });
                     }
                 }
@@ -173,9 +202,21 @@ pub fn evidence_spans(
             let Some((version, text)) = source_version_in_txn(&read, txn, &input.source)? else {
                 return Ok(withheld());
             };
-            let spans = match text {
-                Some(turn) => turn_spans(&turn, &input.ranges)?,
-                None if input.ranges.is_empty() => Vec::new(),
+            let (spans, masked) = match text {
+                Some(turn) => {
+                    let keys = super::source_version::turn_lifted_keys_in_txn(
+                        memory,
+                        &read,
+                        txn,
+                        &input.source,
+                        &turn,
+                    )?;
+                    match keys {
+                        Some(keys) => masked_turn_spans(&turn, &keys, &input.ranges)?,
+                        None => (turn_spans(&turn, &input.ranges)?, false),
+                    }
+                }
+                None if input.ranges.is_empty() => (Vec::new(), false),
                 None => {
                     return Err(MemoryError::bad_request(
                         "byte ranges are served over a TURN's text only",
@@ -186,6 +227,7 @@ pub fn evidence_spans(
                 status: EvidenceSourceStatus::Current,
                 version: Some(version),
                 spans,
+                masked,
             })
         },
     )
@@ -196,7 +238,61 @@ fn withheld() -> EvidenceSpans {
         status: EvidenceSourceStatus::Withheld,
         version: None,
         spans: Vec::new(),
+        masked: false,
     }
+}
+
+/// The spans of `ranges` over `turn`'s text as a reader reads it for whom
+/// each of `keys` reads as its handle, and whether that text is masked at
+/// all. The text is masked piece by piece (the TURN's own words, or each
+/// MESSAGE's), so each MESSAGE slice falls within that MESSAGE's masked
+/// words; it must read as the whole text masked at once reads, which
+/// `vault.snapshot.page` serves. A range with an end inside a handle is
+/// widened to that handle's edge (C-ANCHOR), so no span names part of one.
+fn masked_turn_spans(
+    turn: &TurnText,
+    keys: &LiftedKeys,
+    ranges: &[EvidenceRange],
+) -> MemoryResult<(Vec<EvidenceSpan>, bool)> {
+    let whole = turn.text().and_then(|text| keys.masked(text));
+    let pieces = turn.masked_by(|words| keys.masked(words))?;
+    let (whole, shown) = match (whole, pieces) {
+        (None, None) => return Ok((turn_spans(turn, ranges)?, false)),
+        (Some(whole), Some(shown)) if shown.text() == Some(whole.as_str()) => (whole, shown),
+        _ => {
+            let mut refusal = MemoryError::bad_request(
+                "spans unavailable: a masked secret in this TURN's text runs across two of its MESSAGE rows",
+            );
+            refusal
+                .reason_codes
+                .push(EVIDENCE_SPANS_MASKED_KEY_CROSSES_MESSAGES.to_owned());
+            return Err(refusal);
+        }
+    };
+    let handles = keys.handle_ranges(&whole);
+    let ranges: Vec<EvidenceRange> = ranges
+        .iter()
+        .map(|range| widened(*range, &handles))
+        .collect();
+    Ok((turn_spans(&shown, &ranges)?, true))
+}
+
+/// `range` with each end that falls inside one of `handles` (byte ranges of
+/// the masked text) moved out to that handle's edge.
+fn widened(range: EvidenceRange, handles: &[std::ops::Range<usize>]) -> EvidenceRange {
+    let inside = |at: u64, handle: &std::ops::Range<usize>| {
+        usize::try_from(at).is_ok_and(|at| handle.start < at && at < handle.end)
+    };
+    let mut out = range;
+    for handle in handles {
+        if inside(range.start, handle) {
+            out.start = u64::try_from(handle.start).unwrap_or(u64::MAX);
+        }
+        if inside(range.end, handle) {
+            out.end = u64::try_from(handle.end).unwrap_or(u64::MAX);
+        }
+    }
+    out
 }
 
 /// The exact spans of `ranges` over `turn`'s projected text; one over the
