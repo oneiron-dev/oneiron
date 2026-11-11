@@ -75,6 +75,19 @@ fn prove_bm25_doc_counted_for_missing_posting_repair(
                         "bm25 field total_length recompute",
                     ))?;
         }
+        // A NOTE's fields count in their channels' pooled stats too, as the
+        // index write counted them (FIX 7789).
+        for (channel, (counts, len)) in pooled_note_lengths(&lengths)? {
+            let (doc_count, total_length) = recomputed_field_stats.entry(channel).or_default();
+            *doc_count = doc_count
+                .checked_add(u32::from(counts))
+                .ok_or(Error::ArithmeticOverflow("bm25 field doc_count recompute"))?;
+            *total_length = total_length
+                .checked_add(len)
+                .ok_or(Error::ArithmeticOverflow(
+                    "bm25 field total_length recompute",
+                ))?;
+        }
     }
 
     if !saw_doc {
