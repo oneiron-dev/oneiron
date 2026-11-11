@@ -8,7 +8,7 @@ use std::ops::Range;
 use zeroize::Zeroizing;
 
 use super::super::container::{MAX_FILE_KEYS, REASON_OVER_BUDGET};
-use super::super::{REASON_MNEMONIC, secret_scan_error};
+use super::super::{REASON_MNEMONIC, secret_scan_error, write_payload_hit};
 use super::body::reads_as_text;
 use super::split_phrase;
 use super::text_log::{TextLog, TextSpans};
@@ -134,7 +134,9 @@ impl Masker {
     /// custody record holds the phrase (the record that holds it already,
     /// if one does; with the switch off, only such a phrase is placed), and
     /// each of its words no span covers yet is marked with it. The file's
-    /// bytes stay as stored.
+    /// bytes stay as stored. A hit the leaf's parts still hold once every
+    /// mark is filled leaves its phrases unplaced: the door's refusal stands
+    /// (REVIEW-7059 P1).
     fn place_split_phrases(
         &mut self,
         path: &[MemberStep],
@@ -142,7 +144,9 @@ impl Masker {
         known: &[(Range<usize>, EntityId)],
         placed: &mut Vec<FileKey>,
     ) -> Result<()> {
+        let mut phrases: Vec<PhrasePlace> = Vec::new();
         for phrase in split_phrase::split_phrases(leaf) {
+            // A word two readings find is placed once.
             let words: Vec<Range<usize>> = phrase
                 .words
                 .iter()
@@ -151,6 +155,7 @@ impl Masker {
                         .iter()
                         .map(|(held, _)| held)
                         .chain(placed.iter().map(|key| &key.span))
+                        .chain(phrases.iter().flat_map(|place| &place.words))
                         .any(|held| held.start < word.end && word.start < held.end)
                 })
                 .cloned()
@@ -165,27 +170,84 @@ impl Masker {
                         [hit] if hit.span == (0..phrase.value.len()) => Some(hit.custody),
                         _ => None,
                     });
-            let (reason, custody) = match held {
+            if held.is_none() && self.known_only {
+                continue;
+            }
+            phrases.push(PhrasePlace {
+                value: phrase.value,
+                words,
+                held,
+            });
+        }
+        if phrases.is_empty() {
+            return Ok(());
+        }
+        let marks: Vec<Range<usize>> = known
+            .iter()
+            .map(|(span, _)| span.clone())
+            .chain(placed.iter().map(|key| key.span.clone()))
+            .chain(phrases.iter().flat_map(|place| place.words.iter().cloned()))
+            .collect();
+        if !self.filled_parts_read_clean(leaf, &marks) {
+            return Ok(());
+        }
+        for place in phrases {
+            let (reason, custody) = match place.held {
                 Some(custody) => {
                     self.placed_known = true;
                     (REASON_KNOWN_VALUE, Some(custody))
                 }
-                None if self.known_only => continue,
                 None => {
-                    self.handle(&phrase.value, REASON_MNEMONIC)?;
+                    self.handle(&place.value, REASON_MNEMONIC)?;
                     (REASON_MNEMONIC, None)
                 }
             };
-            for span in words {
+            for span in place.words {
                 placed.push(FileKey {
                     path: path.to_vec(),
                     span,
                     reason,
-                    value: phrase.value.clone(),
+                    value: place.value.clone(),
                     custody,
                 });
             }
         }
         Ok(())
     }
+
+    /// Whether the door's rules read no hit in `leaf` with each of `marks`
+    /// filled where its decoder still reads the leaf as it read it
+    /// (`split_phrase::filled_in_place`). A word's span in an array of byte
+    /// values holds the separators between its numbers, so the plan's copy,
+    /// filled over them, may decode no more: the door's second read would
+    /// then take it as text alone, blind to a key in another of its parts
+    /// that no span places (REVIEW-7059 P1). A value the owner kept in the
+    /// record is screened as the door's read screens it. With the switch off
+    /// the door refuses nothing, so there is no refusal to keep.
+    fn filled_parts_read_clean(&self, leaf: &[u8], marks: &[Range<usize>]) -> bool {
+        if self.known_only {
+            return true;
+        }
+        let Some(copy) = split_phrase::filled_in_place(leaf, marks) else {
+            return true;
+        };
+        let screened = self
+            .at
+            .as_ref()
+            .and_then(|(record, _)| self.kept.screened(record, &copy))
+            .map(Zeroizing::new);
+        let read = match &screened {
+            Some(screened) => screened.as_slice(),
+            None => copy.as_slice(),
+        };
+        write_payload_hit(read).is_none()
+    }
+}
+
+/// A recovery phrase split over a leaf that the plan places: its value, its
+/// words no span covers yet, and the custody record that holds it already.
+struct PhrasePlace {
+    value: Zeroizing<Vec<u8>>,
+    words: Vec<Range<usize>>,
+    held: Option<EntityId>,
 }
