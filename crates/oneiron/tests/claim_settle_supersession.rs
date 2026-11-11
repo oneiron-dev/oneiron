@@ -67,6 +67,53 @@ impl Fixture {
         }
     }
 
+    fn declare_food_preference_normal(&self) {
+        use rmpv::Value;
+
+        let id = oneiron_store::policy_record::default_policy_manifest_id()
+            .expect("default policy manifest id");
+        let body = self
+            .vault
+            .get(&id)
+            .expect("read default policy manifest")
+            .expect("default policy manifest exists");
+        let Value::Map(mut fields) =
+            rmpv::decode::read_value(&mut body.as_slice()).expect("decode default policy manifest")
+        else {
+            panic!("default policy manifest is a map");
+        };
+        let (_, Value::Array(rules)) = fields
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("rules"))
+            .expect("default policy rules")
+        else {
+            panic!("default policy rules are an array");
+        };
+        // A separate pack would still meet the default pack's critical fallback.
+        rules.push(Value::Map(vec![
+            (Value::from("prefix"), Value::from("preference.food")),
+            (Value::from("exact"), Value::Boolean(true)),
+            (
+                Value::from("axes"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+        ]));
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Map(fields))
+            .expect("encode preference policy");
+        self.vault
+            .install_owner_policy_manifest(
+                &self.owner_proof,
+                id,
+                bytes,
+                self.vault.now_recorded_at(),
+            )
+            .expect("declare food preference normal");
+    }
+
     fn input(&self, predicate: &str, value: &str, topic: Option<&str>) -> ClaimInput {
         let mut scope = json!({ "facet": self.facet.to_hex() });
         if let Some(topic) = topic {
@@ -210,6 +257,7 @@ fn approving_a_proposal_supersedes_the_head_it_replaces() {
 #[test]
 fn a_set_predicate_approval_supersedes_only_the_head_on_its_topic() {
     let f = Fixture::new();
+    f.declare_food_preference_normal();
     let old = f.head(&f.input("preference.food", "I like ramen", Some("ramen")));
     let other = f.head(&f.input("preference.food", "I like sushi", Some("sushi")));
     let new = f.propose(&f.input("preference.food", "I avoid ramen", Some("ramen")));
@@ -232,6 +280,7 @@ fn a_set_predicate_approval_supersedes_only_the_head_on_its_topic() {
 #[test]
 fn a_set_predicate_proposal_with_no_topic_supersedes_nothing() {
     let f = Fixture::new();
+    f.declare_food_preference_normal();
     let old = f.head(&f.input("preference.food", "I like ramen", None));
     let new = f.propose(&f.input("preference.food", "I like udon", None));
 
