@@ -8,6 +8,7 @@ import { PickDiamond } from '../marks/PickDiamond'
 import { UrgencyMark } from '../marks/UrgencyMark'
 import { soundPress } from '../lib/press'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect, useSafeId } from '../lib/react-utils'
+import { pushPendingUndo } from '../lib/pending-undo'
 import { SETTLE_OPEN, settleReducer, type SettleKind, type SettleState } from './settle-reducer'
 
 /* How long an answer can be undone before it stands. */
@@ -17,28 +18,6 @@ const FOLD_MS = 260
 
 const prefersReducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-
-/* ── Escape undoes the newest pending answer, wherever focus is ─────────── */
-
-const pendingUndos: Array<() => void> = []
-
-function onEscapeUndo(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || event.defaultPrevented) return
-  const undo = pendingUndos[pendingUndos.length - 1]
-  if (!undo) return
-  event.preventDefault()
-  undo()
-}
-
-function pushPendingUndo(undo: () => void): () => void {
-  if (!pendingUndos.length) document.addEventListener('keydown', onEscapeUndo, true)
-  pendingUndos.push(undo)
-  return () => {
-    const i = pendingUndos.lastIndexOf(undo)
-    if (i >= 0) pendingUndos.splice(i, 1)
-    if (!pendingUndos.length) document.removeEventListener('keydown', onEscapeUndo, true)
-  }
-}
 
 /* ── the root ───────────────────────────────────────────────────────────── */
 
@@ -209,13 +188,12 @@ export interface NeedsYouItemProps extends Omit<React.ComponentPropsWithRef<'div
   urgency?: NeedsYouUrgency
 }
 
-/* Closed: one line. Open: the question line and its body (a shape, then the
-   picks). */
-function NeedsYouItem({ id, asker, question, urgency, className, children, ...props }: NeedsYouItemProps) {
-  const root = useNeedsYou('NeedsYou.Item')
+/* One answer's state: the pick, its undo window (Escape or `undo`
+   restores), and the moment it stands. `onSettled` runs once the window
+   ends. */
+function useAnswerScope(onSettled: (value: string, kind: SettleKind) => void, undoWindowMs: number): ItemContextValue {
   const [state, dispatch] = React.useReducer(settleReducer, SETTLE_OPEN)
   const [pending, setPending] = React.useState<{ label: React.ReactNode; word: string }>({ label: null, word: '' })
-  const isOpen = root.openId === id
 
   const pick = React.useCallback((value: string, label: React.ReactNode, word = 'answered') => {
     setPending({ label, word })
@@ -227,26 +205,38 @@ function NeedsYouItem({ id, asker, question, urgency, className, children, ...pr
   }, [])
   const undo = React.useCallback(() => dispatch({ type: 'undo' }), [])
 
-  /* The undo window: Escape or `undo` restores; otherwise the answer stands. */
   React.useEffect(() => {
     if (state.status !== 'pending') return
     const release = pushPendingUndo(undo)
-    const timer = setTimeout(() => dispatch({ type: 'commit' }), root.undoWindowMs)
+    const timer = setTimeout(() => dispatch({ type: 'commit' }), undoWindowMs)
     return () => {
       clearTimeout(timer)
       release()
     }
-  }, [state.status, undo, root.undoWindowMs])
+  }, [state.status, undo, undoWindowMs])
 
-  const { markSettled } = root
+  const settledRef = React.useRef(onSettled)
+  useIsomorphicLayoutEffect(() => {
+    settledRef.current = onSettled
+  })
   React.useEffect(() => {
-    if (state.status === 'settled') markSettled(id, state.value, state.kind)
-  }, [state, id, markSettled])
+    if (state.status === 'settled') settledRef.current(state.value, state.kind)
+  }, [state])
 
-  const ctx = React.useMemo(
+  return React.useMemo(
     () => ({ state, pendingLabel: pending.label, pendingWord: pending.word, pick, later, undo }),
     [state, pending, pick, later, undo],
   )
+}
+
+/* Closed: one line. Open: the question line and its body (a shape, then the
+   picks). */
+function NeedsYouItem({ id, asker, question, urgency, className, children, ...props }: NeedsYouItemProps) {
+  const root = useNeedsYou('NeedsYou.Item')
+  const isOpen = root.openId === id
+  const { markSettled } = root
+  const ctx = useAnswerScope((value, kind) => markSettled(id, value, kind), root.undoWindowMs)
+  const state = ctx.state
   const settled = state.status === 'settled'
 
   return (
@@ -285,6 +275,40 @@ function NeedsYouItem({ id, asker, question, urgency, className, children, ...pr
       </div>
     </ItemContext.Provider>
   )
+}
+
+export interface NeedsYouAnswerProps {
+  id: string
+  /* The answer stood through its undo window (after the fold). */
+  onSettle?: (id: string, value: string) => void
+  /* The item was set aside with `later`. */
+  onLater?: (id: string) => void
+  undoWindowMs?: number
+  children?: React.ReactNode
+}
+
+/* One answer outside the accordion (a picks line under an activity row):
+   the same pick, undo window and Escape as an item. Renders no element. */
+function NeedsYouAnswer({ id, onSettle, onLater, undoWindowMs = NEEDS_YOU_UNDO_MS, children }: NeedsYouAnswerProps) {
+  const latest = React.useRef({ onSettle, onLater })
+  useIsomorphicLayoutEffect(() => {
+    latest.current = { onSettle, onLater }
+  })
+  const ctx = useAnswerScope((value, kind) => {
+    setTimeout(
+      () => {
+        if (kind === 'later') latest.current.onLater?.(id)
+        else latest.current.onSettle?.(id, value)
+      },
+      prefersReducedMotion() ? 0 : FOLD_MS,
+    )
+  }, undoWindowMs)
+  return <ItemContext.Provider value={ctx}>{children}</ItemContext.Provider>
+}
+
+/* The state of the answer around a part: null outside an item or answer. */
+export function useNeedsYouAnswerStatus(): SettleState['status'] | null {
+  return React.useContext(ItemContext)?.state.status ?? null
 }
 
 /* ── the picks line ─────────────────────────────────────────────────────── */
@@ -561,10 +585,11 @@ function NeedsYouContextPicture({ className, ...props }: NeedsYouContextProps) {
   return <div className={cx('sl-needs-you-context', className)} {...props} />
 }
 
-/* Compound parts: NeedsYou, .Item, .Picks, .Pick, .OwnAnswer, .Later,
-   .Command, .Plan, .Step, .Context. */
+/* Compound parts: NeedsYou, .Item, .Answer, .Picks, .Pick, .OwnAnswer,
+   .Later, .Command, .Plan, .Step, .Context. */
 export const NeedsYou = Object.assign(NeedsYouRoot, {
   Item: NeedsYouItem,
+  Answer: NeedsYouAnswer,
   Picks: NeedsYouPicks,
   Pick: NeedsYouPick,
   OwnAnswer: NeedsYouOwnAnswer,
