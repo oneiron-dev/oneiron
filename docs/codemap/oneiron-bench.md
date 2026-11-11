@@ -127,9 +127,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
 | `src/load/corpus_recall.rs` | src | m | 1 crate-vis | — | `load corpus-recall` — warm recall latency on a vault seeded from a recorded conversation corpus, on the… |
 | `src/load/dream.rs` | src | m | 1 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
+| `src/load/dream/call_proxy.rs` | src | L | 5 crate-vis | — | The model-call timing proxy of `load dream` (FIX 21929) |
 | `src/load/dream/cycle.rs` | src | m | 20 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
 | `src/load/dream/proof.rs` | src | s | 4 crate-vis | — | Whether a recall finds what the cycle landed: the landed claim ids (the stage lines' `landed_ids`, else the… |
-| `src/load/dream/report.rs` | src | m | 3 crate-vis | — | The `load dream` result: the JSON report and the 15-line summary on stdout |
+| `src/load/dream/report.rs` | src | m | 4 crate-vis | — | The `load dream` result: the JSON report and the summary lines on stdout |
 | `src/load/dream/server_log.rs` | src | s | 14 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
 | `src/load/dream/setup.rs` | src | s | 7 crate-vis | — | What `load dream` sets up before the server starts: the model check, the `[models]` section that routes… |
 | `src/load/dream/turns.rs` | src | m | 12 crate-vis | — | The recorded corpus `load dream` seeds: one JSON line per turn (world, person, day, conversation_ref… |
