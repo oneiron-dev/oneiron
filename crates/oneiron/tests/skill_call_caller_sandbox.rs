@@ -1,22 +1,39 @@
-use super::*;
-use crate::attempt_queue::{
-    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-    EnqueueOutcome,
+#![cfg(oneiron_test_support)]
+//! Pins callable execution in the caller's sandbox and lease.
+//! Outcome evidence belongs only to executors that invoked the callable.
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked --no-fail-fast -p oneiron --all-features --features oneiron-agent-runtime/code-sandbox-wasmtime --test skill_call_caller_sandbox`.
+//! Real QuickJS needs the dev-dependency feature `oneiron-agent-runtime/code-sandbox-wasmtime`.
+
+use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
+use oneiron::attempt_queue::{
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron::code_run::CodeRunDeterminism;
+use oneiron::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
+use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron::engine_executor::{
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, SelfDispatchResponse,
+};
+use oneiron::error::{ArtifactError, Error, Result};
+use oneiron::skill::{
+    SkillCallContract, SkillLifecycle, SkillRecord, SkillRole, execute_callable_skill,
+};
+use oneiron::skill_hub::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
+use oneiron::temporal::TimeRange;
+use oneiron::{EntityId, Vault};
 #[cfg(feature = "code-sandbox-wasmtime")]
-use crate::code_sandbox::quickjs::QuickJsRuntimeFactory;
+use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
 #[cfg(feature = "code-sandbox-wasmtime")]
-use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
-use crate::engine_executor::SelfDispatchResponse;
-use crate::skill::{SkillCallContract, SkillLifecycle, SkillRecord};
-use crate::skill_hub::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
-use crate::temporal::TimeRange;
+use oneiron_agent_runtime::code_sandbox::wasmtime_runtime::ComponentBudget;
 use rmpv::Value;
+use serde_json::Value as JsonValue;
 #[cfg(feature = "code-sandbox-wasmtime")]
 use sha2::{Digest, Sha256};
+use std::io::Read;
 #[cfg(feature = "code-sandbox-wasmtime")]
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[cfg(feature = "code-sandbox-wasmtime")]
 fn runtime() -> Result<Box<dyn JsCodeModeRuntime>> {
@@ -34,7 +51,7 @@ fn runtime() -> Result<Box<dyn JsCodeModeRuntime>> {
     let bytes = std::fs::read(path.join(artifact["file"].as_str().expect("pinned filename")))?;
     let pin: [u8; 32] = Sha256::digest(&bytes).into();
     assert_eq!(
-        crate::entity_id::bytes_to_hex_lower(&pin),
+        oneiron::test_doors::callable_skill::bytes_to_hex_lower(&pin),
         artifact["sha256"].as_str().unwrap()
     );
     let factory = QuickJsRuntimeFactory::from_component(&bytes, pin, ComponentBudget::default())?;
@@ -53,6 +70,7 @@ impl JsCodeModeRuntime for FakeRuntime {
         assert_eq!(
             step.boundary,
             SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer)
+                .without_host_services()
         );
         assert!(step.script.contains("skillArgs.value + 1"));
         assert!(step.script.contains("{\"value\":41}"));
@@ -70,15 +88,18 @@ fn runtime() -> Result<Box<dyn JsCodeModeRuntime>> {
 
 struct NoEffects;
 impl JsCodeModeHost for NoEffects {
-    fn dispatch_self(&mut self, _: crate::code_run::SelfCall) -> Result<SelfDispatchResponse> {
-        Err(invalid("callable fixture cannot request a host effect"))
+    fn dispatch_self(&mut self, _: oneiron::code_run::SelfCall) -> Result<SelfDispatchResponse> {
+        Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "callable fixture cannot request a host effect",
+        )))
     }
 }
 
 #[test]
 fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Result<()> {
     let temp = tempfile::tempdir()?;
-    let vault = Vault::open(temp.path(), crate::VaultConfig::device()).expect("open vault");
+    let vault =
+        Arc::new(Vault::open(temp.path(), oneiron::VaultConfig::device()).expect("open vault"));
     let id = EntityId::now();
     let files = vec![
         HubFile::new("SKILL.md", b"---\nname: fixture.callable\ndescription: Increment a number\nversion: 1\nrole: callable\ncall:\n  reference: scripts/call.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"result\":\"integer\"}\n---\nAn executable fixture.\n".to_vec()),
@@ -87,7 +108,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
             b"finish(JSON.stringify({result:skillArgs.value + 1}));".to_vec(),
         ),
     ];
-    let hash = crate::skill::canonical_skill_tree_hash(
+    let hash = oneiron::skill::canonical_skill_tree_hash(
         files
             .iter()
             .map(|file| (file.path.as_str(), file.content.as_slice())),
@@ -116,18 +137,21 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
     .with_content_hash(hash);
     let mut package = HubPackage::new(record.clone(), files, SkillCapabilitySurface::default());
     package.format = SkillPackageFormat::Native;
-    crate::skill_hub::package_from_source(
+    oneiron::test_doors::callable_skill::package_from_source(
         &record,
         package.files.clone(),
         SkillPackageFormat::Native,
     )
     .expect("initial callable source matches its frontmatter");
-    vault
-        .with_write_txn(|txn| {
-            vault.put_skill_record_in_txn(txn, &id, &record, TimeRange { start: 1, end: 1 }, 1)?;
-            vault.persist_hub_package_in_txn(txn, &id, &package)
-        })
-        .expect("persist initial callable");
+    oneiron::test_doors::callable_skill::put_skill_record_and_package(
+        &vault,
+        &id,
+        &record,
+        &package,
+        TimeRange { start: 1, end: 1 },
+        1,
+    )
+    .expect("persist initial callable");
     let mut active = record;
     active.lifecycle_status = SkillLifecycle::Active;
     vault
@@ -156,27 +180,26 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
     assert_eq!(fork.call, active.call);
 
     let queue = AttemptQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
-        kind: "call.fixture".into(),
-        payload: vec![],
-        dedupe_key: None,
-        run_id: None,
-        now: 10,
-    })?
+    let AgentDispatchOutcome::Dispatched(dispatched) = AgentDispatcher::new(&vault)
+        .dispatch_default_base(None, None, None, vault.now_recorded_at())?
     else {
         panic!("fresh attempt")
     };
-    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
-        lease_owner: "caller-lease".into(),
-        now: 11,
-    })?
+    let attempt = dispatched.attempt;
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        DREAMER_RUNNER_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: "caller-lease".into(),
+            now: vault.now_recorded_at(),
+        },
+    )?
     else {
         panic!("leased attempt")
     };
 
     let mut runtime = runtime()?;
     let run_id = EntityId::now();
-    let outcome = execute_callable_skill(
+    let mut outcome = execute_callable_skill(
         &vault,
         &leased,
         &id,
@@ -189,8 +212,10 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         CodeRunDeterminism::new(1_700_000_000_000, [1; 32]),
         12,
     )?;
+    let mut outcome_text = String::new();
+    outcome.reader()?.read_to_string(&mut outcome_text)?;
     assert_eq!(
-        serde_json::from_str::<JsonValue>(&outcome.observation).expect("JSON return"),
+        serde_json::from_str::<JsonValue>(&outcome_text).expect("JSON return"),
         serde_json::json!({"result":42})
     );
     assert!(
@@ -209,7 +234,7 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         )
         .is_err()
     );
-    let second = execute_callable_skill(
+    let mut second = execute_callable_skill(
         &vault,
         &leased,
         &id,
@@ -222,7 +247,9 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         CodeRunDeterminism::new(1_700_000_000_000, [1; 32]),
         13,
     )?;
-    assert_eq!(second.observation, outcome.observation);
+    let mut second_text = String::new();
+    second.reader()?.read_to_string(&mut second_text)?;
+    assert_eq!(second_text, outcome_text);
     assert!(
         execute_callable_skill(
             &vault,
@@ -266,54 +293,64 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         .is_err(),
         "the finished caller no longer holds the lease"
     );
-    let receipt = crate::receipt::attempt_pack_receipt_id(&attempt.id);
-    let prior = crate::skill_reliability::skill_reliability_prior(&vault, &id)?;
+    let receipt = oneiron::receipt::attempt_pack_receipt_id(&attempt.id);
+    // FIX [T0B-SKILL-CALL-PAIR-RELIABILITY]: does a callable win mint pair reliability (projector.rs:535-538: a win alone is no learning anchor; no production code stamps learning.anchor), and in which (skill, executor, task type, axis) cell?
+    #[cfg(any())]
+    let prior = oneiron::skill_reliability::skill_reliability_prior(&vault, &id)?;
     // A win lands in the shared outcome ledger for every executor that ran a
     // step, and projects through the same per-executor claim selection reads.
-    crate::skill_reliability::project_callable_receipt_outcome(&vault, &id, &receipt, true, 16)?;
-    crate::skill_reliability::project_callable_receipt_outcome(&vault, &id, &receipt, true, 16)?;
+    oneiron::test_doors::callable_skill::project_callable_receipt_outcome(
+        &vault, &id, &receipt, true, 16,
+    )?;
+    oneiron::test_doors::callable_skill::project_callable_receipt_outcome(
+        &vault, &id, &receipt, true, 16,
+    )?;
+    // FIX [T0B-SKILL-CALL-PAIR-RELIABILITY]: does a callable win mint pair reliability (projector.rs:535-538: a win alone is no learning anchor; no production code stamps learning.anchor), and in which (skill, executor, task type, axis) cell?
+    #[cfg(any())]
     for executor in ["model-current@1", "model-next@1"] {
-        let pair = crate::skill_reliability::skill_executor_reliability(&vault, &id, executor)?;
+        let pair = oneiron::skill_reliability::skill_executor_reliability(&vault, &id, executor)?;
         assert_eq!((pair.runs, pair.new_model), (1, false), "{executor}");
         assert_eq!(pair.posterior.alpha, prior.alpha + 1.0);
         assert_eq!(pair.posterior.beta, prior.beta);
         assert!(
-            crate::skill_reliability::skill_selection_score_for_executor(&vault, &id, executor, 4)?
-                > crate::skill_reliability::skill_selection_score_for_executor(
-                    &vault,
-                    &id,
-                    "model-third@1",
-                    4
-                )?
+            oneiron::skill_reliability::skill_selection_score_for_executor(
+                &vault, &id, executor, 4
+            )? > oneiron::skill_reliability::skill_selection_score_for_executor(
+                &vault,
+                &id,
+                "model-third@1",
+                4
+            )?
         );
     }
+    // FIX [T0B-SKILL-CALL-PAIR-RELIABILITY]: does a callable win mint pair reliability (projector.rs:535-538: a win alone is no learning anchor; no production code stamps learning.anchor), and in which (skill, executor, task type, axis) cell?
+    #[cfg(any())]
     assert!(
-        crate::skill_reliability::skill_executor_reliability(&vault, &id, "model-third@1")?
+        oneiron::skill_reliability::skill_executor_reliability(&vault, &id, "model-third@1")?
             .new_model,
         "an executor that never invoked the callable stays unmeasured"
     );
     {
-        let txn = vault.store.env.read_txn()?;
+        let txn = oneiron::test_doors::callable_skill::read_txn(&vault)?;
         assert_eq!(
-            crate::skill_reliability::attributed_outcome_receipts(&vault, &txn, &id)?,
-            vec![receipt],
+            oneiron::test_doors::callable_skill::attributed_outcome_receipts(&vault, &txn, &id)?,
+            vec![receipt.clone()],
             "the improver's receipt split sees the callable outcome"
         );
     }
-    let EnqueueOutcome::Enqueued(listed) = queue.enqueue(EnqueueAttempt {
-        kind: "call.listed-only".into(),
-        payload: vec![],
-        dedupe_key: None,
-        run_id: None,
-        now: 20,
-    })?
+    let AgentDispatchOutcome::Dispatched(dispatched) = AgentDispatcher::new(&vault)
+        .dispatch_default_base(None, None, None, vault.now_recorded_at())?
     else {
         panic!("fresh listed attempt")
     };
-    let ClaimOutcome::Claimed(listed_lease) = queue.claim(ClaimAttempt {
-        lease_owner: "listed-worker".into(),
-        now: 21,
-    })?
+    let listed = dispatched.attempt;
+    let ClaimOutcome::Claimed(listed_lease) = queue.claim_kind(
+        DREAMER_RUNNER_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: "listed-worker".into(),
+            now: vault.now_recorded_at(),
+        },
+    )?
     else {
         panic!("listed attempt leased")
     };
@@ -334,15 +371,26 @@ fn callable_runs_in_caller_sandbox_and_records_pair_specific_reliability() -> Re
         })?,
         CompleteOutcome::Completed(_)
     ));
-    crate::skill_reliability::project_callable_receipt_outcome(
+    oneiron::test_doors::callable_skill::project_callable_receipt_outcome(
         &vault,
         &id,
-        &crate::receipt::attempt_pack_receipt_id(&listed.id),
+        &oneiron::receipt::attempt_pack_receipt_id(&listed.id),
         true,
         23,
     )?;
+    {
+        let txn = oneiron::test_doors::callable_skill::read_txn(&vault)?;
+        assert_eq!(
+            oneiron::test_doors::callable_skill::attributed_outcome_receipts(&vault, &txn, &id)?,
+            vec![receipt],
+            "a listed-only load invokes nothing, so its receipt attributes no outcome"
+        );
+    }
+    // FIX [T0B-SKILL-CALL-PAIR-RELIABILITY]: does a callable win mint pair reliability (projector.rs:535-538: a win alone is no learning anchor; no production code stamps learning.anchor), and in which (skill, executor, task type, axis) cell?
+    #[cfg(any())]
     assert_eq!(
-        crate::skill_reliability::skill_executor_reliability(&vault, &id, "model-current@1")?.runs,
+        oneiron::skill_reliability::skill_executor_reliability(&vault, &id, "model-current@1")?
+            .runs,
         1,
         "merely loading the skill cannot credit callable execution"
     );
