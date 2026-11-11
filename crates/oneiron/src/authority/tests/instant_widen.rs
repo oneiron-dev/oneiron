@@ -20,7 +20,7 @@ fn all_first_seen_at(entries: &[AuthorityLogEntry], now: u64) -> BTreeMap<Author
         .collect()
 }
 
-struct EnrollmentWithVeto {
+struct ObservedEnrollment {
     entries: Vec<AuthorityLogEntry>,
     roles: u16,
     class: &'static str,
@@ -28,13 +28,12 @@ struct EnrollmentWithVeto {
     actor: crate::entity_id::EntityId,
     enroll_hash: AuthorityEntryHash,
     bind_hash: AuthorityEntryHash,
-    veto_hash: AuthorityEntryHash,
 }
 
-fn enrollment_with_veto_as(seed: u8, roles: u16, class: &'static str) -> EnrollmentWithVeto {
+fn observed_enrollment_as(seed: u8, roles: u16, class: &'static str) -> ObservedEnrollment {
     let owner = ed_key(seed);
     let owner_key = authority_key_from_ed(&owner);
-    let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(seed, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let phone = ed_key(seed.wrapping_add(1));
     let phone_key = authority_key_from_ed(&phone);
@@ -66,21 +65,18 @@ fn enrollment_with_veto_as(seed: u8, roles: u16, class: &'static str) -> Enrollm
         &phone,
     );
     let bind_hash = authority_entry_hash(&bind).unwrap();
-    let veto = veto_entry(vault_id, &genesis, &owner, enroll_hash, 3);
-    let veto_hash = authority_entry_hash(&veto).unwrap();
-    EnrollmentWithVeto {
-        entries: vec![genesis, enroll, bind, veto],
+    ObservedEnrollment {
+        entries: vec![genesis, enroll, bind],
         roles,
         class,
         phone_key,
         actor,
         enroll_hash,
         bind_hash,
-        veto_hash,
     }
 }
 
-fn assert_enrollment_landed_and_veto_rejected(fold: &AuthorityFold, fixture: &EnrollmentWithVeto) {
+fn assert_enrollment_landed(fold: &AuthorityFold, fixture: &ObservedEnrollment) {
     let phone = fold
         .roster
         .get(&fixture.phone_key)
@@ -93,17 +89,11 @@ fn assert_enrollment_landed_and_veto_rejected(fold: &AuthorityFold, fixture: &En
         "an entry descending from the enrollment folds at once: nothing freezes"
     );
     assert!(actor_binding_is_active(fold, &fixture.actor, fixture.class));
-    assert!(
-        fold.issues
-            .contains(&AuthorityFoldIssue::InvalidEntry(fixture.veto_hash)),
-        "a legacy veto has nothing to veto and folds as InvalidEntry"
-    );
-    assert!(!fold.valid_entries.contains(&fixture.veto_hash));
 }
 
 #[test]
 fn vault_fold_lands_a_just_observed_enrollment_at_once() {
-    let fixture = enrollment_with_veto_as(152, ROLE_AGENT, "system");
+    let fixture = observed_enrollment_as(152, ROLE_AGENT, "system");
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     // One put per row, in causal order, so each signer's observed sequence
@@ -116,7 +106,7 @@ fn vault_fold_lands_a_just_observed_enrollment_at_once() {
 
     // Every row is first observed by this vault right now.
     let fold = vault.authority_fold().unwrap();
-    assert_enrollment_landed_and_veto_rejected(&fold, &fixture);
+    assert_enrollment_landed(&fold, &fixture);
     let rtxn = vault.store.env.read_txn().unwrap();
     let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
     drop(rtxn);
@@ -128,7 +118,7 @@ fn concurrent_restriction_beats_an_enrollment() {
     let owner = ed_key(68);
     let second = ed_key(69);
     let target_key = authority_key_from_ed(&ed_key(70));
-    let genesis = genesis_entry(68, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(68, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll_second = enroll_device_entry(
         vault_id,

@@ -957,10 +957,13 @@ fn provenance_actor_class_in_both_body_and_evid_fails_closed() -> Result<()> {
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
-    // Even an AGREEING duplicate is ambiguous — fail closed.
-    wrapper.evidence = Some(crate::provenance::encode_actor_class_evidence(
-        EdgeActorClass::Human,
-    ));
+    // Even an AGREEING duplicate is ambiguous — fail closed. The legacy
+    // `{"actor_class": u8}` evid map, written inline: its encoder was deleted
+    // by 06ff9d357d9 (#4249, FIX 8909).
+    wrapper.evidence = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("actor_class"),
+        rmpv::Value::from(EdgeActorClass::Human as u8),
+    )]));
     let bytes = crate::claim::encode_claim_body(&wrapper)?;
     // The structural write-door (ONE-1159) rejects the ambiguous body at WRITE
     // time — the claim never reaches the store, so the whole batch is rejected

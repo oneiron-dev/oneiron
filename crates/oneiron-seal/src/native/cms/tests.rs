@@ -5,6 +5,8 @@
 use const_oid::ObjectIdentifier;
 
 use crate::api::SignatureAlgorithm;
+use crate::memory::Held;
+use crate::memory::testing::operation_ledger;
 
 use super::*;
 
@@ -15,7 +17,7 @@ fn cert_der() -> Vec<u8> {
     params.self_signed(&key_pair).expect("cert").der().to_vec()
 }
 
-fn baseline_attrs() -> (ParsedCms, Vec<u8>) {
+fn baseline_attrs() -> (Held<ParsedCms>, Vec<u8>) {
     let cert = cert_der();
     let (issuer, serial) = issuer_and_serial(&cert).expect("issuer/serial");
     let attrs = vec![
@@ -32,8 +34,20 @@ fn baseline_attrs() -> (ParsedCms, Vec<u8>) {
         chain_ders: &[],
     };
     let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
-    let parsed = parse_cms(&der).expect("parse");
+    let parsed = parse_cms(&der, &operation_ledger()).expect("parse");
     (parsed, signing)
+}
+
+/// An owned copy of a held parse's signer, for a test that edits it.
+fn owned_signer(signer: &ParsedSignerInfo) -> ParsedSignerInfo {
+    ParsedSignerInfo {
+        digest_alg_oid: signer.digest_alg_oid.clone(),
+        signed_attrs: signer.signed_attrs.clone(),
+        signed_attrs_content: signer.signed_attrs_content.clone(),
+        signature_alg_oid: signer.signature_alg_oid.clone(),
+        signature: signer.signature.clone(),
+        unsigned_attrs: signer.unsigned_attrs.clone(),
+    }
 }
 
 #[test]
@@ -42,8 +56,9 @@ fn rfc5652_signature_input_uses_universal_set_tag() {
     assert_eq!(signing[0], 0x31, "signature input is the universal SET OF");
     // On-wire field is the IMPLICIT [0] with identical content octets.
     assert!(signing.ends_with(&parsed.signer.signed_attrs_content));
-    let rebuilt = signed_attrs_signature_input(&parsed.signer);
-    assert_eq!(rebuilt, signing);
+    let rebuilt =
+        signed_attrs_signature_input(&parsed.signer, &operation_ledger()).expect("signature input");
+    assert_eq!(*rebuilt, signing);
 }
 
 #[test]
@@ -74,11 +89,13 @@ fn ess_omits_default_hash_algorithm_and_binds_full_cert() {
 
 #[test]
 fn duplicate_and_foreign_attributes_are_rejected() {
-    let (mut parsed, _) = baseline_attrs();
+    let (parsed, _) = baseline_attrs();
+    // The parse is held read-only: the duplicate goes into an owned copy.
+    let mut signer = owned_signer(&parsed.signer);
     // Duplicate the content-type attribute.
-    let dup = parsed.signer.signed_attrs[0].clone();
-    parsed.signer.signed_attrs.push(dup);
-    assert!(check_baseline_attrs(&parsed.signer).is_err());
+    let dup = signer.signed_attrs[0].clone();
+    signer.signed_attrs.push(dup);
+    assert!(check_baseline_attrs(&signer).is_err());
 }
 
 #[test]
@@ -114,7 +131,10 @@ fn unsorted_signed_attribute_set_is_rejected_on_parse() {
         chain_ders: &[],
     };
     let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
-    assert!(parse_cms(&der).is_err(), "unsorted SET must fail");
+    assert!(
+        parse_cms(&der, &operation_ledger()).is_err(),
+        "unsorted SET must fail"
+    );
 }
 
 #[test]
@@ -152,7 +172,7 @@ fn repeated_signed_data_fields_are_rejected_on_parse() {
     ci_body.extend_from_slice(&tlv(0xA0, &signed_data));
     let der = tlv(0x30, &ci_body);
     assert!(
-        parse_cms(&der).is_err(),
+        parse_cms(&der, &operation_ledger()).is_err(),
         "a second signerInfos SET must be rejected, not overwrite"
     );
     // Same for a repeated certificates [0] field.
@@ -167,7 +187,7 @@ fn repeated_signed_data_fields_are_rejected_on_parse() {
     ci_body2.extend_from_slice(&tlv(0xA0, &signed_data2));
     let der2 = tlv(0x30, &ci_body2);
     assert!(
-        parse_cms(&der2).is_err(),
+        parse_cms(&der2, &operation_ledger()).is_err(),
         "a second certificates field must be rejected"
     );
 }
@@ -237,7 +257,7 @@ fn sid_ess_disagreement_is_rejected_on_parse() {
     };
     let der = build_signed_data(&material, &wire, &[9u8; 64], &[]);
     assert!(
-        parse_cms(&der).is_err(),
+        parse_cms(&der, &operation_ledger()).is_err(),
         "sid/ESS issuerSerial disagreement must be rejected"
     );
 }
@@ -339,12 +359,15 @@ fn id_data_signed_data_requires_version_one() {
     let base = build_signed_data(&material, &wire, &[9u8; 64], &[]);
     let at = version_value_offset(&base);
     assert_eq!(base[at], 1, "control: builder emits v1 under id-data");
-    assert!(parse_cms(&base).is_ok(), "id-data at v1 parses");
+    assert!(
+        parse_cms(&base, &operation_ledger()).is_ok(),
+        "id-data at v1 parses"
+    );
     for bad in [0u8, 2, 3, 4, 5] {
         let mut der = base.clone();
         der[at] = bad;
         assert!(
-            parse_cms(&der).is_err(),
+            parse_cms(&der, &operation_ledger()).is_err(),
             "id-data SignedData at version {bad} must be rejected"
         );
     }
@@ -359,22 +382,22 @@ fn tst_info_signed_data_requires_version_three() {
     // unconditional `== 1` gate breaks the live timestamp paths; an
     // unconditional `== 3` gate breaks the CAdES document path.
     assert!(
-        parse_cms(&envelope_with(3, &OID_CT_TST_INFO)).is_ok(),
+        parse_cms(&envelope_with(3, &OID_CT_TST_INFO), &operation_ledger()).is_ok(),
         "id-ct-TSTInfo at version 3 must parse"
     );
     for bad in [0u8, 1, 2, 4, 5] {
         assert!(
-            parse_cms(&envelope_with(bad, &OID_CT_TST_INFO)).is_err(),
+            parse_cms(&envelope_with(bad, &OID_CT_TST_INFO), &operation_ledger()).is_err(),
             "id-ct-TSTInfo SignedData at version {bad} must be rejected"
         );
     }
     // The mismatched pair in the other direction: id-data never rides v3.
     assert!(
-        parse_cms(&envelope_with(3, &OID_DATA)).is_err(),
+        parse_cms(&envelope_with(3, &OID_DATA), &operation_ledger()).is_err(),
         "id-data at version 3 must be rejected"
     );
     assert!(
-        parse_cms(&envelope_with(1, &OID_DATA)).is_ok(),
+        parse_cms(&envelope_with(1, &OID_DATA), &operation_ledger()).is_ok(),
         "control: id-data at version 1 parses through this builder too"
     );
 }
@@ -387,7 +410,7 @@ fn unknown_econtent_type_is_rejected() {
     let other = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.2"); // id-ct-authData
     for version in [1u8, 3] {
         assert!(
-            parse_cms(&envelope_with(version, &other)).is_err(),
+            parse_cms(&envelope_with(version, &other), &operation_ledger()).is_err(),
             "unimplemented eContentType at v{version} must be rejected"
         );
     }

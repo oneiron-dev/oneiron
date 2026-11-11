@@ -19,6 +19,8 @@ use crate::verb_table::load_verbs;
 // The `re.fullmatch` patterns, each beside the Python one (all ASCII classes, so Python's and Rust's agree).
 /// An `outputs_by_input` field name: `[A-Za-z_][A-Za-z0-9_]*`
 static FIELD_NAME: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[A-Za-z_][A-Za-z0-9_]*"));
+/// A run row's grant class: one to 120 printable ASCII characters, `[ -~]{1,120}`
+static GRANT_CLASS: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[ -~]{1,120}"));
 /// An attachment's file name: `[A-Za-z0-9][A-Za-z0-9._-]*`
 static ATTACHMENT: LazyLock<Regex> =
     LazyLock::new(|| compile_fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*"));
@@ -61,7 +63,13 @@ const HOST_FLAGS: &[&str] = &[
     "openapi",
 ];
 /// The keys a run row may hold beside its required ones, and the required ones.
-const RUN_OPTIONAL: &[&str] = &["output", "outputs_by_input", "host", "run_surface"];
+const RUN_OPTIONAL: &[&str] = &[
+    "output",
+    "outputs_by_input",
+    "host",
+    "run_surface",
+    "grant_class",
+];
 const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect"];
 /// A scoped-child row's keys, `description` aside.
 const SCOPED_CHILD_KEYS: &[&str] = &[
@@ -295,7 +303,31 @@ fn check_run_row(row: &Dict) -> Result<(), GenerateError> {
     if !keys_are(&keys, RUN_REQUIRED) || !item_in(row, "scope", &["Read", "Write"])? {
         return Err(refuse(
             row,
-            "a run row names its input, scope, effect, output, per-input outputs and run surface, and nothing else",
+            "a run row names its input, scope, effect, output, per-input outputs, run surface and grant class, and nothing \
+             else",
+        ));
+    }
+    Ok(())
+}
+
+/// A run row's `grant_class` names the authority rule its writer applies (`vault.agents.put`: the author's slice,
+/// ARCH-0053:20). Code mode shows it as the method's JSDoc. It describes the writer's own check; nothing reads it as a
+/// second one. Every run row's key set is checked before any grant class.
+fn check_grant_class(row: &Dict) -> Result<(), GenerateError> {
+    let Some(grant_class) = row.get("grant_class") else {
+        return Ok(());
+    };
+    let phrase = grant_class.as_str().is_some_and(|text| {
+        GRANT_CLASS.is_match(text)
+            && strip(text) == text
+            && !["\\", "\"", "*/"]
+                .into_iter()
+                .any(|mark| text.contains(mark))
+    });
+    if !phrase {
+        return Err(refuse(
+            row,
+            "a grant class is one printable ASCII phrase, with no backslash, double quote or `*/`",
         ));
     }
     Ok(())
@@ -900,6 +932,9 @@ impl Generator {
         for &id in &self.run_rows {
             check_run_row(&self.rows[id])?;
         }
+        for &id in &self.run_rows {
+            check_grant_class(&self.rows[id])?;
+        }
         for &id in &self.manifest {
             check_outputs_by_input(&self.rows[id])?;
         }
@@ -1083,6 +1118,65 @@ mod tests {
             .expect_err("1 == 1.0")
             .to_string();
         assert_eq!(error, "ValueError: duplicate SDK verb");
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn grant_class_refusals_match_python() {
+        // The expected lines are the ones the Python generator printed for the same rows, through both halves of the
+        // port harness on G5 with main 30deae1a20e merged, before this change removed it.
+        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "context": "run", "effect": "ZzEffect""#;
+        let phrase = "ValueError: zz_run: a grant class is one printable ASCII phrase, with no backslash, double quote \
+                      or `*/`";
+        let keys = "ValueError: zz_run: a run row names its input, scope, effect, output, per-input outputs, run surface \
+                    and grant class, and nothing else";
+        let longest = format!(r#""grant_class": "{}""#, "x".repeat(120));
+        let too_long = format!(r#""grant_class": "{}""#, "x".repeat(121));
+        let cases: &[(&str, &str)] = &[
+            (r#""grant_class": "author's slice (ARCH-0053:20)""#, ""),
+            (r#""grant_class": "a/b * c /* d""#, ""),
+            (longest.as_str(), ""),
+            (r#""grant_class": 1"#, phrase),
+            (r#""grant_class": null"#, phrase),
+            (r#""grant_class": """#, phrase),
+            (r#""grant_class": " padded""#, phrase),
+            (r#""grant_class": "padded ""#, phrase),
+            (r#""grant_class": "a \"quoted\" phrase""#, phrase),
+            (r#""grant_class": "back\\slash""#, phrase),
+            (r#""grant_class": "ends */ here""#, phrase),
+            (r#""grant_class": "caf\u00e9""#, phrase),
+            (r#""grant_class": "tab\there""#, phrase),
+            (too_long.as_str(), phrase),
+            (r#""grant_class": "x", "nope": 1"#, keys),
+        ];
+        for (fields, expected) in cases {
+            let root = tree(
+                "grant-class",
+                &[
+                    ("zz_fixture.json", &format!("{{{BASE}}}")),
+                    ("zz_run.json", &format!("{{{RUN}, {fields}}}")),
+                ],
+            );
+            let got =
+                Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
+            assert_eq!(got, *expected, "{fields}");
+            fs::remove_dir_all(&root).expect("cleanup");
+        }
+        // Every run row's key set is checked before any run row's grant class: zz_a's bad grant class comes first in
+        // the verb table, yet zz_run's extra key is the refusal.
+        let root = tree(
+            "grant-class-order",
+            &[
+                ("zz_fixture.json", &format!("{{{BASE}}}")),
+                (
+                    "zz_a.json",
+                    &format!("{{{}, \"grant_class\": 1}}", RUN.replace("zz_run", "zz_a")),
+                ),
+                ("zz_run.json", &format!("{{{RUN}, \"nope\": 1}}")),
+            ],
+        );
+        let got = Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
+        assert_eq!(got, keys);
         fs::remove_dir_all(&root).expect("cleanup");
     }
 

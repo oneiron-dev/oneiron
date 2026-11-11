@@ -239,7 +239,7 @@ fn auto_decision_reads_posture_in_txn_and_rolls_back_with_its_digest() {
             .put(txn, VAULT_CLEANUP_POSTURE_KEY, b"auto_with_digest")?;
         let report = run_cleanup_candidates_in_txn(&vault, txn, &AttemptId::now(), candidates)?;
         assert_eq!(report.posture, CleanupPosture::AutoWithDigest);
-        assert_eq!(report.archived, vec![person]);
+        assert_eq!(report.archived, vec![Some(person)]);
         assert!(
             codec_receipts::DIGEST
                 .get(&vault.store, txn, &report.digest.expect("digest"))?

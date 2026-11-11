@@ -237,15 +237,14 @@ pub fn callable_helper_cases(vault: &Vault, helper: &EntityId) -> Result<Vec<Cal
 /// # Errors
 ///
 /// Only what stops the run before it starts: no isolated lane on this host
-/// for a tier that needs one (none of `backends`, the isolating backends the
-/// host carries, is there), its egress settings, a broken ancestry.
+/// for a tier that needs one (none of the isolating backends the vault's
+/// host installed is there), its egress settings, a broken ancestry.
 pub fn callable_case_passes(
     vault: &Arc<Vault>,
     skill: &EntityId,
     (record, files): (&SkillRecord, &[HubFile]),
     case: &CallableCase,
     runtime: &mut dyn JsCodeModeRuntime,
-    backends: &dyn crate::code_sandbox::microvm::SandboxBackends,
     frozen_unix_ms: u64,
 ) -> Result<bool> {
     let Some(call) = record.call.as_ref() else {
@@ -263,7 +262,10 @@ pub fn callable_case_passes(
     };
     let tier = callable_tier(vault, skill, record)?;
     if tier != SandboxGuestTier::FirstPartyDreamer {
-        let _ = crate::code_sandbox::microvm::select_backend_for_tier(backends, tier)?;
+        let _ = crate::code_sandbox::microvm::select_backend_for_tier(
+            &*vault.runtime().sandbox_backends(),
+            tier,
+        )?;
     }
     let run_id = EntityId::now();
     bind_isolated_lane(vault, runtime, run_id, tier)?;
