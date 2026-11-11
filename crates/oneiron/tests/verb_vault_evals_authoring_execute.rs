@@ -8,7 +8,8 @@
 //! the pass is leased waits on it, and an attempt the door did not admit (a queued nightly
 //! pass) takes no record. An attempt leased again after its lease lapsed keeps its first
 //! request's caller, and once its pass ended runs no second pass; an apply after an end
-//! answers the first end.
+//! answers the first end. A host whose lease lapsed, and whose attempt a later request
+//! leased again, neither claims nor ends the record.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test verb_vault_evals_authoring_execute`.
 #![cfg(oneiron_test_support)]
 
@@ -512,6 +513,55 @@ fn apply_after_an_end_keeps_the_first_end() {
         "the plan for another inventory is never read"
     );
     assert_eq!(result(&fixture, ended.attempt).execution, Some(ended));
+}
+
+#[test]
+fn host_whose_lease_lapsed_neither_claims_nor_ends_the_record() {
+    let fixture = rooted_vault();
+    let owner = owner_memory(&fixture);
+    let (stalled, first) = admitted(&owner);
+    // The owner's host stalls in its model step; its lease lapses, and a later request
+    // leases the attempt again.
+    lapse_the_lease(&fixture);
+    let (current, kept) = match request_at(&owner, LATER).expect("the owner's later request") {
+        EvalAuthoringAdmission::Admitted { attempt, execution } => (attempt, *execution),
+        other => panic!("the lapsed pass is admitted to run on its record: {other:?}"),
+    };
+    assert_eq!(
+        attempt_id(&current),
+        attempt_id(&stalled),
+        "the same attempt"
+    );
+    assert_eq!(kept, first, "the record stays the first request's");
+
+    let (plan, inventory) = empty_plan(&fixture);
+    assert!(
+        fixture
+            .vault
+            .apply_requested_eval_authoring(&stalled, plan, &inventory, skill(), LATER)
+            .is_err(),
+        "the stalled host's plan takes no claim on a lease it lost"
+    );
+    assert!(
+        fixture
+            .vault
+            .end_requested_eval_authoring(&stalled, EvalAuthoringOutcome::Failed, None, None, LATER)
+            .is_err(),
+        "the stalled host ends nothing on a lease it lost"
+    );
+    assert_eq!(
+        result(&fixture, first.attempt).execution.as_ref(),
+        Some(&first),
+        "the record still runs, for the host that holds the lease"
+    );
+
+    let (plan, inventory) = empty_plan(&fixture);
+    let applied = fixture
+        .vault
+        .apply_requested_eval_authoring(&current, plan, &inventory, skill(), LATER)
+        .expect("the host that holds the lease applies the plan");
+    assert_eq!(applied.outcome, EvalAuthoringOutcome::Applied);
+    assert_eq!(applied.ended_at, Some(LATER));
 }
 
 #[test]

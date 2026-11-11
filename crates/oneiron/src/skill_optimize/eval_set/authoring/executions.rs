@@ -10,13 +10,17 @@
 //! a claim on that record, so no effect runs once it has ended. An attempt
 //! leased again after its lease lapsed keeps its first request's record: it
 //! runs on that record while it is running, and runs no second pass once it
-//! has ended.
+//! has ended. Each writer that claims, ends or recovers a record first checks
+//! that the attempt's lease is still the one its host was admitted on: a host
+//! whose lease lapsed, and whose attempt another host leased again, changes
+//! no record.
 
 use serde::{Deserialize, Serialize};
 
 use super::{EvalAuthoringInventory, EvalAuthoringPlan, EvalAuthoringReport};
 use crate::EdgeActorClass;
 use crate::Vault;
+use crate::attempt_queue::AttemptQueue;
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::claim::maintenance_kind::{COACH_EVAL_AUTHORING_FACET, COACH_HOST_QUEUE_KIND};
 use crate::dreamer_runner::{
@@ -250,14 +254,15 @@ impl Vault {
     /// record with what it did: `Applied` with its report, `Refused` for a
     /// plan the engine refused, which applied nothing, or `Failed` for an
     /// error once the effects began. The effects run under a claim on the
-    /// record: a record that is not running (it ended, or another apply holds
-    /// it) is answered as it stands, and no effect runs.
+    /// record, taken under the attempt's live lease: a record that is not
+    /// running (it ended, or another apply holds it) is answered as it
+    /// stands, and no effect runs.
     ///
     /// # Errors
     ///
-    /// An attempt that is not a requested eval-authoring Coach attempt;
-    /// storage errors; an error from the plan's effects, after the record
-    /// ended `Failed`.
+    /// An attempt that is not a requested eval-authoring Coach attempt, or
+    /// whose lease its host no longer holds; storage errors; an error from
+    /// the plan's effects, after the record ended `Failed`.
     pub fn apply_requested_eval_authoring(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -267,7 +272,7 @@ impl Vault {
         now: u64,
     ) -> Result<EvalAuthoringExecution> {
         let id = self.requested_execution(attempt)?;
-        if let Some(kept) = self.claim_execution(&id)? {
+        if let Some(kept) = self.claim_execution(attempt, &id)? {
             return Ok(kept);
         }
         let ran = Some(EvalAuthoringSkillRun {
@@ -288,7 +293,7 @@ impl Vault {
             inventory_digest,
             report,
         };
-        let ended = self.end_execution(&id, EvalAuthoringOutcome::Applying, end, now);
+        let ended = self.end_execution(attempt, &id, &[EvalAuthoringOutcome::Applying], end, now);
         let Some(error) = error else {
             return ended;
         };
@@ -300,13 +305,15 @@ impl Vault {
 
     /// Ends a requested pass that applied no plan: `NoWork`, `Unavailable`,
     /// `NoPlan` or `Failed`, with the skill and inventory it got to. Only a
-    /// running record ends so; any other answers as it stands.
+    /// running record ends so, and a `Failed` end also ends the claim this
+    /// host's apply holds, whose own end did not record; any other record
+    /// answers as it stands.
     ///
     /// # Errors
     ///
     /// Any other outcome, which only [`Self::apply_requested_eval_authoring`]
     /// records; an attempt that is not a requested eval-authoring Coach
-    /// attempt; storage errors.
+    /// attempt, or whose lease its host no longer holds; storage errors.
     pub fn end_requested_eval_authoring(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -333,7 +340,16 @@ impl Vault {
             inventory_digest,
             report: None,
         };
-        self.end_execution(&id, EvalAuthoringOutcome::Running, end, now)
+        // A claim is only ever this host's own: the lease fences every claim.
+        let from: &[EvalAuthoringOutcome] = if outcome == EvalAuthoringOutcome::Failed {
+            &[
+                EvalAuthoringOutcome::Running,
+                EvalAuthoringOutcome::Applying,
+            ]
+        } else {
+            &[EvalAuthoringOutcome::Running]
+        };
+        self.end_execution(attempt, &id, from, end, now)
     }
 
     /// The kept record of a requested pass that a worker's ordinary
@@ -343,8 +359,8 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// An attempt that is not the eval-authoring facet's Coach attempt;
-    /// storage errors.
+    /// An attempt that is not the eval-authoring facet's Coach attempt, or
+    /// whose lease its host no longer holds; storage errors.
     pub fn recover_requested_eval_authoring(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -352,7 +368,10 @@ impl Vault {
     ) -> Result<Option<EvalAuthoringExecution>> {
         self.require_coach_attempt(attempt, COACH_EVAL_AUTHORING_FACET)?;
         let id = EntityId::from_bytes(*attempt.status.attempt.id.as_bytes())?;
-        self.with_write_txn_grouped(|txn| recover_in_txn(self, txn, &id, now))
+        self.with_write_txn_grouped(|txn| {
+            require_live_lease_in_txn(self, txn, attempt)?;
+            recover_in_txn(self, txn, &id, now)
+        })
     }
 
     /// `attempt` is the eval-authoring facet's Coach attempt and a request
@@ -366,10 +385,16 @@ impl Vault {
         Ok(id)
     }
 
-    /// Moves `id`'s record from `Running` to `Applying`, in one writer:
-    /// `None` when this call took the claim, else the record as it stands.
-    fn claim_execution(&self, id: &EntityId) -> Result<Option<EvalAuthoringExecution>> {
+    /// Moves `id`'s record from `Running` to `Applying`, in one writer under
+    /// `attempt`'s live lease: `None` when this call took the claim, else the
+    /// record as it stands.
+    fn claim_execution(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        id: &EntityId,
+    ) -> Result<Option<EvalAuthoringExecution>> {
         self.with_write_txn_grouped(|txn| {
+            require_live_lease_in_txn(self, txn, attempt)?;
             let mut execution = EXECUTIONS.get(self, txn, id)?.ok_or_else(not_requested)?;
             if execution.outcome != EvalAuthoringOutcome::Running {
                 return Ok(Some(execution));
@@ -380,18 +405,21 @@ impl Vault {
         })
     }
 
-    /// Ends `id`'s record with `end` when it stands at `from`, in one
-    /// writer; a record at any other state keeps it, so its first end stands.
+    /// Ends `id`'s record with `end` when it stands at one of `from`, in one
+    /// writer under `attempt`'s live lease; a record at any other state keeps
+    /// it, so its first end stands.
     fn end_execution(
         &self,
+        attempt: &DreamerAdmittedAttempt,
         id: &EntityId,
-        from: EvalAuthoringOutcome,
+        from: &[EvalAuthoringOutcome],
         end: ExecutionEnd,
         now: u64,
     ) -> Result<EvalAuthoringExecution> {
         self.with_write_txn_grouped(|txn| {
+            require_live_lease_in_txn(self, txn, attempt)?;
             let mut execution = EXECUTIONS.get(self, txn, id)?.ok_or_else(not_requested)?;
-            if execution.outcome != from {
+            if !from.contains(&execution.outcome) {
                 return Ok(execution);
             }
             execution.outcome = end.outcome;
@@ -432,6 +460,26 @@ fn recover_in_txn(
         EXECUTIONS.put(vault, txn, attempt, &execution)?;
     }
     Ok(Some(execution))
+}
+
+/// Refuses `attempt` in `txn` unless its lease is still the one its host
+/// was admitted on: a host whose lease lapsed, and whose attempt another host
+/// leased again, neither claims, ends nor recovers its record.
+fn require_live_lease_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: &DreamerAdmittedAttempt,
+) -> Result<()> {
+    let leased = &attempt.status.attempt;
+    let owner = leased.lease_owner.as_deref().ok_or(invalid(
+        "an admitted eval-authoring attempt names its lease owner",
+    ))?;
+    AttemptQueue::new(vault).require_skill_load_lease_in_txn(
+        txn,
+        leased.id,
+        owner,
+        leased.attempt_count,
+    )
 }
 
 /// The refusal of an attempt no request admitted.
