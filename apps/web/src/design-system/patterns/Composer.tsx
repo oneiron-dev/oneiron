@@ -75,10 +75,16 @@ function ComposerRoot({
   const [value, setValue] = useControllableState(valueProp, defaultValue, onValueChange)
   const fieldRef = React.useRef<HTMLTextAreaElement | null>(null)
 
-  /* Grow with the text: measure at auto height, keep within the maximum. */
+  /* Grow with the text: measure at auto height, keep within the maximum.
+     Empty, the field is one line. */
   useIsomorphicLayoutEffect(() => {
     const field = fieldRef.current
     if (!field) return
+    if (!value) {
+      field.style.height = ''
+      field.style.overflowY = 'hidden'
+      return
+    }
     field.style.height = 'auto'
     const next = Math.min(field.scrollHeight, FIELD_MAX_PX)
     field.style.height = `${next}px`
@@ -135,20 +141,30 @@ function ComposerRoot({
       <div className="sl-composer-bar">
         {persona}
         {adds}
-        <textarea
-          ref={fieldRef}
-          className="sl-composer-field"
-          rows={1}
-          aria-label={fieldLabel}
-          placeholder={placeholder}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
-            event.preventDefault()
-            event.currentTarget.form?.requestSubmit()
-          }}
-        />
+        {/* The placeholder is drawn over the empty field, not by the
+            textarea: a textarea wraps its placeholder in a narrow field,
+            while this one stays on one line and ends in an ellipsis. */}
+        <span className="sl-composer-field-box">
+          <textarea
+            ref={fieldRef}
+            className="sl-composer-field"
+            rows={1}
+            aria-label={fieldLabel}
+            aria-placeholder={placeholder || undefined}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+              event.preventDefault()
+              event.currentTarget.form?.requestSubmit()
+            }}
+          />
+          {value === '' && placeholder ? (
+            <span className="sl-composer-placeholder" aria-hidden="true">
+              {placeholder}
+            </span>
+          ) : null}
+        </span>
         {actions}
         {onDictate ? (
           <IconAction label="Dictate" tooltipSide="top" className="sl-composer-dictate" onClick={onDictate}>

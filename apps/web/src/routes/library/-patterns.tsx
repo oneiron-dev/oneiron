@@ -835,6 +835,11 @@ export function PatternSections() {
         <Specimen name="persona, add, a pointer and a chip, the outside line; empty, the button talks; type and it sends; write ultrathink for the boost line" full>
           <ComposerDemo />
         </Specimen>
+        <Specimen name="narrow: the placeholder stays on one line and ends in an ellipsis" wide={1}>
+          <div className="lib-composer-narrow" data-specimen="composer-narrow">
+            <Composer placeholder="Write to the room, or ask Eiri for the week 44 notes" onVoice={() => {}} />
+          </div>
+        </Specimen>
         <Specimen name="outside line, open" wide={1}>
           <OutsideLine summary="Guests see what you send here" defaultOpen>
             <OutsideLine.Group origin="from Acme’s vault">

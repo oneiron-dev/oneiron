@@ -365,6 +365,10 @@
   background: var(--sl-sunk);
 }
 
+.lib-composer-narrow {
+  width: 280px;
+}
+
 .lib-connections {
   display: flex;
   flex-direction: column;
