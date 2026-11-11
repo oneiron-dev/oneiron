@@ -1,0 +1,14 @@
+{
+  "name": "vault.snapshot.open",
+  "description": "Opens a snapshot handle over kinds of rows for the caller: it pins the caller, the kinds, a read filter and an end, never a storage snapshot.",
+  "input": "crate::snapshot_read::SnapshotOpenRequest",
+  "output": "crate::snapshot_read::SnapshotHandle",
+  "call": "crate::snapshot_read::snapshot_open(memory, &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "crate::snapshot_read::validate_snapshot_open(&input)?;"
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}

@@ -513,11 +513,7 @@ impl ConsolidationExecutor<'_> {
 
 /// The Dreamer's own scoped read, as a nightly attempt reads its proposals.
 pub(super) fn merge_read(vault: &Vault, actor: WriteActor) -> Result<ClaimRead<'_>> {
-    let key = ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(invalid)?;
+    let key = ScopedReadActorKey::for_engine_actor(actor).ok_or_else(invalid)?;
     vault.store.authorization_now()?;
     Ok(vault.scoped_read(key))
 }

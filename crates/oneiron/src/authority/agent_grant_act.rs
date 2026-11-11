@@ -54,7 +54,8 @@ pub(crate) enum AgentGrantAct {
     /// names the verb classes he gave beside the scope's exact verbs (FIX
     /// 8735); empty when he named none. `wallet_ref` names the host wallet
     /// the work the Grant funds draws on (FIX 7766); `None` when he named
-    /// none.
+    /// none. `steward` marks his Steward grant to a base agent (untangle
+    /// 6.3): the row is a Steward, never a Delegate.
     Mint {
         grant: EntityId,
         member: EntityId,
@@ -65,6 +66,7 @@ pub(crate) enum AgentGrantAct {
         git_push_bounds: Option<GitPushBounds>,
         verb_classes: BTreeSet<String>,
         wallet_ref: Option<WalletRef>,
+        steward: bool,
     },
     /// The owner revokes the Grant `grant`, acknowledging exactly the
     /// topology decision tokens the writer collected (FIX 5114).
@@ -88,6 +90,7 @@ impl AgentGrantAct {
                 git_push_bounds,
                 verb_classes,
                 wallet_ref,
+                steward,
             } => (
                 grant,
                 AgentGrantChange::Mint {
@@ -99,6 +102,7 @@ impl AgentGrantAct {
                     git_push_bounds,
                     verb_classes,
                     wallet_ref,
+                    steward,
                 },
             ),
             Self::Revoke {

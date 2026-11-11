@@ -1,0 +1,15 @@
+{
+  "name": "vault.stewardship.rules.period.set",
+  "description": "The owner, or a holder of engine.controls.maintenance_cadence, sets how often one standing stewardship rule falls due; the change writes an engine-control receipt.",
+  "input": "crate::task_verb::sdk::StewardshipRulePeriodSetRequest",
+  "output": "crate::task_verb::sdk::EngineControlChangeEntry",
+  "call": "crate::task_verb::sdk::set_stewardship_rule_period_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "engine_controller"
+}
