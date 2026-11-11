@@ -181,8 +181,9 @@ pub(super) const COMPANION_PRINCIPAL: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::WORKSPACE_ROSTER_COMPANION_PRINCIPAL);
 
 /// The principal a companion PERSON was onboarded for, from the guard row
-/// above; `None` for a person who is no one's companion (OF-531).
-pub(super) fn companion_principal_in_txn(
+/// above; `None` for a person who is no one's companion (OF-531). The
+/// check-in ladder reads it for the person behind a companion (rung 2).
+pub(crate) fn companion_principal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     companion: EntityId,
