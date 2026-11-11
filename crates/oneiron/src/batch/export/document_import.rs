@@ -4,6 +4,7 @@
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
 mod owner_archive_restore;
+mod seed_replacement;
 
 pub(crate) use owner_archive_restore::OwnerArchiveRestorePermit;
 
@@ -145,7 +146,10 @@ impl Vault {
     /// `owner`, never an actor taken from the archive. Expression preferences carry an
     /// Imported-source Auto permit for this synchronous call only, recorded as an owner-act
     /// receipt naming the archive in `owner_restore_receipt_ref`. No policy is changed and
-    /// no later write gains a permit.
+    /// no later write gains a permit. In a destination proved fresh before any import write,
+    /// owner-edited census AGENT_DEF and PERSON seeds replace their fresh rows with the
+    /// archive's native bodies and header times, through the owner's own edit writers; they
+    /// keep the destination's birth metadata and are counted in `replaced_seed_entities`.
     pub fn import_whole_vault_archive_from_as_owner<R: Read + Seek>(
         &self,
         source: R,
@@ -213,6 +217,8 @@ impl Vault {
         let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
+        let restore_fresh =
+            owner.is_some() && self.first_non_bootstrap_row_in_txn(&wtxn)?.is_none();
         let assets = super::asset_reserve::ArchiveAssets {
             mint,
             known: self.asset_stream_known_in_txn(&mut wtxn)?,
@@ -258,6 +264,8 @@ impl Vault {
         let mut pending = 0;
         let mut inserted_descriptors = 0;
         let mut unchanged_entities = model_imports.unchanged;
+        let mut replaced_seed_entities = 0;
+        let mut replaced_seed_agents = Vec::new();
         let mut after = None;
         while let Some((id, at)) = archive.next_entity(after.as_ref())? {
             after = Some(id);
@@ -334,6 +342,23 @@ impl Vault {
                     validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     // Keep the destination seed's birth metadata as well as its header.
                     unchanged_entities += 1;
+                    continue;
+                }
+                if restore_fresh
+                    && let Some(owner) = owner
+                    && seed_replacement::replace_edited_seed_in_txn(
+                        self,
+                        &mut wtxn,
+                        owner,
+                        &seeds,
+                        &row,
+                        &row.body.to_bytes_in_with(&archive.files, secrets)?,
+                    )?
+                {
+                    replaced_seed_entities += 1;
+                    if row.entity_type == ENTITY_TYPE_AGENT_DEF {
+                        replaced_seed_agents.push(id);
+                    }
                     continue;
                 }
                 return Err(invalid("import ID collides with different entity data"));
@@ -492,6 +517,13 @@ impl Vault {
                     &id,
                     bundle.fork_hash.as_deref(),
                 )?;
+            } else if replaced_seed_agents.contains(&id) {
+                crate::agent_def::restore_seed_agent_fork_hash_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    &id,
+                    bundle.fork_hash.as_deref(),
+                )?;
             }
         }
         // FIX 5972: an archived `regenerates` link is proven on its
@@ -589,6 +621,7 @@ impl Vault {
             owner_restore_receipt_ref: permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref),
             inserted_entities,
             unchanged_entities,
+            replaced_seed_entities,
             archived_receipt_sources,
             omitted_entities: archive.index.count(Tag::Omitted)?,
             remapped_entities,
