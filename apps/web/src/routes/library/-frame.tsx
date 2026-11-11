@@ -46,6 +46,7 @@ import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
 import { formatAnswerTime } from '~/design-system'
 import { GALLERY_THEMES } from './-themes'
 import { RoomHeadSection } from './-room'
+import { Face } from './-faces'
 
 /* Frame sections of the /library gallery: the sidebar, the microsidebar,
    the app frame on each theme, the vault switch, the activity list, the
@@ -634,9 +635,10 @@ function HomeHeadParts() {
 }
 
 /* Home's sidebar: the person's companion and the vault's lead, then
-   pinned, rooms and projects. The person is Owen. */
-function HomeSidebar({ specimen }: { specimen: string }) {
-  const [current, setCurrent] = React.useState('eiri')
+   pinned, rooms and projects. The person is Owen. `faces` shows the
+   companion and the lead by their pictures. */
+export function HomeSidebar({ specimen, defaultCurrent = 'eiri', faces = false }: { specimen: string; defaultCurrent?: string; faces?: boolean }) {
+  const [current, setCurrent] = React.useState(defaultCurrent)
   const row = (id: string, label: string, icon: IconName, extra: { shared?: boolean; childRows?: React.ReactNode } = {}) => (
     <Sidebar.Row key={id} id={id} icon={<Icon name={icon} />} label={label} current={current === id} onClick={() => setCurrent(id)} {...extra} />
   )
@@ -646,8 +648,14 @@ function HomeSidebar({ specimen }: { specimen: string }) {
         <HomeHeadParts />
       </Sidebar.Head>
       <Sidebar.Group id="top">
-        <Sidebar.Row id="eiri" glyph={line(EIRI)} label="eiri" current={current === 'eiri'} onClick={() => setCurrent('eiri')} />
-        <Sidebar.Row id="antevon" glyph={line(ANTEVON)} label="Antevon" current={current === 'antevon'} onClick={() => setCurrent('antevon')} />
+        <Sidebar.Row id="eiri" glyph={faces ? <Face who={EIRI} size={20} /> : line(EIRI)} label="eiri" current={current === 'eiri'} onClick={() => setCurrent('eiri')} />
+        <Sidebar.Row
+          id="antevon"
+          glyph={faces ? <Face who={ANTEVON} size={20} /> : line(ANTEVON)}
+          label="Antevon"
+          current={current === 'antevon'}
+          onClick={() => setCurrent('antevon')}
+        />
       </Sidebar.Group>
       <Sidebar.Group id="pinned" label="pinned">
         {row('acme-forecast', 'acme-forecast', 'hash', { shared: true })}
@@ -787,7 +795,7 @@ function sidebarFor(id: string, specimen: string): React.ReactNode | null {
    with its count, the vault, more; the divider; the pinned lenses (they
    reorder and unpin); the person at the foot. Alone, it stands on a
    window ground of its own with the readout under it. */
-function MicroSidebarDemo({
+export function MicroSidebarDemo({
   labels,
   current,
   onCurrent,
@@ -1077,7 +1085,22 @@ function PromoAsk({ id, answer, onAnswerChange, onOpen }: { id: string; answer: 
    beside the room as one thing (SplitPane.Thing), with its note and its
    thread. Writing in the pane starts the thread, and the ask in the talk
    then carries a thread line. */
-function BesideDemo({ width, height, withThread, specimen, caption }: { width: number; height: number; withThread: boolean; specimen: string; caption: string }) {
+function BesideDemo({
+  width,
+  height,
+  withThread,
+  writeTools = false,
+  specimen,
+  caption,
+}: {
+  width: number
+  height: number
+  withThread: boolean
+  /* The write box carries add and dictation (SplitPane.Thing writeBox). */
+  writeTools?: boolean
+  specimen: string
+  caption: string
+}) {
   const [current, setCurrent] = React.useState('home')
   const [sidebarOpen, setSidebarOpen] = React.useState(true)
   const [open, setOpen] = React.useState(true)
@@ -1155,6 +1178,20 @@ function BesideDemo({ width, height, withThread, specimen, caption }: { width: n
                   onClose={() => setOpen(false)}
                   note={PROMO_NOTE}
                   onSend={send}
+                  writeBox={
+                    writeTools
+                      ? {
+                          tools: 'always',
+                          onDictate: () => {},
+                          add: (
+                            <Composer.Add label="Add to the message">
+                              <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+                              <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
+                            </Composer.Add>
+                          ),
+                        }
+                      : undefined
+                  }
                   data-specimen={`${specimen}-thing`}
                   thread={thread.map((m, i) => (
                     <MessageRow key={i} author={threadAuthor(m.who)} name={m.who} time={m.time}>
@@ -1269,7 +1306,7 @@ function SortCycleSpecimen() {
 
 /* On the field: the sidebar alone, the microsidebar alone, then the app
    frame on each theme, open, folded with a peek, and with no sidebar. */
-export function FieldSections() {
+export function FieldSections({ children }: { children?: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(true)
   return (
     <div className="lib-field-region">
@@ -1351,8 +1388,9 @@ export function FieldSections() {
           width={1440}
           height={760}
           withThread
+          writeTools
           specimen="beside-1440-thread"
-          caption="1440 wide, with a thread: the write box now says reply; the ask in the talk carries the thread line"
+          caption="1440 wide, with a thread: the write box now says reply and carries add and dictation (writeBox); the ask in the talk carries the thread line"
         />
         <BesideDemo
           width={1100}
@@ -1363,6 +1401,8 @@ export function FieldSections() {
         />
         <BesideDemo width={1100} height={680} withThread specimen="beside-1100-thread" caption="1100 wide, with a thread: over the room" />
       </section>
+
+      {children}
     </div>
   )
 }

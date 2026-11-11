@@ -5,6 +5,15 @@ import designSystemCss from '~/design-system/design-system.css?url'
 import {
   BrandMark,
   Field,
+  MessageRow,
+  PinMark,
+  RoomOutline,
+  TextField,
+  ToneButton,
+  VaultRow,
+  WordDivider,
+  ProgressDonut,
+  THEMES,
   Figure,
   GuestRing,
   Glyph,
@@ -30,8 +39,10 @@ import {
   type Step,
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
-import { RESIDENTS } from './-identity'
+import { EIRI, RESIDENTS, TORY } from './-identity'
 import { FieldSections, FrameSections } from './-frame'
+import { OutsideSection, PlaceSection } from './-place'
+import { FIELD_SCENE } from './-themes'
 import { PatternSections } from './-patterns'
 import { TaskSections } from './-tasks'
 import { WindowGroundSection } from './-themes'
@@ -710,6 +721,83 @@ function LibraryPage() {
           <Specimen name="stack, guest">
             <Portrait initial="y" label="Yuki" size="stack" guest />
           </Specimen>
+          <Specimen name="a face as a picture, 16 to 32 px: round, the image line inside" wide={1}>
+            <span className="lib-inline" data-specimen="portrait-pictures">
+              {([16, 18, 20, 22, 24, 28, 32] as const).map((size) => (
+                <Portrait key={size} src={EIRI.picture!.day} label="Eiri" size={size} />
+              ))}
+            </span>
+          </Specimen>
+          <Specimen name="pictures of three agents at 24 px; a guest's ring" wide={1}>
+            <span className="lib-inline">
+              <Portrait src={EIRI.picture!.day} label="Eiri" size={24} />
+              <Portrait src={TORY.picture!.day} label="Tory" size={24} />
+              <Portrait src="/art/faces/antevon-A-day.png" label="Antevon" size={24} guest />
+              <Portrait src={TORY.picture!.night} label="Tory" size={32} />
+            </span>
+          </Specimen>
+          <Specimen name="a person with no picture: the initial on a disc, 16 to 32 px; a guest" wide={1}>
+            <span className="lib-inline" data-specimen="portrait-discs">
+              {([16, 20, 24, 32] as const).map((size) => (
+                <Portrait key={size} initial="o" label="Owen" size={size} />
+              ))}
+              <Portrait initial="y" label="Yuki" size={24} guest />
+            </span>
+          </Specimen>
+          <Specimen name="a picture that cannot load: the initial on a disc">
+            <Portrait src="/art/faces/missing-face.png" initial="m" label="Metryon" size={24} data-specimen="portrait-missing" />
+          </Specimen>
+        </Section>
+
+        <Section title="PinMark">
+          <Specimen name="after a message’s time; rest on it for its name" full>
+            <div className="lib-messages" data-specimen="pin-mark">
+              <MessageRow author={<Portrait initial="y" label="Yuki" size={24} guest />} name="Yuki" time="13:50" marks={<PinMark />}>
+                <MessageRow.Text>Can we have the Q4 view by Friday?</MessageRow.Text>
+              </MessageRow>
+            </div>
+          </Specimen>
+          <Specimen name="alone">
+            <PinMark />
+          </Specimen>
+        </Section>
+
+        <Section title="ToneButton">
+          <Specimen name="with a mark: a sign-in provider’s, here a neutral disc" wide={1}>
+            <div className="lib-tone-stage" data-specimen="tone-button">
+              <ToneButton mark={<span className="lib-provider-disc" />}>Continue with a work account</ToneButton>
+            </div>
+          </Specimen>
+          <Specimen name="the word alone; disabled" wide={1}>
+            <div className="lib-tone-stage lib-stack">
+              <ToneButton>Continue with a personal account</ToneButton>
+              <ToneButton disabled>Continue with a personal account</ToneButton>
+            </div>
+          </Specimen>
+        </Section>
+
+        <Section title="TextField">
+          <TextFieldSpecimens />
+        </Section>
+
+        <Section title="WordDivider">
+          <Specimen name="or, between two ways in" wide={1}>
+            <div className="lib-tone-stage" data-specimen="word-divider">
+              <WordDivider />
+            </div>
+          </Specimen>
+        </Section>
+
+        <Section title="RoomOutline">
+          <Specimen name="a room’s pins, tasks and threads, one row each; a row opens its thing" wide={1}>
+            <RoomOutlineSpecimen />
+          </Specimen>
+        </Section>
+
+        <Section title="VaultRow">
+          <Specimen name="a scene, a flat theme, a guest’s vault; rest on a row for the lit tone" full>
+            <VaultRowSpecimen />
+          </Specimen>
         </Section>
 
         <Section title="BrandMark">
@@ -733,8 +821,108 @@ function LibraryPage() {
         <TaskSections />
         <FrameSections />
       </Island>
-      <FieldSections />
+      <FieldSections>
+        <PlaceSection />
+        <OutsideSection />
+      </FieldSections>
     </SafelightRoot>
+  )
+}
+
+/* Two text fields side by side: one the gallery owns (controlled, its
+   readout follows each key), one that holds its own text (uncontrolled). */
+function TextFieldSpecimens() {
+  const [email, setEmail] = React.useState('')
+  const [lastOwn, setLastOwn] = React.useState('owen')
+  return (
+    <>
+      <Specimen name="controlled, with a label: the readout follows each key" wide={1}>
+        <div className="lib-tone-stage lib-stack" data-specimen="text-field-controlled">
+          <TextField label="Email address" type="email" placeholder="you@acme" autoComplete="email" value={email} onValueChange={setEmail} />
+          <span className="lib-readout" data-specimen="text-field-controlled-value">
+            value {email ? `“${email}”` : 'empty'}
+          </span>
+        </div>
+      </Specimen>
+      <Specimen name="uncontrolled, from a default value; no label, the placeholder in the quiet ink" wide={1}>
+        <div className="lib-tone-stage lib-stack" data-specimen="text-field-uncontrolled">
+          <TextField aria-label="Vault name" placeholder="Vault name" defaultValue="owen" onValueChange={setLastOwn} />
+          <TextField aria-label="Search the vault" placeholder="Search the vault" />
+          <span className="lib-readout" data-specimen="text-field-uncontrolled-value">
+            last change {`“${lastOwn}”`}
+          </span>
+        </div>
+      </Specimen>
+    </>
+  )
+}
+
+/* The outline of # acme-forecast in a list pane's width; the readout
+   names what a row opened. */
+function RoomOutlineSpecimen() {
+  const [opened, setOpened] = React.useState('')
+  return (
+    <div className="lib-outline-stage" data-specimen="room-outline">
+      <RoomOutline aria-label="outline of # acme-forecast" onOpen={setOpened}>
+        <RoomOutline.Group label="pinned">
+          <RoomOutline.Row id="Q4 view" mark={<Icon name="chart" />}>
+            Q4 view
+          </RoomOutline.Row>
+          <RoomOutline.Row id="The brief" mark={<Icon name="note" />}>
+            The brief
+          </RoomOutline.Row>
+          <RoomOutline.Row id="the pinned message" mark={<Icon name="pin" />} who="Yuki" time="13:50">
+            Can we have the Q4 view by Friday?
+          </RoomOutline.Row>
+        </RoomOutline.Group>
+        <RoomOutline.Group label="tasks">
+          <RoomOutline.Row id="the tasks" mark={<ProgressDonut arcs={['done', 'working', 'ahead']} needsYou tooltip={false} />} who="Metryon" time="14:02">
+            I split the Q4 view in three.
+          </RoomOutline.Row>
+        </RoomOutline.Group>
+        <RoomOutline.Group label="threads">
+          <RoomOutline.Row id="the thread" mark={<Icon name="thread" />} who="Yuki" time="14:10">
+            Which stores are in?
+          </RoomOutline.Row>
+        </RoomOutline.Group>
+      </RoomOutline>
+      <span className="lib-readout" data-specimen="room-outline-log">
+        {opened ? `opens ${opened}` : 'Press a row.'}
+      </span>
+    </div>
+  )
+}
+
+/* Three vaults on the island; the readout names the vault under the
+   pointer, as the screen outside a vault shows its theme. */
+function VaultRowSpecimen() {
+  const [resting, setResting] = React.useState<string | null>(null)
+  const rows = [
+    { id: 'owen', name: 'owen', runs: 'this Mac and two of your machines', theme: FIELD_SCENE, waiting: 2 },
+    { id: 'antevon', name: 'antevon', runs: 'Oneiron Cloud', theme: THEMES[2], waiting: 3 },
+    { id: 'acme', name: 'acme', runs: 'guest · Oneiron Cloud', theme: THEMES[1], waiting: 0 },
+  ]
+  return (
+    <div className="lib-vault-stage" data-specimen="vault-rows">
+      <ul className="lib-vault-list">
+        {rows.map((r) => (
+          <li key={r.id}>
+            <VaultRow
+              theme={r.theme}
+              name={r.name}
+              runs={r.runs}
+              waiting={r.waiting}
+              onPointerEnter={() => setResting(r.id)}
+              onPointerLeave={() => setResting(null)}
+              data-specimen={`vault-row-${r.id}`}
+            />
+          </li>
+        ))}
+      </ul>
+      <span className="lib-readout" data-specimen="vault-rows-log">
+        {resting ? `shows the theme of ${resting}` : 'Rest on a vault.'}
+      </span>
+    </div>
   )
 }
 
