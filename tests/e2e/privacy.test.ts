@@ -834,6 +834,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
   let engine: EngineFixture | undefined;
   let primaryFailed: boolean = false;
   let primary: unknown;
+  let stage = "setup";
   try {
     engine = await EngineFixture.start({ id: "PRIVACY-02", profile,
       initArgs: ["--dimensions", String(spec.vectorTable.dimensions)], serverConfig: dreamerConfig(providers, true) });
@@ -884,10 +885,14 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     if (!unrelated.claim) throw new Error("Unrelated control has no typed record ref");
     const controlId = unrelated.claim.id;
     const targets = [source.id, claim.claim.claim_ref, summaryId];
-    for (const [entity_ref, vector] of [
-      [source.id, spec.vectorTable.source], [claim.claim.claim_ref, spec.vectorTable.claim],
-      [summaryId, spec.vectorTable.summary], [controlId, spec.vectorTable.unrelated],
-    ] as const) await engine.client.call("vault.vectors.put", { entity_ref, vector: [...vector] });
+    for (const [target, entity_ref, vector] of [
+      ["source", source.id, spec.vectorTable.source], ["claim", claim.claim.claim_ref, spec.vectorTable.claim],
+      ["summary", summaryId, spec.vectorTable.summary], ["control", controlId, spec.vectorTable.unrelated],
+    ] as const) {
+      stage = `vault.vectors.put ${target}`;
+      await engine.client.call("vault.vectors.put", { entity_ref, vector: [...vector] });
+    }
+    stage = "erase and public reads";
     const sourceRow = (await engine.client.call("vault.get", { entity_ref: source.id })).value;
     const claimRow = (await engine.client.call("vault.get", { entity_ref: claim.claim.claim_ref })).value;
     const summaryRow = (await engine.client.call("vault.get", { entity_ref: summaryId })).value;
@@ -1010,7 +1015,10 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     expect(providers.seenFixtureCalls.filter(call => call.fixtureId === "source-summary").every(call => (call.body as any)?.response_format?.json_schema?.schema?.required?.join(",") === "text,keep")).toBe(true);
   } catch (error) {
     primaryFailed = true;
-    primary = error;
+    // A refused public call keeps its wire code and message; a bare "HTTP 400" names neither step nor cause.
+    primary = error instanceof PublicHttpError
+      ? new Error(`PRIVACY-02 ${stage}: status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`, { cause: error })
+      : error;
   } finally {
     const cleanups: string[] = [];
     // Capture the real summary wire body before provider cleanup. The standing
