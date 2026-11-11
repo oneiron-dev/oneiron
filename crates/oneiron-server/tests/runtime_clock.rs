@@ -203,6 +203,81 @@ fn a_managed_settings_file_that_sets_the_vaults_clock_is_refused() {
     }
 }
 
+/// A doctor run with no `--config` reads the default config path. When that
+/// path's existence cannot be checked, its file may set the manual clock, so
+/// doctor must not open the vault on the host's clock: an open runs the
+/// vault's recovery, which may record the time it reads for good.
+#[test]
+fn doctor_does_not_open_a_vault_whose_default_config_it_cannot_check() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    stdout(oneiron(
+        &["init", vault.to_str().unwrap(), "--embedder", "none"],
+        &dir.path().join("init.toml"),
+    ));
+    // Two default config paths whose existence cannot be checked: a symlink
+    // loop (ELOOP, for every user), and a file under a parent this process
+    // may not search (EACCES, which binds every user but root).
+    let looped = dir.path().join("looped");
+    std::fs::create_dir_all(looped.join("oneiron")).unwrap();
+    std::os::unix::fs::symlink("oneiron.toml", looped.join("oneiron").join("oneiron.toml"))
+        .unwrap();
+    let locked = dir.path().join("locked");
+    let unsearchable = locked.join("xdg");
+    std::fs::create_dir_all(unsearchable.join("oneiron")).unwrap();
+    std::fs::write(
+        unsearchable.join("oneiron").join("oneiron.toml"),
+        "[runtime]\nclock = \"manual\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut cases = vec![("a symlink loop", looped)];
+    if unsearchable.join("oneiron").try_exists().is_err() {
+        cases.push(("an unsearchable parent", unsearchable));
+    } else {
+        eprintln!("this user searches a mode-000 directory (root): only the symlink loop runs");
+    }
+    let outputs: Vec<_> = cases
+        .into_iter()
+        .map(|(case, xdg)| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
+            for (name, _) in std::env::vars_os() {
+                if name.to_string_lossy().starts_with("ONEIRON_") {
+                    command.env_remove(name);
+                }
+            }
+            command.arg("doctor").arg(&vault).env("XDG_CONFIG_HOME", &xdg);
+            (case, command.output().expect("run oneiron doctor"))
+        })
+        .collect();
+    // Searchable again, so the temporary directory is removed.
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (case, output) in outputs {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "doctor failed under {case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|error| {
+            panic!("doctor printed no JSON under {case} ({error}): {stdout}")
+        });
+        let note = report["location"]["note"].as_str().unwrap_or_default();
+        assert!(
+            note.contains("doctor did not open the vault"),
+            "doctor opened the vault under {case}: {stdout}"
+        );
+        let errors = report["config_errors"].as_array().cloned().unwrap_or_default();
+        let named = errors
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|text| text.contains("cannot be checked"));
+        assert!(named, "the config error names the unchecked path under {case}: {stdout}");
+    }
+}
+
 async fn response_json(response: axum::response::Response) -> Value {
     let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
