@@ -7,8 +7,8 @@ import { basename, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { test as BunTest } from "bun:test";
-import { E2E_ROOT, FIXTURE_ROOT, loadFixtures, loadBuildManifest, requireAsset, verifyFile } from "./fixtures.ts";
-import type { BuildManifest, Profile, SuitePlan, PlannedFile } from "./fixtures.ts";
+import { E2E_ROOT, FIXTURE_ROOT, loadFixtures, loadBuildManifest, loadBuildManifestWithVerification, requireAsset, verifyFile } from "./fixtures.ts";
+import type { BuildManifest, BuildVerification, Profile, SuitePlan, PlannedFile } from "./fixtures.ts";
 
 export const LIMITS = Object.freeze({ slots: 6, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
   readyMs: 10_000, requestMs: 10_000, flowMs: 30_000, suiteMs: 600_000, stopMs: 2_000 });
@@ -246,10 +246,9 @@ export async function runProcess(argv: readonly string[], options: ProcessOption
   return (await ManagedProcess.start(argv, options)).wait(ms);
 }
 export async function closeOwnedProcesses(): Promise<void> { await Promise.all([...(flowStorage.getStore()?.processes ?? owned)].map(p => p.stop())) }
-export async function tempRoot(label: string): Promise<string> {
+export async function tempRoot(label: string, base = process.env.E2E_TEMP_ROOT ?? tmpdir()): Promise<string> {
   assertFlowActive();
   assertLinux();
-  const base = process.env.E2E_TEMP_ROOT ?? tmpdir();
   await mkdir(base, {recursive:true,mode:0o700});
   assertFlowActive();
   const path = await mkdtemp(resolve(base,`oneiron-${label}-`));
@@ -334,7 +333,7 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
   };
 }
 
-export interface Preflight { readonly build: BuildManifest; readonly plan: SuitePlan; readonly files: readonly PlannedFile[];
+export interface Preflight { readonly build: BuildManifest; readonly verification: BuildVerification; readonly plan: SuitePlan; readonly files: readonly PlannedFile[];
   readonly fixturePins:readonly {path:string;sha256:string}[] }
 function selectFiles(plan: SuitePlan, profile: Profile, names: readonly string[]): PlannedFile[] {
   const available = plan.files.filter(file => profile === "deterministic" || file.tests.some(test => plan.optionalIds.includes(test.id)));
@@ -345,7 +344,7 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
   assertLinux();
   const catalog = await loadFixtures();
   const plan = await catalog.readJson<SuitePlan>("suite-plan");
-  const build = await loadBuildManifest(profile);
+  const {build,verification} = await loadBuildManifestWithVerification(profile);
   const files = selectFiles(plan,profile,names);
   if (build.launcher.length === 0 || !build.launcher[0]?.startsWith("/")) throw new BlockedDoor("waits on absolute Linux process launcher");
   if (!Object.values(build.assets).some(asset => asset.path === build.launcher[0])) throw new BlockedDoor("Unpinned process launcher");
@@ -375,7 +374,7 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
   for (const manifest of catalog.manifests) for (const asset of manifest.value.assets) {
     for (const id of asset.scenarios) if (!allIds.has(id)) throw new Error(`Unknown scenario ${id} in ${asset.id}`);
   }
-  return { build, plan, files, fixturePins:catalog.manifests.map(m=>({path:m.path,sha256:m.sha256})) };
+  return { build, verification, plan, files, fixturePins:catalog.manifests.map(m=>({path:m.path,sha256:m.sha256})) };
 }
 async function reapDirectory(path: string): Promise<void> {
   let entries: string[];
@@ -413,6 +412,9 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     return 1;
   }
   const {build,plan} = ready;
+  // A sibling of the report directory, never an exportable report artifact.
+  const verifiedRoot = await tempRoot("verified",dirname(resolve(output)));
+  const verifiedPath = resolve(verifiedRoot,"build.json");
   const selectedIds = (file:PlannedFile) => file.tests.filter(t => profile === "deterministic" || plan.optionalIds.includes(t.id)).map(t => t.id);
   const jobs = ready.files.flatMap(file => selectedIds(file).map(id => ({file,id,planIndex:file.tests.findIndex(test => test.id === id),estimate:file.estimatedSeconds/file.tests.length})));
   const pending = jobs.sort((a,b) => b.estimate-a.estimate || a.file.file.localeCompare(b.file.file) || a.planIndex-b.planIndex);
@@ -482,6 +484,7 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
   process.once("SIGINT",interrupt); process.once("SIGTERM",interrupt);
   let schedulerFailure: string | undefined;
   try {
+    await writeFile(verifiedPath,JSON.stringify(ready.verification)+"\n",{mode:0o600});
     while ((pending.length || running.size) && !interrupted) {
       const remaining = LIMITS.suiteMs-(performance.now()-started);
       if (remaining <= 0) break;
@@ -497,7 +500,7 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
         const env = isolatedEnv(fileRoot,{...build.environment,E2E_PROFILE:profile,E2E_FILE_SLOTS:String(file.slots),
           E2E_CPU_CREDITS:String(file.slots*LIMITS.cpuPerSlot),E2E_MEMORY_MIB:String(file.slots*LIMITS.memoryMiBPerSlot),
           E2E_OWNERS_DIR:ownerDir,E2E_ARTIFACTS_DIR:resolve(output,file.file),E2E_RESULT_FILE:resultFile,E2E_SELECTED_IDS:id,
-          E2E_TEMP_ROOT:fileRoot,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!,
+          E2E_TEMP_ROOT:fileRoot,E2E_BUILD_VERIFIED:verifiedPath,E2E_BUILD_MANIFEST:process.env.E2E_BUILD_MANIFEST!,E2E_BUILD_MANIFEST_SHA256:process.env.E2E_BUILD_MANIFEST_SHA256!,
           ...(process.env.E2E_MEMORY_RETAIN_VAULT?{E2E_MEMORY_RETAIN_VAULT:process.env.E2E_MEMORY_RETAIN_VAULT}:{})});
         await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
         const child = await ManagedProcess.start([...build.launcher,requireAsset(build,"bun"),"test",resolve(E2E_ROOT,file.file),"--timeout",String(LIMITS.suiteMs),"--max-concurrency","1","--reporter=junit","--reporter-outfile",junitFile],
@@ -513,10 +516,12 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
     }
   } catch (error) { schedulerFailure=redactor.text(String(error)) }
   finally {
-    for (const job of running.values()) job.process.signal("SIGKILL");
-    for (const name of [...running.keys()]) await collect(name);
-    await closeOwnedProcesses();
-    process.off("SIGINT",interrupt); process.off("SIGTERM",interrupt);
+    try {
+      for (const job of running.values()) job.process.signal("SIGKILL");
+      for (const name of [...running.keys()]) await collect(name);
+      await closeOwnedProcesses();
+      process.off("SIGINT",interrupt); process.off("SIGTERM",interrupt);
+    } finally { await rm(verifiedRoot,{recursive:true,force:true}) }
   }
   for (const file of ready.files) for (const id of selectedIds(file))
     if (!results.has(id)) results.set(id,{id,outcome:"FAIL",durationMs:0,reason:"Suite deadline/interruption before completion"});
