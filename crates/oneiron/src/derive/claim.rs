@@ -40,7 +40,6 @@ pub(super) fn stage_in_txn(
     context: &ItemContext<'_>,
     claim: &DerivedClaim,
 ) -> Result<ItemOutcome> {
-    let id = EntityId::now();
     let subject = context.resolve(&claim.subject)?;
     let evidence = claim
         .evidence
@@ -68,10 +67,60 @@ pub(super) fn stage_in_txn(
     // earlier item of this batch landed still reads to the item citing it.
     let read = super::actor_read(vault, context.stamp.actor)?
         .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    stage_candidate_in_txn(
+        vault,
+        txn,
+        context,
+        &StagedClaim {
+            local: &claim.local,
+            id: EntityId::now(),
+            candidate: &candidate,
+            source: meet,
+        },
+        crate::core_write::CoreWriteLaneRef::Read(&read),
+    )
+}
+
+/// One claim an item stages through the shared claim gate.
+pub(super) struct StagedClaim<'a> {
+    /// The item's local name.
+    pub(super) local: &'a str,
+    /// The id the claim is minted as.
+    pub(super) id: EntityId,
+    /// The claim's words and evidence.
+    pub(super) candidate: &'a ClaimCandidate,
+    /// The source the engine stamps on it: for a claim item, the meet of the
+    /// trust of the rows it cites.
+    pub(super) source: ClaimSource,
+}
+
+/// Stages `claim` in a savepoint of `txn`: first at Auto, then,
+/// when the gate holds it, as a proposal (as the Dreamer's writers do). A
+/// refusal rolls the savepoint back and keeps a refusal receipt in `txn`.
+///
+/// The write goes in `lane`: under a read lane the gate's reference check
+/// refuses a subject or cited row outside that read.
+///
+/// # Errors
+///
+/// Any error other than the gate's refusal: each aborts the whole commit.
+pub(super) fn stage_candidate_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    context: &ItemContext<'_>,
+    claim: &StagedClaim<'_>,
+    lane: crate::core_write::CoreWriteLaneRef<'_>,
+) -> Result<ItemOutcome> {
+    let StagedClaim {
+        local,
+        id,
+        candidate,
+        source,
+    } = *claim;
     for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Proposed] {
-        let mut envelope = envelope(context, claim, approval, meet)?;
+        let mut envelope = envelope(context, local, approval, source)?;
         let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-        vault.sign_retained_machine_claim_in_txn(&savepoint, &id, &candidate, &mut envelope)?;
+        vault.sign_retained_machine_claim_in_txn(&savepoint, &id, candidate, &mut envelope)?;
         let staged = vault
             .batch_in()
             .claim_candidate(
@@ -84,10 +133,7 @@ pub(super) fn stage_in_txn(
                 },
                 context.now,
             )
-            .apply_recording_gate_decisions_in_lane(
-                &mut savepoint,
-                crate::core_write::CoreWriteLaneRef::Read(&read),
-            );
+            .apply_recording_gate_decisions_in_lane(&mut savepoint, lane);
         match staged {
             Ok(()) => {
                 savepoint.commit()?;
@@ -158,14 +204,14 @@ fn evidence_meet_in_txn(
 }
 
 /// The envelope the engine stamps on a derived claim: the committing actor,
-/// the source `meet` its cited rows fold to, the run's recorded lineage with
-/// that source, and provenance naming the derivation surface, the batch, the
-/// item and the run.
+/// the source `source` (the meet its cited rows fold to), the run's recorded
+/// lineage with that source, and provenance naming the derivation surface,
+/// the batch, the item and the run.
 fn envelope(
     context: &ItemContext<'_>,
-    claim: &DerivedClaim,
+    local: &str,
     approval: ClaimApprovalStatus,
-    meet: ClaimSource,
+    source: ClaimSource,
 ) -> Result<WriteEnvelope> {
     let mut provenance = vec![
         (Value::from("surface"), Value::from(super::DERIVE_SURFACE)),
@@ -173,14 +219,14 @@ fn envelope(
             Value::from(super::DERIVE_BATCH_KEY),
             Value::from(context.batch.to_hex()),
         ),
-        (Value::from("item"), Value::from(claim.local.as_str())),
+        (Value::from("item"), Value::from(local)),
     ];
     if let Some(run) = &context.stamp.run {
         provenance.push((Value::from("run"), Value::from(run.as_str())));
     }
     Ok(WriteEnvelope::with_lineage(
         context.stamp.actor,
-        meet,
+        source,
         WriteProvenance::new(Value::Map(provenance))?,
         approval,
         context
@@ -188,6 +234,6 @@ fn envelope(
             .lineage
             .clone()
             .with(ClaimSource::Generated)
-            .with(meet),
+            .with(source),
     ))
 }
