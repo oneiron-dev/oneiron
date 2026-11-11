@@ -174,15 +174,18 @@
   --sl-sidebar-indent: 44px;
 }
 
+/* Marks and the count sit on the first line, so a caption that wraps
+   under the label leaves them where they were. One line of words (21 px)
+   and the padding make the 30 px row. */
 .sl-sidebar-row {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 11px;
   width: 100%;
   min-width: 0;
   min-height: 30px;
-  padding: 3px 10px 3px calc(10px + var(--sl-sidebar-indent));
+  padding: 4.5px 10px 4.5px calc(10px + var(--sl-sidebar-indent));
   border-radius: var(--sl-radius);
   font-size: var(--sl-t-do);
   line-height: 1.5;
@@ -220,6 +223,7 @@
   flex: none;
   width: 18px;
   height: 18px;
+  margin-top: 1.5px;
   color: var(--sl-sidebar-ink);
 }
 
@@ -227,6 +231,7 @@
 .sl-sidebar-item[data-depth="2"] .sl-sidebar-row-mark {
   width: 16px;
   height: 16px;
+  margin-top: 2.5px;
 }
 
 .sl-sidebar-item[data-depth="1"] .sl-sidebar-row-mark > .sl-icon,
@@ -235,19 +240,31 @@
   height: 14px;
 }
 
-/* The words: the label keeps its length and truncates only when it alone
-   overflows; the caption after it gives way first. */
+/* The words: the name (the label and the shared mark) and then the
+   caption at the right. When both do not fit on one line, the caption
+   wraps under the label; only a label too long for a line of its own
+   truncates, and a caption truncates only on its own line. */
 .sl-sidebar-row-words {
   display: flex;
-  align-items: center;
-  gap: 11px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 11px;
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.sl-sidebar-row-label {
-  flex: 0 0 auto;
+.sl-sidebar-row-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 0 auto;
+  min-width: 0;
   max-width: 100%;
+}
+
+.sl-sidebar-row-label {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -264,7 +281,6 @@
   flex: none;
   width: 9px;
   height: 9px;
-  margin-left: -3px;
   overflow: visible;
   color: var(--sl-sidebar-ink);
 }
@@ -279,8 +295,6 @@
 .sl-sidebar-row-caption {
   flex: 0 1 auto;
   min-width: 0;
-  margin-left: auto;
-  padding-left: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -291,6 +305,7 @@
   flex: none;
   min-width: 22px;
   height: 20px;
+  margin-top: 0.5px;
   margin-left: auto;
   padding: 0 6px;
   border-radius: var(--sl-radius);
@@ -307,9 +322,8 @@
 
 .sl-sidebar-row-pin {
   position: absolute;
-  top: 50%;
+  top: 2px;
   right: 4px;
-  margin-top: -13px;
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -410,12 +424,18 @@
 }
 
 .sl-sidebar[data-collapsed] .sl-sidebar-row {
+  align-items: center;
   justify-content: center;
   width: 40px;
   padding: 3px 0;
 }
 
-.sl-sidebar[data-collapsed] .sl-sidebar-row-words {
+.sl-sidebar[data-collapsed] .sl-sidebar-row-mark {
+  margin-top: 0;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-row-words,
+.sl-sidebar[data-collapsed] .sl-sidebar-row-name {
   display: contents;
 }
 
