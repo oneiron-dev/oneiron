@@ -13,6 +13,7 @@ pub mod consolidation;
 pub mod dag_append;
 pub mod derivation_floor;
 pub mod derive;
+pub mod derive_verbs;
 pub mod feeds;
 pub mod label_writers;
 pub mod lifted_text;
