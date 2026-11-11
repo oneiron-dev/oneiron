@@ -7,13 +7,14 @@ use super::super::spend_record::{SpendScopeId, SpendState};
 use super::super::widen_record::invalid;
 
 impl AgentDispatcher<'_> {
-    /// Finds the open hard scope whose own cap refuses `units`, without moving funds.
+    /// Finds the open hard scope whose own cap refuses `units`, without moving funds, with the
+    /// units the reservation asks of that scope: what the scopes below it cannot cover.
     pub(crate) fn hard_cap_refusal_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         scope: &SpendScopeId,
         units: u64,
-    ) -> Result<Option<SpendScopeId>> {
+    ) -> Result<Option<(SpendScopeId, u64)>> {
         let booking = self.booking_in_txn(txn, scope)?;
         if booking
             .boundaries
@@ -35,9 +36,8 @@ impl AgentDispatcher<'_> {
                 return Ok(None);
             }
             if current.hard || current.parent.is_none() {
-                return Ok(
-                    (current.hard && current.state == SpendState::Open).then_some(current.scope)
-                );
+                return Ok((current.hard && current.state == SpendState::Open)
+                    .then_some((current.scope, wanted)));
             }
             let deficit = wanted - local;
             let hop = self.host_in_txn(txn, &current)?;
