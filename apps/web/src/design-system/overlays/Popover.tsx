@@ -154,15 +154,17 @@ export function PopoverContent({
       }, 0)
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || !isTopLayer(token)) return
+      /* A part inside the layer may take Escape first (an undo window). */
+      if (event.key !== 'Escape' || event.defaultPrevented || !isTopLayer(token)) return
       event.preventDefault()
       removeLayer(token)
       setOpen(false, { returnFocus: true })
     }
     document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('keydown', onKeyDown)
+    /* The layer follows its trigger: scroll places it in the same frame. */
     addEventListener('resize', schedulePlace)
-    addEventListener('scroll', schedulePlace, { capture: true, passive: true })
+    addEventListener('scroll', place, { capture: true, passive: true })
 
     if (intent.current.focusContent) {
       const target = (initialFocus && layer.querySelector<HTMLElement>(initialFocus)) || firstFocusable(layer) || layer
@@ -177,7 +179,7 @@ export function PopoverContent({
       document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('keydown', onKeyDown)
       removeEventListener('resize', schedulePlace)
-      removeEventListener('scroll', schedulePlace, { capture: true })
+      removeEventListener('scroll', place, { capture: true })
       const focusInside = layer.contains(document.activeElement)
       hideLayer(layer)
       if (intent.current.returnFocus || focusInside) trigger?.focus({ preventScroll: true })
