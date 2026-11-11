@@ -186,6 +186,20 @@ export class WsClient {
         socket.addEventListener("close",event => reject(new Error(`WS upgrade closed ${event.code}`)),{once:true});
       }),timeoutMs,"WS upgrade",() => socket.close());
       socket.send(new Uint8Array([3,8]));
+      // The upgrade admits replication only; app-tier calls need the in-band
+      // auth.bind (handler/app_tier.rs require_bound_app_auth). The upgrade
+      // consumed its proof's nonce, so the bind carries a fresh holder proof.
+      const binding: unknown = JSON.parse(boundHeaders(credential).get("x-oneiron-binding")!);
+      const bindId = 0; // Facade call ids start at 1.
+      client.send(30,{type:"rpc.req",id:bindId,seq:0,last:true,payload:{
+        method:"auth.bind",params:{token:credentialParts(credential).bearer,binding},
+      }});
+      const bound = await client.next(timeoutMs);
+      if (bound.tag !== 30 || bound.envelope.id !== bindId || bound.envelope.type !== "rpc.res"
+        || bound.envelope.seq !== 0 || !bound.envelope.last || !(bound.envelope.payload instanceof Uint8Array)
+        || decode(bound.envelope.payload) !== null) {
+        throw new Error("WS auth.bind did not return its null acknowledgement");
+      }
       return client;
     } catch (error) { client.close(); throw error }
   }
@@ -274,7 +288,8 @@ export type PythonSdkOperation =
   | {readonly verb:"receipts";readonly limit?:number};
 export type SdkTarget = {readonly mode:"remote";readonly url:string;readonly credential:string} |
   {readonly mode:"embedded";readonly path:string;readonly dimensions?:number};
-export interface SdkDriverResult { readonly process:ProcessResult;readonly results:readonly ({ok:true;value:unknown}|{ok:false;error:unknown})[] }
+/** `receiptRef` is the Node SDK handle's `lastReceiptRef()` right after that operation, refusals included; Python rows omit it. */
+export interface SdkDriverResult { readonly process:ProcessResult;readonly results:readonly ({ok:true;value:unknown;receiptRef?:string|null}|{ok:false;error:unknown;receiptRef?:string|null})[] }
 const JS_DRIVER = String.raw`
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
@@ -282,6 +297,7 @@ import {pathToFileURL} from 'node:url';
 const p=JSON.parse(readFileSync(0,'utf8'));
 const {Oneiron}=await import(pathToFileURL(p.module).href);
 function error(e){return {name:e.name,code:e.code,message:e.message,suggestions:e.suggestions,wrongRoot:e.wrongRoot,hook:e.hook}}
+function receiptRef(m){try{return typeof m.lastReceiptRef==='function'?m.lastReceiptRef()??null:null}catch{return null}}
 function facade(m,path,input){
  const names=path.split('.');let parent=m;
  for(const name of names.slice(0,-1))parent=parent==null?undefined:parent[name];
@@ -306,8 +322,8 @@ try {
     case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;
     case 'selfActor':value=m.self.actor({});break;case 'people':value=m.vault.people.list(o.input);break;case 'neighbors':value=m.vault.neighbors(o.input);break;
     case 'get':value=m.vault.get(o.input);break;case 'facade':value=facade(m,o.path,o.input);break;default:throw new Error('Unknown SDK operation')}
-   trace(index,o.verb,'complete');return {ok:true,value};
-  }catch(e){trace(index,o.verb,'error',e.code);return {ok:false,error:error(e)}}});
+   trace(index,o.verb,'complete');return {ok:true,value,receiptRef:receiptRef(m)};
+  }catch(e){trace(index,o.verb,'error',e.code);return {ok:false,error:error(e),receiptRef:receiptRef(m)}}});
   process.stdout.write(JSON.stringify(results));
  }
 }catch(e){const failure=JSON.stringify({error:error(e)});process.stdout.write(failure);process.stderr.write(failure);process.exitCode=1;}

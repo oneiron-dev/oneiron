@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use oneiron::WakeTrigger;
 
-use super::super::*;
 use super::*;
 use crate::session::SessionHint;
 
