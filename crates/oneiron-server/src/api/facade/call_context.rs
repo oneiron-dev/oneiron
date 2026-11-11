@@ -488,7 +488,7 @@ pub(super) enum VerbContext {
     /// An MCP session's board stream (`BoardVerbContext`).
     #[expect(
         dead_code,
-        reason = "generate.py emits this refusal for a board row without a host projection"
+        reason = "the SDK generator emits this refusal for a board row without a host projection"
     )]
     Board,
     /// A code run's own browser session.
