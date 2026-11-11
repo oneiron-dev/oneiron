@@ -218,7 +218,9 @@ pub(crate) use system_agent_grant::{
     standing_steward_verbs_in, steward_grant_of_in, steward_rows_rewrite,
 };
 mod engine_controls;
+mod substrate_reads;
 pub(crate) use engine_controls::erase_engine_control_actor_in_txn;
+pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 pub(crate) use engine_controls::rendered_change;
 pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,

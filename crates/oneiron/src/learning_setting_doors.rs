@@ -375,6 +375,53 @@ pub fn learning_settings_as_owner(
     input: &LearningSettingsRequest,
 ) -> Result<LearningSettingsView> {
     owner.revalidate(vault)?;
+    learning_settings(vault, input)
+}
+
+/// [`learning_settings_as_owner`] for a holder of `engine.controls` (untangle
+/// 6.6c, the read side of the dials it may tune), checked at this read.
+///
+/// # Errors
+///
+/// A caller who holds no such grant; storage errors.
+pub fn learning_settings_as_holder(
+    vault: &Vault,
+    reader: WriteActor,
+    input: &LearningSettingsRequest,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    crate::federation::admit_substrate_read_by(
+        vault,
+        reader,
+        "vault.settings.learning",
+        crate::federation::SubstrateRead::Dials,
+    )?;
+    Ok(learning_settings(vault, input)?)
+}
+
+/// `vault.settings.learning` on a bound handle: the embedded owner reads
+/// under its own proof, any other caller as an `engine.controls` holder.
+///
+/// # Errors
+///
+/// As [`learning_settings_as_owner`] and [`learning_settings_as_holder`].
+pub fn learning_settings_embedded(
+    memory: &crate::memory::Memory<'_>,
+    input: &LearningSettingsRequest,
+) -> crate::memory::MemoryResult<LearningSettingsView> {
+    match memory.embedded_owner("vault.settings.learning") {
+        Ok(owner) => Ok(learning_settings_as_owner(memory.vault(), &owner, input)?),
+        Err(_) => learning_settings_as_holder(
+            memory.vault(),
+            WriteActor::new(memory.actor(), memory.actor_class()),
+            input,
+        ),
+    }
+}
+
+fn learning_settings(
+    vault: &Vault,
+    input: &LearningSettingsRequest,
+) -> Result<LearningSettingsView> {
     let wanted = |key: &str| input.key.as_deref().is_none_or(|wanted| wanted == key);
     let mut catalog = Vec::new();
     for spec in SETTING_CATALOG.iter().filter(|spec| wanted(spec.key)) {
