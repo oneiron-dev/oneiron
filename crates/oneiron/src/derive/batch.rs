@@ -116,6 +116,37 @@ pub struct DerivedArchive {
     pub score: f64,
 }
 
+/// A SameAs between two claims an agent derived (kind 4): it lands as the
+/// link's proposed coreference status claim; the edge is applied only where
+/// the owner's standing nightly-link grant already lets this actor apply
+/// one.
+#[derive(Debug, Clone)]
+pub struct DerivedSameAs {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// One claim.
+    pub source: ItemRef,
+    /// The claim it is the same as.
+    pub target: ItemRef,
+}
+
+/// An identity-topology judgment an agent derived (kind 4): a merge, split,
+/// facet or distinct assertion under the agent's own live `topology_seal`
+/// Grant. It lands as a parked proposal, or, when `apply` asks and the
+/// Grant allows it, as an applied event.
+#[derive(Debug, Clone)]
+pub struct DerivedTopology {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The judgment.
+    pub op: crate::identity_topology::IdentityTopologyOp,
+    /// The agent's own `topology_seal` Grant.
+    pub grant: EntityId,
+    /// Whether the judgment asks to take effect now rather than wait as a
+    /// proposal.
+    pub apply: bool,
+}
+
 /// One `about` line of a person: the sensitivity band it is written for and
 /// its one plain line of text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +200,10 @@ pub enum DerivationItem {
     Supersede(DerivedSupersede),
     /// A conflict settlement (kind 3).
     Settle(DerivedSettle),
+    /// A SameAs between two claims (kind 4).
+    SameAs(DerivedSameAs),
+    /// An identity-topology judgment (kind 4).
+    Topology(DerivedTopology),
     /// A person's `about` lines (kind 5).
     PersonAbout(DerivedPersonAbout),
     /// A PsychProfile snapshot (kind 5).
@@ -185,6 +220,8 @@ impl DerivationItem {
             Self::Evidence(evidence) => &evidence.local,
             Self::Supersede(supersede) => &supersede.local,
             Self::Settle(settle) => &settle.local,
+            Self::SameAs(same_as) => &same_as.local,
+            Self::Topology(topology) => &topology.local,
             Self::PersonAbout(about) => &about.local,
             Self::PsychProfile(profile) => &profile.local,
             Self::Archive(archive) => &archive.local,
@@ -198,6 +235,8 @@ impl DerivationItem {
             Self::Evidence(_) => "evidence",
             Self::Supersede(_) => "supersede",
             Self::Settle(_) => "settle",
+            Self::SameAs(_) => "same_as",
+            Self::Topology(_) => "topology",
             Self::PersonAbout(_) => "person_about",
             Self::PsychProfile(_) => "psych_profile",
             Self::Archive(_) => "archive",
@@ -218,6 +257,8 @@ impl DerivationItem {
                 DerivedSettlement::Keep(kept) => vec![&settle.marker, kept],
                 DerivedSettlement::HoldBoth | DerivedSettlement::Dismiss => vec![&settle.marker],
             },
+            Self::SameAs(same_as) => vec![&same_as.source, &same_as.target],
+            Self::Topology(_) => Vec::new(),
             Self::PersonAbout(about) => vec![&about.person],
             Self::PsychProfile(_) => Vec::new(),
             Self::Archive(archive) => vec![&archive.claim],
