@@ -160,7 +160,7 @@ fn fixture(vault: &Vault) -> Result<PromotionFixture> {
     rmpv::encode::write_value(
         &mut body,
         &Mp::Map(vec![
-            (Mp::from("txt"), Mp::from("my name is Oleksii")),
+            (Mp::from("txt"), Mp::from("my name is Owen")),
             (Mp::from("spkr"), Mp::from("user")),
         ]),
     )
@@ -279,7 +279,7 @@ fn promotion_evidence_is_a_turn_or_an_admissible_claim() -> Result<()> {
     let fixture = fixture(&vault)?;
     let session = EntityId::now();
     vault.put_entity(&session, ENTITY_TYPE_SESSION, occurred(1), 1, b"session")?;
-    let by_person = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.subject]);
+    let by_person = candidate(&fixture, "profile.name", "Owen", vec![fixture.subject]);
     let by_session = candidate(&fixture, "profile.city", "Tokyo", vec![session]);
     // The positive control: the same kind of candidate citing its TURN.
     let by_turn = candidate(&fixture, "profile.nickname", "Olety", vec![fixture.turn]);
@@ -303,7 +303,7 @@ fn promotion_evidence_is_a_turn_or_an_admissible_claim() -> Result<()> {
 fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
 
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
@@ -389,7 +389,7 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
 fn an_auto_write_burst_stays_auto_and_leaves_a_typed_check() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let first = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let first = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let second = candidate(&fixture, "profile.tone", "warm", vec![fixture.turn]);
     let ids = vec![first.claim_id, second.claim_id];
     crate::own_rate::set_auto_write_threshold_for_test(Some(1));
@@ -417,7 +417,7 @@ fn an_auto_write_burst_stays_auto_and_leaves_a_typed_check() -> Result<()> {
 fn an_exact_promotion_replay_counts_its_auto_write_once() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     let _ = crate::own_rate::take_counted_auto_writes();
     for pass in ["first pass", "exact replay"] {
@@ -443,7 +443,7 @@ fn promotion_rejects_rather_than_pends_without_an_auto_permit() -> Result<()> {
     // Proposed claim plus a pending consent row for an owner to work off.
     let (_dir, vault) = open_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
 
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
@@ -1006,7 +1006,7 @@ fn generated_evidence_gives_no_boost() -> Result<()> {
     let citing = candidate(
         &fixture,
         "profile.name",
-        "Oleksii",
+        "Owen",
         vec![generated_id, fixture.turn],
     );
     let citing_id = citing.claim_id;
@@ -1045,7 +1045,7 @@ fn landed_verification_blocks_ack() -> Result<()> {
 
     // Drive the verification leg directly: a claim that "landed" but is
     // gone at re-read time is a rejection (caller must fail the attempt).
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
     assert!(vault.get_claim(&claim_id)?.is_some());
@@ -1113,7 +1113,7 @@ fn landed_verification_blocks_ack() -> Result<()> {
 fn replay_path_still_skips_source_trust_gate() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
 
@@ -1380,7 +1380,7 @@ fn the_lineage_guard_is_reached_from_every_claim_write_door() -> Result<()> {
     // 5. Dreamer promotion cannot reach the guard at all: it COMPUTES the
     // source from evidence, so the stamp it writes never outranks the taint
     // it stamps beside it.
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let promoted_id = promoted.claim_id;
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
     let landed = vault.get_claim(&promoted_id)?.expect("landed claim");
@@ -2004,7 +2004,7 @@ fn a_checked_grant_closes_a_stored_value_too_long_to_preview() -> Result<()> {
 fn promotion_rejects_a_held_candidate_without_minting_a_review_row() -> Result<()> {
     let (dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     let checker = CountingAutoChecker::new(AutoCheckOutcome::Hold {
         reasons: vec!["checker: hedged verdict".to_owned()],
@@ -2063,7 +2063,7 @@ fn promotion_rejects_a_held_candidate_without_minting_a_review_row() -> Result<(
 fn promotion_fails_closed_when_the_checker_cannot_answer() -> Result<()> {
     let (dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     let checker = CountingAutoChecker::new(AutoCheckOutcome::Unavailable);
 
