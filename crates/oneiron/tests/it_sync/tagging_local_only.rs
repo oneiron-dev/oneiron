@@ -18,8 +18,10 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::edge::EdgeActorClass;
-use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder, NerSpan};
-use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::extraction::{
+    EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+};
+use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::reverse_rematerialize;
@@ -38,9 +40,11 @@ impl ExtractionEncoder for FirstWord {
     fn locality(&self) -> oneiron::embed::EmbedderLocality {
         oneiron::embed::EmbedderLocality::OnDevice
     }
-    fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
+    /// Answers inline: no worker is dispatched, so the attempt carries no
+    /// execution facts.
+    fn infer(&self, input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
         let text = &input.messages[0].text;
-        Ok(EncoderOutput {
+        let output = EncoderOutput {
             spans: vec![NerSpan {
                 message: 0,
                 start: 0,
@@ -52,8 +56,14 @@ impl ExtractionEncoder for FirstWord {
             vad: None,
             context_links: Vec::new(),
             speaker_links: Vec::new(),
+            mood_parts: Vec::new(),
             stack_sha16: None,
-        })
+        };
+        EncoderAttempt {
+            execution: None,
+            panicked: false,
+            result: Ok(output),
+        }
     }
 }
 
@@ -98,16 +108,20 @@ fn a_provisional_entity_stays_on_its_device_until_it_is_confirmed() {
         .witness(&WitnessTurn {
             conversation_ref: "79797979797979797979797979797979".into(),
             turn_ref: Some(turn_ref.into()),
+            thread_audience: None,
             occurred_at: now,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "text".into(),
                 content: "Mirela called".into(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: WitnessAssertions::default(),
         })
         .expect("witness on device A");
     let turn = EntityId::from_hex(turn_ref).unwrap();

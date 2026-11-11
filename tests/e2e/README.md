@@ -7,8 +7,14 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 242 IDs, 443 public registry rows, and three explicit
-excluded rows. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
+The pinned plan has 29 files, 251 IDs, 443 public registry rows, and three explicit
+excluded rows. The owner plan's 242 IDs plus MUSE-RECALL-01..08 in `retrieval.test.ts`
+(Engine order, 10 Nov 12:54 JST) and MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
+11 Nov 05:37 JST) cite their drivable PROMISE-REGISTER ids in
+`promises`; each `source` lists those promises' canon anchors. The retrieval file
+has 21 cases and an estimated 300 seconds. The plan pin's `expectedFacts` counts
+are derived from the plan, not maintained independently, and the `support/run.ts`
+preflight reads its file and ID counts from that pin. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
 `vault.claims.upsert` and paged `vault.receipts` use the generated snake_case
 DTOs. Bind each method's declared type rather than applying a casing rule to
@@ -77,8 +83,8 @@ use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
 relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
-PRIVACY-03, PRIVACY-06, PRIVACY-07, RETRIEVAL-04 and RETRIEVAL-11 as SKIPPED until
-their doors exist. MEMORY-03 is also SKIPPED while its complete journey still needs
+PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
+RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
 the Observed producer (FIX 21842). These cases remain registered with their reasons
 and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
 passing feature coverage.
@@ -109,6 +115,7 @@ const engine = await EngineFixture.start({
 | `restart()` | Stop and re-serve only this fixture's vault, using the same credential. |
 | `kill()` | SIGKILL the owned server group. First observe a public receipt/ACK/provider barrier. |
 | `close({retainVault?})` | Close peers/server and remove the private root unless explicit local retention. |
+| `serverOutputHas(values)` | After `close()`: `{found, truncated}` for the raw stdout/stderr of every server launch, restarts included. In memory only; never persisted or returned. A leak case asserts `{found:false,truncated:false}`. |
 | `artifacts` | Redacting JSON writer; never uploads anything. |
 
 The fixture defaults to authenticated, model-free `init --embedder none
@@ -186,7 +193,9 @@ text; they still fail the strict vector fixture until explicitly authored.
   union; `McpRpcError.response` preserves the full refusal. Tool `isError`
   results remain their actual protocol bodies. No tool-mode auto-switch occurs.
 - `await engine.websocket(actor?)` opens the real `/ws`, sends binary hello
-  `[3,8]`, and uses MessagePack tags 30/31. `call(verb, input)` is sequential RPC
+  `[3,8]`, then binds the connection in band (`auth.bind` as request id 0, with
+  a fresh holder proof) and waits for its null reply, so app-tier calls are
+  admitted. It uses MessagePack tags 30/31. `call(verb, input)` is sequential RPC
   and returns both the decoded value and original chunk frames, including
   receipts. For subscription/multiplexing checks use `send(tag, envelope)` and
   `next(timeoutMs)`, assemble chunks before ACK, and retain binary cursors.
@@ -199,6 +208,10 @@ text; they still fail the strict vector fixture until explicitly authored.
   installed wheel. Targets are `{mode:"remote",url,credential}` or
   `{mode:"embedded",path,dimensions?}`. Operations are typed `witness`,
   `claimUpsert`, `recall`, `receipts`; Python inputs are native snake_case.
+  The Node driver also takes `{verb:"facade", path, input}`: any generated
+  facade method by its dotted SDK path as the package spells it, no casing conversion.
+  Each Node result row also carries `receiptRef`: the handle's `lastReceiptRef()` right
+  after that operation, refusals included.
   Per-operation `{ok:false,error}` retains SDK errors; assert them explicitly.
   Broader SDK journeys may use an owned real process and the public package,
   never a private binding or Rust helper. `sdk.pair(link)` redeems through the
@@ -226,8 +239,9 @@ they do not estimate tokens or derive answers from requests.
 A step or stream part may name a barrier. `awaitBarrier(name)` waits until the
 external adapter reaches it; `releaseBarrier(name)` releases that boundary.
 It does **not** claim an internal transaction committed. Early release works.
-`seenFixtureCalls` is an in-memory snapshot of sequence, body, fixture ID, role
-and purpose. Unexpected, extra or unconsumed calls fail `close` and the flow.
+`seenFixtureCalls` is an in-memory snapshot of sequence, body, fixture ID, role,
+purpose and HTTP request headers (lower-case names). The provider artifact keeps
+only content-type-like header values; every other header value is persisted as `[REDACTED]`. Unexpected, extra or unconsumed calls fail `close` and the flow.
 There is no catch-all fallback. Exact JSON/bytes fixtures cover HTTP
 Oneironer/media/connectors. Optional `sockets` scripts declare `id`, `origin`,
 `path`, `role`, `purpose`, and ordered `exchanges` of `{request,replies}`. Each
@@ -348,7 +362,7 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 242-ID plan. The prepared manifest must identify
+never claims completion of the 251-ID plan. The prepared manifest must identify
 the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
@@ -361,7 +375,7 @@ SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
 cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
 but does not turn an independently passing sibling into FAIL. Owner-deferred
 SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
-coverage still requires passing evidence for all 242 IDs. Partial and optional-profile
+coverage still requires passing evidence for all 251 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 

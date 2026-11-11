@@ -313,9 +313,11 @@ pub(super) fn link_imports(
                             "vault.agents.put",
                             json!({"id":input.id,"definition":definition}),
                         )?;
+                        // The row's reply carries its output, as every row's does.
+                        let output: Value = field(&value, "output")?;
                         Ok(AgentPutOutput {
-                            id: field(&value, "id")?,
-                            disposition: field(&value, "disposition")?,
+                            id: field(&output, "id")?,
+                            disposition: field(&output, "disposition")?,
                         })
                     })();
                     cx.data().answer(reply)
