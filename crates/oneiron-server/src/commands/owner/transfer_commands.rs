@@ -125,6 +125,7 @@ fn read_batch(source: &str) -> anyhow::Result<Batch> {
 struct ImportedArchive {
     inserted_entities: usize,
     unchanged_entities: usize,
+    replaced_seed_entities: usize,
     omitted_entities: usize,
     archived_receipt_sources: usize,
     imported_results: usize,
@@ -211,6 +212,7 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
     emit(&ImportedArchive {
         inserted_entities: receipt.inserted_entities,
         unchanged_entities: receipt.unchanged_entities,
+        replaced_seed_entities: receipt.replaced_seed_entities,
         omitted_entities: receipt.omitted_entities,
         archived_receipt_sources: receipt.archived_receipt_sources,
         imported_results: receipt.imported_results,
