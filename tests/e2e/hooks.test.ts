@@ -1,14 +1,17 @@
 import { afterAll, expect, test } from "bun:test";
 import { dirname, resolve } from "node:path";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
+import type { Facade, FacadeInput, FacadeResult, FacadeVerb } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { createPrivateKey, createPublicKey } from "node:crypto";
+import { createPrivateKey, createPublicKey, createHash } from "node:crypto";
 import { credentialParts, McpClient, PublicHttpClient, PublicHttpError } from "./support/clients.ts";
 import type { JsonRpcReply, WireReply } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import type { FixtureCatalog } from "./support/fixtures.ts";
 import { BlockedDoor, assertFlowActive, defineFile, redactor, secretHex } from "./support/run.ts";
+import { blake3 } from "@noble/hashes/blake3";
+import { ScriptedProviders, openaiText } from "./support/providers.ts";
+import type { ProviderStep } from "./support/providers.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
   ? "real-small-model" : "deterministic";
@@ -1926,30 +1929,553 @@ agent = "sys.team_lead"
   }
 });
 
+type Hooks07Files = { path: string; text: string }[];
+
+function hooks07BodyHash(text: string): string {
+  return Buffer.from(blake3(new TextEncoder().encode(text))).toString("hex");
+}
+
+// This is the public tree-hash encoding, over authored inputs only.
+function hooks07TreeHash(files: Hooks07Files): string {
+  const hash = createHash("sha256").update("oneiron.skill.tree.v1\0");
+  const length = (n: number) => {
+    const bytes = Buffer.alloc(8);
+    bytes.writeBigUInt64BE(BigInt(n));
+    hash.update(bytes);
+  };
+  const sorted = [...files].sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+  length(sorted.length);
+  for (const file of sorted) {
+    const path = Buffer.from(file.path);
+    const body = Buffer.from(file.text);
+    length(path.length); hash.update(path);
+    length(body.length); hash.update(body);
+  }
+  return hash.digest("hex");
+}
+
+function hooks07Pack(
+  name: string, description: string, version: string, hook: string,
+  predicate: string, body: string, outcomes: string[],
+): Hooks07Files {
+  return [
+    { path: "PACK.md", text: `---
+name: ${name}
+description: ${description}
+version: ${version}
+license: Apache-2.0
+kind: capability
+hooks: ["${hook}"]
+---
+Independent HOOKS-07 inputs.
+` },
+    { path: `hooks/${hook}/HOOK.md`, text: `---
+name: ${hook}
+version: ${version}
+verbs: ["claim.landed:${predicate}"]
+actors: ["human"]
+phase: fact
+budget_ms: 1000
+outcomes: ${JSON.stringify(outcomes)}
+---
+Observe only the selected claim facts.
+` },
+    { path: `hooks/${hook}/intent.md`, text: "Observe the selected facts without external effects.\n" },
+    { path: `hooks/${hook}/body.js`, text: body },
+  ];
+}
+
+function hooks07HubSteps(
+  id: string, files: Hooks07Files, pin: string, version: string,
+): ProviderStep[] {
+  return [
+    {
+      id: `${id}-index`, origin: "hub", role: "skill_hub", purpose: "pinned hook pack fetch",
+      request: { method: "GET", path: "/index.json" },
+      response: { kind: "json", body: { schema: 1, packages: [{
+        name: "hooks07-pinned", description: "Pinned hook consent fixture", version,
+        content_hash: pin, ref_string: "hooks07-pinned",
+        files: files.map((file, index) => ({ path: file.path, url: `${id}/${index}` })),
+      }] } },
+    },
+    ...files.map((file, index): ProviderStep => ({
+      id: `${id}-file-${index}`, origin: "hub", role: "skill_hub", purpose: "authored hook pack bytes",
+      request: { method: "GET", path: `/${id}/${index}` },
+      response: { kind: "bytes", body: new TextEncoder().encode(file.text), contentType: "text/plain" },
+    })),
+  ];
+}
+
 /* HOOKS-07 — Pinned hook update and block scope should work. OF-581/580.
- * Canon: ARCH-0080 #blocks/#updates/#regen; ARCH-0053 #r4b-hubs.
- * Existing hook outcome: AddBlock {kind:"add_block",block:{refs:EntityRef[],
- * session?,branch?,lifetime?,token_cap?}}. Stored block rows retain source hook,
- * source-row provenance/trust, recipient/branch and activation turn.
- * Default lifetime = one BOARD DELIVERY, not one read/retry/other session.
- * Render source rows in existing sections, once each, tail only; never raw
- * prompt text or a new HOOKS section. Read under current recipient scope.
- *
- * Hub pin: {hub_id,ref_string,pin:{type:commit|content_hash|semver|tag,value}}.
- * A wider capability set (reads, reach, grants, outcomes, resources) asks
- * re-consent; hub trust never authorizes it. Main's owner HTTP install/sync
- * paths are not generated typed hub-update/proposal/settlement SDK calls.
- * Hook-typed regen records exist in core but have NO public regeneration door.
- * Canon regen record: intent + hash + golden replay on pinned recent runs;
- * outcome = adopt identical fingerprint | human stamp on diff | rollback on
- * failure. Never cast a lens regen record or replace a failed body with blank.
- *
- * Once those doors exist, install a pinned publisher pack, propose a widening
- * update, verify old pin/provenance until re-consent, emit a claim-backed block,
- * narrow its recipient, render next turn and exclude revoked rows. Check one
- * delivery survives restart but cannot be spent by another session. Regenerate
- * all three cases and inspect typed records, pins and rollback body continuity.
- * Use claim.landed for this flow. Additional source families are NOT selected;
- * if a later design needs them, it separately waits on owner question G09.
+ * ARCH-0080 updates/regen; ARCH-0053 r4b-hubs. The written subset requires
+ * hook-outcome widening to retain the selected pin AND running binding until
+ * owner bind, including a repeated sync/qualification without that consent.
+ * Separately regenerate a vault-owned hook over saved claim.landed runs:
+ * identical eligibility/adoption, owner stamp on diff, revert and blank-body
+ * rollback, typed history and restart. Hub hooks are not regenerated.
+ * Session-bound board delivery/current-recipient narrowing is not proved:
+ * the appendix names no session-bound board-delivery verb behind a read grant.
+ * A/B trees and regen bodies below are authored inputs, not engine oracles.
  */
-suite.todo(test, "HOOKS-07", "waits on typed pinned hub-hook update/re-consent and hook-typed regeneration — Pinned hook update and block scope should work");
+suite.test(test, "HOOKS-07", "Pinned hook widening waits for owner re-consent, and vault-owned regeneration replays, stamps differences, and restores the prior body across restart", async () => {
+  const initialBody = 'return {kind:"nothing"};\n';
+  const identicalBody = '// identical regenerated body\nreturn {kind:"nothing"};\n';
+  const differentBody = 'return {kind:"propose",claim:{subject:input.claim.subject,predicate:"hooks07.regen.output",value:{marker:"hooks07-diff"},confidence:1}};\n';
+  const hubBodyA = '// publisher revision A\nreturn {kind:"nothing"};\n';
+  const hubBodyB = '// publisher revision B\nreturn {kind:"nothing"};\n';
+  const hubA = hooks07Pack("hooks07-pinned", "Pinned hook consent fixture", "1.0.0",
+    "pin-observer", "hooks07.pin.input", hubBodyA, ["nothing"]);
+  const hubB = hooks07Pack("hooks07-pinned", "Pinned hook consent fixture", "2.0.0",
+    "pin-observer", "hooks07.pin.input", hubBodyB, ["nothing", "propose"]);
+  const pinA = hooks07TreeHash(hubA);
+  const pinB = hooks07TreeHash(hubB);
+  const ownerFiles = hooks07Pack("hooks07-regeneration", "Vault-owned hook regeneration fixture", "1.0.0",
+    "regen-observer", "hooks07.regen.input", initialBody, ["nothing", "propose"]);
+  const agentFiles = hooks07Pack("local", "Agent-owned hook regeneration fixture", "1.0.0",
+    "agent-observer", "hooks07.regen.input", initialBody, ["nothing", "propose"]);
+  const coachBodies = [
+    { id: "hooks07-identical", text: `\`\`\`js\n${identicalBody}\`\`\`` },
+    { id: "hooks07-different", text: `\`\`\`js\n${differentBody}\`\`\`` },
+    { id: "hooks07-blank", text: "```js\n```" },
+    { id: "hooks07-agent-different", text: `\`\`\`js\n${differentBody}\`\`\`` },
+  ];
+  const steps: ProviderStep[] = [
+    ...hooks07HubSteps("hooks07-install-a", hubA, pinA, "1.0.0"),
+    ...hooks07HubSteps("hooks07-sync-b-first", hubB, pinB, "2.0.0"),
+    ...hooks07HubSteps("hooks07-sync-b-repeat", hubB, pinB, "2.0.0"),
+    ...coachBodies.map((row): ProviderStep => ({
+      id: row.id, origin: "coach", role: "coach", purpose: "coach_hook_regen",
+      request: { method: "POST", path: "/v1/chat/completions", model: "hooks07-regen", fields: { stream: false } },
+      response: openaiText(row.id, "hooks07-regen", row.text, { inputTokens: 64, outputTokens: 16 }),
+    })),
+  ];
+  const providers = await ScriptedProviders.start({ id: "hooks07", steps });
+  let engine: EngineFixture | undefined;
+  try {
+    engine = await EngineFixture.start({ id: "HOOKS-07", profile, serverConfig: `
+[models.providers.hooks07regen]
+kind = "local-openai-compat"
+base_url = "${providers.urls.coach}"
+revision = "hooks07-fixture-v1"
+timeout_secs = 2
+[models.roles.coach]
+model = "hooks07regen:hooks07-regen"
+[models.workflows]
+enabled = false
+` });
+    const fixture = engine;
+    const owner = fixture.pairedActor.principalRef;
+    const hub = "a1070000000000000000000000000001";
+    const publisher = "hooks07-publisher";
+    const pageBound = 128;
+    // Both real agent principals are created while the server is stopped.
+    await fixture.client.call("vault.receipts", { limit: 1 });
+    await fixture.kill();
+    const principals: string[] = [];
+    for (const name of ["hooks07-author", "hooks07-other-agent"]) {
+      const minted = await fixture.cli.run([
+        "token", "agent", "--name", name, "--tier", "full-access",
+        "--config", resolve(fixture.root, "oneiron.toml"),
+        "--out", resolve(fixture.root, `${name}.credential`),
+      ], undefined, undefined, true);
+      expect(minted.exitCode).toBe(0);
+      const actor = JSON.parse(minted.stdout) as { principal_ref: string; actor_class: string };
+      expect(actor.actor_class).toBe("agent");
+      expect(actor.principal_ref).toMatch(/^[a-f0-9]{32}$/);
+      expect(actor.principal_ref).not.toBe(owner);
+      principals.push(actor.principal_ref);
+    }
+    expect(new Set(principals).size).toBe(2);
+    await fixture.restart();
+    const agent = await fixture.pairActor({ principalRef: principals[0]!, actorClass: "agent",
+      scope: ["core:read", "core:propose", "core:write"] });
+    const otherAgent = await fixture.pairActor({ principalRef: principals[1]!, actorClass: "agent",
+      scope: ["core:read", "core:propose", "core:write"] });
+    const scope = await ownerBaseClaimScope(fixture.client, owner);
+    const claim = (id: string, predicate: string) => fixture.client.call("vault.claims.upsert", {
+      id, subject_ref: owner, predicate, value: { marker: id }, confidence: 1, source: "user_stated", scope,
+    });
+    const enabled = async (pack: string) => (await fixture.client.call("vault.packs.hooks.list", {}))
+      .filter(row => row.binding.pack === pack && row.binding.enabled);
+    const oneBinding = async (pack: string) => {
+      const rows = await enabled(pack);
+      expect(rows).toHaveLength(1);
+      return rows[0]!;
+    };
+    const installedPack = async (name: string) => {
+      const pack = await fixture.client.call("vault.packs.get", { name });
+      if (!pack) throw new Error(`Expected installed fixture pack ${name}`);
+      return pack;
+    };
+    const regen = async (binding: string) => {
+      const view = await fixture.client.call("vault.hooks.regen.get", { binding });
+      if (!view) throw new Error("Expected the live binding's typed regeneration record");
+      return view;
+    };
+    const history = async (binding: string) => {
+      const rows = await fixture.client.call("vault.hooks.regen.history", { binding, limit: pageBound });
+      expect(rows.length).toBeLessThan(pageBound);
+      return rows;
+    };
+    const hookReceipts = () => readHookReceipts(input => fixture.client.call("vault.receipts", input), pageBound);
+    const outputs = async () => {
+      const page = await fixture.client.call("vault.claims.list", {
+        subject_ref: owner, predicate: "hooks07.regen.output", limit: pageBound,
+      });
+      expect(page.value.length).toBeLessThan(pageBound);
+      return page.value;
+    };
+    const refusalReceipts: Facade.CallReceipt[] = [];
+    const refuse = async <V extends FacadeVerb>(client: PublicHttpClient, actor: string, actorClass: string,
+      verb: V, input: FacadeInput<V>, status: number, code: string): Promise<void> => {
+      let refused: PublicHttpError | undefined;
+      try { await client.call(verb, input); } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        refused = error;
+      }
+      if (!refused) throw new Error(`Expected ${verb} refusal`);
+      expect(refused.reply.status).toBe(status);
+      expect(refused.error?.code).toBe(code);
+      const receiptRef = refused.error?.receiptRef;
+      expect(typeof receiptRef).toBe("string");
+      if (typeof receiptRef !== "string") throw new Error("Authenticated facade refusal lacks receiptRef");
+      expect(receiptRef).toMatch(/^call:/);
+      const receipt = await fixture.client.call("vault.receipts.get", { receipt_ref: receiptRef });
+      expect(receipt).not.toBeNull();
+      if (!receipt) throw new Error("Refusal receipt is not publicly readable by owner");
+      expect(receipt.receipt_ref).toBe(receiptRef);
+      expect(receipt.actor_ref).toBe(actor);
+      expect(receipt.actor_class).toBe(actorClass);
+      expect(receipt.verb).toBe(`v1/core/facade/${verb}`);
+      expect(receipt.outcome).toEqual({ refused: { code } });
+      refusalReceipts.push(receipt);
+    };
+
+    // A real fact makes qualification execute the authored body, not an empty replay.
+    await claim("a1070000000000000000000000000010", "hooks07.pin.input");
+    const configured = await fixture.client.call("vault.skill_hubs.put", {
+      hub, kind: "http-index", endpoint: `${providers.urls.hub}/index.json`,
+      trust_tier: "untrusted", sync_policy: "content-hash-frozen",
+    });
+    expect(configured.consent.outcome).toBe("approved");
+    const hubConfig = await fixture.client.call("vault.skill_hubs.get", { hub });
+    expect(hubConfig).toEqual({ kind: "http-index", endpoint: `${providers.urls.hub}/index.json`,
+      trust_tier: "untrusted", sync_policy: "content-hash-frozen" });
+    const reference = (pin: string): Facade.HubRef => ({ hub_id: hub, ref_string: "hooks07-pinned",
+      pin: { type: "content_hash", value: pin } });
+    const trackedA = await fixture.client.call("vault.skill_hubs.refs.set", {
+      hub_ref: reference(pinA), sync_policy: "content-hash-frozen",
+    });
+    expect(await fixture.client.call("vault.skill_hubs.refs.get", { hub, ref_string: "hooks07-pinned" }))
+      .toEqual(trackedA);
+    const first = await fixture.client.call("vault.packs.install", { hub_ref: reference(pinA), publisher });
+    expect(first.outcome).toBe("candidate");
+    if (!first.receipt) throw new Error("Pinned install lacks a Candidate receipt");
+    expect(first.receipt.pin_value).toBe(pinA);
+    const qualify = async (source: string) => {
+      const result = await fixture.client.call("vault.packs.hooks.qualify", { source });
+      expect(result.put.outcome).toBe("installed");
+      const replay = result.replays.find(row => row.hook === "pin-observer");
+      expect(replay?.unreplayed).toBe(false);
+      expect(replay?.entries).toHaveLength(1);
+      expect(replay?.entries[0]?.result).toMatchObject({ status: "ran", outcome: "nothing" });
+      return result;
+    };
+    await qualify(first.receipt.source_id);
+    expect(await fixture.client.call("vault.packs.hooks.bind", { pack: "hooks07-pinned" })).toHaveLength(1);
+    const bindingA = await oneBinding("hooks07-pinned");
+    const selectedA = await installedPack("hooks07-pinned");
+    expect(selectedA.pin_type).toBe("content_hash");
+    expect(selectedA.pin_value).toBe(pinA);
+    expect(selectedA.content_hash).toBe(pinA);
+    expect(selectedA.hub_id).toBe(hub);
+    expect(selectedA.publisher).toBe(publisher);
+    expect(bindingA.binding.source).toBe(selectedA.source_id);
+    expect(bindingA.binding.body_hash).toBe(hooks07BodyHash(hubBodyA));
+    expect(bindingA.binding.author).toMatchObject({ kind: "foreign_actor", identity: publisher, hub });
+    expect(bindingA.binding.owner).toBe(owner);
+
+    const trackedB = await fixture.client.call("vault.skill_hubs.refs.set", {
+      hub_ref: reference(pinB), sync_policy: "content-hash-frozen",
+    });
+    // Requested fetch pin and selected installed pin are distinct concepts.
+    expect(await fixture.client.call("vault.skill_hubs.refs.get", { hub, ref_string: "hooks07-pinned" }))
+      .toEqual(trackedB);
+    expect(trackedB.hub_ref).toEqual(reference(pinB));
+    const widening = await fixture.client.call("vault.packs.sync", { name: "hooks07-pinned" });
+    expect(widening.outcome).toBe("candidate");
+    if (!widening.receipt) throw new Error("Widening sync lacks a Candidate receipt");
+    expect(widening.receipt.permissions.widening_hooks).toContain("pin-observer/outcome:propose");
+    const selectedWhileCandidate = await installedPack("hooks07-pinned");
+    const boundWhileCandidate = await enabled("hooks07-pinned");
+    await qualify(widening.receipt.source_id);
+    const selectedAfterFirst = await installedPack("hooks07-pinned");
+    const boundAfterFirst = await enabled("hooks07-pinned");
+    // Do not stop at the first hold: no owner bind occurs before the repeat.
+    const repeat = await fixture.client.call("vault.packs.sync", { name: "hooks07-pinned" });
+    expect(repeat.outcome).toBe("candidate");
+    if (!repeat.receipt) throw new Error("Repeated sync lacks a Candidate receipt");
+    await qualify(repeat.receipt.source_id);
+    const selectedAfterRepeat = await installedPack("hooks07-pinned");
+    const boundAfterRepeat = await enabled("hooks07-pinned");
+    const trackedBeforeConsent = await fixture.client.call("vault.skill_hubs.refs.get", { hub, ref_string: "hooks07-pinned" });
+
+    // Owner-only doors: valid inputs, a real non-owner, and the actual refusal receipts.
+    const nonowner = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>) =>
+      refuse(agent.client, agent.principalRef, "agent", verb, input, 403, "FORBIDDEN");
+    const validHash = hooks07BodyHash(identicalBody);
+    await nonowner("vault.skill_hubs.put", { hub, ...hubConfig });
+    await nonowner("vault.skill_hubs.get", { hub });
+    await nonowner("vault.skill_hubs.refs.get", { hub, ref_string: "hooks07-pinned" });
+    await nonowner("vault.skill_hubs.refs.set", { hub_ref: reference(pinA), sync_policy: "content-hash-frozen" });
+    await nonowner("vault.packs.install", { hub_ref: reference(pinA), publisher });
+    await nonowner("vault.packs.sync", { name: "hooks07-pinned" });
+    await nonowner("vault.packs.hooks.bind", { pack: "hooks07-pinned" });
+    await nonowner("vault.packs.hooks.qualify", { source: widening.receipt.source_id });
+    await nonowner("vault.hooks.regen.run", { binding: bindingA.id });
+    await nonowner("vault.hooks.regen.get", { binding: bindingA.id });
+    await nonowner("vault.hooks.regen.adopt", { binding: bindingA.id, candidate_hash: validHash });
+    await nonowner("vault.hooks.regen.history", { binding: bindingA.id, limit: pageBound });
+    await nonowner("vault.hooks.regen.revert", { binding: bindingA.id, adopted_hash: validHash });
+    expect(await installedPack("hooks07-pinned")).toEqual(selectedAfterRepeat);
+    expect(await enabled("hooks07-pinned")).toEqual(boundAfterRepeat);
+    expect(await fixture.client.call("vault.skill_hubs.get", { hub })).toEqual(hubConfig);
+    expect(await fixture.client.call("vault.skill_hubs.refs.get", { hub, ref_string: "hooks07-pinned" }))
+      .toEqual(trackedBeforeConsent);
+
+    // Explicit owner re-consent is the only permitted activation step.
+    await fixture.client.call("vault.packs.hooks.bind", { pack: "hooks07-pinned" });
+    const bindingB = await oneBinding("hooks07-pinned");
+    const selectedB = await installedPack("hooks07-pinned");
+    expect(selectedB.pin_value).toBe(pinB);
+    expect(selectedB.content_hash).toBe(pinB);
+    expect(bindingB.binding.source).toBe(selectedB.source_id);
+    expect(bindingB.binding.body_hash).toBe(hooks07BodyHash(hubBodyB));
+    expect(bindingB.binding.selector.outcomes).toEqual(["nothing", "propose"]);
+    expect(bindingB.binding.author).toEqual(bindingA.binding.author);
+    await refuse(fixture.client, owner, "human", "vault.hooks.regen.run", { binding: bindingB.id }, 400, "BAD_REQUEST");
+
+    // Vault-owned regeneration uses saved live fact runs, never hub bytes as its oracle.
+    expect((await fixture.client.call("vault.packs.put", { files: ownerFiles })).outcome).toBe("installed");
+    const original = await oneBinding("hooks07-regeneration");
+    expect(original.binding.author).toEqual({ kind: "owner" });
+    expect(original.binding.body_hash).toBe(hooks07BodyHash(initialBody));
+    const originalRecord = await regen(original.id);
+    expect((await agent.client.call("vault.packs.put", { files: agentFiles })).outcome).toBe("installed");
+    const agentBinding = await oneBinding("local");
+    expect(agentBinding.binding.author).toEqual({ kind: "agent", agent: agent.principalRef });
+    // An explicit owner read grant supplies the golden inputs, not effect or stamp authority.
+    const agentReadGrant: Facade.HookGrant = { reader: owner, reader_class: "human",
+      predicates: ["hooks07.regen.input"], worlds: [scope.world_id] };
+    await fixture.client.call("vault.packs.hooks.grant.set", { binding: agentBinding.id, grant: agentReadGrant });
+    expect(await fixture.client.call("vault.packs.hooks.grant.get", { binding: agentBinding.id }))
+      .toEqual({ binding: agentBinding.id, grant: agentReadGrant });
+    const seedIds = ["a1070000000000000000000000000021", "a1070000000000000000000000000022"];
+    for (const id of seedIds) await claim(id, "hooks07.regen.input");
+    const saved = await awaitPublic(async () => (await hookReceipts())
+      .filter(row => row.fields?.binding === original.id && seedIds.includes(row.fields?.trigger_ref ?? "")),
+      rows => rows.length >= seedIds.length, { label: "HOOKS-07 saved golden fact runs" });
+    expect(saved).toHaveLength(2);
+    for (const row of saved) {
+      expect(row.outcome).toBe("nothing");
+      expect(row.fields?.body_hash).toBe(hooks07BodyHash(initialBody));
+    }
+    const savedKeys = saved.map(row => receiptField(row, "run_key")).sort();
+    const beforeEffects = await outputs();
+    expect(beforeEffects).toEqual([]);
+    const identical = await fixture.client.call("vault.hooks.regen.run", { binding: original.id });
+    expect(await regen(original.id)).toEqual<unknown>(identical);
+    if (!identical || identical.record.pending?.outcome !== "auto_adopt") throw new Error("Nonempty identical golden runs must be auto_adopt eligible");
+    expect(identical.candidate_hash).toBe(hooks07BodyHash(identicalBody));
+    expect(identical.record.pending.candidate).toBe(identicalBody);
+    expect(identical.record.pending.diff).toEqual({ cases: 2, changed: [], execution_failed: [], withheld: [], missing_history: [] });
+    expect([...identical.record.pending.golden.runs].sort()).toEqual(savedKeys);
+    expect(identical.record.pending.golden.candidate).toEqual(identical.record.pending.golden.last_good);
+    expect(Object.keys(identical.record.pending.golden.candidate.cases).sort()).toEqual(savedKeys);
+    expect((await oneBinding("hooks07-regeneration")).binding.body_hash).toBe(hooks07BodyHash(initialBody));
+    expect(await outputs()).toEqual(beforeEffects);
+    await refuse(fixture.client, owner, "human", "vault.hooks.regen.adopt", {
+      binding: original.id, candidate_hash: "not-a-body-hash",
+    }, 400, "BAD_REQUEST");
+    await refuse(fixture.client, owner, "human", "vault.hooks.regen.adopt", {
+      binding: original.id, candidate_hash: "0".repeat(64),
+    }, 409, "INVALID_STATE");
+    expect((await fixture.client.call("vault.hooks.regen.adopt", {
+      binding: original.id, candidate_hash: hooks07BodyHash(identicalBody),
+    })).outcome).toBe("installed");
+    const adoptedIdentical = await oneBinding("hooks07-regeneration");
+    const adoptedRecord = await regen(adoptedIdentical.id);
+    expect(adoptedRecord.record.body_hash).toBe(hooks07BodyHash(identicalBody));
+    expect(adoptedRecord.record.pending ?? null).toBeNull();
+    expect(adoptedRecord.record.previous).toEqual({ body: initialBody,
+      body_hash: hooks07BodyHash(initialBody), stamp: originalRecord.record.stamp });
+    const identicalHistory = await history(adoptedIdentical.id);
+    expect(identicalHistory[0]?.event).toEqual(expect.objectContaining({ event: "adopted",
+      candidate_hash: hooks07BodyHash(identicalBody), stamped: false, rebound: adoptedIdentical.id }));
+
+    const nextId = "a1070000000000000000000000000023";
+    await claim(nextId, "hooks07.regen.input");
+    const nextRuns = await awaitPublic(async () => (await hookReceipts())
+      .filter(row => row.fields?.binding === adoptedIdentical.id && row.fields?.trigger_ref === nextId),
+      rows => rows.length > 0, { label: "HOOKS-07 adopted body's saved fact run" });
+    expect(nextRuns).toHaveLength(1);
+    expect(nextRuns[0]?.outcome).toBe("nothing");
+    const different = await fixture.client.call("vault.hooks.regen.run", { binding: adoptedIdentical.id });
+    expect(await regen(adoptedIdentical.id)).toEqual<unknown>(different);
+    if (!different || different.record.pending?.outcome !== "needs_human_stamp") throw new Error("Different golden result must require the owner stamp");
+    expect(different.candidate_hash).toBe(hooks07BodyHash(differentBody));
+    expect(different.record.pending.candidate).toBe(differentBody);
+    expect(different.record.pending.diff.cases).toBe(1);
+    expect(different.record.pending.diff.changed).toEqual([receiptField(nextRuns[0]!, "run_key")]);
+    expect(different.record.pending.diff.execution_failed).toEqual([]);
+    expect(different.record.pending.diff.withheld).toEqual([]);
+    expect(different.record.pending.diff.missing_history).toEqual([]);
+    expect(await outputs()).toEqual(beforeEffects);
+    expect((await oneBinding("hooks07-regeneration")).binding.body_hash).toBe(hooks07BodyHash(identicalBody));
+    await nonowner("vault.hooks.regen.adopt", { binding: adoptedIdentical.id, candidate_hash: hooks07BodyHash(differentBody) });
+    expect((await fixture.client.call("vault.hooks.regen.adopt", { binding: adoptedIdentical.id,
+      candidate_hash: hooks07BodyHash(differentBody) })).outcome).toBe("installed");
+    const adoptedDifferent = await oneBinding("hooks07-regeneration");
+    expect(adoptedDifferent.binding.body_hash).toBe(hooks07BodyHash(differentBody));
+    const diffRecord = await regen(adoptedDifferent.id);
+    expect(diffRecord.record.previous?.body).toBe(identicalBody);
+    expect(diffRecord.record.previous?.body_hash).toBe(hooks07BodyHash(identicalBody));
+    expect((await history(adoptedDifferent.id))[0]?.event).toEqual(expect.objectContaining({ event: "adopted",
+      candidate_hash: hooks07BodyHash(differentBody), stamped: true, rebound: adoptedDifferent.id }));
+    expect((await fixture.client.call("vault.hooks.regen.revert", { binding: adoptedDifferent.id,
+      adopted_hash: hooks07BodyHash(differentBody) })).outcome).toBe("installed");
+    const restored = await oneBinding("hooks07-regeneration");
+    expect(restored.binding.body_hash).toBe(hooks07BodyHash(identicalBody));
+    const restoredRecord = await regen(restored.id);
+    expect(restoredRecord.record.body_hash).toBe(hooks07BodyHash(identicalBody));
+    expect(restoredRecord.record.previous ?? null).toBeNull();
+    expect(restoredRecord.record.pending ?? null).toBeNull();
+    expect(restoredRecord.record.declined).toEqual(different.record.pending.target);
+    expect((await history(restored.id))[0]?.event).toEqual(expect.objectContaining({ event: "reverted",
+      from_hash: hooks07BodyHash(differentBody), to_hash: hooks07BodyHash(identicalBody), rebound: restored.id }));
+    const blank = await fixture.client.call("vault.hooks.regen.run", { binding: restored.id });
+    expect(await regen(restored.id)).toEqual<unknown>(blank);
+    if (!blank || blank.record.pending?.outcome !== "rolled_back") throw new Error("Blank generated body must roll back");
+    expect(blank.record.pending.failure.phase).toBe("validate");
+    expect(blank.record.pending.failure.message.length).toBeGreaterThan(0);
+    expect(blank.candidate_hash ?? null).toBeNull();
+    expect(blank.record.body_hash).toBe(hooks07BodyHash(identicalBody));
+    expect((await oneBinding("hooks07-regeneration")).binding.body_hash).toBe(hooks07BodyHash(identicalBody));
+    expect(await outputs()).toEqual(beforeEffects);
+
+    // Own-agent doors distinguish actor kind, authorship, and a genuine golden diff.
+    const agentRuns = await awaitPublic(async () => (await hookReceipts())
+      .filter(row => row.fields?.binding === agentBinding.id
+        && [...seedIds, nextId].includes(row.fields?.trigger_ref ?? "")),
+      rows => rows.length >= 3, { label: "HOOKS-07 agent-authored golden fact runs" });
+    expect(agentRuns).toHaveLength(3);
+    for (const row of agentRuns) expect(row.outcome).toBe("nothing");
+    const agentDiff = await fixture.client.call("vault.hooks.regen.run", { binding: agentBinding.id });
+    expect(await agent.client.call("self.hooks.regen.get", { binding: agentBinding.id })).toEqual(agentDiff);
+    if (!agentDiff || agentDiff.record.pending?.outcome !== "needs_human_stamp") throw new Error("A genuine golden diff cannot authorize self-adoption");
+    expect(agentDiff.record.pending.diff.cases).toBe(3);
+    expect(agentDiff.record.pending.diff.changed).toEqual(agentRuns.map(row => receiptField(row, "run_key")).sort());
+    expect(agentDiff.record.pending.diff.execution_failed).toEqual([]);
+    expect(agentDiff.record.pending.diff.withheld).toEqual([]);
+    expect(agentDiff.record.pending.diff.missing_history).toEqual([]);
+    expect(agentDiff.candidate_hash).toBe(hooks07BodyHash(differentBody));
+    expect(await outputs()).toEqual(beforeEffects);
+    await refuse(agent.client, agent.principalRef, "agent", "self.hooks.regen.adopt", {
+      binding: agentBinding.id, candidate_hash: hooks07BodyHash(differentBody),
+    }, 409, "INVALID_STATE");
+    await refuse(fixture.client, owner, "human", "self.hooks.regen.get", { binding: agentBinding.id }, 403, "FORBIDDEN");
+    await refuse(fixture.client, owner, "human", "self.hooks.regen.adopt", {
+      binding: agentBinding.id, candidate_hash: validHash,
+    }, 403, "FORBIDDEN");
+    for (const binding of [restored.id, bindingB.id, agentBinding.id]) {
+      await refuse(otherAgent.client, otherAgent.principalRef, "agent", "self.hooks.regen.get", { binding }, 404, "NOT_FOUND");
+      await refuse(otherAgent.client, otherAgent.principalRef, "agent", "self.hooks.regen.adopt", {
+        binding, candidate_hash: validHash,
+      }, 404, "NOT_FOUND");
+    }
+    expect(await regen(agentBinding.id)).toEqual(agentDiff);
+    expect((await oneBinding("local")).binding).toEqual(agentBinding.binding);
+
+    // Withdraw a real credential's write authority, not a HookGrant read filter.
+    const { seed } = credentialParts(agent.credential);
+    const key = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"),
+      Buffer.from(seed, "hex")]), format: "der", type: "pkcs8" });
+    const holderKey = createPublicKey(key).export({ format: "der", type: "spki" }).subarray(-32).toString("hex");
+    const all: Facade.Scope = { worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" },
+      audience: { kind: "all" }, sensitivity: { kind: "all" }, verbs: { kind: "some", values: ["read", "write"] } };
+    const support = await fixture.client.call("vault.support_grants.mint", { holder: agent.principalRef,
+      holder_class: "agent", holder_key: holderKey, scope: all, records: [], purpose: "HOOKS-07 next-write revocation" });
+    const credential = `v2.cred.${support.slip.slice("v2.slip.".length)}.${seed}`;
+    redactor.add(support.slip, credential);
+    const withdrawn = new PublicHttpClient(fixture.url, { credential, artifacts: fixture.artifacts });
+    expect(await withdrawn.call("self.hooks.regen.get", { binding: agentBinding.id })).toEqual(agentDiff);
+    await refuse(withdrawn, agent.principalRef, "agent", "self.hooks.regen.adopt", {
+      binding: agentBinding.id, candidate_hash: hooks07BodyHash(differentBody),
+    }, 409, "INVALID_STATE");
+    const revoked = await fixture.client.call("vault.support_grants.revoke", { grant_ref: support.grant.grant_ref });
+    expect(revoked.changed).toBe(true);
+    expect((await fixture.client.call("vault.support_grants.list", { include_inactive: true, limit: pageBound }))
+      .grants.find(row => row.grant_ref === support.grant.grant_ref)?.status).toBe("revoked");
+    const revokedWrite = await withdrawn.raw("POST", "/v1/core/facade/self.hooks.regen.adopt", {
+      binding: agentBinding.id, candidate_hash: hooks07BodyHash(differentBody),
+    });
+    // No authenticated caller remains for OF-538 to attribute a receipt to.
+    expect(revokedWrite.status).toBe(401);
+    expect(await regen(agentBinding.id)).toEqual(agentDiff);
+
+    const regenHistory = await history(restored.id);
+    expect(regenHistory.map(row => row.event.event)).toEqual(["decided", "reverted", "adopted", "decided", "adopted", "decided"]);
+    for (const row of regenHistory) expect(row.actor).toEqual({ by: "owner", actor: owner });
+    expect(regenHistory[0]?.event).toEqual(expect.objectContaining({ event: "decided", decision: "rolled_back",
+      failure: expect.objectContaining({ phase: "validate" }) }));
+    expect(regenHistory.at(-1)?.event).toEqual(expect.objectContaining({ event: "decided", decision: "auto_adopt",
+      golden: identical.record.pending.golden }));
+    const agentHistory = await history(agentBinding.id);
+    const regenPackBeforeRestart = await installedPack("hooks07-regeneration");
+    const trackedFinal = await fixture.client.call("vault.skill_hubs.refs.get", { hub, ref_string: "hooks07-pinned" });
+    await fixture.artifacts.json("hooks07-before-restart.json", {
+      selectedWhileCandidate, boundWhileCandidate, selectedAfterFirst, boundAfterFirst,
+      selectedAfterRepeat, boundAfterRepeat, selectedB, bindingB, identical, different, blank,
+      regenHistory, agentDiff, agentHistory, refusalReceipts,
+    });
+    await fixture.kill();
+    await fixture.restart();
+    expect(await fixture.client.call("vault.skill_hubs.get", { hub })).toEqual(hubConfig);
+    expect(await fixture.client.call("vault.skill_hubs.refs.get", { hub, ref_string: "hooks07-pinned" })).toEqual(trackedFinal);
+    expect(await installedPack("hooks07-pinned")).toEqual(selectedB);
+    expect(await oneBinding("hooks07-pinned")).toEqual(bindingB);
+    expect(await installedPack("hooks07-regeneration")).toEqual(regenPackBeforeRestart);
+    expect(await oneBinding("hooks07-regeneration")).toEqual(restored);
+    expect(await regen(restored.id)).toEqual(blank);
+    expect(await history(restored.id)).toEqual(regenHistory);
+    expect(await regen(agentBinding.id)).toEqual(agentDiff);
+    expect(await oneBinding("local")).toEqual({ ...agentBinding, grant: agentReadGrant });
+    expect(await history(agentBinding.id)).toEqual(agentHistory);
+    expect(await outputs()).toEqual(beforeEffects);
+    for (const receipt of refusalReceipts) {
+      const durable = await fixture.client.call("vault.receipts.get", { receipt_ref: receipt.receipt_ref });
+      if (!durable) throw new Error("Refusal receipt did not survive restart");
+      // served_records is a current row projection, not the receipt's saved fields.
+      const { served_records: beforeProjection, ...before } = receipt;
+      const { served_records: afterProjection, ...after } = durable;
+      expect(after).toEqual(before);
+    }
+    expect(providers.seenFixtureCalls.map(row => row.fixtureId)).toEqual(steps.map(row => row.id));
+    await fixture.artifacts.json("hooks07-provider-calls.json", providers.seenFixtureCalls);
+
+    // Assert the promise after collecting ALL witnesses, so today's first pin
+    // defect cannot prevent the repeated-sync discriminator or regen journey.
+    for (const snapshot of [selectedWhileCandidate, selectedAfterFirst, selectedAfterRepeat]) {
+      expect(snapshot.pin_type).toBe("content_hash");
+      expect(snapshot.pin_value).toBe(pinA);
+      expect(snapshot.source_id).toBe(selectedA.source_id);
+      expect(snapshot.content_hash).toBe(pinA);
+      expect(snapshot.publisher).toBe(publisher);
+    }
+    for (const snapshot of [boundWhileCandidate, boundAfterFirst, boundAfterRepeat]) {
+      expect(snapshot).toEqual([bindingA]);
+    }
+  } finally {
+    try { if (engine) await engine.close(); } finally { await providers.close(); }
+  }
+});
