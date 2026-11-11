@@ -577,6 +577,22 @@ pub fn steward_grant_rows(vault: &Vault, agent: EntityId) -> Result<Vec<(EntityI
     Ok(rows)
 }
 
+/// The scope the standing Steward grant rows naming base agent `agent` hold
+/// together: the meet of their authority scopes, so each data axis is the
+/// narrowest any row holds. `None` while no row stands. Read from the stored
+/// rows alone.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn steward_reach_scope(
+    vault: &Vault,
+    agent: EntityId,
+) -> Result<Option<crate::federation::Scope>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::federation::steward_reach_in(&vault.store, &txn, agent)?.map(|reach| reach.scope))
+}
+
 /// Every grant row that stands as a Steward grant naming `agent` with a verb
 /// to give; an opt-out's record is not among them
 /// ([`steward_grant_rows`] lists it).

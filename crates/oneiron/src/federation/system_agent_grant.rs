@@ -498,7 +498,7 @@ impl Vault {
                 if verbs.is_empty() {
                     // The owner had removed every row: the record of his
                     // opt-out, which grants nothing and so has no receipt.
-                    self.put_steward_grant_row_in_txn(txn, actor, verbs)?;
+                    self.put_steward_grant_row_in_txn(txn, actor, verbs, None)?;
                 } else {
                     self.stand_engine_default_grant_in_txn(txn, actor, verbs)?;
                 }
@@ -562,7 +562,7 @@ impl Vault {
                 return Ok(false);
             }
             self.revoke_standing_steward_grants_in_txn(txn, owner, actor)?;
-            self.mint_steward_grant_in_txn(txn, owner, actor, full.clone())?;
+            self.mint_steward_grant_in_txn(txn, owner, actor, full.clone(), None)?;
             Ok(true)
         })?;
         if minted {
@@ -608,6 +608,7 @@ impl Vault {
                     .iter()
                     .map(|class| class.grant_verb().to_owned())
                     .collect(),
+                None,
             )
         })?;
         self.apply_pending_rebinds_after_commit();
@@ -734,15 +735,18 @@ impl Vault {
 
     /// Mints `agent`'s Steward grant with `verbs` as `owner`'s signed act, in
     /// the caller's writer: the act and the FEDERATION_GRANT row land
-    /// together, as the owner's agent grants do.
+    /// together, as the owner's agent grants do. The act signs the scope the
+    /// row holds, its `data_axes` among it
+    /// ([`Self::put_steward_grant_row_in_txn`]).
     fn mint_steward_grant_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         agent: EntityId,
         verbs: BTreeSet<String>,
+        data_axes: Option<&Scope>,
     ) -> Result<EntityId> {
-        let (id, grant) = self.put_steward_grant_row_in_txn(txn, agent, verbs)?;
+        let (id, grant) = self.put_steward_grant_row_in_txn(txn, agent, verbs, data_axes)?;
         self.append_agent_grant_act_in_txn(
             txn,
             owner,
@@ -772,7 +776,7 @@ impl Vault {
         agent: EntityId,
         verbs: BTreeSet<String>,
     ) -> Result<EntityId> {
-        let (id, _) = self.put_steward_grant_row_in_txn(txn, agent, verbs.clone())?;
+        let (id, _) = self.put_steward_grant_row_in_txn(txn, agent, verbs.clone(), None)?;
         let created_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         ENGINE_DEFAULT_GRANT.put(
             &self.store,
@@ -790,12 +794,18 @@ impl Vault {
 
     /// Puts `agent`'s Steward grant row with `verbs` on this vault's root in
     /// the caller's writer, with no act. No verbs is the record of an
-    /// opt-out: the row stands and gives nothing. Returns its id and body.
+    /// opt-out: the row stands and gives nothing. `data_axes` is the scope
+    /// whose worlds, facets, record kinds, audience and sensitivity the row
+    /// holds: the reach of the rows it replaces, for the narrowing door
+    /// (review of #7057: its row came with every axis whole, so taking a
+    /// verb gave back the records a standing row had taken). `None` leaves
+    /// each axis whole, as a default grant has it. Returns its id and body.
     fn put_steward_grant_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         agent: EntityId,
         verbs: BTreeSet<String>,
+        data_axes: Option<&Scope>,
     ) -> Result<(EntityId, FederationGrant)> {
         let scope = self.steward_root_scope_in_txn(txn)?;
         let mut grant = FederationGrant::new(
@@ -804,6 +814,9 @@ impl Vault {
             FederationGrantRole::Steward,
             FederationGrantPreset::Steward,
         );
+        if let Some(data_axes) = data_axes {
+            grant.authority_scope = data_axes.clone();
+        }
         // An empty set is the bottom axis, never an open one.
         grant.authority_scope.verbs = verbs.into_iter().collect();
         // Encoding validates: no row stands, and nothing is signed, for a
@@ -876,6 +889,7 @@ impl Vault {
                 txn,
                 agent,
                 verbs.iter().map(|verb| (*verb).to_owned()).collect(),
+                None,
             )?;
             Ok(id)
         })

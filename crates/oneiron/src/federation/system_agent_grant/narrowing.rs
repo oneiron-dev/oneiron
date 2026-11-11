@@ -12,7 +12,10 @@
 //! owner's signed revoke of every grant row that stands and, when any verb
 //! stays, his signed mint of the narrower one. A whole revoke leaves one
 //! row with no verbs in their place: the record of his opt-out, which
-//! reaches his other machines as the rows do. A narrowing record keeps the
+//! reaches his other machines as the rows do. The row that stands after
+//! holds the data axes the rows it replaces held together (worlds, facets,
+//! record kinds, audience, sensitivity): the door takes verbs and gives back
+//! no record a standing row had taken. A narrowing record keeps the
 //! verbs before and after and the breaks he confirmed. The door never
 //! widens: a grant back is the owner's own grant
 //! ([`Vault::grant_dreamer_weave`] for the Dreamer).
@@ -196,7 +199,8 @@ impl Vault {
     /// system-critical returns [`SystemAgentGrantNarrowing::ConfirmRequired`]
     /// with what breaks and changes nothing, unless `confirm` is the token
     /// that answer carried; then it applies. The door never widens: a verb
-    /// in `keep` the grant does not hold refuses.
+    /// in `keep` the grant does not hold refuses, and the row that stands
+    /// after reaches no record the standing rows did not reach together.
     ///
     /// # Errors
     ///
@@ -231,7 +235,7 @@ impl Vault {
             };
             // The newest standing row names the grant in force: the confirm
             // binds it, and the record keeps it.
-            let (grant, before) = (reach.grant, reach.verbs);
+            let (grant, before, data_axes) = (reach.grant, reach.verbs, reach.scope);
             if before.is_empty() {
                 return Ok(SystemAgentGrantNarrowing::Unchanged);
             }
@@ -266,13 +270,21 @@ impl Vault {
             // another machine stood among them. Then, when a verb stays, his
             // signed mint of the narrower grant; for a whole revoke, the row
             // with no verbs that records his opt-out. Either way one row
-            // stands here after, and it reaches his other machines.
+            // stands here after, and it reaches his other machines. That row
+            // holds the data axes the revoked rows held together: only its
+            // verbs differ, so no record comes back with a narrowing.
             self.revoke_standing_steward_grants_in_txn(txn, owner, agent)?;
             let minted = if keep.is_empty() {
-                self.put_steward_grant_row_in_txn(txn, agent, BTreeSet::new())?;
+                self.put_steward_grant_row_in_txn(txn, agent, BTreeSet::new(), Some(&data_axes))?;
                 None
             } else {
-                Some(self.mint_steward_grant_in_txn(txn, owner, agent, keep.clone())?)
+                Some(self.mint_steward_grant_in_txn(
+                    txn,
+                    owner,
+                    agent,
+                    keep.clone(),
+                    Some(&data_axes),
+                )?)
             };
             let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             SYSTEM_AGENT_NARROWING.put(
