@@ -11,6 +11,7 @@ pub mod consolidation;
 pub mod dag_append;
 pub mod feeds;
 pub mod label_writers;
+pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
