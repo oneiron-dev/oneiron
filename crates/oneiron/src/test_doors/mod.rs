@@ -9,6 +9,7 @@ pub mod code_run_answer;
 pub mod consolidation;
 pub mod dag_append;
 pub mod fanout_admission;
+pub mod grant_roles;
 pub mod label_writers;
 pub mod live_run_claim_put;
 pub mod retrieval_policy_default_floor;
