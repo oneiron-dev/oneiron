@@ -51,7 +51,8 @@ use oneiron::access_grant::{
 };
 use oneiron::federation::Scope;
 use oneiron::feeds::{
-    FeedAckRequest, FeedReadRequest, FeedSelector, FeedSource, FeedStart, FeedSubscribeRequest,
+    FeedAckRequest, FeedRead, FeedReadRequest, FeedSelector, FeedSource, FeedStart,
+    FeedSubscribeRequest,
 };
 use oneiron::memory::Memory;
 use oneiron::{EdgeActorClass, EntityId, Vault};
@@ -1026,17 +1027,28 @@ impl Reader<'_, '_> {
                 surface: format!("feed page {page}"),
                 text: serde_json::to_string(&answer).unwrap_or_default(),
             });
-            if !answer.through.is_empty() {
+            // A subscription made in this walk has no cursor idle past the
+            // retention window, so a gap here leaves the walk unfinished.
+            let page_read = match answer {
+                FeedRead::Page(page_read) => page_read,
+                FeedRead::Gap(_) => {
+                    self.scan
+                        .incomplete
+                        .push(format!("{SURFACE}: page {page} answered a gap"));
+                    return;
+                }
+            };
+            if !page_read.through.is_empty() {
                 let ack = FeedAckRequest {
                     subscription,
-                    through: answer.through.clone(),
+                    through: page_read.through,
                 };
                 if let Err(error) = vault.feed_ack(&lane, &ack) {
                     self.refuse(SURFACE, error.to_string());
                     return;
                 }
             }
-            if !answer.more {
+            if !page_read.more {
                 return;
             }
         }
