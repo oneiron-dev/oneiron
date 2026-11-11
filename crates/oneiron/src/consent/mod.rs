@@ -189,8 +189,6 @@ use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::gate::PolicyScopedGrant;
 #[cfg(test)]
-use crate::outbound_grant::StandingOutboundGrantScope;
-#[cfg(test)]
 use crate::store::GateDecisionId;
 
 #[cfg(test)]

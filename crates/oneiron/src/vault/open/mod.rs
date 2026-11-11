@@ -673,6 +673,7 @@ impl Vault {
             lfs_read_room: Default::default(),
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
+            sandbox_backends: Default::default(),
             result_body_pins,
             verb_hook_state: Default::default(),
             skill_invocations: Default::default(),

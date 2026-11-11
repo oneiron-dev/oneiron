@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn genesis_secret_step_cannot_be_skipped_and_dismissal_is_visible() {
     let key = ed_key(73);
-    let mut genesis = genesis_entry(73, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let mut genesis = genesis_entry(73, 1);
     if let AuthorityOp::Genesis { recovery, .. } = &mut genesis.op {
         *recovery = GenesisRecoveryStep::acknowledge(&[7; 32], false).unwrap();
     }

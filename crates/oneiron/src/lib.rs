@@ -320,6 +320,8 @@ pub mod agent_inbox_lens;
 pub mod board_verb;
 pub mod context_board;
 pub mod genui;
+pub mod guest_error;
+pub mod host_net_floor;
 pub mod lens;
 pub mod memory;
 pub use oneiron_base::panic_report;

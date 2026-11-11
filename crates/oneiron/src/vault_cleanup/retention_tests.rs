@@ -63,7 +63,7 @@ fn retention_archives_only_old_completed_tasks_and_resolver_restores_same_bytes(
     super::rollout::close_blockers_for_test(&vault);
     set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest)?;
     let report = run_vault_cleanup(&vault, &crate::attempt_queue::AttemptId::now())?;
-    assert_eq!(report.archived, vec![ids[0]]);
+    assert_eq!(report.archived, vec![Some(ids[0])]);
     assert_eq!(vault.get_raw(&ids[0])?, raw);
     let evidence = EntityId::now();
     let mut body = ClaimBody::new(
@@ -206,7 +206,13 @@ fn completed_attempt_retention_is_reversible_and_never_changes_queue_bytes() -> 
     vault.set_task_retention_days(Some(90))?;
     let report = run_vault_cleanup(&vault, &crate::attempt_queue::AttemptId::now())?;
     assert!(report.archived.is_empty());
-    assert_eq!(report.candidates[0].kind, CleanupKind::CompletedAttempt);
+    assert_eq!(
+        report.candidates[0]
+            .as_ref()
+            .expect("a run just made holds no erased slot")
+            .kind,
+        CleanupKind::CompletedAttempt
+    );
     accept_cleanup_proposal(&vault, &report.proposal.unwrap())?;
     assert!(queue.list()?.is_empty());
     assert_eq!(queue.get(record.id)?, before);

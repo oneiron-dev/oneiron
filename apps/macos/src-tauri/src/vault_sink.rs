@@ -48,12 +48,13 @@ impl SegmentSink for VaultSegmentSink {
         let asset = EntityId::now();
         self.vault
             .put_entity(&asset, ENTITY_TYPE_ASSET, span, meta.started_at, audio)?;
-        self.vault.put_claim(
-            &EntityId::now(),
-            &segment_claim(asset, &meta, span.end)?,
-            span,
-            meta.started_at,
-        )?;
+        // The claim is born in the facet the audio was born in, the vault
+        // default. Its subject is an ASSET, so the body's own default (the
+        // subject's substrate) names no FACET, and the claim door refuses it.
+        let mut claim = segment_claim(asset, &meta, span.end)?;
+        claim.scope_facet = self.vault.default_facet()?;
+        self.vault
+            .put_claim(&EntityId::now(), &claim, span, meta.started_at)?;
         Ok(asset)
     }
 }
