@@ -1,4 +1,4 @@
-//! Single-writer guard for the run lifecycle (untangle slice E1).
+//! Single-writer guard for the run lifecycle (untangle slices E1 and E2).
 //!
 //! Every write to one of the seven lifecycle fields of an attempt row
 //! (`state`, `active_pause`, `lease_owner`, `scheduled_at`, `settled_at`,
@@ -7,8 +7,10 @@
 //! `RunLifecycle`. This test reads the ported writer files as plain text and
 //! fails on any write it finds there, so a direct write cannot slip back in.
 //!
-//! E2 lengthens [`SCANNED_FILES`] with the files that PR ports; E3 replaces
-//! the list with every file under `src` except `lifecycle.rs` and test code.
+//! E1 scans `engine/mutate.rs`; E2 adds `cancel/ops.rs`,
+//! `cancel/terminal.rs`, `validate/cancel_receipt_landing.rs` and
+//! `validate/field_validators.rs`; E3 replaces the list with every file under
+//! `src` except `lifecycle.rs` and test code.
 //!
 //! Detection, per line (standard library only, no regex crate):
 //!
@@ -22,9 +24,13 @@
 //! * Mutating calls: a method from [`MUTATING_METHODS`] called on a
 //!   `.cancel_state`-rooted path (`.cancel_state.receipts.push(`). Read-only
 //!   calls (`clone`, `len`, `as_ref`, ...) are not in the list.
+//! * Mutable borrows: `&mut` of a `.cancel_state`-rooted path
+//!   (`&mut record.cancel_state.pressure`, `&mut row.cancel_state`). A plain
+//!   `&mut record` (no `.cancel_state` below it) is not a finding.
 //! * Fresh rows: an `AttemptRecord {` expression literal. Told apart from a
 //!   `use` (skipped explicitly), from a type use (`-> Result<AttemptRecord>`,
-//!   `&AttemptRecord`: no `{` follows the name), from an item header
+//!   `&AttemptRecord`: no `{` follows the name), from a return type (a name
+//!   right after `->` is a return type, not a literal), from an item header
 //!   (`impl AttemptRecord {`, `impl Trait for AttemptRecord {`,
 //!   `struct AttemptRecord {`), from a `let`/`if let` destructure (only
 //!   `let`/`let mut` precedes the name on the line) and from a `match`-arm
@@ -36,17 +42,25 @@
 //! the `'x'` / `'\..'` shape, so lifetimes like `&'a` are ignored).
 //!
 //! Known limits: the scan is line-based, so a write whose left-hand path
-//! spans two lines is missed (none in the scanned file today); block
-//! comments (`/* */`) are not stripped (none there today); passing
-//! `&mut record.cancel_state.pressure` to a free function is not a method
-//! call and is not flagged.
+//! spans two lines is missed (none in the scanned files today); block
+//! comments (`/* */`) are not stripped (none there today); a write through
+//! a local alias of a `cancel_state` member (`pressure.pending = ..` where
+//! `pressure: &mut AttemptCancelPressure`) has no `.cancel_state` on its
+//! line and is not seen. The borrow rule flags the line that makes such an
+//! alias from a row, so the alias cannot be made in a scanned file.
 
 use std::path::PathBuf;
 
 /// Writer files the port has moved into `RunLifecycle`. E1 ports one file;
 /// E2 adds its files; E3 replaces this list with every file under `src`
 /// except `lifecycle.rs` and test code.
-const SCANNED_FILES: &[&str] = &["src/attempt_queue/engine/mutate.rs"];
+const SCANNED_FILES: &[&str] = &[
+    "src/attempt_queue/engine/mutate.rs",
+    "src/attempt_queue/cancel/ops.rs",
+    "src/attempt_queue/cancel/terminal.rs",
+    "src/attempt_queue/validate/cancel_receipt_landing.rs",
+    "src/attempt_queue/validate/field_validators.rs",
+];
 
 /// The seven lifecycle fields. (`updated_at`, `backoff_until`, `last_error`,
 /// `events` and `history` are not lifecycle fields: sites keep writing them.)
@@ -61,12 +75,11 @@ const LIFECYCLE_FIELDS: &[&str] = &[
 ];
 
 /// In-place mutators looked for on `.cancel_state`-rooted member paths.
-/// Found today: `push` only
-/// (`src/attempt_queue/validate/cancel_receipt_landing.rs:73`,
-/// `record.cancel_state.receipts.push(receipt)`; an E2 file, not scanned
-/// here). The rest are the same member types' sibling mutators, guarded so a
-/// write cannot hide behind a synonym. Read-only calls seen on these paths
-/// today (`clone`, `len`, `last`, `as_ref`, `is_some`, `is_none`,
+/// Found today: `push` only (`src/attempt_queue/lifecycle.rs:723`,
+/// `record.cancel_state.receipts.push(receipt)`, moved there with E2).
+/// The rest are the same member types' sibling mutators,
+/// guarded so a write cannot hide behind a synonym. Read-only calls seen on
+/// these paths today (`clone`, `len`, `last`, `as_ref`, `is_some`, `is_none`,
 /// `remaining_units`, ...) are deliberately absent.
 const MUTATING_METHODS: &[&str] = &[
     "push",
@@ -118,6 +131,12 @@ fn no_lifecycle_writes_outside_lifecycle_rs() {
             if let Some(method) = find_mutating_call(&code) {
                 failures.push(format!(
                     "{rel}:{lineno}: mutating call .{method}( on .cancel_state path: {}",
+                    line.trim()
+                ));
+            }
+            if has_mut_cancel_borrow(&code) {
+                failures.push(format!(
+                    "{rel}:{lineno}: &mut borrow of .cancel_state path: {}",
                     line.trim()
                 ));
             }
@@ -328,6 +347,61 @@ fn find_mutating_call(code: &str) -> Option<&'static str> {
     None
 }
 
+/// Whether the line holds a `&mut` borrow of a `.cancel_state`-rooted path
+/// (`&mut record.cancel_state.pressure`, `&mut row.cancel_state`). A plain
+/// `&mut record` (no `.cancel_state` below it) is not a finding.
+fn has_mut_cancel_borrow(code: &str) -> bool {
+    let bytes = code.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let Some(rel) = bytes[i..].iter().position(|b| *b == b'&') else {
+            break;
+        };
+        let at = i + rel;
+        let mut p = at + 1;
+        while p < bytes.len() && (bytes[p] == b' ' || bytes[p] == b'\t') {
+            p += 1;
+        }
+        if p + 3 > bytes.len() || bytes[p] != b'm' || bytes[p + 1] != b'u' || bytes[p + 2] != b't' {
+            i = at + 1;
+            continue;
+        }
+        if p + 3 < bytes.len() && is_ident_byte(bytes[p + 3]) {
+            i = at + 1;
+            continue;
+        }
+        let mut q = p + 3;
+        while q < bytes.len() && (bytes[q] == b' ' || bytes[q] == b'\t') {
+            q += 1;
+        }
+        if q >= bytes.len() || !is_ident_start(bytes[q]) {
+            i = at + 1;
+            continue;
+        }
+        let mut e = q;
+        while e < bytes.len()
+            && (is_ident_byte(bytes[e]) || bytes[e] == b'.' || bytes[e] == b'[' || bytes[e] == b']')
+        {
+            e += 1;
+        }
+        let Some(path) = code.get(q..e) else {
+            i = at + 1;
+            continue;
+        };
+        let mut start = 0;
+        while let Some(rel) = path[start..].find(".cancel_state") {
+            let found = start + rel;
+            let after = found + ".cancel_state".len();
+            if after >= path.len() || !is_ident_byte(path.as_bytes()[after]) {
+                return true;
+            }
+            start = after;
+        }
+        i = at + 1;
+    }
+    false
+}
+
 /// Whether the line holds an `AttemptRecord {` expression literal (see the
 /// module docs for how imports, type uses and patterns are told apart).
 fn is_record_literal(line: &str, code: &str) -> bool {
@@ -352,7 +426,7 @@ fn is_record_literal(line: &str, code: &str) -> bool {
             continue;
         }
         let before = code[..at].trim_end();
-        if is_let_pattern(before) || is_item_header(before) {
+        if is_let_pattern(before) || is_item_header(before) || is_return_type(before) {
             start = at + "AttemptRecord".len();
             continue;
         }
@@ -376,6 +450,12 @@ fn is_let_pattern(before: &str) -> bool {
 /// `impl Trait for`, `struct`.
 fn is_item_header(before: &str) -> bool {
     ends_with_keyword(before, &["impl", "for", "struct"])
+}
+
+/// Whether `before` ends with a return arrow: a name right after `->` is a
+/// return type, not a literal.
+fn is_return_type(before: &str) -> bool {
+    before.ends_with("->")
 }
 
 /// Whether `before` ends with one of `keywords` as whole words.
