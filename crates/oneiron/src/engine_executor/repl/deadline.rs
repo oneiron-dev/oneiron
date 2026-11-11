@@ -47,6 +47,8 @@ pub(super) struct SliceProgram<'p> {
     /// The repairs the normalization made to the reply that wrote the
     /// program.
     pub(super) repairs: ExecutorWireRepairs,
+    /// The model id that reply's served receipt named, when it named one.
+    pub(super) answered_by: Option<ModelId>,
     /// The pending step this entry resumed, when it did.
     pub(super) prior: Option<&'p PendingCodeStep>,
     /// Whether the runtime answered the step with an outcome.
@@ -99,9 +101,9 @@ impl EngineNativeExecutor<'_> {
     /// and storage binding checks ran before this.
     ///
     /// The program carries the correction record of the reply that wrote
-    /// it, with the model and repairs its pending step keeps: the record
-    /// commits once, with the checkpoint the resumed step commits, and the
-    /// reply's heal tally moves in that commit (FIX 4411).
+    /// it, with the model, answering model and repairs its pending step
+    /// keeps: the record commits once, with the checkpoint the resumed step
+    /// commits, and the reply's heal tally moves in that commit (FIX 4411).
     pub(super) fn take_pending_program<'p>(
         &self,
         config: &EngineExecutorConfig,
@@ -162,7 +164,8 @@ impl EngineNativeExecutor<'_> {
                     pending.step_seq,
                     &pending.model,
                     pending.repairs,
-                ),
+                )
+                .answered_by(pending.answered_by.clone()),
             },
         })
     }
@@ -213,8 +216,8 @@ impl EngineNativeExecutor<'_> {
     /// kept: the program makes them again when it runs again. So the park
     /// writes no correction record and moves no heal tally: the commit of
     /// the step's checkpoint does both, once (FIX 4411). A step parked again
-    /// keeps its first park's request, program, speech, model, repairs and
-    /// frontier start.
+    /// keeps its first park's request, program, speech, model, answering
+    /// model, repairs and frontier start.
     fn park_pending_step(
         &self,
         config: &EngineExecutorConfig,
@@ -265,6 +268,9 @@ impl EngineNativeExecutor<'_> {
                 .prior
                 .map_or(&config.model, |prior| &prior.model)
                 .clone(),
+            answered_by: slice
+                .prior
+                .map_or(slice.answered_by, |prior| prior.answered_by.clone()),
             repairs: slice.prior.map_or(slice.repairs, |prior| prior.repairs),
             determinism: config.determinism,
             trailing_speech,
