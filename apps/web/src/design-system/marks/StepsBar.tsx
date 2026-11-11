@@ -14,7 +14,8 @@ export interface StepsBarProps extends Omit<React.ComponentPropsWithRef<'span'>,
 }
 
 /* A run's plan as a bar: filled done, half-tone working (its sub-progress
-   filling it), empty ahead. Past eight steps it becomes twelve fixed cells.
+   filling it), empty ahead, a dashed outline where a step failed. Past eight
+   steps it becomes twelve fixed cells.
    The caller derives each step's state from the run; the bar keeps no
    clock. */
 export function StepsBar({ steps, label, className, ...props }: StepsBarProps) {
@@ -48,7 +49,12 @@ export function StepsBar({ steps, label, className, ...props }: StepsBarProps) {
           const x = i * (w + BAR_GAP)
           return (
             <g key={i} data-state={cell.state}>
-              <rect className="sl-steps-track" x={x} y="0" width={w} height={BAR_HEIGHT} />
+              {cell.state === 'failed' ? (
+                /* Inset half a pixel so the 1 px dash lands on whole pixels. */
+                <rect className="sl-steps-failed" x={x + 0.5} y="0.5" width={Math.max(0, w - 1)} height={BAR_HEIGHT - 1} />
+              ) : (
+                <rect className="sl-steps-track" x={x} y="0" width={w} height={BAR_HEIGHT} />
+              )}
               {cell.halftone > 0 ? (
                 <rect x={x} y="0" width={w * cell.halftone} height={BAR_HEIGHT} fill={`url(#${patternId})`} />
               ) : null}

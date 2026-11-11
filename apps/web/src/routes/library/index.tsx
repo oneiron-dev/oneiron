@@ -85,6 +85,12 @@ const RUN_STARTED: Step[] = [{ state: 'ahead' }, { state: 'ahead' }, { state: 'a
 const RUN_WORKING: Step[] = [{ state: 'done' }, { state: 'working', progress: 0.4 }, { state: 'ahead' }]
 const RUN_WORKING_EARLY: Step[] = [{ state: 'done' }, { state: 'done' }, { state: 'working' }, { state: 'ahead' }]
 const RUN_DONE: Step[] = [{ state: 'done' }, { state: 'done' }, { state: 'done' }]
+const RUN_FAILED: Step[] = [{ state: 'done' }, { state: 'failed' }, { state: 'ahead' }]
+const RUN_LONG_FAILED: Step[] = [
+  ...Array.from({ length: 4 }, () => ({ state: 'done' as const })),
+  { state: 'failed' },
+  ...Array.from({ length: 5 }, () => ({ state: 'ahead' as const })),
+]
 const RUN_LONG: Step[] = [
   ...Array.from({ length: 6 }, () => ({ state: 'done' as const })),
   { state: 'working', progress: 0.5 },
@@ -507,6 +513,12 @@ function LibraryPage() {
           </Specimen>
           <Specimen name="done">
             <StepsBar steps={RUN_DONE} />
+          </Specimen>
+          <Specimen name="failed">
+            <StepsBar steps={RUN_FAILED} />
+          </Specimen>
+          <Specimen name="ten steps, failed">
+            <StepsBar steps={RUN_LONG_FAILED} />
           </Specimen>
           <Specimen name="eight steps">
             <StepsBar steps={RUN_EIGHT} />
