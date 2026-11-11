@@ -134,6 +134,7 @@ export {
 export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
 export { claimInk, type ClaimInk } from './patterns/claim-ink'
 export { findBoostWord } from './patterns/find-boost-word'
+export { WriteLine, type WriteLineProps } from './patterns/WriteLine'
 export { TaskList, type TaskListProps } from './patterns/TaskList'
 export {
   TaskRow,
