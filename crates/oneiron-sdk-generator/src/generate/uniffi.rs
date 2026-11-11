@@ -371,7 +371,7 @@ type PyDict = Vec<(Value, Value)>;
 /// comparison makes it: identity first, then equality. Python's `json.loads` returns its one `NaN` object for every
 /// `NaN` token, so any two NaNs from the rows are the same object and compare equal there, while `Value::py_eq` (the
 /// scalar `==`) keeps `NaN != NaN`. Every other value compares by `py_eq`, element by element.
-fn json_eq(a: &Value, b: &Value) -> bool {
+pub(crate) fn json_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Float(x), Value::Float(y)) if x.is_nan() && y.is_nan() => true,
         (Value::List(a), Value::List(b)) => {
