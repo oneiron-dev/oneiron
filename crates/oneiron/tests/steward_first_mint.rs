@@ -9,6 +9,10 @@
 //! own root, not a member: the owner still shares the vault after it (review
 //! of #6917, round 2; the membership guard counted it and refused).
 //!
+//! The owner's grant back (`oneiron dreamer grant`) over a narrower grant
+//! revokes the one it replaces (review of #6913): the Dreamer holds one
+//! Steward grant, so a later whole revoke leaves none standing.
+//!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test steward_first_mint`.
@@ -17,8 +21,9 @@
 use std::collections::BTreeSet;
 
 use oneiron::test_doors::steward::{
-    GrantMark, STEWARD_VERBS, WeaveReach, dreamer, drop_dreamer_rows, grant_mark,
-    open_owner_carrier_vault, owner, weave_reach,
+    GrantMark, STEWARD_READ_VERB, STEWARD_VERBS, WeaveReach, dreamer, drop_dreamer_rows,
+    grant_mark, open_owner_carrier_vault, owner, standing_steward_grants, weave_reach,
+    write_generated_false_without_ceilings,
 };
 
 const SHARED: u64 = 42;
@@ -109,5 +114,54 @@ fn the_first_mint_does_not_close_sharing() {
             .initialize_shared_vault(&owner, SHARED, None, &[], 1)
             .is_err(),
         "a vault is shared once: the creation row closes it"
+    );
+}
+
+#[test]
+fn the_owners_grant_back_revokes_the_grant_it_replaces() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    // A pack that holds the read row alone: the first mint copies `read`.
+    write_generated_false_without_ceilings(&vault).expect("Generated: false, no ceiling");
+    vault.provision_system_agent_grants().expect("first mint");
+    let Some(GrantMark::Minted {
+        grant: first,
+        verbs,
+    }) = grant_mark(&vault, dreamer).expect("mark")
+    else {
+        panic!("the read row mints a grant");
+    };
+    assert_eq!(
+        verbs.iter().map(String::as_str).collect::<Vec<_>>(),
+        [STEWARD_READ_VERB],
+        "the first mint copies read alone"
+    );
+    assert_eq!(
+        standing_steward_grants(&vault, dreamer).expect("standing"),
+        [first],
+        "one Steward grant stands after the first mint"
+    );
+
+    let owner = owner(&vault).expect("owner proof");
+    assert!(
+        vault
+            .grant_dreamer_weave(&owner, 1)
+            .expect("the owner's grant"),
+        "the owner's grant mints the whole default"
+    );
+    let Some(GrantMark::Minted {
+        grant: second,
+        verbs,
+    }) = grant_mark(&vault, dreamer).expect("mark")
+    else {
+        panic!("the owner's grant stands");
+    };
+    assert_ne!(second, first, "a fresh grant");
+    assert_eq!(verbs.len(), STEWARD_VERBS.len(), "the whole default");
+    assert_eq!(
+        standing_steward_grants(&vault, dreamer).expect("standing"),
+        [second],
+        "the grant the owner's grant replaced is revoked: one Steward grant stands"
     );
 }

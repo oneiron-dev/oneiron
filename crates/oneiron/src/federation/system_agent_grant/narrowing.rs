@@ -207,6 +207,17 @@ impl Vault {
         )
     }
 
+    /// Takes the system-critical mark off `grant`, in the caller's writer:
+    /// a grant that was revoked keeps no vault function running.
+    pub(super) fn unmark_system_critical_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        grant: EntityId,
+    ) -> Result<()> {
+        SYSTEM_CRITICAL_GRANT.delete(&self.store, txn, &grant)?;
+        Ok(())
+    }
+
     /// Owner act: narrows base agent `agent`'s Steward grant to the verbs in
     /// `keep` (empty revokes it whole). A grant the vault marks
     /// system-critical returns [`SystemAgentGrantNarrowing::ConfirmRequired`]
