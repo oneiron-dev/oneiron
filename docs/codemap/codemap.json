@@ -647,7 +647,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AgentDefinitionPutDisposition"
@@ -655,7 +655,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 10
      }
@@ -7550,6 +7550,7 @@
      "purpose": "The atomic multi-database write-batch builder and its two terminals",
      "surface": {
       "crate-vis": 10,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -27395,9 +27396,9 @@
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -40260,7 +40261,7 @@
      "path": "src/federation/content_write.rs",
      "purpose": "Actor-bound content transaction interface",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -99461,6 +99462,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_generic_writers.rs",
+     "purpose": "An agent's generic row writers follow ARCH-0053:20 for AGENT_DEF rows",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -101290,7 +101299,7 @@
     "agent_def": {
      "files": 24,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
@@ -102926,10 +102935,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 249,
+   "over_bar": 250,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7336,
-   "test_files": 1015
+   "test_files": 1016
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -126760,7 +126769,7 @@
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -143918,6 +143927,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_served_batch.rs",
+     "purpose": "The served row doors follow ARCH-0053:20 on their credential's agent slice: `vault.batch`, and the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -144832,7 +144849,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1831,
-   "test_files": 189
+   "test_files": 190
   },
   "oneiron-skill-attribution": {
    "files": [
