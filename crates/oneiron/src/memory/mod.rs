@@ -104,6 +104,7 @@ pub mod erase_sweep;
 mod export;
 mod export_audit;
 mod export_kept;
+mod feeds;
 pub mod query_records;
 // FIX 11176: a kept export read and let go through verbs.
 mod export_transfer_read;
