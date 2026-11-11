@@ -49,6 +49,34 @@ impl Memory<'_> {
 }
 
 impl Memory<'_> {
+    /// `text`, projected from the stored record `bodies` (a TURN's own body
+    /// and the MESSAGE rows its words come from), as the bound reader reads
+    /// it: for every reader but the owner, each lifted key a text of those
+    /// bodies holds reads as its handle, as `vault.get` serves the rows
+    /// themselves (OF-067; review of #6964). The flag says a key was masked.
+    pub(crate) fn lifted_projection_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        bodies: &[Vec<u8>],
+        text: &str,
+    ) -> MemoryResult<(String, bool)> {
+        if !self.reads_lifted_keys_masked_in_txn(txn)? {
+            return Ok((text.to_owned(), false));
+        }
+        let values = bodies
+            .iter()
+            .filter_map(|body| super::support::decode_body_json(body))
+            .collect();
+        let keys =
+            LiftedKeys::of_json_in_txn(&self.vault.store, txn, &serde_json::Value::Array(values))?;
+        Ok(match keys.masked(text) {
+            Some(masked) => (masked, true),
+            None => (text.to_owned(), false),
+        })
+    }
+}
+
+impl Memory<'_> {
     /// A claim's served `value` and `scope` as the bound reader reads them
     /// (FIX 13735): for every reader but the owner, each lifted key a string
     /// or an object key of either holds becomes its handle, as in a recall
