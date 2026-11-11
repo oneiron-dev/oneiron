@@ -642,6 +642,70 @@ fn covered_endpoint_stands(image: &super::AuthorityCheckpointV2, hash: &[u8; 32]
     image.rows.contains_key(hash) && image.fold().valid_entries.contains(hash)
 }
 
+/// Whether `key` binds `actor` as a system writer in `fold`: an Active
+/// actor binding plus a live Software `ROLE_AGENT` roster entry, or a
+/// history the successor root carried. Shared by the local writer gate and
+/// the landing-reply signer binding test.
+fn machine_signer_binding_holds_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &super::AuthorityFold,
+    id: EntityId,
+    key: &AuthorityKey,
+    actor: EntityId,
+) -> bool {
+    if fold.actor_bindings.get(key).is_some_and(|binding| {
+        binding.status == ActorBindingStatus::Active
+            && binding.actor_ref == actor
+            && binding.actor_class == "system"
+    }) && fold.roster.get(key).is_some_and(|device| {
+        !device.revoked && device.tier == AuthorityTier::Software && device.roles & ROLE_AGENT != 0
+    }) {
+        return true;
+    }
+    // A history the successor root carried stays writable as it
+    // stays readable: its transitions project an existing birth.
+    super::host_re_root::origin_carried_past_re_root(store, txn, fold, id, key, actor)
+}
+
+/// Whether `body`'s MACHINE proof binds `writer` as its signer in `fold`:
+/// the proof's actor is `writer`, its class is System, its key is strong,
+/// and the folded key/actor binding holds. Malformed or absent proof is
+/// false; storage faults propagate. Read-only: landing-reply admission uses
+/// it so a provisional row's unbound key admits no reply.
+pub(crate) fn machine_claim_signer_bound_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &super::AuthorityFold,
+    id: &EntityId,
+    body: &ClaimBody,
+    writer: EntityId,
+) -> Result<bool> {
+    let parsed = match proof(body) {
+        Ok(parsed) => parsed,
+        Err(Error::Claim(_) | Error::Record(_) | Error::EntityNotFound) => return Ok(false),
+        Err(local) => return Err(local),
+    };
+    let Some((actor, class, Some(signature))) = parsed else {
+        return Ok(false);
+    };
+    if actor != writer || class != EdgeActorClass::System as u64 {
+        return Ok(false);
+    }
+    if super::strong_ed25519_key(&signature.public_key).is_err() {
+        return Ok(false);
+    }
+    let authority_key = AuthorityKey::Ed25519(signature.public_key);
+    Ok(machine_signer_binding_holds_in_txn(
+        store,
+        txn,
+        fold,
+        *id,
+        &authority_key,
+        actor,
+    ))
+}
+
 /// Replay checks origin only, while the local writer must also have an active
 /// key/actor tuple in the transaction's folded roster. No unknown-signer
 /// rejection occurs on replay: an enrollment can arrive after its signed claim.
@@ -750,32 +814,8 @@ pub(crate) fn verify_machine_claim_in_txn(
     // bytes provisionally; read/export withhold until verified history arrives.
     if !replicated {
         let authority_key = AuthorityKey::Ed25519(proof.public_key);
-        if !fold
-            .actor_bindings
-            .get(&authority_key)
-            .is_some_and(|binding| {
-                binding.status == ActorBindingStatus::Active
-                    && binding.actor_ref == actor
-                    && binding.actor_class == "system"
-            })
-            || !fold.roster.get(&authority_key).is_some_and(|device| {
-                !device.revoked
-                    && device.tier == AuthorityTier::Software
-                    && device.roles & ROLE_AGENT != 0
-            })
-        {
-            // A history the successor root carried stays writable as it
-            // stays readable: its transitions project an existing birth.
-            if !super::host_re_root::origin_carried_past_re_root(
-                store,
-                txn,
-                &fold,
-                *id,
-                &authority_key,
-                actor,
-            ) {
-                return Err(denied());
-            }
+        if !machine_signer_binding_holds_in_txn(store, txn, &fold, *id, &authority_key, actor) {
+            return Err(denied());
         }
     }
     Ok(())
