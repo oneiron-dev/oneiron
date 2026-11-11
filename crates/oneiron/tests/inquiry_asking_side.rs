@@ -522,6 +522,36 @@ fn a_housekeeping_pass_drops_an_ended_tasks_answer_with_no_read() {
 }
 
 #[test]
+fn an_unanswered_or_refused_send_drops_an_ended_tasks_answer() {
+    let fixture = asking();
+    let host = MemberHost::answering(&fixture.company);
+    assert!(fixture.send(&host, fixture.task).held);
+    assert!(fixture.send(&host, fixture.other_task).held);
+    let vault = &fixture.company.vault;
+
+    door::cancel_task(vault, fixture.task, fixture.asker).expect("the task ends");
+    assert_eq!(door::held_inquiry_answer_count(vault), 2);
+    let stopped = MemberHost::new(Reply::Stopped);
+    let unavailable = fixture.send(&stopped, fixture.other_task);
+    assert_eq!(unavailable.outcome, InquiryOutcome::Unavailable);
+    assert_eq!(
+        door::held_inquiry_answer_count(vault),
+        1,
+        "an unavailable send drops the ended task's answer and keeps the open task's"
+    );
+
+    door::cancel_task(vault, fixture.other_task, fixture.asker).expect("the other task ends");
+    vault
+        .send_inquiry(&fixture.request(fixture.other_task, None), &host)
+        .expect_err("an ended task sends no inquiry");
+    assert_eq!(
+        door::held_inquiry_answer_count(vault),
+        0,
+        "a refused send drops the ended task's answer too"
+    );
+}
+
+#[test]
 fn an_answer_past_its_valid_until_is_not_held() {
     let fixture = asking();
     let host = MemberHost::new(Reply::Answered {

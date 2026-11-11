@@ -91,7 +91,9 @@ impl Vault {
     /// text), and holds an answer's statements with the task until the task
     /// ends or `valid_until` comes. The keep is the vault's `inquiry_keep`.
     /// `copy` has no landing yet (INQUIRE-1 PR 6), so an answer to a `copy`
-    /// inquiry is held with the task as well.
+    /// inquiry is held with the task as well. Every send, whatever its
+    /// outcome and before any refusal, first drops the held answers whose
+    /// task has ended or whose `valid_until` has come.
     ///
     /// # Errors
     ///
@@ -103,6 +105,7 @@ impl Vault {
         request: &InquirySendRequest,
         transport: &dyn InquiryTransport,
     ) -> Result<InquirySent> {
+        self.evict_inquiry_answers()?;
         if !super::holder::inquiry_task_is_open(self, request.task)? {
             return Err(refuse(
                 "the inquiry's task is not an open TASK of this vault",
