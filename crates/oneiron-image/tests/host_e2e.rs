@@ -10,11 +10,13 @@ use std::time::Duration;
 
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_image::{VERB_ANNOTATE, VERB_CROP, VERB_EXPORT, VERB_OPEN};
-use oneiron_organ_host::{CallClass, HostConfig, OrganCall, OrganHost, OrganInput, OrganSpec};
-use oneiron_organ_protocol::{Hash32, TypedBody};
-use rmpv::Value;
+use oneiron_organ_host::{
+    CallClass, HostConfig, OrganCall, OrganHost, OrganInput, OrganSpec, SightedInput,
+};
+use oneiron_organ_protocol::{Hash32, TypedBody, Value};
 
 const ORGAN: &str = env!("CARGO_BIN_EXE_oneiron-image-organ");
 
@@ -73,7 +75,14 @@ fn call(verb: &str, args: Value, body: Option<TypedBody>, inputs: Vec<OrganInput
         schema: 1,
         args,
         body,
-        inputs,
+        // The test's vault holds no secret marks, so every sight reads the stored bytes.
+        inputs: inputs
+            .into_iter()
+            .map(|input| SightedInput {
+                input,
+                sight: SecretSight::Owner,
+            })
+            .collect(),
         class: CallClass::Interactive,
         deadline: Duration::from_secs(20),
         grant: "photo-edit".into(),
@@ -118,16 +127,16 @@ fn a_vault_image_opens_crops_annotates_and_exports_through_the_host() {
     let line = map(vec![
         (
             "shape",
-            map(vec![
-                ("type", "freehand".into()),
-                (
+            map(vec![(
+                "freehand",
+                map(vec![(
                     "points",
                     Value::Array(vec![map(vec![
                         ("x", Value::F32(0.5)),
                         ("y", Value::F32(0.5)),
                     ])]),
-                ),
-            ]),
+                )]),
+            )]),
         ),
         (
             "stroke",
