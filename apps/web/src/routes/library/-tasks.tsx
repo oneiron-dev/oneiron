@@ -117,7 +117,7 @@ function TasksDemo() {
             data-specimen="task-line-count"
           />
         </MessageRow>
-        <MessageRow author={<Glyph initial="o" label="Oleksii" size={24} />} name="Oleksii" time="14:05">
+        <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="14:05">
           <MessageRow.Text>Eiri, check the supplier notes against the filings.</MessageRow.Text>
         </MessageRow>
         <MessageRow author={line(EIRI, 24)} name="Eiri" time="14:06">
@@ -253,7 +253,7 @@ function SettledDemo() {
           Metryon marks weeks 44 to 46 as promo weeks in the Q4 fit and fits it again.
         </SettledCard.Detail>
       </SettledCard>
-      <SettledCard asker={<Glyph initial="y" label="Yurii" size={18} guest />} question="Edit Acme store sales: three rows from Yurii" pick="approve" state="approved" time="11:20">
+      <SettledCard asker={<Glyph initial="y" label="Yuki" size={18} guest />} question="Edit Acme store sales: three rows from Yuki" pick="approve" state="approved" time="11:20">
         <SettledCard.Detail>Three weekly rows for store 12 change; the old values stay in the ledger.</SettledCard.Detail>
       </SettledCard>
       <SettledCard asker={line(TORY)} question="Pull paid registry extracts at ¥800 each?" pick="allow once" state="allowed once" time="13:14" />

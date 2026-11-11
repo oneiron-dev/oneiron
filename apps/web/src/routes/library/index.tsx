@@ -397,7 +397,7 @@ function LibraryPage() {
           <Specimen name="open" tall={4}>
             <Menu defaultOpen>
               <Menu.Trigger asChild>
-                <Verb>Oleksii</Verb>
+                <Verb>Owen</Verb>
               </Menu.Trigger>
               <Menu.Content width="wide" aria-label="account">
                 <Menu.Heading>Personas</Menu.Heading>
@@ -407,7 +407,7 @@ function LibraryPage() {
                     checked={persona === p}
                     closeOnSelect={false}
                     onClick={() => setPersona(p)}
-                    icon={<Glyph initial="o" label={`Oleksii, ${p}`} size={18} className="lib-menu-glyph" />}
+                    icon={<Glyph initial="o" label={`Owen, ${p}`} size={18} className="lib-menu-glyph" />}
                   >
                     {p}
                   </Menu.Item>
@@ -479,7 +479,7 @@ function LibraryPage() {
             </span>
           </Specimen>
           <Specimen name="at a glyph">
-            <Glyph initial="y" label="Yurii" guest />
+            <Glyph initial="y" label="Yuki" guest />
           </Specimen>
         </Section>
 
@@ -558,17 +558,17 @@ function LibraryPage() {
           <Specimen name="Metryon">
             <Glyph glyph="ruler" label="Metryon" size={32} />
           </Specimen>
-          <Specimen name="Oleksii">
-            <Glyph initial="o" label="Oleksii" size={32} />
+          <Specimen name="Owen">
+            <Glyph initial="o" label="Owen" size={32} />
           </Specimen>
           <Specimen name="18, 24, 32">
             <span className="lib-inline">
               <Glyph glyph="ruler" label="Metryon" size={18} />
               <Glyph glyph="ruler" label="Metryon" size={24} />
               <Glyph glyph="ruler" label="Metryon" size={32} />
-              <Glyph initial="y" label="Yurii" size={18} />
-              <Glyph initial="y" label="Yurii" size={24} />
-              <Glyph initial="y" label="Yurii" size={32} />
+              <Glyph initial="y" label="Yuki" size={18} />
+              <Glyph initial="y" label="Yuki" size={24} />
+              <Glyph initial="y" label="Yuki" size={32} />
             </span>
           </Specimen>
           <Specimen name="square, rounded, round">
@@ -576,9 +576,9 @@ function LibraryPage() {
               <Glyph glyph="owl" label="Tory" shape="square" />
               <Glyph glyph="owl" label="Tory" shape="rounded" />
               <Glyph glyph="owl" label="Tory" shape="round" />
-              <Glyph initial="o" label="Oleksii" shape="square" />
-              <Glyph initial="o" label="Oleksii" shape="rounded" />
-              <Glyph initial="o" label="Oleksii" shape="round" />
+              <Glyph initial="o" label="Owen" shape="square" />
+              <Glyph initial="o" label="Owen" shape="rounded" />
+              <Glyph initial="o" label="Owen" shape="round" />
             </span>
           </Specimen>
           <Specimen name="idle, working, waiting, done">
@@ -587,16 +587,16 @@ function LibraryPage() {
               <Glyph glyph="ruler" label="Metryon" state="working" />
               <Glyph glyph="wing" label="Eiri" state="waiting" />
               <Glyph glyph="owl" label="Tory" state="done" />
-              <Glyph initial="o" label="Oleksii" state="idle" />
-              <Glyph initial="y" label="Yurii" state="working" />
-              <Glyph initial="o" label="Oleksii" state="waiting" />
-              <Glyph initial="y" label="Yurii" state="done" />
+              <Glyph initial="o" label="Owen" state="idle" />
+              <Glyph initial="y" label="Yuki" state="working" />
+              <Glyph initial="o" label="Owen" state="waiting" />
+              <Glyph initial="y" label="Yuki" state="done" />
             </span>
           </Specimen>
           <Specimen name="guest">
             <span className="lib-inline lib-inline-wide">
               <Glyph glyph="wing" label="Eiri" guest />
-              <Glyph initial="y" label="Yurii" guest state="working" />
+              <Glyph initial="y" label="Yuki" guest state="working" />
             </span>
           </Specimen>
           <Specimen name="line, in each resident's ink">
@@ -604,7 +604,7 @@ function LibraryPage() {
               {RESIDENTS.map((r) => (
                 <Glyph key={r.name} glyph={r.glyph} label={r.name} form="line" ink={r.ink} size={32} />
               ))}
-              <Glyph initial="o" label="Oleksii" form="line" size={32} />
+              <Glyph initial="o" label="Owen" form="line" size={32} />
             </span>
           </Specimen>
           <Specimen name="line, no ink">
@@ -645,19 +645,19 @@ function LibraryPage() {
           <Specimen name="profile, Eiri">
             <Portrait glyph="wing" label="Eiri" />
           </Specimen>
-          <Specimen name="profile, Oleksii">
-            <Portrait initial="o" label="Oleksii" />
+          <Specimen name="profile, Owen">
+            <Portrait initial="o" label="Owen" />
           </Specimen>
           <Specimen name="stack">
             <span className="lib-inline">
               <Portrait glyph="ruler" label="Metryon" size="stack" />
               <Portrait glyph="owl" label="Tory" size="stack" />
               <Portrait glyph="laurel" label="Antevon" size="stack" />
-              <Portrait initial="y" label="Yurii" size="stack" />
+              <Portrait initial="y" label="Yuki" size="stack" />
             </span>
           </Specimen>
           <Specimen name="stack, guest">
-            <Portrait initial="y" label="Yurii" size="stack" guest />
+            <Portrait initial="y" label="Yuki" size="stack" guest />
           </Specimen>
         </Section>
 

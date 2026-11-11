@@ -87,7 +87,7 @@ const ASKS: AskFixture[] = [
   },
   {
     id: 'stores',
-    asker: <Glyph initial="y" label="Yurii" size={18} guest />,
+    asker: <Glyph initial="y" label="Yuki" size={18} guest />,
     question: 'Edit Acme store sales: drop the 12 stores that close in November',
     urgency: { reason: 'due Friday', deadline: '17:00' },
     body: (
@@ -137,7 +137,7 @@ const ASKS: AskFixture[] = [
         <NeedsYou.Plan>
           <NeedsYou.Step>read the Hokuei email map</NeedsYou.Step>
           <NeedsYou.Step>draft two openers for the COO</NeedsYou.Step>
-          <NeedsYou.Step>send the one you pick through Yurii</NeedsYou.Step>
+          <NeedsYou.Step>send the one you pick through Yuki</NeedsYou.Step>
           <NeedsYou.Step>log each send in the thread</NeedsYou.Step>
           <NeedsYou.Step>stop at a tenth of the week</NeedsYou.Step>
         </NeedsYou.Plan>
@@ -269,11 +269,11 @@ function useReactions(initial: ReactionState[]) {
   const toggle = (emoji: string) =>
     setList((l) => {
       const r = l.find((x) => x.emoji === emoji)
-      if (!r) return [...l, { emoji, count: 1, mine: true, who: 'Oleksii' }]
+      if (!r) return [...l, { emoji, count: 1, mine: true, who: 'Owen' }]
       const count = r.count + (r.mine ? -1 : 1)
       if (!count) return l.filter((x) => x !== r)
-      const others = r.who.split(', ').filter((w) => w !== 'Oleksii')
-      const who = (r.mine ? others : ['Oleksii', ...others]).join(', ')
+      const others = r.who.split(', ').filter((w) => w !== 'Owen')
+      const who = (r.mine ? others : ['Owen', ...others]).join(', ')
       return l.map((x) => (x === r ? { ...x, count, mine: !x.mine, who } : x))
     })
   return [list, toggle] as const
@@ -283,7 +283,7 @@ function MessagesDemo() {
   const [saved, setSaved] = React.useState<string[]>([])
   const save = (id: string) => () => setSaved((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
   const [reactions, toggle] = useReactions([
-    { emoji: '👍', count: 2, mine: true, who: 'Oleksii, Yurii' },
+    { emoji: '👍', count: 2, mine: true, who: 'Owen, Yuki' },
     { emoji: '✅', count: 1, mine: false, who: 'Tory' },
   ])
   return (
@@ -302,7 +302,7 @@ function MessagesDemo() {
         <MessageActions saved={saved.includes('m1')} onSave={save('m1')} />
       </MessageRow>
       <DayDivider>Today</DayDivider>
-      <MessageRow author={<Glyph initial="o" label="Oleksii" size={32} />} name="Oleksii" time="46 min ago" data-specimen="message-reactions">
+      <MessageRow author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="46 min ago" data-specimen="message-reactions">
         <MessageRow.Text>Eiri, do my notes say anything about Acme’s promo calendar?</MessageRow.Text>
         <MessageRow.Reactions onAdd={() => toggle('👀')}>
           {reactions.map((r) => (
@@ -312,8 +312,8 @@ function MessagesDemo() {
         <MessageActions saved={saved.includes('m2')} onSave={save('m2')} />
       </MessageRow>
       <MessageRow author={<Glyph glyph="wing" label="Eiri" size={32} guest />} name="Eiri" time="44 min ago" provisional>
-        <MessageRow.Fold summary="from Oleksii’s vault">
-          <span>Answered from Oleksii’s personal vault.</span>
+        <MessageRow.Fold summary="from Owen’s vault">
+          <span>Answered from Owen’s personal vault.</span>
           <span>Nothing was copied into this vault.</span>
           <span>It stays provisional until a member accepts it.</span>
         </MessageRow.Fold>
@@ -321,7 +321,7 @@ function MessagesDemo() {
         <MessageActions saved={saved.includes('m3')} onSave={save('m3')} />
       </MessageRow>
       <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={32} />} name="Metryon" time="31 min ago" data-specimen="message-thread">
-        <MessageRow.Text>Starting on the Q4 view Yurii asked for.</MessageRow.Text>
+        <MessageRow.Text>Starting on the Q4 view Yuki asked for.</MessageRow.Text>
         <MessageRow.ThreadLine
           replies={3}
           lastReply="6 min ago"
@@ -329,7 +329,7 @@ function MessagesDemo() {
           participants={
             <>
               <Glyph glyph="ruler" label="Metryon" size={18} />
-              <Glyph initial="o" label="Oleksii" size={18} />
+              <Glyph initial="o" label="Owen" size={18} />
             </>
           }
         />
@@ -419,11 +419,11 @@ function CrewDemo({ open }: { open?: boolean }) {
         data-specimen={open ? undefined : 'crew'}
         onInvite={() => setInvites((n) => n + 1)}
       >
-        <CrewStack.Member name="Oleksii, you" caption="here now">
-          <Glyph initial="o" label="Oleksii" state="idle" />
+        <CrewStack.Member name="Owen, you" caption="here now">
+          <Glyph initial="o" label="Owen" state="idle" />
         </CrewStack.Member>
-        <CrewStack.Member name="Yurii, a guest" caption="from Acme’s vault, reads and proposes">
-          <Glyph initial="y" label="Yurii" guest />
+        <CrewStack.Member name="Yuki, a guest" caption="from Acme’s vault, reads and proposes">
+          <Glyph initial="y" label="Yuki" guest />
         </CrewStack.Member>
         <Popover defaultOpen={open}>
           <Popover.Trigger asChild>
@@ -463,15 +463,15 @@ function CrewDemo({ open }: { open?: boolean }) {
         <CrewStack.Member name="Antevon" caption="keeping the record">
           <Glyph glyph="laurel" label="Antevon" size={18} state="idle" />
         </CrewStack.Member>
-        <CrewStack.Member name="Eiri, a guest" caption="from Oleksii’s personal vault">
+        <CrewStack.Member name="Eiri, a guest" caption="from Owen’s personal vault">
           <Glyph glyph="wing" label="Eiri" size={18} guest />
         </CrewStack.Member>
         <CrewStack.List>
-          <CrewStack.ListRow glyph={<Glyph initial="o" label="Oleksii" />} href="#oleksii">
-            Oleksii (you)
+          <CrewStack.ListRow glyph={<Glyph initial="o" label="Owen" />} href="#owen">
+            Owen (you)
           </CrewStack.ListRow>
-          <CrewStack.ListRow glyph={<Glyph initial="y" label="Yurii" guest />} href="#yurii">
-            Yurii
+          <CrewStack.ListRow glyph={<Glyph initial="y" label="Yuki" guest />} href="#yuki">
+            Yuki
           </CrewStack.ListRow>
           <CrewStack.ListRow glyph={<Glyph glyph="ruler" label="Metryon" />} href="#metryon">
             Metryon
@@ -508,7 +508,7 @@ function SplitDemo() {
   const room = (
     <>
       <span className="lib-t-section">acme-forecast</span>
-      <span className="lib-t-say">Starting on the Q4 view Yurii asked for.</span>
+      <span className="lib-t-say">Starting on the Q4 view Yuki asked for.</span>
     </>
   )
   return (
@@ -591,7 +591,7 @@ function ComposerDemo() {
   return (
     <div className="lib-stack" data-specimen="composer">
       {sent.map((m, i) => (
-        <MessageRow key={i} author={<Glyph initial="o" label="Oleksii" size={32} />} name="Oleksii" time="just now">
+        <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={32} />} name="Owen" time="just now">
           <MessageRow.Text>{m.text}</MessageRow.Text>
         </MessageRow>
       ))}
@@ -629,16 +629,16 @@ function ComposerDemo() {
       >
         <OutsideLine summary="Guests see what you send here">
           <OutsideLine.Group origin="from Acme’s vault">
-            <OutsideLine.Guest glyph={<Glyph initial="y" label="Yurii" size={18} guest />}>Yurii</OutsideLine.Guest>
+            <OutsideLine.Guest glyph={<Glyph initial="y" label="Yuki" size={18} guest />}>Yuki</OutsideLine.Guest>
           </OutsideLine.Group>
-          <OutsideLine.Group origin="from Oleksii’s personal vault">
+          <OutsideLine.Group origin="from Owen’s personal vault">
             <OutsideLine.Guest glyph={<Glyph glyph="wing" label="Eiri" size={18} guest />}>Eiri</OutsideLine.Guest>
           </OutsideLine.Group>
         </OutsideLine>
         <Composer.Carry>
           {pointer ? (
             <Composer.Pointer who="Metryon" onRemove={() => setPointer(false)} removeLabel="Drop the pointer">
-              Starting on the Q4 view Yurii asked for.
+              Starting on the Q4 view Yuki asked for.
             </Composer.Pointer>
           ) : null}
           {chip ? (
@@ -719,7 +719,7 @@ function ConnectionsDemo() {
         <h3 className="lib-t-section">Guests you host</h3>
         {request === 'open' ? (
           <ConnectionRow
-            name="Yurii"
+            name="Yuki"
             origin="from Acme’s vault"
             scope="Asks to read # acme-forecast"
             status="proposed"
@@ -731,7 +731,7 @@ function ConnectionsDemo() {
           />
         ) : (
           <ConnectionRow
-            name="Yurii"
+            name="Yuki"
             origin="from Acme’s vault"
             scope={request === 'allowed' ? 'Reads # acme-forecast' : 'Asked to read # acme-forecast'}
             status={request === 'allowed' ? 'approved' : 'idle'}
@@ -746,7 +746,7 @@ function ConnectionsDemo() {
         )}
         <ConnectionRow
           name="Eiri"
-          origin="from Oleksii’s personal vault"
+          origin="from Owen’s personal vault"
           scope="Reads and proposes, answers stay provisional"
           status="approved"
           statusLabel="live"
@@ -767,7 +767,7 @@ function FilesDemo() {
         <FileRow kind="lens" kindLabel="lens" name="Forecast Q4" maker="agent" author="Metryon" time="14:05" />
       </FileGroup>
       <FileGroup title="Not in a thread">
-        <FileRow kind="deck" kindLabel="deck" name="Hokuei pitch" maker="person" author="Oleksii" time="Mon at 09:12" />
+        <FileRow kind="deck" kindLabel="deck" name="Hokuei pitch" maker="person" author="Owen" time="Mon at 09:12" />
         <FileRow kind="note" kindLabel="note" name="week 44 dips" maker="agent" author="Tory" time="03:10" />
         <FileRow kind="note" kindLabel="note" name="weekly digest" maker="system" author="the vault" time="Fri at 17:00" />
       </FileGroup>
@@ -918,7 +918,7 @@ export function PatternSections() {
         <Specimen name="outside line, open" wide={1}>
           <OutsideLine summary="Guests see what you send here" defaultOpen>
             <OutsideLine.Group origin="from Acme’s vault">
-              <OutsideLine.Guest glyph={<Glyph initial="y" label="Yurii" size={18} guest />}>Yurii</OutsideLine.Guest>
+              <OutsideLine.Guest glyph={<Glyph initial="y" label="Yuki" size={18} guest />}>Yuki</OutsideLine.Guest>
             </OutsideLine.Group>
           </OutsideLine>
         </Specimen>

@@ -49,7 +49,7 @@ const line = (r: Resident, size: 18 | 24 = 18) => (
 
 const VAULTS: VaultSwitchVault[] = [
   { id: 'antevon', name: 'antevon', caption: 'the house' },
-  { id: 'oleksii', name: 'oleksii', caption: 'yours', needsYou: 2 },
+  { id: 'owen', name: 'owen', caption: 'yours', needsYou: 2 },
   { id: 'acme', name: 'acme', caption: 'a guest slice', needsYou: 1 },
 ]
 
@@ -86,7 +86,7 @@ function AccountParts() {
           checked={persona === p}
           closeOnSelect={false}
           onClick={() => setPersona(p)}
-          icon={<Glyph initial="o" label={`Oleksii, ${p}`} size={18} />}
+          icon={<Glyph initial="o" label={`Owen, ${p}`} size={18} />}
         >
           {p}
         </Menu.Item>
@@ -149,8 +149,8 @@ const ACTIVITY: ActivityFixture[] = [
   { id: 'promo', kind: 'needs-you', who: METRYON, where: 'acme-forecast', sentence: 'Should the fit treat weeks 44 to 46 as promo weeks?', when: '14:02', age: 'today', ago: 8 },
   { id: 'filings', kind: 'running', who: TORY, where: 'hokuei pilot', sentence: 'Checking the May filings for the three suppliers', when: '13:40', age: 'today', ago: 30 },
   { id: 'extracts', kind: 'needs-you', who: TORY, where: 'the house', sentence: 'Pull paid registry extracts at ¥800 each?', when: '13:12', age: 'today', ago: 58 },
-  { id: 'stores', kind: 'mention', who: { name: 'Yurii', initial: 'y' }, where: 'acme-forecast', sentence: '@Oleksii can you confirm the store list before Friday?', when: '12:18', age: 'today', ago: 112 },
-  { id: 'edit', kind: 'outside', who: { name: 'Yurii', initial: 'y', guest: true }, where: 'acme-forecast', sentence: 'Proposed an edit to Acme store sales', when: '11:05', age: 'today', ago: 185 },
+  { id: 'stores', kind: 'mention', who: { name: 'Yuki', initial: 'y' }, where: 'acme-forecast', sentence: '@Owen can you confirm the store list before Friday?', when: '12:18', age: 'today', ago: 112 },
+  { id: 'edit', kind: 'outside', who: { name: 'Yuki', initial: 'y', guest: true }, where: 'acme-forecast', sentence: 'Proposed an edit to Acme store sales', when: '11:05', age: 'today', ago: 185 },
   { id: 'nightly', kind: 'done', who: ANTEVON, where: 'the house', sentence: 'Nightly consolidation finished: 42 claims went in', when: '23:10', age: 'yesterday', ago: 900 },
   { id: 'passport', kind: 'reaction', who: EIRI, where: 'Personal', sentence: 'Reacted to your note on the passport photos', when: '18:22', age: 'yesterday', ago: 1188 },
   { id: 'outlook', kind: 'done', who: METRYON, where: 'hokuei pilot', sentence: 'The Q4 supplier outlook is drafted', when: '9 Nov', age: 'older', ago: 3000 },
@@ -342,8 +342,8 @@ function PlaceHeadDemo({ specimen, origin = false, title }: { specimen: string; 
       data-specimen={specimen}
     >
       <CrewStack aria-label="crew" max={3}>
-        <CrewStack.Member name="Oleksii, you">
-          <Glyph initial="o" label="Oleksii" />
+        <CrewStack.Member name="Owen, you">
+          <Glyph initial="o" label="Owen" />
         </CrewStack.Member>
         <CrewStack.Member name="Metryon">
           <Glyph glyph="ruler" label="Metryon" />
@@ -351,8 +351,8 @@ function PlaceHeadDemo({ specimen, origin = false, title }: { specimen: string; 
         <CrewStack.Member name="Tory">
           <Glyph glyph="owl" label="Tory" />
         </CrewStack.Member>
-        <CrewStack.Member name="Yurii, a guest">
-          <Glyph initial="y" label="Yurii" guest />
+        <CrewStack.Member name="Yuki, a guest">
+          <Glyph initial="y" label="Yuki" guest />
         </CrewStack.Member>
       </CrewStack>
       <IconAction label="Outline">
@@ -411,7 +411,7 @@ function PeopleDemo() {
         <PeopleTable.Cell>Who</PeopleTable.Cell>
         <PeopleTable.Cell>Role</PeopleTable.Cell>
       </PeopleTable.Head>
-      <PeopleTable.Row glyph={<Glyph initial="o" label="Oleksii" size={18} />} name="Oleksii" roleWord={<ReadOnlyRole id="owner" who="oleksii" />}>
+      <PeopleTable.Row glyph={<Glyph initial="o" label="Owen" size={18} />} name="Owen" roleWord={<ReadOnlyRole id="owner" who="owen" />}>
         <PeopleTable.Row glyph={line(ANTEVON)} name="Antevon" roleWord={<ChangeableRole initial="steward" who="antevon" />}>
           <PeopleTable.Row glyph={line(METRYON)} name="Metryon" roleWord={<ChangeableRole initial="member" who="metryon" />} />
           <PeopleTable.Row glyph={line(TORY)} name="Tory" roleWord={<ChangeableRole initial="delegate" who="tory" />} />
@@ -419,10 +419,10 @@ function PeopleDemo() {
         <PeopleTable.Row glyph={line(EIRI)} name="Eiri" roleWord={<ChangeableRole initial="deputy" who="eiri" />} />
       </PeopleTable.Row>
       <PeopleTable.Row
-        glyph={<Glyph initial="y" label="Yurii" size={18} guest />}
-        name="Yurii"
+        glyph={<Glyph initial="y" label="Yuki" size={18} guest />}
+        name="Yuki"
         origin="from Acme’s vault"
-        roleWord={<ReadOnlyRole id="guest" who="yurii" />}
+        roleWord={<ReadOnlyRole id="guest" who="yuki" />}
       />
     </PeopleTable>
   )
@@ -798,7 +798,7 @@ function MicroSidebarDemo({
         <MicroSidebar.Foot>
           <Menu>
             <Menu.Trigger asChild>
-              <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Oleksii" size={24} />} label="Oleksii" />
+              <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" />
             </Menu.Trigger>
             <Menu.Content side="right" align="end" width="wide" aria-label="account">
               <AccountParts />
