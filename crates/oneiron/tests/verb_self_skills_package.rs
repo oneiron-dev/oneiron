@@ -15,7 +15,6 @@ use std::sync::Arc;
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::authority::{ActSurface, MachineRole, SlipCaveat, VerifiedSlip};
 use oneiron::claim::base_world_id;
-use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
 use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};

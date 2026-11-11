@@ -14,7 +14,6 @@ use base64::Engine as _;
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::claim::base_world_id;
-use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
 use oneiron::registry::ENTITY_TYPE_ASSET;

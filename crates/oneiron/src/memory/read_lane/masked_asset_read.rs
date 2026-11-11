@@ -15,9 +15,13 @@ impl Memory<'_> {
     /// exactly like a missing target; the receipt counts only rows the key
     /// could read. An admitted ASSET answers its bytes as a masked reader
     /// reads them in that same snapshot
-    /// ([`repo_asset_body_known_in_txn`](crate::memory::repo_secret_reads::repo_asset_body_known_in_txn)):
+    /// ([`repo_asset_body_in_txn`](crate::memory::repo_secret_reads::repo_asset_body_in_txn)):
     /// a repo file a mark covers, or a value custody knows reads in, answers
     /// its projection; every other ASSET answers its stored bytes unchanged.
+    /// The snapshot is the known-value pass's own
+    /// ([`with_known_snapshot`](crate::Vault::with_known_snapshot), FIX 8966),
+    /// so the bytes and the values matched against them are one state and the
+    /// thread holds one read transaction (LMDB's one reader slot per thread).
     /// There is no cap and no pin: the row is read live. Record verbs serve
     /// every claim status, so the lane is `Recorded` as `vault.get` opens it.
     pub(crate) fn masked_asset_read(
@@ -26,42 +30,49 @@ impl Memory<'_> {
     ) -> MemoryResult<ScopedReadResult<Option<(EntityId, Vec<u8>)>>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let target = self.read_target(entity_ref, ReadMode::Live)?;
-        lane.read_projected(&point_reads(&[target]), None, |txn, rows| {
-            let standing = crate::authority::principal_standing_in_txn(
-                self.vault(),
-                txn,
-                self.actor(),
-                self.actor_class(),
-                MASKED_ASSET_READ_VERB,
-            )?;
-            if standing.is_none() {
-                return Err(masked_asset_read_refused());
-            }
-            let Some(row) = rows.into_iter().next().flatten() else {
-                return Ok::<_, MemoryError>(None);
-            };
-            if row.entity_type != crate::registry::ENTITY_TYPE_ASSET {
-                return Ok(None);
-            }
-            let candidate = self.read_world_candidate(&lane, txn, &row);
-            let Some(body) = row.body else {
-                return Ok(None);
-            };
-            let id = row.id;
-            let served = crate::memory::repo_secret_reads::repo_asset_body_known_in_txn(
-                self.vault(),
-                txn,
-                &id,
-                row.entity_type,
-                &body,
-            )?
-            .unwrap_or(body);
-            if let Some(candidate) = candidate {
-                candidate.served();
-            }
-            self.produced_from([id]);
-            Ok(Some((id, served)))
-        })
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let vault = self.vault();
+        vault.with_known_snapshot(|known, txn| {
+            Ok(
+                lane.read_projected_in_txn(txn, &point_reads(&[target]), None, |txn, rows| {
+                    let standing = crate::authority::principal_standing_in_txn(
+                        vault,
+                        txn,
+                        self.actor(),
+                        self.actor_class(),
+                        MASKED_ASSET_READ_VERB,
+                    )?;
+                    if standing.is_none() {
+                        return Err(masked_asset_read_refused());
+                    }
+                    let Some(row) = rows.into_iter().next().flatten() else {
+                        return Ok::<_, MemoryError>(None);
+                    };
+                    if row.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+                        return Ok(None);
+                    }
+                    let candidate = self.read_world_candidate(&lane, txn, &row);
+                    let Some(body) = row.body else {
+                        return Ok(None);
+                    };
+                    let id = row.id;
+                    let served = crate::memory::repo_secret_reads::repo_asset_body_in_txn(
+                        vault,
+                        txn,
+                        &id,
+                        row.entity_type,
+                        &body,
+                        known,
+                    )?
+                    .unwrap_or(body);
+                    if let Some(candidate) = candidate {
+                        candidate.served();
+                    }
+                    self.produced_from([id]);
+                    Ok(Some((id, served)))
+                }),
+            )
+        })?
     }
 }
 
