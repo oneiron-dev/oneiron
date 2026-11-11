@@ -3,6 +3,8 @@
 
 use rmpv::Value;
 
+use crate::code_run::WaitKey;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::side_table::{CodecError, RawValue};
 
@@ -14,7 +16,7 @@ use super::constants::{
     DREAMER_RUN_TREE_KEYS, DREAMER_RUN_TREE_SCHEMA_VERSION, KEY_ATTEMPT_ID, KEY_CARRIED_SPEND,
     KEY_CAUSE, KEY_CLASS, KEY_CREATED_AT, KEY_ELECTED_AT, KEY_NODE_ID, KEY_PARENT_ATTEMPT,
     KEY_PARK_OWNER, KEY_PARKED_AT, KEY_REASON, KEY_SCHEMA_VERSION, KEY_WAIT, KEY_WAIT_ASKED_UNITS,
-    KEY_WAIT_LEASE_GENERATION, KEY_WAIT_SCOPE,
+    KEY_WAIT_GENERATION, KEY_WAIT_ID, KEY_WAIT_LEASE_GENERATION, KEY_WAIT_RUN, KEY_WAIT_SCOPE,
 };
 use super::types::{
     DreamerHomeNodeClass, DreamerHomeNodeDesignation, DreamerParkCause, DreamerParkWait,
@@ -213,20 +215,51 @@ impl RawValue for DreamerRunTreeRecord {
 
 fn encode_parked_wait(wait: Option<&DreamerParkedWait>) -> Value {
     wait.map_or(Value::Nil, |wait| {
-        let DreamerParkWait::Budget { scope, asked_units } = &wait.wait;
-        Value::Map(vec![
-            (
-                Value::from(KEY_CLASS),
-                Value::from(DreamerParkWaitClass::Budget.as_str()),
-            ),
-            (Value::from(KEY_WAIT_SCOPE), Value::from(scope.as_str())),
-            (Value::from(KEY_WAIT_ASKED_UNITS), Value::from(*asked_units)),
-            (
-                Value::from(KEY_WAIT_LEASE_GENERATION),
-                Value::from(wait.lease_generation),
-            ),
-        ])
+        let class = Value::from(wait.wait.class().as_str());
+        let lease_generation = (
+            Value::from(KEY_WAIT_LEASE_GENERATION),
+            Value::from(wait.lease_generation),
+        );
+        // Key order is `DREAMER_PARKED_WAIT_KEYS`, filtered to the class's set.
+        let entries = match &wait.wait {
+            DreamerParkWait::Budget { scope, asked_units } => vec![
+                (Value::from(KEY_CLASS), class),
+                (Value::from(KEY_WAIT_SCOPE), Value::from(scope.as_str())),
+                (Value::from(KEY_WAIT_ASKED_UNITS), Value::from(*asked_units)),
+                lease_generation,
+            ],
+            DreamerParkWait::Consent { key }
+            | DreamerParkWait::Peer { key }
+            | DreamerParkWait::Human { key } => vec![
+                (Value::from(KEY_CLASS), class),
+                lease_generation,
+                (
+                    Value::from(KEY_WAIT_RUN),
+                    Value::Binary(key.run.as_bytes().to_vec()),
+                ),
+                (
+                    Value::from(KEY_WAIT_ID),
+                    Value::Binary(key.wait_id.as_bytes().to_vec()),
+                ),
+                (
+                    Value::from(KEY_WAIT_GENERATION),
+                    Value::from(key.generation),
+                ),
+            ],
+        };
+        Value::Map(entries)
     })
+}
+
+fn decode_wait_entity_id(value: &Value, reason: &'static str) -> Result<EntityId> {
+    let Value::Binary(bytes) = value else {
+        return Err(invalid_dreamer_runner(reason));
+    };
+    let raw: [u8; ENTITY_ID_LEN] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| invalid_dreamer_runner(reason))?;
+    EntityId::from_bytes(raw).map_err(|_| invalid_dreamer_runner(reason))
 }
 
 pub(super) fn encode_parked_record(record: &DreamerParkedAttemptRecord) -> Result<Vec<u8>> {
@@ -266,6 +299,9 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
     let mut scope = None;
     let mut asked_units = None;
     let mut lease_generation = None;
+    let mut wait_run = None;
+    let mut wait_id = None;
+    let mut wait_generation = None;
     let mut seen = [false; DREAMER_PARKED_WAIT_KEYS.len()];
 
     for (key, value) in entries {
@@ -307,24 +343,76 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                     invalid_dreamer_runner("dreamer parked wait lease_generation overflows u32")
                 })?);
             }
+            KEY_WAIT_RUN => {
+                wait_run = Some(decode_wait_entity_id(
+                    value,
+                    "dreamer parked wait wait_run must be 16-byte binary",
+                )?);
+            }
+            KEY_WAIT_ID => {
+                wait_id = Some(decode_wait_entity_id(
+                    value,
+                    "dreamer parked wait wait_id must be 16-byte binary",
+                )?);
+            }
+            KEY_WAIT_GENERATION => {
+                wait_generation = Some(expect_u64(
+                    value,
+                    "dreamer parked wait wait_generation must be an integer",
+                )?);
+            }
             _ => unreachable!("index resolved from DREAMER_PARKED_WAIT_KEYS"),
         }
     }
 
     let class = class.ok_or(invalid_dreamer_runner("missing dreamer parked wait class"))?;
-    let DreamerParkWaitClass::Budget = class;
+    let lease_generation = lease_generation.ok_or(invalid_dreamer_runner(
+        "missing dreamer parked wait lease_generation",
+    ))?;
+    let wait = match class {
+        DreamerParkWaitClass::Budget => {
+            if wait_run.is_some() || wait_id.is_some() || wait_generation.is_some() {
+                return Err(invalid_dreamer_runner(
+                    "dreamer parked wait key does not belong to its class",
+                ));
+            }
+            DreamerParkWait::Budget {
+                scope: SpendScopeId(
+                    scope.ok_or(invalid_dreamer_runner("missing dreamer parked wait scope"))?,
+                ),
+                asked_units: asked_units.ok_or(invalid_dreamer_runner(
+                    "missing dreamer parked wait asked_units",
+                ))?,
+            }
+        }
+        answer => {
+            if scope.is_some() || asked_units.is_some() {
+                return Err(invalid_dreamer_runner(
+                    "dreamer parked wait key does not belong to its class",
+                ));
+            }
+            let key = WaitKey {
+                run: wait_run.ok_or(invalid_dreamer_runner(
+                    "missing dreamer parked wait wait_run",
+                ))?,
+                wait_id: wait_id.ok_or(invalid_dreamer_runner(
+                    "missing dreamer parked wait wait_id",
+                ))?,
+                generation: wait_generation.ok_or(invalid_dreamer_runner(
+                    "missing dreamer parked wait wait_generation",
+                ))?,
+            };
+            match answer {
+                DreamerParkWaitClass::Consent => DreamerParkWait::Consent { key },
+                DreamerParkWaitClass::Peer => DreamerParkWait::Peer { key },
+                DreamerParkWaitClass::Human => DreamerParkWait::Human { key },
+                DreamerParkWaitClass::Budget => unreachable!("budget waits decode above"),
+            }
+        }
+    };
     Ok(DreamerParkedWait {
-        wait: DreamerParkWait::Budget {
-            scope: SpendScopeId(
-                scope.ok_or(invalid_dreamer_runner("missing dreamer parked wait scope"))?,
-            ),
-            asked_units: asked_units.ok_or(invalid_dreamer_runner(
-                "missing dreamer parked wait asked_units",
-            ))?,
-        },
-        lease_generation: lease_generation.ok_or(invalid_dreamer_runner(
-            "missing dreamer parked wait lease_generation",
-        ))?,
+        wait,
+        lease_generation,
     })
 }
 
@@ -498,6 +586,55 @@ mod tests {
         }
     }
 
+    fn answer_key() -> WaitKey {
+        WaitKey {
+            run: EntityId::from_bytes([7; 16]).expect("test run id reads"),
+            wait_id: EntityId::from_bytes([8; 16]).expect("test wait id reads"),
+            generation: 2,
+        }
+    }
+
+    fn answer_wait(class: DreamerParkWaitClass) -> DreamerParkedWait {
+        let key = answer_key();
+        let wait = match class {
+            DreamerParkWaitClass::Consent => DreamerParkWait::Consent { key },
+            DreamerParkWaitClass::Peer => DreamerParkWait::Peer { key },
+            DreamerParkWaitClass::Human => DreamerParkWait::Human { key },
+            DreamerParkWaitClass::Budget => unreachable!("answer waits only"),
+        };
+        DreamerParkedWait {
+            wait,
+            lease_generation: 5,
+        }
+    }
+
+    fn answer_wait_value(class: &str, omit: Option<&str>, extra: Option<(&str, Value)>) -> Value {
+        let key = answer_key();
+        let mut entries = vec![
+            (Value::from(KEY_CLASS), Value::from(class)),
+            (Value::from(KEY_WAIT_LEASE_GENERATION), Value::from(5_u32)),
+            (
+                Value::from(KEY_WAIT_RUN),
+                Value::Binary(key.run.as_bytes().to_vec()),
+            ),
+            (
+                Value::from(KEY_WAIT_ID),
+                Value::Binary(key.wait_id.as_bytes().to_vec()),
+            ),
+            (
+                Value::from(KEY_WAIT_GENERATION),
+                Value::from(key.generation),
+            ),
+        ];
+        if let Some(omit) = omit {
+            entries.retain(|(key, _)| key.as_str() != Some(omit));
+        }
+        if let Some((key, value)) = extra {
+            entries.push((Value::from(key), value));
+        }
+        Value::Map(entries)
+    }
+
     fn wait_value(class: &str, extra: Option<(&str, Value)>) -> Value {
         let mut entries = vec![
             (Value::from(KEY_CLASS), Value::from(class)),
@@ -584,6 +721,48 @@ mod tests {
         assert!(
             decode_parked_record(&bytes).is_err(),
             "a parked wait with an unknown key fails decode"
+        );
+    }
+
+    #[test]
+    fn answer_parks_round_trip_their_wait_key() {
+        for class in [
+            DreamerParkWaitClass::Consent,
+            DreamerParkWaitClass::Peer,
+            DreamerParkWaitClass::Human,
+        ] {
+            let record = parked_record(Some(answer_wait(class)));
+            let bytes = encode_parked_record(&record).expect("parked row encodes");
+            let decoded = decode_parked_record(&bytes).expect("parked row decodes");
+            assert_eq!(decoded, record, "an answer park round-trips its wait key");
+        }
+    }
+
+    #[test]
+    fn a_consent_wait_with_a_budget_key_fails() {
+        let bytes = row_bytes(
+            DREAMER_PARKED_SCHEMA_VERSION,
+            Some(answer_wait_value(
+                "consent",
+                None,
+                Some((KEY_WAIT_SCOPE, Value::from("test-launch"))),
+            )),
+        );
+        assert!(
+            decode_parked_record(&bytes).is_err(),
+            "a consent wait carrying scope fails decode"
+        );
+    }
+
+    #[test]
+    fn a_peer_wait_without_wait_id_fails() {
+        let bytes = row_bytes(
+            DREAMER_PARKED_SCHEMA_VERSION,
+            Some(answer_wait_value("peer", Some(KEY_WAIT_ID), None)),
+        );
+        assert!(
+            decode_parked_record(&bytes).is_err(),
+            "a peer wait without wait_id fails decode"
         );
     }
 }

@@ -1,6 +1,7 @@
 //! Parking a Dreamer attempt in local runner state.
 
 use crate::attempt_queue::AttemptId;
+use crate::code_run::WaitKey;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 
 use super::DreamerParkCause;
@@ -22,8 +23,9 @@ pub struct ParkDreamerAttempt {
     pub now: u64,
 }
 
-/// What a parked attempt waits on: the typed refill that resumes it. A typed wait exists only on a
-/// trap park (the writer refuses it elsewhere): one resume route.
+/// Exactly what wakes a parked attempt's trap. A typed wait exists only on a trap park.
+/// For Consent, Peer and Human, the code-run wait's delivery wakes the trap through the `TRAPS`
+/// binding written beside the park.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DreamerParkWait {
     /// The hard cap of exactly this open spend scope refused the step's reservation, which asked
@@ -35,6 +37,21 @@ pub enum DreamerParkWait {
         /// scopes below it could still cover when the step parked.
         asked_units: u64,
     },
+    /// A held effect's consent answer or an outbound call's settled reply delivered on the wait.
+    Consent {
+        /// The exact code-run wait whose delivery wakes the bound trap.
+        key: WaitKey,
+    },
+    /// A peer's or child's result delivered on the wait.
+    Peer {
+        /// The exact code-run wait whose delivery wakes the bound trap.
+        key: WaitKey,
+    },
+    /// A person's answer delivered on the wait.
+    Human {
+        /// The exact code-run wait whose delivery wakes the bound trap.
+        key: WaitKey,
+    },
 }
 
 impl DreamerParkWait {
@@ -43,17 +60,21 @@ impl DreamerParkWait {
     pub fn class(&self) -> DreamerParkWaitClass {
         match self {
             Self::Budget { .. } => DreamerParkWaitClass::Budget,
+            Self::Consent { .. } => DreamerParkWaitClass::Consent,
+            Self::Peer { .. } => DreamerParkWaitClass::Peer,
+            Self::Human { .. } => DreamerParkWaitClass::Human,
         }
     }
 }
 
 /// A parked attempt's typed wait with its lease fence: the queue row's `attempt_count` the writer
-/// read in the park's own transaction. A resumer wakes the wait only while the row still carries
-/// this generation, so a retry's park never answers its source's refill.
+/// read in the park's own transaction. Budget top-ups check this generation before waking the trap;
+/// answer deliveries use the trap's private attempt and lineage binding and the exact wait key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerParkedWait {
     /// The condition that wakes the parked attempt's trap.
     pub wait: DreamerParkWait,
-    /// The queue row's attempt count when this wait was parked.
+    /// The queue row's attempt count stamped by the writer for every class; Consent, Peer and Human
+    /// resumers do not read it here because the trap binding and exact wait key fence their delivery.
     pub lease_generation: u32,
 }
