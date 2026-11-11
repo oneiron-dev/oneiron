@@ -223,7 +223,7 @@ fn checker_manifest(extra: Vec<(Value, Value)>) -> Vec<u8> {
 pub(crate) fn checker_vault(knob: Option<&str>) -> Result<(tempfile::TempDir, crate::Vault)> {
     let (tmp, vault) = temp_vault();
     let extra = knob.map(checker_entry).into_iter().collect();
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         &vault,
         default_policy_manifest_id()?,
         &checker_manifest(extra),
