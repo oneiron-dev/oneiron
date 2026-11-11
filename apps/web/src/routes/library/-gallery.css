@@ -447,7 +447,7 @@
   max-width: 640px;
 }
 
-/* Bare on the field below the island: the rail and the frame. */
+/* Bare on the field below the island: the sidebar and the frame. */
 .lib-field-region {
   position: relative;
   z-index: var(--sl-z-work);
@@ -504,7 +504,7 @@
   max-width: 320px;
 }
 
-.lib-rail-demo {
+.lib-sidebar-demo {
   display: flex;
   flex-direction: column;
   gap: 8px;

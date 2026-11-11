@@ -8,21 +8,21 @@ import { useReorder } from './use-reorder'
 
 /* ── the root ───────────────────────────────────────────────────────────── */
 
-interface RailContextValue {
+interface SidebarContextValue {
   ground: 'field' | 'paper'
   collapsed: boolean
   announce: (message: string) => void
 }
 
-const RailContext = React.createContext<RailContextValue | null>(null)
+const SidebarContext = React.createContext<SidebarContextValue | null>(null)
 
-function useRail(part: string): RailContextValue {
-  const ctx = React.useContext(RailContext)
-  if (!ctx) throw new Error(`${part} must be inside a Rail`)
+function useSidebar(part: string): SidebarContextValue {
+  const ctx = React.useContext(SidebarContext)
+  if (!ctx) throw new Error(`${part} must be inside a Sidebar`)
   return ctx
 }
 
-export interface RailProps extends React.ComponentPropsWithRef<'nav'> {
+export interface SidebarProps extends React.ComponentPropsWithRef<'nav'> {
   /* `field`: bare on the printed field; words carry the on-field ink (and
      its soft shadow by day). `paper`: on a near-opaque strip of the ground. */
   ground?: 'field' | 'paper'
@@ -34,8 +34,8 @@ export interface RailProps extends React.ComponentPropsWithRef<'nav'> {
   onGroupReorder?: (ids: string[]) => void
 }
 
-/* The list of places at the left. Children: one Rail.Head, then Rail.Groups. */
-function RailRoot({
+/* The list of places at the left. Children: one Sidebar.Head, then Sidebar.Groups. */
+function SidebarRoot({
   ground = 'field',
   collapsed = false,
   onGroupReorder,
@@ -43,52 +43,52 @@ function RailRoot({
   children,
   'aria-label': ariaLabel = 'places',
   ...props
-}: RailProps) {
+}: SidebarProps) {
   const [message, setMessage] = React.useState('')
   const reorder = useReorder<HTMLDivElement>({
-    itemAttribute: 'data-rail-group-id',
-    handle: '[data-rail-group-handle]',
+    itemAttribute: 'data-sidebar-group-id',
+    handle: '[data-sidebar-group-handle]',
     onReorder: onGroupReorder,
     announce: setMessage,
   })
   const parts = React.Children.toArray(children)
-  const heads = parts.filter((c) => React.isValidElement(c) && c.type === RailHead)
+  const heads = parts.filter((c) => React.isValidElement(c) && c.type === SidebarHead)
   const groups = parts.filter((c) => !heads.includes(c))
   const ctx = React.useMemo(() => ({ ground, collapsed, announce: setMessage }), [ground, collapsed])
 
   return (
-    <RailContext.Provider value={ctx}>
+    <SidebarContext.Provider value={ctx}>
       <nav
         aria-label={ariaLabel}
-        className={cx('sl-rail', className)}
+        className={cx('sl-sidebar', className)}
         data-ground={ground}
         data-collapsed={collapsed ? '' : undefined}
         {...props}
       >
         {heads}
-        <div ref={reorder.containerRef} className="sl-rail-groups" {...reorder.containerProps}>
+        <div ref={reorder.containerRef} className="sl-sidebar-groups" {...reorder.containerProps}>
           {groups}
         </div>
-        <span className="sl-rail-status" role="status">
+        <span className="sl-sidebar-status" role="status">
           {message}
         </span>
       </nav>
-    </RailContext.Provider>
+    </SidebarContext.Provider>
   )
 }
 
 /* ── the head ───────────────────────────────────────────────────────────── */
 
-export interface RailHeadProps extends React.ComponentPropsWithRef<'div'> {}
+export interface SidebarHeadProps extends React.ComponentPropsWithRef<'div'> {}
 
-/* The top of the rail: the vault switch, then icon actions at the right. */
-function RailHead({ className, ...props }: RailHeadProps) {
-  return <div className={cx('sl-rail-head', className)} {...props} />
+/* The top of the sidebar: the vault switch, then icon actions at the right. */
+function SidebarHead({ className, ...props }: SidebarHeadProps) {
+  return <div className={cx('sl-sidebar-head', className)} {...props} />
 }
 
 /* ── a group ────────────────────────────────────────────────────────────── */
 
-export interface RailGroupProps extends Omit<React.ComponentPropsWithRef<'div'>, 'id'> {
+export interface SidebarGroupProps extends Omit<React.ComponentPropsWithRef<'div'>, 'id'> {
   /* Names the group for reordering. */
   id?: string
   /* The group's head; with one the group folds. */
@@ -102,7 +102,7 @@ export interface RailGroupProps extends Omit<React.ComponentPropsWithRef<'div'>,
   onReorder?: (ids: string[]) => void
 }
 
-function RailGroup({
+function SidebarGroup({
   id,
   label,
   open: openProp,
@@ -113,22 +113,22 @@ function RailGroup({
   className,
   children,
   ...props
-}: RailGroupProps) {
-  const rail = useRail('Rail.Group')
+}: SidebarGroupProps) {
+  const sidebar = useSidebar('Sidebar.Group')
   const [openState, setOpen] = useControllableState(openProp, defaultOpen, onOpenChange)
-  /* An icon rail shows every row; a group without a head never folds. */
-  const open = rail.collapsed || !label || openState
-  const listId = useSafeId('sl-rail-group')
+  /* Collapsed to icons, every row shows; a group without a head never folds. */
+  const open = sidebar.collapsed || !label || openState
+  const listId = useSafeId('sl-sidebar-group')
   const reorder = useReorder<HTMLDivElement>({
-    itemAttribute: 'data-rail-row-id',
+    itemAttribute: 'data-sidebar-row-id',
     onReorder: reorderable ? onReorder : undefined,
-    announce: rail.announce,
+    announce: sidebar.announce,
   })
 
   return (
     <div
-      className={cx('sl-rail-group', className)}
-      data-rail-group-id={id}
+      className={cx('sl-sidebar-group', className)}
+      data-sidebar-group-id={id}
       data-reorder-label={label}
       data-state={open ? 'open' : 'closed'}
       {...props}
@@ -136,25 +136,25 @@ function RailGroup({
       {label ? (
         <button
           type="button"
-          className="sl-rail-group-label"
-          data-rail-group-handle=""
+          className="sl-sidebar-group-label"
+          data-sidebar-group-handle=""
           aria-expanded={open}
           aria-controls={listId}
-          tabIndex={rail.collapsed ? -1 : undefined}
+          tabIndex={sidebar.collapsed ? -1 : undefined}
           draggable={false}
           onClick={() => setOpen(!openState)}
         >
           {label}
-          <Icon name="chevron" size={12} className="sl-rail-group-chevron" />
+          <Icon name="chevron" size={12} className="sl-sidebar-group-chevron" />
         </button>
       ) : null}
-      <div className="sl-rail-group-fold" data-state={open ? 'open' : 'closed'}>
+      <div className="sl-sidebar-group-fold" data-state={open ? 'open' : 'closed'}>
         <div
           ref={reorder.containerRef}
           id={listId}
           role="list"
           aria-label={label}
-          className="sl-rail-group-list"
+          className="sl-sidebar-group-list"
           inert={!open}
           {...reorder.containerProps}
         >
@@ -167,7 +167,7 @@ function RailGroup({
 
 /* ── a row ──────────────────────────────────────────────────────────────── */
 
-export interface RailRowProps extends Omit<React.ComponentPropsWithRef<'button'>, 'id'> {
+export interface SidebarRowProps extends Omit<React.ComponentPropsWithRef<'button'>, 'id'> {
   /* Names the row for reordering. */
   id?: string
   /* The symbol before the label: an Icon. */
@@ -194,13 +194,13 @@ export interface RailRowProps extends Omit<React.ComponentPropsWithRef<'button'>
 
 function SharedMark() {
   return (
-    <svg className="sl-rail-row-shared" viewBox="0 0 10 10" role="img" aria-label="shared with another vault">
+    <svg className="sl-sidebar-row-shared" viewBox="0 0 10 10" role="img" aria-label="shared with another vault">
       <path d="M5 .8 9.2 5 5 9.2 .8 5Z" />
     </svg>
   )
 }
 
-function RailRow({
+function SidebarRow({
   id,
   icon,
   glyph,
@@ -217,27 +217,27 @@ function RailRow({
   children,
   type = 'button',
   ...props
-}: RailRowProps) {
-  const rail = useRail('Rail.Row')
+}: SidebarRowProps) {
+  const sidebar = useSidebar('Sidebar.Row')
   const content = (
     <>
-      <span className="sl-rail-row-mark" data-slot={glyph ? 'glyph' : 'icon'} aria-hidden="true">
+      <span className="sl-sidebar-row-mark" data-slot={glyph ? 'glyph' : 'icon'} aria-hidden="true">
         {glyph ?? icon}
       </span>
-      <span className="sl-rail-row-words">
-        <span className="sl-rail-row-label">{label}</span>
+      <span className="sl-sidebar-row-words">
+        <span className="sl-sidebar-row-label">{label}</span>
         {shared ? <SharedMark /> : null}
-        {caption !== undefined ? <span className="sl-rail-row-caption">{caption}</span> : null}
+        {caption !== undefined ? <span className="sl-sidebar-row-caption">{caption}</span> : null}
       </span>
       {count !== undefined ? (
-        <Figure size="badge" className="sl-rail-row-count">
+        <Figure size="badge" className="sl-sidebar-row-count">
           {count}
         </Figure>
       ) : null}
     </>
   )
   const own = {
-    className: cx('sl-rail-row', className),
+    className: cx('sl-sidebar-row', className),
     'aria-current': current ? ('page' as const) : undefined,
     'data-current': current ? '' : undefined,
     draggable: false,
@@ -254,7 +254,7 @@ function RailRow({
       </button>
     )
   }
-  if (rail.collapsed && typeof label === 'string') {
+  if (sidebar.collapsed && typeof label === 'string') {
     control = (
       <Tooltip label={label} caption={typeof caption === 'string' ? caption : undefined} side="right">
         {control}
@@ -265,8 +265,8 @@ function RailRow({
   return (
     <div
       role="listitem"
-      className="sl-rail-item"
-      data-rail-row-id={id}
+      className="sl-sidebar-item"
+      data-sidebar-row-id={id}
       data-reorder-label={typeof label === 'string' ? label : undefined}
       data-depth={depth}
       data-pinnable={onPinChange ? '' : undefined}
@@ -277,7 +277,7 @@ function RailRow({
           label="Pin"
           size="sm"
           tooltipSide="right"
-          className="sl-rail-row-pin"
+          className="sl-sidebar-row-pin"
           aria-pressed={pinned}
           data-reorder-ignore=""
           onClick={() => onPinChange(!pinned)}
@@ -289,5 +289,5 @@ function RailRow({
   )
 }
 
-/* Compound parts: Rail, Rail.Head, Rail.Group, Rail.Row. */
-export const Rail = Object.assign(RailRoot, { Head: RailHead, Group: RailGroup, Row: RailRow })
+/* Compound parts: Sidebar, Sidebar.Head, Sidebar.Group, Sidebar.Row. */
+export const Sidebar = Object.assign(SidebarRoot, { Head: SidebarHead, Group: SidebarGroup, Row: SidebarRow })

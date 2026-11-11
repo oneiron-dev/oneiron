@@ -11,7 +11,7 @@ import {
   Menu,
   NeedsYou,
   PeopleTable,
-  Rail,
+  Sidebar,
   RolePicker,
   RoleWord,
   SortCycle,
@@ -28,7 +28,7 @@ import {
 import { Section, Specimen } from './-gallery-frame'
 import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
 
-/* Frame sections of the /library gallery: the rail, the vault switch, the
+/* Frame sections of the /library gallery: the sidebar, the vault switch, the
    activity list, the sort cycle, the people table and its roles. Every demo
    works on fixture data from the app's cast. */
 
@@ -326,7 +326,7 @@ function PeopleDemo() {
   )
 }
 
-/* ── the rail ─────────────────────────────────────────────────────────── */
+/* ── the sidebar ──────────────────────────────────────────────────────── */
 
 interface RoomFixture {
   id: string
@@ -345,10 +345,10 @@ const ROOMS: RoomFixture[] = [
 
 const GROUPS = ['top', 'pinned', 'rooms', 'projects', 'vault']
 
-/* A whole rail on fixture data: the head with the vault switch, the top
+/* A whole sidebar on fixture data: the head with the vault switch, the top
    rows, pinned, rooms, projects with nested rooms, and the vault. Rows and
    groups reorder; pinning moves a room between rooms and pinned. */
-function RailDemo({
+function SidebarDemo({
   ground,
   specimen,
   collapsed: collapsedProp,
@@ -380,7 +380,7 @@ function RailDemo({
   const roomRow = (id: string, isPinned: boolean) => {
     const r = room(id)
     return (
-      <Rail.Row
+      <Sidebar.Row
         key={id}
         id={id}
         icon={<Icon name={r.icon} />}
@@ -395,9 +395,9 @@ function RailDemo({
   }
   const part: Record<string, React.ReactNode> = {
     top: (
-      <Rail.Group key="top" id="top">
-        <Rail.Row id="eiri" glyph={line(EIRI)} label="eiri" caption="yours" current={current === 'eiri'} onClick={() => setCurrent('eiri')} />
-        <Rail.Row
+      <Sidebar.Group key="top" id="top">
+        <Sidebar.Row id="eiri" glyph={line(EIRI)} label="eiri" caption="yours" current={current === 'eiri'} onClick={() => setCurrent('eiri')} />
+        <Sidebar.Row
           id="antevon"
           glyph={line(ANTEVON)}
           label="Antevon"
@@ -405,7 +405,7 @@ function RailDemo({
           current={current === 'antevon'}
           onClick={() => setCurrent('antevon')}
         />
-        <Rail.Row
+        <Sidebar.Row
           id="activity"
           icon={<Icon name="activity" />}
           label="activity"
@@ -413,49 +413,49 @@ function RailDemo({
           current={current === 'activity'}
           onClick={() => setCurrent('activity')}
         />
-      </Rail.Group>
+      </Sidebar.Group>
     ),
     pinned: (
-      <Rail.Group key="pinned" id="pinned" label="pinned" reorderable onReorder={setPinned}>
+      <Sidebar.Group key="pinned" id="pinned" label="pinned" reorderable onReorder={setPinned}>
         {pinned.map((id) => roomRow(id, true))}
-      </Rail.Group>
+      </Sidebar.Group>
     ),
     rooms: (
-      <Rail.Group key="rooms" id="rooms" label="rooms" reorderable onReorder={setRooms}>
+      <Sidebar.Group key="rooms" id="rooms" label="rooms" reorderable onReorder={setRooms}>
         {rooms.map((id) => roomRow(id, false))}
-      </Rail.Group>
+      </Sidebar.Group>
     ),
     projects: (
-      <Rail.Group key="projects" id="projects" label="projects">
-        <Rail.Row id="hokuei" icon={<Icon name="project" />} label="hokuei pilot" current={current === 'hokuei'} onClick={() => setCurrent('hokuei')} />
-        <Rail.Row id="outlook" depth={1} icon={<Icon name="hash" />} label="supplier outlook" current={current === 'outlook'} onClick={() => setCurrent('outlook')} />
-        <Rail.Row id="contradictions" depth={2} icon={<Icon name="thread" />} label="supplier contradictions" current={current === 'contradictions'} onClick={() => setCurrent('contradictions')} />
-        <Rail.Row id="personal" icon={<Icon name="project" />} label="Personal" current={current === 'personal'} onClick={() => setCurrent('personal')} />
-        <Rail.Row id="passport" depth={1} icon={<Icon name="hash" />} label="passport" current={current === 'passport'} onClick={() => setCurrent('passport')} />
-      </Rail.Group>
+      <Sidebar.Group key="projects" id="projects" label="projects">
+        <Sidebar.Row id="hokuei" icon={<Icon name="project" />} label="hokuei pilot" current={current === 'hokuei'} onClick={() => setCurrent('hokuei')} />
+        <Sidebar.Row id="outlook" depth={1} icon={<Icon name="hash" />} label="supplier outlook" current={current === 'outlook'} onClick={() => setCurrent('outlook')} />
+        <Sidebar.Row id="contradictions" depth={2} icon={<Icon name="thread" />} label="supplier contradictions" current={current === 'contradictions'} onClick={() => setCurrent('contradictions')} />
+        <Sidebar.Row id="personal" icon={<Icon name="project" />} label="Personal" current={current === 'personal'} onClick={() => setCurrent('personal')} />
+        <Sidebar.Row id="passport" depth={1} icon={<Icon name="hash" />} label="passport" current={current === 'passport'} onClick={() => setCurrent('passport')} />
+      </Sidebar.Group>
     ),
     vault: (
-      <Rail.Group key="vault" id="vault">
-        <Rail.Row id="vault" icon={<Icon name="vault" />} label="vault" current={current === 'vault'} onClick={() => setCurrent('vault')} />
-      </Rail.Group>
+      <Sidebar.Group key="vault" id="vault">
+        <Sidebar.Row id="vault" icon={<Icon name="vault" />} label="vault" current={current === 'vault'} onClick={() => setCurrent('vault')} />
+      </Sidebar.Group>
     ),
   }
   return (
-    <div className="lib-rail-demo" data-specimen={specimen}>
-      <Rail ground={ground} collapsed={collapsed} onGroupReorder={setGroups} aria-label={`places, ${ground}`}>
-        <Rail.Head>
+    <div className="lib-sidebar-demo" data-specimen={specimen}>
+      <Sidebar ground={ground} collapsed={collapsed} onGroupReorder={setGroups} aria-label={`places, ${ground}`}>
+        <Sidebar.Head>
           <VaultSwitch vaults={VAULTS} currentId={vault} onSwitch={setVault} onCreate={() => {}}>
             <AccountParts />
           </VaultSwitch>
           <IconAction label="Search" caption="press ⌘K">
             <Icon name="search" />
           </IconAction>
-          <IconAction label={collapsed ? 'Expand the rail' : 'Collapse to icons'} onClick={() => setCollapsed(!collapsed)}>
+          <IconAction label={collapsed ? 'Expand the sidebar' : 'Collapse to icons'} onClick={() => setCollapsed(!collapsed)}>
             <Icon name="sidebar" />
           </IconAction>
-        </Rail.Head>
+        </Sidebar.Head>
         {groups.map((g) => part[g])}
-      </Rail>
+      </Sidebar>
       <p className="lib-field-readout" data-specimen={`${specimen}-order`}>
         {groups.join(' ')} | {pinned.join(' ')} | {rooms.join(' ')}
       </p>
@@ -514,29 +514,29 @@ function SortCycleSpecimen() {
   )
 }
 
-/* On the field: the rail alone, then the frame (a rail beside an island
+/* On the field: the sidebar alone, then the frame (a sidebar beside an island
    holding the activity list), on both grounds. */
 export function FieldSections() {
   const [collapsed, setCollapsed] = React.useState(true)
   return (
     <div className="lib-field-region">
-      <section className="lib-field-section" aria-labelledby="lib-rail">
-        <h2 id="lib-rail" className="lib-field-head">
-          Rail
+      <section className="lib-field-section" aria-labelledby="lib-sidebar">
+        <h2 id="lib-sidebar" className="lib-field-head">
+          Sidebar
         </h2>
         <div className="lib-field-specimens">
           <figure className="lib-field-specimen">
-            <RailDemo ground="field" specimen="rail-reorder" />
+            <SidebarDemo ground="field" specimen="sidebar-reorder" />
             <figcaption className="lib-field-caption">
               drag a row or a group’s label, or press Alt with an arrow on it; pin a room on hover
             </figcaption>
           </figure>
           <figure className="lib-field-specimen">
-            <RailDemo ground="field" specimen="rail-collapsed" collapsed={collapsed} onCollapsedChange={setCollapsed} />
+            <SidebarDemo ground="field" specimen="sidebar-collapsed" collapsed={collapsed} onCollapsedChange={setCollapsed} />
             <figcaption className="lib-field-caption">collapsed: symbols only, names in a tooltip</figcaption>
           </figure>
           <figure className="lib-field-specimen">
-            <RailDemo ground="paper" specimen="rail-paper" />
+            <SidebarDemo ground="paper" specimen="sidebar-paper" />
             <figcaption className="lib-field-caption">on paper</figcaption>
           </figure>
         </div>
@@ -549,7 +549,7 @@ export function FieldSections() {
         {(['field', 'paper'] as const).map((ground) => (
           <figure key={ground} className="lib-frame-specimen">
             <div className="lib-frame" data-specimen={`frame-${ground}`}>
-              <RailDemo ground={ground} specimen={`frame-${ground}-rail`} />
+              <SidebarDemo ground={ground} specimen={`frame-${ground}-sidebar`} />
               <Island className="lib-frame-island">
                 <ActivityDemo specimen={`frame-${ground}-activity`} />
               </Island>

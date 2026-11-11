@@ -120,12 +120,12 @@ export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
 export { claimInk, type ClaimInk } from './patterns/claim-ink'
 
 export {
-  Rail,
-  type RailProps,
-  type RailHeadProps,
-  type RailGroupProps,
-  type RailRowProps,
-} from './frame/Rail'
+  Sidebar,
+  type SidebarProps,
+  type SidebarHeadProps,
+  type SidebarGroupProps,
+  type SidebarRowProps,
+} from './frame/Sidebar'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'
 export {
