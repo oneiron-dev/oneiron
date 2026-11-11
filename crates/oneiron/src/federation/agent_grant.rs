@@ -69,6 +69,8 @@ use super::{
 
 mod funding;
 pub(crate) use funding::SelectedOwnerAgentFundingGrant;
+mod member_index;
+pub(crate) use member_index::{backfill_agent_grant_member_index, index_agent_grant_member_in_txn};
 mod withdrawal;
 
 /// The one-tap revoke command every agent grant carries.
@@ -83,6 +85,9 @@ const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than no
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
 const BAD_WALLET: &str = "an agent grant's wallet_ref names a nonempty issuer and id";
+/// The one verb of the read Grant pairing a named agent mints (Engine RULING
+/// PAIR-GRANT-DESIGN Q4): the Grant spelling, not the slip's `core:read`.
+const DEFAULT_GRANT_VERB: &str = "read";
 
 /// One owner's agent grant as its live row holds it.
 #[derive(Debug, Clone)]
@@ -170,118 +175,204 @@ impl Vault {
         wallet_ref: Option<super::WalletRef>,
     ) -> Result<AgentGrantMintOutcome> {
         self.with_write_txn_grouped(|txn| {
-            let delegated_by = owner.revalidate_in_txn(self, txn)?;
-            let names_verbs = match &authority_scope.verbs {
-                ScopeAxis::Some(verbs) => !verbs.is_empty(),
-                ScopeAxis::Bottom => false,
-                ScopeAxis::All => return Err(Error::InvalidConfig(NO_VERB_LIST.into())),
-            };
-            if !names_verbs && verb_classes.is_empty() {
-                return Err(Error::InvalidConfig(NO_VERB_LIST.into()));
-            }
-            if !verb_classes
-                .iter()
-                .all(|class| oneiron_authority::federation::verb_class_name_is_valid(class))
-            {
-                return Err(Error::InvalidConfig(BAD_VERB_CLASS.into()));
-            }
-            if wallet_ref.as_ref().is_some_and(|wallet| !wallet.is_valid()) {
-                return Err(Error::InvalidConfig(BAD_WALLET.into()));
-            }
-            if authority_scope
-                .verbs
-                .contains(&super::GIT_PUSH_VERB.to_owned())
-            {
-                return Err(Error::InvalidConfig(RESERVED_GIT_PUSH.into()));
-            }
-            if !self.is_agent_principal_in_txn(txn, agent)? {
-                return Err(Error::InvalidConfig(NOT_AN_AGENT.into()));
-            }
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            if expires_at.is_some_and(|expires_at| expires_at <= now) {
-                return Err(Error::InvalidConfig(ALREADY_EXPIRED.into()));
-            }
-            let scope = self
-                .shared_vault_creation_in_txn(txn)?
-                .map_or_else(own_device_residence_scope, |shared| {
-                    FederationGrantScope::vault(shared.vault_id)
-                });
-            let grant = FederationGrant {
-                authority_scope,
-                scope,
-                member_ref: agent,
-                role: FederationGrantRole::Delegate,
-                preset: FederationGrantPreset::Delegate,
-                expires_at,
-                delegated_by: Some(delegated_by),
-                guest: None,
-                owner_agent: true,
-                repo_bounds,
-                kind: super::FederationGrantKind::Access,
-                git_push_bounds: None,
-                detach_on_member_leave: None,
-                verb_classes,
-                wallet_ref,
-            };
-            // The owner's class rows, read once in this writer when the grant
-            // names a class: repo bounds take `read` from a class as from its
-            // exact verbs, as every repo seam judging the grant does.
-            let classes = super::AgentVerbClasses::for_grants_in_txn(&self.store, txn, [&grant])?;
-            if let Some(bounds) = &grant.repo_bounds {
-                self.check_repo_bounds_mint_in_txn(
-                    txn,
-                    &grant.scope_for_verb(super::REPO_READ_VERB, &classes),
-                    bounds,
-                )?;
-            }
-            // Encoding validates: nothing is signed for a grant that cannot stand.
-            let data = encode_federation_grant_body(&grant)?;
-            let id = EntityId::now();
-            let act = self.append_agent_grant_act_in_txn(
+            self.mint_agent_grant_in_txn(
                 txn,
                 owner,
                 surface,
-                AgentGrantAct::Mint {
-                    grant: id,
-                    member: agent,
-                    scope: grant.authority_scope.clone(),
-                    expires_at,
-                    repo_bounds: grant.repo_bounds.clone(),
-                    grant_kind: super::FederationGrantKind::Access,
-                    git_push_bounds: None,
-                    verb_classes: grant.verb_classes.clone(),
-                    wallet_ref: grant.wallet_ref.clone(),
-                },
-            )?;
-            self.apply_agent_grant_op_in_txn(
-                txn,
-                BatchOp::Put {
-                    id,
-                    entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-                    occurred: TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    learned_at: now,
-                    row_version: None,
-                    data,
-                    allow_maintenance: true,
-                    allow_reserved_predicate: false,
-                    hub_sync_imported: false,
-                },
-            )?;
-            let confers = grant.confers_with_classes_at(now, &classes);
-            Ok(AgentGrantMintOutcome {
-                standing: AgentGrantStanding {
-                    id,
-                    grant,
-                    delegated_by,
-                    created_at: now,
-                },
-                act,
-                confers,
-            })
+                agent,
+                authority_scope,
+                expires_at,
+                repo_bounds,
+                verb_classes,
+                wallet_ref,
+            )
         })
+    }
+
+    /// [`Self::mint_agent_grant`] in the caller's writer `txn`, so a door
+    /// that mints a Grant beside rows of its own (an owner's pairing link for
+    /// a named agent, AGENT-PAIR-DEFAULT-GRANT) commits both or neither.
+    ///
+    /// # Errors
+    /// As [`Self::mint_agent_grant`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the owner's one mint in the caller's writer: his proof, surface, agent, scope, expiry, repo bounds, classes and wallet"
+    )]
+    pub(crate) fn mint_agent_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        agent: EntityId,
+        authority_scope: Scope,
+        expires_at: Option<u64>,
+        repo_bounds: Option<RepoAccessBounds>,
+        verb_classes: BTreeSet<String>,
+        wallet_ref: Option<super::WalletRef>,
+    ) -> Result<AgentGrantMintOutcome> {
+        let delegated_by = owner.revalidate_in_txn(self, txn)?;
+        let names_verbs = match &authority_scope.verbs {
+            ScopeAxis::Some(verbs) => !verbs.is_empty(),
+            ScopeAxis::Bottom => false,
+            ScopeAxis::All => return Err(Error::InvalidConfig(NO_VERB_LIST.into())),
+        };
+        if !names_verbs && verb_classes.is_empty() {
+            return Err(Error::InvalidConfig(NO_VERB_LIST.into()));
+        }
+        if !verb_classes
+            .iter()
+            .all(|class| oneiron_authority::federation::verb_class_name_is_valid(class))
+        {
+            return Err(Error::InvalidConfig(BAD_VERB_CLASS.into()));
+        }
+        if wallet_ref.as_ref().is_some_and(|wallet| !wallet.is_valid()) {
+            return Err(Error::InvalidConfig(BAD_WALLET.into()));
+        }
+        if authority_scope
+            .verbs
+            .contains(&super::GIT_PUSH_VERB.to_owned())
+        {
+            return Err(Error::InvalidConfig(RESERVED_GIT_PUSH.into()));
+        }
+        if !self.is_agent_principal_in_txn(txn, agent)? {
+            return Err(Error::InvalidConfig(NOT_AN_AGENT.into()));
+        }
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        if expires_at.is_some_and(|expires_at| expires_at <= now) {
+            return Err(Error::InvalidConfig(ALREADY_EXPIRED.into()));
+        }
+        let scope = self
+            .shared_vault_creation_in_txn(txn)?
+            .map_or_else(own_device_residence_scope, |shared| {
+                FederationGrantScope::vault(shared.vault_id)
+            });
+        let grant = FederationGrant {
+            authority_scope,
+            scope,
+            member_ref: agent,
+            role: FederationGrantRole::Delegate,
+            preset: FederationGrantPreset::Delegate,
+            expires_at,
+            delegated_by: Some(delegated_by),
+            guest: None,
+            owner_agent: true,
+            repo_bounds,
+            kind: super::FederationGrantKind::Access,
+            git_push_bounds: None,
+            detach_on_member_leave: None,
+            verb_classes,
+            wallet_ref,
+        };
+        // The owner's class rows, read once in this writer when the grant
+        // names a class: repo bounds take `read` from a class as from its
+        // exact verbs, as every repo seam judging the grant does.
+        let classes = super::AgentVerbClasses::for_grants_in_txn(&self.store, txn, [&grant])?;
+        if let Some(bounds) = &grant.repo_bounds {
+            self.check_repo_bounds_mint_in_txn(
+                txn,
+                &grant.scope_for_verb(super::REPO_READ_VERB, &classes),
+                bounds,
+            )?;
+        }
+        // Encoding validates: nothing is signed for a grant that cannot stand.
+        let data = encode_federation_grant_body(&grant)?;
+        let id = EntityId::now();
+        let act = self.append_agent_grant_act_in_txn(
+            txn,
+            owner,
+            surface,
+            AgentGrantAct::Mint {
+                grant: id,
+                member: agent,
+                scope: grant.authority_scope.clone(),
+                expires_at,
+                repo_bounds: grant.repo_bounds.clone(),
+                grant_kind: super::FederationGrantKind::Access,
+                git_push_bounds: None,
+                verb_classes: grant.verb_classes.clone(),
+                wallet_ref: grant.wallet_ref.clone(),
+                steward: false,
+            },
+        )?;
+        self.apply_agent_grant_op_in_txn(
+            txn,
+            BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+        )?;
+        let confers = grant.confers_with_classes_at(now, &classes);
+        Ok(AgentGrantMintOutcome {
+            standing: AgentGrantStanding {
+                id,
+                grant,
+                delegated_by,
+                created_at: now,
+            },
+            act,
+            confers,
+        })
+    }
+
+    /// Mints in the writer `txn` of the owner's pairing link for `holder` the
+    /// agent's default read Grant (Engine RULING PAIR-GRANT-DESIGN Q3/Q4):
+    /// verbs `read` and the slip `scope`'s other axes, with no expiry, wallet,
+    /// repo bounds or verb classes, as an OAuth sign-in's Grant. Only a named
+    /// agent's PERSON gets one, and only while no Grant row names it: an
+    /// agent definition, a base agent, an ordinary person and a holder a
+    /// Grant row already names mint nothing (`None`).
+    ///
+    /// # Errors
+    /// As [`Self::mint_agent_grant`]: the caller refuses its link.
+    pub(crate) fn mint_default_agent_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        holder: EntityId,
+        scope: &Scope,
+    ) -> Result<Option<EntityId>> {
+        let named_agent = match live_entity_row_in_txn(&self.store, txn, &holder)? {
+            LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                body,
+            } => crate::vault::is_named_agent_principal_body(&holder, &body),
+            _ => false,
+        };
+        if !named_agent
+            || self
+                .agent_grants_reporting_in_txn(txn)?
+                .0
+                .iter()
+                .any(|standing| standing.grant.member_ref == holder)
+        {
+            return Ok(None);
+        }
+        let mut authority_scope = scope.clone();
+        authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([DEFAULT_GRANT_VERB.to_owned()]));
+        let minted = self.mint_agent_grant_in_txn(
+            txn,
+            owner,
+            surface,
+            holder,
+            authority_scope,
+            None,
+            None,
+            BTreeSet::new(),
+            None,
+        )?;
+        Ok(Some(minted.standing.id))
     }
 
     /// The owner revokes the agent grant `grant_ref`: his signed act, then
@@ -398,7 +489,7 @@ impl Vault {
     /// Deletes the agent grant row `grant_ref` in the caller's writer. The
     /// withdrawal stays known here and reaches its peers, in this writer
     /// (FIX-LIST 5107, 10772).
-    fn delete_agent_grant_row_in_txn(
+    pub(super) fn delete_agent_grant_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         grant_ref: EntityId,

@@ -28,6 +28,11 @@
 //! 11429), as a queued turn action is, and so is a wake its turn owes that
 //! no admission has judged yet (FIX 11833). A wake whose sealed slip lapsed
 //! stays owed for that rebind until its own expiry (FIX 12058).
+//!
+//! Untangle slice 6.8c arms a program on a trigger other than a turn
+//! (`trigger`): a due time, the host turning idle, or a change feed moving.
+//! The arming seals its actor's authority; each occurrence records the wake it
+//! owes with that authority, and the same admission judges it again.
 
 mod admit;
 mod arm;
@@ -45,6 +50,7 @@ mod resume;
 mod run;
 mod stop_recovery;
 mod stop_sends;
+mod trigger;
 mod types;
 mod wake;
 mod withdrawn;
@@ -87,8 +93,14 @@ pub(crate) use self::run::{
     ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,
     note_program_write_uncertain, settle_program_outbound_in_txn, settle_program_write_in_txn,
 };
+// The owner's stop of a parked try (`park_release`) abandons the try's
+// Pending sends as a held program's Stop does (FIX 7188).
+pub(in crate::dreamer_runner) use self::stop_sends::abandon_stopped_sends_in_txn;
+pub(crate) use self::trigger::{
+    next_program_timer_at, release_idle_programs, release_program_wakes,
+};
 pub use self::types::{
-    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
+    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
     TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
     TurnProgramRegistration,
 };

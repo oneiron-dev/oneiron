@@ -5,6 +5,15 @@ crate::side_table::side_tables! {
     /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
     AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One wait over the AGENT children an attempt spawned (slice 6.5b), and its first done
+    /// reduction (JSON): the waiting attempt, the children's attempt ids, the policy and the
+    /// step key. Key: id16(wait).
+    AGENT_DISPATCH_CHILD_WAIT: VaultMeta b"agent.dispatch.child_wait.v1\0" Raw Authored [accepts: crate::agent_dispatch::agent_dispatch_child_wait_accepts_masked]
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The index rows of the waits over AGENT children, by a one-byte tag: `w` id16(child
+    /// attempt) + id16(wait) (a child's unsettled waits; a presence marker).
+    AGENT_DISPATCH_CHILD_WAIT_INDEX: VaultMeta b"agent.dispatch.child_wait_index.v1\0" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 1380: one running child's comm widening, its per-reach asks to its parent and the
     /// reach the parent approved. Key: id16.
     AGENT_DISPATCH_COMM_WIDEN: VaultMeta b"agent.dispatch.comm.v1\0" Named Engine
@@ -30,7 +39,7 @@ crate::side_table::side_tables! {
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
     AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical]
-        => crate::agent_dispatch::spend_handoff::erase_spend_scope_actor_in_txn;
+        => crate::agent_dispatch::erase_spend_scope_actor_in_txn;
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];

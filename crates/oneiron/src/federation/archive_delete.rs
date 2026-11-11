@@ -2,9 +2,9 @@
 //! judged from the vault's own rows in the caller's snapshot.
 //!
 //! The live Owner deletes anything its bound credential reaches. An Admin
-//! deletes what the resource axes of its live membership grant hold; a
-//! Steward deletes in scope, what its live grant holds under the `delete`
-//! class it names (ARCH-0043, owner 9 Nov); an Admin, a Steward or a Member
+//! or a Deputy deletes what the resource axes of its live membership grant
+//! hold; a Steward deletes in scope, what its live grant holds under the
+//! `delete` class it names (ARCH-0043, owner 9 Nov); an Admin, a Steward or a Member
 //! deletes an item it provably owns (a TASK by its Owner fact, a NOTE by
 //! its author); the records the vault mints itself are no one's own. For a
 //! person delete is a role default, never a Grant it must hold; a Viewer, a
@@ -255,6 +255,7 @@ fn person_arms(
         if !matches!(
             role,
             FederationGrantRole::Owner
+                | FederationGrantRole::Deputy
                 | FederationGrantRole::Admin
                 | FederationGrantRole::Steward
                 | FederationGrantRole::Member

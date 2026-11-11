@@ -703,7 +703,7 @@ crate::side_table::side_tables! {
     /// (ARCH-0080 §10). Key: id16(binding claim).
     SKILL_HUB_PACK_HOOK_PROPOSAL: VaultMeta b"pack.hook-proposal.v1/" Named
         // Restore class: An ask stands with the binding claims it describes.
-        [restore: content] [family: unregistered] [tier: canonical]
+        [restore: content] [family: unclassified] [tier: canonical]
         => crate::store::pack_hook_proposal::scrub_hook_proposal_actor_in_txn;
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
     /// never synced or imported. Key: ().
@@ -780,7 +780,7 @@ crate::side_table::side_tables! {
     /// bytes32 (BLAKE3) + bytes16 (instance); value: empty.
     PROVENANCE_BODY_SOURCE: VaultMeta b"provenance:body_source:v1:" Raw
         // Restore class: Historical source facts are custody state: the current vault's is kept.
-        [restore: live] [family: unregistered] [tier: canonical];
+        [restore: live] [family: structure] [tier: canonical];
     /// One row's immutable birth envelope (Rule A made_by); an erase of its process actor drops
     /// it (FIX 6074). Key: id16.
     PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named
