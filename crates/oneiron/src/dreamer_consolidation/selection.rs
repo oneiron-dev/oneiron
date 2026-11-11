@@ -232,6 +232,58 @@ impl Vault {
             Ok(())
         })
     }
+
+    /// The owner, by its proof, or a holder of `engine.controls` sets the selection timing: the
+    /// soak and the recency window. Every other field stays as it stands (untangle 6.6b;
+    /// maintenance cadence), through the one check, with a receipt naming it. Untangle 6.6d gives
+    /// it its verb. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
+    /// holder of `engine.controls`; the row's own validation; store failures.
+    pub fn set_consolidation_selection_timing_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        soak_ms: u64,
+        recency_window_ms: u64,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::MaintenanceCadence,
+            "DREAMER_CONSOLIDATION_SELECTION",
+            &crate::federation::rendered_change(&serde_json::json!({
+                "soak_ms": soak_ms,
+                "recency_window_ms": recency_window_ms,
+            }))?,
+            |txn| {
+                let mut config = self.consolidation_selection_in_txn(&*txn)?;
+                config.soak_ms = soak_ms;
+                config.recency_window_ms = recency_window_ms;
+                config.validate()?;
+                SELECTION.put(&self.store, txn, &(), &config)
+            },
+        )
+    }
+
+    /// [`Self::set_consolidation_selection_timing_by`] for a holder of `engine.controls` (untangle
+    /// 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_consolidation_selection_timing_by`].
+    pub fn set_consolidation_selection_timing_as_holder(
+        &self,
+        holder: crate::entity_id::EntityId,
+        soak_ms: u64,
+        recency_window_ms: u64,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.set_consolidation_selection_timing_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            soak_ms,
+            recency_window_ms,
+        )
+    }
     pub fn consolidation_selection(&self) -> Result<SelectionConfig> {
         let txn = self.store.env.read_txn()?;
         self.consolidation_selection_in_txn(&txn)
