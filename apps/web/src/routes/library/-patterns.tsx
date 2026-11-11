@@ -23,6 +23,7 @@ import {
   SplitPane,
   StepsBar,
   Verb,
+  WriteLine,
   formatElapsed,
   type ComposerPersonaKind,
   type RunSubState,
@@ -605,6 +606,20 @@ function ComposerDemo() {
   )
 }
 
+/* ── one line to write ───────────────────────────────────────────────── */
+
+function WriteLineDemo() {
+  const [log, setLog] = React.useState<string[]>([])
+  return (
+    <div className="lib-stack lib-write-line" data-specimen="write-line">
+      <WriteLine placeholder="Reply to Metryon about the Q4 view" onSend={(text) => setLog((l) => [...l.slice(-1), `sent “${text}”`])} />
+      <span className="lib-readout" data-specimen="write-line-log">
+        {log.length ? log.join(', ') : 'Nothing sent yet.'}
+      </span>
+    </div>
+  )
+}
+
 /* ── connections ──────────────────────────────────────────────────────── */
 
 function ConnectionVerbs({ leave }: { leave?: boolean }) {
@@ -846,6 +861,17 @@ export function PatternSections() {
               <OutsideLine.Guest glyph={<Glyph initial="y" label="Yurii" size={18} guest />}>Yurii</OutsideLine.Guest>
             </OutsideLine.Group>
           </OutsideLine>
+        </Specimen>
+      </Section>
+
+      <Section title="WriteLine">
+        <Specimen name="Enter sends and clears; empty text does not send; Escape leaves the line" wide={1}>
+          <WriteLineDemo />
+        </Specimen>
+        <Specimen name="narrow: the placeholder ends in an ellipsis" wide={1}>
+          <div className="lib-composer-narrow">
+            <WriteLine placeholder="Reply to Metryon about the Q4 view" aria-label="reply, narrow" />
+          </div>
         </Specimen>
       </Section>
 

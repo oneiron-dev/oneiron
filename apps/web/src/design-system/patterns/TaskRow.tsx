@@ -5,6 +5,7 @@ import { Unfold } from '../primitives/Unfold'
 import { Verb } from '../primitives/Verb'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { taskCountWords } from './task-group'
+import { WriteLine, type WriteLineProps } from './WriteLine'
 
 /* ── the list's open row ───────────────────────────────────────────────── */
 
@@ -126,49 +127,12 @@ function TaskRowQuestion({ className, ...props }: TaskRowQuestionProps) {
   return <p className={cx('sl-task-question', className)} {...props} />
 }
 
-export interface TaskRowWriteProps
-  extends Omit<React.ComponentPropsWithRef<'input'>, 'value' | 'defaultValue' | 'onChange' | 'type'> {
-  value?: string
-  defaultValue?: string
-  onValueChange?: (value: string) => void
-  /* Called with the trimmed text on Enter; the field then clears. */
-  onSend?: (text: string) => void
-}
+export interface TaskRowWriteProps extends WriteLineProps {}
 
-/* One line to write to the task. Enter sends. */
-function TaskRowWrite({
-  value: valueProp,
-  defaultValue = '',
-  onValueChange,
-  onSend,
-  placeholder = 'Write to this task',
-  className,
-  onKeyDown,
-  'aria-label': ariaLabel,
-  ...props
-}: TaskRowWriteProps) {
-  const [value, setValue] = useControllableState(valueProp, defaultValue, onValueChange)
-  return (
-    <input
-      type="text"
-      className={cx('sl-task-write', className)}
-      aria-label={ariaLabel ?? placeholder}
-      placeholder={placeholder}
-      autoComplete="off"
-      value={value}
-      onChange={(event) => setValue(event.target.value)}
-      onKeyDown={(event) => {
-        onKeyDown?.(event)
-        if (event.defaultPrevented || event.key !== 'Enter' || event.nativeEvent.isComposing) return
-        const text = value.trim()
-        if (!text) return
-        event.preventDefault()
-        onSend?.(text)
-        setValue('')
-      }}
-      {...props}
-    />
-  )
+/* One line to write to the task: a WriteLine. Enter sends; Escape leaves
+   the line and folds the row. */
+function TaskRowWrite({ placeholder = 'Write to this task', className, ...props }: TaskRowWriteProps) {
+  return <WriteLine className={cx('sl-task-write', className)} placeholder={placeholder} {...props} />
 }
 
 export interface TaskRowOwnProps extends Omit<React.ComponentPropsWithRef<'div'>, 'children'> {
