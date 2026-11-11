@@ -214,6 +214,12 @@ fn session_end_plans_only_its_sitting_imported_turns_excludes_sessionless_dirty_
     let conversation = seed_conversation(&vault, 100);
     let pre_existing = seed_dirty_turn(&vault, &conversation, 100);
     let before = meso_partition_attempt_count(&vault);
+    let watermark_before = oneiron::dreamer_consolidation::read_watermark(
+        &vault,
+        oneiron::dreamer_runner::DreamerConsolidationScope::Meso,
+    )
+    .unwrap()
+    .last_learned_at;
 
     let TranscriptIngestOutcome::Session {
         turn_refs,
@@ -261,8 +267,8 @@ fn session_end_plans_only_its_sitting_imported_turns_excludes_sessionless_dirty_
         )
         .unwrap()
         .last_learned_at,
-        200,
-        "the watermark settles at the max learned_at of the planned prefix"
+        watermark_before,
+        "a sitting's close never advances the global Meso watermark, so the unplanned sessionless dirty turn stays in the next global sweep"
     );
 }
 #[test]
