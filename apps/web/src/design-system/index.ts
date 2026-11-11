@@ -11,6 +11,7 @@ export { readScene, type SceneReading } from './lib/scene'
 
 export { Verb, type VerbProps } from './primitives/Verb'
 export { IconAction, type IconActionProps } from './primitives/IconAction'
+export { InfoMark, type InfoMarkProps } from './primitives/InfoMark'
 export { PrimaryButton, type PrimaryButtonProps } from './primitives/PrimaryButton'
 export { Figure, type FigureProps } from './primitives/Figure'
 export { Tabs, type TabsProps, type TabsListProps, type TabsTabProps, type TabsPanelProps } from './primitives/Tabs'
@@ -217,6 +218,17 @@ export { ACT_MODES, setActMode, type RoleAct, type ActMode } from './frame/role-
 
 export { GLYPH_NAMES, type GlyphName } from './lib/seal-art'
 export { GlyphLine, laurelLeaves, type GlyphLineProps, type LaurelLeaf } from './lib/glyph-lines'
+export {
+  placeInfoNote,
+  INFO_NOTE_DELAY_MS,
+  INFO_NOTE_SIDE_GAP_PX,
+  INFO_NOTE_SIDE_WIDTH_PX,
+  INFO_NOTE_SIDE_ROOM_PX,
+  INFO_NOTE_UNDER_GAP_PX,
+  INFO_NOTE_UNDER_WIDTH_PX,
+  type InfoNotePlacement,
+  type NoteRect,
+} from './lib/info-note'
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'

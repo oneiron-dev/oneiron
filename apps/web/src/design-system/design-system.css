@@ -11,6 +11,7 @@
 @import './primitives/Figure.css';
 @import './primitives/Verb.css';
 @import './primitives/IconAction.css';
+@import './primitives/InfoMark.css';
 @import './primitives/PrimaryButton.css';
 @import './primitives/Tabs.css';
 @import './primitives/Unfold.css';
