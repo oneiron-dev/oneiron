@@ -3,12 +3,14 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
 use oneiron::attempt_queue::{
-    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-    EnqueueOutcome, ManifestEntry, ManifestKind,
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, ManifestEntry,
+    ManifestKind,
 };
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::error::Result;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionClass,
@@ -162,20 +164,16 @@ impl Fixture {
 
 fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
     let queue = AttemptQueue::new(vault);
-    for index in 0..200 {
-        let now = 100 + index * 10;
-        let EnqueueOutcome::Enqueued(attempt) = queue
-            .enqueue(EnqueueAttempt {
-                kind: "hub.fixture".to_owned(),
-                payload: vec![],
-                dedupe_key: None,
-                run_id: None,
-                now,
-            })
-            .expect("enqueue")
+    let dispatcher = AgentDispatcher::new(vault);
+    for _ in 0..200 {
+        let now = vault.now_recorded_at();
+        let AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+            .dispatch_default_base(None, None, None, now)
+            .expect("enqueue typed agent dispatch")
         else {
-            panic!("fresh attempt");
+            panic!("fresh agent dispatch");
         };
+        let attempt = dispatched.attempt;
         queue
             .append_manifest_entry(
                 attempt.id,
@@ -183,10 +181,13 @@ fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
             )
             .expect("skill manifest");
         let ClaimOutcome::Claimed(leased) = queue
-            .claim(ClaimAttempt {
-                lease_owner: "fixture".to_owned(),
-                now: now + 1,
-            })
+            .claim_kind(
+                DREAMER_RUNNER_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "fixture".to_owned(),
+                    now: vault.now_recorded_at(),
+                },
+            )
             .expect("claim")
         else {
             panic!("claimable attempt");
@@ -206,14 +207,19 @@ fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
                     id: attempt.id,
                     lease_owner: "fixture".to_owned(),
                     attempt_count: leased.attempt_count,
-                    now: now + 2,
+                    now: vault.now_recorded_at(),
                 })
                 .expect("complete"),
             CompleteOutcome::Completed(_)
         ));
         let receipt = oneiron::receipt::attempt_pack_receipt_id(&attempt.id);
-        oneiron::skill_reliability::record_skill_contributing_win(vault, skill, &receipt, now + 3)
-            .expect("attribute win");
+        oneiron::skill_reliability::record_skill_contributing_win(
+            vault,
+            skill,
+            &receipt,
+            vault.now_recorded_at(),
+        )
+        .expect("attribute win");
         if !oneiron::skill_optimize::held_out_receipts(vault, skill)
             .expect("held-out reserve")
             .is_empty()
