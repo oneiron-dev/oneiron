@@ -8,40 +8,48 @@
    the rest of the app: html.light forces light, html.dark forces dark, and no
    class follows the operating system.
 
-   Light values marked provisional are derived here because the token table
-   gives no light value for them yet. */
+   The grounds and inks below were set by an APCA contrast audit: only
+   lightness moved, hue and chroma were kept. Values marked provisional are
+   derived here because the audit gives no value for them yet. */
 
 .sl-root {
   color-scheme: light dark;
 
-  /* Grounds: the field ground, the island well, a well inside the island. */
-  --sl-bg: light-dark(#F4F5F7, #131110);
-  --sl-island: light-dark(#FAF9F5, #1B1815);
-  --sl-sunk: light-dark(#FDFCF9, #161412);
+  /* The window ground around the sheet: its two print inks (equal for a
+     flat theme) and the ink of words and symbols set on it. SafelightRoot
+     sets all three from its theme. */
+
+  /* Grounds. bg is the sidebar's tone in the sheet; island is the work
+     area; well is one step darker than the sheet, for a recess; sunk is one
+     step lighter, for a raised card and a text field. At night a theme
+     turns the sheet's tones toward its hue: SafelightRoot sets the
+     --sl-night-* values, and without them the night value here holds. */
+  --sl-bg: light-dark(#EFF0F2, var(--sl-night-bg, #120F0D));
+  --sl-island: light-dark(#FAF9F5, var(--sl-night-island, #1B1815));
+  --sl-sunk: light-dark(#FDFCF9, var(--sl-night-sunk, #272421));
+  --sl-well: light-dark(#EFEEEB, var(--sl-night-well, #120F0D));
   /* The popover ground. */
-  --sl-pop: light-dark(#FEFDFB /* provisional */, #211D18);
+  --sl-pop: light-dark(#FEFDFB, var(--sl-night-pop, #2C2926));
   /* The disc behind a person's initial and a filled person seal. */
-  --sl-disc: light-dark(#DBE0E6 /* provisional */, #443E35);
+  --sl-disc: light-dark(#DBE0E6, var(--sl-night-disc, #4C4741));
   /* The plate behind a dithered portrait. */
   --sl-plate: light-dark(#E8EBEE /* provisional */, #131110);
   /* A pressed or opened person disc. */
-  --sl-disc-hover: light-dark(#CDD4DB /* provisional */, #50493F);
+  --sl-disc-hover: light-dark(#CFD4DA /* provisional */, #58524C /* provisional */);
   /* The round plate under a resident in a crew stack, and its hover. */
-  --sl-chip: light-dark(#ECEFF2 /* provisional */, #25211C);
-  --sl-chip-hover: light-dark(#E1E6EA /* provisional */, #2E2924);
-  /* A sunk field while it holds focus (the write box). */
-  --sl-sunk-focus: light-dark(#F7F6F1 /* provisional */, #181614);
+  --sl-chip: light-dark(#E4E6E9, var(--sl-night-chip, #302D2A));
+  --sl-chip-hover: light-dark(#DBDDE0 /* provisional */, #393633 /* provisional */);
 
   /* The ink ladder: silver in dark, slate in light. ink-4 is never text. */
-  --sl-ink-1: light-dark(#1E2226, #DDD6C9);
-  --sl-ink-2: light-dark(#3A424B, #C0B9AC);
-  --sl-ink-3: light-dark(#5C6771, #8F887A);
-  --sl-ink-4: light-dark(#8A929B, #565048);
-  --sl-rule: light-dark(#DCE1E5, #322D27);
+  --sl-ink-1: light-dark(#1E2226, #E8E1D5);
+  --sl-ink-2: light-dark(#3A424B, #D6CEC1);
+  --sl-ink-3: light-dark(#4E5862, #BAB3A4);
+  --sl-ink-4: light-dark(#8A929B, #837C74);
+  --sl-rule: light-dark(#D5DADE, var(--sl-night-rule, #3A3734));
 
   /* Hover is one tone step; lit marks the selected row or the open item. */
-  --sl-hover: light-dark(rgba(30, 34, 38, 0.04) /* provisional */, rgba(221, 214, 201, 0.04));
-  --sl-lit: light-dark(rgba(30, 34, 38, 0.07) /* provisional */, rgba(221, 214, 201, 0.07));
+  --sl-hover: light-dark(rgba(30, 34, 38, 0.04), rgba(232, 225, 213, 0.05));
+  --sl-lit: light-dark(rgba(30, 34, 38, 0.07), rgba(232, 225, 213, 0.08));
   --sl-selection: light-dark(rgba(30, 34, 38, 0.14) /* provisional */, rgba(221, 214, 201, 0.2));
 
   /* The one red: live, touch, in flight. The one other hue: what comes from outside. */
@@ -53,14 +61,14 @@
 
   /* The primary button: the one filled box. */
   --sl-primary: var(--sl-ink-1);
-  --sl-primary-hover: light-dark(#2E3339 /* provisional */, #EDE7DB);
+  --sl-primary-hover: light-dark(#2F3337 /* provisional */, #F9F2E6 /* provisional */);
   --sl-on-primary: light-dark(#FAF9F5, #131110);
 
   /* Material inks. The field ink prints the night clouds; the grain ink prints
      the quiet screen inside the island; the track is an empty step segment. */
   --sl-field-ink: #4A443C; /* night only: the day field draws its art as it is */
   --sl-grain-ink: light-dark(#ECF0F3 /* provisional */, #24201C);
-  --sl-track: light-dark(#DEE3E7 /* provisional */, #2E2A25);
+  --sl-track: light-dark(#B8BEC5, #837C74);
 
   /* Text set bare on the field: a halo of the ground at night, white with a
      soft shadow over the day art. light-dark() takes colours only, so each
@@ -71,33 +79,27 @@
     0 0 2px light-dark(transparent, #131110),
     0 0 1px light-dark(transparent, #131110),
     0 1px 3px light-dark(rgba(10, 38, 62, 0.42), transparent);
-  /* The sidebar bare on the field: resting words (white by day, silver-2 by
-     night), the quieter caption, the hover and current tone steps, the
-     badge figure, and the shadow colour under a symbol by day. */
-  --sl-on-field-word: light-dark(#FFFDF8, #C0B9AC);
-  --sl-on-field-quiet: light-dark(rgba(255, 253, 248, 0.8) /* provisional */, #8F887A);
-  --sl-on-field-hover: light-dark(rgba(10, 38, 62, 0.1) /* provisional */, rgba(221, 214, 201, 0.04));
-  --sl-on-field-lit: light-dark(rgba(10, 38, 62, 0.2) /* provisional */, rgba(221, 214, 201, 0.07));
-  --sl-on-field-badge-ink: light-dark(#1E2226, #131110);
+  /* Words that cross every part of the field carry a halo: the ground's
+     tone by night, a deep sky tone by day, under the soft day shadow. */
   --sl-on-field-drop: light-dark(rgba(10, 38, 62, 0.42), transparent);
-  /* Words and symbols that cross every part of the field (the sidebar runs
-     over the pale day clouds) carry a halo: the ground's tone by night, a
-     deep sky tone by day, under the soft day shadow. */
   --sl-on-field-halo: light-dark(rgba(10, 38, 62, 0.62) /* provisional */, #131110);
   --sl-on-field-text-halo:
     0 0 6px var(--sl-on-field-halo),
     0 0 2px var(--sl-on-field-halo),
     0 0 1px var(--sl-on-field-halo),
     0 1px 3px var(--sl-on-field-drop);
-  --sl-on-field-symbol-halo:
-    drop-shadow(0 0 1px var(--sl-on-field-halo))
-    drop-shadow(0 0 3px var(--sl-on-field-halo))
-    drop-shadow(0 1px 2px var(--sl-on-field-drop));
-  /* The sidebar on paper: a near-opaque strip of the ground. */
-  --sl-paper: color-mix(in srgb, var(--sl-bg) 92%, transparent);
 
-  /* The only shadow in the system sits under a popover. */
+  /* Two shadows. Under a popover; and the ring of a raised card (a stack
+     of soft layers by day, one faint light ring at night, where a dark
+     shadow cannot show). */
   --sl-pop-shadow: 0 10px 28px light-dark(rgba(30, 40, 52, 0.16) /* provisional */, rgba(6, 5, 4, 0.55));
+  --sl-card-shadow:
+    0 0 0 1px light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.09)),
+    0 1px 2px -1px light-dark(rgba(0, 0, 0, 0.06), transparent),
+    0 2px 4px light-dark(rgba(0, 0, 0, 0.04), transparent);
+  /* The inner outline of a portrait or a picture: black or white, never a
+     tinted neutral, so it reads as an edge on any ground. */
+  --sl-image-line: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
 
   /* Type: Source Serif 4 speaks, Server Mono counts. Six sizes and no others. */
   --sl-serif: "Source Serif 4", Georgia, serif;
@@ -116,6 +118,10 @@
 
   /* Motion. */
   --sl-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  /* The messages column: the width shared by message text, every card
+     under a message, and the write box. */
+  --sl-col: 620px;
 
   /* Field visible around the island. */
   --sl-gutter: 28px;
