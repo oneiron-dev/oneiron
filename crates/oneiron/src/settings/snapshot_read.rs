@@ -14,6 +14,10 @@ use crate::side_table::{self, Named, SideTable};
 const SETTINGS: SideTable<(), SnapshotReadSettings, Named> =
     SideTable::new(&side_table::SNAPSHOT_READ_SETTINGS);
 
+/// The name an engine-control receipt gives this row (untangle 6.6f): the
+/// row's stored name, as every knob has.
+pub const SNAPSHOT_READ_BOUNDS_KNOB: &str = "SNAPSHOT_READ_SETTINGS";
+
 /// The bounds every snapshot handle is held to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +76,37 @@ impl SnapshotReadSettings {
         }
         Ok(())
     }
+
+    /// The first bound of `self` that is above the same bound of `held`.
+    fn first_bound_above(&self, held: &Self) -> Option<&'static str> {
+        [
+            (
+                "open_per_actor",
+                u64::from(self.open_per_actor),
+                u64::from(held.open_per_actor),
+            ),
+            (
+                "default_lifetime_secs",
+                self.default_lifetime_secs,
+                held.default_lifetime_secs,
+            ),
+            (
+                "max_lifetime_secs",
+                self.max_lifetime_secs,
+                held.max_lifetime_secs,
+            ),
+            (
+                "page_rows",
+                u64::from(self.page_rows),
+                u64::from(held.page_rows),
+            ),
+            ("page_bytes", self.page_bytes, held.page_bytes),
+            ("handle_rows", self.handle_rows, held.handle_rows),
+        ]
+        .into_iter()
+        .find(|(_, bound, in_force)| bound > in_force)
+        .map(|(name, _, _)| name)
+    }
 }
 
 impl Default for SnapshotReadSettings {
@@ -124,5 +159,66 @@ impl Vault {
         SETTINGS.put(&self.store, &mut txn, &(), &settings)?;
         txn.commit()?;
         Ok(settings)
+    }
+
+    /// The owner, by its proof, or a holder of `engine.controls.work_budget`
+    /// lowers the snapshot bounds (untangle 6.6f; Engine 9 Nov 19:48,
+    /// SNAPSHOT-SETTINGS-IN-6.6, in the shape of S66B-BUDGETS B1 = A; its
+    /// verb is `vault.settings.snapshot_read.lower`). The row in force is the
+    /// owner's cap: each new bound must be at or below its value in force,
+    /// so this door never raises one. Raising a bound stays the owner's act,
+    /// at `vault.settings.snapshot_read.replace`. The cap at a credential's
+    /// own expiry is not a bound of this row and does not move.
+    ///
+    /// The next page of any handle is held to the new page and handle
+    /// bounds. A handle that is already open keeps the lifetime it was
+    /// opened with, and stays open when fewer may now be open at once.
+    /// Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` for bounds that fail
+    /// [`SnapshotReadSettings::validate`]; when `actor` is neither the
+    /// owner, by a proof that still holds, nor a live holder of
+    /// `engine.controls.work_budget`; and for a bound above its value in
+    /// force. Store failures.
+    pub fn lower_snapshot_read_bounds_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        bounds: SnapshotReadSettings,
+    ) -> Result<crate::entity_id::EntityId> {
+        bounds.validate()?;
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::WorkBudget,
+            SNAPSHOT_READ_BOUNDS_KNOB,
+            &crate::federation::rendered_change(&bounds)?,
+            |txn| {
+                let held = SETTINGS.get(&self.store, &*txn, &())?.unwrap_or_default();
+                if let Some(name) = bounds.first_bound_above(&held) {
+                    return Err(Error::InvalidConfig(format!(
+                        "this door only lowers the snapshot bounds, and {name} is above its value in force; raising one is the owner's act at vault.settings.snapshot_read.replace"
+                    )));
+                }
+                SETTINGS.put(&self.store, txn, &(), &bounds)
+            },
+        )
+    }
+
+    /// [`Self::lower_snapshot_read_bounds_by`] for a holder of
+    /// `engine.controls.work_budget` (untangle 6.6f).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lower_snapshot_read_bounds_by`].
+    pub fn lower_snapshot_read_bounds_as_holder(
+        &self,
+        holder: crate::entity_id::EntityId,
+        bounds: SnapshotReadSettings,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.lower_snapshot_read_bounds_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            bounds,
+        )
     }
 }

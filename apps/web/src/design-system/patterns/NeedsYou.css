@@ -1,5 +1,6 @@
-/* The needs-you block: a sunk well in a room, bare on a popover or a desk.
-   One item open, the rest one line each. */
+/* The needs-you block: in a room a raised card (the sunk tone and the
+   card ring) as wide as the messages column; bare on a popover or a desk.
+   Groups by room, one skeleton per ask. */
 .sl-needs-you {
   display: flex;
   flex-direction: column;
@@ -7,279 +8,246 @@
 }
 
 .sl-needs-you[data-ground="well"] {
-  padding: 4px 14px;
+  max-width: var(--sl-col);
+  padding: 2px 6px 4px 12px;
   border-radius: var(--sl-radius);
   background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
 }
 
 .sl-needs-you[data-ground="bare"] {
   --sl-mark-ground: var(--sl-pop);
 }
 
-/* A settled item folds away on the same curve as an unfold. */
-.sl-needs-you-item {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition:
-    grid-template-rows 260ms var(--sl-ease-out),
-    opacity 200ms ease;
+/* A group: the room's name as a quiet label; a hairline before the next. */
+.sl-needs-you-group + .sl-needs-you-group {
+  margin-top: 2px;
+  box-shadow: 0 -1px 0 var(--sl-rule);
 }
 
-.sl-needs-you-item > .sl-needs-you-item-inner {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.sl-needs-you-item[data-settle="settled"] {
-  grid-template-rows: 0fr;
-  opacity: 0;
-}
-
-/* Set aside: one quiet line in the question's column: its first words,
-   `set aside`, and `answer now` at the right. */
-.sl-needs-you-aside {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  min-width: 0;
-  padding: 6px 0 6px 34px;
-  font-size: var(--sl-t-do);
+.sl-needs-you-group-label {
+  padding-top: 9px;
+  font-size: var(--sl-t-figure);
   line-height: 1.5;
-}
-
-.sl-needs-you-aside-words {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--sl-ink-2);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sl-needs-you-aside-state {
-  flex: none;
   color: var(--sl-ink-3);
-  white-space: nowrap;
 }
 
-.sl-needs-you-answer-now {
-  flex: none;
-  margin-left: auto;
+/* One ask. */
+.sl-needs-you-ask {
+  padding: 4px 0 8px;
 }
 
-/* The head: the asker's mark, the question, the urgency at the right. */
-.sl-needs-you-head.sl-unfold-trigger {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  column-gap: 12px;
+.sl-needs-you-ask:not([data-state="open"]) {
+  padding-bottom: 4px;
+}
+
+/* Line 1: the asker's portrait, the ask, then later and the information
+   mark at the right. */
+.sl-needs-you-line {
+  display: flex;
   align-items: center;
-  width: 100%;
-  padding: 9px 0;
-  border-radius: var(--sl-radius);
-  text-align: left;
-}
-
-.sl-needs-you-head:focus-visible {
-  outline-offset: 0;
-}
-
-.sl-needs-you-item[data-state="open"] .sl-needs-you-head {
-  cursor: default;
+  gap: 8px;
+  min-height: 32px;
 }
 
 .sl-needs-you-asker {
   display: grid;
   place-items: center;
-  color: var(--sl-ink-2);
+  flex: none;
 }
 
 .sl-needs-you-question {
+  flex: 1;
   min-width: 0;
-  overflow: hidden;
   font-size: var(--sl-t-say);
-  line-height: 1.4;
-  color: var(--sl-ink-2);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.sl-needs-you-head:hover .sl-needs-you-question,
-.sl-needs-you-item[data-state="open"] .sl-needs-you-question {
+  line-height: 1.5;
   color: var(--sl-ink-1);
-}
-
-.sl-needs-you-item[data-state="open"] .sl-needs-you-question {
-  white-space: normal;
   text-wrap: pretty;
 }
 
-.sl-needs-you-meta {
-  display: inline-flex;
-  max-width: 30ch;
-  overflow: hidden;
+.sl-needs-you-line > .sl-icon-action {
+  color: var(--sl-ink-3);
 }
 
-/* The body sits under the question, past the asker's column. */
-.sl-needs-you-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 0 0 12px 34px;
+.sl-needs-you-line > .sl-icon-action:hover,
+.sl-needs-you-line > .sl-icon-action:focus-visible,
+.sl-needs-you-line > .sl-info-mark[data-open] {
+  color: var(--sl-ink-1);
+  background: var(--sl-lit);
 }
 
-/* The picks line. */
-.sl-needs-you-picks {
+/* Line 2: the answers, under the ask's text (past the portrait). */
+.sl-needs-you-answers {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 20px;
+  gap: 6px;
   min-height: 30px;
 }
 
-.sl-needs-you-pick {
+.sl-needs-you-ask[data-asker] .sl-needs-you-answers {
+  margin-left: 28px;
+}
+
+.sl-needs-you-answer {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 30px;
+  gap: 6px;
+  height: 30px;
+  border-radius: var(--sl-radius);
   font-size: var(--sl-t-do);
-  color: var(--sl-ink-2);
+  line-height: 1;
   white-space: nowrap;
   transition: transform 120ms var(--sl-ease-out);
 }
 
-.sl-needs-you-pick:hover,
-.sl-needs-you-pick:focus-visible,
-.sl-needs-you-pick[aria-pressed="true"] {
-  color: var(--sl-ink-1);
-  outline: none;
-}
-
-.sl-needs-you-pick:focus-visible .sl-pick-diamond path {
-  stroke-width: 1.8;
-}
-
-.sl-needs-you-pick[data-tone="consent"]:hover,
-.sl-needs-you-pick[data-tone="consent"]:focus-visible {
-  color: var(--sl-safelight);
-}
-
-.sl-needs-you-pick:active {
+.sl-needs-you-answer:active {
   transform: scale(0.96);
 }
 
-.sl-needs-you-pick:disabled {
-  cursor: default;
-  transform: none;
-}
-
-.sl-needs-you-later {
+/* The clock of an answers line outside an ask sits at its right end. */
+.sl-needs-you-answers > .sl-needs-you-later {
   margin-left: auto;
 }
 
-.sl-needs-you-pending {
-  display: inline-block;
-  font-size: var(--sl-t-do);
-  color: var(--sl-ink-2);
-  white-space: nowrap;
-}
-
-.sl-needs-you-pending > .sl-needs-you-undo {
+/* Chips: each answer on the chip tone; hover lifts it to the disc tone.
+   The pencil and the cross are quieter than the words. */
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-answer {
+  padding: 0 11px;
+  background: var(--sl-chip);
   color: var(--sl-ink-1);
 }
 
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-answer:hover {
+  background: var(--sl-disc);
+}
+
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-answer:is([data-kind="own"], [data-kind="no"]) {
+  padding: 0 8px;
+  color: var(--sl-ink-2);
+}
+
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-diamond {
+  display: none;
+}
+
+/* Plain: a diamond and a word, no chip tone. */
+.sl-needs-you-answers[data-answers="plain"] {
+  gap: 6px 12px;
+}
+
+.sl-needs-you-answers[data-answers="plain"] .sl-needs-you-answer {
+  padding: 0 4px;
+  color: var(--sl-ink-2);
+}
+
+.sl-needs-you-answers[data-answers="plain"] .sl-needs-you-answer:hover {
+  color: var(--sl-ink-1);
+}
+
+/* Yes carries the weight, and the figure when money is involved. */
+.sl-needs-you-answer[data-kind="yes"] {
+  font-weight: 600;
+}
+
+.sl-needs-you-answers .sl-needs-you-answer[data-kind="yes"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-answer[data-kind="yes"] > .sl-figure {
+  color: var(--sl-ink-1);
+  font-weight: 400;
+}
+
+/* The field of an own answer replaces the line. */
 .sl-needs-you-own {
-  flex: 1 1 260px;
+  flex: 1 1 240px;
   min-width: 0;
-  height: 32px;
+  height: 30px;
   padding: 0 10px;
   border: 0;
   border-radius: var(--sl-radius);
-  background: var(--sl-hover);
+  background: var(--sl-island);
+  box-shadow: inset 0 0 0 1px var(--sl-rule);
   color: var(--sl-ink-1);
   font-family: var(--sl-serif);
   font-size: var(--sl-t-say);
 }
 
 .sl-needs-you-own::placeholder {
-  color: var(--sl-ink-2);
+  color: var(--sl-ink-3);
   font-style: italic;
+  opacity: 1;
 }
 
 .sl-needs-you-own:focus {
-  outline: 1.5px solid var(--sl-ink-4);
-  outline-offset: 0;
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--sl-ink-4);
 }
 
-/* Shapes: a command as one sentence, a plan as numbered steps. */
-.sl-needs-you-command {
-  max-width: 64ch;
-  font-size: var(--sl-t-say);
+/* Answered: one record line. The ask in the quiet ink, cut at 44
+   characters; the mark of the answer, its word, its time; `undo` while
+   the window is open. */
+.sl-needs-you-record,
+.sl-needs-you-aside {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  font-size: var(--sl-t-do);
   line-height: 1.5;
-  color: var(--sl-ink-2);
-}
-
-/* The steps read as one list; the hidden ones continue it when unfolded. */
-.sl-needs-you-plan {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  counter-reset: sl-plan-step;
-}
-
-.sl-needs-you-plan-rest {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  align-self: stretch;
-}
-
-.sl-needs-you-plan-rest .sl-needs-you-steps {
-  padding-top: 2px;
-}
-
-.sl-needs-you-plan-rest > .sl-verb {
-  margin-top: 6px;
-}
-
-.sl-needs-you-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  list-style: none;
-}
-
-.sl-needs-you-step {
-  display: grid;
-  grid-template-columns: 2.6ch minmax(0, 1fr);
-  counter-increment: sl-plan-step;
-  font-size: var(--sl-t-say);
-  line-height: 1.45;
-  color: var(--sl-ink-2);
-}
-
-.sl-needs-you-step::before {
-  content: counter(sl-plan-step);
-  padding-top: 2px;
-  font-family: var(--sl-mono);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
-  font-size: var(--sl-t-figure);
   color: var(--sl-ink-3);
 }
 
-.sl-needs-you-context {
-  display: block;
-  max-width: 420px;
+.sl-needs-you-record-ask {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-needs-you-record-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  margin-left: 6px;
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-record-word {
+  flex: none;
+  color: var(--sl-ink-1);
+  white-space: nowrap;
+}
+
+.sl-needs-you-record-time {
+  flex: none;
+  margin-left: 2px;
+}
+
+.sl-needs-you-record > .sl-needs-you-undo {
+  margin-left: 6px;
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-aside-state {
+  flex: none;
+  white-space: nowrap;
+}
+
+.sl-needs-you-answer-now {
+  flex: none;
+  color: var(--sl-ink-1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sl-needs-you-item {
-    transition: opacity 200ms ease;
-  }
-  .sl-needs-you-pick {
+  .sl-needs-you-answer {
     transition: none;
   }
-  .sl-needs-you-pick:active {
+  .sl-needs-you-answer:active {
     transform: none;
   }
 }

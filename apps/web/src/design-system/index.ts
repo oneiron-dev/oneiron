@@ -5,9 +5,13 @@ export { SafelightRoot, type SafelightRootProps } from './ground/SafelightRoot'
 export { Field, type FieldProps } from './ground/Field'
 export { Island, type IslandProps } from './ground/Island'
 export { Well, type WellProps } from './ground/Well'
+export { WindowGround, type WindowGroundProps } from './ground/WindowGround'
+export { useRootTheme, type RootTheme } from './ground/root-theme'
+export { readScene, type SceneReading } from './lib/scene'
 
 export { Verb, type VerbProps } from './primitives/Verb'
 export { IconAction, type IconActionProps } from './primitives/IconAction'
+export { InfoMark, type InfoMarkProps } from './primitives/InfoMark'
 export { PrimaryButton, type PrimaryButtonProps } from './primitives/PrimaryButton'
 export { Figure, type FigureProps } from './primitives/Figure'
 export { Tabs, type TabsProps, type TabsListProps, type TabsTabProps, type TabsPanelProps } from './primitives/Tabs'
@@ -60,23 +64,26 @@ export {
 } from './marks/donut-segments'
 export { Glyph, type GlyphProps, type GlyphState, type GlyphShape, type GlyphForm } from './marks/Glyph'
 export { Portrait, type PortraitProps } from './marks/Portrait'
+export { BrandMark, type BrandMarkProps } from './marks/BrandMark'
 
 export {
   NeedsYou,
   NEEDS_YOU_UNDO_MS,
+  useNeedsYouAnswerStatus,
   type NeedsYouProps,
-  type NeedsYouItemProps,
+  type NeedsYouGroupProps,
+  type NeedsYouAskProps,
   type NeedsYouAnswerProps,
-  type NeedsYouUrgency,
+  type NeedsYouAnswerRecord,
+  type NeedsYouAnswerMark,
+  type NeedsYouAnswers,
   type NeedsYouPicksProps,
   type NeedsYouPickProps,
   type NeedsYouOwnAnswerProps,
+  type NeedsYouYesNoProps,
   type NeedsYouLaterProps,
-  type NeedsYouCommandProps,
-  type NeedsYouPlanProps,
-  type NeedsYouStepProps,
-  type NeedsYouContextProps,
 } from './patterns/NeedsYou'
+export { formatAnswerTime } from './patterns/answer-time'
 export {
   settleReducer,
   SETTLE_OPEN,
@@ -113,11 +120,26 @@ export {
   type SplitPanePaneProps,
   type SplitPaneHandleProps,
   type SplitPaneHeadProps,
+  type SplitPaneThingProps,
 } from './patterns/SplitPane'
+export {
+  paneWidth,
+  paneBounds,
+  paneTrack,
+  thingPlaceholder,
+  LIST_PANE_PX,
+  THING_PANE_MIN_PX,
+  THING_PANE_MAX_PX,
+  COLUMN_ROOM_PX,
+  SPLIT_EDGE_PX,
+  type PaneKind,
+} from './patterns/pane-width'
 export { snapToMagnet, SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, type MagnetSnap } from './patterns/snap-to-magnet'
 export {
   Composer,
   type ComposerProps,
+  type ComposerSize,
+  type ComposerTools,
   type ComposerSendDetails,
   type ComposerAddProps,
   type ComposerCarryProps,
@@ -126,6 +148,7 @@ export {
   type ComposerPersonaProps,
   type ComposerPersonaKind,
 } from './patterns/Composer'
+export { composerKeySends, composerSendText, type ComposerKeyState } from './patterns/composer-keys'
 export { OutsideLine, type OutsideLineProps, type OutsideLineGroupProps, type OutsideLineGuestProps } from './patterns/OutsideLine'
 export { ConnectionRow, type ConnectionRowProps } from './patterns/ConnectionRow'
 export { FileRow, type FileRowProps } from './patterns/FileRow'
@@ -140,7 +163,6 @@ export {
 export { ClaimText, type ClaimTextProps } from './patterns/ClaimText'
 export { claimInk, type ClaimInk } from './patterns/claim-ink'
 export { findBoostWord } from './patterns/find-boost-word'
-export { WriteLine, type WriteLineProps } from './patterns/WriteLine'
 export { TaskList, type TaskListProps } from './patterns/TaskList'
 export {
   TaskRow,
@@ -178,6 +200,7 @@ export {
 export {
   MicroSidebar,
   type MicroSidebarProps,
+  type MicroSidebarVaultMarkProps,
   type MicroSidebarItemProps,
   type MicroSidebarMoreProps,
   type MicroSidebarMoreItemProps,
@@ -210,7 +233,46 @@ export { ACT_MODES, setActMode, type RoleAct, type ActMode } from './frame/role-
 
 export { GLYPH_NAMES, type GlyphName } from './lib/seal-art'
 export { GlyphLine, laurelLeaves, type GlyphLineProps, type LaurelLeaf } from './lib/glyph-lines'
+export {
+  placeInfoNote,
+  INFO_NOTE_DELAY_MS,
+  INFO_NOTE_SIDE_GAP_PX,
+  INFO_NOTE_SIDE_WIDTH_PX,
+  INFO_NOTE_SIDE_ROOM_PX,
+  INFO_NOTE_UNDER_GAP_PX,
+  INFO_NOTE_UNDER_WIDTH_PX,
+  type InfoNotePlacement,
+  type NoteRect,
+} from './lib/info-note'
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
+export {
+  THEMES,
+  DEFAULT_THEME,
+  SCENE_STAND_IN_COLOUR,
+  DAY_GROUND_INK,
+  NIGHT_GROUND_INK,
+  TONE_FLOOR,
+  TONE_SPAN,
+  apcaLc,
+  deriveThemeTones,
+  hexToOklch,
+  hexToRgb,
+  oklchToHex,
+  rgbToOklab,
+  themeProperties,
+  themeSeedFromColour,
+  themeSeedFromPixels,
+  toneMapFromPixels,
+  type Theme,
+  type ThemeKind,
+  type ThemeMode,
+  type ThemeSeed,
+  type ThemeTones,
+  type SheetTones,
+  type ToneMap,
+  type PixelData,
+  type Oklch,
+} from './lib/theme'
 export { useControllableState, Slot, cx } from './lib/react-utils'
