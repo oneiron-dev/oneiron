@@ -170,7 +170,7 @@ fn scope_within(request: &AgentScope, holder: &AgentScope) -> bool {
 
 /// Whether every grant `request` names is one `holder` holds: its scope, its
 /// skills, its connectors and its code-mode MCPs.
-fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
+pub(super) fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
     scope_within(&request.scope, &holder.scope)
         && request
             .skills
