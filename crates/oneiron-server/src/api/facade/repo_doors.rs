@@ -21,15 +21,15 @@ use oneiron::memory::repo_doors::{
     REPO_PUBLICATION_POLICY_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, REPO_WORK_BASE_CHANGED,
     RepoCheckoutBindInput, RepoCheckoutBindOutput, RepoExportInput, RepoExportOutput,
     RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput, RepoMergeQueueObserveInput,
-    RepoMergeQueueObserveOutput, RepoProposalSubmitInput, RepoProposalSubmitOutput,
-    RepoReviewPolicy, RepoRunAnswer, RepoRunBinding, RepoSnapshotsGetInput, RepoSnapshotsGetOutput,
-    RepoSnapshotsIngestInput, RepoSnapshotsIngestOutput, RepoSnapshotsReadInput,
-    RepoSnapshotsReadOutput, RepoSymbolsDeclareInput, RepoSymbolsDeclareOutput,
-    RepoSymbolsDefinitionsInput, RepoSymbolsDefinitionsOutput, RepoSymbolsObserveInput,
-    RepoSymbolsObserveOutput, RepoSymbolsReleaseInput, RepoSymbolsReleaseOutput,
-    RepoSymbolsRenewInput, RepoSymbolsRenewOutput, RepoViewsGetInput, RepoViewsGetOutput,
-    RepoViewsReadInput, RepoViewsReadOutput, RepoWorkOpenInput, RepoWorkOpenOutput,
-    repo_provenance_unwitnessed,
+    RepoMergeQueueObserveOutput, RepoProposalResolveInput, RepoProposalSubmitInput,
+    RepoProposalSubmitOutput, RepoReviewPolicy, RepoRunAnswer, RepoRunBinding,
+    RepoSnapshotsGetInput, RepoSnapshotsGetOutput, RepoSnapshotsIngestInput,
+    RepoSnapshotsIngestOutput, RepoSnapshotsReadInput, RepoSnapshotsReadOutput,
+    RepoSymbolsDeclareInput, RepoSymbolsDeclareOutput, RepoSymbolsDefinitionsInput,
+    RepoSymbolsDefinitionsOutput, RepoSymbolsObserveInput, RepoSymbolsObserveOutput,
+    RepoSymbolsReleaseInput, RepoSymbolsReleaseOutput, RepoSymbolsRenewInput,
+    RepoSymbolsRenewOutput, RepoViewsGetInput, RepoViewsGetOutput, RepoViewsReadInput,
+    RepoViewsReadOutput, RepoWorkOpenInput, RepoWorkOpenOutput, repo_provenance_unwitnessed,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
@@ -508,9 +508,62 @@ pub(crate) async fn vault_repo_proposal_submit(
                 spec,
                 Some(&policy as &dyn RepoReviewPolicy),
                 |stamp| match request {
-                    Some(request) => {
-                        binding.sources_from_host(&vault, stamp, path, content_hash, &request)
-                    }
+                    Some(request) => binding.sources_from_host(
+                        &vault,
+                        stamp,
+                        path,
+                        content_hash,
+                        &request,
+                        oneiron::code_run::SelfEffect::RepoProposalSubmit,
+                    ),
+                    None => Err(repo_provenance_unwitnessed()),
+                },
+            )
+        },
+    )
+    .await
+}
+
+/// `vault.repo.proposal_resolve`: one whole-file resolution of a typed
+/// repository conflict against the run's own work, the public mirror of
+/// `self.code.proposal_resolve`, held to the vault's review policy. The
+/// host uses only a request actually served on this exact attachment, and
+/// its provenance names the resolution; without one the proposal holds as
+/// `repo_provenance_required`, its work kept.
+pub(crate) async fn vault_repo_proposal_resolve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: Caller,
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<RepoProposalResolveInput>,
+) -> Listed<RepoProposalSubmitOutput> {
+    let verb = "vault.repo.proposal_resolve";
+    let policy = OwnerProposalReviewPolicy::new(Arc::clone(&server.vault));
+    let vault = Arc::clone(&server.vault);
+    on_repo_run(
+        server,
+        auth,
+        session,
+        invocation,
+        verb,
+        input,
+        move |memory, binding, spec, request| {
+            let path = spec.path.clone();
+            let content_hash = *blake3::hash(&spec.content).as_bytes();
+            memory.repo_proposal_resolve_for_run(
+                binding,
+                spec,
+                Some(&policy as &dyn RepoReviewPolicy),
+                |stamp| match request.as_ref() {
+                    Some(request) => binding.sources_from_host(
+                        &vault,
+                        stamp,
+                        path.clone(),
+                        content_hash,
+                        request,
+                        oneiron::code_run::SelfEffect::RepoProposalResolve,
+                    ),
                     None => Err(repo_provenance_unwitnessed()),
                 },
             )
