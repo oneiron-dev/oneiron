@@ -167,7 +167,14 @@ async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
             "setup_oneiron",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
-                json!({ "board_budget_tok": 800, "cache": { "ttl_ms": 900_000 } }),
+                json!({
+                    "board_budget_tok": 800,
+                    "cache": { "ttl_ms": 900_000 },
+                    "page": {
+                        "limit": mcp_expected_generated_names().len(),
+                        "forceful_override": true,
+                    },
+                }),
             ),
         ),
     )

@@ -118,7 +118,11 @@ async fn mcp_page_cursor_continues_exactly_once_and_is_bound() {
         setup(
             credential,
             "cursor-2",
-            json!({ "limit": mcp_expected_generated_names().len(), "cursor": cursor.clone() }),
+            json!({
+                "limit": mcp_expected_generated_names().len(),
+                "forceful_override": true,
+                "cursor": cursor.clone(),
+            }),
         ),
     )
     .await;
@@ -463,7 +467,7 @@ async fn mcp_two_live_cursors_on_one_connection_continue_independently() {
         setup(
             "two-cursor-b2",
             1000,
-            json!({ "limit": 50, "cursor": second_cursor }),
+            json!({ "limit": whole.len(), "forceful_override": true, "cursor": second_cursor }),
         ),
     )
     .await;
@@ -486,7 +490,7 @@ async fn mcp_two_live_cursors_on_one_connection_continue_independently() {
         setup(
             "two-cursor-a2",
             900,
-            json!({ "limit": 50, "cursor": first_cursor }),
+            json!({ "limit": whole.len(), "forceful_override": true, "cursor": first_cursor }),
         ),
     )
     .await;

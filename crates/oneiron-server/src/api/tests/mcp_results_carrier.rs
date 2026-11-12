@@ -39,7 +39,15 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
             credential,
             "negotiated-setup",
             "setup_oneiron",
-            mcp_endpoint_envelope(actor_ref, "read_board"),
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({
+                    "page": {
+                        "limit": mcp_expected_generated_names().len(),
+                        "forceful_override": true,
+                    },
+                }),
+            ),
         ),
     )
     .await;
