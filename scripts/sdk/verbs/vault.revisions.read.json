@@ -5,8 +5,8 @@
   "output": "crate::claim::ScopedReadResult<Vec<Option<crate::task_verb::sdk::RevisionEntry>>>",
   "call": "crate::task_verb::sdk::vault_revisions_read_embedded(memory, input)?",
   "scope": "Read",
-  "act_class": "read",
   "grant_class": "vault.revisions.read grant + caller read lane",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true,
     "validate": "input.validate()?;"

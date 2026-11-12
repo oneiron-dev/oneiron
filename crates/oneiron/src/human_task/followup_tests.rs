@@ -256,6 +256,7 @@ pub(super) fn park_on_human(
         deadline: None,
         now_ms: NOW,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let kind = trap_for_durable_wait(&human_input_wait(task_ref), step_hash);
     let trap = open_trap(&fixture.vault, &ctx, kind, step_hash, "human response")
@@ -328,6 +329,7 @@ pub(super) fn open_test_trap(
         deadline: None,
         now_ms: NOW,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     open_trap(&fixture.vault, &ctx, kind, step_hash, "human response").expect("open test trap")
 }

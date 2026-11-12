@@ -1,0 +1,35 @@
+{
+  "name": "tasks.create.from_message",
+  "description": "Mints one TASK from a project-room MESSAGE or TURN and binds it to the root of the thread that message stands in, in one write; a trunk message, a typed brief, an intent key or a ceiling short of Auto is refused, and nothing is written.",
+  "prose_links": [
+    "/create/label",
+    "/create/spec/title",
+    "/create/spec/description",
+    "/create/spec/brief",
+    "/create/spec/notes",
+    "/create/spec/instructions"
+  ],
+  "refs": [
+    "/source_ref",
+    "/create/parent_ref"
+  ],
+  "input": "TaskCreateFromMessageRequest",
+  "output": "crate::task_verb::TaskCreateReceipt",
+  "call": "crate::task_verb::sdk::task_create_from_message(memory, input)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "task_decisions": true,
+  "mcp_fields": {
+    "source_ref": "source_ref",
+    "create": "create"
+  },
+  "mcp_required_fields": [
+    "source_ref",
+    "create"
+  ],
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_scope": "unrestricted",
+  "section": true
+}

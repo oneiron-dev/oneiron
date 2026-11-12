@@ -5,6 +5,7 @@
   "output": "crate::memory::graph_fs_doors::GraphFsOutput",
   "call": "memory.graph_fs_cat(input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

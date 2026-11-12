@@ -9,6 +9,7 @@
   "output": "crate::blob_artifact::esign::EsignDraftView",
   "call": "memory.esign_create(&input)?",
   "scope": "Write",
+  "act_class": "legal_send",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

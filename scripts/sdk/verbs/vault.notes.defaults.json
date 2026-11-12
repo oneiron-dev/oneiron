@@ -8,6 +8,7 @@
   "output": "crate::note::NoteDefaultsView",
   "call": "memory.note_defaults(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

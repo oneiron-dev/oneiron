@@ -5,6 +5,7 @@
   "output": "crate::memory::ExportAnswer",
   "call": "crate::memory::ExportAnswer::Inline(memory.export(&input)?)",
   "scope": "Read",
+  "act_class": "mass_secret_export",
   "admission": {
     "unrestricted_record_scope": true,
     "owner_grade": true

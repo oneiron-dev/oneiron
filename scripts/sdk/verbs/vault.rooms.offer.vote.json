@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::OfferCard",
   "call": "memory.rooms_offer_vote(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

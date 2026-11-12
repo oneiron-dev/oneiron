@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::ProjectRosterWriteOutcome",
   "call": "memory.projects_write_roster(input.project, &input.record)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },
