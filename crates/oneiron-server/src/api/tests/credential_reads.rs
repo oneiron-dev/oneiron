@@ -130,8 +130,12 @@ fn room() -> Room {
                     metadata,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: at,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .expect("speak");
     }
@@ -177,6 +181,7 @@ impl Room {
                     created_at: 1,
                     revoked_at: None,
                     expires_at: None,
+                    companion_bounds: None,
                 },
             )
             .expect("grant the message's space");
@@ -447,7 +452,7 @@ async fn an_owner_credential_handed_to_another_key_reads_no_relationship_words()
 #[tokio::test]
 async fn a_host_slip_handed_to_another_key_reads_no_relationship_words() {
     let room = room();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&room.server);
     let mut slip = room.server.vault.ensure_host_root_slip(&issuer).unwrap();
     let holder = ed25519_dalek::SigningKey::from_bytes(&[0x51; 32]);
     issuer
@@ -584,7 +589,7 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
     )
     .unwrap();
     claim.world = Some(world);
-    claim.rel = Some(space);
+    claim.rel = oneiron::write_envelope::claim_body::relationship_scope_of(Some(space));
     server
         .vault
         .put_claim(
@@ -614,6 +619,7 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
                 created_at: 1,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .expect("grant the claim's relationship");
@@ -797,8 +803,12 @@ fn room_turn(
             metadata: Some(metadata),
             is_visible: true,
             order: 0,
+            parts: None,
+            quote: None,
         }],
         occurred_at: at,
+        assertions: Default::default(),
+        thread_audience: None,
     }
 }
 

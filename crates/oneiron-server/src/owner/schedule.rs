@@ -545,14 +545,17 @@ mod tests {
         let backups = oneiron::test_support::restore_tempdir();
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-        let host = OwnerHost {
-            vault_path: dir.path().to_path_buf(),
-            vault_config: oneiron::VaultConfig::device(),
-            backups: BackupPlan::new(dir.path(), backups.path().to_path_buf(), keep),
-            every: Some(every),
-            backup_lock: Mutex::new(()),
-            rehearse_temp: dir.path().parent().map(std::path::Path::to_path_buf),
-        };
+        crate::test_credentials::install_fixture_keystore(&vault, b"");
+        // The schedule is the `[backup]` policy since #3229 and FIX 5621, in
+        // whole hours: an interval under an hour is due at every tick.
+        let mut config = crate::config::ServeConfig::default();
+        config.vault_path = dir.path().to_path_buf();
+        config.backup.enabled = true;
+        config.backup.every_hours = every.as_secs() / 3_600;
+        config.backup.keep = keep;
+        config.backup.dir = Some(backups.path().to_path_buf());
+        let host = OwnerHost::from_config(&config, oneiron::VaultConfig::device())
+            .with_rehearsal_dir(dir.path().parent().expect("temp parent").to_path_buf());
         let server = SyncServer::new(vault, SyncServerConfig::default())
             .unwrap()
             .with_owner_host(host);
@@ -639,10 +642,14 @@ mod tests {
         let host = |config: &crate::config::ServeConfig| {
             OwnerHost::from_config(config, config.vault_config())
         };
-        assert!(host(&config).every.is_none(), "the schedule is opt-in");
+        // OwnerHost.every is gone (#3229, ee03f1dcb4d): the schedule reads as
+        // the `[backup]` fallback policy, enabled and every_hours (rule D).
+        assert!(!host(&config).fallback.enabled, "the schedule is opt-in");
         config.backup.enabled = true;
-        assert_eq!(host(&config).every, Some(Duration::from_secs(24 * 3_600)));
+        let on = host(&config).fallback;
+        assert!(on.enabled);
+        assert_eq!(on.every_hours, 24);
         config.privacy_posture = oneiron::HostingPrivacyPosture::Hosted;
-        assert!(host(&config).every.is_none());
+        assert!(!host(&config).fallback.enabled);
     }
 }

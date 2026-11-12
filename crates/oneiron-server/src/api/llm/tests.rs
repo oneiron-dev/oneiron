@@ -25,6 +25,7 @@ fn response() -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: "answer".into(),
+                signature: None,
             }],
         },
         usage: LlmUsage {
@@ -38,8 +39,11 @@ fn response() -> LlmResponse {
                 reasoning: 0,
             },
             raw_provider: serde_json::json!({}),
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 // One request per call: the raw routes' gate wraps it. A stream this
@@ -77,11 +81,13 @@ impl LlmBackend for Backend {
             }),
             Ok(LlmStreamEvent::TextEnd {
                 part_id: "t".into(),
+                signature: None,
             }),
             Ok(LlmStreamEvent::Done {
                 message: response.message,
                 usage: response.usage,
                 finish_reason: response.finish_reason,
+                reply_assertions: Default::default(),
             }),
         ])))
     }
@@ -100,6 +106,8 @@ fn request() -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -125,12 +133,16 @@ fn seed_models(vault: &Vault) {
                         output_per_million: "1".into(),
                         cache_read_per_million: None,
                         cache_write_per_million: None,
+                        currency: None,
                     }),
                     capabilities: vec![LlmCapability::Streaming],
                     metadata: BTreeMap::new(),
                 },
                 scores: BTreeMap::new(),
                 fetched_at: BTreeMap::new(),
+                tokens_per_o200k: None,
+                stale_since: None,
+                source_rows: None,
             })
             .unwrap();
     }
@@ -180,14 +192,14 @@ async fn raw_remote_transport_refuses_issuer_secret_without_a_holder_proof() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
-    use oneiron::authority::{HostSlipIssuer, PairingPrincipal, format_pairing_link};
+    use oneiron::authority::{PairingPrincipal, format_pairing_link};
     use oneiron::federation::Scope;
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     seed_models(&vault);
     let person = vault.ensure_embedded_owner_actor().unwrap().to_hex();
     let budget = BudgetGuard::with_reserve_units("host", 100, 10, BudgetExhaustionPolicy::Suspend);
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault.clone(),
         crate::config::SyncServerConfig {
             auth_secret: Some("fixture-owner".into()),
@@ -204,7 +216,7 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
             .unwrap();
     });
     // Scope::top() for a PERSON is owner-grade: the LLM route's floor.
-    let issuer = HostSlipIssuer::from_secret(b"fixture-owner").unwrap();
+    let issuer = crate::test_credentials::rooting_host_issuer(&vault, b"fixture-owner").0;
     let link = vault
         .issue_pairing_link_for_principal(
             &issuer,
@@ -215,6 +227,7 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
                 actor_class: Some("human".into()),
                 org_ref: None,
                 write_facet: None,
+                comm: None,
             },
         )
         .unwrap();
@@ -224,7 +237,7 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
     tokio::task::spawn_blocking(move || {
         // Pair through the public SDK adapter; do not use the issuer secret as
         // the LLM client's credential.
-        let (origin, credential) = oneiron_remote::OneironClient::pair(&link).unwrap();
+        let (origin, credential, _reach) = oneiron_remote::OneironClient::pair(&link).unwrap();
         let client = RemoteLlmClient::connect(&origin, &credential).unwrap();
         let guard =
             BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
@@ -297,7 +310,7 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
         seed_models(&vault);
-        let mut server = SyncServer::new(
+        let mut server = crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("owner".into()),
@@ -382,7 +395,7 @@ async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_
         seed_models(&vault);
         let budget =
             BudgetGuard::with_reserve_units("partial", 100, 10, BudgetExhaustionPolicy::Suspend);
-        let server = SyncServer::new(
+        let server = crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("owner".into()),
@@ -455,6 +468,7 @@ async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
                     message: answer.message,
                     usage: LlmUsage::zero(),
                     finish_reason: answer.finish_reason,
+                    reply_assertions: Default::default(),
                 },
             )])))
         }
@@ -464,7 +478,7 @@ async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
     seed_models(&vault);
     let budget =
         BudgetGuard::with_reserve_units("missing-usage", 20, 10, BudgetExhaustionPolicy::Suspend);
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),
@@ -543,7 +557,7 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     let budget = BudgetGuard::with_reserve_units("raw", 100, 10, BudgetExhaustionPolicy::Suspend);
     let backend = Arc::new(Counting(AtomicUsize::new(0)));
     let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),
@@ -634,7 +648,7 @@ async fn a_raw_call_that_picks_its_own_route_has_its_row_with_no_backend_attache
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),
@@ -746,7 +760,7 @@ enabled = false
         .with_ai(host.handle())
         .with_run_receipts(receipts.clone());
     let server = Arc::new(server);
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(TEST_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let world = |kept: bool| {
         let world = EntityId::now();
         let when = TimeRange { start: 1, end: 1 };
@@ -772,6 +786,7 @@ enabled = false
         role: LlmMessageRole::User,
         content: vec![ContentPart::Text {
             text: "about the world".into(),
+            signature: None,
         }],
     }];
     let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-raw-world");
@@ -779,6 +794,7 @@ enabled = false
     let kept: LlmError = RetryableLlmError::KeptOnDevice {
         retry_after: None,
         resets_at: Vec::new(),
+        reason: None,
     }
     .into();
     for verb in ["generate", "stream"] {
@@ -822,7 +838,7 @@ enabled = false
             matches!(
                 row.event,
                 RunEvent::Denied {
-                    reason: RunDenied::KeptOnDevice,
+                    reason: RunDenied::KeptOnDevice { .. },
                     ..
                 }
             )
