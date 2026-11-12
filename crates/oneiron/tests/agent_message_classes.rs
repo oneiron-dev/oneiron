@@ -34,7 +34,9 @@ use oneiron::attempt_queue::{
 };
 use oneiron::code_run::{CodeRunDeterminism, HostSelfDispatcher};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron::dreamer_runner::{
+    DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore, ParkDreamerAttempt,
+};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorLimits, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
@@ -53,9 +55,10 @@ use oneiron::test_doors::resident_wake_hold::{
 };
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::{
-    AttemptId, BudgetLease, ContentPart, EdgeActorClass, EntityId, FatalLlmError, FinishReason,
-    LlmBackend, LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
-    LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault, VaultConfig,
+    AttemptId, BudgetLease, ContentPart, DreamerParkCause, EdgeActorClass, EntityId, FatalLlmError,
+    FinishReason, LlmBackend, LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault,
+    VaultConfig,
 };
 use oneiron_testkit::FakeClock;
 
@@ -391,6 +394,46 @@ fn an_agents_message_to_a_busy_resident_waits_for_the_run_to_end() -> TestResult
         "the run has ended, so the follow-up wakes the resident"
     );
     assert_eq!(wakes(&vault, fixture.yuki)?, 2);
+    Ok(())
+}
+
+/// A wake parked on a durable wait keeps its lease, so its row still reads
+/// Leased, but it runs no step (#7327 review round 1). Like a paused wake,
+/// it is not busy: a person's message to its resident wakes the resident,
+/// as it would a sleeping one, and lands on no branch.
+#[test]
+fn a_persons_message_to_a_resident_whose_wake_is_parked_wakes_it() -> TestResult {
+    let clock = FakeClock::default();
+    let dir = tempfile::tempdir()?;
+    let (vault, fixture, wake, leased) = busy_resident(&clock, &dir)?;
+    DreamerRunnerStore::new(&vault).park_attempt(ParkDreamerAttempt {
+        attempt_id: leased.id,
+        reason: "waiting on a person's answer".to_owned(),
+        cause: DreamerParkCause::Signal,
+        park_owner: WORKER.to_owned(),
+        carried_spend: None,
+        now: clock.now(),
+    })?;
+
+    admit_person_message(
+        &vault,
+        fixture.inbox,
+        fixture.yuki,
+        fixture.owen,
+        "parked-1",
+    )?;
+    clock.advance(u64::from(HOLD_SECS) + 1);
+    let next = the_wake(&inbox_pass(&vault, fixture.yuki, clock.now())?)?;
+    assert_eq!(
+        next.attempt.dedupe_key.as_deref(),
+        Some(format!("agent.dispatch:{}", message_key(&fixture, "parked-1")).as_str()),
+        "the parked wake runs nothing, so the message wakes the resident"
+    );
+    assert_eq!(wakes(&vault, fixture.yuki)?, 2);
+    assert!(
+        signals(&vault, fixture.yuki, wake.attempt.id)?.is_empty(),
+        "nothing lands on the parked wake's branch"
+    );
     Ok(())
 }
 
