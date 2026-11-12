@@ -8,6 +8,7 @@
   "host_door_precheck": false,
   "host_door_lists": true,
   "scope": "Write",
+  "act_class": "reversible_work",
   "proposes": true,
   "admission": {
     "validate": "input.validate()?;"

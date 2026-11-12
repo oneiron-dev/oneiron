@@ -5,6 +5,7 @@
   "output": "crate::memory::identity_doors::IdentityLookup",
   "call": "memory.entities_look_before_mint_as_owner(&memory.embedded_owner(\"vault.entities.look_before_mint\")?, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_caller": true,
   "host_door_lists": true,

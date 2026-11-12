@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::RoomPage",
   "call": "memory.rooms_messages_selected(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "room_ref": "room_ref",
     "turn_ref": "after",

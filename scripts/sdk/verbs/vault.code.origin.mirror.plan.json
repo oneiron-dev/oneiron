@@ -5,6 +5,7 @@
   "output": "crate::origin::publish::OriginMirrorPlanView",
   "call": "memory.origin_mirror_plan_as(&memory.embedded_owner(\"vault.code.origin.mirror.plan\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

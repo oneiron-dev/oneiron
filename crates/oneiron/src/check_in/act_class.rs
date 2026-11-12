@@ -15,22 +15,25 @@ pub enum ActClass {
     /// `spawn` power is in every agent's grant (SPAWN-KNOB).
     Spawn,
     /// Spend above the spend cap. Raising the cap is the act that checks in.
-    SpendAboveCap,
+    SpendOverCap,
     /// A send under a delegated identity. A send from the actor's own
     /// identity is reversible work.
     OutboundSend,
+    /// An agent adding someone else to a room or thread; the add is from now
+    /// (ARCH-0082 #agent-room-add, SCOPE-JOIN = A).
+    RoomAdd,
     /// Adding a member, or raising a member's role.
-    AddOrRaiseMember,
+    MemberAdd,
     /// Removing a member, or lowering a member's role.
-    RemoveOrDemoteMember,
+    MemberRemove,
     /// Preparing a legal document and sending it for signature.
-    LegalPrepareAndSend,
+    LegalSend,
     /// Signing as the vault's principal. Anyone signs in their own name.
     Sign,
     /// Billing changes.
     Billing,
     /// Deleting items; restorable from backup for 90 days.
-    DeleteItems,
+    Delete,
     /// Deleting the whole vault.
     VaultDelete,
     /// Erasing data for good.
@@ -46,24 +49,25 @@ pub enum ActClass {
     /// An agent widening a world's privacy settings.
     WorldWiden,
     /// Widening another actor's grant.
-    WidenAnothersGrant,
+    GrantWiden,
     /// Widening one's own grant: never answered by the actor itself.
-    WidenOwnGrant,
+    GrantWidenOwn,
 }
 
 impl ActClass {
     /// Every act class, in table order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::ReversibleWork,
         Self::Spawn,
-        Self::SpendAboveCap,
+        Self::SpendOverCap,
         Self::OutboundSend,
-        Self::AddOrRaiseMember,
-        Self::RemoveOrDemoteMember,
-        Self::LegalPrepareAndSend,
+        Self::RoomAdd,
+        Self::MemberAdd,
+        Self::MemberRemove,
+        Self::LegalSend,
         Self::Sign,
         Self::Billing,
-        Self::DeleteItems,
+        Self::Delete,
         Self::VaultDelete,
         Self::Erase,
         Self::OwnershipTransfer,
@@ -71,8 +75,8 @@ impl ActClass {
         Self::SecurityControlDisable,
         Self::MassSecretExport,
         Self::WorldWiden,
-        Self::WidenAnothersGrant,
-        Self::WidenOwnGrant,
+        Self::GrantWiden,
+        Self::GrantWidenOwn,
     ];
 
     /// The stable token for receipts and policy rows.
@@ -81,14 +85,15 @@ impl ActClass {
         match self {
             Self::ReversibleWork => "reversible_work",
             Self::Spawn => "spawn",
-            Self::SpendAboveCap => "spend_above_cap",
+            Self::SpendOverCap => "spend_over_cap",
             Self::OutboundSend => "outbound_send",
-            Self::AddOrRaiseMember => "add_or_raise_member",
-            Self::RemoveOrDemoteMember => "remove_or_demote_member",
-            Self::LegalPrepareAndSend => "legal_prepare_and_send",
+            Self::RoomAdd => "room_add",
+            Self::MemberAdd => "member_add",
+            Self::MemberRemove => "member_remove",
+            Self::LegalSend => "legal_send",
             Self::Sign => "sign",
             Self::Billing => "billing",
-            Self::DeleteItems => "delete_items",
+            Self::Delete => "delete",
             Self::VaultDelete => "vault_delete",
             Self::Erase => "erase",
             Self::OwnershipTransfer => "ownership_transfer",
@@ -96,9 +101,16 @@ impl ActClass {
             Self::SecurityControlDisable => "security_control_disable",
             Self::MassSecretExport => "mass_secret_export",
             Self::WorldWiden => "world_widen",
-            Self::WidenAnothersGrant => "widen_anothers_grant",
-            Self::WidenOwnGrant => "widen_own_grant",
+            Self::GrantWiden => "grant_widen",
+            Self::GrantWidenOwn => "grant_widen_own",
         }
+    }
+
+    /// The class `token` names; `None` for any other text, the tokens the
+    /// classes had before the verb-surface rename included (VS-OLD-NAMES = A).
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|act| act.as_str() == token)
     }
 
     /// This class's row of [`ACT_CLASS`].
@@ -219,7 +231,7 @@ const fn catastrophe(
 /// canon lists outside the main table (key and recovery, security-control
 /// disable, mass secret export, an agent's widen of a world) state no undo
 /// class, so they hold on silence.
-pub static ACT_CLASS: [ActClassRow; 19] = [
+pub static ACT_CLASS: [ActClassRow; 20] = [
     row(
         ActClass::ReversibleWork,
         UndoClass::Undoable,
@@ -233,7 +245,7 @@ pub static ACT_CLASS: [ActClassRow; 19] = [
         ModelCheck::UnsureTest,
     ),
     row(
-        ActClass::SpendAboveCap,
+        ActClass::SpendOverCap,
         UndoClass::Unstated,
         CONFIRM_KEY_QUORUM,
         ModelCheck::UnsureTest,
@@ -245,20 +257,30 @@ pub static ACT_CLASS: [ActClassRow; 19] = [
         CONFIRM_KEY_DELAY,
         ModelCheck::UnsureTest,
     ),
+    // Canon has no table row: an agent's add checks in, in AskWhenUnsure, and
+    // the decision model weighs who is there, the room's purpose and the
+    // newcomer's role. What the newcomer saw from now cannot be taken back,
+    // so canon states no undo class and an unsure add holds on silence.
     row(
-        ActClass::AddOrRaiseMember,
+        ActClass::RoomAdd,
+        UndoClass::Unstated,
+        CONFIRM_OR_KEY,
+        ModelCheck::UnsureTest,
+    ),
+    row(
+        ActClass::MemberAdd,
         UndoClass::Unstated,
         CONFIRM_KEY_QUORUM,
         ModelCheck::UnsureTest,
     ),
     row(
-        ActClass::RemoveOrDemoteMember,
+        ActClass::MemberRemove,
         UndoClass::Unstated,
         CONFIRM_KEY_QUORUM,
         ModelCheck::UnsureTest,
     ),
     row(
-        ActClass::LegalPrepareAndSend,
+        ActClass::LegalSend,
         UndoClass::OneWayAfterSendWindow,
         CONFIRM_OR_KEY,
         ModelCheck::UnsureTest,
@@ -279,7 +301,7 @@ pub static ACT_CLASS: [ActClassRow; 19] = [
     ),
     // The Grant is the consent.
     row(
-        ActClass::DeleteItems,
+        ActClass::Delete,
         UndoClass::BackupOnly,
         CONFIRM_OR_KEY,
         ModelCheck::UnsureTest,
@@ -339,7 +361,7 @@ pub static ACT_CLASS: [ActClassRow; 19] = [
         Some(CatastropheClass::WorldPrivacyWiden),
     ),
     row(
-        ActClass::WidenAnothersGrant,
+        ActClass::GrantWiden,
         UndoClass::UndoableByRevoke,
         CONFIRM_KEY_QUORUM,
         ModelCheck::Never,
@@ -350,7 +372,7 @@ pub static ACT_CLASS: [ActClassRow; 19] = [
         fixed: true,
         floor_class: Some(CatastropheClass::WidenOwnAuthority),
         ..row(
-            ActClass::WidenOwnGrant,
+            ActClass::GrantWidenOwn,
             UndoClass::NotApplicable,
             CONFIRM_OR_KEY,
             ModelCheck::Never,

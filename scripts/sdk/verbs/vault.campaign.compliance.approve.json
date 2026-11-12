@@ -5,6 +5,7 @@
   "output": "crate::campaign::compliance::ComplianceReceipt",
   "call": "memory.vault().store.record_hooks.compliance_approve_as(memory, &memory.embedded_owner(\"vault.campaign.compliance.approve\")?, &input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

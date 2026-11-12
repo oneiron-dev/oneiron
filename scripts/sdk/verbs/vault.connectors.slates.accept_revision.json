@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ConnectorSlateRevisionAcceptedView",
   "call": "crate::task_verb::sdk::accept_connector_slate_revision(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.accept_revision\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

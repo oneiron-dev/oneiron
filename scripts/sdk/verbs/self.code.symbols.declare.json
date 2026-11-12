@@ -3,6 +3,7 @@
   "input": "crate::memory::repo_doors::RepoSymbolsDeclareInput",
   "output": "crate::memory::repo_doors::RepoSymbolsDeclareOutput",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "run",
   "effect": "RepoSymbolsDeclare"
 }
