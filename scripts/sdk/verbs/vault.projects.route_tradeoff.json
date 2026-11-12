@@ -5,6 +5,7 @@
   "output": "crate::task_verb::TaskAskReceipt",
   "call": "memory.tasks_route_project_tradeoff(crate::EntityId::from_hex(&input.task_ref)?, crate::EntityId::from_hex(&input.proposal_ref)?)?",
   "scope": "Write",
+  "act_class": "spawn",
   "lands_turn": true,
   "mcp_fields": {
     "spec": "$"

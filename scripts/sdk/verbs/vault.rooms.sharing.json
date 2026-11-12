@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::RoomSharingView",
   "call": "memory.rooms_sharing(crate::EntityId::from_hex(&input.room_ref)?)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

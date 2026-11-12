@@ -272,7 +272,7 @@ impl Memory<'_> {
         // AUTO rules on every auto fan-out, whatever its width. The ladder's
         // receipt, when it decided it, is kept on the run (FIX 333).
         let (disposition, decision_receipt) =
-            if !has_pathology && policy.mode == super::ConsultFanOutMode::Auto {
+            if !has_pathology && policy.mode == super::CheckInMode::AskWhenUnsure {
                 auto.decide_with_receipt(&run.plan, &run.estimate)
             } else {
                 (FanoutAutoDisposition::SurfaceHuman, None)

@@ -13,7 +13,6 @@ pub(crate) mod class_policy;
 pub(crate) mod consult_fanout_values;
 pub(crate) mod curator_proposal;
 pub(crate) mod failure_signal_delivery;
-pub(crate) mod fanout_mode;
 pub(crate) mod manifest_authenticity;
 pub(crate) mod task_assignee;
 pub(crate) mod training_ask_kind;
@@ -100,7 +99,10 @@ mod replicated_confirm;
 mod residence_budgets;
 mod resolution;
 mod tracker_limits;
-pub(crate) use self::derive_verdict::{DeriveAllowance, DeriveCapability, derive_verdict_in_txn};
+pub(crate) use self::derive_verdict::{
+    DeriveAllowance, DeriveCapability, derive_grant_ref_in_txn, derive_verdict_in_txn,
+    reaches_target,
+};
 pub use self::dreamer_grant::DreamerWeaveReach;
 // The refusal's type is named only by the integration tests' doors; the
 // engine reads its token where the verdict answers.

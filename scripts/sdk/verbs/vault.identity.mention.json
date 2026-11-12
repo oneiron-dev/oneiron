@@ -5,6 +5,7 @@
   "output": "crate::dreamer_runner::maintenance::identity::IdentityMentionView",
   "call": "memory.identity_mention_as_owner(&memory.embedded_owner(\"vault.identity.mention\")?, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_caller": true,
   "host_door_lists": true,

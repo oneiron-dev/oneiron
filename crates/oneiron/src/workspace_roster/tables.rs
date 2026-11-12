@@ -2,6 +2,11 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
+    /// One bind or unbind of a house mind's org link (HOUSE-BIND = A): binder, house, org, role,
+    /// workspace and grant. Key: id16 (house) + id16 (receipt).
+    HOUSE_LINK_RECEIPT: VaultMeta b"house_link.receipt.v1/" Named
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::store::actor_scrubs::erase_house_link_actor_in_txn;
     /// Where one project ask went: its project, placing TASK and ask (content, not authority).
     /// Key: id16 (ask).
     PROJECT_ASK: VaultMeta b"project.ask.v1/" Named
@@ -35,6 +40,11 @@ crate::side_table::side_tables! {
     /// Permit for one goal-pointer change: old goal id16, new goal id16 (zeros for none), project
     /// body hash32. Key: id16 (project).
     PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// A full goal revision proposal (LEARNING-01): the proposed record, the goal claim and
+    /// generation it revises, its proposer, reasons, evidence, diff and any dismissal. Never the
+    /// goal in force. Key: id16 (project) + id16 (proposal).
+    PROJECT_GOAL_PROPOSAL: VaultMeta b"project.goal_proposal.v1/" Named
         [restore: content] [family: unclassified] [tier: canonical];
     /// The vault's per-project history budget, set by the owner. Key: ().
     PROJECT_HISTORY_POLICY: VaultMeta b"project.history_policy.v1" Named
@@ -79,6 +89,10 @@ crate::side_table::side_tables! {
     /// Index from a project's derived home room back to the project that owns it. Key: id16 (derived
     /// home-room id).
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// Index from an extra room to the project that groups it, rebuilt from the room body's
+    /// `project_group` key at every CONVERSATION put. Key: id16 (room).
+    PROJECT_EXTRA_ROOM: VaultMeta b"project.extra_room.v1/" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// The root project's entity id, seeded once at first boot. Key: ().
     PROJECT_ROOT: VaultMeta b"project.root.v1" Raw

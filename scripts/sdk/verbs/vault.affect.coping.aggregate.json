@@ -5,6 +5,7 @@
   "output": "crate::memory::coping_doors::CopingAggregate",
   "call": "memory.coping_aggregate_as_owner(&memory.embedded_owner(\"vault.affect.coping.aggregate\")?, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

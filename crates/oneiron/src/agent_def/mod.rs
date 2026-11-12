@@ -17,14 +17,16 @@ mod id_pin;
 mod manifest;
 mod models;
 mod optional_memory;
+mod proposed_change;
 mod refusal;
 mod types;
 mod widening;
 pub mod workflow;
+mod write_receipt;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
-pub(crate) use self::doors::AgentAuthorLease;
 pub use self::doors::AgentDefinitionPutDisposition;
+pub(crate) use self::doors::{AgentAuthorLease, AgentAuthoring, stands};
 pub use self::models::{
     AgentModel, UNBOUND_LIST_KEEPS_ROUTE, birth_under_inherited_list, ensure_inherited_model_list,
     ensure_listed, note_stale_listed_models, note_unbound_listed_run, resolve_compaction_model,
@@ -32,6 +34,10 @@ pub use self::models::{
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
+};
+pub use self::proposed_change::ProposedAgentDefinitionChangeDecision;
+pub(crate) use self::proposed_change::{
+    ProposedAgentDefinitionChange, ProposedAgentDefinitionChangeSettlement,
 };
 pub use self::refusal::{
     REFUSAL_DIAL_KEYS, RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind,
@@ -44,6 +50,7 @@ pub use self::types::{
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, DreamingMode, MCP_REF_KEYS,
     MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
 };
+pub use self::write_receipt::AgentDefinitionWriteReceipts;
 
 pub(crate) use self::codec::{
     legacy_logical_id_row, validate_agent_definition_bytes, validate_agent_definition_update,
@@ -108,7 +115,7 @@ pub(crate) use portable::{
 };
 pub(crate) use portable_binding::{
     PreparedAgentDefinitionBirth, agent_fork_hash_in_txn, bind_agent_birth_in_txn,
-    import_agent_fork_hash_in_txn,
+    import_agent_fork_hash_in_txn, restore_seed_agent_fork_hash_in_txn,
 };
 pub(crate) use portable_knowledge::{KnowledgeFormat, decode_agent_knowledge};
 

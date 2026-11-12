@@ -8,6 +8,7 @@ use rmpv::Value;
 
 use super::*;
 use crate::Vault;
+use crate::batch::export::OwnerArchiveRestorePermit;
 use crate::batch::{ApplyOpsGateMode, BatchOp, EntityMetadataHeader, apply_ops_with_gate_mode};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
@@ -134,6 +135,7 @@ impl Vault {
             &ExpressionPreferenceWrite::native(change),
             occurred,
             learned_at,
+            None,
         )?;
         txn.commit()?;
         Ok(result)
@@ -149,6 +151,7 @@ impl Vault {
         change: &ExpressionPreferenceWrite,
         occurred: TimeRange,
         learned_at: u64,
+        permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<ExpressionPreferenceWriteResult> {
         if matches!(
             change.origin,
@@ -211,7 +214,7 @@ impl Vault {
         // gate said no without telling it why there is nothing further to try,
         // so the refusal names the contract in the family's own voice.
         match self.set_expression_preference_requesting_in_txn(
-            wtxn, actor, claim_id, change, occurred, learned_at,
+            wtxn, actor, claim_id, change, occurred, learned_at, permit,
         ) {
             // ONLY a denial that wanted to PARK the write becomes the
             // family refusal. `Pending` is the gate saying "a human should
@@ -248,7 +251,17 @@ impl Vault {
         change: &ExpressionPreferenceWrite,
         occurred: TimeRange,
         learned_at: u64,
+        permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<ExpressionPreferenceWriteResult> {
+        if let Some(permit) = permit
+            && (change.origin != ExpressionWriteOrigin::Imported
+                || actor.entity_ref() != permit.owner()
+                || actor.actor_class() != EdgeActorClass::Human)
+        {
+            return Err(Error::InvariantViolation(
+                "owner archive restore permit does not match imported expression actor",
+            ));
+        }
         let requested = ClaimApprovalStatus::Auto;
         let (predicate, wire) = match &change.value {
             ExpressionPreferenceValue::Language(v) => {
@@ -348,6 +361,11 @@ impl Vault {
             prior_ids.push(old_id);
         }
 
+        let gate_mode = ApplyOpsGateMode::new(true, true).with_source_in_gate_input();
+        let gate_mode = match permit {
+            Some(permit) => gate_mode.with_owner_archive_restore(permit),
+            None => gate_mode,
+        };
         apply_ops_with_gate_mode(
             &self.store,
             &self.config,
@@ -363,7 +381,7 @@ impl Vault {
             }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(true, true).with_source_in_gate_input(),
+            gate_mode,
         )?;
         let mut superseded_claim_ids = Vec::new();
         for old_id in prior_ids {

@@ -48,6 +48,7 @@ mod consult_ladder_facade;
 mod consult_payload;
 mod consult_result;
 mod create_facade;
+mod create_from_message;
 mod create_origin;
 pub(crate) use create_origin::message_dispatch_in_txn;
 mod create_spec;
@@ -162,8 +163,8 @@ pub(crate) mod tests;
 
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
-    ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutMode,
-    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
+    ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutPause,
+    ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
 };
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,
@@ -491,6 +492,7 @@ pub use ask_types::{
     TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
 
+use crate::check_in::CheckInMode;
 use crate::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 

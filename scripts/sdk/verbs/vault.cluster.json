@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>",
   "call": "memory.cluster(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

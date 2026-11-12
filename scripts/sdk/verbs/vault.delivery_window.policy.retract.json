@@ -5,6 +5,7 @@
   "output": "crate::memory::CommitReceipt",
   "call": "memory.delivery_window_retract_as(&memory.embedded_owner(\"vault.delivery_window.policy.retract\")?, input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

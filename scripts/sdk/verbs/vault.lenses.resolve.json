@@ -8,6 +8,7 @@
   "host_door_precheck": false,
   "host_door_caller": true,
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "projection_record_scope": true
   },

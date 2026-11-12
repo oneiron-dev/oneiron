@@ -5,6 +5,7 @@
   "output": "crate::blob_artifact::esign::EsignSigningPdfView",
   "call": "memory.esign_signing_pdf(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

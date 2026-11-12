@@ -16,6 +16,7 @@
   "output": "crate::task_verb::TaskCreateReceipt",
   "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
   "scope": "Write",
+  "act_class": "unstated",
   "task_decisions": true,
   "proposes": true,
   "mcp_fields": {

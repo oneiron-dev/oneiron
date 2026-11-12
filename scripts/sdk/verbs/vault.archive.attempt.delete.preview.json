@@ -5,6 +5,7 @@
   "output": "crate::vault_cleanup::AttemptArchiveDeletePreviewView",
   "call": "crate::vault_cleanup::preview_attempt_archive_delete_wire(memory, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },
