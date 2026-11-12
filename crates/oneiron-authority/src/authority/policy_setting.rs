@@ -81,6 +81,10 @@ pub enum PolicySetting {
     /// The most of a context pack's claims worlds other than base may hold
     /// (ARCH-0004 #world-scope; WORLD-SHARE-FRACTION-NO-OWNER-DOOR).
     NonBaseWorldClaimFraction,
+    /// The FACET a write with no active mask is born under (ARCH-0022
+    /// #facets: "Every vault has one default facet ... the owner may set
+    /// another").
+    DefaultFacet,
 }
 
 impl PolicySetting {
@@ -95,6 +99,7 @@ impl PolicySetting {
             Self::FreeTimePolicy => "settings.free_time_policy",
             Self::BoardLayout => "settings.board_layout",
             Self::NonBaseWorldClaimFraction => "settings.non_base_world_claim_fraction",
+            Self::DefaultFacet => "settings.default_facet",
         }
     }
 
@@ -108,6 +113,7 @@ impl PolicySetting {
             Self::FreeTimePolicy => "free_time_policy",
             Self::BoardLayout => "board_layout",
             Self::NonBaseWorldClaimFraction => "non_base_world_claim_fraction",
+            Self::DefaultFacet => "default_facet",
         }
     }
 
@@ -121,6 +127,7 @@ impl PolicySetting {
             "free_time_policy" => Self::FreeTimePolicy,
             "board_layout" => Self::BoardLayout,
             "non_base_world_claim_fraction" => Self::NonBaseWorldClaimFraction,
+            "default_facet" => Self::DefaultFacet,
             _ => return None,
         })
     }
@@ -133,7 +140,8 @@ impl PolicySetting {
             | Self::InferenceDefaults
             | Self::RoomThreadAdmin
             | Self::BoardLayout
-            | Self::NonBaseWorldClaimFraction => OwnerActKind::PolicySetting,
+            | Self::NonBaseWorldClaimFraction
+            | Self::DefaultFacet => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

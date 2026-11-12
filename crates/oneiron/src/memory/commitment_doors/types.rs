@@ -1,7 +1,7 @@
 //! Public commitment shapes. IDs are caller references, never raw storage keys.
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CommitmentObligorKind {
     Owner,
@@ -9,14 +9,14 @@ pub enum CommitmentObligorKind {
     ThirdParty,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentObligor {
     pub kind: CommitmentObligorKind,
     pub entity_ref: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentContent {
     pub text: String,
@@ -35,6 +35,8 @@ pub enum CommitmentStrength {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CommitmentStatus {
+    /// Named by a signing document not yet signed; not in force.
+    Inert,
     Open,
     Fulfilled,
     Released,
@@ -48,6 +50,8 @@ pub enum CommitmentBirthKind {
     RunTreeNode,
     Brief,
     SurfaceAction,
+    /// Named by a signing document's draft; the reference is the document.
+    EsignDocument,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -58,7 +62,7 @@ pub struct CommitmentBirthProvenance {
 }
 
 /// The engine's shared recurrence vocabulary, projected without a second evaluator.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CommitmentSchedule {
     Once {
@@ -78,7 +82,7 @@ pub enum CommitmentSchedule {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CommitmentQuotaWindow {
     IsoWeek { tz: String },

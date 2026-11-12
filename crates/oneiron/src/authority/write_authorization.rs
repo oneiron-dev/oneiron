@@ -130,6 +130,26 @@ impl Vault {
         Ok(fold)
     }
 
+    /// [`Self::verify_write_actor_in_txn`], with one refusal answered
+    /// instead: `Ok(false)` where store truth holds and the vault is rooted,
+    /// but the log binds no key to the writer at its class. `Ok(true)` where
+    /// that check admits it. A writer the store does not hold, two roots and
+    /// a binding a revocation quarantined are refused as there.
+    pub(crate) fn write_actor_bound_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        writer: &WriteActor,
+    ) -> Result<bool> {
+        let fold = self.write_actor_store_truth_in_txn(txn, writer)?;
+        if fold.vault_id.is_none() {
+            return Ok(true);
+        }
+        match rooted_write_disposition(&fold, writer) {
+            CausalWriteDisposition::Unbound => Ok(false),
+            disposition => admit_write_disposition(disposition).map(|()| true),
+        }
+    }
+
     /// [`Self::verify_write_actor_in_txn`] for the room join and consent
     /// doors, where one of this vault's own agents acts as itself: it asks
     /// into a room by an offer card (ARCH-0006a:243) and answers the parts a

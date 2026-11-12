@@ -4,7 +4,7 @@
 //! a different act.
 
 use crate::EntityId;
-use crate::federation::{ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal};
+use crate::federation::{DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget};
 use crate::memory::support::verify_deletion_authority_in_txn;
 use crate::memory::{
     DeleteReceipt, MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, SafeDeleteReason,
@@ -138,7 +138,7 @@ impl Memory<'_> {
             .into_iter()
             .map(|id| {
                 let entry = self
-                    .archive_delete_authority_in(&txn, id)
+                    .archive_delete_authority_in(&txn, &DeleteTarget::new(id))
                     .and_then(|_| archive_entry_in(self.vault, &txn, id));
                 (id, entry)
             })
@@ -157,19 +157,22 @@ impl Memory<'_> {
     pub(crate) fn confirm_archive_delete(
         &self,
         items: &[(EntityId, Option<ArchiveExpectation>)],
-    ) -> ArchiveDeleteResults<(DeleteReceipt, ArchiveDeleteAuthority)> {
+    ) -> ArchiveDeleteResults<(DeleteReceipt, DeleteAuthority)> {
         let mut targets = items.to_vec();
         targets.sort_by_key(|(id, _)| *id);
         targets.dedup_by_key(|(id, _)| *id);
         targets
             .into_iter()
             .map(|(id, expected)| {
+                let target = DeleteTarget::new(id);
                 let result = self
                     .expected_archive_holds(id, expected.as_ref())
                     .and_then(|()| {
-                        self.safe_delete_archive_checked(
+                        self.safe_delete_admitted(
                             id,
-                            &|txn| self.archive_delete_authority_in(txn, id),
+                            crate::deletion::DeleteReason::UserHardDelete,
+                            crate::deletion::AdmittedDeleteDoor::Archive,
+                            &|txn| self.archive_delete_authority_in(txn, &target),
                             |txn| match &expected {
                                 Some((_, marker)) => same_archive_in(self.vault, txn, id, marker),
                                 None => archive_marker(self.vault, txn, id).map(drop),
@@ -209,20 +212,20 @@ impl Memory<'_> {
         Ok(())
     }
 
-    /// This caller's authority to delete the archived `id` in `txn`
-    /// (`federation::require_archive_delete_in_txn`), its refusal FORBIDDEN.
+    /// This caller's authority to delete the archived `target` in `txn`
+    /// (`federation::require_delete_authority_in_txn`), its refusal FORBIDDEN.
     fn archive_delete_authority_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        id: EntityId,
-    ) -> MemoryResult<ArchiveDeleteAuthority> {
-        let caller = ArchiveDeleteCaller {
+        target: &DeleteTarget,
+    ) -> MemoryResult<DeleteAuthority> {
+        let caller = DeleteCaller {
             actor: self.actor,
             class: self.actor_class,
             credential: self.presented_credential(),
         };
-        crate::federation::require_archive_delete_in_txn(self.vault, txn, caller, id)?.map_err(
-            |refusal: ArchiveDeleteRefusal| {
+        crate::federation::require_delete_authority_in_txn(self.vault, txn, caller, target)?
+            .map_err(|refusal: DeleteRefusal| {
                 MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
                     refusal.message(),
@@ -232,8 +235,7 @@ impl Memory<'_> {
                          delete.",
                     ],
                 )
-            },
-        )
+            })
     }
 }
 
