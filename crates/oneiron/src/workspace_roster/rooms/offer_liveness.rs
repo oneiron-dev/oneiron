@@ -29,7 +29,14 @@ impl Memory<'_> {
             return Ok(BTreeSet::new());
         }
         let vault = self.vault();
-        if let Some(project_room) = vault.project_room(room)? {
+        // Only a home room's body is a project room's: `Vault::project_room`
+        // refuses any other room's body as invalid, not absent, so the
+        // room-access seam's classifier picks the arm first.
+        let home = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            super::project_room_of(vault, &txn, room)?.is_some()
+        };
+        if home && let Some(project_room) = vault.project_room(room)? {
             let members = project_room.member_ids.into_iter().collect();
             return self.ended_room_threads(room, threads, &members);
         }
