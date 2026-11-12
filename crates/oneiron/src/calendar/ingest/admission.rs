@@ -68,6 +68,11 @@ pub(super) struct PollAdmission<'a> {
     /// admits every property in one pass: a connector source no archived
     /// version holds.
     pub(crate) continuations: Option<Vec<OwedProperties>>,
+    /// The items whose booking move a pending emergency delivery held back
+    /// this pass (FIX 22385, Engine ruling 16:10, 12 Nov). Each one's feed
+    /// passport stays as it was, so the source reads its update again; the
+    /// caller keeps the source's read position owed.
+    pub(crate) owed_booking_moves: u32,
 }
 
 impl PollAdmission<'_> {
@@ -128,8 +133,15 @@ impl PollAdmission<'_> {
                 // head: occurred and name follow the drifted VEVENT, and
                 // `calendar.time` re-mints when its value moved. A live
                 // booking's EVENT moves through its booking instead.
-                if !self.move_booking(event_ref, event)? {
-                    self.rewrite_event(event_ref, event)?;
+                match self.move_booking(event_ref, event)? {
+                    FeedMoveOutcome::NotBooking => self.rewrite_event(event_ref, event)?,
+                    FeedMoveOutcome::Unchanged | FeedMoveOutcome::Moved(_) => {}
+                    // Only this item waits: no claim, no passport head, and
+                    // the next read of the source sees the move again.
+                    FeedMoveOutcome::HeldBack => {
+                        self.owed_booking_moves += 1;
+                        return Ok(());
+                    }
                 }
                 self.admit_properties(event_ref, event)?;
                 let next = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
@@ -282,16 +294,18 @@ impl PollAdmission<'_> {
     /// so the move lands, and in one transaction the booking passport takes
     /// its next SEQUENCE, the revision receipt is recorded and the booker's
     /// revised invite is queued. The echo of the slot the booking already
-    /// sits at writes nothing. False when the EVENT carries no live booking,
-    /// or when the VEVENT is a cancellation, which stays the imported-cancel
-    /// outcome: the caller then rewrites the EVENT as any other.
+    /// sits at writes nothing, and a pending emergency delivery holds the
+    /// move back. [`FeedMoveOutcome::NotBooking`] when the EVENT carries no
+    /// live booking, or when the VEVENT is a cancellation, which stays the
+    /// imported-cancel outcome: the caller then rewrites the EVENT as any
+    /// other.
     fn move_booking(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
-    ) -> Result<bool, CalendarError> {
+    ) -> Result<FeedMoveOutcome, CalendarError> {
         if event.cancelled {
-            return Ok(false);
+            return Ok(FeedMoveOutcome::NotBooking);
         }
         let slot = match (event.starts_at_utc, event.ends_at_utc) {
             (Some(start), Some(end)) => Some(TimeRange { start, end }),
@@ -302,17 +316,21 @@ impl PollAdmission<'_> {
                 .map_err(|error| CalendarError::IcsIngest {
                     reason: error.to_string(),
                 })?;
-        Ok(match outcome {
-            FeedMoveOutcome::NotBooking => false,
-            FeedMoveOutcome::Unchanged => true,
+        match &outcome {
             FeedMoveOutcome::Moved(revision) => {
                 tracing::debug!(
                     sequence = revision.sequence,
                     "calendar feed moved a booking"
                 );
-                true
             }
-        })
+            FeedMoveOutcome::HeldBack => {
+                tracing::debug!(
+                    "a pending emergency delivery holds a calendar feed's booking move"
+                );
+            }
+            FeedMoveOutcome::NotBooking | FeedMoveOutcome::Unchanged => {}
+        }
+        Ok(outcome)
     }
 
     /// Drift changes the EVENT's time/name without erasing its origin or

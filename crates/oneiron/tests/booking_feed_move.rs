@@ -9,6 +9,12 @@
 //! booking already sits at writes nothing, and a feed update of an EVENT that
 //! carries no booking still moves it as before.
 //!
+//! The revised-invite drain settles each queued row once. The fixture page
+//! has no live publication, so the drain sends nothing for it, as a
+//! lifecycle move on such a page sends nothing; the send itself is the
+//! existing `dispatch_booking_revision_invite_outcome` (FIX 7850). The drain
+//! is new, so main cannot build that test: its red is the missing item.
+//!
 //! The booking fixture is a trimmed copy of the `it` booking fixture
 //! (`tests/it/booking_lifecycle.rs`), as in
 //! `tests/booking_calendar_cancel_reschedule.rs`, because the `it` target does
@@ -20,6 +26,7 @@
 use std::sync::Mutex;
 
 use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
+use oneiron::booking::lifecycle::{BookingRevisionInviteDrain, run_booking_revision_invites};
 use oneiron::booking::{
     BOOKING_PASSPORT_SYSTEM, BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn,
     BookingSolver, BookingVerbReceipt, BookingVerbRequest, ConfirmReceipt, ConfirmSpec,
@@ -33,6 +40,9 @@ use oneiron::calendar::ingest::{
     IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
 };
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
+use oneiron::outbound::{
+    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
+};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::{
     CalendarSel, DreamerHomeNodeCandidate, DreamerRunnerStore, EntityId, TimeRange, Vault,
@@ -258,6 +268,19 @@ impl IcsFeedFetcher for ScriptedFeed {
             .ok_or_else(|| CalendarError::IcsFetch {
                 reason: "the scripted feed has no response left".to_owned(),
             })
+    }
+}
+
+/// A sink that counts the sends it is asked for.
+#[derive(Default)]
+struct CountingSink {
+    calls: usize,
+}
+
+impl OutboundExecutionSink for CountingSink {
+    fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        self.calls += 1;
+        OutboundExecutionOutcome::delivered_to_channel("provider:message:counted")
     }
 }
 
@@ -570,5 +593,64 @@ fn a_feed_update_of_an_event_with_no_booking_still_moves_it() {
         fixture.queued_revision_invites(),
         Vec::<serde_json::Value>::new(),
         "no booking, no notice"
+    );
+}
+
+#[test]
+fn the_revision_invite_drain_settles_each_queued_row_once() {
+    let fixture = Fixture::open();
+    let (booked, _) = book_seen_by_the_host_feed(&fixture, b"feed-move-drain");
+    let event = booked.calendar.event_ref;
+    let minutes = u64::from(DEFAULT_INTRO_DURATION_MIN) * 60;
+    // Two host moves, each outside the host's working hours: two revisions,
+    // two queued rows.
+    for (sequence, start, etag, now) in [
+        (1, MONDAY + 16 * 3_600, "v2", NOW + 120),
+        (2, MONDAY + 17 * 3_600, "v3", NOW + 180),
+    ] {
+        fixture.poll_host_feed(
+            &[FeedEvent {
+                uid: &booked.calendar.uid,
+                sequence,
+                slot: TimeRange {
+                    start,
+                    end: start + minutes,
+                },
+                summary: "intro-call",
+            }],
+            etag,
+            now,
+        );
+    }
+    assert_eq!(fixture.booking_sequence(&event), 2);
+
+    let mut sink = CountingSink::default();
+    let drain =
+        run_booking_revision_invites(&fixture.vault, "fix-22385-drain", &mut sink, 16, NOW + 240)
+            .expect("drain the revised invites");
+    assert_eq!(
+        drain,
+        BookingRevisionInviteDrain {
+            dispatched: 0,
+            settled_unsent: 2,
+            refused: 0,
+        },
+        "the first revision is superseded by the second, and the page has no live publisher to send the second as"
+    );
+    assert_eq!(
+        sink.calls, 0,
+        "nothing is sent for a page with no live publisher"
+    );
+    assert!(
+        fixture.queued_revision_invites().is_empty(),
+        "the drain settles every row it claimed"
+    );
+    let again =
+        run_booking_revision_invites(&fixture.vault, "fix-22385-drain", &mut sink, 16, NOW + 300)
+            .expect("drain again");
+    assert_eq!(
+        again,
+        BookingRevisionInviteDrain::default(),
+        "a settled row is not claimed again"
     );
 }
