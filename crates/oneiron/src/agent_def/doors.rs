@@ -756,6 +756,10 @@ impl Vault {
     /// no definition of its own (a PERSON bound as an agent) lends the slice
     /// its grant gives it ([`Self::within_granted_slice_in_txn`]): inside it
     /// the definition is approved, and with no grant at all it is a proposal.
+    /// A grant lends no model choice (FIX 4472: the models a definition runs
+    /// on are the owner's), so a new definition from such an agent that names
+    /// a model list, a tier, a compaction model or a dreaming model is a
+    /// proposal; one that names none runs on the house route.
     /// A put over a stored definition answers to
     /// [`Self::agent_authored_update_in_txn`].
     ///
@@ -803,7 +807,8 @@ impl Vault {
             .0
         } else {
             self.ensure_new_authored_definition_in_txn(txn, id, &requested)?;
-            let within = self.within_granted_slice_in_txn(txn, authoring, &requested)?;
+            let within = !super::widening::has_model_choice(&requested)
+                && self.within_granted_slice_in_txn(txn, authoring, &requested)?;
             let mut definition = requested;
             mark_agent_authored(&mut definition, author, authoring.door);
             definition.approval_status = if within {
@@ -831,8 +836,10 @@ impl Vault {
     /// - each skill, connector and code-mode MCP it names is one the agent
     ///   can itself use ([`Self::named_tools_in_writer_use_in_txn`]).
     ///
-    /// No definition lists the models such an agent may run on, so no model
-    /// `requested` names is outside its slice.
+    /// The slice holds no model choice: no definition lists the models such
+    /// an agent may run on. The caller holds a new definition that names one
+    /// outside the slice ([`Self::agent_authored_put_in_txn`]); a stored
+    /// definition's model choices answer to the owner-only widening rule.
     ///
     /// # Errors
     ///

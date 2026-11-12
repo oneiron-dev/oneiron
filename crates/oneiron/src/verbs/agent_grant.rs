@@ -29,6 +29,12 @@
 //! empty (`{"kind":"bottom"}`); it is never every verb. A grant without
 //! classes behaves exactly as before.
 //!
+//! `vault.agents.grants.from_slip` converts one live slip of a named agent
+//! that no Grant has ever named, as the owner's registry lists it, into its
+//! holder's default read Grants (FIX AGENT-GRANTLESS-VISIBLE; Engine RULING
+//! GRANTLESS-SHAPE Q9 = A). It takes no Scope: each Grant is the slip's
+//! logged Scope with verbs `read`.
+//!
 //! A mint may also name the host wallet the work the grant funds draws on
 //! (FIX 7766): `wallet_ref: {"issuer": "...", "id": "..."}`, an opaque host
 //! reference, signed in the owner's act. A spend lease the owner opens with
@@ -45,7 +51,8 @@ use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, EngineControlChange, RepoAccessBounds, Scope,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantFromSlipUnchangedReason, AgentGrantStanding,
+    EngineControlChange, GrantlessAgentConversion, RepoAccessBounds, Scope,
     SystemAgentGrantNarrowing, SystemFunction, WalletRef,
 };
 use crate::memory::MemoryResult;
@@ -160,6 +167,28 @@ pub struct AgentGrantRevoked {
     pub act_ref: Option<String>,
 }
 
+/// `vault.agents.grants.from_slip`'s input: one slip the owner's registry
+/// lists among its `grantless_agents` (FIX AGENT-GRANTLESS-VISIBLE).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGrantFromSlipRequest {
+    /// The slip's id (64 hex), as the registry row's `slip_ref` names it.
+    pub slip_ref: String,
+}
+
+/// `vault.agents.grants.from_slip`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum AgentGrantFromSlipOutcome {
+    /// The holder's default read Grants as minted: the named slip's Scope
+    /// first, then one for each other distinct Scope of its live slips.
+    Minted { grants: Vec<AgentGrantMinted> },
+    /// Nothing was minted, for `reason`.
+    Unchanged {
+        reason: AgentGrantFromSlipUnchangedReason,
+    },
+}
+
 /// One base agent's principal, as `vault.agents.grants.mint` names it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -238,6 +267,39 @@ pub fn revoke_agent_grant_as(
         agent: revoked.agent,
         act_ref: revoked.act.map(|act| act.to_hex()),
     })
+}
+
+/// `vault.agents.grants.from_slip` under the owner's proof, his acts
+/// recording `surface` (Engine RULING GRANTLESS-SHAPE Q9 = A): converts one
+/// live slip of a named agent that no Grant has ever named into its holder's
+/// default read Grants, verbs `read` and each Scope's other axes, with no
+/// expiry, wallet, repo bounds or classes. A slip that no longer qualifies
+/// answers unchanged with its reason, so a repeat never mints twice; an id
+/// that names no slip is not found.
+pub fn mint_agent_grants_from_slip_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    surface: ActSurface,
+    input: AgentGrantFromSlipRequest,
+) -> MemoryResult<AgentGrantFromSlipOutcome> {
+    let slip_id = hex32(&input.slip_ref)
+        .ok_or_else(|| crate::memory::MemoryError::bad_request("slip_ref is 64 hex"))?;
+    Ok(
+        match vault.mint_default_agent_grants_from_slip(owner, surface, slip_id)? {
+            GrantlessAgentConversion::Minted(minted) => AgentGrantFromSlipOutcome::Minted {
+                grants: minted
+                    .iter()
+                    .map(|minted| AgentGrantMinted {
+                        grant: agent_grant_view(&minted.standing, minted.confers),
+                        act_ref: minted.act.to_hex(),
+                    })
+                    .collect(),
+            },
+            GrantlessAgentConversion::Unchanged(reason) => {
+                AgentGrantFromSlipOutcome::Unchanged { reason }
+            }
+        },
+    )
 }
 
 /// The view of `standing` as minted; `confers` was judged in the minting
