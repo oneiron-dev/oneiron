@@ -981,18 +981,31 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     };
     let closed_for = 40 * 24 * 60 * 60;
     let clock = oneiron::store::ports::ManualClock::new(wall() - closed_for);
+    // Each open installs the keystore a host installs, holding this
+    // install's issuer seed for SECRET (FIX-LIST 3018).
     let open = || {
         let mut config = oneiron::VaultConfig::server();
         config.store_clock = clock.bundle();
-        oneiron::Vault::open_owned(dir.path(), config).unwrap()
+        let vault = oneiron::Vault::open_owned(dir.path(), config).unwrap();
+        crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
+        vault
     };
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
     // The vault starts its authority clock 40 days ago and stays closed
     // until now.
-    open().ensure_host_root_slip(&issuer).unwrap();
+    let issuer = {
+        let first = open();
+        let issuer = first.bootstrap_host_slip_issuer().unwrap();
+        first.ensure_host_root_slip(&issuer).unwrap();
+        issuer
+    };
     clock.set(wall());
 
     let vault = open();
+    // The owner's agent link is an act this install carries: it needs a live
+    // machine profile in the roster, as serve's first start writes.
+    vault
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .unwrap();
     let principal = vault
         .ensure_agent_principal("trailing-clock")
         .unwrap()
