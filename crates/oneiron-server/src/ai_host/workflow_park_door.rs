@@ -218,8 +218,9 @@ fn cursor_progress(
     })
 }
 
-/// A step's request with its user turn and the assistant turn whose tools
-/// run.
+/// A step's request with its user turn and the assistant turn whose three
+/// `self.use` calls run. The cursor's `tool_index` counts the answered ones,
+/// so the turn holds at least that many calls, as a step's saved turn does.
 fn transcript() -> oneiron::Result<WorkflowToolTranscript> {
     let purpose = CallPurpose::Other {
         name: "workflow_step".to_owned(),
@@ -231,6 +232,15 @@ fn transcript() -> oneiron::Result<WorkflowToolTranscript> {
             signature: None,
         }],
     };
+    let mut assistant = text(LlmMessageRole::Assistant, "Using it.");
+    assistant
+        .content
+        .extend((1..=3).map(|use_number| ContentPart::ToolCall {
+            call_id: format!("self-use-{use_number}"),
+            name: "self.use".to_owned(),
+            input: serde_json::json!({ "use": use_number }),
+            signature: None,
+        }));
     Ok(WorkflowToolTranscript {
         request: LlmRequest {
             model: ModelId::new("fake/park-retry@1")
@@ -251,7 +261,7 @@ fn transcript() -> oneiron::Result<WorkflowToolTranscript> {
             },
             messages: vec![
                 text(LlmMessageRole::User, "Use the saved key three times."),
-                text(LlmMessageRole::Assistant, "Using it."),
+                assistant,
             ],
             tools: Vec::new(),
             params: BTreeMap::new(),
