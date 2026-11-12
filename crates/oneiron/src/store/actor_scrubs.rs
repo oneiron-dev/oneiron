@@ -79,6 +79,15 @@ pub trait StoreActorScrubs: Send + Sync {
         actor: &EntityId,
     ) -> Result<()>;
 
+    /// The engine's `workspace_roster::erase_house_link_actor_in_txn`
+    /// (side table `HOUSE_LINK_RECEIPT`).
+    fn erase_house_link_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()>;
+
     /// The engine's `workspace_roster::erase_member_intent_actor_in_txn`
     /// (side table `WORKSPACE_ROSTER_MEMBER_INTENT`).
     fn erase_member_intent_actor_in_txn(
@@ -225,6 +234,19 @@ pub(crate) fn erase_member_actor_in_txn(
         .store
         .actor_scrubs
         .erase_member_actor_in_txn(vault, wtxn, actor)
+}
+
+/// The actor scrub `HOUSE_LINK_RECEIPT` declares:
+/// the engine's `workspace_roster::erase_house_link_actor_in_txn`.
+pub(crate) fn erase_house_link_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .actor_scrubs
+        .erase_house_link_actor_in_txn(vault, wtxn, actor)
 }
 
 /// The actor scrub `WORKSPACE_ROSTER_MEMBER_INTENT` declares:

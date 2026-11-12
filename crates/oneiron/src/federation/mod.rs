@@ -12,9 +12,11 @@ pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
 mod agent_verb_class;
 pub(crate) use agent_grant::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, SelectedOwnerAgentFundingGrant,
-    agent_grants_for_store_in_txn,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, GrantlessAgentConversion,
+    SelectedOwnerAgentFundingGrant, agent_grants_for_store_in_txn,
+    backfill_agent_grant_member_index, index_agent_grant_member_in_txn,
 };
+pub use agent_grant::{AgentGrantFromSlipUnchangedReason, DefaultAgentGrantBackfill};
 pub(crate) use agent_verb_class::AgentVerbClasses;
 // The self brief's GRANT producer (FIX 17594).
 mod agent_grant_brief;
@@ -29,12 +31,12 @@ pub(crate) use archive_delete::{
 #[allow(unused_imports)]
 pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
-pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent};
-pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
+pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent, INQUIRE_VERB_CLASS};
 pub(crate) use connect_grant::{
-    grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
-    require_one_connect_per_peer,
+    ConnectGrantRequest, connect_direction_projection, grant_serves_selector, is_guest_slice,
+    pact_admits_grant, require_connect_grant_in_txn, require_one_connect_per_peer,
 };
+pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
 mod connect_proposal;
 pub(crate) use connect_proposal::{
     drop_pending_connect_proposals_in_txn, erase_connect_proposer_in_txn,
@@ -72,6 +74,7 @@ pub(crate) use membership_gate::authenticated_grant_membership_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use membership_gate::grant_allows_content_write;
 pub(crate) mod grant_scope;
+pub use grant_scope::STEWARD_ROLE_NOTE;
 mod ruling_integrity;
 mod rulings;
 pub(crate) use ruling_integrity::{
@@ -96,17 +99,19 @@ pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub(crate) use shared_act::removal_archive_body_keys_in_txn;
 pub use shared_act::{
     AddOwnerPlan, DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, DetachRemainder,
-    DetachRemainderReason, DetachReport, EraseAskKind, EraseAskStatus,
-    NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
-    ReceivedRemovalArchive, ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery,
-    RemovalExportFile, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
-    SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
-    SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
-    SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
-    shared_act_outcome_transcript,
+    DetachRemainderReason, DetachReport, EraseAskKind, EraseAskStatus, MemberAskChange,
+    MemberAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, NOTIFICATION_PRODUCER_MEMBER_ASK,
+    OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS, ReceivedRemovalArchive,
+    ReceivedRemovalArchiveState, RemovalExportCopy, RemovalExportDelivery, RemovalExportFile,
+    RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN, SHARED_INVITATION_TTL_SECS,
+    SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind,
+    SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState, SharedMemberAsk,
+    SharedMemberChange, SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome,
+    TransferOwnershipPlan, shared_act_outcome_transcript,
 };
 pub(crate) use shared_act::{DetachOutcome, SharedMemberDeparture};
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
+pub(crate) use shared_creation::role_preset;
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{
     InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,
@@ -201,6 +206,30 @@ use self::stale::register_foreign_world_for_pact;
 
 #[cfg(test)]
 mod membership_gate_tests;
+mod system_agent_grant;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use system_agent_grant::SystemAgentGrantState;
+pub(crate) use system_agent_grant::erase_narrowing_actor_in_txn;
+pub(crate) use system_agent_grant::is_system_agent_steward_grant;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use system_agent_grant::standing_steward_verbs_in;
+pub use system_agent_grant::{
+    EngineDefaultGrant, EngineDefaultOrigin, SYSTEM_AGENT_GRANT_NARROWING_WARNING,
+    SystemAgentGrantNarrowing, SystemAgentNarrowing, SystemFunction,
+};
+pub(crate) use system_agent_grant::{
+    StewardRows, SystemAgent, holds_system_agent_grant, steward_grant_of_in, steward_reach_in,
+    steward_rows_rewrite,
+};
+mod engine_controls;
+mod substrate_reads;
+pub(crate) use engine_controls::erase_engine_control_actor_in_txn;
+pub(crate) use engine_controls::is_engine_controls_grant;
+pub(crate) use engine_controls::rendered_change;
+pub use engine_controls::{
+    ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
+};
+pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]

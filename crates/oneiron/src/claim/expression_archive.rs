@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::expression_preference::{ExpressionPreferenceWrite, ExpressionWriteOrigin};
 use super::*;
+use crate::batch::export::OwnerArchiveRestorePermit;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
@@ -202,6 +203,7 @@ impl ExpressionPreferenceArchive {
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         actor: &WriteActor,
+        permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<(usize, usize)> {
         let mut existing_count = 0;
         for row in &self.rows {
@@ -241,6 +243,7 @@ impl ExpressionPreferenceArchive {
                     &write_spec(row)?,
                     row.occurred,
                     row.learned_at,
+                    permit,
                 )?;
                 if !result.superseded_claim_ids.is_empty() {
                     return Err(invalid("replay write closed a head on its own"));

@@ -1,8 +1,9 @@
 //! Credential-safe view of exact replicated skill source carriers. A source
 //! member that is no UTF-8 text is an archive file the carrier's row names
-//! (FIX 10101).
-use super::ExportBody;
+//! (FIX 10101). Under the Owner's whole-vault archive with secrets included
+//! the record and tree keep credentials; every other export nulls them.
 use super::source_tree::HeldFiles;
+use super::{ExportBody, ExportSecrets};
 use crate::batch::export::{ArchiveFiles, ExportFileTree, ExportSourceContent, FileSpool};
 use crate::error::{Error, Result};
 use crate::store::skill_package::{HubPackage, SkillCapabilitySurface};
@@ -22,34 +23,53 @@ pub struct ExportHubSource {
     allowed_tools: BTreeSet<String>,
 }
 impl ExportHubSource {
+    /// [`Self::from_package_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn from_package(
         holder: &crate::entity_id::EntityId,
         package: &HubPackage,
     ) -> Result<Self> {
-        for set in [
-            &package.capabilities.bins,
-            &package.capabilities.env,
-            &package.capabilities.mcp,
-            &package.capabilities.allowed_tools,
-        ] {
-            for text in set {
-                if super::credential_nulling::null_credentials(
-                    "",
-                    &serde_json::Value::String(text.clone()),
-                ) != serde_json::Value::String(text.clone())
-                {
-                    return Err(invalid("source capability credential"));
+        Self::from_package_with(holder, package, ExportSecrets::Nulled)
+    }
+
+    /// A hub package as its carrier under `secrets`: the record via
+    /// [`ExportBody::from_bytes_with`], the tree via the source tree's policy
+    /// entry. The capability-string credential refusal runs only under
+    /// [`ExportSecrets::Nulled`].
+    pub(crate) fn from_package_with(
+        holder: &crate::entity_id::EntityId,
+        package: &HubPackage,
+        secrets: ExportSecrets,
+    ) -> Result<Self> {
+        if secrets == ExportSecrets::Nulled {
+            for set in [
+                &package.capabilities.bins,
+                &package.capabilities.env,
+                &package.capabilities.mcp,
+                &package.capabilities.allowed_tools,
+            ] {
+                for text in set {
+                    if super::credential_nulling::null_credentials(
+                        "",
+                        &serde_json::Value::String(text.clone()),
+                    ) != serde_json::Value::String(text.clone())
+                    {
+                        return Err(invalid("source capability credential"));
+                    }
                 }
             }
         }
         Ok(Self {
             holder: holder.to_hex(),
-            record: ExportBody::from_bytes(
+            record: ExportBody::from_bytes_with(
                 &crate::write_envelope::skill_record::encode_skill_record(&package.record)?,
                 crate::registry::ENTITY_TYPE_SKILL,
+                secrets,
             ),
             format: package.format,
-            source_tree: super::export_source_tree(&package.export_files()?)?,
+            source_tree: super::source_tree::export_source_tree_for(
+                &package.export_files()?,
+                secrets,
+            )?,
             bins: package.capabilities.bins.clone(),
             env: package.capabilities.env.clone(),
             mcp: package.capabilities.mcp.clone(),
@@ -87,12 +107,30 @@ impl ExportHubSource {
                 .is_none()
     }
     /// [`Self::to_bytes_in`] with no archive files.
+    /// [`Self::to_bytes_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn to_bytes(&self) -> Result<Vec<u8>> {
-        self.to_bytes_in(&HeldFiles::default())
+        self.to_bytes_with(ExportSecrets::Nulled)
     }
+
+    /// [`Self::to_bytes_in_with`] with no archive files.
+    pub(crate) fn to_bytes_with(&self, secrets: ExportSecrets) -> Result<Vec<u8>> {
+        self.to_bytes_in_with(&HeldFiles::default(), secrets)
+    }
+
     /// The carrier's bytes, each source member stored as a file read from
-    /// `files`.
+    /// `files`. [`Self::to_bytes_in_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn to_bytes_in(&self, files: &dyn ArchiveFiles) -> Result<Vec<u8>> {
+        self.to_bytes_in_with(files, ExportSecrets::Nulled)
+    }
+
+    /// The carrier's bytes under `secrets`, each source member stored as a
+    /// file read from `files`: the tree imports with its policy entry, so a
+    /// kept credential tree rebuilds its exact package.
+    pub(crate) fn to_bytes_in_with(
+        &self,
+        files: &dyn ArchiveFiles,
+        secrets: ExportSecrets,
+    ) -> Result<Vec<u8>> {
         if matches!(self.record, ExportBody::Pack(_) | ExportBody::HubSource(_)) {
             return Err(invalid("recursive source carrier"));
         }
@@ -100,7 +138,7 @@ impl ExportHubSource {
             crate::write_envelope::skill_record::decode_skill_record(&self.record.to_bytes()?)?;
         let mut package = HubPackage::new(
             record,
-            self.source_tree.import_files_in(files)?,
+            self.source_tree.import_files_in_with(files, secrets)?,
             SkillCapabilitySurface {
                 bins: self.bins.clone(),
                 env: self.env.clone(),
@@ -114,13 +152,36 @@ impl ExportHubSource {
             &package,
         )
     }
+
     /// [`Self::validate_in`] with no archive files.
+    /// [`Self::validate_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn validate(&self) -> Result<()> {
-        self.validate_in(&HeldFiles::default())
+        self.validate_with(ExportSecrets::Nulled)
     }
+
+    /// [`Self::validate_in_with`] with no archive files.
+    pub(crate) fn validate_with(&self, secrets: ExportSecrets) -> Result<()> {
+        self.validate_in_with(&HeldFiles::default(), secrets)
+    }
+
     /// The carrier's checks, each source member stored as a file read from
     /// `files`: the same transform over the decoded carrier rebuilds it.
+    /// [`Self::validate_in_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn validate_in(&self, files: &dyn ArchiveFiles) -> Result<()> {
+        self.validate_in_with(files, ExportSecrets::Nulled)
+    }
+
+    /// The carrier's checks under `secrets`, each source member stored as a
+    /// file read from `files`: the record validates with
+    /// [`ExportBody::validate_with`], the tree with its policy entry, the
+    /// capability-string credential check runs only under
+    /// [`ExportSecrets::Nulled`], and the round trip rebuilds through
+    /// [`Self::from_package_with`] with the same policy.
+    pub(crate) fn validate_in_with(
+        &self,
+        files: &dyn ArchiveFiles,
+        secrets: ExportSecrets,
+    ) -> Result<()> {
         let holder = crate::entity_id::EntityId::from_hex(&self.holder)?;
         if holder.to_hex() != self.holder {
             return Err(invalid("noncanonical source holder"));
@@ -129,25 +190,28 @@ impl ExportHubSource {
         if matches!(self.record, ExportBody::Pack(_) | ExportBody::HubSource(_)) {
             return Err(invalid("recursive source carrier"));
         }
-        self.record.validate(crate::registry::ENTITY_TYPE_SKILL)?;
-        self.source_tree.validate_in(files)?;
-        for set in [&self.bins, &self.env, &self.mcp, &self.allowed_tools] {
-            for text in set {
-                if super::credential_nulling::null_credentials(
-                    "",
-                    &serde_json::Value::String(text.clone()),
-                ) != serde_json::Value::String(text.clone())
-                {
-                    return Err(invalid("source capability credential"));
+        self.record
+            .validate_with(crate::registry::ENTITY_TYPE_SKILL, secrets)?;
+        self.source_tree.validate_in_with(files, secrets)?;
+        if secrets == ExportSecrets::Nulled {
+            for set in [&self.bins, &self.env, &self.mcp, &self.allowed_tools] {
+                for text in set {
+                    if super::credential_nulling::null_credentials(
+                        "",
+                        &serde_json::Value::String(text.clone()),
+                    ) != serde_json::Value::String(text.clone())
+                    {
+                        return Err(invalid("source capability credential"));
+                    }
                 }
             }
         }
         if !self.redacted() {
             let (holder, package) = crate::store::skill_source_carrier::decode_source_carrier(
-                &self.to_bytes_in(files)?,
+                &self.to_bytes_in_with(files, secrets)?,
             )?
             .ok_or_else(|| invalid("missing source envelope"))?;
-            if Self::from_package(&holder, &package)? != *self {
+            if Self::from_package_with(&holder, &package, secrets)? != *self {
                 return Err(invalid("noncanonical source carrier"));
             }
         }

@@ -74,6 +74,8 @@ mod project_conversation;
 mod project_proposal;
 mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
+mod research_root;
+pub(crate) use self::research_root::ResearchRootRequest;
 mod resident;
 mod room_join;
 mod run_effects;
@@ -154,9 +156,10 @@ pub use self::spend_calibration::{
     SpendBasis, UsdPriceTarget, UsdUnitPrice,
 };
 pub(crate) use self::spend_lease::payer_binds_in_txn;
+pub(crate) use self::spend_record::erase_spend_scope_actor_in_txn;
 pub use self::spend_record::{
-    ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused,
-    SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendCapGeneration, SpendPayer,
+    SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
 pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};

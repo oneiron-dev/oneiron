@@ -18,6 +18,10 @@ pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
 pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;
 pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+#[path = "../../test_doors/esign_seal_verify_reasons.rs"]
+pub mod esign_seal_verify_reasons;
 #[cfg(test)]
 mod tests;
 pub(crate) use lane_scope::bounded_by_whole_vault;
