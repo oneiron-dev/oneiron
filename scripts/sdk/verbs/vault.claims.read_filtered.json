@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>",
   "call": "memory.claim_read_filtered(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

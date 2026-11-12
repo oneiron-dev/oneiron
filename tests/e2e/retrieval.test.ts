@@ -2434,7 +2434,7 @@ async function museRecall01AwaitPack(
   label: string,
 ): Promise<MuseRecall01Pack> {
   const claimPublicationDeadlineMs = 3000;
-  const pollLabel = `MUSE-RECALL-01 ENGINE DEFECT 2026-11-11: FIX 22964 approved claim lexical publication; ${label}`;
+  const pollLabel = `MUSE-RECALL-01 approved claim lexical publication (FIX 22964, fixed by #7032); ${label}`;
   const observed = await awaitPublic(
     async () => {
       let pack: MuseRecall01Pack;
@@ -3390,7 +3390,10 @@ suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit quest
 //   typed pack (per-item world label, base group first) and in the rendered
 //   pack (base text before story text, story label before story text). The
 //   exact non-base budget fraction is not asserted: no typed door read here
-//   lets the owner set or read that fraction.
+//   lets the owner set or read that fraction. The fixture holds three base
+//   claims beside the three story claims, so the default non-base share
+//   (0.5) admits every story claim; the two extra base claims are longer
+//   than the base sentinel claim, so the sentinel ranks first in base.
 // - P-RECALL-014: "Owner-excluded worlds are omitted entirely from the
 //   Context Board." Source: ARCH-0067#what. NOT proved: no typed owner
 //   world-access grant/exclude door and no board render read for a paired
@@ -3462,8 +3465,15 @@ function museRecall03AssertBaseFirst(
   const storyLabels = new Set<string>();
   for (const sentinel of storySentinels) {
     const storyIndex = hits.findIndex((item) => item.value_text.includes(sentinel));
-    expect(storyIndex).toBeGreaterThan(baseIndex);
     if (storyIndex < 0) throw new Error("Story sentinel claim missing from recall pack");
+    if (storyIndex < baseIndex) {
+      // Slot order only: which world each matching item carries, never its text.
+      const order = hits.map((item) => (item.value_text.includes(baseSentinel) ? "base" : item.world === baseLabel ? "base-world" : "story"));
+      throw new Error(
+        `MUSE-RECALL-03 ENGINE DEFECT 2026-11-12: FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY] P-RECALL-011 base section first (ARCH-0004 #world-scope); the pack partitions worlds only under the All scope, so a {story, include_base} recall stays flat in score order; base_index=${baseIndex} story_index=${storyIndex} order=${JSON.stringify(order)}`,
+      );
+    }
+    expect(storyIndex).toBeGreaterThan(baseIndex);
     const label = hits[storyIndex]!.world;
     expect(label === baseLabel).toBe(false);
     storyLabels.add(label ?? "");
@@ -3506,6 +3516,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     const tokenOtherWorld = `quiet${secretHex(3)}`;
     const tokenNowhere = `nowhere${secretHex(3)}`;
     const baseSentinel = `base${secretHex(3)}`;
+    const baseExtraSentinels = [`basex${secretHex(3)}`, `basey${secretHex(3)}`];
     const storySentinels = [`storya${secretHex(3)}`, `storyb${secretHex(3)}`, `storyc${secretHex(3)}`];
     const otherSentinel = `other${secretHex(3)}`;
     const storyWorldName = `Lantern Story ${secretHex(2)}`;
@@ -3513,7 +3524,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     const readerName = `Recall Reader ${secretHex(2)}`;
     const writerName = `Recall Writer ${secretHex(2)}`;
     const sentinels = [
-      tokenCommon, tokenOtherWorld, tokenNowhere, baseSentinel,
+      tokenCommon, tokenOtherWorld, tokenNowhere, baseSentinel, ...baseExtraSentinels,
       ...storySentinels, otherSentinel, storyWorldName, otherWorldName,
       readerName, writerName,
     ];
@@ -3537,21 +3548,25 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     }
 
     const baseValue = `real harbor note ${tokenCommon} ${baseSentinel}`;
+    const baseExtraValues = baseExtraSentinels.map(
+      (sentinel) => `real harbor note kept beside the quay through a long grey evening ${tokenCommon} ${sentinel}`,
+    );
     const storyValues = storySentinels.map(
       (sentinel) => `story harbor note ${tokenCommon} ${tokenCommon} ${sentinel}`,
     );
     const otherValue = `quiet harbor note ${tokenOtherWorld} ${otherSentinel}`;
     const expectedWorldByValue = new Map<string, string>([
       [baseValue, baseScope.world_id],
+      ...baseExtraValues.map((value): [string, string] => [value, baseScope.world_id]),
       ...storyValues.map((value): [string, string] => [value, storyWorld.id_hex]),
       [otherValue, otherWorld.id_hex],
     ]);
     const claimInputs: FacadeInput<"vault.claims.upsert">[] = [
-      {
-        predicate: museRecall03Predicate, subject_ref: ownerRef, value: baseValue,
+      ...[baseValue, ...baseExtraValues].map((value): FacadeInput<"vault.claims.upsert"> => ({
+        predicate: museRecall03Predicate, subject_ref: ownerRef, value,
         confidence: 1, source: "user_stated", scope: baseScope,
         occurred_at: museRecall03Occurred,
-      },
+      })),
       ...storyValues.map((value): FacadeInput<"vault.claims.upsert"> => ({
         predicate: museRecall03Predicate, subject_ref: ownerRef, value,
         confidence: 1, source: "user_stated",
@@ -3621,7 +3636,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
         return observed.pack;
       } catch (error) {
         const prefix = supersededStories.length > 0
-          ? "MUSE-RECALL-03 ENGINE DEFECT 2026-11-11: canon-multi decision.practical was auto-superseded (residual FIX 8794)"
+          ? "MUSE-RECALL-03 canon-multi decision.practical was auto-superseded again (FIX 8794 residual, fixed by #7055)"
           : "MUSE-RECALL-03 partition recall";
         throw new Error(
           `${prefix}; last presence=${JSON.stringify(lastPresence)}; seeded states=${JSON.stringify(seededStates)}; ${errorText(error)}`,
@@ -3982,35 +3997,56 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
 
     // Seed two owner memories, each read back through vault.claims.list.
     const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
-    const claimShortIds: string[] = [];
+    // A public predicate has at least two dot-joined segments (D17 grammar);
+    // a bare "preference" is refused 400 before anything is stored.
+    const seedPredicate = "preference.meeting_place";
+    const seededClaims: { readonly id: string | null; readonly shortId: string }[] = [];
     for (const marker of markers) {
       const conversation = await engine.client.call("vault.conversations.create", {
         body: { members: [engine.pairedActor.principalRef, reader.principalRef] },
         occurred_start: occurred, occurred_end: occurred,
       } satisfies FacadeInput<"vault.conversations.create">);
       await museRecallReadSetup(engine, conversation.id, "CONVERSATION");
-      const claim = await engine.client.call("vault.claims.upsert", {
-        scope, predicate: "preference", subject_ref: conversation.id,
-        value: marker, source: "user_stated", confidence: 1, occurred_at: occurred,
-      } satisfies FacadeInput<"vault.claims.upsert">);
-      claimShortIds.push(claim.claim_short_id);
+      let claim: FacadeResult<"vault.claims.upsert">;
+      try {
+        claim = await engine.client.call("vault.claims.upsert", {
+          scope, predicate: seedPredicate, subject_ref: conversation.id,
+          value: marker, source: "user_stated", confidence: 1, occurred_at: occurred,
+        } satisfies FacadeInput<"vault.claims.upsert">);
+      } catch (error) {
+        if (!(error instanceof PublicHttpError)) throw error;
+        const detail = error.error;
+        throw new Error(
+          `MUSE-RECALL-04 seed vault.claims.upsert predicate=${seedPredicate} subject=CONVERSATION: status=${error.reply.status} code=${detail?.code ?? "<none>"} message=${detail?.message ?? "<none>"} suggestion=${detail?.suggestions?.[0] ?? "<none>"}`,
+          { cause: error },
+        );
+      }
+      seededClaims.push({ id: claim.claim?.id ?? null, shortId: claim.claim_short_id });
       await engine.awaitReceipt(claim.receipt_ref);
       const listed = await engine.client.call("vault.claims.list", {
-        subject_ref: conversation.id, predicate: "preference", limit: 10,
+        subject_ref: conversation.id, predicate: seedPredicate, limit: 10,
       } satisfies FacadeInput<"vault.claims.list">);
       expect(listed.value).toHaveLength(1);
       expect(listed.value[0]!.value).toBe(marker);
     }
 
     // Second-door visibility of the seeds, then the positive recall control.
+    // A CLAIM hit carries no snippet (memory/reads.rs LexicalHit: a preview
+    // only when the body has a `content` field), so each seeded claim is
+    // found by its record id or its short id.
+    const bm25FindsEverySeed = (page: FacadeResult<"vault.search.bm25">): boolean =>
+      seededClaims.every((seed) => page.value.some((hit) =>
+        (seed.id !== null && hit.record?.id === seed.id)
+        || hit.short_id.split("@")[0] === seed.shortId.split("@")[0]));
     const bm25 = await awaitPublic(
       () => engine.client.call("vault.search.bm25", {
         query: phrase, limit: 10,
       } satisfies FacadeInput<"vault.search.bm25">),
-      (page) => page.value.some((hit) => (hit.snippet ?? "").includes(phrase)),
+      bm25FindsEverySeed,
       { label: "seeded claims in BM25 search" },
     );
-    expect(bm25.value.some((hit) => (hit.snippet ?? "").includes(phrase))).toBe(true);
+    expect(seededClaims).toHaveLength(markers.length);
+    expect(bm25FindsEverySeed(bm25)).toBe(true);
     const pack = await awaitPublic(
       () => recall({
         query: phrase, effort: "light", telemetry: { capture_trace: true }, limit: 10,
@@ -4156,7 +4192,7 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
 // Doors used: vault.structural.put, vault.agents.grants.mint/revoke,
 // token pair (pairActor), mount, graph_fs.readdir/ls/grep,
 // vault.claims.upsert/list, vault.get, vault.recall, vault.receipts.get,
-// HTTP raw facade calls and one WS RPC for refusal receipts.
+// HTTP raw facade calls and their call receipts for refusals.
 
 type museRecall05Mount = FacadeInput<"graph_fs.readdir">["mount"];
 type museRecall05WorldView = FacadeResult<"graph_fs.readdir">;
@@ -4357,7 +4393,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
             ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
             : errorText(error);
           throw new Error(
-            `MUSE-RECALL-05 ENGINE DEFECT 2026-11-11: FIX [AGENT-GRAPHFS-GRANT-WORLDS] the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ extra_names=${JSON.stringify(extraNames ?? "<unavailable>")} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(seenNames ?? "<unavailable>")}; ${detail}`,
+            `MUSE-RECALL-05 the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97; FIX [AGENT-GRAPHFS-GRANT-WORLDS], fixed by #7044); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ extra_names=${JSON.stringify(extraNames ?? "<unavailable>")} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(seenNames ?? "<unavailable>")}; ${detail}`,
             { cause: error },
           );
         }
@@ -4382,21 +4418,46 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     };
     await expectReaderBlind();
 
-    // A direct walk at the excluded path serves nothing and is not a 403:
-    // absent means indistinguishable from never having existed, and a
-    // refusal for a hidden world carries no name and no count.
-    const direct = await reader.client.raw("POST", "/v1/core/facade/graph_fs.readdir", {
-      mount, path: worldPath,
+    // A direct walk at the excluded path is not a 403 and answers exactly as
+    // a world id the vault never assigned: absent means indistinguishable
+    // from never having existed. readdir serves the same fixed
+    // claims/backlinks/scope skeleton for every well-formed world id, so the
+    // control is a never-assigned id, not an empty listing; the hidden
+    // world's claims directory must then list what the never-assigned one
+    // lists (nothing), with no name and no count.
+    const neverAssignedPath = `/worlds/${secretHex(16)}`;
+    const readdirAt = (path: string) => reader.client.raw("POST", "/v1/core/facade/graph_fs.readdir", {
+      mount, path,
     } satisfies FacadeInput<"graph_fs.readdir">);
-    expect(direct.status).not.toBe(403);
-    const directText = museRecall05Text(direct.body);
-    expect(directText.includes(token)).toBe(false);
-    if (segment !== worldName) expect(directText.includes(worldName)).toBe(false);
-    if (direct.status >= 200 && direct.status < 300) {
-      const entries = museRecall05Field(direct.body, "entries");
-      expect(Array.isArray(entries) ? entries.length : 0).toBe(0);
-    } else {
-      expect(museRecall05WireError(direct.body)).toBeDefined();
+    const entryNames = (body: unknown): string[] | null => {
+      const entries = museRecall05Field(body, "entries");
+      if (!Array.isArray(entries)) return null;
+      return entries
+        .filter((entry) => museRecall05Field(entry, "kind") !== "cursor")
+        .map((entry) => String(museRecall05Field(entry, "name")))
+        .sort();
+    };
+    for (const [hiddenPath, controlPath] of [
+      [worldPath, neverAssignedPath],
+      [`${worldPath}/claims`, `${neverAssignedPath}/claims`],
+    ] as const) {
+      const direct = await readdirAt(hiddenPath);
+      const control = await readdirAt(controlPath);
+      const directText = museRecall05Text(direct.body);
+      expect(direct.status).not.toBe(403);
+      expect(directText.includes(token)).toBe(false);
+      if (segment !== worldName) expect(directText.includes(worldName)).toBe(false);
+      const hiddenLeaf = hiddenPath.slice(worldPath.length) || "/";
+      const seen = { status: direct.status, names: entryNames(direct.body) };
+      const expected = { status: control.status, names: entryNames(control.body) };
+      if (JSON.stringify(seen) !== JSON.stringify(expected)) {
+        throw new Error(
+          `MUSE-RECALL-05 direct readdir of the hidden world${hiddenLeaf} differs from a never-assigned world id; actor=reader agent ${reader.principalRef}; hidden=${JSON.stringify(seen)} never_assigned=${JSON.stringify(expected)}`,
+        );
+      }
+      if (direct.status < 200 || direct.status >= 300) {
+        expect(museRecall05WireError(direct.body)).toBeDefined();
+      }
     }
 
     // The exclusion survives a restart; the owner still sees the world.
@@ -4417,35 +4478,10 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     if (!widenError) throw new Error("Agent self-widen was not refused with the standard error envelope");
     expect(widenError.code.length).toBeGreaterThan(0);
     expect(widenError.message.length).toBeGreaterThan(0);
-    // The same refusal over WS leaves a call receipt; read it back.
-    const socket = await engine.websocket(reader);
-    try {
-      let refusal: WsRpcError | undefined;
-      try {
-        await socket.call("vault.agents.grants.mint", widen);
-      } catch (error) {
-        if (error instanceof WsRpcError) refusal = error;
-        else throw error;
-      }
-      if (!refusal) throw new Error("Agent self-widen over WS was not refused");
-      const receiptRef = refusal.frames
-        .map((frame) => frame.envelope.receipt_ref)
-        .find((ref): ref is string => typeof ref === "string" && ref.length > 0);
-      if (!receiptRef) throw new Error("WS refusal carried no receipt_ref to read back");
-      const receipt = await awaitPublic(
-        () => reader.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
-        value => value !== null,
-        { label: "grant self-widen refusal call receipt" },
-      );
-      if (!receipt) throw new Error("Refusal call receipt is not readable");
-      expect(receipt.verb).toBe("vault.agents.grants.mint");
-      expect(receipt.outcome).not.toBe("ok");
-      if (typeof receipt.outcome !== "string") {
-        expect(receipt.outcome.refused.code.length).toBeGreaterThan(0);
-      }
-    } finally {
-      socket.close();
-    }
+    // The refusal's call receipt, read back as owner. A /ws socket is
+    // owner-grade only for a scoped agent (FIX 23077), so the HTTP reply's
+    // receipt is the one under test.
+    await museRecallHttpRefusalReceipt(engine, "MUSE-RECALL-05", widenReply, "vault.agents.grants.mint");
     // The refused widen changed nothing, read back through the listing.
     const afterWiden = await museRecall05WorldEntries(reader.client, mount);
     try {
@@ -4453,7 +4489,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     } catch (error) {
       const extraNames = afterWiden.names.filter((name) => !readerBaseline.names.includes(name));
       throw new Error(
-        `MUSE-RECALL-05 ENGINE DEFECT 2026-11-11: FIX [AGENT-GRAPHFS-GRANT-WORLDS] the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ after refused self-widen extra_names=${JSON.stringify(extraNames)} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(afterWiden.names)}; ${errorText(error)}`,
+        `MUSE-RECALL-05 the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97; FIX [AGENT-GRAPHFS-GRANT-WORLDS], fixed by #7044); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ after refused self-widen extra_names=${JSON.stringify(extraNames)} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(afterWiden.names)}; ${errorText(error)}`,
         { cause: error },
       );
     }
@@ -5791,7 +5827,19 @@ suite.test(test, "MUSE-RECALL-08", "Recall serializes the same pack in all five 
     expect((JSON.stringify(writerDenied.body) ?? "").includes(sentinel)).toBe(false);
 
     // The same refusal over WS leaves a call receipt the owner can read back.
-    const writerSocket = await engine.websocket(writer);
+    let writerSocket: Awaited<ReturnType<typeof engine.websocket>>;
+    try {
+      writerSocket = await engine.websocket(writer);
+    } catch (error) {
+      const message = errorText(error);
+      if (/WS upgrade (failed|closed)/.test(message)) {
+        throw new Error(
+          `MUSE-RECALL-08 ENGINE DEFECT 2026-11-12: scoped agent cannot reach the WS facade; plain /ws requires owner grade, same pre-upgrade cause as FIX-LIST:23077 [FEDERATION-GUEST-WS-FACADE-ADMISSION]; actor=write-only agent ${writer.principalRef}; ${message}`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
     let wsRefusal: unknown = undefined;
     try {
       await writerSocket.call("vault.recall", jsonRecall);

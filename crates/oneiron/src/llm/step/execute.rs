@@ -4,6 +4,7 @@ use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
     LlmResponse, LlmUsage,
 };
+use super::budget_wait::wake_budget_trap_in_txn;
 use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step, step_index_lookup_in_txn,
@@ -17,8 +18,10 @@ use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
     DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
 };
+use crate::agent_dispatch::SpendCapRefusal;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, current_legibility};
 use crate::error::Error;
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 // FIX 4816: the recovery moved to `recovery`; its names stay reachable here.
 pub(super) use super::recovery::{recover_step, recovery_in_txn};
@@ -258,8 +261,16 @@ async fn durable_step(
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
-            return budget_trap(ctx, step_hash, BUDGET_PARK_REASON)
-                .inspect(|_| step_budget_hit(ctx, guard, &request));
+            let trapped = budget_trap(
+                ctx,
+                step_hash,
+                BUDGET_PARK_REASON,
+                Some(guard.reserve_units()),
+            );
+            if budget_acted(&trapped) {
+                step_budget_hit(ctx, guard, &request);
+            }
+            return trapped;
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -398,11 +409,15 @@ async fn durable_step(
                 BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
                 _ => BUDGET_PARK_REASON,
             };
-            return budget_trap(ctx, step_hash, reason).inspect(|_| {
-                if denied == BudgetDenied::Exhausted {
-                    step_budget_hit(ctx, guard, &request);
-                }
-            });
+            let asked_units = match denied {
+                BudgetDenied::Exhausted => Some(guard.reserve_units()),
+                _ => None,
+            };
+            let trapped = budget_trap(ctx, step_hash, reason, asked_units);
+            if denied == BudgetDenied::Exhausted && budget_acted(&trapped) {
+                step_budget_hit(ctx, guard, &request);
+            }
+            return trapped;
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
@@ -652,16 +667,29 @@ pub(super) const HOST_CHECK_PARK_REASON: &str = "durable step held by a host che
 /// trap that records `reason`. The trap and its park land in one
 /// transaction: an open trap over an unparked attempt reads as plain leased
 /// work, which boot recovery requeues and a fresh budget runs without the
-/// signal.
+/// signal. A spend scope refused for good, by a closed boundary or a
+/// ceiling, has no write to wait for: the step refuses with that typed
+/// reason before any trap opens, and nothing parks
+/// (BUDGET-TRAP-UNTYPED-NO-SENDER).
 pub(super) fn budget_trap(
     ctx: &DurableStepContext<'_>,
     step_hash: [u8; 32],
     reason: &str,
+    asked_units: Option<u64>,
 ) -> DurableStepResult<StepOutcome> {
     let failure_policy =
         resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-    let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
+    let parked = ctx.vault.with_write_txn_grouped(|wtxn| {
+        let refusal = match (&ctx.spend_scope, asked_units) {
+            (Some(spend), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .hard_cap_refusal_in_txn(wtxn, &spend.scope, units)?,
+            _ => None,
+        };
+        let wait = match budget_wait(refusal) {
+            Ok(wait) => wait,
+            Err(refused) => return Ok(Err(refused)),
+        };
         let trap = open_trap_in_txn(
             ctx.vault,
             wtxn,
@@ -671,7 +699,7 @@ pub(super) fn budget_trap(
             reason,
             TrapBindingScope::Attempt,
         )?;
-        store.park_attempt_in_txn(
+        store.park_attempt_with_wait_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
                 attempt_id: ctx.attempt_id,
@@ -681,14 +709,80 @@ pub(super) fn budget_trap(
                 carried_spend: None,
                 now: ctx.now_s(),
             },
+            wait,
         )?;
-        Ok(trap)
+        // A top-up that moved the cap after the step's guards read their room
+        // found no park to wake: a spent budget's park wakes itself in its own
+        // write (FIX PARK-BUDGET-SIGNAL-BEFORE-PARK). The retry reads the cap
+        // again, so only a later top-up wakes it again.
+        let generation = match (&ctx.spend_scope, asked_units) {
+            (Some(spend), Some(_)) => spend.cap_generation.as_ref(),
+            _ => None,
+        };
+        let cap_moved = match generation {
+            Some(generation) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .spend_cap_moved_in_txn(wtxn, generation)?,
+            None => false,
+        };
+        let resumed = if cap_moved {
+            wake_budget_trap_in_txn(ctx.vault, wtxn, &trap, ctx.now_ms)?
+        } else {
+            None
+        };
+        Ok(Ok((trap, resumed)))
     })?;
+    let (trap, resumed) = parked.map_err(DurableStepError::BudgetRefused)?;
+    if resumed.is_some() {
+        ctx.vault.store.notify_attempt_observers();
+        ctx.vault.store.notify_proactivity_changes();
+    }
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
     Ok(StepOutcome::Trapped {
         trap,
         failure_policy,
     })
+}
+
+/// The typed wait of a step an open hard cap refused, which that cap's
+/// top-up wakes; `None` when no spend scope refused it. A scope refused for
+/// good, by a closed boundary or a ceiling, is the step's typed refusal.
+fn budget_wait(
+    refusal: Option<SpendCapRefusal>,
+) -> std::result::Result<Option<crate::dreamer_runner::DreamerParkWait>, StepBudgetRefusal> {
+    let refused = match refusal {
+        None => return Ok(None),
+        Some(SpendCapRefusal::HardCap { scope, asked_units }) => {
+            return Ok(Some(crate::dreamer_runner::DreamerParkWait::Budget {
+                scope,
+                asked_units,
+            }));
+        }
+        Some(SpendCapRefusal::BoundaryClosed {
+            scope,
+            available_units,
+            asked_units,
+        }) => StepBudgetRefusal::BoundaryClosed {
+            scope: scope.as_str().to_owned(),
+            available_units,
+            asked_units,
+        },
+        Some(SpendCapRefusal::CeilingReached {
+            scope,
+            available_units,
+            asked_units,
+        }) => StepBudgetRefusal::CeilingReached {
+            scope: scope.as_str().to_owned(),
+            available_units,
+            asked_units,
+        },
+    };
+    Err(refused)
+}
+
+/// Whether the host acted on a spent budget: it trapped the step, or
+/// refused it typed.
+fn budget_acted(outcome: &DurableStepResult<StepOutcome>) -> bool {
+    matches!(outcome, Ok(_) | Err(DurableStepError::BudgetRefused(_)))
 }
 
 /// `host.budget.hit` for a step whose budget is spent, once the host acted

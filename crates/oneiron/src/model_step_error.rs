@@ -1,6 +1,7 @@
 //! Durable model-step failure and reply-check contracts.
 
 use crate::error::Error;
+use crate::store::model_step_submission::StepBudgetRefusal;
 use oneiron_model::llm::{DreamerFailureDecision, FallbackError, LlmError, LlmResponse, LlmUsage};
 
 pub type DurableStepResult<T> = std::result::Result<T, DurableStepError>;
@@ -59,6 +60,11 @@ pub enum DurableStepError {
     /// call no longer emits it when the wake-pass deadline expires.
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
+    /// The step's spend scope refused its reservation and no write frees it
+    /// (a closed boundary, a ceiling): no trap opens and nothing parks. The
+    /// host ends the try with this typed reason.
+    #[error("durable step budget refused: {0}")]
+    BudgetRefused(StepBudgetRefusal),
 }
 
 impl DurableStepError {

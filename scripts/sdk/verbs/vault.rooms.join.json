@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::JoinOutcome",
   "call": "memory.rooms_join(&input)?",
   "scope": "Write",
+  "act_class": "room_add",
   "mcp_fields": {
     "spec": "$",
     "room_ref": "=room"

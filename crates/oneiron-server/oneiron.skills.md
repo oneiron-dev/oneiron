@@ -819,6 +819,7 @@ Response fields:
 - Each node includes `job_id`, `run_id`, `parent_id`, `worker_kind`, `status`, `timestamps`, optional `failure`, and ordered `children`.
 - `status`: one of `queued`, `running`, `completed`, or `failed`.
 - `failure.reason`: summarized terminal failure text copied from the backing queue row only when `status` is `failed`.
+- `failure.budget_refusal`: present only when a spend scope refused the try's step for good, copied from the backing queue row: `reason` (`boundary_closed` or `ceiling_reached`), `scope` (the refusing spend scope's id), `available_units` and `asked_units`.
 - `repairs`: render-time repair records, currently `missing_parent` and `parent_cycle`.
 
 Notes:

@@ -15,8 +15,7 @@ use oneiron_model::llm::ModelId;
 
 use super::super::types::{
     ContextPackRetrievalBudget, DEFAULT_CONTEXT_FRACTION, DEFAULT_MAX_FIELD_CHARS,
-    DEFAULT_MAX_NEIGHBORS, DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, DEFAULT_WINDOW_TOKEN_BUDGET,
-    FieldProfile, PackFormat, TokenAllocation,
+    DEFAULT_MAX_NEIGHBORS, DEFAULT_WINDOW_TOKEN_BUDGET, FieldProfile, PackFormat, TokenAllocation,
 };
 
 #[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
@@ -57,7 +56,10 @@ pub struct ContextPackBuilder<'a> {
     pub(super) max_item_tokens: usize,
     pub(super) signals_used: Vec<Signal>,
     pub(super) world_scope: WorldScope,
-    pub(super) non_base_world_fraction: f32,
+    /// The share of a partitioned pack's claims non-base worlds may hold
+    /// ([`Self::non_base_world_claim_fraction`]); `None` = the owner's
+    /// setting, read when the pack runs.
+    pub(super) non_base_world_fraction: Option<f32>,
     pub(super) disclosure: Option<DisclosureContext>,
     /// Additive session routing (ONE-1570 Arm B). `None` on every canonical
     /// entry, which is therefore behaviorally unchanged. The sibling field on
@@ -200,7 +202,7 @@ impl<'a> ContextPackBuilder<'a> {
             max_item_tokens: 0,
             signals_used: Vec::new(),
             world_scope: WorldScope::All,
-            non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
+            non_base_world_fraction: None,
             disclosure: None,
             session: None,
             psych_profile_key: None,
@@ -544,23 +546,30 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Sets the ARCH-0004 / ARCH-0022 world scope. Delegates the post-fusion
-    /// filter to the pipeline; under the default [`WorldScope::All`] the pack
-    /// additionally groups surviving claims by world (base section first). For
-    /// [`WorldScope::Base`] / [`WorldScope::World`] the pack stays flat.
+    /// filter to the pipeline. Under a scope that selects base beside another
+    /// world — the default [`WorldScope::All`], a [`WorldScope::World`] (its
+    /// default selection is `{base, id}`, ARCH-0004 #world-scope), or a
+    /// [`WorldScope::WorldSet`] that includes base and names a world — the pack
+    /// additionally groups surviving claims by world (base section first) and
+    /// holds non-base claims to the world share. For [`WorldScope::Base`] and a
+    /// one-sided `WorldSet` the pack stays flat.
     pub fn world(mut self, scope: WorldScope) -> Self {
         self.pipeline = self.pipeline.world(scope.clone());
         self.world_scope = scope;
         self
     }
 
-    /// Sets the share of the pack's claims non-base worlds may occupy under
-    /// [`WorldScope::All`] (default `0.5`). The pack's rows are selected so
-    /// non-base claims stay at most `floor(fraction × emitted claims)`: a base
-    /// claim ranked below fiction still gets its slot, and the pack goes short
-    /// rather than over the share when base claims are scarce. Only consulted
-    /// for `All` scope.
+    /// Sets the share of the pack's claims non-base worlds may occupy under a
+    /// partitioned scope: [`WorldScope::All`], [`WorldScope::World`], or a
+    /// [`WorldScope::WorldSet`] that includes base and names a world. Unset,
+    /// the pack reads the owner's share when it runs (ARCH-0004 #world-scope;
+    /// [`crate::Vault::non_base_world_claim_fraction`], `0.5` until the owner
+    /// sets one). The pack's rows are selected so non-base claims stay at most
+    /// `floor(fraction × emitted claims)`: a base claim ranked below fiction
+    /// still gets its slot, and the pack goes short rather than over the share
+    /// when base claims are scarce. Not consulted for the other scopes.
     pub fn non_base_world_claim_fraction(mut self, fraction: f32) -> Self {
-        self.non_base_world_fraction = fraction;
+        self.non_base_world_fraction = Some(fraction);
         self
     }
 

@@ -87,6 +87,7 @@ use crate::write_envelope::WriteActor;
 
 mod codec;
 mod companion_bind;
+mod house_link;
 mod intent;
 mod records;
 mod runner;
@@ -100,6 +101,12 @@ use codec::*;
 use companion_bind::*;
 use steps::*;
 
+pub(crate) use self::codec::companion_principal_in_txn;
+pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
+pub(crate) use self::house_link::{
+    erase_house_link_actor_in_txn, house_link_receipts, house_role_lines_in_txn,
+    is_house_link_grant_in_txn,
+};
 pub use self::intent::CompanionChoice;
 pub use self::intent::{
     CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
@@ -113,6 +120,10 @@ pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
     WorkspaceRosterEntry, WorkspaceRosterRole,
 };
+// The bind-interval read; its first reader outside the tests is FIX row
+// SPEAKER-BYLINE-FOR-ORG's statement byline.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::house_link::house_org_at_in_txn;
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
     erase_member_intent_actor_in_txn,
@@ -126,9 +137,10 @@ pub use self::work_companion::WorkCompanionPolicy;
 #[cfg(test)]
 mod tests;
 
-mod project;
+pub(crate) mod project;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use project::create_project_signed_for_test;
+pub(crate) use project::index_extra_room;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
@@ -139,8 +151,9 @@ pub use project::{
 pub(crate) use project::{
     ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
     ProjectDetectionVerdict, claim_project_detection, erase_card_actor_in_txn,
-    erase_pending_actor_in_txn, fail_project_detection, project_house_agent, seeded_house_agent,
-    settle_project_detection, stage_project_detection_in_txn,
+    erase_pending_actor_in_txn, fail_project_detection, project_house_agent,
+    project_house_agent_in_txn, seeded_house_agent, settle_project_detection,
+    stage_project_detection_in_txn,
 };
 pub use project::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, OwnerProjectSigner,
@@ -159,6 +172,14 @@ pub use project::{
     ProjectRoomChange, ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof,
     RoomOriginCard,
 };
+pub use project::{
+    GoalAxisChange, GoalAxisChanges, GoalBudgetChange, GoalPreferenceChange, GoalPreferenceChanges,
+    GoalRecordDiff, GoalTextChange, ProjectGoalBase, ProjectGoalProposal,
+    ProjectGoalProposalDismissal, ProjectGoalProposalEvidence, ProjectGoalProposalImprovement,
+    ProjectGoalProposalRate, ProjectGoalProposalReasons, ProjectGoalProposalStatus,
+    ProjectGoalProposalView, ProjectGoalProposeRequest, ProjectGoalProposer,
+    ProjectGoalRevisionsView, project_goal_propose,
+};
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_PACK, PROJECT_SHORT_ID_PREFIX,
     ProjectReader, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
@@ -167,20 +188,27 @@ pub(crate) use project::{
     normalize_project_body, note_project_proof, permit_leader_chat_record, precheck_goal_delete,
     project_mint_gate_refs_in_txn, projects_led_in_txn, reconcile_project_rooms,
     retire_goal_for_delete, room_facets_in, root_project_in, seed_root_project,
-    settle_leader_chat_record, speaks_as_in_txn, validate_local_leader_chat_turns,
-    validate_project_body, validate_project_edge_delete, validate_project_edge_put,
-    validate_project_graph, validate_project_transition, validate_room_body,
-    verify_existing_leader_chat_turn,
+    seeded_root_home_room, settle_leader_chat_record, speaks_as_in_txn,
+    validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_project_transition,
+    validate_room_body, verify_existing_leader_chat_turn,
 };
 pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
     capture_project_put, check_revision_put, projects_touched_by_put,
     rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
 };
+pub use project::{
+    ProjectRoomLink, ProjectRoomLinkRequest, ProjectRoomRow, ProjectRoomsPage, ProjectRoomsRequest,
+};
 #[cfg(feature = "sync")]
 pub(crate) use project::{
     decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
     inadmissible_revision_carriers,
+};
+pub(crate) use project::{
+    dismiss_project_goal_proposal, project_goal_base_in_txn, project_goal_proposals_in_txn,
+    reads_goal_proposals_in_txn,
 };
 // Old paths of items the store layer now names at `store::project_kind` and
 // `batch::export`; only sync code still reads them here.
@@ -227,19 +255,25 @@ pub(crate) use rooms::{
     thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
 };
 pub use rooms::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
-pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
+pub(crate) use rooms::{
+    VaultStanding, private_root_of_room_in, room_thread_source_in, vault_standing_in,
+};
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
 };
 
 pub(crate) use rooms::RoomThreadTask;
-pub use rooms::{ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, RoomHostHand, RoomHostPin};
+pub(crate) use rooms::stored_room_pins_in;
+pub use rooms::{
+    ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
+};
 pub use rooms::{
     OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
     OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
+pub use rooms::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
@@ -249,6 +283,7 @@ pub(crate) use rooms::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]
 pub(crate) use rooms::erased_side_row_here;
+pub(crate) use rooms::room_group_project_in;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
 pub(crate) use rooms::task_binding_turns_in;
@@ -264,6 +299,7 @@ pub(crate) use rooms::{
     erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
 };
 pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
+pub(crate) use rooms::{record_room_message_in_txn, record_thread_reply_in_txn};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};

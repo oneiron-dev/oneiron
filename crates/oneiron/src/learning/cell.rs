@@ -40,8 +40,10 @@ pub struct LearningCell {
     /// `learning.setting` only: the catalog key of the fitted knob.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting_key: Option<String>,
-    /// The project whose runs the cell counts; `None` is the vault's.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The project whose runs the cell counts; `None` is the vault's. The
+    /// default reads a positional claim value written before the field
+    /// existed as the vault's cell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<EntityId>,
 }
 

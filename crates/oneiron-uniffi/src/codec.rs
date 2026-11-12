@@ -1065,6 +1065,9 @@ impl Lift<engine::EntityRefReceipt> for EntityRefReceipt {
                 short_id: record.short_id,
                 label: record.label,
             }),
+            agent_definition_disposition: value
+                .agent_definition
+                .map(|written| written.disposition.as_str().to_owned()),
         })
     }
 }

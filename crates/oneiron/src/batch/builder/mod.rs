@@ -67,6 +67,11 @@ pub struct BatchBuilder<'a> {
     caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
     prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
     prepared_agent_birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
+    /// The agent whose slice bounds each AGENT_DEF this batch creates
+    /// (ARCH-0053:20), set by the generic row doors an agent's own handle
+    /// answers ([`Self::authored_through`]). `None` writes each body as
+    /// staged.
+    agent_authoring: Option<crate::agent_def::AgentAuthoring>,
     /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
     /// exact bytes: a marked carrier's content its writer already scanned
     /// (FIX 9034), set by that door alone.
@@ -137,6 +142,7 @@ impl<'a> BatchBuilder<'a> {
             caller_envelopes: std::collections::HashMap::new(),
             prepared_person_substrate: None,
             prepared_agent_birth: None,
+            agent_authoring: None,
             marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
@@ -166,6 +172,38 @@ impl<'a> BatchBuilder<'a> {
             self.births.push((*id, birth));
         }
         self
+    }
+
+    /// Holds each AGENT_DEF this batch creates to `actor`'s slice when
+    /// `actor` is an agent writing through `door`, the name its provenance
+    /// records (ARCH-0053:20): in the transaction that applies the batch,
+    /// before any put lands, the author writer bounds the body, so a
+    /// definition inside the slice is active and a wider one is a proposal.
+    /// Any other actor's batch writes as staged. Every door that commits an
+    /// agent's own puts names its writer here, with the key of the read its
+    /// write lane holds the caller to (`None` for an unbound lane): an agent
+    /// with no definition of its own takes its slice from that credential.
+    pub fn authored_through(
+        mut self,
+        actor: &crate::WriteActor,
+        door: &'static str,
+        read_key: Option<&crate::claim::ScopedReadActorKey>,
+    ) -> Self {
+        self.agent_authoring = crate::agent_def::AgentAuthoring::of(actor, door, read_key);
+        self
+    }
+
+    /// What the author writer makes of each AGENT_DEF put this batch stages,
+    /// by staged id, readable once the batch has committed; none for a batch
+    /// with no agent author ([`Self::authored_through`]).
+    #[must_use]
+    pub fn agent_definition_write_receipts(
+        &self,
+    ) -> crate::agent_def::AgentDefinitionWriteReceipts {
+        self.agent_authoring
+            .as_ref()
+            .map(crate::agent_def::AgentAuthoring::receipts)
+            .unwrap_or_default()
     }
 
     /// Gates and applies `id`'s raw CLAIM put under `envelope`, its verified

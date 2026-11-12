@@ -6,6 +6,7 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::dreamer_wake::WakeTrigger;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
@@ -18,7 +19,7 @@ mod park;
 mod retry_policy;
 
 pub use crate::store::dreamer_attempt_payload::DreamerAttemptPayload;
-pub use park::ParkDreamerAttempt;
+pub use park::{DreamerParkWait, DreamerParkedWait, ModelSeatId, ParkDreamerAttempt};
 
 use super::constants::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
 
@@ -408,6 +409,9 @@ pub struct FailDreamerAttempt {
     pub lease_owner: String,
     pub attempt_count: u32,
     pub reason: String,
+    /// The typed refusal when a spend scope refused the try's step for good;
+    /// the failed row keeps it beside `reason`. `None` for every other failure.
+    pub budget_refusal: Option<StepBudgetRefusal>,
     pub now: u64,
 }
 
@@ -628,6 +632,8 @@ pub struct DreamerRunTreeRecord {
 }
 
 #[doc(hidden)]
+pub use oneiron_wake_contract::dreamer_runner::park_wait::DreamerParkWaitClass;
+#[doc(hidden)]
 pub use oneiron_wake_contract::dreamer_runner::types::DreamerParkCause;
 
 /// The cause of a park a failed model call made (FIX 7382, Engine
@@ -703,4 +709,6 @@ pub struct DreamerParkedAttemptRecord {
     pub park_owner: String,
     pub carried_spend: Option<u64>,
     pub parked_at: u64,
+    /// The typed refill that resumes this park, with its lease fence; `None` for an untyped park.
+    pub wait: Option<DreamerParkedWait>,
 }

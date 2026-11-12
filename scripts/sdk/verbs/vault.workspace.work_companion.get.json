@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::WorkCompanionPolicy",
   "call": "memory.workspace_work_companion_get(&input.workspace_ref)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
