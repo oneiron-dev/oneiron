@@ -424,6 +424,11 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
     let principal_ref = seeded_test_entity_id(0x1265_0101).to_hex();
     let person_ref = seeded_test_entity_id(0x1265_0102).to_hex();
     let persona_ref = seeded_test_entity_id(0x1265_0103).to_hex();
+    seed_companion_profile_targets(
+        &server,
+        seeded_test_entity_id(0x1265_0102),
+        seeded_test_entity_id(0x1265_0103),
+    );
     let create_request = json!({
         "principal_ref": principal_ref,
         "scope": {

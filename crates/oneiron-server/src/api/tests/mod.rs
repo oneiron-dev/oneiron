@@ -270,6 +270,34 @@ pub(super) fn seed_active_claim(
         .expect("seed active claim");
 }
 
+/// A companion-profile grant names a live PERSON and a live FACET persona
+/// (`check_companion_profile_target`): seeds each that no row backs yet.
+pub(super) fn seed_companion_profile_targets(
+    server: &SyncServer,
+    person_ref: oneiron::EntityId,
+    persona_ref: oneiron::EntityId,
+) {
+    for (id, kind, body) in [
+        (
+            person_ref,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            &b"companion person"[..],
+        ),
+        (
+            persona_ref,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            &b"companion persona"[..],
+        ),
+    ] {
+        if !server.vault.entity_exists(&id).expect("read target row") {
+            server
+                .vault
+                .put_entity(&id, kind, oneiron::TimeRange { start: 1, end: 1 }, 1, body)
+                .expect("seed companion profile target");
+        }
+    }
+}
+
 pub(super) fn seed_companion_profile_access(
     server: &SyncServer,
     grant_id: oneiron::EntityId,
@@ -277,6 +305,7 @@ pub(super) fn seed_companion_profile_access(
     person_ref: oneiron::EntityId,
     persona_ref: oneiron::EntityId,
 ) {
+    seed_companion_profile_targets(server, person_ref, persona_ref);
     let grant = oneiron::AccessGrant::companion_profile_read(
         principal_ref,
         person_ref,

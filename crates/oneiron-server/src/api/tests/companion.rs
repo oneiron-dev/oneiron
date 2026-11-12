@@ -15,6 +15,11 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     let other_person_ref = seeded_test_entity_id(0x1265_0005).to_hex();
     let other_principal_ref = seeded_test_entity_id(0x1265_0006).to_hex();
     let cross_principal_grant_id = seeded_test_entity_id(0x1265_0007).to_hex();
+    seed_companion_profile_targets(
+        &server,
+        seeded_test_entity_id(0x1265_0003),
+        seeded_test_entity_id(0x1265_0004),
+    );
 
     let profile_path_with_override = format!(
         "/v1/companion/profiles/{persona_ref}?principal_ref={principal_ref}&person_ref={person_ref}"
@@ -501,6 +506,16 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
     let source_a = seeded_test_entity_id(0x1218_0105);
     let source_b = seeded_test_entity_id(0x1218_0106);
     let existing_persona_ref = seeded_test_entity_id(0x1218_0109);
+    server
+        .vault
+        .put_entity(
+            &existing_persona_ref,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"persona entity without psych profile",
+        )
+        .expect("seed existing persona entity");
     seed_companion_profile_access(
         &server,
         seeded_test_entity_id(0x1218_0107),
@@ -522,16 +537,6 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
         person_ref,
         existing_persona_ref,
     );
-    server
-        .vault
-        .put_entity(
-            &existing_persona_ref,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"persona entity without psych profile",
-        )
-        .expect("seed existing persona entity");
     let stale_profile = oneiron::PsychProfile::new(
         stale_persona_ref,
         "stale compact",
@@ -1203,6 +1208,7 @@ async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_roll
     let principal = seeded_test_entity_id(0x0002_6001);
     let person = seeded_test_entity_id(0x0002_6002);
     let persona = seeded_test_entity_id(0x0002_6003);
+    seed_companion_profile_targets(&server, person, persona);
     let mut grant =
         oneiron::AccessGrant::companion_profile_read(principal, person, Some(persona), 1_000);
     grant.expires_at = Some(2_000);
