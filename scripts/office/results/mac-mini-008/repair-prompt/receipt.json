@@ -1,5 +1,5 @@
 {
-  "detail": "open: PowerPoint window: ['DIALOG:', 'DIALOG:PowerPoint found a problem with content in <workspace>/Library/Containers/com.microsoft.Powerpoint/Data/tmp/w8-oracle/repair-2929-a1e35290/repair-2929-5fa10ff6.pptx.\\nPowerPoint can attempt to repair the presentation.\\n\\nIf you trust the source of this presentation, click Repair.', 'DIALOG:']",
+  "detail": "open: PowerPoint window: ['DIALOG:', 'DIALOG:PowerPoint found a problem with content in <host-home>/Library/Containers/com.microsoft.Powerpoint/Data/tmp/w8-oracle/repair-2929-a1e35290/repair-2929-5fa10ff6.pptx.\\nPowerPoint can attempt to repair the presentation.\\n\\nIf you trust the source of this presentation, click Repair.', 'DIALOG:']",
   "environment": {
     "font_inventory_sha256": "dc5fb53ab863df6d9701cb2ef1db8fcccf169cee5e0720e3388760b09230fc28",
     "harness": "one-2531-v1",

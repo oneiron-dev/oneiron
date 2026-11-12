@@ -20,6 +20,7 @@ pub use app_reads::{
 };
 
 mod childof;
+pub(crate) use childof::has_deferred_child_of_source_in_txn;
 pub(in crate::sync) use childof::{defer_child_of, settle_child_of};
 mod companion_identity;
 mod edges;
@@ -68,7 +69,8 @@ pub(crate) use self::observers::{
     register_custody_observer, register_document_pins_observer, register_message_docs_observer,
     register_office_proposals_observer, register_repo_manifests_observer,
     register_room_facts_observer, register_room_turns_observer, register_source_audiences_observer,
-    register_typed_body_rows_observer, with_deletion_tombstone_observer_a_suppressed,
+    register_turn_program_observers, register_typed_body_rows_observer,
+    with_deletion_tombstone_observer_a_suppressed,
 };
 
 #[cfg(test)]

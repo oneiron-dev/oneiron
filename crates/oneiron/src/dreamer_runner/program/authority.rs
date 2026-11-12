@@ -46,6 +46,24 @@ pub(crate) struct TurnProgramAuthority {
     proof: Proof,
 }
 
+impl TurnProgramAuthority {
+    /// Whether this authority verifies on any machine of the vault, so its
+    /// wake rides to the elected home (FIX 5266): a verified capability slip
+    /// whose signed instrument it still carries. A host action, an attested
+    /// owner and the in-process host's own caller stand on the machine that
+    /// sealed them, so their wakes are admitted there, as before.
+    #[cfg(feature = "sync")]
+    pub(crate) fn rides_to_home(&self) -> bool {
+        matches!(
+            self.proof,
+            Proof::Slip {
+                instrument: Some(_),
+                ..
+            }
+        )
+    }
+}
+
 /// How the waking actor proved itself on the turn: a reference and its
 /// witness, never a secret and no authority on its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,6 +371,48 @@ impl TurnProgramAuthority {
             Proof::Native => Ok(Standing::Stands(None)),
             Proof::AttestedOwner { holder } => self.owner_standing_in_txn(vault, txn, *holder),
         }
+    }
+
+    /// The read key this authority reads under while it stands in `txn`, built as the actor's
+    /// own `Memory` read lane builds it: the slip's credential key, the owner's key for the
+    /// vault owner (a host action and an attested owner included), or the actor's grant-checked
+    /// key. `None` when it does not stand. A feed-woken program's wake is judged on it, as its
+    /// own reads are (slice 6.8c, lead call K).
+    ///
+    /// # Errors
+    ///
+    /// The standing's reads.
+    pub(super) fn reader_key_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<crate::claim::ScopedReadActorKey>> {
+        use crate::claim::ScopedReadActorKey;
+        let class = self.class()?;
+        // A check that cannot decide reads as not the owner: the narrower lane.
+        let owner = || {
+            crate::memory::actor_is_vault_owner_in_txn(vault, txn, self.actor, class)
+                .unwrap_or(false)
+        };
+        Ok(match self.standing_in_txn(vault, txn)? {
+            Standing::Stands(Some(slip)) => {
+                vault.credential_read_key_in_txn(txn, &slip, self.actor, owner())?
+            }
+            Standing::Stands(None) => match self.proof {
+                Proof::HostAction { .. } | Proof::AttestedOwner { .. } => {
+                    Some(ScopedReadActorKey::vault_owner(self.actor))
+                }
+                Proof::Native | Proof::Slip { .. } if owner() => {
+                    Some(ScopedReadActorKey::vault_owner(self.actor))
+                }
+                Proof::Native | Proof::Slip { .. } => ScopedReadActorKey::with_actor_class(
+                    self.actor.to_hex(),
+                    class.gate_actor_class(),
+                )
+                .map(|key| key.require_access_grants(Some(self.actor))),
+            },
+            Standing::Lapsed | Standing::OwnerNotLive | Standing::Withdrawn { .. } => None,
+        })
     }
 
     /// The attested owner `holder`'s standing in `txn` (FIX 11090): he is the

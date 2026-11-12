@@ -1,0 +1,9 @@
+/* A 14 px pin in the quiet ink, on the name line's centre. */
+.sl-pin-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--sl-ink-3);
+}
