@@ -841,6 +841,12 @@ const OUTSIDE: &[Pin] = &[
         "compaction check diagnostic: conflicts and reason; the ladder types the verdict when the host lends decisions",
     ),
     pin(
+        "crates/oneiron/src/dreamer_runner/maintenance/seal_checks.rs",
+        "trait SealChecker",
+        "pub trait SealChecker {",
+        "seal checks: host decides each objective through the decision ladder on an independent provider",
+    ),
+    pin(
         "crates/oneiron/src/dreamer_wake/program.rs",
         "call_as_step",
         "slot = Some(call_as_step(&ctx, self.inner, self.meter, request).await);",

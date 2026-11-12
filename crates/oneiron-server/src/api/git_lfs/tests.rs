@@ -46,7 +46,9 @@ fn test_server(config: SyncServerConfig) -> (tempfile::TempDir, Arc<SyncServer>)
     let vault = Arc::new(
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("open vault"),
     );
-    let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
+    let server = Arc::new(
+        crate::test_credentials::server_with_fixture_keystore(vault, config).expect("sync server"),
+    );
     (dir, server)
 }
 
@@ -426,11 +428,14 @@ async fn lfs_unauthenticated_write_fails_including_loopback() {
     // the gate reads no address, so there is no loopback branch to take.
     let (_hatch_dir, hatch) = test_server(hatch_config());
     assert!(
-        authorize(&HeaderMap::new(), &hatch, LfsAccess::Read).is_ok(),
+        authorize(&HeaderMap::new(), &hatch, LfsAccess::Read)
+            .await
+            .is_ok(),
         "the dev hatch still serves LFS reads"
     );
     assert_eq!(
         authorize(&HeaderMap::new(), &hatch, LfsAccess::Write)
+            .await
             .expect_err("the dev hatch can never store an object")
             .status(),
         StatusCode::FORBIDDEN
@@ -715,23 +720,28 @@ fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneir
         )],
     ))
     .unwrap();
-    let want =
-        oneiron::sync::chunks::encode_chunk_request(&oneiron::sync::chunks::ChunkSyncRequest {
-            oid: *oid.as_bytes(),
-            selector,
-            have: vec![],
-            want: Some(
-                vault
-                    .lfs_manifest(oid)
-                    .unwrap()
-                    .expect("manifest")
-                    .chunks
-                    .iter()
-                    .map(|chunk| chunk.hash)
-                    .collect(),
-            ),
-        })
-        .unwrap();
+    // HTTP carries a chunk request as a stream of frames (FIX 145), not as
+    // the socket's envelope.
+    let chunk_request = oneiron::sync::chunks::ChunkSyncRequest {
+        oid: *oid.as_bytes(),
+        selector,
+        have: vec![],
+        want: Some(
+            vault
+                .lfs_manifest(oid)
+                .unwrap()
+                .expect("manifest")
+                .chunks
+                .iter()
+                .map(|chunk| chunk.hash)
+                .collect(),
+        ),
+        request: 1,
+        cursor: None,
+        read: None,
+    };
+    let mut want = Vec::new();
+    oneiron::sync::chunks::write_chunk_request_stream(&chunk_request, &mut want).unwrap();
     let token = format!(
         "{}scope=core:read;principal_ref={}",
         crate::test_credentials::RECIPE_PREFIX,

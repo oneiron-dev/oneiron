@@ -280,6 +280,9 @@ pub use rooms::{
 };
 pub(crate) use rooms::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 
+#[cfg(oneiron_test_support)]
+pub(crate) use rooms::backfill_doors as room_turn_backfill_doors;
+pub(crate) use rooms::backfill_room_turns_on_open;
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]
 pub(crate) use rooms::erased_side_row_here;

@@ -223,6 +223,10 @@ pub enum SolvedSource {
     /// checks met (CUA E8b): its type is the run's recorded stamp, its
     /// subgoal the done-means' question.
     TaskRun { task: EntityId },
+    /// A `self.browser.library.draft` call drafted the span of an unfiled
+    /// run (FIX 10508): its type is the one its caller recorded on the
+    /// draft, its subgoal and checks the draft's.
+    UnfiledDraft,
 }
 
 /// What a source door captured, before its caller's door scopes it.

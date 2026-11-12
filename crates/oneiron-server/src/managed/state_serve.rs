@@ -667,7 +667,12 @@ mod shed_tests {
         for cause in [ShedCause::LongOutboundWait, ShedCause::MemoryPressure] {
             for waited_secs in [0, 1] {
                 let response = state
-                    .handle_request(CtlRequest::Shed { cause, waited_secs })
+                    .handle_request(CtlRequest::Shed {
+                        cause,
+                        waited_secs,
+                        // Unguarded, as before FIX 5186.
+                        wait_id: None,
+                    })
                     .await;
                 if waited_secs == 0 {
                     assert!(matches!(
@@ -694,6 +699,7 @@ mod shed_tests {
                 vault,
                 pid,
                 contract_version,
+                ..
             } if vault == "ctl-test"
                 && pid == std::process::id()
                 && contract_version == CONTRACT_VERSION

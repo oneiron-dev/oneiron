@@ -101,6 +101,7 @@ impl oneiron::code_run::AgentVerbDoor for NoVerbs {
     > {
         Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
         }))
     }
 
@@ -144,6 +145,9 @@ fn run<'a>(
         task: "summarize the launch plan",
         run_id: mcp_code_run_id(run_ref, actor),
         verbs: Arc::new(NoVerbs),
+        off_record_session: None,
+        consent_origin: None,
+        brief: None,
     })
 }
 

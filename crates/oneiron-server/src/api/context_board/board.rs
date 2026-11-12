@@ -373,7 +373,7 @@ pub(super) fn board_parts(
             // rows passed (FIX 9755): one whose TASK they withheld never
             // renders as a bare row. A child with no TASK is an attempt no
             // entity read proves, kept exactly where the bare jobs are.
-            rows.attach_people_admitted(people, &children, |child| {
+            rows.attach_people_admitted(vault, people, &children, |child| {
                 match child.task_ref.as_deref().map(EntityId::from_hex) {
                     Some(Ok(task)) => {
                         oneiron::context_board::TasksSectionRows::task_admitted(memory, read, task)

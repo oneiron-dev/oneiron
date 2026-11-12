@@ -26,8 +26,16 @@ async fn local_entity_document_edit_refreshes_only_matching_read() {
         .documents()
         .open(first)
         .expect("open document");
+    // The local owner's edit, at the vault's now (FIX 8873).
+    let owner = server.vault().ensure_embedded_owner_actor().expect("owner");
     document
-        .edit_text(0, 0, "one edit")
+        .edit_text(
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            server.vault().now_recorded_at(),
+            0,
+            0,
+            "one edit",
+        )
         .expect("durable document edit");
     assert_eq!(document.text().unwrap(), "one edit");
     tokio::time::timeout(
@@ -460,6 +468,7 @@ async fn headerless_vector_delete_refreshes_only_its_local_read() {
     config.dimensions = 4;
     config.embedding_model = Some("test/model@v1".to_owned());
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"");
     let server = Arc::new(
         crate::server::SyncServer::new(
             vault,
@@ -866,6 +875,7 @@ fn seed_reactive_citation(
             occurred_at: None,
             learned_at: None,
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     memory.bless_brief_kind().unwrap();

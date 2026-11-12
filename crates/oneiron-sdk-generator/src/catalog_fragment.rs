@@ -293,19 +293,24 @@ impl<'r> Fragment<'r> {
     }
 
     /// The row's description as its JSDoc line. A run row has no description; one that names its grant class shows
-    /// it.
+    /// it. A row that names the agent power its writer checks shows that too.
     fn doc(node: &Node<'_>, indent: &str) -> String {
-        let text = match node.row() {
+        let (text, row) = match node.row() {
             Some(row) if JSDOC => match (row.get("description"), row.get("grant_class")) {
-                (Some(description), _) if description.truthy() => description.str(),
+                (Some(description), _) if description.truthy() => (description.str(), row),
                 (_, Some(grant_class)) if grant_class.truthy() => {
-                    format!("Grant class: {}.", grant_class.str())
+                    (format!("Grant class: {}.", grant_class.str()), row)
                 }
                 _ => return String::new(),
             },
             _ => return String::new(),
         };
-        format!("{indent}/** {text} */\n")
+        match row.get("power") {
+            Some(power) if power.truthy() => {
+                format!("{indent}/** {text} Power: {}. */\n", power.str())
+            }
+            _ => format!("{indent}/** {text} */\n"),
+        }
     }
 
     /// A path segment's type, its call signature, the members it holds, or both at once.

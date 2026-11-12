@@ -4,6 +4,7 @@
 //! through the evaluator while keeping replicated replay trust-blind.
 
 mod agent_definition_setup;
+mod agent_power_refusal;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
@@ -150,6 +151,7 @@ pub(crate) mod live_run_claim_put_fixture;
 mod tests;
 
 pub(crate) use self::agent_definition_setup::record_agent_definition_setup_in_txn;
+pub(crate) use self::agent_power_refusal::record_agent_power_refusal_in_txn;
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
