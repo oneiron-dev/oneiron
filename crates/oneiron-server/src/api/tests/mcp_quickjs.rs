@@ -747,19 +747,18 @@ async fn quickjs_code_mode_applies_the_tool_argument_rules() {
     );
 }
 
-/// Review repro (Astra P1): generated code cannot name a claim's source. A
-/// guest's `user_stated` claim through `self.memory.claim_upsert` is stored as
-/// `Generated`, under the run's provenance, and asks only the approval a
-/// generated claim may ask for.
+/// Review repro (Astra P1): generated code cannot name a claim's source. The
+/// guest's `self.memory.put_claim` input is closed and lists no source, so a
+/// guest's claim is stored as `Generated`, under the run's provenance, and
+/// asks only the approval a generated claim may ask for.
 #[tokio::test]
 async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     let actor = seeded_test_entity_id(0x0024_6541);
     let subject = seeded_test_entity_id(0x0024_6542);
     let claim = seeded_test_entity_id(0x0024_6543);
     let script = format!(
-        "await self.memory.claim_upsert({{id: '{}', predicate: 'profile.favorite_drink', \
-         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated'}}); \
-         finish('stated');",
+        "await self.memory.put_claim({{id: '{}', predicate: 'profile.favorite_drink', \
+         subject: '{}', value: 'sencha', confidence: 1}}); finish('stated');",
         claim.to_hex(),
         subject.to_hex()
     );
