@@ -1,4 +1,5 @@
-//! Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold): an inbound
+//! Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold) and
+//! `tests/agent_message_classes.rs` (AGM-2 message classes): an inbound
 //! message to a resident's inbox, admitted as routing admits one, with no
 //! provider adapter in the loop.
 
@@ -21,6 +22,54 @@ pub fn admit_inbox_message(
     sender: &str,
     correlation_id: &str,
 ) -> Result<()> {
+    admit_message(
+        vault,
+        identity,
+        agent,
+        SurfaceCounterpartyStamp::Unknown {
+            counterparty_key: sender.to_owned(),
+        },
+        sender,
+        correlation_id,
+    )
+}
+
+/// Admits one inbound `web` message to `identity`, the inbox `agent` speaks
+/// on, from the known PERSON `sender`, as [`admit_inbox_message`] admits one
+/// from an unknown sender.
+pub fn admit_person_message(
+    vault: &Vault,
+    identity: EntityId,
+    agent: EntityId,
+    sender: EntityId,
+    correlation_id: &str,
+) -> Result<()> {
+    admit_message(
+        vault,
+        identity,
+        agent,
+        SurfaceCounterpartyStamp::Known {
+            counterparty_ref: sender.to_hex(),
+        },
+        &sender.to_hex(),
+        correlation_id,
+    )
+}
+
+/// The model PERSON custom agent `agent` was born with, which names it as a
+/// message's sender.
+pub fn agent_person(agent: EntityId) -> Result<EntityId> {
+    crate::context_board::agent_person_id(agent)
+}
+
+fn admit_message(
+    vault: &Vault,
+    identity: EntityId,
+    agent: EntityId,
+    counterparty: SurfaceCounterpartyStamp,
+    user_ref: &str,
+    correlation_id: &str,
+) -> Result<()> {
     let now = vault.now_recorded_at();
     let event = SurfaceEvent {
         schema_version: SURFACE_EVENT_SCHEMA_VERSION,
@@ -32,12 +81,10 @@ pub fn admit_inbox_message(
         actor_ref: agent.to_hex(),
         facet_ref: None,
         subject_ref: None,
-        counterparty: SurfaceCounterpartyStamp::Unknown {
-            counterparty_key: sender.to_owned(),
-        },
+        counterparty,
         source: SurfaceEventSource {
             app: SurfaceSourceApp::Web,
-            user_ref: sender.to_owned(),
+            user_ref: user_ref.to_owned(),
         },
         action: SurfaceEventAction::Message,
         correlation_id: correlation_id.to_owned(),

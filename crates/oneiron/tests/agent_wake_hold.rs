@@ -22,8 +22,9 @@ use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, ResidentAgentSpec, ResidentGoalRecord,
     ResidentInboxDispatch, ResidentWakeMode,
 };
-use oneiron::attempt_queue::AttemptQueue;
+use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::store::GateDecisionId;
@@ -190,6 +191,30 @@ fn wakes(vault: &Vault, agent: EntityId) -> TestResult<usize> {
         .len())
 }
 
+/// Runs every wake queued in `vault` to its end, as the host's worker does:
+/// leased, then completed. A resident with a wake queued or running is busy,
+/// and a message to it wakes nothing (AGM-2).
+fn finish_wakes(vault: &Vault) -> TestResult {
+    const WORKER: &str = "agent-wake-hold-worker";
+    let queue = AttemptQueue::new(vault);
+    while let ClaimOutcome::Claimed(row) = queue.claim_kind(
+        DREAMER_RUNNER_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: WORKER.to_owned(),
+            now: u64::MAX,
+        },
+    )? {
+        let leased = queue.get(row.id)?.ok_or("a leased wake reads back")?;
+        queue.complete(CompleteAttempt {
+            id: leased.id,
+            lease_owner: WORKER.to_owned(),
+            attempt_count: leased.attempt_count,
+            now: leased.updated_at,
+        })?;
+    }
+    Ok(())
+}
+
 /// The keys the one wake in `pass` carries besides its own dedupe key, and
 /// that dedupe key.
 fn the_wake(pass: &ResidentInboxDispatch) -> TestResult<(String, Vec<String>)> {
@@ -269,8 +294,9 @@ fn five_messages_within_the_hold_give_one_wake() -> TestResult {
     Ok(())
 }
 
-/// AGM-4: a message that arrives after a wake took the hold's messages
-/// opens a hold of its own, and gives a second wake once it has run.
+/// AGM-4: a message that arrives after a wake took the hold's messages,
+/// and that wake has run, opens a hold of its own, and gives a second wake
+/// once it has run.
 #[test]
 fn a_message_after_the_hold_gives_a_second_wake() -> TestResult {
     let clock = FakeClock::default();
@@ -282,6 +308,7 @@ fn a_message_after_the_hold_gives_a_second_wake() -> TestResult {
     let (_, carried) = the_wake(&inbox_pass(&vault, fixture.yuki, clock.now())?)?;
     assert!(carried.is_empty(), "a lone message carries no other");
     assert_eq!(wakes(&vault, fixture.yuki)?, 1);
+    finish_wakes(&vault)?;
 
     clock.advance(2);
     let later = clock.now();
