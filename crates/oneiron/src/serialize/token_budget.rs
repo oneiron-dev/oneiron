@@ -79,6 +79,28 @@ pub(super) fn enforce_token_budget_with_depth_limit(
         return 0;
     }
 
+    let needs: Vec<usize> = groups
+        .iter()
+        .map(|(_, rows)| {
+            rows.iter()
+                .map(|row| {
+                    estimate_entity_tokens_with_depth_limit(row, tokenizer, value_depth_limit)
+                })
+                .sum::<usize>()
+        })
+        .collect();
+    // Groups whose summed need fits keep every row. The per-type split below
+    // floors each share, so at a budget equal to the need (what
+    // `allocate_section_budgets` hands a section that fits) one type ended a
+    // token short and lost its row (FIX [CONTEXT-PACK-GROUP-SPLIT-DROPS-ROW]).
+    let total_need = needs
+        .iter()
+        .fold(0_usize, |total, need| total.saturating_add(*need));
+    if total_need <= token_budget {
+        groups.retain(|(_, rows)| !rows.is_empty());
+        return total_need;
+    }
+
     // Normalize fractions so they sum to 1.0 (multiple "other" types each
     // get allocation.other, so raw sum can exceed 1.0).
     let raw: Vec<f32> = groups
@@ -90,24 +112,18 @@ pub(super) fn enforce_token_budget_with_depth_limit(
 
     // First pass: compute initial budgets vs actual needs.
     let mut budgets: Vec<usize> = Vec::with_capacity(groups.len());
-    let mut needs: Vec<usize> = Vec::with_capacity(groups.len());
     let mut surplus: usize = 0;
     let mut hungry_weight: f32 = 0.0;
 
-    for (i, (_, rows)) in groups.iter().enumerate() {
+    for (i, &needed) in needs.iter().enumerate() {
         let frac = raw[i] * norm;
         let budget = (token_budget as f32 * frac) as usize;
-        let needed: usize = rows
-            .iter()
-            .map(|row| estimate_entity_tokens_with_depth_limit(row, tokenizer, value_depth_limit))
-            .sum();
         if needed <= budget {
             surplus += budget - needed;
         } else {
             hungry_weight += frac;
         }
         budgets.push(budget);
-        needs.push(needed);
     }
 
     // Second pass: redistribute surplus to hungry types, then truncate.

@@ -152,6 +152,17 @@ fn remove_unrecorded_open(destination: &Path, created: &[PathBuf]) -> Result<()>
     Ok(())
 }
 
+/// Writes `receipt` as its view's receipt in the caller's writer, for the
+/// test door that lists a masked copy on a materialized view.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_view_receipt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &ViewReceipt,
+) -> Result<()> {
+    VIEW_RECEIPTS.put(&vault.store, txn, &receipt.view_id, receipt)
+}
+
 /// One view's receipt, read in the caller's snapshot `txn`.
 pub(crate) fn view_receipt_in_txn(
     vault: &Vault,
