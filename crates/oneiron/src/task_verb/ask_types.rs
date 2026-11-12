@@ -162,6 +162,37 @@ impl TaskAskQuestion {
             commitment: false,
         }
     }
+
+    /// Refuses an option id or outcome mapping name that the write door's
+    /// credential rule reads as a credential name (`token`, `api-key`,
+    /// `deploy_secret`). With the secret scan on, its mask lifts that map
+    /// member into custody and the kept ask no longer decodes, so the ask is
+    /// refused here, by name, in every scan mode. Kept and replicated asks are
+    /// not re-checked: their guard never refuses a name.
+    pub(in crate::task_verb) fn check_option_names(&self) -> MemoryResult<()> {
+        let mapping = self
+            .outcome_binding
+            .iter()
+            .flat_map(|binding| binding.mapping.keys().map(String::as_str));
+        for name in self
+            .options
+            .keys()
+            .map(TaskAskOptionId::as_str)
+            .chain(mapping)
+        {
+            if crate::batch::secret_scan::credential_field_name(name) {
+                return Err(MemoryError::bad_request_with(
+                    format!(
+                        "ask option or outcome name `{name}` is a credential name to the write door's secret scan"
+                    ),
+                    &[
+                        "Rename it: a name that is, or ends in, token, secret, password or api_key is a credential name.",
+                    ],
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

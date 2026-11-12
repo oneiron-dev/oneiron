@@ -35,6 +35,7 @@ mod execution;
 mod files;
 mod guards;
 mod owner;
+mod owner_request;
 pub(super) mod persist;
 mod queue_review;
 mod receipts;
@@ -49,6 +50,7 @@ pub use files::RepoProposedFile;
 pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
+pub(crate) use owner_request::OwnerRequestAttribution;
 pub use queue_review::{
     ContractReviewEvidence, ContractReviewRequest, ContractReviewSettlement, QueueReviewAdmission,
     RepoProposalCritique, RepoProposalReview,
