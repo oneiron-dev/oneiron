@@ -8,6 +8,7 @@
   "output": "crate::office_body::OfficeBodyView",
   "call": "memory.artifacts_body_read(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

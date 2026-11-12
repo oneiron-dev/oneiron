@@ -60,8 +60,7 @@ impl Running {
 
 pub(super) fn outcomes(server: &SyncServer) -> Vec<TaggingOutcome> {
     server
-        .tagger
-        .as_ref()
+        .tagger_slot()
         .expect("slot")
         .traces()
         .into_iter()
@@ -212,8 +211,7 @@ fn a_failing_slow_or_wrong_tagger_never_fails_the_write_and_is_retried() {
     // The write stands, and every try left exactly one trace.
     assert!(vault.get(&turn).expect("turn read").is_some());
     let traces: Vec<_> = tagged
-        .tagger
-        .as_ref()
+        .tagger_slot()
         .expect("slot")
         .traces()
         .into_iter()
@@ -293,8 +291,7 @@ fn a_restarted_server_resumes_the_markers_of_a_crashed_one() {
     assert!(wait_until(|| shadowed(&restarted) == TEXTS.len()));
     running.stop();
     let mut tagged: Vec<EntityId> = restarted
-        .tagger
-        .as_ref()
+        .tagger_slot()
         .expect("slot")
         .traces()
         .into_iter()
@@ -545,8 +542,7 @@ fn timing_write_latency_and_write_to_trace() {
     running.stop();
     let to_trace = |turns: &BTreeMap<EntityId, Instant>| -> Vec<Duration> {
         live_server
-            .tagger
-            .as_ref()
+            .tagger_slot()
             .expect("slot")
             .traces()
             .into_iter()

@@ -5,6 +5,7 @@
   "output": "Vec<crate::skill::helper::CallableCardView>",
   "call": "memory.skill_callables()?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {},
   "mcp_scope": "unrestricted",
   "section": false

@@ -5,6 +5,7 @@
   "output": "Option<crate::blob_artifact::ArtifactExportFile>",
   "call": "memory.artifacts_export(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

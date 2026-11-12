@@ -5,6 +5,7 @@
   "output": "Vec<crate::edit_settle::PendingProposalView>",
   "call": "memory.artifacts_proposals(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

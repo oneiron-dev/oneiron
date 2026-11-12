@@ -509,15 +509,7 @@ impl ClaimCandidate {
         mut self,
         principal: EntityId,
     ) -> oneiron_contracts::error::Result<Self> {
-        let mut scope = match self.scope.take() {
-            Some(Value::Map(scope)) => scope,
-            None => Vec::new(),
-            Some(_) => {
-                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
-                    "scope must be a map",
-                ));
-            }
-        };
+        let mut scope = crate::write_envelope::claim_body::scope_map_entries(self.scope.take());
         scope.retain(|(key, _)| key.as_str() != Some("typed_question_principal"));
         scope.push((
             Value::from("typed_question_principal"),
@@ -531,15 +523,7 @@ impl ClaimCandidate {
         mut self,
         taint: ClaimSource,
     ) -> oneiron_contracts::error::Result<Self> {
-        let mut entries = match self.scope.take() {
-            Some(Value::Map(entries)) => entries,
-            None => Vec::new(),
-            Some(_) => {
-                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
-                    "scope must be a map",
-                ));
-            }
-        };
+        let mut entries = crate::write_envelope::claim_body::scope_map_entries(self.scope.take());
         entries.retain(|(key, _)| key.as_str() != Some("evidence_taint"));
         entries.push((Value::from("evidence_taint"), Value::from(taint.as_str())));
         self.scope = Some(Value::Map(entries));
@@ -559,12 +543,13 @@ impl ClaimCandidate {
         let key = crate::write_envelope::claim_body::CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY;
         let mut entries = match self.scope.take() {
             Some(Value::Map(entries)) => entries,
-            None => Vec::new(),
-            Some(_) => {
-                return Err(oneiron_contracts::error::Error::InvalidClaimBody(
-                    "scope must be a map",
-                ));
+            // A scope that is not a map carries no recognized entry, so it
+            // holds no initial weight to drop and stays as written.
+            Some(opaque) if weight.is_none() => {
+                self.scope = Some(opaque);
+                return Ok(self);
             }
+            scope => crate::write_envelope::claim_body::scope_map_entries(scope),
         };
         entries.retain(|(entry, _)| entry.as_str() != Some(key));
         if let Some(weight) = weight {

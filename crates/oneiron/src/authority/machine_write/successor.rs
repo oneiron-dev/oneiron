@@ -2,7 +2,7 @@
 
 use rmpv::Value;
 
-use super::{SIGNATURE_KEY, denied, machine_claim_transcript};
+use super::{MACHINE_SIGNATURE_KEY, denied, machine_claim_transcript};
 use crate::Vault;
 use crate::claim::ClaimBody;
 use crate::edge::EdgeActorClass;
@@ -41,7 +41,7 @@ impl Vault {
         };
         let slot = entries
             .iter_mut()
-            .find(|(key, _)| key.as_str() == Some(SIGNATURE_KEY))
+            .find(|(key, _)| key.as_str() == Some(MACHINE_SIGNATURE_KEY))
             .ok_or_else(denied)?;
         slot.1 = Value::Array(vec![
             Value::Binary(proof.public_key.to_vec()),

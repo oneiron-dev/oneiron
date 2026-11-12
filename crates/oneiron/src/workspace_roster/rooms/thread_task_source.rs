@@ -10,7 +10,7 @@ use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 
-/// The project room and the thread root a MESSAGE or TURN `source` stands
+/// The room and the thread root a MESSAGE or TURN `source` stands
 /// in, for a TASK made from it: the root is where a bound TASK's holder
 /// wakes and what a conversion reads. A MESSAGE is part of exactly one TURN
 /// and belongs to that TURN's room alone. A source in a second thread under

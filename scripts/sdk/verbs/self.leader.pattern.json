@@ -3,6 +3,7 @@
   "input": "crate::code_run::LeaderPatternInput",
   "output": "crate::code_run::LeaderPatternOutput",
   "scope": "Read",
+  "act_class": "reversible_work",
   "context": "run",
   "effect": "Leader",
   "run_surface": "live"

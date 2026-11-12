@@ -11,11 +11,17 @@ use crate::engine_executor::{
 };
 use crate::{EntityId, Error, Result};
 use sha2::{Digest, Sha256};
+use std::sync::{Mutex, PoisonError};
 
-/// Pinned interpreter bytes. Each handle owns its Engine and epoch counter.
+/// Pinned interpreter bytes, compiled once. Every handle shares the one
+/// compiled component, its Engine and so its epoch counter; each step still
+/// allocates its own Store, which checks its own deadline and cancel token
+/// when the shared counter advances (FIX AGENT-RUN-START-LATENCY-4S: a
+/// compile per handle cost every agent run seconds before its first call).
 pub struct QuickJsRuntimeFactory {
-    bytes: Box<[u8]>,
-    budget: ComponentBudget,
+    /// The probed, compiled runtime each handle is made fresh from. It holds
+    /// no Store, capability or adapter; the lock only makes it shareable.
+    template: Mutex<WasmtimeComponentRuntime>,
     sha256: [u8; 32],
 }
 
@@ -30,17 +36,20 @@ impl QuickJsRuntimeFactory {
                 "QuickJS component SHA-256/header mismatch".into(),
             ));
         }
-        let mut template = WasmtimeComponentRuntime::from_component(
+        let template = WasmtimeComponentRuntime::from_component(
             bytes,
             *blake3::hash(bytes).as_bytes(),
             budget,
         )?;
+        // The probe runs on a handle of its own, so the kept template is
+        // exactly what compiled.
+        let mut probe = template.fresh();
         let mut host = ProbeHost;
         // No ambient `process` or `fetch`. A `fetch` the catalog serves is
         // the SDK's own web-fetch verb (FIX 7262), a global the bootstrap
         // installs non-configurable, as it installs every SDK global; an
         // engine's own `fetch` is configurable.
-        let result = template.run_step(JsCodeModeStep {
+        let result = probe.run_step(JsCodeModeStep {
             run_id: EntityId::from_bytes([1; 16])?, seq: 0,
             script: "const xs = [1,2,3].map(x => x * 7); finish(JSON.stringify({sum:xs.reduce((a,b)=>a+b,0), now:Date.now(), clean:typeof process === 'undefined' && (typeof fetch === 'undefined' || !Object.getOwnPropertyDescriptor(globalThis, 'fetch').configurable), typed:typeof self !== 'undefined' && [vault.search, vault.claims.put, vault.claims.supersede, vault.edges.put, vault.recall].every(f => typeof f === 'function') && !('verbs' in self) && typeof ask === 'function' && ['speak','think','express'].every(k => typeof self[k] === 'function') && typeof sandbox.fs.read_file === 'function' && typeof sandbox.credential.call === 'function' && typeof oneiron.clock.now_unix_ms === 'function' && typeof oneiron.random.bytes === 'function'}));",
             boundary: SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer),
@@ -58,19 +67,20 @@ impl QuickJsRuntimeFactory {
             )));
         }
         Ok(Self {
-            bytes: bytes.into(),
-            budget,
+            template: Mutex::new(template),
             sha256,
         })
     }
 
-    /// A fresh runtime handle. Every step allocates its own Wasmtime Store.
+    /// A fresh runtime handle on the compiled component: no compile, no
+    /// Store, capability or adapter of another handle's. Every step
+    /// allocates its own Wasmtime Store.
     pub fn runtime(&self) -> Result<WasmtimeComponentRuntime> {
-        WasmtimeComponentRuntime::from_component(
-            &self.bytes,
-            *blake3::hash(&self.bytes).as_bytes(),
-            self.budget,
-        )
+        Ok(self
+            .template
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .fresh())
     }
 
     /// Reviewed deployer pin; useful for run configuration identity.

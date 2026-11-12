@@ -304,7 +304,11 @@ impl Vault {
             let Some(bounds) = standing.grant.repo_bounds.as_ref() else {
                 continue;
             };
-            if standing.grant.member_ref != caller.principal {
+            // A Grant bound to a working view is no repo Grant (row 6
+            // WORKING-VIEW-EDIT): it pushes nothing.
+            if standing.grant.member_ref != caller.principal
+                || standing.grant.working_view_bounds.is_some()
+            {
                 continue;
             }
             let repo = GitPushRepo {

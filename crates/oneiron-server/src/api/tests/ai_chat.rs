@@ -35,7 +35,15 @@ async fn ai_server_with(
     (dir, Arc::new(server), host)
 }
 
-async fn send(server: &Arc<SyncServer>, request: Request<Body>) -> (StatusCode, Vec<u8>) {
+async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCode, Vec<u8>) {
+    // The owner's app on this device: a session key is admitted only for a
+    // caller the listener saw on loopback (auth/locality.rs caller_locality).
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            std::net::Ipv4Addr::LOCALHOST,
+            40_000,
+        ))));
     let request = slip_credentials::bind_request(server, request);
     let response = api_routes(Arc::clone(server))
         .oneshot(request)
@@ -376,14 +384,25 @@ fn install_route_manifest(vault: &oneiron::Vault) {
         roles: MODEL_ROLES
             .into_iter()
             .map(|role| {
+                // The extraction encoder binds the Oneironer slot, alone, to
+                // a model no generative role serves (`validate_families`).
+                let encoder = role == ModelRole::ExtractionEncoder;
                 (
                     role,
                     ModelBinding {
-                        model: model("cloud/big@live"),
-                        slot: ModelSlot::Llm,
+                        model: model(if encoder {
+                            "device/encoder@live"
+                        } else {
+                            "cloud/big@live"
+                        }),
+                        slot: if encoder {
+                            ModelSlot::Oneironer
+                        } else {
+                            ModelSlot::Llm
+                        },
                         tier: ModelTierRef("chat".into()),
                         // The teacher's pin is probe-approved as one model.
-                        route_models: if role == ModelRole::ExtractionTeacher {
+                        route_models: if encoder || role == ModelRole::ExtractionTeacher {
                             std::collections::BTreeMap::new()
                         } else {
                             std::collections::BTreeMap::from([
@@ -391,6 +410,8 @@ fn install_route_manifest(vault: &oneiron::Vault) {
                                 (ModelLocality::OnDevice, model("device/tiny@live")),
                             ])
                         },
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })

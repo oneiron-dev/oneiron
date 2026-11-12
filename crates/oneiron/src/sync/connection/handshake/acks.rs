@@ -133,6 +133,7 @@ impl SyncConnection {
         client
             .residence_acks
             .retain(|seq, _| retained.contains(seq));
+        self.note_home_receipts(client);
         Ok(())
     }
 }

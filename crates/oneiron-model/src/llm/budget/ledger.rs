@@ -7,6 +7,7 @@ use super::policy::BudgetPolicyRow;
 use super::state::BudgetState;
 use super::types::BudgetThreshold;
 use crate::llm::LlmUsage;
+use crate::llm::backend::PhysicalAttempts;
 
 /// Per-row bookkeeping inside the one meter. `used_units`/`reserved_units`
 /// carry the full charge of every call matching the row — those are the cap
@@ -64,6 +65,10 @@ pub(super) struct LeaseRecord {
     /// Set once by `begin_dispatch`: bytes may have left under this lease, so
     /// it can no longer be released untouched.
     pub(super) dispatched: bool,
+    /// The physical attempts the lease's transports began, the same counter
+    /// every handle of the lease shares. Once it is above zero, bytes left,
+    /// and the lease can never be marked unsent (FIX BUDGET-LEASE).
+    pub(super) physical_attempts: PhysicalAttempts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

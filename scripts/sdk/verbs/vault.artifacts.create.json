@@ -6,6 +6,7 @@
   "call": "memory.artifacts_create(&input)?",
   "file_call": "memory.artifacts_create_file(&input, body)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

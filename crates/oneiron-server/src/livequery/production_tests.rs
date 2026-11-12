@@ -73,9 +73,11 @@ fn server_with_config(
                 created_at: AT,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .unwrap();
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let server = Arc::new(
         SyncServer::new(
             vault,
@@ -88,6 +90,12 @@ fn server_with_config(
         )
         .unwrap(),
     );
+    // The synchronous RPC door finds the served handle through the hub; its
+    // refresh task keeps it alive with the server. A plain `#[test]` has no
+    // runtime to spawn that task on, so it gets no hub, as before.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        connection::Hub::for_server(&server);
+    }
     (dir, server)
 }
 
@@ -146,8 +154,12 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
                 metadata: Some(json!({"rel": SPACE})),
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: AT,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap()
 }
@@ -171,6 +183,7 @@ pub(super) fn claim(server: &SyncServer) -> oneiron::memory::CommitReceipt {
             occurred_at: Some(AT),
             learned_at: Some(AT),
             salience: None,
+            confidence_details: None,
         })
         .unwrap()
 }
@@ -218,13 +231,13 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
         let auth = auth(&server, class);
         assert_eq!(auth.actor_class(), Some(class));
         assert_eq!(bound_actor_class(&auth).unwrap(), expected);
-        let reply = rpc(&server, &auth, "hydrate", json!({"refs":[]}));
+        let reply = rpc(&server, &auth, "vault.hydrate", json!({"refs":[]}));
         assert_eq!(reply["result"]["value"], json!([]));
         assert!(reply["result"]["narrowing"].is_object());
     }
     let classless = format!("scope=core:read;principal_ref={ACTOR}");
     let auth = crate::test_credentials::authenticate(&server, &classless);
-    let reply = rpc(&server, &auth, "hydrate", json!({"refs":[]}));
+    let reply = rpc(&server, &auth, "vault.hydrate", json!({"refs":[]}));
     assert_error(&reply, "FORBIDDEN");
     assert_eq!(
         reply["error"]["message"],
@@ -240,20 +253,21 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
     let payload_actor = rpc(
         &server,
         &auth,
-        "recall",
+        "vault.recall",
         json!({
             "query":"solar", "actor_class":"human", "principal_ref":ACTOR,
         }),
     );
     assert_error(&payload_actor, "FORBIDDEN");
     let owner = crate::test_credentials::authenticate(&server, "jti=production-unregistered-host");
-    let reply = rpc(&server, &owner, "receipts", json!({}));
+    let reply = rpc(&server, &owner, "vault.receipts", json!({}));
     assert_error(&reply, "FORBIDDEN");
     assert_eq!(
         reply["error"]["message"],
         "facade routes bind writes to an authenticated principal"
     );
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let (issuer, _) =
+        crate::test_credentials::rooting_host_issuer(server.vault(), SECRET.as_bytes());
     let template = server.vault().ensure_host_root_slip(&issuer).unwrap();
     for (index, class) in ["Human", "owner", ""].iter().enumerate() {
         let mut claims = template.claims.clone();
@@ -374,7 +388,8 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
 
     let (_dir, server) = server();
     let said = witness(&server, "solar panel maintenance").message_short_ids[0].clone();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let (issuer, _) =
+        crate::test_credentials::rooting_host_issuer(server.vault(), SECRET.as_bytes());
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(["core:read".to_owned()].into());
     let link = server
@@ -388,6 +403,7 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
                 actor_class: Some("human".to_owned()),
                 org_ref: None,
                 write_facet: None,
+                comm: None,
             },
         )
         .unwrap();
@@ -415,7 +431,13 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
         CoreAuth::from_headers(request.headers(), &server.config, server.vault().as_ref()).unwrap();
 
     // The message comes back as its turn, quoting it (ARCH-0004).
-    let pack = rpc(&server, &auth, "recall", json!({"query": "solar panel"}))["result"].clone();
+    let pack = rpc(
+        &server,
+        &auth,
+        "vault.recall",
+        json!({"query": "solar panel"}),
+    )["result"]
+        .clone();
     let found = pack["items"].as_array().unwrap().iter().any(|item| {
         item["cited_messages"]
             .as_array()
@@ -519,7 +541,7 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
     // recall case is a scope the engine refuses on both doors.
     let cases = [
         (
-            "recall",
+            "vault.recall",
             json!({"query":"solar","effort":"medium","scope":{"kinds":[]}}),
             memory
                 .recall(
@@ -536,13 +558,13 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
                 .unwrap_err(),
         ),
         (
-            "hydrate",
+            "vault.hydrate",
             json!({"refs":[missing]}),
             memory.hydrate(&[missing]).unwrap_err(),
         ),
         (
-            "neighbors",
-            json!({"entityRef":ACTOR,"opts":{"limit":1,"edge_kind":"not-a-kind"}}),
+            "vault.neighbors",
+            json!({"entity_ref":ACTOR,"opts":{"limit":1,"edge_kind":"not-a-kind"}}),
             memory
                 .neighbors(
                     ACTOR,
@@ -581,7 +603,7 @@ async fn rpc_high_recall_without_a_reranker_runs_unreranked_and_says_so() {
     let reply = rpc(
         &server,
         &auth,
-        "recall",
+        "vault.recall",
         json!({"query":"solar","effort":"high"}),
     );
     assert!(reply.get("error").is_none(), "{reply}");
@@ -642,6 +664,10 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
                 world_ref: None,
                 facet: missing_facet.facet.clone(),
                 kinds: None,
+                worlds: None,
+                project_refs: Vec::new(),
+                conversation_refs: Vec::new(),
+                person_ref: None,
             },
             100,
             None,
@@ -701,6 +727,7 @@ async fn receipt_limit_is_applied_after_actor_scoping() {
             occurred_at: Some(AT),
             learned_at: Some(AT),
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     let source = BoundSource::new(
@@ -766,6 +793,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
                     occurred_at: Some(AT),
                     learned_at: Some(AT),
                     salience: Some(0.9),
+                    confidence_details: None,
                 })
                 .unwrap();
             assert_eq!(receipt.approval, "auto");
@@ -808,6 +836,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
                 occurred_at: Some(AT),
                 learned_at: Some(AT),
                 salience: None,
+                confidence_details: None,
             })
             .unwrap();
         assert_eq!(receipt.approval, "auto");
@@ -920,6 +949,7 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
                 learned_at: Some(AT),
                 salience: None,
                 relationship_ref: None,
+                confidence_details: None,
             })
             .unwrap();
         server
@@ -2200,6 +2230,8 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
             metadata: Some(json!({"rel": SPACE})),
             is_visible: true,
             order,
+            parts: None,
+            quote: None,
         };
         let receipt = memory
             .witness(&WitnessTurn {
@@ -2210,6 +2242,8 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                     said(1, "We met for lunch at noon."),
                 ],
                 occurred_at: AT,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .unwrap();
         let id_of = |short_id: &str| {
@@ -2344,7 +2378,7 @@ async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
         json!({"query":"solar","effort":"call","deadline_ms":30_000}),
         json!({"query":"solar","deadline_ms":60_000}),
     ] {
-        let reply = rpc(&server, &auth, "recall", value);
+        let reply = rpc(&server, &auth, "vault.recall", value);
         assert!(reply.get("error").is_none(), "{reply}");
         assert_eq!(reply["result"]["pack_version"], 1);
     }
@@ -2352,7 +2386,7 @@ async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
         let reply = rpc(
             &server,
             &auth,
-            "recall",
+            "vault.recall",
             json!({"query":"solar","effort":"call","deadline_ms":deadline_ms}),
         );
         assert_error(&reply, "BAD_REQUEST");
@@ -2386,7 +2420,7 @@ async fn rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage() {
     let reply = rpc(
         &server,
         &auth,
-        "recall",
+        "vault.recall",
         json!({"query":"solar","effort":"call","deadline_ms":DEADLINE_MS}),
     );
     let took = started.elapsed();
