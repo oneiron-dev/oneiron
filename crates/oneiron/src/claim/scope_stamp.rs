@@ -88,6 +88,67 @@ impl crate::Vault {
         self.default_facet_in_txn(&txn)
     }
 
+    /// The facet an engine door's CLAIM put at `id` carries when the claim's
+    /// subject has no FACET of its own. `ClaimBody::new` stamps the subject's
+    /// derived substrate id, which is a stored FACET only for a PERSON, so the
+    /// CLAIM birth gate (#4389) refuses it for any other subject. A birth
+    /// takes the vault default facet; a write over a stored claim keeps that
+    /// claim's facet, because a stored facet never moves
+    /// (`FacetStampImmutable`).
+    pub(crate) fn claim_put_facet_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<EntityId> {
+        if let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw_wiped(&self.store, txn, id)?
+            && EntityMetadataHeader::parse(&raw)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+            && let Ok(stored) = super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        {
+            return Ok(stored.scope_facet);
+        }
+        self.default_facet_in_txn(txn)
+    }
+
+    /// [`Self::claim_put_facet_in_txn`] for a door whose subject may be a
+    /// PERSON: a birth keeps `stamped`, the facet `ClaimBody::new` set, when it
+    /// names a stored FACET (a PERSON's substrate), else takes the vault
+    /// default facet.
+    pub(crate) fn claim_put_facet_keeping_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        stamped: EntityId,
+    ) -> Result<EntityId> {
+        if self.get_raw_in(txn, id)?.is_none()
+            && self.get_entity_type_in_txn(txn, &stamped)? == Some(ENTITY_TYPE_FACET)
+        {
+            return Ok(stamped);
+        }
+        self.claim_put_facet_in_txn(txn, id)
+    }
+
+    /// [`Self::claim_put_facet_in_txn`] for a claim about the stored record
+    /// `record`: a birth takes the FACET `record` was born under when that is
+    /// a stored FACET, as the provenance and calendar origin claims do, else
+    /// the vault default facet.
+    pub(crate) fn claim_put_facet_of_record_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        record: EntityId,
+    ) -> Result<EntityId> {
+        if self.get_raw_in(txn, id)?.is_none()
+            && let Some(facet) =
+                crate::federation::record_scope::birth_facet(&self.store, txn, record)?
+            && self.get_entity_type_in_txn(txn, &facet)? == Some(ENTITY_TYPE_FACET)
+        {
+            return Ok(facet);
+        }
+        self.claim_put_facet_in_txn(txn, id)
+    }
+
     /// Makes the stored FACET `facet` the vault default. Only the owner may
     /// call it.
     pub fn set_default_facet(&self, facet: EntityId, actor: WriteActor) -> MemoryResult<()> {

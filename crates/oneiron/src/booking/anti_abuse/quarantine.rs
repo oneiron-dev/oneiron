@@ -152,6 +152,12 @@ fn quarantine_borderline_submission_in_txn(
     {
         return Ok(receipt);
     }
+    // The subject is the booking page, whose derived substrate id is no
+    // FACET: the claim is born in the facet the page was born under, else the
+    // vault default, before the consent binding reads the body.
+    body.scope_facet = vault
+        .claim_put_facet_of_record_in_txn(wtxn, &claim_ref, facts.page_ref)
+        .map_err(|error| engine_failure("quarantine claim facet", error))?;
     let (diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &body)
             .map_err(|error| engine_failure("quarantine consent binding", error))?;
