@@ -55,6 +55,27 @@ pub(crate) async fn vault_agents_update(
     .await
 }
 
+/// SPAWN-KNOB: the owner sets the powers an agent, attempt or reader child
+/// holds; the setter revalidates the proof in its own writer.
+pub(crate) async fn vault_agents_powers_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::agent_def::AgentPowerSetRequest,
+) -> MaybeListed<oneiron::agent_def::AgentPowers> {
+    const VERB: &str = "vault.agents.powers.set";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::agent_def::set_agent_powers_from_request_as(server.vault(), &owner, input)
+                .map_err(MemoryError::from)
+        },
+        |_| None,
+    )
+    .await
+}
+
 pub(crate) async fn vault_agents_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
