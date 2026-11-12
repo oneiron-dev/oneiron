@@ -316,7 +316,7 @@ fn an_archive_with_a_board_turn_restores_whole_as_its_owner() {
             omissions
                 .iter()
                 .any(|(id, reason)| *id == claim.to_hex() && reason == "LocalHistoryNotRestored"),
-            "the manifest names {claim} as LocalHistoryNotRestored: {omissions:?}"
+            "the manifest names {claim:?} as LocalHistoryNotRestored: {omissions:?}"
         );
     }
 }
