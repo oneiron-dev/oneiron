@@ -1,4 +1,8 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
+mod asset_masked_read;
+mod connector_source_rows_read;
+mod skill_package_read;
+
 mod act_answer;
 mod agent_grant;
 mod agent_run_effect;
@@ -455,6 +459,10 @@ pub struct RoomEntry {
 pub use crate::memory::RecallRequest;
 
 pub use crate::memory::affect::QueryAffect;
+
+pub use self::asset_masked_read::*;
+pub use self::connector_source_rows_read::*;
+pub use self::skill_package_read::*;
 
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
