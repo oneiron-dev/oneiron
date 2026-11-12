@@ -416,6 +416,11 @@ pub const ESIGN_SEAL_ACTOR: &[u8] = b"oneiron.esign.seal.actor.v1";
 /// from the summary's requester. No parts: policy binds this one engine writer.
 pub const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.actor.v1";
 
+/// The plugin section fit install writer
+/// (`context_board::plugin::fit_install::install_writer`), distinct from the
+/// offering actor. No parts: policy binds this one engine writer.
+pub const PLUGIN_SECTION_FIT_INSTALL_ACTOR: &[u8] = b"oneiron.plugin-section.fit-install.actor.v1";
+
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
 pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
