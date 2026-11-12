@@ -32,7 +32,8 @@ use super::super::validation::{
     validate_scored_candidates,
 };
 use super::super::world_partition::{
-    annotate_stale_federated_worlds, partition_pack_claims, resolve_edge_short_ids,
+    annotate_stale_federated_worlds, partition_pack_claims, partitions_by_world,
+    resolve_edge_short_ids,
 };
 use super::{
     ContextPackBuilder, ContextPackRun, ContextPackTelemetry, HydrateOptions,
@@ -184,7 +185,8 @@ impl<'a> ContextPackBuilder<'a> {
         let mut pipeline = pipeline.context_pack_budget(retrieval_budget);
         // The world share and the disclosure clamp hold while the rows are
         // selected, so neither leaves the pack short of rows it could carry.
-        if matches!(self.world_scope, WorldScope::All) {
+        let partitioned = partitions_by_world(&self.world_scope);
+        if partitioned {
             pipeline = pipeline.context_pack_world_share(self.non_base_world_fraction);
         }
         if let Some(ctx) = self
@@ -317,12 +319,13 @@ impl<'a> ContextPackBuilder<'a> {
                 results.push(entity);
             }
 
-            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
-            // default `All` scope, a result the share removes seeds no
-            // neighbor (FIX 9759). The pass after the walk holds the share
-            // over every claim the pack emits.
+            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under a
+            // scope that selects base beside another world (`All`, or a
+            // `WorldSet` with base and a world), a result the share removes
+            // seeds no neighbor (FIX 9759). The pass after the walk holds the
+            // share over every claim the pack emits.
             let mut critical = pipeline_output.critical;
-            if matches!(self.world_scope, WorldScope::All) {
+            if partitioned {
                 let (cut, _) = partition_pack_claims(
                     &self.read,
                     &rtxn,
@@ -487,12 +490,13 @@ impl<'a> ContextPackBuilder<'a> {
             }
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117), once over
-            // every claim the pack emits (FIX 9759): under the default `All`
-            // scope, base section first, then one section per non-base world,
-            // with non-base claims held to the share. Flat (unchanged) for the
-            // other scopes, which the walk already held to their worlds.
+            // every claim the pack emits (FIX 9759): under every scope that
+            // selects base beside another world (`partitions_by_world`), base
+            // section first, then one section per non-base world, with
+            // non-base claims held to the share. Flat for the scopes that
+            // select one side only, which the walk already held to it.
             critical.extend(edge_walk.critical);
-            let world_share = if matches!(self.world_scope, WorldScope::All) {
+            let world_share = if partitioned {
                 let (cut, non_base_claims) = partition_pack_claims(
                     &self.read,
                     &rtxn,

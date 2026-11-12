@@ -9,6 +9,7 @@ use heed::RoTxn;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::StoreRead;
 
@@ -36,7 +37,34 @@ pub(super) fn resolve_edge_short_ids(
     }
 }
 
-/// ARCH-0004 / ARCH-0022 world partitioning for an `All`-scope pack, run once
+/// Whether a pack under `scope` is partitioned by world: every scope whose
+/// selection holds base reality beside at least one other world (ARCH-0004
+/// #world-scope: "The context pack MUST partition claims by world — the
+/// base-reality section first, labeled per-world sections after, the non-base
+/// sections budget-capped"). Those are `All` and a `WorldSet` that includes
+/// base and names a world; [`partition_pack_claims`] and the selection-time
+/// world share then hold the same non-base cap for both.
+///
+/// The rest select no base row beside a world, so their packs stay flat in
+/// score order. `Base` is base alone. A `WorldSet` without base, or naming no
+/// world, is one side only. `World(id)` admits only its own world's rows in
+/// the pipeline's world filter today (`pipeline::filters::apply_world_filter`),
+/// so a share over it would hold every one of its claims out. `CodebaseSet`
+/// selects repository membership, not worlds. `ActiveSet` resolves its members
+/// only while the run executes, and the pack builder sets no selection for it.
+pub(super) fn partitions_by_world(scope: &WorldScope) -> bool {
+    match scope {
+        WorldScope::All => true,
+        WorldScope::WorldSet(worlds) => worlds.include_base() && !worlds.worlds().is_empty(),
+        WorldScope::Base
+        | WorldScope::World(_)
+        | WorldScope::CodebaseSet(_)
+        | WorldScope::ActiveSet => false,
+    }
+}
+
+/// ARCH-0004 / ARCH-0022 world partitioning for a pack whose scope
+/// [`partitions_by_world`], run once
 /// over the rows it emits (FIX 9759): reorders `results` so rows are grouped
 /// by world — the base section (claims with no `world` key plus every other
 /// base-reality record) first, then one section per non-base world, which
