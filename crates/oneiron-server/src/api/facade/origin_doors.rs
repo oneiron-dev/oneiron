@@ -164,6 +164,36 @@ pub(crate) async fn vault_code_origin_mirror_get(
     .await
 }
 
+/// `vault.code.origin.lfs_path_policy.get`.
+pub(crate) async fn vault_code_origin_lfs_path_policy_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginRepoRequest,
+) -> Listed<OriginLfsPathPolicyView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.lfs_path_policy.get",
+        move |memory, owner| memory.origin_lfs_path_policy_get_as(owner, input),
+    )
+    .await
+}
+
+/// `vault.code.origin.lfs_path_policy.set`.
+pub(crate) async fn vault_code_origin_lfs_path_policy_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginLfsPathPolicySetRequest,
+) -> Listed<OriginLfsPathPolicyView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.lfs_path_policy.set",
+        move |memory, owner| memory.origin_lfs_path_policy_set_as(owner, input),
+    )
+    .await
+}
+
 pub(crate) async fn vault_code_origin_mirror_plan(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

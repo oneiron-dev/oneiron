@@ -8,6 +8,7 @@ use crate::store::attempt_inputs::ClaimAttempt;
 use crate::store::attempt_inputs::CompleteAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::store::attempt_inputs::FailAttempt;
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::write_envelope::claim_body::ClaimBody;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, HydratedShortId, TimeRange, Vault};
@@ -408,4 +409,13 @@ pub trait JobQueue: Transactions {
         input: CompleteAttempt,
     ) -> Result<CompleteOutcome>;
     fn port_job_fail(&self, txn: &mut Self::Write<'_>, input: FailAttempt) -> Result<FailOutcome>;
+    /// [`Self::port_job_fail`] keeping `budget_refusal` on the failed row
+    /// beside its reason: the typed refusal of a spend scope that refused the
+    /// try's step for good (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    fn port_job_fail_with_refusal(
+        &self,
+        txn: &mut Self::Write<'_>,
+        input: FailAttempt,
+        budget_refusal: Option<StepBudgetRefusal>,
+    ) -> Result<FailOutcome>;
 }

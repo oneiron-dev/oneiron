@@ -254,13 +254,16 @@ pub(crate) use rooms::{
     thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
 };
 pub use rooms::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
-pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
+pub(crate) use rooms::{
+    VaultStanding, private_root_of_room_in, room_thread_source_in, vault_standing_in,
+};
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{
     ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
 };
@@ -269,6 +272,7 @@ pub use rooms::{
     OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
+pub use rooms::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,

@@ -14,6 +14,7 @@ use loro::awareness::EphemeralStore;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::BudgetGuard;
 use oneiron_store::consolidation_scope::DreamerConsolidationScope;
+use oneiron_store::model_step_submission::StepBudgetRefusal;
 use oneiron_store::write_envelope::WriteEnvelope;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -143,6 +144,10 @@ pub enum DreamerAttemptExecution {
     Failed {
         reason: String,
         completed_units: u64,
+        /// The typed refusal when a spend scope refused the try's step for
+        /// good (BUDGET-TRAP-UNTYPED-NO-SENDER); `None` for every other
+        /// failure. The driver carries it to the failed row beside `reason`.
+        budget_refusal: Option<StepBudgetRefusal>,
     },
     Park {
         reason: String,
