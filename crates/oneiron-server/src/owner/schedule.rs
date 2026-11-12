@@ -545,6 +545,7 @@ mod tests {
         let backups = oneiron::test_support::restore_tempdir();
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        crate::test_credentials::install_fixture_keystore(&vault, b"");
         // The schedule is the `[backup]` policy since #3229 and FIX 5621, in
         // whole hours: an interval under an hour is due at every tick.
         let mut config = crate::config::ServeConfig::default();
