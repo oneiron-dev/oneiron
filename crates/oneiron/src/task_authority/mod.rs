@@ -395,8 +395,16 @@ pub(crate) fn put_task_authority_fact_in_txn(
     fact: TaskAuthorityFact,
 ) -> Result<EntityId> {
     let fact_ref = vault.store.clock.entity_id()?;
+    // The fact is born under its TASK's facet (UNBUILT item 10), so a reader
+    // outside that facet reads none of the facts about it. A TASK at its own
+    // substrate facet, which no FACET row holds, leaves the vault default.
+    let substrate = crate::claim::substrate_facet_id(fact.task_ref)?;
+    let mask =
+        crate::federation::record_scope::task_birth_facet(&vault.store, &*wtxn, fact.task_ref)?
+            .filter(|facet| *facet != substrate);
     vault
         .batch_in()
+        .mask(mask)
         .put_task_fact(
             &fact_ref,
             &encode_task_authority_fact_body(&fact),
