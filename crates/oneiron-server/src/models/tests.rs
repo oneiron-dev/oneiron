@@ -130,7 +130,7 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
     )
     .await;
     let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"cpa:owen7/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
+        "default = \"cpa:team/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
         fake.base_url
     ))));
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
@@ -143,7 +143,7 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
     );
     assert_eq!(
         response.usage.raw_provider["requested_model"],
-        json!("owen7/gpt-6.1-sol")
+        json!("team/gpt-6.1-sol")
     );
     assert_eq!(response.usage.raw_provider["provider"], json!("cpa"));
     let (deltas, usage, text) = stream(seat, "again").await;
@@ -153,7 +153,7 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
     let seen = fake.seen();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].path, "/v1/chat/completions");
-    assert_eq!(seen[0].body["model"], json!("owen7/gpt-6.1-sol"));
+    assert_eq!(seen[0].body["model"], json!("team/gpt-6.1-sol"));
     assert_eq!(seen[1].body["stream"], json!(true));
     let home = std::env::var("HOME").unwrap();
     assert_eq!(
@@ -166,7 +166,7 @@ async fn openai_compatible_provider_generates_and_streams_through_a_seat() {
 async fn a_call_that_picks_its_own_model_or_route_never_reaches_the_provider() {
     let fake = FakeLlm::start(Vec::new(), None).await;
     let runtime = ModelRuntime::build(Some(&config(&format!(
-        "default = \"cpa:owen7/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
+        "default = \"cpa:team/gpt-6.1-sol\"\n[providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"{}\"\nkey_env = \"HOME\"\n",
         fake.base_url
     ))));
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
