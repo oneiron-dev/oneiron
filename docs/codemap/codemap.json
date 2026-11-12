@@ -15273,9 +15273,19 @@
      "surface": {
       "const": 1,
       "enum": 4,
-      "fn": 2,
+      "fn": 3,
       "static": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/check_in/chain.rs",
+     "purpose": "The ladder from verified records (ARCH-0082 #ladder; ROLES-CHECKIN P2.2, piece 2c; Engine ruling P22-SHAPE…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -15285,7 +15295,8 @@
      "path": "src/check_in/mod.rs",
      "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…",
      "surface": {
-      "re-export": 4
+      "crate-vis": 7,
+      "re-export": 8
      }
     },
     {
@@ -15300,6 +15311,65 @@
       "const": 1,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "CapturedWait",
+      "DelayWindow",
+      "DelayWindowOpen",
+      "Extension",
+      "HolderAnswer",
+      "HolderKind",
+      "HolderReply",
+      "Objection",
+      "OpenPendingCheckIn",
+      "PendingCheckIn",
+      "PendingState",
+      "Rung",
+      "RungEntry",
+      "RungHolder",
+      "RungMembers"
+     ],
+     "path": "src/check_in/pending.rs",
+     "purpose": "The durable Wait handle (ARCH-0082 #ladder and #waits; ROLES-CHECKIN P2.2, pieces 2b and 2d; Engine ruling…",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 5,
+      "fn": 8,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckInPolicy",
+      "CheckInScope",
+      "ClassWait",
+      "RungWaitRow",
+      "WaitSource"
+     ],
+     "path": "src/check_in/policy.rs",
+     "purpose": "The `check_in` policy row (ARCH-0082 #waits and #changing; Engine ruling P22-SHAPE Q5 = A): one versioned…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/check_in/receipt.rs",
+     "purpose": "The `check_in` receipt (Engine ruling P22-SHAPE Q8 = A): one receipt per transition of a pending check-in…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -15318,7 +15388,7 @@
      "purpose": "One check-in: power, mode and rung 0, then the unsure test (ARCH-0082 #composing and #ladder)",
      "surface": {
       "enum": 5,
-      "fn": 3,
+      "fn": 4,
       "struct": 1,
       "trait": 1
      }
@@ -15339,6 +15409,41 @@
       "fn": 3,
       "static": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/check_in/tables.rs",
+     "purpose": "The side tables `check_in` keeps (ROLES-CHECKIN P2.2): each row declares one, and the crate's build script…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VerbActClass"
+     ],
+     "path": "src/check_in/verb_act_class.rs",
+     "purpose": "The act class each verb row states (`act_class` in `scripts/sdk/verbs/<verb>.json`; ARCH-0082 #act-table…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CheckInTransition"
+     ],
+     "path": "src/check_in/waits.rs",
+     "purpose": "The waits and canon's table \"When nobody answers\" (ARCH-0082 #waits and #no-answer; ruling R2; Engine ruling…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1
      }
     },
     {
@@ -43914,7 +44019,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 71
+      "crate-vis": 72
      }
     },
     {
@@ -47602,7 +47707,7 @@
      "purpose": "The inquiry edge and its opened scope (federation.md #inquiry-scope, #inquiry-first-build; Engine ruling…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 7,
       "fn": 10,
       "struct": 4
      }
@@ -47628,10 +47733,30 @@
      "path": "src/inquiry/log.rs",
      "purpose": "\"Asked about you\" (federation.md #inquiry-keep): the member vault's own full log of the inquiries companies…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InquiryJudgment",
+      "InquiryJudgmentOutcome",
+      "InquiryMemberAnswer",
+      "UnsureInquiryJudgment"
+     ],
+     "path": "src/inquiry/member.rs",
+     "purpose": "The member side of an inquiry (federation.md #inquiry, #inquiry-checkin; ARCH-0082 #inquiry; Engine ruling…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -47641,8 +47766,8 @@
      "path": "src/inquiry/mod.rs",
      "purpose": "Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner…",
      "surface": {
-      "crate-vis": 9,
-      "re-export": 7
+      "crate-vis": 10,
+      "re-export": 8
      }
     },
     {
@@ -67604,7 +67729,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 5,
       "re-export": 20
      }
@@ -67616,7 +67741,7 @@
      "path": "src/receipt/off_device.rs",
      "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -90150,7 +90275,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -91621,6 +91746,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FixedChain",
+      "FixedVerdicts"
+     ],
+     "path": "src/test_doors/check_in.rs",
+     "purpose": "Door for `tests/check_in_pending_handle.rs`, `tests/check_in_rung_waits.rs` and `tests/check_in_ladder.rs`…",
+     "surface": {
+      "fn": 15,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -91825,7 +91964,7 @@
      "path": "src/test_doors/inquiry.rs",
      "purpose": "Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the member's log and the asking side's…",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -91886,7 +92025,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 45
+      "mod": 46
      }
     },
     {
@@ -97962,7 +98101,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "mod": 1,
       "re-export": 28
      }
@@ -100565,6 +100704,16 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in/fixture.rs",
+     "purpose": "The P2.2 check-in tests' shared fixture (`check_in_pending_handle.rs`, `check_in_rung_waits.rs`): a vault on…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in_fanout_modes.rs",
      "purpose": "ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename…",
      "surface": {}
@@ -100573,8 +100722,40 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in_ladder.rs",
+     "purpose": "ROLES-CHECKIN P2.2, piece 2c (ARCH-0082 #ladder; Engine ruling P22-SHAPE Q3, Q4 and Q9 = A): the ladder from…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_pending_handle.rs",
+     "purpose": "ROLES-CHECKIN P2.2, piece 2b (Engine rulings PR2-SPLIT = B and P22-SHAPE Q1, Q2, Q8, Q9 = A): when…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_rung_waits.rs",
+     "purpose": "ROLES-CHECKIN P2.2, piece 2d (ruling R2; Engine rulings PR2-SPLIT = B and P22-SHAPE Q3, Q5-Q7 = A): the wait…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in_tables.rs",
      "purpose": "ROLES-CHECKIN PR 1 (ONEIRON-ARCH-0082): the check-in modes, the act table, the role defaults and the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_verb_census.rs",
+     "purpose": "ROLES-CHECKIN PR 2, P2.1 (ONEIRON-ARCH-0082 #act-table): every verb row states its act class, by the ruled…",
      "surface": {}
     },
     {
@@ -101089,6 +101270,14 @@
      "notable": [],
      "path": "tests/inquiry_edge.rs",
      "purpose": "INQUIRE-1 PR 2 (federation.md #inquiry-scope, #inquiry-first-build; Engine ruling INQUIRE-SHAPE Q1 = A): the…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inquiry_member_answer.rs",
+     "purpose": "INQUIRE-1 PR 3 (federation.md #inquiry, #inquiry-checkin; ARCH-0082 #inquiry; Engine ruling INQUIRE-SHAPE…",
      "surface": {}
     },
     {
@@ -102052,6 +102241,24 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_member_read.rs",
+     "purpose": "NO-DOOR REPO-MEMBER-SNAPSHOT-SYMBOL-READ (tests/e2e/code-custody.test.ts CODE-CUSTODY-01), ruled…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_run/fixture.rs",
+     "purpose": "The run repo door tests' shared fixture (`symbol_lease_observe.rs`, `repo_member_read.rs`): a fresh owned…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102454,7 +102661,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/symbol_lease_observe.rs",
@@ -102563,6 +102770,14 @@
      "notable": [],
      "path": "tests/verb_self_skills_package.rs",
      "purpose": "`self.skills.package`: an agent with a read permit but no Grant naming the verb is refused, the holder reads…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_tasks_done_executor_stamp.rs",
+     "purpose": "A met DONE through the public `tasks.update` stamps the executor model of the authenticated host run it came…",
      "surface": {}
     },
     {
@@ -102916,9 +103131,9 @@
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "check_in": {
-     "files": 5,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
+     "files": 12,
+     "impl_vault": true,
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…"
     },
@@ -103532,7 +103747,7 @@
      "purpose": "Ingest source registry and source-local normalization"
     },
     "inquiry": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -104211,7 +104426,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104386,10 +104601,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 256,
+   "over_bar": 257,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7409,
-   "test_files": 1075
+   "source_files": 7418,
+   "test_files": 1084
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -123620,7 +123835,7 @@
      "path": "src/verb_table.rs",
      "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     }
    ],
@@ -133560,7 +133775,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/auth/binding_admission.rs",
@@ -145454,6 +145669,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/federation_connect_host_fault_status.rs",
+     "purpose": "Connect host faults keep their server status while invalid peer proofs remain request errors",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/git_lfs_prehandler_refusal_envelope.rs",
+     "purpose": "A slip the owner revoked is refused at the binding door, before any route runs",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -145735,6 +145966,14 @@
      "notable": [],
      "path": "tests/model_binding_proposer_grant.rs",
      "purpose": "An agent whose Grant names `vault.models.bindings.propose` may propose a binding; the owner still decides…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/openai_proxy_exchange_names_recalled_rows.rs",
+     "purpose": "The OpenAI proxy's exchange claim names the recalled row its prompt carried",
      "surface": {}
     },
     {
@@ -146360,7 +146599,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1833,
-   "test_files": 195
+   "test_files": 198
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -151658,8 +151897,8 @@
      "path": "src/overlay_db/accessors.rs",
      "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
      "surface": {
-      "crate-vis": 2,
-      "fn": 31,
+      "crate-vis": 3,
+      "fn": 33,
       "struct": 2
      }
     },

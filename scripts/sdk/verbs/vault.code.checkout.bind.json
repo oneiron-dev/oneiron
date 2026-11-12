@@ -5,6 +5,7 @@
   "output": "crate::memory::origin_doors::CheckoutDoorBinding",
   "call": "memory.checkout_door_bind_as(&memory.embedded_owner(\"vault.code.checkout.bind\")?, input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

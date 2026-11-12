@@ -5,6 +5,7 @@
   "output": "crate::origin::publish::OriginPublishReviewView",
   "call": "memory.origin_publish_review_as(&memory.origin_publish_proof(\"vault.code.origin.publish.review\"), input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

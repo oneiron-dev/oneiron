@@ -27,6 +27,15 @@ crate::side_table::side_tables! {
     /// first. Empty marker. Key: u64be (occurred_at) + string (receipt id).
     INQUIRY_RECEIPT_BY_TIME: VaultMeta b"inquiry:receipt_by_time:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// An inquiry the member's check-in ladder took to the member (ARCH-0082 #inquiry): the
+    /// pending check-in it waits on, so a repeat of the inquiry advances that one and opens no
+    /// other, and the member's answer settles both in one writer. An erase of the check-in's asker
+    /// drops the row and settles the inquiry `no_answer`. Key: id16 (the inquiry edge's grant) +
+    /// id16 (the inquiry); value: id16 (the pending check-in).
+    INQUIRY_PENDING: VaultMeta b"inquiry:pending:v1:" Raw
+        // Restore class: live, as the log row and the pending check-in it joins are.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::inquiry::erase_inquiry_pending_actor_in_txn;
     /// The asking side's route to one member's vault (INQUIRE-1 PR 4), on the company vault:
     /// bound to the member's seat in one shared vault, it names the member's vault, the member
     /// host and the guest slip that vault minted for this host on its inquiry edge. The member's

@@ -5,6 +5,7 @@
   "output": "Vec<crate::consent_graduation::api::GraduationTrustRow>",
   "call": "crate::consent_graduation::api::trust_table(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.trust_table\")?)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

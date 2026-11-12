@@ -8,6 +8,7 @@
   "output": "Vec<crate::office_body::OfficeBodyCommitView>",
   "call": "memory.artifacts_body_commits(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

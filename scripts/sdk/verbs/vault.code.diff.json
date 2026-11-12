@@ -5,6 +5,7 @@
   "output": "Option<crate::code_document::CodeDiffView>",
   "call": "memory.code_diff(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

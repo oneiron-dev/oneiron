@@ -5,6 +5,7 @@
   "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>",
   "call": "oneiron_browser::DesktopAnswer::of(driver.observe_page(input)?)",
   "scope": "Read",
+  "act_class": "read",
   "context": "browser",
   "mcp": "none",
   "section": false

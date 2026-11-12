@@ -3,6 +3,7 @@
   "input": "crate::memory::repo_doors::RepoSnapshotsReadInput",
   "output": "crate::memory::repo_doors::RepoSnapshotsReadOutput",
   "scope": "Read",
+  "act_class": "reversible_work",
   "context": "run",
   "effect": "RepoSnapshotsRead"
 }

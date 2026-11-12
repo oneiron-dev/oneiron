@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ConnectorSchemaReply",
   "call": "crate::task_verb::sdk::connector_schema_read(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
