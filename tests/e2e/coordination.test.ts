@@ -4563,15 +4563,29 @@ type MuseLoop08AuditRow = FacadeResult<"vault.authority.audit">["rows"][number];
 type MuseLoop08ErrorBody = { error: { code: string; message: string } };
 type MuseLoop08ActorReceipt = { actor_ref?: string | null };
 
+// Unfiltered, vault.claims.list also lists retracted rows (canon: ClaimListFilter's lifecycle is optional);
+// `lifecycle: "active"` reads the active set only.
 async function museLoop08Claims(
   client: PublicHttpClient,
   subjectRef: string,
   predicate: string,
+  lifecycle?: "active",
 ): Promise<MuseLoop08ClaimRow[]> {
   const page = await client.call("vault.claims.list", {
-    subject_ref: subjectRef, predicate, limit: 10,
+    subject_ref: subjectRef, predicate, limit: 10, ...(lifecycle ? { lifecycle } : {}),
   } satisfies FacadeInput<"vault.claims.list">);
   return page.value;
+}
+
+// A revert retracts the claim in place: the unfiltered list still holds its row, which reads "retracted".
+async function museLoop08Lifecycle(
+  client: PublicHttpClient,
+  subjectRef: string,
+  predicate: string,
+  claimRef: string,
+): Promise<MuseLoop08ClaimRow["lifecycle"] | undefined> {
+  const rows = await museLoop08Claims(client, subjectRef, predicate);
+  return rows.find((row) => row.claim_ref === claimRef)?.lifecycle;
 }
 
 async function museLoop08PendingRefs(client: PublicHttpClient): Promise<Set<string>> {
@@ -4633,10 +4647,6 @@ async function museLoop08AuditRows(client: PublicHttpClient): Promise<MuseLoop08
 // discovery and cross-kind undo stay unproved: canon says only the owner
 // reviewing *named* changes and reverting all or some is built in part, and
 // this case exercises claims only.
-// DEFECT (red since E2E job 6, Wed 11 Nov 2026; FIX row
-// OWNER-APPROVAL-CRITICALITY-FLOOR, as in MUSE-LOOP-01): the owner's
-// vault.runs.settle of the agent's proposed claims is refused 403 on the
-// fallback criticality floor.
 suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a chosen subset then the rest where unblocked, and reports the blocked change (P-LOOP-030 subset)", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-LOOP-08", profile });
   try {
@@ -4779,7 +4789,8 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     if (!alphaComp) throw new Error("Selective revert did not compensate the chosen change");
     expect(alphaComp.receipt.length).toBeGreaterThan(0);
     await engine.awaitReceipt(alphaComp.receipt);
-    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, alphaPredicate, alphaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate, "active")).toHaveLength(0);
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
     expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
     const alphaHistory = await owner.call("vault.claims.history", {
@@ -4792,7 +4803,8 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     } satisfies FacadeInput<"vault.runs.settlement">);
     expect(settlementAfterRestart.receipt).toBe(settlement.receipt);
     expect(settlementAfterRestart.revert_handle).toBe(settlement.revert_handle);
-    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, alphaPredicate, alphaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate, "active")).toHaveLength(0);
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
     expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
 
@@ -4818,9 +4830,11 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
       const inNotUndone = rest.not_undone.some((row) => row.change === changeId);
       expect(inCompensated !== inNotUndone).toBe(true);
     }
-    expect(await museLoop08Claims(owner, subjectRef, gammaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, gammaPredicate, gammaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, gammaPredicate, "active")).toHaveLength(0);
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate)).some((row) => row.value === betaValueTwo)).toBe(true);
-    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate)).toHaveLength(0);
+    expect(await museLoop08Lifecycle(owner, subjectRef, alphaPredicate, alphaRow.claim_ref)).toBe("retracted");
+    expect(await museLoop08Claims(owner, subjectRef, alphaPredicate, "active")).toHaveLength(0);
 
     // The owner revokes the proposer's slip; its next write use is refused.
     const auditAfterPairings = await museLoop08AuditRows(owner);
