@@ -633,7 +633,9 @@ const fn stop_code(run: &PartitionRun) -> &'static str {
     match run {
         PartitionRun::Trapped => THING_CHILD_TRAPPED,
         PartitionRun::Checkpoint => THING_CHILD_CHECKPOINT,
-        PartitionRun::Refused { .. } | PartitionRun::BudgetRefused { .. } => THING_CHILD_REFUSED,
+        PartitionRun::Refused { .. }
+        | PartitionRun::BudgetRefused { .. }
+        | PartitionRun::SeatRefused { .. } => THING_CHILD_REFUSED,
         PartitionRun::Completed { .. } | PartitionRun::Held { .. } => THING_CHILD_PARENT_FAILED,
     }
 }
