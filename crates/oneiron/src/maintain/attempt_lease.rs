@@ -9,7 +9,6 @@ use crate::attempt_queue::{
     AttemptLeaseWarningReport, AttemptQueue, AttemptQueueCleanupReport, CleanupAttemptLeases,
     WarnExpiringAttemptLeases,
 };
-use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::Result;
 
 /// Runs the WARNING rung and then the reclaim rung over live attempt leases,
@@ -24,8 +23,9 @@ use crate::error::Result;
 /// was taken away.
 ///
 /// An attempt parked on a signal keeps its lease, as a host's restart keeps
-/// it: only the signal it waits on resumes it, so no reclaim queues it again
-/// while its parked row stands (FIX 10304).
+/// it: only the signal it waits on resumes it, so while its parked row stands
+/// no reclaim queues it again (FIX 10304) and no warning asks it to land. The
+/// queue reads the park itself in both rungs (FIX RUN-LEASE).
 pub(super) fn sweep_attempt_leases(
     vault: &Vault,
     now: u64,
@@ -36,13 +36,9 @@ pub(super) fn sweep_attempt_leases(
         now,
         lease_timeout_secs,
     })?;
-    let parked = DreamerRunnerStore::new(vault).parked_ids()?;
-    let cleanup = queue.cleanup_leases_except(
-        CleanupAttemptLeases {
-            now,
-            lease_timeout_secs,
-        },
-        &parked,
-    )?;
+    let cleanup = queue.cleanup_leases(CleanupAttemptLeases {
+        now,
+        lease_timeout_secs,
+    })?;
     Ok((warnings, cleanup))
 }
