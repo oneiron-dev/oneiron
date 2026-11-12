@@ -46,7 +46,7 @@ use oneiron::workspace_roster::{
     JoinDecision, OfferAnswer, OfferAnswerRequest, OfferDraft, ProjectRecord,
     ProjectRoomLinkRequest, RoomTurn,
 };
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 /// The label this file's TASKs carry.
 const FIXTURE_PATH: &str = "crates/oneiron/tests/room_turn_backfill.rs";
@@ -647,6 +647,71 @@ fn reopen_names_every_recorded_recipient_and_wakes_no_one() -> TestResult {
         "the backfill stages no wake"
     );
     Ok(())
+}
+
+/// A thread reply whose parent was erased keeps no row, nor does any reply
+/// under it, so the thread above the gap still reads (review round 1 of
+/// #7265, P1 at backfill.rs:188). In an ordinary room, owen's trunk turn A
+/// holds a thread R, P, C, each answering the one before. Every row is
+/// stripped, P is erased with `reasons` in turn, and the pass runs. A and R
+/// are rowed, P and C are not, and the thread reads on A answer R alone:
+/// the live prefix the DAG's own thread read gives.
+fn reply_under_an_erased_reply_keeps_its_thread_readable(reasons: &[DeleteReason]) -> TestResult {
+    let rig = open_rig()?;
+    let room = make_room(&rig, RoomKind::Ordinary)?;
+    let a = native_trunk(&rig, room, vec![])?;
+    let r = plain_reply(&rig, room, a)?;
+    let p = plain_reply(&rig, room, a)?;
+    let c = plain_reply(&rig, room, a)?;
+    let row_c = doors::room_turn_row(&rig.vault, c)?.ok_or("C keeps no row at P1")?;
+    assert_eq!(row_c.reply_to, Some(p.to_hex()), "C answers P");
+    doors::strip_room_turn_rows(&rig.vault, room, &[])?;
+    for &reason in reasons {
+        rig.vault.delete_room_record(
+            room,
+            p,
+            WriteActor::new(rig.owen, EdgeActorClass::Human),
+            reason,
+        )?;
+    }
+    let pass = doors::run_room_turn_backfill(&rig.vault)?;
+    println!("ERASED-REPLY reasons={reasons:?} {pass:?}");
+    assert_eq!(rig.vault.thread_roots(a)?, vec![r], "the thread roots on A");
+    let thread = rig.vault.thread(a)?;
+    assert_eq!(thread.root, Some(r), "{thread:?}");
+    assert_eq!(thread.replies, vec![r], "the live prefix: {thread:?}");
+    rig.vault.thread_meta(a)?;
+    for (turn, rowed, label) in [
+        (a, true, "A"),
+        (r, true, "R"),
+        (p, false, "P"),
+        (c, false, "C"),
+    ] {
+        assert_eq!(
+            doors::room_turn_row(&rig.vault, turn)?.is_some(),
+            rowed,
+            "{label} keeps a row: {pass:?}"
+        );
+    }
+    Ok(())
+}
+
+/// [`reply_under_an_erased_reply_keeps_its_thread_readable`] with P
+/// soft-deleted: it keeps its header and edges, and C its `Parent` edge.
+#[test]
+fn reopen_rows_no_reply_under_a_soft_erased_reply() -> TestResult {
+    reply_under_an_erased_reply_keeps_its_thread_readable(&[DeleteReason::UserDelete])
+}
+
+/// [`reply_under_an_erased_reply_keeps_its_thread_readable`] with P
+/// soft-deleted, then hard-deleted: P and its edges go, and C keeps P as its
+/// parent in its erasure pin.
+#[test]
+fn reopen_rows_no_reply_under_a_hard_erased_reply() -> TestResult {
+    reply_under_an_erased_reply_keeps_its_thread_readable(&[
+        DeleteReason::UserDelete,
+        DeleteReason::UserHardDelete,
+    ])
 }
 
 /// The time the pass takes for one room of `BULK_TURNS` TURNs, all in one

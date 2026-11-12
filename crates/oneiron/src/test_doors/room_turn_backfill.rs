@@ -32,6 +32,8 @@ pub struct BackfillCounts {
     pub skipped_home_witness: u64,
     /// TURNs whose body or DAG parent does not decode, left with no row.
     pub skipped_undecodable: u64,
+    /// Thread replies whose DAG parent keeps no row, left with no row.
+    pub skipped_unrowed_parent: u64,
 }
 
 /// A room's index rows, each list in key order.
@@ -94,6 +96,7 @@ pub fn run_room_turn_backfill(vault: &Vault) -> Result<BackfillCounts> {
         skipped_unbound: report.skipped_unbound,
         skipped_home_witness: report.skipped_home_witness,
         skipped_undecodable: report.skipped_undecodable,
+        skipped_unrowed_parent: report.skipped_unrowed_parent,
     })
 }
 
