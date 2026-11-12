@@ -59,6 +59,8 @@ pub mod turn_programs;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod wake_d1_park_release;
+#[cfg(feature = "sync")]
+pub use crate::sync::connection::sync_outbox;
 
 /// Runs the identity-topology reconcile that a replica's sync ingest runs,
 /// over this vault's own ledger: shell edges, redirects and split assignment

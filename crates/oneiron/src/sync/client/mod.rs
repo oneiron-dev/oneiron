@@ -64,6 +64,8 @@ mod sync_frames;
 mod types;
 mod window_pads;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::base::ResidenceReceipt;
 pub use self::base::SyncClient;
 pub(crate) use self::connect::VerifiedConnectOrigin;
 pub use self::connect::{
