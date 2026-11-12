@@ -191,6 +191,9 @@ impl FactHookRunner {
             Ok(more) => report.more = more,
             Err(error) => tracing::warn!(%error, "due watcher ticks wait for the next pass"),
         }
+        // Timer and feed turn programs are released beside the ticks, hooks on
+        // or off (untangle slice 6.8c); no loop of their own runs.
+        crate::dreamer_runner::release_program_wakes(vault, now);
         if !vault.hooks_enabled()? {
             report.disabled = true;
             return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);

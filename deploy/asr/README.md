@@ -46,8 +46,8 @@ key_env = "ONEIRON_ASR_TOKEN"
 model = "hearing:whisper-large-v3"
 kind = "asr"
 weights = "whisper-large-v3"
-# or weights_manifest = "/home/lexi/oneiron-manifests/whisper-large-v3.json"
-env_lock = "/home/lexi/oneiron-locks/whisper-py312.lock"
+# or weights_manifest = "<host-home>/oneiron-manifests/whisper-large-v3.json"
+env_lock = "<host-home>/oneiron-locks/whisper-py312.lock"
 # device = "0"
 # idle_stop_secs = 300          # left out: the worker stays up
 

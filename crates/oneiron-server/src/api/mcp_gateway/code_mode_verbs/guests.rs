@@ -27,7 +27,7 @@ pub(super) fn start_run_guest(
         error: BrowserError::Unavailable(e),
     };
     let backend = select_backend_for_session(
-        &oneiron::code_sandbox::SANDBOX_BACKENDS,
+        &*vault.runtime().sandbox_backends(),
         SandboxGuestTier::Untrusted,
         runtime.to_path_buf(),
         image,

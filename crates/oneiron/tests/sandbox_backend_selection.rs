@@ -14,11 +14,11 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use oneiron::ErrorKind;
-use oneiron::code_sandbox::SANDBOX_BACKENDS;
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::microvm::{
     MicroVmBackend, SandboxBackends, select_backend_for_session, select_backend_for_tier,
 };
+use oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends;
 
 const TIERS: [SandboxGuestTier; 3] = [
     SandboxGuestTier::FirstPartyDreamer,
@@ -56,13 +56,13 @@ fn outcome_shape(line: &str) -> &str {
 fn selection_outcomes_of_the_compiled_backends() {
     let mut finite = Vec::new();
     for tier in TIERS {
-        let line = finite_outcome(select_backend_for_tier(&SANDBOX_BACKENDS, tier));
+        let line = finite_outcome(select_backend_for_tier(&CompiledSandboxBackends, tier));
         println!("SELECT-FINITE tier={} -> {line}", tier.as_str());
         finite.push(line);
     }
     for tier in TIERS {
         let line = session_outcome(select_backend_for_session(
-            &SANDBOX_BACKENDS,
+            &CompiledSandboxBackends,
             tier,
             PathBuf::from(SESSION_RUNTIME),
             SESSION_IMAGE,

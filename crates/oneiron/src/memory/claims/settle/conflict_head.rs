@@ -52,7 +52,7 @@ pub(super) fn conflict_head_in_txn(
     if crate::claim::claim_generated_origin(proposal)
         || crate::claim::is_reserved_predicate(&proposal.predicate)
         || proposal.predicate.split('.').next() == Some(TASK_PROPOSAL_NAMESPACE)
-        || (SET_CARDINALITY_PREDICATES.contains(&proposal.predicate.as_str())
+        || (declared_cardinality(&proposal.predicate) == ClaimCardinality::Set
             && !has_topic_key(proposal.scope.as_ref()))
     {
         return Ok(None);

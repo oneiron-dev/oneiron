@@ -225,7 +225,7 @@ fn put_in_own_txn(
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let options = prepare(&mut wtxn, &policy)?;
     let outcome = apply_put(
-        &vault.store,
+        &crate::secret_custody::CustodyWrite::of(vault),
         &mut wtxn,
         PutRequest {
             row: PutRow {
@@ -234,6 +234,8 @@ fn put_in_own_txn(
                 occurred: test_time_range(20, 20),
                 learned_at: 21,
                 data,
+                row_version: None,
+                file_body: None,
             },
             options,
             context: PutContext {
@@ -245,6 +247,9 @@ fn put_in_own_txn(
                 transition: None,
                 posture: crate::HostingPrivacyPosture::default(),
                 owner_authored: None,
+                pending_prompt: None,
+                prepared_person_substrate: None,
+                prepared_agent_birth: None,
             },
         },
     )
@@ -379,25 +384,23 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
     {
         let (_dir, vault) = open_test_vault();
         seed_people(&vault)?;
-        let mut body = ClaimBody::new(
+        // The persisted actor class rides in the value record (06ff9d357d9
+        // deleted the legacy wrapper-evidence codec).
+        let mut record =
+            EdgeProvenanceClaimBody::new(entity(0x31), 0.9, SupersessionStatus::Confirmed);
+        record.actor_class = Some(EdgeActorClass::Human);
+        let body = ClaimBody::new(
             "edge.provenance",
             ClaimSubject::Edge {
                 source: entity(0x31),
                 kind: EdgeKind::Mentions,
                 target: entity(0x32),
             },
-            crate::provenance::encode_edge_provenance_value(&EdgeProvenanceClaimBody::new(
-                entity(0x31),
-                0.9,
-                SupersessionStatus::Confirmed,
-            )),
+            crate::provenance::encode_edge_provenance_value(&record),
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
-        body.evidence = Some(crate::provenance::encode_actor_class_evidence(
-            EdgeActorClass::Human,
-        ));
         let bytes = crate::claim::encode_claim_body(&body)?;
         let public = put_with(
             &vault,
@@ -627,6 +630,7 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
                             defer_metrics_until_commit: true,
                             transition: None,
                             owner_authored: None,
+                            pending_prompt: None,
                         },
                         policy,
                         crate::gate::GateWriteMode {
@@ -731,6 +735,7 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
                 ENTITY_TYPE_EVENT,
                 test_time_range(1, 1),
                 1,
+                0,
                 b"old",
             );
             vault.with_write_txn(|wtxn| {

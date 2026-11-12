@@ -163,7 +163,8 @@ type Learning03Archive = {
   }[];
   proposed_claim: { claim: Ref; parents: Ref[]; diff_receipt: Ref; approval: "Proposed" };
 };
-suite.todo(test, "LEARNING-03", "waits on typed experiment child creation, sealed-cohort setup and campaign archive/evidence reads");
+// Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
+suite.todo(test, "LEARNING-03", "waits on its arming PR: the OF-366 authoring bind, real experiment results and counted sealed-referee completion over a vault.research.create_root root");
 
 // LEARNING-04 — Multi-critic findings and seal audits should work. OF-352/544.
 // Waiting: typed confession/recheck/audit receipt readback and controlled public
@@ -211,7 +212,8 @@ type Learning05 = {
   admission: { candidate: Ref; required_cells: string[][]; covered_cells: string[][]; admitted: boolean };
 };
 type Learning05Current = PublicCall<"vault.research.promotion_basis">;
-suite.todo(test, "LEARNING-05", "waits on typed campaign output-archive descriptor/placement/best reads and coverage-floor admission setup");
+// Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
+suite.todo(test, "LEARNING-05", "waits on its arming PR: goal/TASK/real output/candidate setup with receipts and a valid two-bin axis fixture over a vault.research.create_root root");
 
 // LEARNING-06 — Eval authoring keeps independent held-out families should work.
 // OF-578. G01 is RESOLVED: wait for typed HTTP+SDK authoring/ledger calls, not
@@ -337,4 +339,5 @@ type Learning09 = {
   top_up: { line: Ref; units: number };
   resume: { attempt: Ref; same_candidate: Ref; preserved_outputs: Ref[] };
 };
-suite.todo(test, "LEARNING-09", "waits on typed vault RSI soft/pinned share and exposure controls, top-up and campaign hold/resume observation");
+// Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
+suite.todo(test, "LEARNING-09", "waits on vault.research.advance with exposure reservation, then one same-attempt/candidate/partial-output journey through both holds over a vault.research.create_root root");

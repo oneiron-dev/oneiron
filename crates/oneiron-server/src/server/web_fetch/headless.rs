@@ -37,7 +37,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use oneiron::Vault;
 use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::egress::EgressConfig;
-use oneiron::code_sandbox::microvm::select_backend_for_session;
+use oneiron::code_sandbox::microvm::{SandboxBackends, select_backend_for_session};
 use oneiron::web_fetch::{
     CROSS_SITE_REDIRECT_REASON, HeadlessDocument, HeadlessRenderer, HostedEgressGuard,
     HostedEgressRefusal, PinnedOrigin, RenderContext, RendererError, RendererResult,
@@ -171,6 +171,7 @@ impl GuestHeadless {
             };
         let mut session = start_guest(
             &self.guest,
+            &*self.vault.runtime().sandbox_backends(),
             relay,
             self.handles.charge(),
             handler,
@@ -219,16 +220,18 @@ fn destination_refusal(refused: &DestinationRefusal) -> RendererError {
 /// engine's tier selector, as a code run's guest starts, behind `relay`,
 /// and attaches it: with no starter, as one render switches no engine, and
 /// with `requests` where the render is guarded. The guest mounts no fixture.
-/// Each phase's outcome moves `readiness`.
+/// Each phase's outcome moves `readiness`. Its backend comes from
+/// `backends`, the set the vault carries (F1-6).
 fn start_guest(
     guest: &BrowserGuest,
+    backends: &dyn SandboxBackends,
     relay: Arc<dyn EgressRelay>,
     retention: Box<dyn HandleRetention>,
     requests: Option<Arc<dyn BrowserRequestHandler>>,
     readiness: &BrowserReadinessCell,
 ) -> Result<BrowserSession, BrowserError> {
     let backend = select_backend_for_session(
-        &oneiron::code_sandbox::SANDBOX_BACKENDS,
+        backends,
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,

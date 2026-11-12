@@ -1,0 +1,50 @@
+/* Hidden at rest with no transition, so leaving hides it at once. A row's
+   hover shows it after 180 ms; focus inside it, or a menu it opened, shows
+   it at once. */
+.sl-hover-bar {
+  position: absolute;
+  top: -15px;
+  right: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+  visibility: hidden;
+  opacity: 0;
+  transition: none;
+}
+
+.sl-message-row:hover .sl-hover-bar {
+  visibility: visible;
+  opacity: 1;
+  transition:
+    visibility 0s linear 180ms,
+    opacity 120ms ease 180ms;
+}
+
+.sl-hover-bar:focus-within,
+.sl-hover-bar:has([aria-expanded="true"]) {
+  visibility: visible;
+  opacity: 1;
+  transition: none;
+}
+
+.sl-hover-bar .sl-icon-action {
+  width: 30px;
+  height: 28px;
+}
+
+.sl-hover-bar .sl-icon-action svg {
+  width: 15px;
+  height: 15px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-message-row:hover .sl-hover-bar {
+    transition: visibility 0s linear 180ms;
+  }
+}

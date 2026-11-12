@@ -13,7 +13,6 @@ pub(crate) mod class_policy;
 pub(crate) mod consult_fanout_values;
 pub(crate) mod curator_proposal;
 pub(crate) mod failure_signal_delivery;
-pub(crate) mod fanout_mode;
 pub(crate) mod manifest_authenticity;
 pub(crate) mod task_assignee;
 pub(crate) mod training_ask_kind;
@@ -21,12 +20,15 @@ pub(crate) mod training_ask_kind;
 pub(crate) use manifest_authenticity::stamp_manifest_origin;
 mod carry_forward_policy;
 mod coach_offer_reach;
+mod code_run_answer;
 mod confirm;
 mod connector_admission;
 mod consolidation_readers;
 mod constants;
 mod entity_resolution_bands;
+pub(crate) use code_run_answer::code_run_answer_may_witness;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
+pub(crate) use constants::{CHECKED_PRODUCER_PROVENANCE_KEY, LIVE_RUN_CLAIM_PUT_PRODUCER};
 mod decision;
 mod decode;
 mod default_manifest;
@@ -40,10 +42,23 @@ mod value_encoding;
 pub(crate) fn owner_policy_manifest_as_stored(data: Vec<u8>) -> crate::error::Result<Vec<u8>> {
     default_manifest::with_default_owner_policy_notifications(data)
 }
+/// Whether `error` is a Gate write rejection whose outcome is Pending: the
+/// one rejection after which an Auto request is resubmitted as Proposed, so
+/// the write lands parked for review. A Deny, and any error that is not a
+/// Gate rejection, is not.
+pub(crate) fn gate_rejection_pends(error: &crate::error::Error) -> bool {
+    matches!(
+        error,
+        crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { outcome, .. })
+            if crate::error::GateDenialOutcome::parse(outcome)
+                == Some(crate::error::GateDenialOutcome::Pending)
+    )
+}
 mod definition_ceiling;
 mod delegation_chain;
 mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
+mod derive_verdict;
 pub(crate) mod dispatch_compliance;
 mod docx_budget;
 mod doors;
@@ -57,6 +72,7 @@ pub(crate) mod fanout_policy;
 mod foreign_agent;
 mod grants;
 mod hosted_tts_policy;
+mod house_grant;
 mod input;
 pub(crate) mod judge_calibration;
 pub(crate) mod mail_policy;
@@ -83,8 +99,25 @@ mod replicated_confirm;
 mod residence_budgets;
 mod resolution;
 mod tracker_limits;
+pub(crate) use self::derive_verdict::{DeriveAllowance, DeriveCapability, derive_verdict_in_txn};
 pub use self::dreamer_grant::DreamerWeaveReach;
-pub(crate) use self::dreamer_grant::{DREAMER_LANDING_ROWS_REF, dreamer_landing_verdict_in_txn};
+// The refusal's type is named only by the integration tests' doors; the
+// engine reads its token where the verdict answers.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::derive_verdict::DeriveRefusal;
+// An ordinary agent's derive rows are written only by the integration
+// tests' doors (untangle 6.7d).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dreamer_grant::body_with_agent_derive_rows;
+// The landing rows' reference names the X02 grant a verdict stood on before
+// the Dreamer held a Steward grant (6.3b); only the lib tests and the
+// regression door (`test_doors::untangle_regressions`) read it here.
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use self::dreamer_grant::DREAMER_LANDING_ROWS_REF;
+pub(crate) use self::dreamer_grant::{
+    DreamerLandingVerdict, body_with_steward_rows, dreamer_landing_verdict_in_txn,
+    dreamer_rows_held,
+};
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
@@ -106,6 +139,10 @@ pub(crate) mod weave_policy;
 mod witness_message;
 pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
+/// The live-run claim put test's gate fixtures, for its integration test doors
+/// (`test_doors::live_run_claim_put`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) mod live_run_claim_put_fixture;
 #[cfg(test)]
 mod tests;
 
@@ -219,6 +256,7 @@ pub(crate) use self::grants::{
     scoped_read_record_allowed, scoped_read_record_allowed_with_scope,
 };
 pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
+pub(crate) use self::house_grant::is_shipped_house_read_row;
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_floor_refusal, consent_gate_reason_codes,

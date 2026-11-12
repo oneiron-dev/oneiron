@@ -19,21 +19,6 @@
 //! [`SandboxBoundaryContract::for_tier`] stays a pure value constructor.
 
 mod adapter;
-#[cfg(target_os = "linux")]
-mod container;
-#[cfg(target_os = "linux")]
-pub use container::{CONTAINER_BACKEND_NAME, ContainerBackend};
-#[cfg(target_os = "linux")]
-#[path = "../firecracker/protocol.rs"]
-mod protocol;
-#[cfg(target_os = "linux")]
-#[path = "../firecracker/snapshot.rs"]
-mod snapshot;
-#[cfg(target_os = "linux")]
-fn refused(detail: impl Into<String>) -> crate::Error {
-    backend::backend_error("isolated-guest", detail)
-}
-
 mod backend;
 mod credential;
 mod handle;
@@ -45,8 +30,9 @@ pub use self::adapter::MicroVmSandboxAdapter;
 #[cfg(any(test, debug_assertions, feature = "microvm-dev"))]
 pub use self::backend::DevProcessBackend;
 pub use self::backend::{
-    DEV_BACKEND_NAME, MicroVmBackend, SandboxBackends, dev_backend_compiled,
-    firecracker_backend_compiled, select_backend_for_session, select_backend_for_tier,
+    DEV_BACKEND_NAME, MicroVmBackend, NoSandboxBackends, SandboxBackends, backend_error,
+    dev_backend_compiled, firecracker_backend_compiled, select_backend_for_session,
+    select_backend_for_tier,
 };
 pub use self::credential::{
     CredentialAllowlist, CredentialDestination, CredentialEgressProxy, CredentialInjection,
@@ -57,8 +43,8 @@ pub use self::handle::{ExecutionBudget, GuestImage, MicroVmExit, MicroVmHandle, 
 pub use self::output::{
     MicroVmOutputBodies, MicroVmOutputSink, MicroVmOutputSpool, MicroVmOutputStreamBodies,
 };
-#[cfg(all(unix, feature = "microvm-firecracker"))]
-pub(in crate::code_sandbox) use self::overlay::reap_overlay_scratch;
+#[cfg(all(unix, any(test, feature = "microvm-firecracker")))]
+pub use self::overlay::reap_overlay_scratch;
 pub use self::overlay::{collect_overlay_writes, prepare_overlay_handle};
 
 #[cfg(test)]

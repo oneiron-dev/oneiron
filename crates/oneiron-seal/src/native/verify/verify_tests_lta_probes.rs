@@ -8,13 +8,14 @@ pub(crate) mod tests {
 
     use super::super::super::{cms, pdf, profile};
     use super::super::verify_dss_core::dss_revision_end;
-    use super::super::verify_sig_pipeline::collect_signatures;
+    use super::super::verify_sig_pipeline::{SigHandler, collect_signatures};
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::verify_tests_time_lta_a::tests::*;
     use crate::api::{
         PadesProfile, PdfSealEngine, SealResourceLimits, SignatureAlgorithm, VerifyCheckKind,
         VerifyCheckStatus, VerifyFindingCode,
     };
+    use crate::memory::testing::{operation_limits, shared_bytes};
 
     /// Catalog body for hand-built revisions: the current catalog plus a
     /// /DSS key. Reads /Pages and /AcroForm from the revision state.
@@ -47,9 +48,17 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        let sigs = collect_signatures(&doc).unwrap();
-        let ts = sigs.iter().find(|e| e.is_doc_ts).unwrap();
+        let sigs = collect_signatures(&doc, &operation_limits()).unwrap();
+        let ts = sigs
+            .iter()
+            .find(|e| e.handler == SigHandler::DocTs)
+            .unwrap();
         (doc, ts.byte_range[2] + ts.byte_range[3])
+    }
+
+    /// [`dss_revision_end`] under one test operation's limits.
+    fn dss_end_of(doc: &Document, bytes: &[u8]) -> Option<u64> {
+        dss_revision_end(doc, bytes, &operation_limits()).unwrap()
     }
 
     pub(crate) fn base_input() -> Vec<u8> {
@@ -72,13 +81,13 @@ pub(crate) mod tests {
         let signer2 = test_ca("span-signer-two");
         let tsa = tsa_ca();
         let b1 = append_sig_revision(&base_input(), &signer, "span-a", Some(&tsa), AT_UNIX);
-        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let state = pdf::reparse_revision(&b1, &operation_limits()).unwrap();
         let m = state.max_obj;
         let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
         let material = profile::DssMaterial {
             certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
             ocsps_der: Vec::new(),
-            crls_der: vec![crl],
+            crls_der: vec![shared_bytes(&crl)],
         };
         // ts object first (m+1), then the DSS material (m+3..=dss_num);
         // m+2 is the /FT /Sig field binding the doc-ts (botfix7 P1: only
@@ -87,7 +96,8 @@ pub(crate) mod tests {
         // doc-ts field's reference — the field must also survive the NEXT
         // production revision's register_field, which rewrites /Fields from
         // the reparsed state (so the new reference must be IN the state).
-        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 3).unwrap();
+        let (mut dss_objs, dss_num) =
+            profile::build_dss_objects(&material, m + 3, &operation_limits()).unwrap();
         let (ts_body, br_rel, lt_rel) = doc_ts_body(64 * 1024);
         let field_body =
             format!("<< /FT /Sig /T (Span-DocTimeStamp) /V {} 0 R >>", m + 1).into_bytes();
@@ -133,7 +143,8 @@ pub(crate) mod tests {
         // every evaluated evidence byte but stop before its own revision's
         // xref/trailer. That is insufficient for archival profile credit:
         // the timestamp must cover its entire structural revision. The
-        // first signer retains only its independently verified B-T rung.
+        // first signer retains only the rung its own signature timestamp and
+        // the material give it, never an archival one.
         let (bytes, anchors, br_end, rev_xref, newest_dss) = span_craft_fixture();
         assert!(
             br_end < rev_xref,
@@ -141,22 +152,27 @@ pub(crate) mod tests {
         );
         let (doc, ts_br_end) = doc_and_ts_br_end(&bytes);
         assert_eq!(ts_br_end, br_end);
-        assert_eq!(dss_revision_end(&doc, &bytes), Some(br_end));
+        assert_eq!(dss_end_of(&doc, &bytes), Some(br_end));
         assert!(newest_dss < br_end);
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
         eprintln!(
             "PROBE-A br_end={br_end} dss_end={:?} rev_xref={rev_xref} newest_dss={newest_dss} -> {:?}",
-            dss_revision_end(&doc, &bytes),
+            dss_end_of(&doc, &bytes),
             report.achieved_profile()
         );
         // The span-crafted timestamp attests the DSS bytes, but ends before
         // its own revision EOF. It cannot own a structural revision, so the
         // modification classifier must not claim Clean. The first signer's
-        // signature timestamp still supports its B-T profile independently.
+        // signature timestamp still supports its own rung independently,
+        // never an archival one. Engine call Q-C = A (10 Nov 07:23; Engine
+        // 08:32 on SEAL-QC-PROBE-A-PROFILE): every covered certificate is a
+        // trust anchor, so the stale CRL their own key signed claims nothing
+        // about the chains (ETSI EN 319 102-1 §5.2.6 checks no trust anchor's
+        // revocation status); the material passes, and that rung is B-LT.
         assert_eq!(report.modifications, crate::api::Modifications::NotRun);
         assert!(!report.valid());
-        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
+        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineLt));
     }
 
     #[test]
@@ -215,26 +231,27 @@ pub(crate) mod tests {
         let signer2 = test_ca("dorm-signer-two");
         let tsa = tsa_ca();
         let b1 = append_sig_revision(&base_input(), &signer, "dorm-a", Some(&tsa), AT_UNIX);
-        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let state = pdf::reparse_revision(&b1, &operation_limits()).unwrap();
         let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
         let material = profile::DssMaterial {
             certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
             ocsps_der: Vec::new(),
-            crls_der: vec![crl],
+            crls_der: vec![shared_bytes(&crl)],
         };
-        let (dss_objs, dss_num) = profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+        let (dss_objs, dss_num) =
+            profile::build_dss_objects(&material, state.max_obj + 1, &operation_limits()).unwrap();
         // Dormant staging: material objects only, no catalog /DSS key.
         let (b2, _) = emit_revision(&b1, &state, &dss_objs, None);
         let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
         // Activation: a post-timestamp catalog update naming the staged DSS.
-        let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
+        let state4 = pdf::reparse_revision(&b3, &operation_limits()).unwrap();
         let cat_body = catalog_body(&state4, Some(dss_num));
         let (b4, written4) = emit_revision(&b3, &state4, &[(state4.root.0, cat_body)], None);
         let cat_offset = written4[0].1;
         let b5 = append_sig_revision(&b4, &signer2, "dorm-b", None, 0);
         let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
         let (doc, ts_br_end) = doc_and_ts_br_end(&b5);
-        let dss_end = dss_revision_end(&doc, &b5).unwrap();
+        let dss_end = dss_end_of(&doc, &b5).unwrap();
         eprintln!(
             "PROBE-B1 ts_br_end={ts_br_end} dss_end={dss_end} activating_catalog@{cat_offset}"
         );
@@ -258,13 +275,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            )
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signers are self-signed trust
+        // anchors, so every covered certificate is an anchor, and a stale CRL
+        // their own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the archival-credit assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     /// Probe B2 (dormant staging, activation by trailer /Root switch): the
@@ -282,15 +300,16 @@ pub(crate) mod tests {
         let signer2 = test_ca("switch-signer-two");
         let tsa = tsa_ca();
         let b1 = append_sig_revision(&base_input(), &signer, "switch-a", Some(&tsa), AT_UNIX);
-        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let state = pdf::reparse_revision(&b1, &operation_limits()).unwrap();
         let m = state.max_obj;
         let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
         let material = profile::DssMaterial {
             certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
             ocsps_der: Vec::new(),
-            crls_der: vec![crl],
+            crls_der: vec![shared_bytes(&crl)],
         };
-        let (mut dss_objs, dss_num) = profile::build_dss_objects(&material, m + 1).unwrap();
+        let (mut dss_objs, dss_num) =
+            profile::build_dss_objects(&material, m + 1, &operation_limits()).unwrap();
         let c2_num = dss_num + 1;
         dss_objs.push((c2_num, catalog_body(&state, Some(dss_num))));
         // Dormant staging: C2 present in bytes, trailer /Root unchanged.
@@ -299,7 +318,7 @@ pub(crate) mod tests {
         let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
         // Activation: trailer /Root switch only (one filler object carries
         // the revision; the doc-ts does not cover this revision).
-        let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
+        let state4 = pdf::reparse_revision(&b3, &operation_limits()).unwrap();
         let filler = state4.max_obj + 1;
         let (b4, _) = emit_revision(
             &b3,
@@ -310,7 +329,7 @@ pub(crate) mod tests {
         let b5 = append_sig_revision(&b4, &signer2, "switch-b", None, 0);
         let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
         let (doc, ts_br_end) = doc_and_ts_br_end(&b5);
-        let dss_end = dss_revision_end(&doc, &b5).unwrap();
+        let dss_end = dss_end_of(&doc, &b5).unwrap();
         eprintln!("PROBE-B2 ts_br_end={ts_br_end} dss_end={dss_end} staged_catalog_c2@{c2_offset}");
         assert!(c2_offset < ts_br_end, "C2 is staged pre-timestamp");
         assert!(dss_end <= ts_br_end, "gate passes over staged objects");
@@ -345,7 +364,7 @@ pub(crate) mod tests {
         let signer2 = test_ca("chain-signer-two");
         let tsa = tsa_ca();
         let b1 = append_sig_revision(&base_input(), &signer, "chain-a", Some(&tsa), AT_UNIX);
-        let state = pdf::reparse_revision(&b1, &SealResourceLimits::default()).unwrap();
+        let state = pdf::reparse_revision(&b1, &operation_limits()).unwrap();
         let m = state.max_obj;
         let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
         let (c1, c2, dss_n, link, hole) = (m + 1, m + 2, m + 3, m + 4, m + 5);
@@ -363,13 +382,13 @@ pub(crate) mod tests {
         let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
         // Plant the terminal CRL stream AFTER the timestamp, overwriting the
         // placeholder: the doc-ts attests "null", the evaluation reads this.
-        let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
+        let state4 = pdf::reparse_revision(&b3, &operation_limits()).unwrap();
         let (b4, written4) = emit_revision(&b3, &state4, &[(hole, stream_body(&crl))], None);
         let planted_offset = written4[0].1;
         let b5 = append_sig_revision(&b4, &signer2, "chain-b", None, 0);
         let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
         let (doc, ts_br_end) = doc_and_ts_br_end(&b5);
-        let dss_end = dss_revision_end(&doc, &b5).unwrap();
+        let dss_end = dss_end_of(&doc, &b5).unwrap();
         eprintln!("PROBE-C ts_br_end={ts_br_end} dss_end={dss_end} planted_crl@{planted_offset}");
         assert!(
             planted_offset >= ts_br_end,
@@ -395,13 +414,14 @@ pub(crate) mod tests {
             .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
-        assert_eq!(
-            (vm.status, vm.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::ValidationMaterialInvalid)
-            )
-        );
+        // Engine call Q-C = A (10 Nov 07:23; Engine 07:54 on
+        // SEAL-QC-ANCHOR-SIGNED-PROBES): the signers are self-signed trust
+        // anchors, so every covered certificate is an anchor, and a stale CRL
+        // their own key signed claims nothing about the chains. ETSI EN 319
+        // 102-1 §5.2.6 checks the revocation status of the certificates the
+        // trust anchor certifies, never of the trust anchor itself. The
+        // material passes; the archival-credit assertions above stand.
+        assert_eq!(vm.status, VerifyCheckStatus::Pass);
     }
 
     #[test]
@@ -410,15 +430,20 @@ pub(crate) mod tests {
         let tsa = tsa_ca();
         let signed = append_sig_revision(&base_input(), &signer, "dss-refs", Some(&tsa), AT_UNIX);
         let engine = verify_engine(vec![signer.cert_der.clone(), tsa.cert_der.clone()], AT_UNIX);
-        for (mode, valid_material) in [("128", true), ("129", false), ("cycle", false)] {
-            let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+        // Rule 5 conversion (072a918f8b6, #3385): a reference chain is
+        // followed whole however long, so the old 128-hop cap is gone and a
+        // 129-hop chain is valid material like the 128-hop one. Only the
+        // cycle, a chain that never ends, still fails.
+        for (mode, valid_material) in [("128", true), ("129", true), ("cycle", false)] {
+            let state = pdf::reparse_revision(&signed, &operation_limits()).unwrap();
             let material = profile::DssMaterial {
                 certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
                 crls_der: vec![],
                 ocsps_der: vec![],
             };
             let (mut objects, dss_num) =
-                profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+                profile::build_dss_objects(&material, state.max_obj + 1, &operation_limits())
+                    .unwrap();
             let first = dss_num + 1;
             let ocsp = build_ocsp(
                 &signer,
@@ -462,16 +487,15 @@ pub(crate) mod tests {
                 .filter(|c| c.kind == VerifyCheckKind::ValidationMaterial)
                 .map(|c| (c.status, c.finding))
                 .collect();
+            // Lead ruling F with its Q3: the cycle makes the OCSP array
+            // malformed presented material, which is discarded. Every covered
+            // certificate here is a trust anchor, so coverage is complete
+            // without it and the material passes; the cycle still grants no
+            // archival authority (below).
             assert!(
-                material.iter().any(|(status, finding)| if valid_material {
-                    *status == VerifyCheckStatus::Pass
-                } else {
-                    (*status, *finding)
-                        == (
-                            VerifyCheckStatus::Fail,
-                            Some(VerifyFindingCode::ValidationMaterialInvalid),
-                        )
-                }),
+                material
+                    .iter()
+                    .any(|(status, _)| *status == VerifyCheckStatus::Pass),
                 "{mode}: {material:?}"
             );
             if valid_material {
@@ -566,7 +590,13 @@ pub(crate) mod tests {
         let doc = dss_doc_flate_crl(std::slice::from_ref(&ca.cert_der), b"not zlib".to_vec());
         let covered = covered_of(&[&ca.cert_der]);
         let checks = dss_check(&doc, &covered);
-        assert_material_fails(&checks);
+        // Lead ruling F (SEAL-SHADOW-ETSI, 10 Nov 06:50; Engine reading
+        // 07:02): forged or unverifiable presented material is NotRun with
+        // the visible sub-indication ValidationMaterialPossibleTampering.
+        assert_material_unresolved(
+            &checks,
+            crate::api::VerifyFindingCode::ValidationMaterialPossibleTampering,
+        );
     }
 
     /// Signature dictionary body with patchable /ByteRange and /Contents,
@@ -624,7 +654,7 @@ pub(crate) mod tests {
     ) -> (Vec<u8>, TestCa) {
         let signer = test_ca(name);
         let input = base_input();
-        let state = pdf::reparse_revision(&input, &SealResourceLimits::default()).unwrap();
+        let state = pdf::reparse_revision(&input, &operation_limits()).unwrap();
         let capacity = 64 * 1024;
         let (body, br_rel, lt_rel) = sig_body_shaped(capacity, typed);
         let sig_num = state.max_obj + 1;
