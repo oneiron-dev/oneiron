@@ -27,4 +27,15 @@ crate::side_table::side_tables! {
     /// first. Empty marker. Key: u64be (occurred_at) + string (receipt id).
     INQUIRY_RECEIPT_BY_TIME: VaultMeta b"inquiry:receipt_by_time:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The member's private link from an opened statement to the claim it was drawn from
+    /// (federation.md #inquiry-scope): it stays in the member's vault, and no Connect export or
+    /// answer reads it. An erase of either claim drops the row (`deletion::derived_rows`). Key:
+    /// id16 (the opened statement claim); value: id16 (the claim it was drawn from).
+    INQUIRY_SCOPE_LINK: VaultMeta b"inquiry:scope_link:v1:" Raw
+        // Restore class: the link follows the image's claims, as the statements it joins do.
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// Every scope link by the claim it was drawn from, written with the link, so an erase of
+    /// that claim finds its links. Empty marker. Key: id16 (drawn from) + id16 (opened).
+    INQUIRY_SCOPE_LINK_BY_SOURCE: VaultMeta b"inquiry:scope_link_by_source:v1:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
 }

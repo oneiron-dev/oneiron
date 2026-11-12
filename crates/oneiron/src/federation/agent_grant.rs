@@ -277,6 +277,7 @@ impl Vault {
             detach_on_member_leave: None,
             verb_classes,
             wallet_ref,
+            inquiry_terms: None,
         };
         // The owner's class rows, read once in this writer when the grant
         // names a class: repo bounds take `read` from a class as from its
