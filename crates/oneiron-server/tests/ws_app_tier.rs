@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used)]
-//! New app-tier socket tests. The upgrade always uses owner credentials;
-//! principal-bearing slips are presented only inside auth.bind.
+//! New app-tier socket tests. An owner-grade upgrade opens full replication
+//! and binds a principal in-band with auth.bind; a principal's own slip opens
+//! a facade socket of calls and subscriptions and never replication
+//! (FIX-LIST 23077, ARCH-0044 T1).
 
 use futures_util::{SinkExt, StreamExt};
 use oneiron::sync::transport::{
@@ -340,12 +342,14 @@ async fn bind_requires_a_signed_verified_slip_then_returns_terminal_reply() {
     assert_eq!(close_code(&mut replay).await, 4008);
 }
 
-#[tokio::test]
-async fn a_principal_slip_never_crosses_the_owner_upgrade_gate() {
-    let fixture = fixture().await;
+/// Upgrades `/ws` with `credential`'s own slip and its holder proof, as a
+/// BYOA agent holds its own socket (ARCH-0044 T1), then sends the hello.
+async fn connect_with_slip(
+    fixture: &Fixture,
+    credential: &Credential,
+) -> Result<Socket, tokio_tungstenite::tungstenite::Error> {
     let mut request = fixture.url.as_str().into_client_request().unwrap();
-    let credential = credential(&fixture);
-    let payload = bind_payload(&credential, now());
+    let payload = bind_payload(credential, now());
     let slip = payload["token"].as_str().unwrap();
     request.headers_mut().insert(
         "x-oneiron-binding",
@@ -354,7 +358,103 @@ async fn a_principal_slip_never_crosses_the_owner_upgrade_gate() {
     request
         .headers_mut()
         .insert("authorization", format!("Bearer {slip}").parse().unwrap());
-    let error = tokio_tungstenite::connect_async(request).await.unwrap_err();
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await?;
+    socket
+        .send(Message::Binary(
+            vec![TAG_PROTOCOL_HELLO, PROTOCOL_VERSION].into(),
+        ))
+        .await
+        .unwrap();
+    Ok(socket)
+}
+
+/// Binds `credential` in-band on `socket` and checks the bind's terminal
+/// reply, which is the first frame a facade socket sends.
+async fn bind(socket: &mut Socket, credential: &Credential, request_id: u64) {
+    send(
+        socket,
+        TAG_RPC,
+        json!({"requestId":request_id,"method":"auth.bind","params":bind_payload(credential, now())}),
+    )
+    .await;
+    assert_eq!(
+        rpc_reply(socket).await,
+        json!({"requestId":request_id,"result":null,"last":true})
+    );
+}
+
+/// The type and id of the next app frame.
+async fn reply_head(socket: &mut Socket) -> (String, u64) {
+    loop {
+        let frame = match next(socket).await {
+            Message::Binary(frame) => frame,
+            Message::Ping(_) | Message::Pong(_) => continue,
+            other => panic!("expected an app frame, got {other:?}"),
+        };
+        assert_eq!(frame[0], TAG_RPC);
+        let envelope: Envelope<serde::de::IgnoredAny> = rmp_serde::from_slice(&frame[1..]).unwrap();
+        return (envelope.kind, envelope.id);
+    }
+}
+
+#[tokio::test]
+async fn a_principal_slip_opens_a_facade_socket_that_serves_no_sync_state() {
+    let fixture = fixture().await;
+    let credential = credential(&fixture);
+    // The principal's own slip opens a socket (FIX-LIST 23077). No root
+    // snapshot is sent: the first frame is the bind's own reply.
+    let mut socket = connect_with_slip(&fixture, &credential).await.unwrap();
+    bind(&mut socket, &credential, 5).await;
+    // The bound slip's calls are answered.
+    send(
+        &mut socket,
+        TAG_RPC,
+        json!({"requestId":7,"method":"ping","params":{"n":1}}),
+    )
+    .await;
+    assert_eq!(reply_head(&mut socket).await, ("ping".to_owned(), 7));
+    // A sync frame is the owner's replication, never served here.
+    let mut vv = vec![TAG_VERSION_VECTOR];
+    vv.extend_from_slice(&loro::VersionVector::default().encode());
+    socket.send(Message::Binary(vv.into())).await.unwrap();
+    assert_eq!(close_code(&mut socket).await, 4003);
+    // A residence call serves the owner's machines: closed before it runs.
+    let mut residence = connect_with_slip(&fixture, &credential).await.unwrap();
+    bind(&mut residence, &credential, 5).await;
+    send(
+        &mut residence,
+        TAG_RPC,
+        json!({"requestId":8,"method":"residence.claim.vector","params":{}}),
+    )
+    .await;
+    assert_eq!(close_code(&mut residence).await, 4008);
+}
+
+#[tokio::test]
+async fn a_facade_socket_closes_once_its_slip_is_revoked_and_the_slip_opens_no_other() {
+    let fixture = fixture().await;
+    let credential = credential(&fixture);
+    let mut socket = connect_with_slip(&fixture, &credential).await.unwrap();
+    bind(&mut socket, &credential, 5).await;
+    fixture
+        .server
+        .vault()
+        .revoke_capability_slip(
+            &oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap(),
+            credential.slip.claims.slip_id,
+        )
+        .unwrap();
+    // The grant is asked again at the next use: the call is refused and the
+    // socket closes.
+    send(
+        &mut socket,
+        TAG_RPC,
+        json!({"requestId":7,"method":"ping","params":{"n":1}}),
+    )
+    .await;
+    assert_eq!(close_code(&mut socket).await, 4008);
+    // The revoked slip opens no further socket.
+    let error = connect_with_slip(&fixture, &credential).await.unwrap_err();
     assert!(
         matches!(error, tokio_tungstenite::tungstenite::Error::Http(response) if response.status() == 401)
     );
