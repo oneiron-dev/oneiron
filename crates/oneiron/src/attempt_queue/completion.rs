@@ -4,8 +4,9 @@ use crate::error::Result;
 
 use super::encoding::decode_record;
 use super::engine::AttemptQueue;
+use super::lifecycle::{PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit};
 use super::telemetry::invalid_transition;
-use super::types::{AttemptRecord, AttemptState, CompleteAttempt, CompleteOutcome};
+use super::types::{AttemptRecord, CompleteAttempt, CompleteOutcome};
 use super::validate::{validate_lease_owner, validate_transition_lease};
 
 impl AttemptQueue<'_> {
@@ -23,9 +24,9 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("complete", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
-            AttemptState::Leased => {
+        match RunLifecycle::step(RunRow::of(&record), RunEvent::Complete) {
+            RunStep::Replay => Ok(CompleteOutcome::AlreadyCompleted(record)),
+            RunStep::Move { .. } => {
                 validate_lease_owner(&input.lease_owner)?;
                 validate_transition_lease(
                     &record,
@@ -33,28 +34,23 @@ impl AttemptQueue<'_> {
                     input.attempt_count,
                     "complete",
                 )?;
-                record.state = AttemptState::Completed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = None;
-                record.updated_at = input.now;
-                record.settled_at = Some(input.now);
-                self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                let encoded = self.encode_in_txn(wtxn, &mut record)?;
-                self.store
-                    .attempt_records
-                    .put(wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
+                let _ = RunLifecycle::complete(&mut record, input.now);
+                self.commit_terminal_in_txn(
                     wtxn,
-                    &record,
-                    &input.lease_owner,
+                    &mut record,
+                    TerminalCommit {
+                        last_error: None,
+                        now: input.now,
+                        receipt_actor: PackReceiptActor::Caller(&input.lease_owner),
+                    },
                 )?;
                 crate::dreamer_wake::apply_projection_in_txn(self.store, wtxn, &record)?;
                 self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(CompleteOutcome::Completed(record))
             }
-            state => Err(invalid_transition("complete", state.as_str())),
+            RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                Err(invalid_transition("complete", record.state.as_str()))
+            }
         }
     }
 }

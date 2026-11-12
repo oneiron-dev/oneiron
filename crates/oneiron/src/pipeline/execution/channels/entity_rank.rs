@@ -20,6 +20,33 @@ pub(super) struct MatchReading {
     pub(super) every_kind: bool,
 }
 
+/// Whether the query matched `id` itself: a text, vector, phonetic, HyDE or
+/// media channel scored it, or the temporal channel scored it on a window
+/// the query or the host named (`temporal_is_query`). Graph mass, recency
+/// and the effort's now anchor are no match. The ranker below and the
+/// pack's slot accounting read this one test.
+pub(super) fn direct_query_match(
+    components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    id: &EntityId,
+    temporal_is_query: bool,
+) -> bool {
+    components.get(id).is_some_and(|parts| {
+        parts.iter().any(|part| {
+            part.score > 0.0
+                && match part.signal {
+                    RetrievalSignal::Text
+                    | RetrievalSignal::Vector
+                    | RetrievalSignal::Phonetic
+                    | RetrievalSignal::Hyde
+                    | RetrievalSignal::HydeRetry
+                    | RetrievalSignal::MediaVector => true,
+                    RetrievalSignal::Temporal => temporal_is_query,
+                    _ => false,
+                }
+        })
+    })
+}
+
 /// Moves each row the query did not match itself to just after the last row
 /// it did match, keeping their order, and caps their scores below the
 /// weakest match so a later sort keeps them there. The query matched a row
@@ -50,23 +77,7 @@ pub(super) fn rank_unmatched_below_matches(
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
 ) -> Result<()> {
-    let direct = |id: &EntityId| {
-        components.get(id).is_some_and(|parts| {
-            parts.iter().any(|part| {
-                part.score > 0.0
-                    && match part.signal {
-                        RetrievalSignal::Text
-                        | RetrievalSignal::Vector
-                        | RetrievalSignal::Phonetic
-                        | RetrievalSignal::Hyde
-                        | RetrievalSignal::HydeRetry
-                        | RetrievalSignal::MediaVector => true,
-                        RetrievalSignal::Temporal => reading.temporal_is_query,
-                        _ => false,
-                    }
-            })
-        })
-    };
+    let direct = |id: &EntityId| direct_query_match(components, id, reading.temporal_is_query);
     let Some(last_match) = scores.iter().rposition(|hit| direct(&hit.id)) else {
         return Ok(());
     };

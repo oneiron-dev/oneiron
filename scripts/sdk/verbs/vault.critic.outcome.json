@@ -1,0 +1,19 @@
+{
+  "name": "vault.critic.outcome",
+  "description": "Records the anchored outcome of one critique of a persisted review: the owner's verdict, or a completed directed seal recheck the engine reads, named by an agent on a Grant listing this verb for a review it wrote.",
+  "refs": [
+    "/target_ref"
+  ],
+  "input": "crate::critic::review::CriticOutcomeSubmit",
+  "output": "crate::critic::review::CriticOutcomeView",
+  "call": "crate::critic::review::critic_outcome(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true,
+    "readable": [
+      "target_ref"
+    ]
+  },
+  "section": false,
+  "act_class": "reversible_work"
+}

@@ -22,7 +22,7 @@
 //! table's own key type and codec, checks the record and carriers it names, and
 //! restores it in the import's write transaction once the entities are in:
 //! records first, then indexes, then heads. An identical live row is unchanged;
-//! any other refuses the import.
+//! any other refuses the import, except the destination-local LFS boundary seed.
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
@@ -1010,8 +1010,8 @@ pub(crate) fn validate_side_rows<R: Read + Seek>(
 /// the order the import's row index keeps them (FIX 3678), one at a time.
 /// A row whose record or carrier is not live here refuses the import; an
 /// identical live row is unchanged, and any other live row under its key
-/// refuses the import, never overwritten. Returns the rows written and those
-/// already here.
+/// refuses the import, never overwritten. A valid destination LFS boundary seed
+/// is kept and counted unchanged. Returns the rows written and those already here.
 pub(crate) fn restore_side_rows_in_txn<R: Read + Seek>(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -1042,6 +1042,19 @@ pub(crate) fn restore_side_rows_in_txn<R: Read + Seek>(
         let stored = table.stored(store, wtxn, &row.key)?;
         let collides = || invalid("side row collides with a different stored row");
         let restore = match row.family {
+            // The LFS boundary seed is a destination setting; stored chunk ids
+            // hash chunk bytes, not this seed.
+            ArchiveSideFamily::LfsCdc => match stored {
+                Some(live)
+                    if table.canonical(&row.key, &live)
+                        && <[u8; 8]>::try_from(live.as_slice())
+                            .is_ok_and(|bytes| u64::from_le_bytes(bytes) != 0) =>
+                {
+                    None
+                }
+                Some(_) => return Err(collides()),
+                None => Some(Cow::Borrowed(row.value.as_slice())),
+            },
             // A revision's author this vault erased never lands, and a twin
             // equal but for attribution is unchanged (FIX 6258).
             ArchiveSideFamily::CodeRevisionRecord | ArchiveSideFamily::CodeRevisionProposal => {

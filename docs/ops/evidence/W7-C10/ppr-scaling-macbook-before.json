@@ -3,7 +3,7 @@
   "host": {
     "os": "macos",
     "arch": "aarch64",
-    "hostname": "Oletybook.local",
+    "hostname": "macbook.local",
     "kernel": "27.0.0",
     "cpu": "Apple M4 Max",
     "logical_cpus": 16,

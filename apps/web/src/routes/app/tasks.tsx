@@ -38,7 +38,7 @@ type Task = {
   doors: Door[]
 }
 
-const HUMANS: Record<'o' | 'y', string> = { o: 'oleksii', y: 'yurii' }
+const HUMANS: Record<'o' | 'y', string> = { o: 'owen', y: 'yuki' }
 const AGENTS: Record<'eiri' | 'tory' | 'antevon', { name: string; tip: string }> = {
   eiri: { name: 'Eiri', tip: 'Eiri · outbound · every send waits for your click' },
   tory: { name: 'Tory', tip: 'Tory · research' },
@@ -181,7 +181,7 @@ const FIXTURES: Task[] = [
     due: 'fri',
     dueTip: 'due Friday, Aug 21',
     doneTs: 0,
-    why: 'Yurii owns the COO thread on LinkedIn. The deck follows his DM from today.',
+    why: 'Yuki owns the COO thread on LinkedIn. The deck follows his DM from today.',
     doors: [
       { label: 'the thread', to: '/app/threads', tip: 'linkedin · Hokuei COO · the whole thread' },
       { label: 'open the org', to: '/app/orgs', tip: 'Hokuei · the org dossier' },
@@ -226,7 +226,7 @@ const FIXTURES: Task[] = [
     due: 'aug 25',
     dueTip: 'due Tuesday, Aug 25',
     doneTs: 0,
-    why: 'Yurii met their procurement lead in July. A quiet check-in keeps the door open.',
+    why: 'Yuki met their procurement lead in July. A quiet check-in keeps the door open.',
     doors: [{ label: 'open the org', to: '/app/orgs', tip: 'Kanto Logistics · the org dossier' }],
   },
   /* done */
@@ -262,7 +262,7 @@ const FIXTURES: Task[] = [
     dueTip: 'was due today',
     doneAt: '14:02',
     doneTs: 2,
-    why: "Sent from Yurii's account under the outreach grant. Verified in the thread.",
+    why: "Sent from Yuki's account under the outreach grant. Verified in the thread.",
     doors: [{ label: 'the thread', to: '/app/threads', tip: 'linkedin · Hokuei COO' }],
   },
   {
@@ -284,7 +284,7 @@ const FIXTURES: Task[] = [
   },
   {
     id: 'd4',
-    title: 'Approve the LinkedIn grant for Yurii',
+    title: 'Approve the LinkedIn grant for Yuki',
     org: 'Hokuei',
     who: 'o',
     group: 'today',
@@ -293,7 +293,7 @@ const FIXTURES: Task[] = [
     dueTip: 'was due Aug 14',
     doneAt: 'aug 14',
     doneTs: 0,
-    why: 'A scoped, budgeted grant so Yurii can reach the Hokuei COO. It expires in 30 days.',
+    why: 'A scoped, budgeted grant so Yuki can reach the Hokuei COO. It expires in 30 days.',
     doors: [{ label: 'the grant', to: '/settings/grants', tip: 'linkedin grant · scope, budget, expiry' }],
   },
 ]

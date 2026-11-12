@@ -65,6 +65,9 @@ fn fixture() -> (
         std::time::Duration::from_millis(oneiron::memory::caps::MAX_RECALL_DEADLINE_MS);
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     let mut runtime = RuntimeConfig::default();
+    runtime.role_defaults.summarizer.mode = crate::runtime::RuntimeMode::OneironCloud;
+    runtime.role_defaults.summarizer.provider_kind =
+        crate::runtime::RuntimeProviderKind::OneironCloud;
     runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
     let (send, calls) = mpsc::unbounded_channel();
     let budget = BudgetGuard::with_reserve_units(
@@ -83,6 +86,9 @@ fn fixture() -> (
             voice_session_ref: None,
         }),
         shutdown: ManagedShutdown::new(),
+        speculative_auth: None,
+        phone: None,
+        owner_policy: oneiron::policy_model::PolicyModelConfig::default(),
     }).unwrap();
     (dir, vault, host, budget, calls)
 }
@@ -96,10 +102,13 @@ fn response(value: serde_json::Value) -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: value.to_string(),
+                signature: None,
             }],
         },
         usage,
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -141,7 +150,7 @@ async fn real_admission_exact_bounded_request_empty_signature_and_no_locks_acros
         assert_eq!(call.request.params["max_output_tokens"], json!(512));
         assert!(call.request.tools.is_empty());
         assert!(call.request.provider_options.is_empty());
-        let ContentPart::Text { text: input } = &call.request.messages[1].content[0] else {
+        let ContentPart::Text { text: input, .. } = &call.request.messages[1].content[0] else {
             panic!("text input")
         };
         assert_eq!(
@@ -197,7 +206,7 @@ async fn later_revision_prepared_while_backend_waits_rejects_old_result_before_e
     );
     let (result, ()) = tokio::join!(newer.take().unwrap().run(), async {
         let call = calls.recv().await.unwrap();
-        let ContentPart::Text { text } = &call.request.messages[1].content[0] else {
+        let ContentPart::Text { text, .. } = &call.request.messages[1].content[0] else {
             panic!("input")
         };
         assert_eq!(

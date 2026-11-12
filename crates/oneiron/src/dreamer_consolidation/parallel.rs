@@ -173,6 +173,8 @@ impl ConsolidationExecutor<'_> {
             subject,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
+            wake_pass_bound: true,
         };
         let call = self.role(DREAMER_EXTRACTION_ROLE);
         let rules = failure_rules::load(ctx.vault)?;
@@ -292,6 +294,7 @@ impl ConsolidationExecutor<'_> {
         // without cancelling or paying again for completed siblings.
         let mut replies = Vec::new();
         let mut refused = None;
+        let mut budget_refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
         for (
@@ -314,6 +317,9 @@ impl ConsolidationExecutor<'_> {
                 SliceFate::Refused(reason) => {
                     refused.get_or_insert(reason);
                 }
+                SliceFate::BudgetRefused { reason, refusal } => {
+                    budget_refused.get_or_insert((reason, refusal));
+                }
             }
         }
         if trapped {
@@ -321,6 +327,10 @@ impl ConsolidationExecutor<'_> {
         }
         if checkpoint || ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
+        }
+        // A refusal for good ends the try, before a reply a retry may fix.
+        if let Some((reason, refusal)) = budget_refused {
+            return Ok(PartitionRun::BudgetRefused { reason, refusal });
         }
         if let Some(reason) = refused {
             return Ok(PartitionRun::Refused { reason });
@@ -404,6 +414,8 @@ impl ConsolidationExecutor<'_> {
             subject,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
+            wake_pass_bound: true,
         };
         let corrections_started = Instant::now();
         let decided = self
@@ -426,11 +438,7 @@ impl ConsolidationExecutor<'_> {
                     reason: format!("correction read refused: {}", errors.join("; ")),
                 });
             }
-            Err(error) => {
-                return Ok(PartitionRun::Refused {
-                    reason: error.to_string(),
-                });
-            }
+            Err(error) => return Ok(PartitionRun::refused_by(error)),
         };
         if ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);

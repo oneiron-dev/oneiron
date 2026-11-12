@@ -15,15 +15,20 @@ fn reply_with_cache(
     params: Value,
     cache: &mut Option<ResidenceIndexCache>,
 ) -> Value {
+    // An unproved peer keeps the device's unknown-destination set (OF-534 G6);
+    // no append or touch is staged across calls.
     let answer = run(
         server,
         auth,
+        PeerMachine::Unknown,
         RpcRequest {
             request_id: 7,
             method: method.into(),
             params,
         },
         cache,
+        &mut None,
+        &mut None,
     )
     .unwrap();
     test_wire::reply(&answer.queued(0))
@@ -301,7 +306,14 @@ pub(crate) async fn cross_the_index(
             "window": window.as_str(), "selector": encoded, "limit": 1,
             "after": after, "revision": revision,
         });
-        match index(&server, &auth, params, &mut cache, budgets) {
+        match index(
+            &server,
+            &auth,
+            PeerMachine::Unknown,
+            params,
+            &mut cache,
+            budgets,
+        ) {
             Ok((page, _)) => {
                 after = page["nextCursor"].clone();
                 revision = page["revision"].clone();

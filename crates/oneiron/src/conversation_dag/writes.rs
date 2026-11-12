@@ -551,14 +551,19 @@ fn append_at_in_txn(
             CANONICAL.put(&vault.store, txn, &parent, &id)?;
         }
     }
-    Ok(AppendedRecord {
+    let appended = AppendedRecord {
         id,
         head: if input.advance { Some(id) } else { old_head },
         parent: input.parent,
         kind: ENTITY_TYPE_TURN,
         containing_turn: None,
         reply_target: target,
-    })
+    };
+    // THREAD-TASK-EVERY-ROOM: every TURN, trunk or thread, in any room,
+    // keeps its room row and stages its wakes in this write, as a witness
+    // turn does.
+    crate::workspace_roster::record_native_room_turn_in_txn(vault, txn, input, &appended)?;
+    Ok(appended)
 }
 
 /// Puts the door-built TURN `body` at `id` as an audience edit of the
@@ -645,7 +650,23 @@ impl Vault {
             policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
             Ok(append_in_txn(self, txn, input, None, false)?)
         });
-        policy::settle_append(writer, policy::APPEND_ROW, input, appended)
+        let appended = policy::settle_append(writer, policy::APPEND_ROW, input, appended)?;
+        // A MESSAGE its TURN's room row now lists reaches the room's live
+        // window after commit (THREAD-TASK-ONE-SURFACE): the commit mirrors
+        // the MESSAGE, not the row of the TURN it joined.
+        #[cfg(feature = "sync")]
+        if let Some(turn) = appended.containing_turn
+            && self
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)
+                .and_then(|rtxn| crate::workspace_roster::replicated_turn_in(self, &rtxn, turn))
+                .is_ok_and(|row| row.is_some())
+        {
+            self.refresh_room_turn_in_live_window(&turn);
+        }
+        Ok(appended)
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.

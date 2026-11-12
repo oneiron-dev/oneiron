@@ -184,6 +184,9 @@ pub(super) fn append_message_in_txn(
         batch = batch.text(&id, &[("content", envelope.content)]);
     }
     batch.apply(txn)?;
+    // A TURN that keeps a room row lists the MESSAGE there too
+    // (THREAD-TASK-ONE-SURFACE).
+    crate::workspace_roster::record_room_message_in_txn(vault, txn, turn, id)?;
     // The TURN's words changed: new work for consolidation and the sieve.
     crate::dreamer_consolidation::redirty::redirty_turn_in_txn(vault, txn, &turn)?;
     Ok(AppendedRecord {

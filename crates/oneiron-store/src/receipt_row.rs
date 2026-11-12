@@ -148,6 +148,19 @@ pub enum ReceiptKind {
     /// transaction to its own store; the vault owner's override and the
     /// engine's internal resumes alike.
     RunHoldOverride,
+    /// One transition of a pending check-in (ARCH-0082 #ladder and #waits;
+    /// ROLES-CHECKIN P2.2): opened, climbed, skipped, extended, answered, let
+    /// go, held, proceeded with an undo, window passed or objection held. It
+    /// names the pending check-in, its act class, the rung, the holders and
+    /// the wait with its source, written in the transition's own transaction
+    /// to its own store.
+    CheckIn,
+    /// One send of an inquiry, on the asking vault (federation.md #inquiry,
+    /// INQUIRE-1): the asker, the task, the question, the time and the
+    /// outcome (answered, no_answer, pending or unavailable), never answer
+    /// text. Written in the send's own transaction to its own store, whatever
+    /// the vault's `inquiry_keep`.
+    Inquiry,
 }
 
 impl ReceiptKind {
@@ -169,6 +182,8 @@ impl ReceiptKind {
             Self::ReferenceRefusal => "reference_refusal",
             Self::TaskLifecycle => "task_lifecycle",
             Self::RunHoldOverride => "run_hold_override",
+            Self::CheckIn => "check_in",
+            Self::Inquiry => "inquiry",
         }
     }
 
@@ -190,6 +205,8 @@ impl ReceiptKind {
             "reference_refusal" => Some(Self::ReferenceRefusal),
             "task_lifecycle" => Some(Self::TaskLifecycle),
             "run_hold_override" => Some(Self::RunHoldOverride),
+            "check_in" => Some(Self::CheckIn),
+            "inquiry" => Some(Self::Inquiry),
             _ => None,
         }
     }

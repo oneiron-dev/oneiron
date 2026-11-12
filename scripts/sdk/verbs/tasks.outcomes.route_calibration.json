@@ -7,6 +7,7 @@
   "mcp_served_output": "output.derived_from.iter().copied()",
   "call": "memory.tasks_ask_route_calibration(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

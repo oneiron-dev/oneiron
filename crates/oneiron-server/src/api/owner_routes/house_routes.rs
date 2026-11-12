@@ -38,6 +38,11 @@ pub(super) fn owner_table() -> OwnerTable {
 struct FinishWorkspace {
     /// The stored workspace whose house leads the root.
     workspace_ref: String,
+    /// The role the house runs its org in: `member`, `steward`, `admin`,
+    /// `deputy` or `owner`. Absent, the host's `house_role` config; with
+    /// neither, `deputy`.
+    #[serde(default)]
+    role: Option<String>,
 }
 
 /// The OpenAPI schema of `POST /v1/owner/workspace/finish`'s body
@@ -61,6 +66,14 @@ async fn finish(
 ) -> OwnerReply<()> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
-    blocking(move || house::finish_workspace(&server, &owner, &request.workspace_ref)).await?;
+    blocking(move || {
+        house::finish_workspace(
+            &server,
+            &owner,
+            &request.workspace_ref,
+            request.role.as_deref(),
+        )
+    })
+    .await?;
     Ok(Json(()))
 }

@@ -9,6 +9,7 @@
 //! (checkpoint-in-append). Control flow re-runs on resume; side effects are
 //! memoized — never bit-replayed.
 
+mod budget_wait;
 mod codec;
 // FIX 4465 B: a self-written compaction's calls, filed in this family on
 // their run's captured route (an `ExecutorStorage` method, no export).
@@ -47,6 +48,11 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
+pub(crate) use self::budget_wait::{
+    wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
+    wake_resident_share_traps_in_txn,
+};
+
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
 pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};
@@ -73,7 +79,7 @@ pub use self::types::{
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
     DurableStepContext, DurableStepError, DurableStepResult, ReplyCheck, StepOutcome,
-    StepProgression, TrapRef,
+    StepProgression, StepSpendScope, TrapRef,
 };
 
 pub(crate) use self::step_only::{

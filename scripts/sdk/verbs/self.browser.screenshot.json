@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserScreenshotOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.screenshot(input)?)",
   "scope": "Read",
+  "act_class": "read",
   "context": "browser",
   "mcp": "none",
   "section": false,

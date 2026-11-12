@@ -430,7 +430,7 @@ impl Vault {
     /// Whether base agent `agent`'s MACHINE binding is Active on a roster
     /// key that is not revoked, in `txn`: the live delegation its grant is
     /// held to.
-    pub(super) fn system_agent_binding_live_in(
+    pub(crate) fn system_agent_binding_live_in(
         &self,
         txn: &heed::RoTxn<'_>,
         agent: EntityId,
@@ -778,6 +778,7 @@ impl Vault {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 steward: true,
+                working_view_bounds: None,
             },
         )?;
         Ok(id)

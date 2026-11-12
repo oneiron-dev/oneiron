@@ -16,9 +16,10 @@ mod evidence_spans;
 mod policy_preflight;
 mod run_reader;
 mod settings_doors;
-mod skill_reader;
+pub(crate) mod skill_reader;
 mod snapshot;
 mod source_version;
+mod strength_observations;
 pub(crate) mod tables;
 
 pub use evidence_spans::{
@@ -31,7 +32,8 @@ pub use policy_preflight::{
     PolicyPreflightRequest, policy_preflight, validate_policy_preflight,
 };
 pub use run_reader::{
-    checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
+    checkpoint_as_reader, checkpoint_embedded, reply_evidence_as_reader, reply_evidence_embedded,
+    settled_step_as_reader, settled_step_embedded,
 };
 pub(crate) use run_reader::{is_attempt_actor_in_txn, is_steward_in_txn, not_the_callers};
 pub use settings_doors::{
@@ -47,6 +49,13 @@ pub use snapshot::{
     SnapshotPageRequest, SnapshotRow, snapshot_open, snapshot_page, validate_snapshot_open,
 };
 pub use source_version::{SourceVersion, SourceVersionCheck};
+pub use strength_observations::{
+    ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource, StrengthObservationsPage,
+    StrengthObservationsPageRequest, strength_observations_page,
+};
+pub(crate) use strength_observations::{
+    classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
+};
 // The integration tests' doors name a cited source's version as a caller's
 // read serves it (untangle 6.7a).
 #[cfg(oneiron_test_support)]

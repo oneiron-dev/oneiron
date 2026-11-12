@@ -4,7 +4,7 @@
 //! A person is a PERSON entity, and its handle is the PERSON's own vault
 //! short id. An agent is a person through its `actor.subject_ref` anchor; a
 //! definition with no subject gets its own model PERSON when it is defined
-//! ([`ensure_agent_person`]). The cached prefix holds a budgeted `people`
+//! ([`ensure_agent_person_in_txn`]). The cached prefix holds a budgeted `people`
 //! roster per vault; the live board names persons by handle, and a handle the
 //! reader's cached roster does not hold carries its name inline.
 
@@ -68,7 +68,8 @@ pub struct PersonRow {
     pub name: String,
     pub kind: PersonKind,
     /// `owner`, `member` or `contact` for a human; `preset` or `custom` for
-    /// an agent.
+    /// an agent, and for a house mind that runs an org its link, `runs <org>
+    /// as <role>` (HOUSE-BIND = A).
     pub role: String,
     /// One line for the reader's sensitivity band, when the about job has
     /// written one.
@@ -164,6 +165,8 @@ impl People {
                 }
             }
         }
+        // A house that runs an org reads its link as its role (HOUSE-BIND = A).
+        let house_roles = crate::workspace_roster::house_role_lines_in_txn(vault, &rtxn)?;
         // Every read below the roster's own transaction opens its own, so the
         // census is taken first and the reader's read runs after it closes.
         let mut found = Vec::new();
@@ -209,12 +212,11 @@ impl People {
                         .unwrap_or_else(|| def.agent_id.clone()),
                     handle,
                     kind: PersonKind::Agent,
-                    role: if def.logical_id.is_some() {
-                        "preset"
-                    } else {
-                        "custom"
-                    }
-                    .to_owned(),
+                    role: match house_roles.get(agent) {
+                        Some(runs) => runs.clone(),
+                        None if def.logical_id.is_some() => "preset".to_owned(),
+                        None => "custom".to_owned(),
+                    },
                     about: None,
                 },
                 Some(_) => person_row_without_definition(vault, at, person, handle, &body),
@@ -470,24 +472,10 @@ impl<'a> PeopleView<'a> {
 
 /// Every agent is a person: a definition with no subject gets its own model
 /// PERSON, named for it, and the anchor to it, written by the agent itself in
-/// one transaction. The PERSON id derives from the agent's, so a rerun finds
-/// the same person. Upkeep agents are not people and get none.
-pub(crate) fn ensure_agent_person(
-    vault: &Vault,
-    agent: EntityId,
-    name: &str,
-    at: u64,
-) -> Result<()> {
-    if crate::dreamer_runner::authority::is_base_agent_actor(&agent)? {
-        return Ok(());
-    }
-    let mut txn = vault.store.env.write_txn()?;
-    ensure_agent_person_in_txn(vault, &mut txn, agent, name, at)?;
-    txn.commit()?;
-    Ok(())
-}
-
-/// [`ensure_agent_person`] in the caller's writer, which owns commit.
+/// the caller's writer, which owns commit: the writer that stores the
+/// definition, so a person that cannot be built leaves no definition behind.
+/// The PERSON id derives from the agent's, so a rerun finds the same person.
+/// Upkeep agents are not people and get none.
 pub(crate) fn ensure_agent_person_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -533,7 +521,7 @@ pub(crate) fn seeded_agent_person_ids(agent: EntityId) -> Result<(EntityId, Enti
 }
 
 /// The model PERSON `agent` is born with, its own person on the PEOPLE
-/// board ([`ensure_agent_person`], and a seeded agent's): it derives from
+/// board ([`ensure_agent_person_in_txn`], and a seeded agent's): it derives from
 /// the agent's id, so every device names the same one.
 pub(crate) fn agent_person_id(agent: EntityId) -> Result<EntityId> {
     EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])

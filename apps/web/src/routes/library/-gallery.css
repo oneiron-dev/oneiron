@@ -408,8 +408,9 @@
   margin-top: 10px;
 }
 
-.lib-pin-mark {
-  display: inline-grid;
+/* Bare cards one under the other. */
+.lib-cards-bare {
+  gap: 28px;
 }
 
 /* A block with an information mark: a raised card, the column's width. */
@@ -761,6 +762,27 @@
   color: var(--sl-ink-2);
 }
 
+/* A room at a set width (given inline): its head line, then the view its
+   tab selects, on the island tone. */
+.lib-room-root {
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+.lib-room-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 150px;
+  padding: 22px 28px 20px;
+  background: var(--sl-island);
+}
+
+.lib-room-caption {
+  max-width: 640px;
+}
+
 /* The companion's room: the head, the messages ending at the bottom, the
    write box at the foot. Messages sit flush with the head: the rows'
    own padding hangs into the margin. */
@@ -845,4 +867,151 @@
   .lib-crew-pop {
     width: 320px;
   }
+}
+
+
+/* ── the new parts in the island ──────────────────────────────────────── */
+
+/* A stage at the width of a sign-in sheet's column. */
+.lib-tone-stage {
+  width: 350px;
+}
+
+.lib-provider-disc {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--sl-ink-4);
+}
+
+/* A list pane's width: 340 px less its 16 px sides. */
+.lib-outline-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 308px;
+}
+
+.lib-vault-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 560px;
+}
+
+.lib-vault-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -10px;
+  padding: 0;
+  list-style: none;
+}
+
+/* ── a place and its panes ────────────────────────────────────────────── */
+
+.lib-place-caption {
+  max-width: 760px;
+}
+
+/* A list pane: the head, then the list, inside the pane's 16 px sides. */
+.lib-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 16px;
+}
+
+.lib-list-pane > .sl-split-head {
+  padding: 0 2px 4px 8px;
+}
+
+.lib-list-pane > .sl-split-head .sl-split-head-title {
+  font-weight: 600;
+}
+
+.lib-thing-origin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+/* ── outside a vault ──────────────────────────────────────────────────── */
+
+.lib-outside-root {
+  width: 1440px;
+  height: 900px;
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+.lib-sign-in {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lib-sign-in-or {
+  margin-top: 8px;
+}
+
+.lib-sign-in-email {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.lib-wide-button.sl-primary-button {
+  width: 100%;
+  height: 44px;
+  font-size: var(--sl-t-say);
+}
+
+.lib-sign-in-passkey {
+  align-self: center;
+  margin-top: 6px;
+}
+
+.lib-vaults-title {
+  margin-bottom: 12px;
+  font-size: var(--sl-t-place);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--sl-ink-1);
+}
+
+.lib-vault-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  padding: 12px 10px 4px 26px;
+}
+
+.lib-vaults-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 14px;
+  box-shadow: 0 -1px 0 var(--sl-rule);
+}
+
+.lib-vaults-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-1);
+}
+
+.lib-vaults-verbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
 }

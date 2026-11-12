@@ -251,6 +251,7 @@ pub(super) fn settle(
                 lease_owner: LEASE_OWNER.to_owned(),
                 attempt_count: attempt.attempt_count,
                 reason: format!("{facet} failed: {:?}", error.kind()),
+                budget_refusal: None,
                 now,
             })?;
         }

@@ -40,6 +40,7 @@ mod adopted_fold;
 mod agent_grant_act;
 mod agent_grant_bound;
 mod agent_principal;
+mod agent_slips;
 mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
@@ -445,6 +446,7 @@ pub(crate) use act_standing::{
 pub(crate) use adopted_evidence::{adopted_evidence_in_txn, carried_residence_rows_in_txn};
 pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
+pub(crate) use agent_slips::{AgentSlipStanding, LiveAgentSlip};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
     AdoptedImageCacheEntry, adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
@@ -512,7 +514,7 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history,
+    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, machine_claim_needs_history,
     machine_claim_needs_history_observing, machine_claim_read_admitted,
     machine_claim_signer_bound_in_txn, machine_history_authority_descends,
     machine_history_authority_descends_with_image, machine_history_host_context,

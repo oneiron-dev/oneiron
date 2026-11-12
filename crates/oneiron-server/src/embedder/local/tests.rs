@@ -611,8 +611,10 @@ fn a_bulk_forward_gets_its_layer_under_steady_query_traffic() {
             let _turn = turns.take(Priority::Bulk);
             bulk_ran.store(true, Ordering::SeqCst);
         });
+        // Waiters hold the tickets between head and next (#5458).
         wait_for("the bulk forward to wait", || {
-            turns.state().bulk_waiting == 1
+            let state = turns.state();
+            state.bulk_next.wrapping_sub(state.bulk_head) == 1
         });
         let mut queries = 0;
         while !bulk_ran.load(Ordering::SeqCst) {
@@ -622,7 +624,8 @@ fn a_bulk_forward_gets_its_layer_under_steady_query_traffic() {
             );
             let next = scope.spawn(|| turns.take(Priority::Query));
             wait_for("the next query to wait", || {
-                turns.state().queries_waiting == 1
+                let state = turns.state();
+                state.query_next.wrapping_sub(state.query_head) == 1
             });
             drop(running);
             running = next.join().expect("query thread");
@@ -765,7 +768,8 @@ mod with_model {
     fn the_committed_subset_matches_the_reference_runtime() {
         let embedder = LocalEmbedder::load(&harrier_config(EmbedderDevice::Auto), &manager())
             .expect("model loads");
-        let measured = embedder
+        // The vectors; the per-item encoder input counts are not compared.
+        let (measured, _) = embedder
             .embed_documents(&reference_chunks())
             .expect("embedded");
         let (worst, mean) = agreement(&measured, &reference_vectors(), 0.99);
@@ -784,7 +788,7 @@ mod with_model {
         for (dtype, floor) in [(DType::F32, 0.999), (DType::BF16, 0.99)] {
             let embedder = LocalEmbedder::load_at(&config, &manager(), dtype, Q8Kernel::Tiled)
                 .expect("model loads");
-            let measured = embedder
+            let (measured, _) = embedder
                 .embed_documents(&pplx_parity_texts())
                 .expect("embedded");
             let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), floor);
@@ -798,7 +802,7 @@ mod with_model {
     fn pplx_q8_0_matches_sentence_transformers() {
         let embedder = LocalEmbedder::load(&pplx_config(EmbedderDevice::Auto), &manager())
             .expect("model loads");
-        let measured = embedder
+        let (measured, _) = embedder
             .embed_documents(&pplx_parity_texts())
             .expect("embedded");
         let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), 0.99);
@@ -861,13 +865,15 @@ mod with_model {
             }
         }
         assert_eq!(differing_states, 0, "inputs whose hidden states moved");
-        let ours = packed.embed_documents(&texts).expect("embedded");
+        // The vectors; the per-item encoder input counts are not compared.
+        let (ours, _) = packed.embed_documents(&texts).expect("embedded");
         let theirs: Vec<Vec<f32>> = texts
             .iter()
             .map(|text| {
                 reference
                     .embed_documents(std::slice::from_ref(text))
                     .expect("embedded")
+                    .0
                     .remove(0)
             })
             .collect();
@@ -937,7 +943,7 @@ mod with_model {
         let load_ms = load_started.elapsed().as_millis();
 
         let embed_started = std::time::Instant::now();
-        let documents = embedder
+        let (documents, _) = embedder
             .embed_documents(&texts)
             .expect("documents embedded");
         let embed_secs = embed_started.elapsed().as_secs_f64();

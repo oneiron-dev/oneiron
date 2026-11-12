@@ -16,9 +16,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | Extraction-quality schemas and validation |
 | `src/lib.rs` | src | s | 4 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
 | `src/llm/assembly.rs` | src | m | 1 struct · 10 fn | StreamAssembly | Shared typed stream assembly |
-| `src/llm/backend.rs` | src | m | 2 struct · 1 enum · 3 trait · 13 fn · 5 type · 1 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
+| `src/llm/backend.rs` | src | m | 2 struct · 1 enum · 3 trait · 13 fn · 5 type · 4 crate-vis | BrokerIsolation, BudgetLease, LlmBackend, LlmStream, SingleRouteBackend, SingleSend | Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget… |
 | `src/llm/backend_identity.rs` | src | s | 1 struct · 2 fn | LlamaAlias | The answering house llama.cpp process's launch alias (FIX 7895, 6567 PR1b): which incarnation answered a… |
-| `src/llm/budget/checkpoint.rs` | src | s | 1 struct · 2 fn | BudgetCheckpoint | Settled state of one budget meter across a workflow hook wait |
+| `src/llm/budget/checkpoint.rs` | src | s | 1 struct · 3 fn | BudgetCheckpoint | Settled state of one budget meter across a workflow hook wait |
 | `src/llm/budget/dispatch.rs` | src | s | 1 struct · 1 enum · 13 fn · 1 const | DispatchBinding, DispatchRefused | Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is… |
 | `src/llm/budget/guard.rs` | src | m | 1 struct · 18 fn · 1 crate-vis | BudgetGuard | Guard handle: admission, abort, reads, and settlement entry points |
 | `src/llm/budget/ladders.rs` | src | s | 5 crate-vis | — | Threshold ladder emission for the budget meter |
@@ -70,4 +70,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/subscribers.rs` | src | s | 4 struct · 6 fn | ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker | Pure clock-injected progress and voice stages |
 | `src/model_binding.rs` | src | s | 3 struct · 4 enum · 5 fn · 1 const | CalibratedVerdict, ModelBinding, ModelDisposition, ModelRole, ModelSlot, VerdictBinding, VerdictMode | Model-role bindings and calibrated verdict values |
 | `src/teacher_probe_policy.rs` | src | s | 1 struct · 5 fn · 1 const | TeacherProbePolicy | Resolved extraction-teacher probe policy values |
+| `tests/budget_park_fence.rs` | test | s | — | — | FIX BUDGET-PARK: parking a workflow's budget fences every handle of the original meter |
+| `tests/budget_unsent_evidence.rs` | test | s | — | — | FIX BUDGET-LEASE: a call's lease, once a physical attempt began under it, can never be marked unsent |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-model` made `pub` so `oneiron` can reach them across the crate split |

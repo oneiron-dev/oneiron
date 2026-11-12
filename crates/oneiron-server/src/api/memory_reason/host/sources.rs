@@ -132,6 +132,7 @@ pub(super) fn rerank_pins(
             }
         }
         let Value::Object(fields) = crate::projection::project_entity_parts(
+            &backend.server.vault,
             &candidate.id,
             entity_type,
             learned_at,
@@ -199,6 +200,7 @@ pub(super) fn compose_pins(
         };
         let body_hash = *blake3::hash(&body).as_bytes();
         let Value::Object(fields) = crate::projection::project_entity_parts(
+            &backend.server.vault,
             &expected.id,
             entity_type,
             learned_at,

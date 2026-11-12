@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::cycle::{FreeTimeCycle, FreeTimeCycleState, close_cycle_in_txn};
 use super::items::FreeTimeItemBinding;
 use super::{CYCLE, FreeTimeKind, RECEIPT};
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::{EntityId, Result, Vault};
 
 /// How one item ended.
@@ -52,6 +53,11 @@ pub struct FreeTimeItemReceipt {
     pub context_unread: Option<String>,
     /// Vault clock seconds.
     pub at: u64,
+    /// The typed refusal of an item whose try a spend scope refused for good
+    /// (BUDGET-TRAP-UNTYPED-NO-SENDER), beside its `Failed` outcome; `None`
+    /// for every other receipt and on a receipt written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
 }
 
 impl FreeTimeItemReceipt {
@@ -72,6 +78,7 @@ impl FreeTimeItemReceipt {
             proposal,
             context_unread: None,
             at,
+            budget_refusal: None,
         }
     }
 }

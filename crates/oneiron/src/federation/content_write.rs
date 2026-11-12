@@ -123,6 +123,12 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         self.txn
     }
 
+    /// The key of the read this writer's lane holds its caller to; `None`
+    /// for an unbound lane.
+    pub(crate) fn lane_actor_key(&self) -> Option<&'v crate::claim::ScopedReadActorKey> {
+        self.lane.actor_key()
+    }
+
     /// Record the store clock inside this writer; the clock row is a
     /// supporting effect, not a separately granted content record.
     pub(crate) fn recorded_at(&mut self) -> Result<u64> {

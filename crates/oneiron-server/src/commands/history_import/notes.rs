@@ -310,16 +310,10 @@ mod tests {
             std::fs::write(dir.path().join(name), "x".repeat(400)).expect("test fixture");
         }
         let mut counts = NoteCounts::default();
-        let refused = read_folder(dir.path(), &mut counts, 1000)
-            .err()
-            .and_then(|error| error.downcast::<FolderRefused>().ok());
-        assert!(
-            matches!(
-                refused,
-                Some(FolderRefused::TooManyBytes { budget: 1000, .. })
-            ),
-            "{refused:?}"
-        );
+        // read_folder takes no budget and FolderRefused is gone (OF-554, #2591,
+        // 2ac9e524083): the refusal is any error the read answers (rule D).
+        let refused = read_folder(dir.path(), &mut counts).err();
+        assert!(refused.is_some(), "{refused:?}");
         assert_eq!(counts.found, 2, "refused at the file past the budget");
     }
 }

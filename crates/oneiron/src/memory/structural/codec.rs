@@ -9,6 +9,10 @@ use crate::registry::ENTITY_TYPE_REGISTRY;
 pub(super) fn registered_edge_weight(kind: EdgeKind) -> f32 {
     kind.default_weight().unwrap_or(1.0)
 }
+/// The type byte a door names with `kind`: the static registry only. A kind
+/// a vault registers at run time (PROJECT) reads back by its name
+/// ([`crate::store::Store::entity_kind_name`]), but no kind-string door
+/// takes it: it is born only through its own door.
 pub(in crate::memory) fn type_byte_for_kind(kind: &str) -> MemoryResult<u8> {
     ENTITY_TYPE_REGISTRY
         .iter()
@@ -20,10 +24,4 @@ pub(in crate::memory) fn type_byte_for_kind(kind: &str) -> MemoryResult<u8> {
                 &["Use a registry kind string such as MESSAGE, PERSON, TASK, ASSET."],
             )
         })
-}
-pub(in crate::memory) fn kind_string_for_type(entity_type: u8) -> String {
-    crate::registry::entity_type_registry_entry(entity_type).map_or_else(
-        || format!("TYPE_{entity_type}"),
-        |entry| entry.kind.to_owned(),
-    )
 }

@@ -7,11 +7,17 @@
 //! it. The agent's own report never becomes a finding: a check the checker
 //! cannot make stays pending for a later night. Each finding comes with the
 //! checker's protocol, so a completed random audit freezes its contract with
-//! it (FIX 3611).
+//! it (FIX 3611). The checker decides each objective through the decision
+//! ladder ([`SealObjectiveCheck`], ARCH-0076 #decide-required,
+//! DECIDE-BYPASS-2), on a judge that is not the executor.
 use super::coach::COACH_SEAL_CHECKS_FACET;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::self_heal::audit::{CheckerProtocol, SealCheckOutcome, SealCheckRequest};
 use crate::{Error, Result, Vault};
+
+mod decide;
+
+pub use decide::{SealObjectiveCheck, SealObjectiveDecision, SealObjectiveDecisions};
 
 /// What the host's checker made of one request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +38,10 @@ pub enum SealCheck {
 }
 
 /// What the host lends the Coach: an independent check of one request.
+/// The host asks each objective's question on the decision ladder
+/// ([`SealObjectiveCheck::decide`]), its judge the ladder's one rung; the
+/// seam lends the judge's seat and the result it reads, never a verdict
+/// of its own.
 pub trait SealChecker {
     /// The check of `request` on its pinned result, by a judge that is not
     /// `executor`, the model that produced the result.
