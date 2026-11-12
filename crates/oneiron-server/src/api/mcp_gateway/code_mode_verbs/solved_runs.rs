@@ -33,13 +33,28 @@ pub(super) struct BrowserCapture<'a, 'v> {
 
 /// What a source names for its capture (CUA E8a): the checks the page
 /// must meet, the exact subgoal, the recorded task type, where they came
-/// from, and the history entry its span starts after.
+/// from, the history entry its span starts after, and the entry it ends
+/// with when the source names one (a draft's own `through_seq`).
 pub(super) struct CheckedSpan {
     pub(super) subgoal: String,
     pub(super) checks: Vec<ExpectInput>,
     pub(super) type_ref: TypeRef,
     pub(super) source: SolvedSource,
     pub(super) after_seq: Option<u64>,
+    pub(super) through_seq: Option<u64>,
+}
+
+impl CheckedSpan {
+    /// The entry this span's capture ends with: the span's own end or
+    /// `pre_press`, the entry before the last granted press (FIX 10511),
+    /// whichever comes first; by default (None) the draft's own default
+    /// end. A draft's capture never keeps steps past the span it drafted.
+    fn capture_through(&self, pre_press: Option<u64>) -> Option<u64> {
+        match (self.through_seq, pre_press) {
+            (Some(own), Some(press)) => Some(own.min(press)),
+            (own, press) => own.or(press),
+        }
+    }
 }
 
 impl BrowserCapture<'_, '_> {
@@ -90,8 +105,9 @@ impl BrowserCapture<'_, '_> {
             postcondition: span.checks,
             after_seq: span.after_seq,
             // A span its goal reached before a granted press ends there
-            // (FIX 10511), not on the press.
-            through_seq: session.pre_press_through(span.after_seq),
+            // (FIX 10511), not on the press; a draft's span ends no later
+            // than the entry it drafted through.
+            through_seq: span.capture_through(session.pre_press_through(span.after_seq)),
             past_press: SOLVED_PAST_PRESS,
             type_ref: None,
         };
@@ -180,6 +196,7 @@ impl RunGuests {
             type_ref,
             source: SolvedSource::TaskRun { task },
             after_seq: None,
+            through_seq: None,
         };
         match capture.capture_checked_run(driver, span) {
             Ok(note) => tracing::info!(%note, "TASK run solved-run capture"),
@@ -220,6 +237,7 @@ fn checked_span(
                 type_ref: record.type_ref,
                 source: SolvedSource::LibraryRun { workflow: id },
                 after_seq: mark,
+                through_seq: None,
             }))
         }
         AgentVerb::SelfBrowserLibraryDraft => draft_span(input).map(Some),
@@ -229,8 +247,9 @@ fn checked_span(
 
 /// What a `self.browser.library.draft` call with `input` names for a
 /// capture (FIX 10508): its subgoal and checks, the task type its caller
-/// recorded, and the span it drafted from. Why not, for a draft that
-/// records no type, a type that is not a task type's form, or no check.
+/// recorded, and the span it drafted (after its `after_seq`, through its
+/// `through_seq`). Why not, for a draft that records no type, a type that
+/// is not a task type's form, or no check.
 fn draft_span(input: &Value) -> Result<CheckedSpan, String> {
     let input: DraftInput = serde_json::from_value(input.clone())
         .map_err(|error| format!("library draft input: {error}"))?;
@@ -251,6 +270,7 @@ fn draft_span(input: &Value) -> Result<CheckedSpan, String> {
         type_ref,
         source: SolvedSource::UnfiledDraft,
         after_seq: input.after_seq,
+        through_seq: input.through_seq,
     })
 }
 
@@ -278,6 +298,7 @@ pub(crate) fn draft_checked_span(
             type_ref: span.type_ref,
             source: span.source,
             after_seq: span.after_seq,
+            through_seq: span.through_seq,
         }),
     )
 }
