@@ -245,6 +245,8 @@ fn served_request_witness() -> TestResult<RepoRequestWitness> {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OnDevice,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
