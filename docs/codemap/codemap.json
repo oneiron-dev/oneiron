@@ -2860,7 +2860,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AcceptAttemptLanding",
@@ -3215,7 +3215,7 @@
      "path": "src/attempt_queue/lifecycle.rs",
      "purpose": "The run lifecycle (untangle slice 5.0c, S5-3): ONE transition table for an attempt row's state and pause…",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 47,
       "enum": 2,
       "fn": 3
      }
@@ -35164,7 +35164,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 33,
       "fn": 19,
       "struct": 1
      }
@@ -92039,7 +92039,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 46
+      "mod": 47
      }
     },
     {
@@ -92094,6 +92094,19 @@
      "purpose": "Door for `tests/repo_anchor_symbol_manifest.rs` (FIX RUN-DECLARE-ANCHOR-MANIFEST): the production selector a…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MarkedHit"
+     ],
+     "path": "src/test_doors/repo_secret_marks.rs",
+     "purpose": "Doors for `tests/git_smart_http.rs` (SMART-HTTP-SECRET-PUSH-EXPECTATIONS): the hits a marked push's intent…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -100703,6 +100716,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/booking_calendar_cancel_reschedule.rs",
+     "purpose": "A booking whose calendar provider cancelled it cannot be moved (FIX 22385)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/budget_scope_hosts.rs",
      "purpose": "Row B3 of BUDGET-TRAP-UNTYPED-NO-SENDER: the hosts whose steps spend under a spend scope",
      "surface": {}
@@ -102388,6 +102409,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lease_parked.rs",
+     "purpose": "FIX RUN-LEASE: an attempt parked on its signal keeps its lease until the signal resumes it, so no lease rung…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -102441,6 +102470,14 @@
      "notable": [],
      "path": "tests/run_steps.rs",
      "purpose": "Primitive D, slice 6.5c: a live agent run submits model steps under its own lease (`ai.steps.submit`…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_terminal_commit.rs",
+     "purpose": "FIX RUN-SETTLE-RECIPE: every terminal door of the attempt queue settles its row through one commit…",
      "surface": {}
     },
     {
@@ -104489,7 +104526,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104666,8 +104703,8 @@
    },
    "over_bar": 260,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7419,
-   "test_files": 1090
+   "source_files": 7420,
+   "test_files": 1093
   },
   "oneiron-agent-runtime": {
    "files": [
