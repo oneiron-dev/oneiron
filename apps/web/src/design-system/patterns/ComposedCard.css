@@ -1,0 +1,224 @@
+/* A card an agent composed. Framed: the sunk tone and the card ring, at
+   most the messages column wide, the asks block's padding. Bare: no
+   frame, for the pane and for a view. */
+.sl-composed-card {
+  display: flex;
+  flex-direction: column;
+  max-width: var(--sl-col);
+  color: var(--sl-ink-2);
+}
+
+.sl-composed-card[data-ground="well"] {
+  padding: 6px 6px 12px 12px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
+  --sl-mark-ground: var(--sl-sunk);
+}
+
+/* Under a message's text, a framed card keeps a little air. */
+.sl-message-body > .sl-composed-card[data-ground="well"] {
+  margin-top: 10px;
+}
+
+/* The title line: the title, then the information mark at the right. */
+.sl-composed-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.sl-composed-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--sl-t-say);
+  line-height: 1.5;
+  color: var(--sl-ink-1);
+  text-wrap: pretty;
+}
+
+.sl-composed-card[data-ground="bare"] .sl-composed-card-title {
+  font-size: var(--sl-t-section);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.sl-composed-card-head > .sl-info-mark {
+  color: var(--sl-ink-3);
+}
+
+.sl-composed-card-head > .sl-info-mark:hover,
+.sl-composed-card-head > .sl-info-mark:focus-visible {
+  color: var(--sl-ink-1);
+  background: var(--sl-lit);
+}
+
+/* A bare card's note: text under the body. */
+.sl-composed-card-note {
+  max-width: 60ch;
+  padding: 10px 0 2px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  text-wrap: pretty;
+}
+
+/* ── the table ── */
+
+.sl-composed-table {
+  width: 100%;
+  max-width: 520px;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+}
+
+.sl-composed-cell {
+  padding: 2px 20px 2px 0;
+  text-align: left;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+.sl-composed-table-head .sl-composed-cell {
+  padding-bottom: 5px;
+  white-space: nowrap;
+  font-size: var(--sl-t-figure);
+  color: var(--sl-ink-3);
+}
+
+/* The row's header names it, in the reading ink. */
+.sl-composed-table-row > th.sl-composed-cell {
+  color: var(--sl-ink-2);
+}
+
+.sl-composed-table-row > .sl-composed-cell[data-figure] {
+  width: 1%;
+  font-family: var(--sl-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--sl-t-figure);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.sl-composed-cell[data-pick] {
+  width: 28px;
+  padding-right: 0;
+  text-align: center;
+}
+
+/* The pick: a diamond with a hit area the row's height. */
+.sl-composed-pick {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  border-radius: var(--sl-radius);
+  color: var(--sl-ink-1);
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-composed-pick:hover,
+.sl-composed-pick:focus-visible {
+  background: var(--sl-lit);
+  outline: none;
+}
+
+.sl-composed-pick:active {
+  transform: scale(0.96);
+}
+
+/* ── the foot ── */
+
+.sl-composed-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+}
+
+.sl-composed-foot-count {
+  color: var(--sl-ink-3);
+}
+
+.sl-composed-foot-more {
+  color: var(--sl-ink-1);
+}
+
+.sl-composed-foot-action {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+/* ── chips: the action and the readings ── */
+
+.sl-composed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-chip);
+  color: var(--sl-ink-1);
+  font-size: var(--sl-t-do);
+  line-height: 1;
+  white-space: nowrap;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-composed-chip:hover {
+  background: var(--sl-disc);
+}
+
+.sl-composed-chip:focus-visible {
+  outline: 1.5px solid var(--sl-ink-4);
+  outline-offset: 2px;
+}
+
+.sl-composed-chip:active {
+  transform: scale(0.96);
+}
+
+.sl-composed-picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The chosen reading carries the inset line. */
+.sl-composed-reading[data-chosen] {
+  box-shadow: inset 0 0 0 1.5px var(--sl-ink-1);
+}
+
+/* ── the figures ── */
+
+.sl-composed-figures {
+  margin: 8px 0 0;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  text-wrap: pretty;
+}
+
+.sl-composed-figures > .sl-figure:first-child {
+  color: var(--sl-ink-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-composed-pick,
+  .sl-composed-chip {
+    transition: none;
+  }
+  .sl-composed-pick:active,
+  .sl-composed-chip:active {
+    transform: none;
+  }
+}

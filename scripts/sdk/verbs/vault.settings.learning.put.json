@@ -1,9 +1,9 @@
 {
   "name": "vault.settings.learning.put",
-  "description": "The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope.",
+  "description": "The owner, or a holder of the engine.controls class of a dial it may tune, lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope; the owner's pins and caps stand.",
   "input": "crate::learning_setting_doors::LearningSettingPut",
   "output": "crate::learning_setting_doors::LearningSettingsView",
-  "call": "crate::learning_setting_doors::put_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.put\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "call": "crate::learning_setting_doors::put_learning_setting_embedded(memory, input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Write",
@@ -11,5 +11,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "owner"
+  "host_door_proof": "engine_controller"
 }

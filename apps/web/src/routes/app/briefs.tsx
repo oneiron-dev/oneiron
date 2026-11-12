@@ -126,7 +126,7 @@ const BRIEFS: Brief[] = [
       LEAD('A quiet week that moved one thing: Hokuei booked the pilot call. Kanto Logistics answered.'),
       LABEL('what moved'),
       LI([c('Hokuei booked the pilot call for Thursday 10:00', 'cl_7a20', 0.95), '. Mika Tanaka confirmed it on LINE.']),
-      LI([c('Kanto Logistics replied to the intro', 'cl_5b3e', 0.88), '. No call is booked yet. Yurii owns the next message.']),
+      LI([c('Kanto Logistics replied to the intro', 'cl_5b3e', 0.88), '. No call is booked yet. Yuki owns the next message.']),
       LI([c('Hokuei may be consolidating suppliers', 'cl_9d17', 0.81), '. Tory read the filings. The claim waits in the inbox.']),
       LABEL('by the numbers'),
       NODE('nums'),
@@ -156,7 +156,7 @@ const BRIEFS: Brief[] = [
       LABEL("who's in the room"),
       NODE('who-kanto'),
       LABEL('next step'),
-      P('Book the call. Yurii owns the intro. Lead with the June contract, not the spreadsheet.', { editedBy: 'y', editedAt: 'Aug 12 18:02' }),
+      P('Book the call. Yuki owns the intro. Lead with the June contract, not the spreadsheet.', { editedBy: 'y', editedAt: 'Aug 12 18:02' }),
       NODE('acts-kanto'),
     ]),
     trail: [

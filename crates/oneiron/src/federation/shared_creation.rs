@@ -59,11 +59,10 @@ fn invalid(message: &str) -> Error {
 pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
     Ok(match role {
         Role::Owner => GrantPreset::Owner,
-        Role::Admin => GrantPreset::Admin,
+        Role::Deputy | Role::Admin => GrantPreset::Admin,
         Role::Steward => GrantPreset::Steward,
         Role::Member => GrantPreset::Member,
         Role::Viewer => GrantPreset::ReadOnly,
-        Role::Auditor => GrantPreset::ReadOnly,
         Role::Delegate => {
             return Err(invalid(
                 "delegate needs a separately attenuated expiring grant",
@@ -77,8 +76,9 @@ pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
 /// own-device grant (FIX 3134): pairing a device never closes sharing. Nor
 /// does a base agent's Steward grant, which the host mints by default on the
 /// vault's own root when it opens the vault (untangle 6.3; review of #6917,
-/// round 2): it is the engine's actor's reach, not a member. The creation
-/// row still closes a vault that was shared.
+/// round 2): it is the engine's actor's reach, not a member. Nor does an
+/// owner's `engine.controls` grant to a principal (6.6): his grant, not a
+/// membership. The creation row still closes a vault that was shared.
 fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         &vault.store,
@@ -99,6 +99,7 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
             && !grant.is_git_push()
             && !super::is_own_device_grant(&grant)
             && !super::holds_system_agent_grant(grant.member_ref)
+            && !super::is_engine_controls_grant(&grant)
         {
             return Ok(true);
         }
@@ -181,11 +182,6 @@ impl Vault {
             if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &member)? {
                 return Err(Error::EntityNotFound);
             }
-            let role = if role == Role::Auditor {
-                Role::Viewer
-            } else {
-                role
-            };
             let mut grant = FederationGrant::new(
                 FederationGrantScope::vault(vault_id),
                 member,
@@ -263,11 +259,6 @@ impl Vault {
                 {
                     return Err(Error::EntityNotFound);
                 }
-                let role = if role == Role::Auditor {
-                    Role::Viewer
-                } else {
-                    role
-                };
                 self.invite_founding_member_in_txn(
                     &mut txn, vault_id, actor, member, role, invited_at,
                 )?;

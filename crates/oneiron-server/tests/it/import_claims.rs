@@ -41,13 +41,21 @@ const SUBAGENTS_SAID: [&str; 4] = [
     "Two open issues",
 ];
 
+/// The names this test's persons carry: words of the turns they are
+/// extracted from, so the extraction input lists them (FIX 7506: a reply
+/// names listed P-labels, never ids).
+const CODE_NAMES: [&str; 2] = ["watering", "schedule"];
+const CHAT_NAME: &str = "kyoto";
+
 fn fixture(path: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/history")
         .join(path)
 }
 
-fn person(vault: &Vault) -> EntityId {
+/// A named person: its name is an identity hint the listing matches
+/// against the turns' words, so extraction calls list it.
+fn person(vault: &Vault, name: &str) -> EntityId {
     let id = EntityId::now();
     vault
         .put_entity(
@@ -55,7 +63,7 @@ fn person(vault: &Vault) -> EntityId {
             oneiron::registry::ENTITY_TYPE_PERSON,
             TimeRange { start: 1, end: 1 },
             1,
-            b"person",
+            &rmp_serde::to_vec_named(&json!({"name": name})).unwrap(),
         )
         .unwrap();
     id
@@ -77,28 +85,53 @@ fn turns(request: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-fn candidate(subject: EntityId, value: &str, turn: &str) -> Value {
+fn candidate(subject: &str, value: &str, turn: &str, quote: &str) -> Value {
     json!({
-        "subject": subject.to_hex(),
+        "subject": subject,
         "predicate": "profile.name",
         "value": value,
         "confidence": 0.9,
-        "evidence_refs": [{"source_id": turn, "byte_range": [0, 4]}],
+        "evidence_refs": [{"source": turn, "quote": quote}],
     })
 }
 
 /// A model that extracts from the turn where the owner said something: two
 /// claims from the Claude Code session, one from the ChatGPT chat, none from
-/// anything else.
-fn extractor(code: [EntityId; 2], chat: EntityId) -> Reply {
+/// anything else. Subjects are this call's P-labels for the test persons'
+/// names, each emitted only where listed, so each claim lands once; the
+/// quote is the owner's shown words, which the turn holds once.
+fn extractor() -> Reply {
     Reply::Computed(Arc::new(move |request: &Value| {
+        let transcript = request["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .and_then(|message| message["content"].as_str())
+            .unwrap_or_default();
+        let mut names = std::collections::BTreeMap::new();
+        for line in transcript.lines() {
+            let Some(rest) = line.strip_prefix("entity ") else {
+                continue;
+            };
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let (Some(label), Some(name)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if let Ok(name) = serde_json::from_str::<String>(name.trim()) {
+                names.insert(name, label.to_owned());
+            }
+        }
         let mut candidates = Vec::new();
         for (turn, text) in turns(request) {
             if text.contains(OWNER_SAID[0]) {
-                candidates.push(candidate(code[0], "Ana", &turn));
-                candidates.push(candidate(code[1], "Garden planner", &turn));
+                for (name, value) in [(CODE_NAMES[0], "Ana"), (CODE_NAMES[1], "Garden planner")] {
+                    if let Some(label) = names.get(name) {
+                        candidates.push(candidate(label, value, &turn, OWNER_SAID[0]));
+                    }
+                }
             } else if text.contains(OWNER_SAID[1]) {
-                candidates.push(candidate(chat, "Ana", &turn));
+                if let Some(label) = names.get(CHAT_NAME) {
+                    candidates.push(candidate(label, "Ana", &turn, OWNER_SAID[1]));
+                }
             }
         }
         json!({ "candidates": candidates }).to_string()
@@ -164,9 +197,12 @@ async fn imported_claims_wait_in_one_review_per_import_which_the_owner_approves_
     std::fs::create_dir_all(&vault_path).unwrap();
     let (code, chat) = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
-        ([person(&vault), person(&vault)], person(&vault))
+        (
+            [person(&vault, CODE_NAMES[0]), person(&vault, CODE_NAMES[1])],
+            person(&vault, CHAT_NAME),
+        )
     };
-    let fake = FakeLlm::start(vec![], Some(extractor(code, chat))).await;
+    let fake = FakeLlm::start(vec![], Some(extractor())).await;
     let config = write_config(
         dir.path(),
         &vault_path,

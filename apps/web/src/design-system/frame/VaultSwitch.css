@@ -1,0 +1,86 @@
+/* The vault's name at the top left, a chevron after it. */
+.sl-vault-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  color: var(--sl-ink-1);
+  transition:
+    background-color 120ms ease,
+    transform 120ms var(--sl-ease-out);
+}
+
+.sl-vault-switch:hover,
+.sl-vault-switch[aria-expanded="true"] {
+  background: var(--sl-hover);
+}
+
+.sl-vault-switch:active {
+  transform: scale(0.96);
+}
+
+.sl-vault-switch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-vault-switch-chevron {
+  display: block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--sl-ink-2);
+  transition: transform 160ms var(--sl-ease-out);
+}
+
+.sl-vault-switch-chevron path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+.sl-vault-switch[aria-expanded="true"] .sl-vault-switch-chevron {
+  transform: rotate(180deg);
+}
+
+/* A vault row: the name, a quieter word, then the ring and count, then the pick. */
+.sl-vault-switch-item-name {
+  flex: none;
+}
+
+.sl-vault-switch-item-caption {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sl-ink-3);
+}
+
+.sl-vault-switch-item-needs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.sl-vault-switch-item > .sl-menu-item-pick {
+  margin-left: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-vault-switch,
+  .sl-vault-switch-chevron {
+    transition: none;
+  }
+  .sl-vault-switch:active {
+    transform: none;
+  }
+}
