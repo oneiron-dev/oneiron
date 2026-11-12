@@ -25,6 +25,20 @@ pub(super) fn owned_trial(
     locality: CallerLocality,
 ) -> Result<(String, ModelTrial)> {
     let principal = owner.revalidate_in_txn(vault, txn)?;
+    trial_for_principal(vault, txn, principal, input, locality)
+}
+
+/// The trial and its catalog revision under `principal`: the [`owned_trial`]
+/// read past its owner proof, for the granted-agent binding-propose door,
+/// which carries an agent's Grant and no owner proof of its own. The same
+/// checks as the owner path.
+pub(super) fn trial_for_principal(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    input: &ModelTrialRef,
+    locality: CallerLocality,
+) -> Result<(String, ModelTrial)> {
     let trial = vault
         .model_trial_in_txn(txn, principal, input.question, input.trial, locality)?
         .ok_or(Error::EntityNotFound)?;
