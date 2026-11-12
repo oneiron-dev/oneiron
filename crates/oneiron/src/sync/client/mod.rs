@@ -71,6 +71,7 @@ pub use self::connect::{
 };
 pub use self::federated::ImportTier;
 pub(crate) use self::leaf_keys::send_leaf_key_requests;
+pub use self::note_session::BindReceipt;
 pub(in crate::sync) use self::own_device::OwnDeviceImport;
 pub(crate) use self::residence::IndexFetchFault;
 pub use self::residence::custody::drain_custody_residence_member_as;
