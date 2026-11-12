@@ -5,7 +5,7 @@ use super::audience::{
 };
 use super::participation::{
     addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
-    record_addressed_in_txn, thread_root_in_txn,
+    thread_root_in_txn,
 };
 use super::*;
 use crate::conversation_dag::{ProvenRoomQuote, QuotedReply};
@@ -592,24 +592,16 @@ pub(crate) fn admit_witness(
         }
         turn.message_ids = all;
     }
-    TURNS.put(&vault.store, txn, &turn_id, &turn)?;
-    super::history::index_turn(&vault.store, txn, &turn)?;
-    admitted.record_in_txn(vault, txn, now)?;
-    record_addressed_in_txn(
+    super::turn_record::record_room_turn_in_txn(
         vault,
         txn,
-        room,
         branch,
-        turn_id,
-        &turn.addressed_agents,
+        &turn,
+        Some(&admitted),
+        minted,
+        private.as_ref(),
         now,
     )?;
-    // FIX 15647: each agent the turn addresses, and each holder of its
-    // thread's open TASK, is staged one wake in this write; whoever runs the
-    // agent delivers it after the commit.
-    if minted {
-        super::wake::stage_room_wakes_in_txn(vault, txn, branch, &turn, private.as_ref(), now)?;
-    }
     super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
     Ok(RoomWitness { quoted, thread })
 }

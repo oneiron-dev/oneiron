@@ -9,6 +9,7 @@
 //! (checkpoint-in-append). Control flow re-runs on resume; side effects are
 //! memoized — never bit-replayed.
 
+mod budget_wait;
 mod codec;
 // FIX 4465 B: a self-written compaction's calls, filed in this family on
 // their run's captured route (an `ExecutorStorage` method, no export).
@@ -46,6 +47,8 @@ mod types;
 // The moved bodies still spell these parent (`llm`) names as `super::X`;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
+
+pub(crate) use self::budget_wait::wake_budget_traps_in_txn;
 
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 

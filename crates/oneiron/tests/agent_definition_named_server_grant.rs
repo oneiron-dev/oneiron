@@ -138,18 +138,12 @@ fn named_agent(fixture: &Fixture, name: &str) -> EntityId {
         .vault
         .ensure_agent_principal(name)
         .expect("named agent principal");
+    // A PERSON row is no AGENT_DEF: `get_agent_definition` refuses a
+    // non-AGENT_DEF row rather than answering `None`, so the type is the check.
     assert_eq!(
         fixture.vault.get_entity_type(&writer).expect("entity type"),
         Some(ENTITY_TYPE_PERSON),
         "a named agent's principal holds no definition"
-    );
-    assert!(
-        fixture
-            .vault
-            .get_agent_definition(&writer)
-            .expect("read the author")
-            .is_none(),
-        "the PERSON author has no AGENT_DEF of its own"
     );
     writer
 }
