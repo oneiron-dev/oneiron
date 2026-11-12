@@ -99,7 +99,18 @@ impl Home {
             .unwrap();
         edit.commit();
         let update = edit.export(ExportMode::updates(&base)).unwrap();
-        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &update)
+        // Every window UPDATE travels in its pad envelope (KS-5, FIX 7107).
+        let envelope = transport::WindowPadEnvelope {
+            kind: transport::WindowPadKind::Update,
+            form: transport::WindowPadForm::PadFree,
+            queue_seq: None,
+            payload: update.clone(),
+            refs: Vec::new(),
+            sidecar: None,
+        }
+        .encode()
+        .unwrap();
+        let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &envelope)
             .into_result()
             .unwrap();
         Change { frame, id, update }
@@ -159,6 +170,10 @@ impl Heard {
             .flatten()
             .any(|frame| {
                 let (_, tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
+                // A released window frame carries its update inside the pad
+                // envelope; a frame with no envelope is read as it is.
+                let payload = transport::window_pad_frame_payload(payload)
+                    .map_or(payload, |(_, inner, _)| inner);
                 tag == window_sub_tags::UPDATE
                     && (payload == change.update.as_slice() || carries(payload, change.id))
             })
