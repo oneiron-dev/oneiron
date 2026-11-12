@@ -361,6 +361,7 @@ impl Vault {
             {
                 return Err(invalid("the Candidate changed during its test"));
             }
+            let agent_author = self.candidate_agent_author_in_txn(txn, &candidate)?;
             if let Some(publisher) = &publisher {
                 self.check_publisher_in_txn(txn, publisher)?;
             }
@@ -376,7 +377,7 @@ impl Vault {
                     source_id,
                     hub: &hub,
                     publisher: &candidate.publisher,
-                    agent_author: None,
+                    agent_author,
                     foreign: publisher.as_ref(),
                     verdict: PackFitVerdict {
                         fits: true,
@@ -511,6 +512,7 @@ impl Vault {
             {
                 return Err(invalid("the Candidate changed during its test"));
             }
+            let agent_author = self.candidate_agent_author_in_txn(txn, &candidate)?;
             if let Some(publisher) = &publisher {
                 self.check_publisher_in_txn(txn, publisher)?;
             }
@@ -526,7 +528,7 @@ impl Vault {
                     source_id,
                     hub: &hub,
                     publisher: &candidate.publisher,
-                    agent_author: None,
+                    agent_author,
                     foreign: publisher.as_ref(),
                     verdict: PackFitVerdict {
                         fits: true,
