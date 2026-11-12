@@ -120,13 +120,12 @@ pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, 
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;
+pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
-pub(in crate::workspace_roster) use participation::{
-    require_reader, require_thread_reader, stands_in_thread_in,
-};
+pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
