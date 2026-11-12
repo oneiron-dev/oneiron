@@ -431,6 +431,12 @@ impl KeptValues {
         self.0.is_empty()
     }
 
+    /// Whether the owner ruled a value no secret or kept it as text in
+    /// `record`.
+    pub(crate) fn holds_record(&self, record: &EntityId) -> bool {
+        self.0.contains_key(record)
+    }
+
     /// Whether the owner ruled `value` no secret or kept it as text in `record`,
     /// as it is or as one of its spellings decodes (base64, percent or JSON
     /// escapes): the choice covers the value however it is written (FIX 2725).

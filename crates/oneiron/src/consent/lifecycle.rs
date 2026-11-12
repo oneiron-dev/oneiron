@@ -1,8 +1,9 @@
 //! Typed public consent lifecycle calls. The wire bounds carry no authority:
-//! only the existing owner-authenticated consent doors mint or revoke grants.
+//! only the existing owner-authenticated consent doors mint grants; revoke is the owner's, or the
+//! Grant's own grantee dropping that Grant.
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
+use crate::{EdgeActorClass, EntityId, Vault};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
 use super::support::normalized_ref;
@@ -133,8 +134,10 @@ pub struct ConsentActReceipt {
     /// receipt (a repeat revoke is idempotent). Absent on every other act.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub already_revoked: bool,
-    /// On a repeat revoke with no consent receipt to return: the record that revoked the grant, where that
-    /// path writes one (a graduation demotion's receipt id). Absent otherwise.
+    /// What revoked the grant, when the receipt alone does not name it: on a repeat revoke with no
+    /// consent receipt to return, the record that revoked the grant where that path writes one (a
+    /// graduation demotion's receipt id). On the grantee path always the renouncing grantee's actor
+    /// ref, even beside a receipt. Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_by: Option<String>,
 }
@@ -204,6 +207,37 @@ pub fn revoke(
         },
         // Revoked without a consent receipt: the act's revoke outcome and the row it names (a revoke
         // receipt's handle is its grant ref), with no Gate decision to name.
+        None => ConsentActReceipt {
+            decision_ref: None,
+            outcome: "revoked".to_owned(),
+            reason_code: crate::consent::CONSENT_REASON_REVOKED.to_owned(),
+            diff_handle: grant.as_bytes().to_vec(),
+            grant_ref: Some(grant),
+            already_revoked: revocation.already_revoked,
+            revoked_by: revocation.revoked_by,
+        },
+    })
+}
+
+/// A Grant's own grantee drops that Grant (P-GATE-010, DEC-0006): the caller is the Grant's bound
+/// actor on that Grant only, never a 202 ask. The request names exactly one Grant. Unknown and
+/// not-held Grants answer the same 403 a non-owner's owner-path call gets, so existence does not
+/// leak. `revoked_by` always names the grantee; the owner path is unchanged.
+pub fn revoke_as_grantee(
+    vault: &Vault,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    input: RevokeGrantRequest,
+) -> MemoryResult<ConsentActReceipt> {
+    let grant = parse_digest(&input.grant, "grant")?.to_hex();
+    let revocation = vault.consent_revocation_as_grantee(actor, actor_class, &grant)?;
+    Ok(match revocation.receipt {
+        Some(receipt) => ConsentActReceipt {
+            already_revoked: revocation.already_revoked,
+            revoked_by: revocation.revoked_by,
+            ..receipt.into()
+        },
+        // Same fallback shape as the owner path; on this path `revoked_by` names the grantee.
         None => ConsentActReceipt {
             decision_ref: None,
             outcome: "revoked".to_owned(),

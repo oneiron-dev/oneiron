@@ -131,8 +131,11 @@ impl ServeReplayJudge {
         let Some((project, _)) = goal.project else {
             return Ok(None);
         };
-        Ok(self.vault.project_intake_goal(project)?.map(|record| {
-            let axes: Vec<Value> = record
+        Ok(self
+            .vault
+            .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
+            .map(|record| {
+                let axes: Vec<Value> = record
                 .primary_axes
                 .iter()
                 .chain(&record.floor_axes)
@@ -141,8 +144,8 @@ impl ServeReplayJudge {
                     |axis| json!({"name": axis.name, "measure": axis.measure, "bound": axis.bound}),
                 )
                 .collect();
-            json!({"goal": record.goal, "why": record.why, "axes": axes})
-        }))
+                json!({"goal": record.goal, "why": record.why, "axes": axes})
+            }))
     }
 
     /// A reserved receipt's run as a replay reads it: its kind, task and

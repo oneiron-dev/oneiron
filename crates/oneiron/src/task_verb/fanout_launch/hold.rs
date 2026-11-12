@@ -18,7 +18,7 @@ pub(in crate::task_verb) fn ask_launch_needs_approval(
     if policy_in(vault, txn, &ConsultFanOutScope::default())?
         .policy
         .mode
-        != ConsultFanOutMode::Manual
+        != CheckInMode::AlwaysAsk
     {
         return Ok(false);
     }

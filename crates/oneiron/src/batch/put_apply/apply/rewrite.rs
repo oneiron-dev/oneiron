@@ -95,6 +95,7 @@ pub(super) fn rewrite_put_body(
                 &*wtxn,
                 &fixed.id,
                 updated,
+                data,
                 fixed.hub_admission,
             )? {
                 Some(crate::write_envelope::skill_record::encode_skill_record(

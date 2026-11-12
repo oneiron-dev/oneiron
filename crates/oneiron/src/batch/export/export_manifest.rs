@@ -97,6 +97,15 @@ impl ExportManifest {
         self
     }
 
+    /// Produced after the keeping serializer transform of the Owner's
+    /// whole-vault archive with secrets included, never by a caller option:
+    /// the payload and structural nulling claims are both false, and every
+    /// other field is kept as it was.
+    pub(crate) fn with_serializer_keeping(mut self) -> Self {
+        self.secrets_nulled = ExportSecretsNulledManifest::from_redacted(false);
+        self
+    }
+
     #[must_use]
     pub fn clear() -> Self {
         Self::from_redacted(false)

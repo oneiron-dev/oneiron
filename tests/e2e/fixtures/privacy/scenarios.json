@@ -147,15 +147,6 @@
         "vaultWriteGrant": true
       },
       {
-        "name": "Privacy Agent Holder",
-        "actorClass": "agent",
-        "scope": [
-          "core:read",
-          "core:write"
-        ],
-        "vaultWriteGrant": true
-      },
-      {
         "name": "Privacy Suggesting Agent",
         "actorClass": "agent",
         "scope": [
@@ -182,10 +173,12 @@
     "summaryText": "privacyroomsummary: a temporary summary, not copied with the visible talk.",
     "fromHereTexts": [
       "privacyroompersonsave: saved under the person grant.",
-      "privacyroomagentsave: saved under the agent grant."
+      "privacyroomsecondsave: saved after the holder saves from here again."
     ],
     "afterLossText": "privacyroomlostgrant: must stay off record.",
     "afterRejoinText": "privacyroomrejoined: rejoin must not restart saving.",
+    "guestText": "privacyroomguestturn: the guest adds a brass lens.",
+    "outOfWindowText": "privacyroomoutofwindow: said before anyone joined the room.",
     "expected": {
       "suggestionSaves": 0,
       "declineSaves": 0,

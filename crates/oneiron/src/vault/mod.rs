@@ -60,16 +60,19 @@ pub(crate) use self::edges::{
     filtered_edge_peers_in,
 };
 pub use self::entities::HydratedShortId;
-/// The composed session census bounds itself exactly like [`Vault::entities_by_type`],
-/// and that census has only in-crate test callers today.
-#[cfg(test)]
+/// The composed session census, a snapshot page (`snapshot_read::snapshot`)
+/// and a reader's skill list (`snapshot_read::skill_reader`) bound themselves
+/// exactly like
+/// [`Vault::entities_by_type`].
 pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
 pub(crate) use self::identity::VaultId;
 pub use self::identity::{OpenOptions, VaultStorageId};
-pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
+pub(crate) use self::open::{
+    EngineSeedIdentities, embedded_owner_actor_id, encode_embedded_owner_actor_body,
+};
 pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
@@ -99,6 +102,10 @@ pub struct Vault {
     /// What the runtime witnesses of each leased attempt it runs now (OF-568
     /// L5). In memory only: never persisted, never restored.
     pub(crate) attempt_activity: crate::code_run::activity::AttemptActivityRuntime,
+    /// The answers of task-kept inquiries this vault asked (INQUIRE-1 PR 4),
+    /// each until its task ends or its `valid_until`. In memory only: never
+    /// persisted, never restored.
+    pub(crate) inquiry_answers: crate::inquiry::InquiryAnswerHolder,
     /// Task work's one fair line on this vault, whichever door the work came
     /// in by ([`Vault::admit_task_work`]).
     pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,

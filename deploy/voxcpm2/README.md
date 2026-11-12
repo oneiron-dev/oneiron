@@ -132,11 +132,11 @@ key_env = "VOXCPM_TOKEN"
 model = "voice:voxcpm2"
 kind = "vox_cpm2"
 weights = "voxcpm2"
-env_lock = "/home/lexi/oneiron-locks/voxcpm2-py312.lock"
+env_lock = "<host-home>/oneiron-locks/voxcpm2-py312.lock"
 # idle_stop_secs = 300          # left out: the worker stays up
 
 [models.workers.voice.env]
-ONEIRON_VOICE_POLICY_FILE = "/home/lexi/oneiron-config/voice-policy.json"
+ONEIRON_VOICE_POLICY_FILE = "<host-home>/oneiron-config/voice-policy.json"
 
 [models.media.speech]
 rungs = ["voice:voxcpm2"]

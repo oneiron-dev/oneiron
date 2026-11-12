@@ -451,17 +451,51 @@ const OUTCOME_TRUST: SideTable<EntityId, [u8; 32], Raw> =
 /// Applies the erase's artifact rename map to every review outcome's evidence key and
 /// to the learning rows citing those artifacts (FIX 11368): an outcome key cites its
 /// artifact, and a calibration receipt cites it again in the evidence ledger and heads.
+/// The map also renames finding keys, an artifact's id or a flaw's key over its target:
+/// an outcome's scope and an automatic outcome's evidence hold them.
 pub(crate) fn rewrite_outcome_artifact_ids_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     renamed: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
     rewrite_outcome_keys_in_txn(vault, wtxn, renamed)?;
+    rewrite_automatic_outcome_keys_in_txn(vault, wtxn, renamed)?;
     rewrite_learning_receipts_in_txn(vault, wtxn, renamed)?;
     rewrite_learning_head_citations_in_txn(vault, wtxn, renamed)
 }
 
-/// Re-keys the artifact suffix of every `review.outcome` evidence key the map renames.
+/// Re-keys the finding key, its evidence, of every `review.automatic_outcome` the map
+/// renames.
+fn rewrite_automatic_outcome_keys_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let mut ids = Vec::new();
+    vault.for_each_claim_with_predicate_in_txn(wtxn, "review.automatic_outcome", |id, _| {
+        ids.push(id);
+        Ok(())
+    })?;
+    for id in ids {
+        let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+            continue;
+        };
+        let Some(new) = body
+            .evidence
+            .as_ref()
+            .and_then(Value::as_str)
+            .and_then(|key| renamed.get(key))
+        else {
+            continue;
+        };
+        body.evidence = Some(Value::from(new.as_str()));
+        rewrite_outcome_claim_in_txn(vault, wtxn, &id, &body)?;
+    }
+    Ok(())
+}
+
+/// Re-keys the artifact suffix of every `review.outcome` evidence key, and the finding
+/// key its scope holds, the map renames.
 fn rewrite_outcome_keys_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -476,24 +510,32 @@ fn rewrite_outcome_keys_in_txn(
         let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
             continue;
         };
-        let Some(rmpv::Value::Map(entries)) = body.evidence.as_mut() else {
-            continue;
-        };
         let mut changed = false;
-        for (key, value) in entries.iter_mut() {
-            if key.as_str() != Some("candidate_evidence") {
-                continue;
+        if let Some(rmpv::Value::Map(entries)) = body.evidence.as_mut() {
+            for (key, value) in entries.iter_mut() {
+                if key.as_str() != Some("candidate_evidence") {
+                    continue;
+                }
+                let Some(text) = value.as_str().map(str::to_owned) else {
+                    continue;
+                };
+                let Some((verdict, artifact)) = text.rsplit_once(':') else {
+                    continue;
+                };
+                if let Some(new) = renamed.get(artifact) {
+                    *value = rmpv::Value::from(format!("{verdict}:{new}"));
+                    changed = true;
+                }
             }
-            let Some(text) = value.as_str().map(str::to_owned) else {
-                continue;
-            };
-            let Some((verdict, artifact)) = text.rsplit_once(':') else {
-                continue;
-            };
-            if let Some(new) = renamed.get(artifact) {
-                *value = rmpv::Value::from(format!("{verdict}:{new}"));
-                changed = true;
-            }
+        }
+        if let Some(new) = body
+            .scope
+            .as_ref()
+            .and_then(Value::as_str)
+            .and_then(|key| renamed.get(key))
+        {
+            body.scope = Some(Value::from(new.as_str()));
+            changed = true;
         }
         if !changed {
             continue;

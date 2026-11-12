@@ -1,4 +1,8 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
+mod asset_masked_read;
+mod connector_source_rows_read;
+mod skill_package_read;
+
 mod act_answer;
 mod agent_grant;
 mod agent_run_effect;
@@ -30,8 +34,10 @@ mod credential;
 mod custody_drain;
 mod describe;
 mod diary;
+mod diary_pinned;
 mod disclosure;
 mod embedding_space;
+mod engine_controls;
 mod eval_cohort;
 mod explain;
 mod fanout_launch;
@@ -42,6 +48,8 @@ mod feedback;
 mod files;
 mod follower_keyframe;
 mod free_time_policy;
+mod gate_decision_read;
+mod gate_policy_read;
 mod git_push_grant;
 mod goal_optimize;
 mod grants;
@@ -78,9 +86,11 @@ mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
+mod research_root;
 mod reservoir_sources;
 mod residence;
 mod retrieval;
+mod revisions_read;
 mod root_requests;
 mod scratchpad;
 mod secret;
@@ -88,6 +98,7 @@ mod secret_custody;
 mod secret_grant;
 mod secret_use;
 mod self_actor;
+mod self_model_read;
 mod self_verbs;
 mod share;
 mod shared;
@@ -170,14 +181,28 @@ pub struct RoomClaimRequest {
 pub struct ProjectRefRequest {
     pub project_ref: String,
 }
-/// `vault.projects.goal.dismiss`'s input: the proposal one tradeoff question
-/// made, under the goal claim the caller saw in force.
+/// `vault.projects.goal.dismiss`'s input: the project and the proposal to
+/// set aside.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGoalDismissRequest {
     pub project_ref: String,
-    pub expected_goal_ref: String,
-    pub question_digest: String,
+    pub target: ProjectGoalDismissTarget,
+}
+/// What `vault.projects.goal.dismiss` sets aside: the preference one
+/// tradeoff question proposed, under the goal claim the caller saw in force;
+/// or a full goal proposal by its id, with the owner's reason.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProjectGoalDismissTarget {
+    Preference {
+        expected_goal_ref: String,
+        question_digest: String,
+    },
+    Proposal {
+        proposal_ref: String,
+        reason: String,
+    },
 }
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
 /// wrote nothing.
@@ -365,6 +390,30 @@ pub fn task_create_spec(
         )),
     }
 }
+
+/// `tasks.create.from_message`: the project-room MESSAGE or TURN a TASK is
+/// made from, and the create as `tasks.create` names it. The TASK binds to
+/// the root of the thread the source stands in, in the create's write. A
+/// create that routes through approval (a typed brief, an intent key, or a
+/// ceiling short of Auto) is refused.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCreateFromMessageRequest {
+    /// The MESSAGE or TURN, by short-id ref or 32-hex id.
+    pub source_ref: String,
+    pub create: TaskCreateRequest,
+}
+
+/// `tasks.create.from_message` for the surface's actor: the source by its
+/// id, and the create spec [`task_create_spec`] builds.
+pub fn task_create_from_message(
+    memory: &Memory<'_>,
+    input: TaskCreateFromMessageRequest,
+) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
+    let source_ref = crate::memory::resolve_entity_ref(memory.vault(), &input.source_ref)?;
+    let spec = task_create_spec(memory, input.create)?;
+    memory.tasks_create_from_message(source_ref, &spec)
+}
 /// `tasks.wave` (OF-427, ARCH-0068 RC5): an epic TASK cut into a wave of
 /// TASKs by a planner agent, queued as one planning attempt. Who asks, and
 /// the lease the wave runs under, are the host's, never request text.
@@ -449,6 +498,10 @@ pub use crate::memory::RecallRequest;
 
 pub use crate::memory::affect::QueryAffect;
 
+pub use self::asset_masked_read::*;
+pub use self::connector_source_rows_read::*;
+pub use self::skill_package_read::*;
+
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agent_run_effect::*;
@@ -482,8 +535,10 @@ pub use self::credential::*;
 pub use self::custody_drain::*;
 pub use self::describe::*;
 pub use self::diary::*;
+pub use self::diary_pinned::*;
 pub use self::disclosure::*;
 pub use self::embedding_space::*;
+pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
 pub use self::fanout_launch::*;
@@ -494,6 +549,8 @@ pub use self::feedback::*;
 pub use self::files::*;
 pub use self::follower_keyframe::*;
 pub use self::free_time_policy::*;
+pub use self::gate_decision_read::*;
+pub use self::gate_policy_read::*;
 pub use self::git_push_grant::*;
 pub use self::goal_optimize::*;
 pub use self::grants::*;
@@ -527,9 +584,11 @@ pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
+pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
 pub use self::retrieval::*;
+pub use self::revisions_read::*;
 pub use self::root_requests::*;
 pub use self::scratchpad::*;
 pub use self::secret::*;
@@ -537,6 +596,7 @@ pub use self::secret_custody::*;
 pub use self::secret_grant::*;
 pub use self::secret_use::*;
 pub use self::self_actor::*;
+pub use self::self_model_read::*;
 pub use self::self_verbs::*;
 pub use self::share::*;
 pub use self::shared::*;
@@ -729,7 +789,7 @@ fn verb_leaves(name: &str, written: bool) -> Vec<&str> {
 /// `describe`) with its typed input and reply, one overload first for each
 /// input field that selects its own reply (`describe({fold})`,
 /// `tasks.update({resultRef})`), and every type they reach in one namespace.
-/// `scripts/sdk/generate.py` writes that one text from the table to both
+/// The SDK generator (`crates/oneiron-sdk-generator`) writes that one text from the table to both
 /// `catalog_fragment.d.ts` and `code-mode.d.ts`, so the methods a model is
 /// shown are exactly the rows the host serves.
 #[must_use]
@@ -902,7 +962,7 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let short = serde_json::json!({
         "who": {"responder": {"human": {"actor_ref": actor}}},
@@ -1030,8 +1090,8 @@ fn short_ask_retry_identity_includes_recipient_deadline_and_branch() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let other = crate::EntityId::from_bytes([0xE2; 16]).unwrap();
-    super::tests::support::put_person(&vault, other);
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    crate::task_verb::tests::support::put_person(&vault, other);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let base = serde_json::json!({
         "who": {"people": [actor]},

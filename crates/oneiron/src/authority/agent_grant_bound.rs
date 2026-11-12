@@ -11,11 +11,15 @@
 //! alone: Grants are never unioned (authority/principal_standing.rs,
 //! federation/repo_access.rs, FIX 7462). The verbs stay the slip's.
 //!
-//! - No Grant row names the holder: the slip reads as its Scope allows, as
-//!   before (ruling Q2 = B: `oneiron token agent`, `token read` and
-//!   `token pair` pair agents with no Grant). A revoke removes the Grant's
-//!   row, so revoking an agent's last Grant gives it back its slip's Scope:
-//!   FIX AGENT-REVOKE-WIDENS.
+//! - No Grant has ever named the holder: the slip reads as its Scope
+//!   allows, as before. That is an ordinary person, which no Grant can name
+//!   (Engine RULING PAIR-GRANT-DESIGN Q1 = A), or an agent paired before the
+//!   upgrade or without the owner's proof; the owner narrows it by minting a
+//!   Grant. Pairing a named agent mints its default read Grant (Q3/Q4).
+//! - A Grant has named the holder, but no Grant row names it now (each was
+//!   revoked): it reads nothing (Q2 = A), so revoking an agent's last Grant
+//!   never gives it back its slip's Scope (closes FIX AGENT-REVOKE-WIDENS).
+//!   The signed mints say who was named: `agent_grant_ever_named_in_txn`.
 //! - A Grant row names the holder, but none stands for `read` now (expired,
 //!   no `read`, its owner gone, its pact lapsed): it reads nothing, so an
 //!   expiry never widens it.
@@ -29,6 +33,14 @@
 //! The credential itself is left whole: only the read key's Scope narrows,
 //! so a guard that asks for the exact credential (a phone line's) still
 //! finds it.
+//!
+//! The key keeps the bound of the snapshot it was built in, and a lane may
+//! be held past a revoke, an expiry or a lapse (a caller's own handle, or a
+//! saved lane rebuilt later). So the key also names its holder, and each
+//! serving txn's row checks read that holder's standing Grants again
+//! ([`Vault::agent_grant_read_bounds_in_txn`]): a row must lie inside one of
+//! them as well, met with the key's own Scope (REVIEW-7051 P1). That only
+//! narrows; the key's own bound still binds.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -51,7 +63,7 @@ pub(crate) struct AgentGrantReadBound {
 impl Vault {
     /// The bound the owner-agent Grants that name `holder` in `txn` put on a
     /// read under a credential of Scope `slip` that `holder` holds (module
-    /// docs); `None` when no Grant row names `holder`.
+    /// docs); `None` when no Grant has ever named `holder`.
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -61,6 +73,31 @@ impl Vault {
         slip: &Scope,
         holder: EntityId,
     ) -> Result<Option<AgentGrantReadBound>> {
+        Ok(self
+            .agent_grant_read_bounds_in_txn(txn, holder)?
+            .map(|bounds| AgentGrantReadBound {
+                envelope: bounds
+                    .iter()
+                    .fold(disclosure_axes(&Scope::default()), |envelope, bound| {
+                        join(&envelope, bound)
+                    }),
+                alternatives: bounds.iter().map(|bound| slip.meet(bound)).collect(),
+            }))
+    }
+
+    /// What each owner-agent Grant naming `holder` that stands for `read` in
+    /// `txn` lets a read reach, its verbs left open, in Grant id order; empty
+    /// when a Grant has named `holder` but none stands now (every one
+    /// revoked, expired, without `read`, its owner gone or its pact lapsed),
+    /// and `None` when no Grant has ever named `holder` (module docs).
+    ///
+    /// # Errors
+    /// A store, fold or clock failure; never a refusal.
+    pub(crate) fn agent_grant_read_bounds_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<Option<Vec<Scope>>> {
         let (grants, undecoded) = self.agent_grants_reporting_in_txn(txn)?;
         let naming: Vec<&AgentGrantStanding> = grants
             .iter()
@@ -77,7 +114,10 @@ impl Vault {
             );
         }
         if naming.is_empty() {
-            return Ok(None);
+            // Every Grant that named it is revoked: no alternative stands.
+            return Ok(self
+                .agent_grant_ever_named_in_txn(txn, holder)?
+                .then(Vec::new));
         }
         let now = self.instant_in_txn(txn)?.secs();
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
@@ -86,23 +126,15 @@ impl Vault {
             txn,
             naming.iter().map(|standing| &standing.grant),
         )?;
-        let bounds: Vec<Scope> = naming
-            .iter()
-            .filter(|standing| {
-                standing.stands_in_txn(self, txn, holder, "read", now, &owners, &classes)
-            })
-            .map(|standing| disclosure_axes(&standing.grant.scope_for_verb("read", &classes)))
-            .collect();
-        let envelope = bounds
-            .iter()
-            .fold(disclosure_axes(&Scope::default()), |envelope, bound| {
-                join(&envelope, bound)
-            });
-        let alternatives = bounds.iter().map(|bound| slip.meet(bound)).collect();
-        Ok(Some(AgentGrantReadBound {
-            envelope,
-            alternatives,
-        }))
+        Ok(Some(
+            naming
+                .iter()
+                .filter(|standing| {
+                    standing.stands_in_txn(self, txn, holder, "read", now, &owners, &classes)
+                })
+                .map(|standing| disclosure_axes(&standing.grant.scope_for_verb("read", &classes)))
+                .collect(),
+        ))
     }
 }
 

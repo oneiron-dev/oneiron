@@ -198,9 +198,16 @@ pub(super) fn anchors(
 /// root availability is NotRun. No provisional result grants trust or profile.
 /// The covered certificates serve as those roots as they are, never copied
 /// (FIX 12260). Memory its decodes were refused ends it as itself, never as
-/// a failed or malformed DSS.
-fn classify_missing_material_root(
+/// a failed or malformed DSS. Treating every covered certificate as a root
+/// exempts them from coverage, from `unknown` statuses and from the shadow
+/// scan, so before the probe the material is re-read at the same time under
+/// the real `anchors`. Only what that reading cannot settle is a missing-root
+/// symptom: a failure there stands; possible tampering (a shadow an earlier
+/// failure may have hidden; lead ruling F) or an authenticated `unknown`
+/// found there is what the check reports; otherwise the probe decides.
+pub(super) fn classify_missing_material_root(
     doc: &Document,
+    anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at: u64,
     memory: &MemoryLedger,
@@ -221,16 +228,38 @@ fn classify_missing_material_root(
     {
         return Ok(());
     }
-    let mut probe = Checks::new(limits);
-    verify_dss(doc, covered, covered, at, memory, &mut probe, limits)?;
-    if probe.passed(VerifyCheckKind::ValidationMaterial)
-        && let Some(check) = checks
-            .list
-            .iter_mut()
-            .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+    let mut real = Checks::new(limits);
+    verify_dss(doc, anchors, covered, at, memory, &mut real, limits)?;
+    let real_material = real
+        .list
+        .iter()
+        .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
+        .map(|c| (c.status, c.finding));
+    let finding = match real_material {
+        Some((VerifyCheckStatus::Fail, _)) => return Ok(()),
+        Some((
+            VerifyCheckStatus::NotRun,
+            Some(
+                found @ (VerifyFindingCode::ValidationMaterialPossibleTampering
+                | VerifyFindingCode::RevocationStatusUnknown),
+            ),
+        )) => found,
+        _ => {
+            let mut probe = Checks::new(limits);
+            verify_dss(doc, covered, covered, at, memory, &mut probe, limits)?;
+            if !probe.passed(VerifyCheckKind::ValidationMaterial) {
+                return Ok(());
+            }
+            VerifyFindingCode::TrustRootUnavailable
+        }
+    };
+    if let Some(check) = checks
+        .list
+        .iter_mut()
+        .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
     {
         check.status = VerifyCheckStatus::NotRun;
-        check.finding = Some(VerifyFindingCode::TrustRootUnavailable);
+        check.finding = Some(finding);
     }
     Ok(())
 }
@@ -366,6 +395,7 @@ pub(crate) fn verify_document(
             .map_err(memory_refused)?;
         classify_missing_material_root(
             &doc,
+            &anchor_certs,
             &covered,
             provisional_material_time(&envelopes, dss_end, None, ctx.clock_ms / 1000),
             &memory,
@@ -451,6 +481,7 @@ pub(crate) fn verify_document(
                 .map_err(memory_refused)?;
             classify_missing_material_root(
                 &doc,
+                &anchor_certs,
                 &material,
                 provisional_material_time(
                     &envelopes,
