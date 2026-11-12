@@ -14,7 +14,6 @@ mod types;
 
 mod fanout;
 
-pub use fanout::FanoutApprovalMode;
 pub(crate) use fanout::{
     FanoutAdmission, FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow,
     FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutHistory, FanoutPathology,

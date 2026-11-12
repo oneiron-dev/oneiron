@@ -24,7 +24,7 @@ use crate::entity_id::EntityId;
 use crate::memory::{
     MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
 };
-use crate::note::{NoteProgramEdit, NoteProgramEditOutcome};
+use crate::note::{NoteEditLanding, NoteProgramEdit, NoteProgramEditOutcome};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
@@ -400,6 +400,26 @@ impl crate::Vault {
         self.scratchpad_sealed_in_txn(&txn, pad)
     }
 
+    /// Whether `pad` is the pad the board bound to `actor`'s `session`: the
+    /// actor's own board block, where its pad append lands with no grant
+    /// (ARCH-0032 #scratchpad-one-store). Every other NOTE edit is the
+    /// Grant's answer (DEC-0006 #10).
+    pub(crate) fn is_session_pad_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        session: &str,
+        pad: EntityId,
+    ) -> crate::error::Result<bool> {
+        let key = PadKey::Session {
+            actor,
+            session: session.to_owned(),
+        };
+        Ok(PAD.get(&self.store, txn, &key)?.is_some_and(|row| {
+            row.actor == *actor.as_bytes() && row.session == session && row.pad == *pad.as_bytes()
+        }))
+    }
+
     /// [`Self::scratchpad_sealed`] inside the caller's read.
     pub(crate) fn scratchpad_sealed_in_txn(
         &self,
@@ -566,9 +586,14 @@ impl Memory<'_> {
             let actor = self.write_actor();
             let outcome = self.with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn, lane| {
-                    let outcome = self
-                        .vault()
-                        .edit_note_in_txn(txn, note, &edit, actor, lane)?;
+                    let outcome = self.vault().edit_note_landing_in_txn(
+                        txn,
+                        note,
+                        &edit,
+                        actor,
+                        lane,
+                        NoteEditLanding::SessionPad { session },
+                    )?;
                     if matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
                         run_lifecycle::observe_append_in_txn(self, txn, session, pad)?;
                     }

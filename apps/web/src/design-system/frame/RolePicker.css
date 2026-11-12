@@ -1,0 +1,135 @@
+/* The roles as picks: diamond and name, the job beside it, a quieter hint. */
+.sl-role-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 560px;
+  max-width: 100%;
+}
+
+.sl-role-picks {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-role-pick {
+  display: grid;
+  grid-template-columns: 9px 5.5em minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: baseline;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 5px 8px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  line-height: 1.45;
+  color: var(--sl-ink-2);
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+
+.sl-role-pick > .sl-pick-diamond {
+  align-self: start;
+  margin-top: 6px;
+}
+
+.sl-role-pick:not(:disabled):hover,
+.sl-role-pick:focus-visible {
+  background: var(--sl-hover);
+  outline: none;
+}
+
+.sl-role-pick[aria-pressed="true"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-role-pick[aria-pressed="true"] .sl-role-pick-name {
+  font-weight: 600;
+}
+
+.sl-role-pick:disabled {
+  cursor: default;
+}
+
+.sl-role-pick-job {
+  min-width: 0;
+  color: var(--sl-ink-2);
+}
+
+.sl-role-pick-hint {
+  font-style: italic;
+  white-space: nowrap;
+  color: var(--sl-ink-3);
+}
+
+/* The record of a pick inside its undo window. */
+.sl-role-receipt {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+/* What the role asks first: an act, then its mode as three picks. */
+.sl-role-acts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-top: 4px;
+}
+
+.sl-role-acts > .sl-unfold {
+  align-self: stretch;
+}
+
+.sl-role-act-list {
+  display: flex;
+  flex-direction: column;
+  padding-top: 6px;
+  list-style: none;
+}
+
+.sl-role-act {
+  display: grid;
+  grid-template-columns: 9.5em minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: var(--sl-t-do);
+}
+
+.sl-role-act-name {
+  color: var(--sl-ink-1);
+}
+
+.sl-role-act-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+}
+
+.sl-role-act-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+.sl-role-act-mode:not(:disabled):hover,
+.sl-role-act-mode:focus-visible,
+.sl-role-act-mode[aria-pressed="true"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-role-act-mode:disabled {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-role-pick {
+    transition: none;
+  }
+}

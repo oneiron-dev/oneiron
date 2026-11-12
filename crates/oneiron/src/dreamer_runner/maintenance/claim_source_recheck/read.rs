@@ -171,10 +171,10 @@ pub(super) fn critical_in(
 /// may not read never reaches its judge.
 fn dreamer_read(vault: &Vault) -> Result<ScopedRead<'_>> {
     let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
-    let key = crate::claim::ScopedReadActorKey::with_actor_class(
-        dreamer.to_hex(),
-        crate::edge::EdgeActorClass::System.gate_actor_class(),
-    )
+    let key = crate::claim::ScopedReadActorKey::for_engine_actor(crate::WriteActor::new(
+        dreamer,
+        crate::edge::EdgeActorClass::System,
+    ))
     .ok_or_else(invalid)?;
     Ok(vault.scoped_read(key))
 }
