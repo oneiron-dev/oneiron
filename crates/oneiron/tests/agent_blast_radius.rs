@@ -39,6 +39,7 @@ use oneiron::code_run::{
     SelfDispatcher, parse_agent_put_request,
 };
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -242,13 +243,23 @@ fn save_agent(f: &Fixture, id: EntityId, name: &str) -> TestResult {
 /// A watch TASK `owner_ref` owns, ticking `WATCH_AHEAD` from now; `None` is
 /// the vault owner's own.
 fn watcher(f: &Fixture, owner_ref: Option<EntityId>, title: &str) -> TestResult<EntityId> {
+    watcher_due_in(f, owner_ref, title, WATCH_AHEAD)
+}
+
+/// [`watcher`], ticking `ahead` seconds from now.
+fn watcher_due_in(
+    f: &Fixture,
+    owner_ref: Option<EntityId>,
+    title: &str,
+    ahead: u64,
+) -> TestResult<EntityId> {
     let now = f.vault.now_recorded_at();
     let receipt = f
         .vault
         .memory(f.owner, EdgeActorClass::Human)
         .tasks_create(
             &TaskCreateSpec::new(RmpValue::from(title), None, owner_ref, Some(now))
-                .with_due_at(now + WATCH_AHEAD)
+                .with_due_at(now + ahead)
                 .with_watch(true),
         )?;
     receipt
@@ -609,6 +620,44 @@ fn the_switch_off_answer_offers_pause_tree_with_the_count() -> TestResult {
         switched_off["made_by"]["pause_offer"],
         json!({"verb": PAUSE_TREE, "pausable": 2}),
         "{switched_off}"
+    );
+    Ok(())
+}
+
+/// A held watcher does not tick when its due time passes; after the
+/// resume it ticks once, late, and its watch TASK settles.
+#[test]
+fn a_held_watcher_ticks_only_after_resume_tree() -> TestResult {
+    let f = fixture()?;
+    let task = watcher_due_in(&f, Some(f.agent), "watch the build in a moment", 2)?;
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        paused["paused"]["watchers"],
+        json!([task.to_hex()]),
+        "{paused}"
+    );
+
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    f.vault.housekeeping(HousekeepingBudget::unbounded())?;
+    let held = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        keys(&held, "watchers", "task_ref"),
+        vec![&id_json(task)],
+        "a held tick does not release: {held}"
+    );
+    assert_eq!(held["watchers"][0]["held"], json!(true), "{held}");
+
+    as_owner(
+        &f,
+        RESUME_TREE,
+        json!({"pause_ref": paused["pause_ref"].clone()}),
+    )?;
+    f.vault.housekeeping(HousekeepingBudget::unbounded())?;
+    let ticked = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        ticked["watchers"],
+        json!([]),
+        "after the resume the tick releases, late, and settles the watch TASK: {ticked}"
     );
     Ok(())
 }
