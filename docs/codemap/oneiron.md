@@ -8564,6 +8564,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/summary_as_record_permit.rs` | test | L | — | — | The owner's summary-as-record lands on a default vault (Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A) |
 | `tests/symbol_lease_observe.rs` | test | s | — | — | NO-DOOR SYMBOL-LEASE-OBSERVATION (tests/e2e/code-custody.test.ts CODE-CUSTODY-03): a leased run reads its… |
 | `tests/sync_outbox.rs` | test | s | — | — | The owner's outbox read (FIX 3966): what one of the owner's machines still owes its home |
+| `tests/sync_state_retain_refused_window.rs` | test | s | — | — | A window whose retain the home refused is found again by the residence upkeep's retry (FIX… |
 | `tests/tag_views_source_label.rs` | test | m | — | — | The tag views serve nothing derived from a relationship-scoped MESSAGE outside that relationship… |
 | `tests/tasks_person_fit.rs` | test | s | — | — | FIX 1161: TASKS fits use measured person fit before completion count |
 | `tests/temporal_query_window.rs` | test | s | — | — | Query-derived occurred windows must not lose their eligible hit to learned-time candidates |
