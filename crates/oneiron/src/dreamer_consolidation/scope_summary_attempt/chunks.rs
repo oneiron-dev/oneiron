@@ -151,6 +151,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     subject,
                     deadline: Some(ctx.deadline),
                     now_ms: ctx.now_ms,
+                    spend_scope: None,
                 };
                 let mut replies = Vec::with_capacity(steps.len());
                 for (request, step_hash, labels) in steps {

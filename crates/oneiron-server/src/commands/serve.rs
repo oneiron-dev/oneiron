@@ -120,6 +120,10 @@ pub(super) async fn serve_anchored(
     // spaces. The local provider downloads nothing here — that is the worker's.
     let (sync_server, gpu_poller) =
         build_server(vault, &config, server_config, owner_host, startup_args).await?;
+    // Built: this install's profile is enrolled, and the listener has not
+    // bound. The agents a self-hosted vault paired before Grants get their
+    // default read Grant now, once (FIX AGENT-GRANTLESS-VISIBLE).
+    crate::owner::agent_grants::backfill_default_grants_at_start(sync_server.vault());
     // The host's socket: adopted from the service manager, or host:port
     // bound here. Bound before any worker starts, so a refused bind leaves
     // nothing running. An adopted socket is judged by where it listens.

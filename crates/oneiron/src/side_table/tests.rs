@@ -524,6 +524,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PORTS_WITHDRAWN",
         "PROJECT_DEPTH_LOCAL_BIRTH",
         "PROJECT_CYCLE_QUESTION",
+        "PROJECT_EXTRA_ROOM",
         "PROJECT_FRONTIER",
         "PROJECT_FROZEN_APPLIED",
         "PROJECT_FROZEN_WAIT_PROJECT",
