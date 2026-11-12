@@ -1217,7 +1217,7 @@ async fn retired_task_routes_are_not_found() {
         let server = Arc::clone(&server);
         let recipe = recipe.clone();
         async move {
-            crate::build_app(Arc::clone(&server))
+            let response = crate::build_app(Arc::clone(&server))
                 .oneshot(crate::test_credentials::bind_request(
                     &server,
                     Request::builder()
