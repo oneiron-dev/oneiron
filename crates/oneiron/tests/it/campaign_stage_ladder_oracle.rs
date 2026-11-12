@@ -726,6 +726,7 @@ fn call_held_cites_the_claim_the_outcome_was_read_from() {
     )
     .expect("fixture");
     planted.valid_from = Some(OUTCOME_AT + 60);
+    planted.scope_facet = vault.default_facet().expect("vault default facet");
     vault
         .put_claim(
             &test_id(PLANTED_OUTCOME_SEED),
@@ -770,26 +771,24 @@ fn call_held_cites_the_claim_the_outcome_was_read_from() {
 
 #[test]
 fn an_owner_attested_outcome_is_never_relabelled_machine() {
-    // The test ladder's `call_booked -> call_held` demands machine evidence, so
-    // the owner's check-in answer advances nothing rather than being written as
-    // an observation the engine never made.
+    // CAL-07 accepts both bases for the held transition (FIX 9666, ef11f808af5
+    // #4006; Engine ruling T0F-OWNER-ATTESTED-HELD = A): the owner's check-in
+    // answer advances `call_booked -> call_held` even on the test ladder, whose
+    // rung asks for machine evidence, and the head records it as the owner's
+    // attestation, never as an observation the engine made.
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
     walk_to_call_booked(&vault);
     record_outcome_as(&vault, EventOutcome::Held, EventOutcomeBasis::OwnerAttested);
 
-    assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).1.value,
-        stage_value(
-            CALL_BOOKED,
-            StageEvidenceClass::CalendarEvent,
-            vec![test_id(EVENT_SEED), test_id(ICS_SEED)],
-            BOOKING_AT,
-        ),
-    );
+    let held_ref = advanced(apply_outcome(&vault));
+    let (held_id, held_body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
+    assert_eq!(held_id, held_ref);
+    let held = decode_crm_stage_value(&held_body.value).unwrap();
+    assert_eq!(held.stage, key(CALL_HELD));
+    assert_eq!(held.basis, EvidenceBasis::OwnerAttested);
 
-    // A ladder that DOES admit attestation on that rung promotes on the same
+    // A ladder that admits attestation on that rung promotes on the same
     // answer, and the head says whose answer it was.
     let (_attesting_dir, attesting_vault) = oracle_vault();
     walk_to_call_booked(&attesting_vault);

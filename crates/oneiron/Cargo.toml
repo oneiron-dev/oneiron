@@ -290,8 +290,9 @@ test-support = [
 [dev-dependencies]
 wat = "1"
 oneiron-guest = { path = "../oneiron-guest" }
-# The sandbox backends, for the integration tests that run them (core split 5b.1).
-oneiron-agent-runtime = { path = "../oneiron-agent-runtime" }
+# The sandbox backends, for the integration tests that run them (core split 5b.1),
+# with the JS runtime the code-mode tests drive.
+oneiron-agent-runtime = { path = "../oneiron-agent-runtime", features = ["code-sandbox-wasmtime"] }
 tempfile = "3"
 # Keep property generators without enabling bit-vec/default in the shipped graph.
 proptest = { version = "1", default-features = false, features = ["std", "fork", "timeout"] }
