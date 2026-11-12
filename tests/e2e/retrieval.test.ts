@@ -1473,6 +1473,11 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
   }
 });
 
+// Readable filler claims RETRIEVAL-09 adds beside its six-row task clique: the
+// reader's walk admits about 9-17 fixture rows, so 56 more keep the clique at
+// or under 10% of the admitted graph (FIX-LIST [RETRIEVAL-09-FIXTURE-BELOW-COMMUNITY-CAP]).
+const retrieval09FillerCount = 56;
+
 /* RETRIEVAL-09: authored TURN self-reports, optional priors, real read ceiling. */
 suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should work", async () => {
   const fixture = await scenario<{
@@ -1553,6 +1558,33 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       ]);
       hubs.push(hub); allowed.push(hub.id_hex);
     }
+    // FIX-LIST [RETRIEVAL-09-FIXTURE-BELOW-COMMUNITY-CAP]: since #7272 the
+    // reader's narrowed walk takes its community prior from the rows it admits
+    // alone, and a fine community over 10% of them takes none (6 x 10 > ~20
+    // rows). Readable filler claims about the owner share no query word and
+    // sit two hops from every claim seed (claim -> owner -> filler; the walk
+    // follows ClaimOf both ways), so the walk admits them as singletons: the
+    // admitted graph passes 60 rows and the six-row task clique stays one
+    // community. They are written before `before`, and none is hidden.
+    const fillerRefs: string[] = [];
+    for (let start = 0; start < retrieval09FillerCount; start += 8) {
+      const receipts = await Promise.all(Array.from(
+        { length: Math.min(8, retrieval09FillerCount - start) },
+        (_, offset) => engine.client.call("vault.claims.upsert", {
+          predicate: `profile.retrieval_filler_${start + offset}`,
+          subject_ref: engine.pairedActor.principalRef, value: `quiet ledger line ${start + offset}`,
+          confidence: 0.875, source: "user_stated", scope, occurred_at: at, learned_at: at,
+        }),
+      ));
+      for (const receipt of receipts) {
+        expect(["auto", "approved"]).toContain(receipt.approval);
+        await engine.awaitReceipt(receipt.receipt_ref);
+        fillerRefs.push(receipt.claim_short_id);
+      }
+    }
+    const fillers = await engine.client.call("vault.hydrate", { refs: fillerRefs });
+    expect(fillers.value).toHaveLength(retrieval09FillerCount);
+    allowed.push(...fillers.value.map(entity => entity.id_hex));
     const reader = await recordBoundReader(engine, allowed);
     const privateRow = records.get("private-community")!;
     expect((await reader.call("vault.get", { entity_ref: privateRow.ref })).value).toBeNull();
