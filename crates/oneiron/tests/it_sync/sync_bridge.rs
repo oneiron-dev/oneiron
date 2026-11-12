@@ -25,7 +25,7 @@ use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncResiden
 use oneiron::sync::lease;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::schema::create_window_doc;
-use oneiron::sync::transport::TAG_SYNC_UPDATE;
+use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
@@ -418,7 +418,21 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     message.extend_from_slice(&update);
     let responses = client.handle_server_message(&message).unwrap();
 
-    assert!(responses.is_empty());
+    // Under sync all this device follows every world readable here, so the
+    // root's newly listed window is asked for at once, and nothing else.
+    let requested: Vec<(String, u8)> = responses
+        .iter()
+        .map(|frame| {
+            assert_eq!(frame.first(), Some(&TAG_WINDOW_SYNC), "a window frame");
+            let (key, sub_tag, _) =
+                transport::decode_window_sync(&frame[1..]).expect("decode window frame");
+            (key.to_owned(), sub_tag)
+        })
+        .collect();
+    assert_eq!(
+        requested,
+        vec![("2026-03".to_string(), window_sub_tags::VV_REQUEST)]
+    );
     assert_eq!(client.server_windows(), vec!["2026-03".to_string()]);
     assert_eq!(
         vault
