@@ -8027,6 +8027,7 @@ dependencies = [
  "oneiron-linkedin-policy",
  "oneiron-model",
  "oneiron-policy-vocabulary",
+ "oneiron-records",
  "oneiron-retrieval",
  "oneiron-run-budget",
  "oneiron-sandbox-contract",
@@ -8036,6 +8037,7 @@ dependencies = [
  "oneiron-store",
  "oneiron-testkit",
  "oneiron-vault-contract",
+ "oneiron-verb-wire",
  "oneiron-wake-contract",
  "oneiron-web-fetch",
  "oneiron-xlsx-formula",
@@ -8760,6 +8762,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-records"
+version = "0.1.0"
+dependencies = [
+ "oneiron-verb-wire",
+]
+
+[[package]]
 name = "oneiron-remote"
 version = "0.1.0"
 dependencies = [
@@ -9071,6 +9080,10 @@ dependencies = [
  "tokio",
  "zeroize",
 ]
+
+[[package]]
+name = "oneiron-verb-wire"
+version = "0.1.0"
 
 [[package]]
 name = "oneiron-vm-outbox"

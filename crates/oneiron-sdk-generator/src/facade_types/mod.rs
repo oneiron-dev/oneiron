@@ -68,6 +68,9 @@ pub const CRATES: &[(&str, &str)] = &[
     ("oneiron_remote", "crates/oneiron-remote/src"),
     // Core split slice 2: core re-exports the consent state at its old paths (SDK-GEN-CRATES-MISSES-CONSENT-STATE).
     ("oneiron_consent_state", "crates/oneiron-consent-state/src"),
+    // Lib split, stage A: the crates below the lib that mirror its module tree.
+    ("oneiron_verb_wire", "crates/oneiron-verb-wire/src"),
+    ("oneiron_records", "crates/oneiron-records/src"),
 ];
 
 /// The source directory `CRATES` gives a crate name (`CRATES[crate]`), or `None` for a name it does not hold.
@@ -85,6 +88,7 @@ pub(crate) const EAGER: &[&str] = &[
     "oneiron_authority",
     "oneiron_model",
     "oneiron_retrieval",
+    "oneiron_verb_wire",
 ];
 
 /// A bare row type is named from the SDK module, as its generated fn names it.
