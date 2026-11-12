@@ -142,7 +142,8 @@ fn turn_body(role: &str) -> Vec<u8> {
 }
 
 /// A slip of the home's own mint for `holder`: it parses and names its
-/// holder, as the relayed intent's put requires.
+/// holder, as the relayed intent's put requires. Its binding key is a real
+/// Ed25519 public key, as a slip's claims require.
 fn holder_slip_token(server: &SyncServer, holder: EntityId) -> String {
     let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
     let root = server.vault().ensure_host_root_slip(&issuer).unwrap();
@@ -150,7 +151,10 @@ fn holder_slip_token(server: &SyncServer, holder: EntityId) -> String {
     claims.slip_id = *blake3::hash(b"ask-drain-holder").as_bytes();
     claims.holder_ref = holder.to_hex();
     claims.actor_class = Some("human".to_owned());
-    claims.binding_key = *blake3::hash(b"ask-drain-holder-key").as_bytes();
+    claims.binding_key =
+        ed25519_dalek::SigningKey::from_bytes(blake3::hash(b"ask-drain-holder-key").as_bytes())
+            .verifying_key()
+            .to_bytes();
     server
         .vault()
         .mint_capability_slip(&issuer, claims)
@@ -267,7 +271,11 @@ async fn drains_landed_ask_intents() {
     let update = doc.export(ExportMode::all_updates()).unwrap();
     send_enveloped_update(&mut socket, WINDOW, &update).await;
     let landed = eventually(|| vault.get_entity_type(&result_row).unwrap().is_some()).await;
-    assert!(landed, "the window update lands the result row at the home");
+    assert!(
+        landed,
+        "the window update lands the result row at the home; quarantined there: {:?}",
+        oneiron::sync::quarantine::quarantined_records(&vault)
+    );
 
     // No ask sweep runs on this server: only the UPDATE arm's drain consumes.
     let consumed = eventually(|| {
