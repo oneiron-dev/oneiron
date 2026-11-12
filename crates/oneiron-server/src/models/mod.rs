@@ -87,6 +87,10 @@ mod seat_model;
 mod seat_model_admission;
 mod served;
 mod siwc_responses;
+// SEAT-PARK-MODEL-STEP-PATH: the housekeeping tick's restore of a lapsed SIWC login.
+pub(crate) mod siwc_seat_login;
+// SEAT-PARK-MODEL-STEP-PATH: an SIWC offer's model seat and the refusals that name it.
+pub(crate) use siwc_responses::{seat_refusal, siwc_offer_seat};
 pub(crate) mod soniox;
 mod source_admission;
 mod sse;
@@ -279,6 +283,9 @@ pub struct ModelRuntime {
     budgets: ModelHostBudgets,
     /// This server's Responses state, which its socket pools hold (FIX 9516).
     responses: ResponsesContext,
+    /// The configured SIWC logins the housekeeping tick restores a lapsed
+    /// seat of (SEAT-PARK-MODEL-STEP-PATH).
+    siwc_logins: Arc<siwc_seat_login::SiwcSeatLogins>,
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's
