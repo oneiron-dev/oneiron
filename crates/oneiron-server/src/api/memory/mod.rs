@@ -269,7 +269,7 @@ pub(super) use self::watch::{
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
         (status = 400, description = "Malformed verb request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds or unresolved_actor. remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 422, description = "remember: a ref the entity names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body (as `/v1/core/batch`).", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
@@ -285,7 +285,7 @@ pub(crate) async fn core_memory_verb(
     auth.require(CoreScope::Write)?;
     // Every named verb writes or erases vault content: an owner act, so a
     // hosted operator's root is refused before any of them (FIX 2222).
-    crate::api::host_action::require_host_owner_act(&server, &auth)?;
+    let host_action = crate::api::host_action::require_host_owner_act(&server, &auth)?;
     let verb = oneiron::NamedMemoryVerb::parse(&verb_name).map_err(memory_verb_refusal)?;
     let req = json_payload(payload)?;
     let operation = core_memory_operation_kind(verb.operation_kind());
@@ -398,16 +398,35 @@ pub(crate) async fn core_memory_verb(
             }
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
-            let failed = |error: oneiron::Error| {
-                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
-                core_engine_error("core memory delete failed", error)
+            // DEL-2 (ARCH-0043, owner DEL-2 = A): a self-hosted root, the dev
+            // mode and an owner-grade token delete as the owner, as before,
+            // with no new read. Any other token is judged by the one delete
+            // authority on its own resolved actor.
+            let owner_door = host_action.is_some() || auth.is_owner_grade();
+            let (existed, receipt_id, sweep_key) = if owner_door {
+                let failed = |error: oneiron::Error| {
+                    tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
+                    core_engine_error("core memory delete failed", error)
+                };
+                let outcome = server
+                    .vault
+                    .delete_entity_with_reason(&id, reason)
+                    .map_err(failed)?;
+                (
+                    outcome.existed,
+                    outcome.receipt_id.map(|id| id.to_hex()),
+                    outcome.sweep_key.as_deref().map(hex_bytes),
+                )
+            } else {
+                let receipt = core_memory_delete_by_role(&server, &auth, &id, response_reason)?;
+                let receipt_id = receipt.receipt_ref.as_deref().map(|receipt| {
+                    receipt
+                        .strip_prefix("redaction:")
+                        .unwrap_or(receipt)
+                        .to_owned()
+                });
+                (receipt.existed, receipt_id, None)
             };
-            let outcome = server
-                .vault
-                .delete_entity_with_reason(&id, reason)
-                .map_err(failed)?;
-            let (existed, receipt_id, sweep_key) =
-                (outcome.existed, outcome.receipt_id, outcome.sweep_key);
             let state = oneiron::memory::DeleteRequestState::Applied;
 
             Ok(Json(CoreMemoryVerbResponse {
@@ -427,8 +446,8 @@ pub(crate) async fn core_memory_verb(
                             | oneiron::DeleteReason::GdprDelete
                             | oneiron::DeleteReason::PolicyDelete
                     ),
-                    receipt_id: receipt_id.map(|id| id.to_hex()),
-                    sweep_key: sweep_key.as_deref().map(hex_bytes),
+                    receipt_id,
+                    sweep_key,
                     state: state.as_str().to_owned(),
                 }),
             }))
@@ -653,6 +672,39 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
             Some("verb"),
         ),
     }
+}
+
+/// The core delete of `id` by a token that is not owner-grade (DEL-2,
+/// ARCH-0043; Engine ruling 13 Nov 02:51 = A). Its actor is resolved as the
+/// facade resolves a writer, and `Memory::safe_delete` judges it on that
+/// actor's handle, the credential's proof bound: the owner path when the
+/// actor is the vault's owner, else the role table (a Member's own item, an
+/// Admin's in-scope item, an agent under a Grant that names `delete`), each
+/// refusal FORBIDDEN and naming its reason. A token that names no actor is
+/// refused `unresolved_actor`.
+fn core_memory_delete_by_role(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    id: &oneiron::EntityId,
+    reason: CoreMemoryVerbDeleteReason,
+) -> Result<oneiron::memory::DeleteReceipt, DagWriteError> {
+    let (actor, class) = facade::facade_actor(server, auth).map_err(|_| {
+        oneiron::memory::MemoryError::new(
+            oneiron::memory::MEMORY_CODE_FORBIDDEN,
+            "unresolved_actor: this token names no actor the delete authority can judge",
+            &[
+                "Present a slip paired with --principal-ref and --actor-class, or the owner's own credential.",
+            ],
+        )
+    })?;
+    let memory = super::scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
+    let reason = match reason {
+        CoreMemoryVerbDeleteReason::User => oneiron::memory::SafeDeleteReason::UserDelete,
+        CoreMemoryVerbDeleteReason::UserHard => oneiron::memory::SafeDeleteReason::UserHardDelete,
+        CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
+        CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
+    };
+    Ok(memory.safe_delete(&id.to_hex(), reason)?)
 }
 
 pub(crate) fn core_memory_delete_reason(
