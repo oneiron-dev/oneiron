@@ -1,6 +1,6 @@
 {
   "name": "vault.agents.made_by.get",
-  "description": "The owner reads what one agent made, transitively: the definitions it saved, the live branches its runs spawned or its TASKs realize, its TASKs waiting for their due tick and its hook bindings, each saved agent with its live runs and held Grants. Switching an agent off does not stop them.",
+  "description": "The owner reads what one agent made, transitively: the definitions it saved, live branches of its runs and TASKs, TASKs waiting for their tick, its hook bindings, and each saved agent's live runs and Grants. Switching off does not stop them.",
   "input": "crate::task_verb::sdk::AgentMadeByRequest",
   "output": "crate::task_verb::sdk::AgentMadeBy",
   "call": "crate::task_verb::sdk::read_agent_made_by_as(memory.vault(), &memory.embedded_owner(\"vault.agents.made_by.get\")?, input)?",
