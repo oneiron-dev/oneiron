@@ -90,10 +90,14 @@ impl SyncConnection {
         if *mode_rx.borrow_and_update() != client.config.residence_mode {
             return LoopExit::Renegotiate;
         }
-        // The worlds this negotiation follows: a pick, a world setting or a
-        // grant that changes them renegotiates at once (ARCH-0023b
+        // The worlds this negotiation followed, read before its first frame:
+        // a pick, a world setting or a grant that changed them since, or
+        // changes them later, renegotiates at once (ARCH-0023b
         // #partial-sync), as a mode change does.
-        let followed = client.effective_worlds().ok();
+        let followed = client.negotiated_worlds.clone();
+        if client.effective_worlds().ok() != followed {
+            return LoopExit::Renegotiate;
+        }
         let mut left_rx = self.left.subscribe();
         // The host's admission for each batch, and its pause (FIX 12036).
         let mut gate = self.batch_gate();

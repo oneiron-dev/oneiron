@@ -14,8 +14,11 @@ use crate::sync::window_rows::{WINDOW_SHALLOW_FENCE, WINDOW_STATE_VECTOR};
 impl SyncClient {
     /// Every socket has its own subscribed-key set. A reconnect retains its
     /// local Docs and root, but must negotiate every world VV again after
-    /// the server's root response (and after all shared base VVs).
+    /// the server's root response (and after all shared base VVs). The
+    /// worlds it follows are read here, before its first frame: a change
+    /// after this point renegotiates once the steady loop starts.
     pub(in crate::sync) fn begin_connection_sync(&mut self) {
+        self.negotiated_worlds = self.effective_worlds().ok();
         self.requested_windows
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
