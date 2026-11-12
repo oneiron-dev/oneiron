@@ -13,8 +13,10 @@ use crate::model_step_error::DurableStepError;
 /// `charges` with any paid usage `error` holds added first. A deadline or
 /// finalize stop checkpoints, as before; a refused paid reply (a conflict
 /// read `conflict_failed` kept the open marker of among them) asks again
-/// after its retry delay, as a refused extraction does (FIX 7272); any other
-/// parks as [`DreamerParkCause::of_step`] says. Reasons are as before.
+/// after its retry delay, as a refused extraction does (FIX 7272); a step a
+/// spend scope refused for good ends the try `Failed`, typed, with what it
+/// spent (BUDGET-TRAP-UNTYPED-NO-SENDER); any other parks as
+/// [`DreamerParkCause::of_step`] says. Reasons are as before.
 pub(super) fn park_partition_failure_with_spend(
     error: DurableStepError,
     charges: &mut StepChargeTally,
@@ -30,10 +32,8 @@ pub(super) fn park_partition_failure_with_spend(
         | DurableStepError::SpentFallback { usage, .. } => charges.record_usage(usage),
         _ => {}
     }
-    let cause = if matches!(error, DurableStepError::SpentSchemaValidation { .. }) {
-        DreamerParkCause::Retry
-    } else {
-        crate::dreamer_runner::dreamer_park_cause_of_step(&error)
-    };
-    charges.park_for(&error.to_string(), cause)
+    if matches!(error, DurableStepError::SpentSchemaValidation { .. }) {
+        return charges.park_for(&error.to_string(), DreamerParkCause::Retry);
+    }
+    charges.end_on_step_error(&error.to_string(), &error)
 }
