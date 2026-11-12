@@ -3,7 +3,7 @@
 use super::PendingEmbeddingPayload;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 
 /// The payload the embedding worker sends for a stored record, or `None` when
 /// the record is not embedded at all.
@@ -173,8 +173,13 @@ pub(crate) fn indexed_payload(
     if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
         return None;
     }
+    // A NOTE embeds its body alone, as it did before its title and tags
+    // became BM25F fields of their own (FIX 7789): a ranking field is not
+    // new embedding input.
+    let note_body = crate::config::bm25::NoteTextField::Body.source_name();
     let text = fields
         .iter()
+        .filter(|(name, _)| entity_type != ENTITY_TYPE_NOTE || name == note_body)
         .map(|(_, value)| value.as_str())
         .collect::<Vec<_>>()
         .join("\n");

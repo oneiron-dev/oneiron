@@ -546,17 +546,47 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let data = encode_agent_definition(def)?;
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let existing = self.read_agent_definition_in_txn(txn, id)?;
-            if expected_version.is_some_and(|version| version != existing.version) {
-                return Err(Error::ConcurrentWrite("agent definition revision changed"));
-            }
-            validate_agent_definition_update(&existing, def)?;
-            super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
-            self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
+            self.update_agent_definition_as_owner_in_txn(
+                txn,
+                owner,
+                id,
+                expected_version,
+                def,
+                occurred,
+                learned_at,
+            )
         })
+    }
+
+    /// Owner edit of an AGENT_DEF in the caller's writer: rechecks the proof,
+    /// fences the revision, runs the immutable-field gate, moves the id pin,
+    /// and writes the row. The whole-vault seed-replacement adapter calls this
+    /// in the import writer; the public owner doors reach it through
+    /// [`Self::update_agent_definition_as_checked`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "owner, target, revision, body and event time are one edit in the caller's writer"
+    )]
+    pub(crate) fn update_agent_definition_as_owner_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_version: Option<&str>,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_agent_definition(def)?;
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let existing = self.read_agent_definition_in_txn(txn, id)?;
+        if expected_version.is_some_and(|version| version != existing.version) {
+            return Err(Error::ConcurrentWrite("agent definition revision changed"));
+        }
+        validate_agent_definition_update(&existing, def)?;
+        super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
+        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
     }
 
     /// [`Self::update_agent_definition_at_version_as`] in the caller's

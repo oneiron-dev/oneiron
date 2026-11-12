@@ -175,6 +175,12 @@ pub struct MemoryRow {
     /// OI-1 = A): the tag the board shows beside it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook: Option<String>,
+    /// The room's pin record when the board's room pins this row
+    /// (ROOM-SCOPED-PINS P2): the PERSON who pinned it, the agent that acted
+    /// for that PERSON and when. Only an admitted row carries it; absent
+    /// from the wire otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_pin: Option<crate::conversation::RoomPin>,
     /// The exact revision this row's body was served at, where the read
     /// pinned one. Board history records it, never LIVE in its place. Not on
     /// the wire: board refs stay as they were.
