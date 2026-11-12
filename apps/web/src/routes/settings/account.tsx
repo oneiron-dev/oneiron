@@ -11,12 +11,12 @@ function AccountPage() {
     <Sheet page="account">
       <PaneHead title="account" hint="The person signed in. The vault stays where it is when you leave." />
       <div className="srow acct">
-        <span className="seal seal-human" title="o · oleksii · owner">
+        <span className="seal seal-human" title="o · owen · owner">
           o
         </span>
-        <span className="val">oleksii</span>
+        <span className="val">owen</span>
         <span className="addr" title="the account address">
-          olety7@gmail.com
+          owen@example.com
         </span>
         <span className="acts tail">
           <a className="act" href="/signin" title="verb: sign_out · the vault stays where it is">

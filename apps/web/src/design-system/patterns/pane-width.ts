@@ -1,7 +1,9 @@
 /* How wide a pane beside the room is. A pane for a list (an outline, the
    tasks) is 340 px. A pane for one thing takes what the messages column
-   leaves, between 380 and 680 px. Pure, and the same rule as the CSS
-   track the split draws before anything is measured. */
+   leaves, between 380 and 680 px. A work area too narrow for the column
+   and the pane's floor takes either pane over the room instead. Pure, and
+   the same rule as the CSS track the split draws before anything is
+   measured. */
 
 export type PaneKind = 'list' | 'thing'
 
@@ -29,6 +31,29 @@ export function paneWidth(kind: PaneKind, containerWidth: number, sidebarWidth =
   if (kind === 'list') return LIST_PANE_PX
   const left = containerWidth - sidebarWidth - (column + COLUMN_ROOM_PX) - SPLIT_EDGE_PX
   return Math.min(THING_PANE_MAX_PX, Math.max(THING_PANE_MIN_PX, left))
+}
+
+/* What a pane over a narrow room leaves of the work area at its left. */
+export const PANE_OVER_GUTTER_PX = 56
+
+/* The narrowest a pane beside the room may be: a list's 340 px, one
+   thing's 380 px. */
+export function paneFloor(kind: PaneKind): number {
+  return kind === 'list' ? LIST_PANE_PX : THING_PANE_MIN_PX
+}
+
+/* When the work area is narrower than the messages column, its gutter and
+   the pane's floor together, the pane lies over the room instead of
+   beside it, and the room keeps its column. */
+export function paneLiesOver(kind: PaneKind, containerWidth: number, sidebarWidth = 0, column = COLUMN_PX): boolean {
+  return containerWidth - sidebarWidth - (column + COLUMN_ROOM_PX) - SPLIT_EDGE_PX < paneFloor(kind)
+}
+
+/* The width of a pane over the room: a list's 340 px, one thing's 680 px
+   at most; never wider than the work area less 56 px. */
+export function paneOverWidth(kind: PaneKind, containerWidth: number, sidebarWidth = 0): number {
+  const most = kind === 'list' ? LIST_PANE_PX : THING_PANE_MAX_PX
+  return Math.max(0, Math.min(most, containerWidth - sidebarWidth - PANE_OVER_GUTTER_PX))
 }
 
 /* The same rule as a CSS grid track, for the first paint. */

@@ -40,7 +40,7 @@ separate, and changes nothing else.
 
 | Fact | Value |
 | --- | --- |
-| Upstream source root | `/home/lexi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/heed-0.20.5` |
+| Upstream source root | `<host-home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/heed-0.20.5` |
 | crates.io checksum (unpatched lock entry) | `7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb` |
 | Upstream `src/env.rs` SHA-256 | `cfca096b00d446431092c897f9939ff79834d9a8984208e21d8274b7d6a5d343` |
 | Upstream VCS commit (`.cargo_vcs_info.json`) | `947c3aa814b9a5eab764a95f84242fe1756cf61a`, `path_in_vcs = "heed"` |

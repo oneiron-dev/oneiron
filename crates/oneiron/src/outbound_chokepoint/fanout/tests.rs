@@ -12,7 +12,7 @@ use super::*;
 
 const NOW_MS: u64 = 1_770_000_000_000;
 
-fn plan_with(mode: FanoutApprovalMode, edges: &[(&str, &str, u32)]) -> FanoutPlan {
+fn plan_with(mode: CheckInMode, edges: &[(&str, &str, u32)]) -> FanoutPlan {
     FanoutPlan {
         plan_ref: "plan-1".to_owned(),
         brief_ref: "brief-1".to_owned(),
@@ -30,7 +30,7 @@ fn plan_with(mode: FanoutApprovalMode, edges: &[(&str, &str, u32)]) -> FanoutPla
 }
 
 /// A plan whose total is exactly `total`, spread over one edge.
-fn plan_of_total(mode: FanoutApprovalMode, total: u32) -> FanoutPlan {
+fn plan_of_total(mode: CheckInMode, total: u32) -> FanoutPlan {
     if total == 0 {
         return plan_with(mode, &[]);
     }
@@ -38,7 +38,7 @@ fn plan_of_total(mode: FanoutApprovalMode, total: u32) -> FanoutPlan {
 }
 
 /// A star plan: one actor consulting `width` distinct peers once each.
-fn star_plan(mode: FanoutApprovalMode, width: u32) -> FanoutPlan {
+fn star_plan(mode: CheckInMode, width: u32) -> FanoutPlan {
     let refs: Vec<(String, String)> = (0..width)
         .map(|index| ("peer_hub".to_owned(), format!("peer_{index:03}")))
         .collect();
@@ -205,7 +205,7 @@ fn expected_digest(
 #[test]
 fn fanout_estimate_is_deterministic_total_plus_per_peer() {
     let ordered = plan_with(
-        FanoutApprovalMode::Auto,
+        CheckInMode::AskWhenUnsure,
         &[
             ("peer_a", "peer_b", 2),
             ("peer_a", "peer_c", 3),
@@ -213,7 +213,7 @@ fn fanout_estimate_is_deterministic_total_plus_per_peer() {
         ],
     );
     let shuffled = plan_with(
-        FanoutApprovalMode::Auto,
+        CheckInMode::AskWhenUnsure,
         &[
             ("peer_b", "peer_c", 1),
             ("peer_a", "peer_c", 3),
@@ -259,11 +259,11 @@ fn fanout_estimate_is_deterministic_total_plus_per_peer() {
     // Malformed and overflowing plans fail before admission: no metering
     // answer, no surface row, no classifier call.
     let overflow = plan_with(
-        FanoutApprovalMode::Auto,
+        CheckInMode::AskWhenUnsure,
         &[("peer_a", "peer_b", u32::MAX), ("peer_a", "peer_c", 1)],
     );
-    let zero_count = plan_with(FanoutApprovalMode::Auto, &[("peer_a", "peer_b", 0)]);
-    let blank_ref = plan_with(FanoutApprovalMode::Auto, &[("peer_a", "   ", 1)]);
+    let zero_count = plan_with(CheckInMode::AskWhenUnsure, &[("peer_a", "peer_b", 0)]);
+    let blank_ref = plan_with(CheckInMode::AskWhenUnsure, &[("peer_a", "   ", 1)]);
     for malformed in [&overflow, &zero_count, &blank_ref] {
         assert!(fanout_estimate(malformed).is_err());
         assert!(fanout_plan_digest(malformed).is_err());
@@ -289,7 +289,7 @@ fn fanout_estimate_is_deterministic_total_plus_per_peer() {
 
 #[test]
 fn non_canonical_refs_fail_closed_before_any_effect() {
-    let canonical = plan_with(FanoutApprovalMode::Manual, &[("peer_a", "peer_b", 40)]);
+    let canonical = plan_with(CheckInMode::AlwaysAsk, &[("peer_a", "peer_b", 40)]);
     let canonical_digest = fanout_plan_digest(&canonical).expect("canonical twin digests");
 
     let mut setup_sink = RecordingSink::default();
@@ -371,7 +371,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
         assert!(resume_executor.started.is_empty());
     }
 
-    let rate_plan = plan_with(FanoutApprovalMode::FullAccess, &[("peer_a", "peer_b", 1)]);
+    let rate_plan = plan_with(CheckInMode::NeverAsk, &[("peer_a", "peer_b", 1)]);
     let padded_rate = [PeerRateSnapshot {
         peer_ref: " peer_b ".to_owned(),
         window_secs: 900,
@@ -468,7 +468,7 @@ fn non_canonical_refs_fail_closed_before_any_effect() {
 
 #[test]
 fn approval_choices_are_receipted_and_persistable() {
-    let plan = plan_of_total(FanoutApprovalMode::Manual, 40);
+    let plan = plan_of_total(CheckInMode::AlwaysAsk, 40);
     let mut sink = RecordingSink::default();
     let admission = admit_fanout_plan(
         &plan,
@@ -575,7 +575,7 @@ fn approval_choices_are_receipted_and_persistable() {
 #[test]
 fn changed_plan_cannot_reuse_approval() {
     let plan = plan_with(
-        FanoutApprovalMode::Manual,
+        CheckInMode::AlwaysAsk,
         &[("peer_a", "peer_b", 30), ("peer_a", "peer_c", 10)],
     );
     let mut sink = RecordingSink::default();
@@ -607,7 +607,7 @@ fn changed_plan_cannot_reuse_approval() {
     let mut changed_brief = plan.clone();
     changed_brief.brief_ref = "brief-2".to_owned();
     let mut changed_mode = plan.clone();
-    changed_mode.mode = FanoutApprovalMode::FullAccess;
+    changed_mode.mode = CheckInMode::NeverAsk;
 
     for mutated in [
         &changed_count,
@@ -662,7 +662,7 @@ fn large_real_work_has_no_hard_cap() {
     for width in [150_u32, 300] {
         let mut full_sink = RecordingSink::default();
         let full = admit_fanout_plan(
-            &star_plan(FanoutApprovalMode::FullAccess, width),
+            &star_plan(CheckInMode::NeverAsk, width),
             Some(default_test_threshold()),
             &[],
             &RecordingDecider::surface(),
@@ -677,7 +677,7 @@ fn large_real_work_has_no_hard_cap() {
 
         let mut auto_sink = RecordingSink::default();
         let auto = admit_fanout_plan(
-            &star_plan(FanoutApprovalMode::Auto, width),
+            &star_plan(CheckInMode::AskWhenUnsure, width),
             Some(default_test_threshold()),
             &[],
             &RecordingDecider::allow(),
@@ -688,7 +688,7 @@ fn large_real_work_has_no_hard_cap() {
         assert!(matches!(auto, FanoutAdmission::Proceed { .. }));
 
         // And the same size proceeds through a human approval.
-        let manual_plan = star_plan(FanoutApprovalMode::Manual, width);
+        let manual_plan = star_plan(CheckInMode::AlwaysAsk, width);
         let mut manual_sink = RecordingSink::default();
         let mut executor = RecordingExecutor::default();
         let manual = admit_fanout_plan(
@@ -730,14 +730,14 @@ fn pause_is_before_effect_creation() {
         observed_count: 1,
         spike_at: 2,
     }];
-    let manual = plan_of_total(FanoutApprovalMode::Manual, over);
-    let auto_surface = plan_of_total(FanoutApprovalMode::Auto, over);
-    let auto_error = plan_of_total(FanoutApprovalMode::Auto, over);
+    let manual = plan_of_total(CheckInMode::AlwaysAsk, over);
+    let auto_surface = plan_of_total(CheckInMode::AskWhenUnsure, over);
+    let auto_error = plan_of_total(CheckInMode::AskWhenUnsure, over);
     let cycle = plan_with(
-        FanoutApprovalMode::FullAccess,
+        CheckInMode::NeverAsk,
         &[("peer_a", "peer_b", 1), ("peer_b", "peer_a", 1)],
     );
-    let spike = plan_with(FanoutApprovalMode::FullAccess, &[("peer_a", "peer_b", 1)]);
+    let spike = plan_with(CheckInMode::NeverAsk, &[("peer_a", "peer_b", 1)]);
 
     let branches: [(&FanoutPlan, RecordingDecider, &[PeerRateSnapshot]); 5] = [
         (&manual, RecordingDecider::allow(), &cycle_rates),

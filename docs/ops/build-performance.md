@@ -356,7 +356,7 @@ to 8.08 s but does not remove the large front-end workload.
 
 ### Core codegen units
 
-The Mac mini (`Oletymac`, M4, 16 GiB) ran package-only core library test builds
+The Mac mini (`macmini`, M4, 16 GiB) ran package-only core library test builds
 with all features, `--no-run`, four Cargo jobs, `debug=1`, and incremental
 compilation disabled, from baseline `11830e7c035cf0465e61dc27db66493f8e3de838`.
 Every accepted warm sample rebuilt zero non-core units; the first 16-unit build
@@ -393,6 +393,6 @@ reproduction, so no Linux or universal speedup is claimed.
   (`-fuse-ld=lld`). The mold comparison was interrupted and is inconclusive.
 
 The machine-local evidence archive is
-`/Users/olety/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`
+`<host-home>/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`
 (`cgu-result-mini.json`, `trybuild-result-mini.json`, cache/featureless
 reports, raw commands). It is outside the public repository.

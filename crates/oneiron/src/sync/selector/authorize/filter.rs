@@ -1,4 +1,5 @@
 use super::*;
+use crate::workspace_roster::project::extra_room_redaction;
 
 /// `withhold` names the worlds kept off the machine the export serves. Every
 /// export door withholds; promotion authority asks only what the grant
@@ -394,12 +395,23 @@ pub(in crate::sync::selector) fn filter_window_doc(
     for (id, raw) in &revision_rows {
         map_insert_bytes(&out_entities, &id.to_hex(), raw)?;
     }
+    let strip_extra_room = matches!(reach, BirthReach::OtherVault(_));
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
         if id.to_hex() != raw_key || !shipped.contains(&id) {
+            return;
+        }
+        if strip_extra_room
+            && let Some(header) = EntityMetadataHeader::parse(blob)
+            && let Some(stripped) = extra_room_redaction::strip_project_group_from_record_bytes(
+                header.entity_type,
+                blob,
+            )
+        {
+            let _ = map_insert_bytes(&out_entities, raw_key, &stripped);
             return;
         }
         let _ = map_insert_bytes(&out_entities, raw_key, blob);

@@ -43,6 +43,7 @@ use super::widen_record::invalid;
 mod ancestry;
 mod closed_scope;
 mod funding;
+mod hard_cap_refusal;
 mod late_spend;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
@@ -262,7 +263,18 @@ impl AgentDispatcher<'_> {
         scope.cap_units = maximum.units;
         scope.shown_at_ms = Some(shown.at_ms);
         SCOPE.put(&self.vault.store, &mut txn, &scope.scope.0, &scope)?;
+        let now_ms = self
+            .vault
+            .store
+            .clock
+            .now_recorded_at()
+            .saturating_mul(1000);
+        let resumed = crate::llm::wake_budget_traps_in_txn(self.vault, &mut txn, id, now_ms)?;
         txn.commit()?;
+        if !resumed.is_empty() {
+            self.vault.store.notify_attempt_observers();
+            self.vault.store.notify_proactivity_changes();
+        }
         Ok(scope)
     }
 
