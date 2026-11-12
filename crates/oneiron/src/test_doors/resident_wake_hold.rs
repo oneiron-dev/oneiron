@@ -1,5 +1,6 @@
-//! Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold) and
-//! `tests/agent_message_classes.rs` (AGM-2 message classes): an inbound
+//! Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold),
+//! `tests/agent_message_classes.rs` and `tests/agent_message_classifier.rs`
+//! (AGM-2 message classes): an inbound
 //! message to a resident's inbox, admitted as routing admits one, with no
 //! provider adapter in the loop.
 
