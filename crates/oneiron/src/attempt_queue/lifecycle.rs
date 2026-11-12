@@ -175,6 +175,7 @@ fn row(
         active_pause: None,
         terminal_exhaust: parts.terminal_exhaust,
         signal_intents: parts.signal_intents,
+        budget_refusal: None,
     }
 }
 

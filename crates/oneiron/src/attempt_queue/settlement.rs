@@ -2,6 +2,7 @@
 
 use crate::error::Result;
 use crate::store::Rows;
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 use super::AttemptQueue;
 use super::encoding::decode_record;
@@ -100,6 +101,18 @@ impl AttemptQueue<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         input: FailAttempt,
     ) -> Result<FailOutcome> {
+        self.fail_storage_with_refusal_in_txn(wtxn, input, None)
+    }
+
+    /// [`Self::fail_storage_in_txn`] keeping `budget_refusal` on the failed
+    /// row beside its reason, so the row's receipt, run tree and owner views
+    /// read it typed (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    pub(crate) fn fail_storage_with_refusal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: FailAttempt,
+        budget_refusal: Option<StepBudgetRefusal>,
+    ) -> Result<FailOutcome> {
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("fail", "missing"));
         };
@@ -118,6 +131,7 @@ impl AttemptQueue<'_> {
                 let _ = RunLifecycle::fail(&mut record, input.now);
                 record.backoff_until = None;
                 record.last_error = Some(input.reason);
+                record.budget_refusal = budget_refusal;
                 record.updated_at = input.now;
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
                 let encoded = self.encode_in_txn(wtxn, &mut record)?;
@@ -147,6 +161,16 @@ impl AttemptQueue<'_> {
         input: FailAttempt,
     ) -> Result<FailOutcome> {
         crate::ports::JobQueue::port_job_fail(self, txn, input)
+    }
+
+    /// [`Self::fail_in_txn`] keeping `budget_refusal` on the failed row.
+    pub(crate) fn fail_with_refusal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: FailAttempt,
+        budget_refusal: Option<StepBudgetRefusal>,
+    ) -> Result<FailOutcome> {
+        crate::ports::JobQueue::port_job_fail_with_refusal(self, txn, input, budget_refusal)
     }
 }
 
