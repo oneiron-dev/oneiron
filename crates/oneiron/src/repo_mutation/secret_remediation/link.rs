@@ -194,6 +194,8 @@ fn put_link_in_txn(
         start: link.at,
         end: link.at,
     };
+    // The edge source is the proposal claim, which has no FACET of its own.
+    body.scope_facet = vault.claim_put_facet_in_txn(wtxn, &id)?;
     vault.put_reserved_claim_in_txn(wtxn, &id, &body, occurred, link.at)?;
     Ok(true)
 }

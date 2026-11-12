@@ -11,6 +11,7 @@ pub mod authority_world_undo;
 pub mod callable_skill;
 pub mod check_in;
 pub mod checkpoint_registry;
+pub mod claim_facet_birth;
 pub mod claim_source_recheck;
 pub mod claim_transition;
 pub mod coach;

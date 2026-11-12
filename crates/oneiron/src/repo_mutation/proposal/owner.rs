@@ -1,7 +1,9 @@
 //! The owner proposer: an authenticated owner's ordinary file proposal and
 //! its fresh re-review of a resolved handle-bearing file. Both go through
 //! the one checked proposer; the owner proof, the repository pointer, the
-//! session and the provenance sources are judged again in its writer.
+//! session and the provenance sources are judged again in its writer. The
+//! session and the provenance claim are the engine's (`owner_request`): they
+//! are bound once the base and the staged bytes are final.
 //!
 //! FIX 4367: an owner proposal's base is the tree of the exact commit its
 //! stored repository pointer names, read from the object store. It is not
@@ -10,6 +12,7 @@
 //! current green still fails enqueue. Landing still checks the staged head
 //! and the expected bytes; nothing rebases.
 
+use super::owner_request::OwnerRequestAttribution;
 use super::resolve_handles::RereviewPrepared;
 use super::*;
 use crate::git_wire::{GitOid, GitWire};
@@ -21,7 +24,8 @@ impl Vault {
     /// `repair_of` source makes the proposal that failed proposal's
     /// replacement, judged in the same writer (FIX 4364). Its base is the
     /// tree of the commit the stored repository pointer names, not the live
-    /// checkout (FIX 4367).
+    /// checkout (FIX 4367). The engine binds its session and provenance
+    /// claim from `attribution` (NO-DOOR CODE-PROPOSAL-ATTRIBUTION).
     pub(crate) fn propose_repo_mutation_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -29,6 +33,7 @@ impl Vault {
         request: RepoMutationRequest,
         review: RepoProposalReview,
         repair_of: Option<EntityId>,
+        attribution: &OwnerRequestAttribution,
     ) -> Result<RepoProposal> {
         let proposed = self.propose_repo_mutation_as_owner_checked::<std::convert::Infallible>(
             owner,
@@ -36,20 +41,29 @@ impl Vault {
             request,
             review,
             repair_of,
+            attribution,
             |_| Ok(Ok(())),
         )?;
         Ok(proposed.unwrap_or_else(|never| match never {}))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one owner proposal's proof, repository, request, review, repair source, attribution and check"
+    )]
     fn propose_repo_mutation_as_owner_checked<R>(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         repository: EntityId,
-        request: RepoMutationRequest,
+        mut request: RepoMutationRequest,
         review: RepoProposalReview,
         repair_of: Option<EntityId>,
+        attribution: &OwnerRequestAttribution,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
+        let base = self.owner_pinned_base(&request.repo_ref)?;
+        // The base is pinned and the bytes are final: bind the sources.
+        self.attribute_owner_request(owner, attribution, repository, &mut request)?;
         let actor = request.actor_id;
         let repository_ref = request.repo_ref.clone();
         let session = request.session_id;
@@ -59,7 +73,6 @@ impl Vault {
             request.op_provenance.intent,
             request.op_provenance.substrate_ref,
         ];
-        let base = self.owner_pinned_base(&repository_ref)?;
         let proposed = self.propose_repo_mutation_checked(
             request,
             review,
@@ -118,7 +131,10 @@ impl Vault {
         original: EntityId,
         mut request: RepoMutationRequest,
         review: RepoProposalReview,
+        attribution: &OwnerRequestAttribution,
     ) -> Result<RepoProposal> {
+        // The engine's projection replaces the content first, so the
+        // attribution binds the bytes that are staged.
         let prepared = RereviewPrepared::new(self, original, &mut request)?;
         let proposed = self.propose_repo_mutation_as_owner_checked::<std::convert::Infallible>(
             owner,
@@ -126,6 +142,7 @@ impl Vault {
             request,
             review,
             None,
+            attribution,
             |txn| {
                 prepared.revalidate(self, txn)?;
                 Ok(Ok(()))
