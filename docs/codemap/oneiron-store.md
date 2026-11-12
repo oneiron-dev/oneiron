@@ -151,7 +151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/compaction/gate.rs` | src | s | 3 struct · 3 enum · 8 fn | CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal, CompactionSuppression | The deterministic pre-swap gate (agent-runtime-v1 §d7) |
 | `src/compaction/host_request.rs` | src | s | 1 struct | HostCompactResult | Host compaction request and result records |
 | `src/config.rs` | src | m | 3 struct · 7 fn · 5 mod · 2 re-export | Bm25RankProfile, HnswConfig, VaultConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
-| `src/config/bm25.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | Bm25Config, Bm25Formula, Bm25RecencyConfig, FieldConfig, FieldLengthPolicy | Rank-profile config: field/channel params, formula, recency, defaults |
+| `src/config/bm25.rs` | src | s | 3 struct · 3 enum · 11 fn · 2 const | Bm25Config, Bm25Formula, Bm25RecencyConfig, FieldConfig, FieldLengthPolicy, NoteTextField | Rank-profile config: field/channel params, formula, recency, defaults |
 | `src/config/community_graph/codec.rs` | src | s | 1 struct · 9 fn | CommunitySnapshot | Snapshot and membership encode/decode with strict guards |
 | `src/config/community_graph/detection.rs` | src | m | 1 struct · 9 fn | Graph | Graph projection and Leiden/CPM partition detection |
 | `src/config/community_graph/mod.rs` | src | s | 4 mod · 6 re-export | — | Pure community graph projection, snapshot codecs and configuration |

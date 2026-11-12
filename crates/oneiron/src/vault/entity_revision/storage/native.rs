@@ -13,7 +13,8 @@ use loro::LoroDoc;
 pub(crate) struct NoteCapture {
     pub(crate) changed: bool,
     pub(crate) published: bool,
-    pub(crate) markdown: String,
+    /// The stored image's text fields (`note::revision::index_fields`).
+    pub(crate) fields: Vec<(&'static str, String)>,
 }
 
 pub(super) fn active_note(
@@ -164,6 +165,7 @@ pub(crate) fn capture_native_note_in_txn(
     let stored = crate::note::revision::stored_slot_in_txn(store, txn, id, slot)?
         .ok_or(Error::CorruptedIndex("NOTE indexed slot missing"))?;
     let markdown = stored.doc.get_text("body").to_string();
+    let fields = crate::note::revision::index_fields(&stored.doc)?;
     let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
         .ok_or(Error::EntityNotFound)?;
     let row = envelope_reference(store, txn, &id, &raw)?;
@@ -209,8 +211,7 @@ pub(crate) fn capture_native_note_in_txn(
     }
     let published = !activated || !indexed_retained;
     let same_input = if published {
-        let selected =
-            crate::note::revision::row_with_markdown_in_txn(store, txn, &raw, markdown.clone())?;
+        let selected = crate::note::revision::row_with_markdown_in_txn(store, txn, &raw, markdown)?;
         indexed_before.is_some_and(|before| {
             before.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                 == selected.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
@@ -247,7 +248,7 @@ pub(crate) fn capture_native_note_in_txn(
     Ok(NoteCapture {
         changed,
         published,
-        markdown,
+        fields,
     })
 }
 

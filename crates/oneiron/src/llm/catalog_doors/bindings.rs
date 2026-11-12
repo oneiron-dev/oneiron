@@ -1,12 +1,14 @@
-//! Owner model-binding doors.
-//! Entry: Vault::propose_model_binding_as_owner.
+//! Owner model-binding doors, and an agent's proposal under its Grant.
+//! Entries: Vault::propose_model_binding_as_owner,
+//! Vault::propose_model_binding_as_granted_agent.
 //! Vault is crate::Vault; binding records are owned by llm::manifest.
 
-use super::trials::owned_trial;
+use super::trials::{owned_trial, trial_for_principal};
 use super::*;
+use crate::authority::OwnerActKind;
 use crate::claim::CallerLocality;
 use crate::llm::manifest::{ModelBinding, read_manifest};
-use crate::llm::model_trials::ModelTrialAction;
+use crate::llm::model_trials::{ModelTrial, ModelTrialAction};
 
 fn proposal(
     vault: &Vault,
@@ -18,6 +20,75 @@ fn proposal(
         .get(&vault.store, txn, &id)?
         .filter(|row| row.principal == principal)
         .ok_or(Error::EntityNotFound)
+}
+
+/// The proposal write both propose doors share: the trial is a completed
+/// held-out offer, both arms match, only the measured model changes, the
+/// manifest validates, and an existing proposal for (principal, role, trial)
+/// is returned idempotently. The row lands `Proposed`; nothing activates it.
+/// The caller commits.
+fn propose_binding_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    principal: EntityId,
+    input: ModelBindingPropose,
+    revision: String,
+    trial: ModelTrial,
+) -> Result<ModelBindingProposal> {
+    current(vault, txn, &revision)?;
+    // An unknown comparison stays an owner-reviewable offer, marked by its
+    // receipt's Unknown action and quality (FIX 9901). A proposal is only
+    // ever settled by the owner's accept; nothing approves it for them.
+    if trial.receipt.as_ref().is_none_or(|receipt| {
+        !matches!(
+            receipt.action,
+            ModelTrialAction::Offer
+                | ModelTrialAction::AutoApprove
+                | ModelTrialAction::AskTradeoff
+                | ModelTrialAction::Unknown
+        )
+    }) {
+        return Err(invalid(
+            "model binding proposal needs a completed held-out trial offer",
+        ));
+    }
+    let manifest = read_manifest(&vault.store, txn)?.ok_or(Error::EntityNotFound)?;
+    let previous = manifest.binding(input.role)?.clone();
+    if previous.model != trial.request.incumbent.model
+        || input.binding.model != trial.request.candidate.model
+    {
+        return Err(invalid("model binding does not match both trial arms"));
+    }
+    let mut measured = previous.clone();
+    measured.model = trial.request.candidate.model.clone();
+    if input.binding != measured {
+        return Err(invalid(
+            "a model trial changes only the measured role model, not other binding controls",
+        ));
+    }
+    let mut proposed_manifest = manifest.clone();
+    proposed_manifest
+        .roles
+        .insert(input.role, input.binding.clone());
+    proposed_manifest.validate()?;
+    for (_, saved) in PROPOSALS.scan(&vault.store, txn)? {
+        if saved.principal == principal && saved.role == input.role && saved.trial.id == trial.id {
+            return Ok(saved);
+        }
+    }
+    let row = ModelBindingProposal {
+        id: EntityId::now(),
+        principal,
+        role: input.role,
+        previous,
+        proposed: input.binding,
+        trial: ModelTrialView::of(revision, trial),
+        status: ModelBindingStatus::Proposed,
+        proposed_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        settled_at: None,
+    };
+    PROPOSALS.put(vault, txn, &row.id, &row)?;
+    Ok(row)
 }
 
 impl Vault {
@@ -39,62 +110,36 @@ impl Vault {
             },
             locality,
         )?;
-        current(self, &txn, &revision)?;
-        // An unknown comparison stays an owner-reviewable offer, marked by its
-        // receipt's Unknown action and quality (FIX 9901). A proposal is only
-        // ever settled by the owner's accept; nothing approves it for them.
-        if trial.receipt.as_ref().is_none_or(|receipt| {
-            !matches!(
-                receipt.action,
-                ModelTrialAction::Offer
-                    | ModelTrialAction::AutoApprove
-                    | ModelTrialAction::AskTradeoff
-                    | ModelTrialAction::Unknown
-            )
-        }) {
-            return Err(invalid(
-                "model binding proposal needs a completed held-out trial offer",
-            ));
-        }
-        let manifest = read_manifest(&self.store, &txn)?.ok_or(Error::EntityNotFound)?;
-        let previous = manifest.binding(input.role)?.clone();
-        if previous.model != trial.request.incumbent.model
-            || input.binding.model != trial.request.candidate.model
-        {
-            return Err(invalid("model binding does not match both trial arms"));
-        }
-        let mut measured = previous.clone();
-        measured.model = trial.request.candidate.model.clone();
-        if input.binding != measured {
-            return Err(invalid(
-                "a model trial changes only the measured role model, not other binding controls",
-            ));
-        }
-        let mut proposed_manifest = manifest.clone();
-        proposed_manifest
-            .roles
-            .insert(input.role, input.binding.clone());
-        proposed_manifest.validate()?;
-        for (_, saved) in PROPOSALS.scan(&self.store, &txn)? {
-            if saved.principal == principal
-                && saved.role == input.role
-                && saved.trial.id == trial.id
-            {
-                return Ok(saved);
-            }
-        }
-        let row = ModelBindingProposal {
-            id: EntityId::now(),
+        let row = propose_binding_in_txn(self, &mut txn, principal, input, revision, trial)?;
+        txn.commit()?;
+        Ok(row)
+    }
+
+    /// An agent's binding proposal under its own live Grant naming
+    /// `vault.models.bindings.propose`: the bound actor's live Grant naming
+    /// the act and the carrying owner are checked in this one write
+    /// transaction, then the owner's own proposal rules run under that
+    /// owner's principal. The row lands `Proposed`; nothing activates it.
+    pub fn propose_model_binding_as_granted_agent(
+        &self,
+        agent: EntityId,
+        input: ModelBindingPropose,
+        locality: CallerLocality,
+    ) -> Result<ModelBindingProposal> {
+        let mut txn = self.store.env.write_txn()?;
+        let principal =
+            self.agent_act_owner_in_txn(&txn, agent, OwnerActKind::ModelBindingPropose)?;
+        let (revision, trial) = trial_for_principal(
+            self,
+            &txn,
             principal,
-            role: input.role,
-            previous,
-            proposed: input.binding,
-            trial: ModelTrialView::of(revision, trial),
-            status: ModelBindingStatus::Proposed,
-            proposed_at: crate::ports::recorded_at_in_txn(&self.store, &mut txn)?,
-            settled_at: None,
-        };
-        PROPOSALS.put(self, &mut txn, &row.id, &row)?;
+            &ModelTrialRef {
+                question: input.question,
+                trial: input.trial,
+            },
+            locality,
+        )?;
+        let row = propose_binding_in_txn(self, &mut txn, principal, input, revision, trial)?;
         txn.commit()?;
         Ok(row)
     }

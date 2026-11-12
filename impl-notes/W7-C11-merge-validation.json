@@ -52,7 +52,7 @@
         "Summary [  20.145s] 1545 tests run: 606 passed, 939 failed, 7284 skipped"
       ],
       "hosts": [
-        "olety@100.124.216.116"
+        "owner@macbook"
       ],
       "specPath": "<host-home>/w7-build/tickets/W7-C11/merge-validation/W7-C11-merge-validation-v3-3aded1c1399e.spec.json"
     },
