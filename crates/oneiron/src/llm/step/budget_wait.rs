@@ -65,22 +65,34 @@ pub(crate) fn wake_budget_traps_in_txn(
             kind: DreamerTrapKind::Budget,
             step_hash: binding.step_hash,
         };
-        match trap_consume_precheck_in_txn(vault, wtxn, &trap)? {
-            TrapConsumePrecheck::Proceed => {
-                if let Some(attempt) = wake_trap_in_txn(vault, wtxn, &trap, now_ms)? {
-                    resumed.push(attempt);
-                }
-            }
-            TrapConsumePrecheck::Skip {
-                reason,
-                attempt_id,
-                park_owner,
-            } => {
-                tracing::info!(?reason, attempt = ?attempt_id, %park_owner, "budget top-up skipped a broken trap park");
-            }
+        if let Some(attempt) = wake_budget_trap_in_txn(vault, wtxn, &trap, now_ms)? {
+            resumed.push(attempt);
         }
     }
     Ok(resumed)
+}
+
+/// Signals and consumes one budget trap in the caller's write, after the
+/// read-only consume precheck: the top-up's wake of each covered park, and a
+/// park's own wake when its cap moved before it landed. `None` for a trap an
+/// earlier wake reached, or a broken park the precheck skips.
+pub(super) fn wake_budget_trap_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    trap: &TrapRef,
+    now_ms: u64,
+) -> Result<Option<AttemptId>> {
+    match trap_consume_precheck_in_txn(vault, wtxn, trap)? {
+        TrapConsumePrecheck::Proceed => wake_trap_in_txn(vault, wtxn, trap, now_ms),
+        TrapConsumePrecheck::Skip {
+            reason,
+            attempt_id,
+            park_owner,
+        } => {
+            tracing::info!(?reason, attempt = ?attempt_id, %park_owner, "budget trap wake skipped a broken trap park");
+            Ok(None)
+        }
+    }
 }
 
 fn trap_anchor(park_owner: &str) -> Option<EntityId> {
