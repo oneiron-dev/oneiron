@@ -3390,7 +3390,10 @@ suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit quest
 //   typed pack (per-item world label, base group first) and in the rendered
 //   pack (base text before story text, story label before story text). The
 //   exact non-base budget fraction is not asserted: no typed door read here
-//   lets the owner set or read that fraction.
+//   lets the owner set or read that fraction. The fixture holds three base
+//   claims beside the three story claims, so the default non-base share
+//   (0.5) admits every story claim; the two extra base claims are longer
+//   than the base sentinel claim, so the sentinel ranks first in base.
 // - P-RECALL-014: "Owner-excluded worlds are omitted entirely from the
 //   Context Board." Source: ARCH-0067#what. NOT proved: no typed owner
 //   world-access grant/exclude door and no board render read for a paired
@@ -3513,6 +3516,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     const tokenOtherWorld = `quiet${secretHex(3)}`;
     const tokenNowhere = `nowhere${secretHex(3)}`;
     const baseSentinel = `base${secretHex(3)}`;
+    const baseExtraSentinels = [`basex${secretHex(3)}`, `basey${secretHex(3)}`];
     const storySentinels = [`storya${secretHex(3)}`, `storyb${secretHex(3)}`, `storyc${secretHex(3)}`];
     const otherSentinel = `other${secretHex(3)}`;
     const storyWorldName = `Lantern Story ${secretHex(2)}`;
@@ -3520,7 +3524,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     const readerName = `Recall Reader ${secretHex(2)}`;
     const writerName = `Recall Writer ${secretHex(2)}`;
     const sentinels = [
-      tokenCommon, tokenOtherWorld, tokenNowhere, baseSentinel,
+      tokenCommon, tokenOtherWorld, tokenNowhere, baseSentinel, ...baseExtraSentinels,
       ...storySentinels, otherSentinel, storyWorldName, otherWorldName,
       readerName, writerName,
     ];
@@ -3544,21 +3548,25 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     }
 
     const baseValue = `real harbor note ${tokenCommon} ${baseSentinel}`;
+    const baseExtraValues = baseExtraSentinels.map(
+      (sentinel) => `real harbor note kept beside the quay through a long grey evening ${tokenCommon} ${sentinel}`,
+    );
     const storyValues = storySentinels.map(
       (sentinel) => `story harbor note ${tokenCommon} ${tokenCommon} ${sentinel}`,
     );
     const otherValue = `quiet harbor note ${tokenOtherWorld} ${otherSentinel}`;
     const expectedWorldByValue = new Map<string, string>([
       [baseValue, baseScope.world_id],
+      ...baseExtraValues.map((value): [string, string] => [value, baseScope.world_id]),
       ...storyValues.map((value): [string, string] => [value, storyWorld.id_hex]),
       [otherValue, otherWorld.id_hex],
     ]);
     const claimInputs: FacadeInput<"vault.claims.upsert">[] = [
-      {
-        predicate: museRecall03Predicate, subject_ref: ownerRef, value: baseValue,
+      ...[baseValue, ...baseExtraValues].map((value): FacadeInput<"vault.claims.upsert"> => ({
+        predicate: museRecall03Predicate, subject_ref: ownerRef, value,
         confidence: 1, source: "user_stated", scope: baseScope,
         occurred_at: museRecall03Occurred,
-      },
+      })),
       ...storyValues.map((value): FacadeInput<"vault.claims.upsert"> => ({
         predicate: museRecall03Predicate, subject_ref: ownerRef, value,
         confidence: 1, source: "user_stated",
@@ -3992,7 +4000,7 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
     // A public predicate has at least two dot-joined segments (D17 grammar);
     // a bare "preference" is refused 400 before anything is stored.
     const seedPredicate = "preference.meeting_place";
-    const claimShortIds: string[] = [];
+    const seededClaims: { readonly id: string | null; readonly shortId: string }[] = [];
     for (const marker of markers) {
       const conversation = await engine.client.call("vault.conversations.create", {
         body: { members: [engine.pairedActor.principalRef, reader.principalRef] },
@@ -4013,7 +4021,7 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
           { cause: error },
         );
       }
-      claimShortIds.push(claim.claim_short_id);
+      seededClaims.push({ id: claim.claim?.id ?? null, shortId: claim.claim_short_id });
       await engine.awaitReceipt(claim.receipt_ref);
       const listed = await engine.client.call("vault.claims.list", {
         subject_ref: conversation.id, predicate: seedPredicate, limit: 10,
@@ -4023,14 +4031,22 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
     }
 
     // Second-door visibility of the seeds, then the positive recall control.
+    // A CLAIM hit carries no snippet (memory/reads.rs LexicalHit: a preview
+    // only when the body has a `content` field), so each seeded claim is
+    // found by its record id or its short id.
+    const bm25FindsEverySeed = (page: FacadeResult<"vault.search.bm25">): boolean =>
+      seededClaims.every((seed) => page.value.some((hit) =>
+        (seed.id !== null && hit.record?.id === seed.id)
+        || hit.short_id.split("@")[0] === seed.shortId.split("@")[0]));
     const bm25 = await awaitPublic(
       () => engine.client.call("vault.search.bm25", {
         query: phrase, limit: 10,
       } satisfies FacadeInput<"vault.search.bm25">),
-      (page) => page.value.some((hit) => (hit.snippet ?? "").includes(phrase)),
+      bm25FindsEverySeed,
       { label: "seeded claims in BM25 search" },
     );
-    expect(bm25.value.some((hit) => (hit.snippet ?? "").includes(phrase))).toBe(true);
+    expect(seededClaims).toHaveLength(markers.length);
+    expect(bm25FindsEverySeed(bm25)).toBe(true);
     const pack = await awaitPublic(
       () => recall({
         query: phrase, effort: "light", telemetry: { capture_trace: true }, limit: 10,
@@ -4176,7 +4192,7 @@ suite.test(test, "MUSE-RECALL-04", "Thin evidence returns no memory, search repo
 // Doors used: vault.structural.put, vault.agents.grants.mint/revoke,
 // token pair (pairActor), mount, graph_fs.readdir/ls/grep,
 // vault.claims.upsert/list, vault.get, vault.recall, vault.receipts.get,
-// HTTP raw facade calls and one WS RPC for refusal receipts.
+// HTTP raw facade calls and their call receipts for refusals.
 
 type museRecall05Mount = FacadeInput<"graph_fs.readdir">["mount"];
 type museRecall05WorldView = FacadeResult<"graph_fs.readdir">;
@@ -4462,35 +4478,10 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     if (!widenError) throw new Error("Agent self-widen was not refused with the standard error envelope");
     expect(widenError.code.length).toBeGreaterThan(0);
     expect(widenError.message.length).toBeGreaterThan(0);
-    // The same refusal over WS leaves a call receipt; read it back.
-    const socket = await engine.websocket(reader);
-    try {
-      let refusal: WsRpcError | undefined;
-      try {
-        await socket.call("vault.agents.grants.mint", widen);
-      } catch (error) {
-        if (error instanceof WsRpcError) refusal = error;
-        else throw error;
-      }
-      if (!refusal) throw new Error("Agent self-widen over WS was not refused");
-      const receiptRef = refusal.frames
-        .map((frame) => frame.envelope.receipt_ref)
-        .find((ref): ref is string => typeof ref === "string" && ref.length > 0);
-      if (!receiptRef) throw new Error("WS refusal carried no receipt_ref to read back");
-      const receipt = await awaitPublic(
-        () => reader.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
-        value => value !== null,
-        { label: "grant self-widen refusal call receipt" },
-      );
-      if (!receipt) throw new Error("Refusal call receipt is not readable");
-      expect(receipt.verb).toBe("vault.agents.grants.mint");
-      expect(receipt.outcome).not.toBe("ok");
-      if (typeof receipt.outcome !== "string") {
-        expect(receipt.outcome.refused.code.length).toBeGreaterThan(0);
-      }
-    } finally {
-      socket.close();
-    }
+    // The refusal's call receipt, read back as owner. A /ws socket is
+    // owner-grade only for a scoped agent (FIX 23077), so the HTTP reply's
+    // receipt is the one under test.
+    await museRecallHttpRefusalReceipt(engine, "MUSE-RECALL-05", widenReply, "vault.agents.grants.mint");
     // The refused widen changed nothing, read back through the listing.
     const afterWiden = await museRecall05WorldEntries(reader.client, mount);
     try {
