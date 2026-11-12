@@ -276,7 +276,12 @@ sync = [
 # mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
 # test in `oneiron-server`). No production effect; enabled only by
 # downstream crates' dev-dependencies.
-test-hooks = ["oneiron-model/test-hooks", "oneiron-store/test-hooks", "oneiron-records/test-hooks"]
+test-hooks = [
+    "oneiron-model/test-hooks",
+    "oneiron-store/test-hooks",
+    "oneiron-verb-wire/test-hooks",
+    "oneiron-records/test-hooks",
+]
 # Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
 # without seeding the default policy manifest (the effect-spine oracle needs
 # it). Enable explicitly for rolling-tier test builds. Even under

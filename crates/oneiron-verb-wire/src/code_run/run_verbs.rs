@@ -242,7 +242,6 @@ pub struct ReportBlockedOutput {
 // and SDK types use that Scope directly; these mirrors supply its MCP schema.
 #[derive(schemars::JsonSchema)]
 #[schemars(rename = "BranchScope")]
-#[expect(dead_code, reason = "schema mirror of the model crate's Scope")]
 pub struct BranchScopeSchema {
     world: Option<String>,
     facet: Option<String>,
@@ -255,7 +254,6 @@ pub struct BranchScopeSchema {
 #[derive(schemars::JsonSchema)]
 #[schemars(rename = "BranchScopeResource")]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[expect(dead_code, reason = "schema mirror of the model crate's ScopeResource")]
 pub enum BranchScopeResourceSchema {
     Bucket { key: String },
     DocumentVersion { document: String, version: String },
