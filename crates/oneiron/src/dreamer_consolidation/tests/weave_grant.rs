@@ -365,7 +365,7 @@ fn the_dreamers_read_key_is_held_to_its_live_grant() -> Result<()> {
     crate::test_util::provision_engine_machines(&vault);
     let dreamer = vault.dreamer_authority()?;
     let conversation = seed_session(&vault, 0x6f, 1);
-    let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+    let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
     let key = crate::claim::ScopedReadActorKey::for_engine_actor(dreamer).expect("dreamer key");
     assert_eq!(key.system_agent_guard(), Some(dreamer.entity_ref()));
     let reads = |vault: &Vault| -> Result<bool> {
@@ -406,7 +406,7 @@ fn the_strength_archive_is_judged_by_a_narrowed_steward_grant() -> Result<()> {
         let full = vault.stand_steward_grant_for_test(dreamer, &STEWARD_VERBS)?;
         let node_id = crate::identity::load_or_mint_client_id(&vault)?;
         let conversation = seed_session(&vault, 0x70, 1);
-        let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+        let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
         let subject = EntityId::now();
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
         enqueue_micro(&vault, "run-steward-strength", 20)?;

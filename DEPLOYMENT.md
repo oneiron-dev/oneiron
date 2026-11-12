@@ -122,6 +122,12 @@ lists the host's assistant voice names. Stored turns spoken under one of those
 names count as assistant turns during consolidation, beside the generic
 `assistant`, `agent`, `ai`, and `model` speakers. The default is empty.
 
+`house_role` (config file only: `member`, `steward`, `admin` or `owner`) is the
+role a workspace's house mind runs its org in when the owner's finish
+(`POST /v1/owner/workspace/finish`) names no `role`. The start binds the stored
+workspace's house only when it is set. It has no default: unset, a finish must
+name the role, and the start binds no house.
+
 `trusted_proxies` (flag `--trusted-proxies`, env `ONEIRON_TRUSTED_PROXIES`,
 comma-separated `ip` or `ip/prefix`) names the reverse proxies whose
 `X-Forwarded-For` the server believes when it keys per-address booking quotas.
