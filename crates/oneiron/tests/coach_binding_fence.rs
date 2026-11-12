@@ -24,13 +24,13 @@ const READER: &str = "reader";
 /// The model's reply: one new person, named in T1, and its name.
 fn reply() -> String {
     serde_json::json!({
-        "persons": [{"id": "new:P1", "name": "Oleksii", "evidence_turn_refs": ["T1"]}],
+        "persons": [{"id": "new:P1", "name": "Owen", "evidence_turn_refs": ["T1"]}],
         "candidates": [{
             "subject": "new:P1",
             "predicate": "profile.name",
-            "value": "Oleksii",
+            "value": "Owen",
             "confidence": 0.8,
-            "evidence_refs": [{"source": "T1", "quote": "Oleksii"}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         }],
     })
     .to_string()
@@ -42,7 +42,7 @@ fn a_key_built_for_the_coach_by_any_constructor_is_held_to_its_live_binding() {
     let vault = open_dreamer_vault(dir.path(), READER).expect("fixture vault");
     let coach = coach(&vault).expect("the Coach");
     // The Dreamer has no grant here, so it weaves by its shipped rows.
-    let pass = consolidate_unbound_turn(&vault, "call me Oleksii", None, None, &reply())
+    let pass = consolidate_unbound_turn(&vault, "call me Owen", None, None, &reply())
         .expect("one consolidation pass");
     // The read half of the Coach's default grant is all this test needs.
     let held = [STEWARD_READ_VERB];

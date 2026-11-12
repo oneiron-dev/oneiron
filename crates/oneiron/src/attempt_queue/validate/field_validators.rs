@@ -1,8 +1,9 @@
 //! Length caps, error literals, and per-field validators plus lease/manifest mutators.
 
 use crate::attempt_queue::cancel::{CancelStanding, MAX_LANDING_RESERVE_PERCENT};
+use crate::attempt_queue::lifecycle::{RunLifecycle, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
-use crate::attempt_queue::types::{AttemptRecord, AttemptState, CleanupAttemptLeases};
+use crate::attempt_queue::types::{AttemptRecord, CleanupAttemptLeases};
 use crate::error::{ArtifactError, Error, Result};
 pub(in crate::attempt_queue) use crate::store::attempt_record_codec::field_validators::{
     ERR_ABANDONED_WITHOUT_REASON, ERR_ABANDONED_WITHOUT_RESULT, ERR_CANCEL_ACTOR_IS_RUNTIME,
@@ -85,16 +86,15 @@ pub(in crate::attempt_queue) fn lease_claimed_record(
     lease_owner: &str,
     now: u64,
 ) -> Result<()> {
-    record.state = AttemptState::Leased;
-    record.lease_owner = Some(lease_owner.to_owned());
-    record.attempt_count = record
-        .attempt_count
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("attempt lease count"))?;
+    if !matches!(
+        RunLifecycle::claim(record, lease_owner)?,
+        RunStep::Move { .. }
+    ) {
+        return Err(invalid_transition("claim", record.state.as_str()));
+    }
     if record.claimed_at.is_none() {
         record.claimed_at = Some(now);
     }
-    record.scheduled_at = None;
     record.backoff_until = None;
     record.updated_at = now;
     Ok(())

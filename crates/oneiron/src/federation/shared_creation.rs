@@ -56,14 +56,13 @@ pub struct SharedVaultCreation {
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
-pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
+pub(crate) fn role_preset(role: Role) -> Result<GrantPreset> {
     Ok(match role {
         Role::Owner => GrantPreset::Owner,
-        Role::Admin => GrantPreset::Admin,
+        Role::Deputy | Role::Admin => GrantPreset::Admin,
         Role::Steward => GrantPreset::Steward,
         Role::Member => GrantPreset::Member,
         Role::Viewer => GrantPreset::ReadOnly,
-        Role::Auditor => GrantPreset::ReadOnly,
         Role::Delegate => {
             return Err(invalid(
                 "delegate needs a separately attenuated expiring grant",
@@ -79,8 +78,11 @@ pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
 /// vault's own root when it opens the vault (untangle 6.3; review of #6917,
 /// round 2): it is the engine's actor's reach, not a member. Nor does an
 /// owner's `engine.controls` grant to a principal (6.6): his grant, not a
+/// membership. Nor does a house mind's link to the org it runs over
+/// `vault_id` (HOUSE-BIND = A): a host may bind a workspace's house before its
+/// owner shares the vault, and the link stays. A deleted grant's shell is no
 /// membership. The creation row still closes a vault that was shared.
-fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>, vault_id: u64) -> Result<bool> {
     for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         &vault.store,
         txn,
@@ -94,6 +96,11 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
             return Err(Error::CorruptedIndex("federation grant type"));
         }
+        if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+            && !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+        {
+            continue;
+        }
         let grant =
             super::decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
         if matches!(grant.scope, FederationGrantScope::Vault { .. })
@@ -101,6 +108,8 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
             && !super::is_own_device_grant(&grant)
             && !super::holds_system_agent_grant(grant.member_ref)
             && !super::is_engine_controls_grant(&grant)
+            && !(grant.scope == FederationGrantScope::vault(vault_id)
+                && crate::workspace_roster::is_house_link_grant_in_txn(vault, txn, &grant)?)
         {
             return Ok(true);
         }
@@ -135,7 +144,8 @@ impl Vault {
         // Only the vault's owner shares it: a native host's proof shows a
         // live person, not whose vault this is.
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        if SHARED_VAULT_CREATION.contains(&self.store, &txn, &())? || has_member_grant(self, &txn)?
+        if SHARED_VAULT_CREATION.contains(&self.store, &txn, &())?
+            || has_member_grant(self, &txn, vault_id)?
         {
             return Err(invalid("shared membership has already been initialized"));
         }
@@ -183,11 +193,6 @@ impl Vault {
             if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &member)? {
                 return Err(Error::EntityNotFound);
             }
-            let role = if role == Role::Auditor {
-                Role::Viewer
-            } else {
-                role
-            };
             let mut grant = FederationGrant::new(
                 FederationGrantScope::vault(vault_id),
                 member,
@@ -216,13 +221,29 @@ impl Vault {
         let mut seeded_manifest = None;
         if let Some(preset) = preset {
             let id = crate::gate::default_policy_manifest_id()?;
-            let default = crate::gate::default_policy_manifest()?;
-            match crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)? {
-                Some(raw)
-                    if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                        != Some(default.as_slice()) =>
-                {
-                    let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            let shipped = crate::gate::default_policy_manifest()?;
+            let stored = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?;
+            let body = stored
+                .as_deref()
+                .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..));
+            // An untouched seeded default is the engine's whatever rows it
+            // carries, a bound house mind's read row (`gate::house_grant`)
+            // among them: it takes the preset's rows on its own body.
+            let untouched = match body {
+                Some(body) => {
+                    body == shipped.as_slice()
+                        || crate::gate::manifest_authenticity::manifest_is_seeded_default(
+                            &self.store,
+                            &txn,
+                            &id,
+                            body,
+                        )?
+                }
+                None => true,
+            };
+            match &stored {
+                Some(raw) if !untouched => {
+                    let header = crate::batch::EntityMetadataHeader::parse(raw)
                         .ok_or(Error::CorruptedIndex("shared policy manifest header"))?;
                     if header.entity_type != crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
                         return Err(invalid("shared policy id is not a policy manifest"));
@@ -235,7 +256,8 @@ impl Vault {
                     // Defaults are ordinary editable stored policy, not a
                     // second runtime policy engine. The preset's act-policy
                     // rows ride the same manifest through the owner door.
-                    let data = super::pending_act::with_preset_act_policies(default, preset)?;
+                    let base = body.map_or(shipped, <[u8]>::to_vec);
+                    let data = super::pending_act::with_preset_act_policies(base, preset)?;
                     seeded_manifest = Some((id, data));
                     creation.policy_ref = Some(id.to_hex());
                 }
@@ -265,11 +287,6 @@ impl Vault {
                 {
                     return Err(Error::EntityNotFound);
                 }
-                let role = if role == Role::Auditor {
-                    Role::Viewer
-                } else {
-                    role
-                };
                 self.invite_founding_member_in_txn(
                     &mut txn, vault_id, actor, member, role, invited_at,
                 )?;

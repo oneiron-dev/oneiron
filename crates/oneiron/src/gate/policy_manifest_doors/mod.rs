@@ -88,7 +88,11 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn body_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Option<Vec<u8>>> {
+pub(crate) fn body_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<Vec<u8>>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
         return Ok(None);
     };
@@ -108,7 +112,7 @@ fn body_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<Opt
     Ok(Some(body))
 }
 
-fn view_in_txn(
+pub(crate) fn view_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,

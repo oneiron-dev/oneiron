@@ -335,6 +335,10 @@ pub fn register_peer_actor(vault: &Vault, peer_id: u64, actor: &WriteActor) -> R
         // also keeps a federated (Imported) binding from ever superseding a
         // local one.
         body.source = Some(ClaimSource::Observed);
+        // Only a PERSON has a substrate facet; any other actor's binding
+        // takes the actor rule's facet.
+        body.scope_facet =
+            crate::actor_claims::actor_claim_facet_in_txn(vault, wtxn, actor.entity_ref())?;
         vault.put_reserved_claim_in_txn(
             wtxn,
             &claim_id,

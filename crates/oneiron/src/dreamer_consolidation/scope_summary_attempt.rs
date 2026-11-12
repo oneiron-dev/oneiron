@@ -296,6 +296,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             subject,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         let mut charges = StepChargeTally::default();
         // The reply answers to the summary contract inside the step (FIX

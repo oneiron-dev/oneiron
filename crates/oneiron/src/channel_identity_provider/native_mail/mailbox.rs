@@ -62,7 +62,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let id = mailbox_record_id(identity_ref)?;
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             PREDICATE_NATIVE_MAIL_MAILBOX,
             ClaimSubject::Entity(identity_ref),
             Value::from(address),
@@ -79,6 +79,8 @@ impl Vault {
                 "native mailbox record names another address or was retracted".into(),
             ));
         }
+        // The subject is the channel identity, which has no FACET of its own.
+        body.scope_facet = self.claim_put_facet_in_txn(&wtxn, &id)?;
         self.put_reserved_claim_in_txn(
             &mut wtxn,
             &id,
@@ -91,5 +93,18 @@ impl Vault {
         )?;
         wtxn.commit()?;
         Ok(())
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// [`Self::record_native_mailbox`] for `test_doors::claim_facet_birth`.
+    pub(crate) fn record_native_mailbox_for_test(
+        &self,
+        identity_ref: EntityId,
+        address: &str,
+        now: u64,
+    ) -> Result<()> {
+        self.record_native_mailbox(identity_ref, address, now)
     }
 }
