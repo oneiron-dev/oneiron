@@ -84830,7 +84830,7 @@
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
       "crate-vis": 21,
-      "fn": 16,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -84946,18 +84946,21 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 11,
-      "re-export": 8
+      "crate-vis": 12,
+      "re-export": 9
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "BindReceipt"
+     ],
      "path": "src/sync/client/note_session.rs",
      "purpose": "The existing app-tier MessagePack auth.bind handshake on the sync socket",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 2,
+      "enum": 1
      }
     },
     {
@@ -85599,6 +85602,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 18,
+      "mod": 1,
       "re-export": 4,
       "struct": 3
      }
@@ -85621,6 +85625,17 @@
      "purpose": "Typed reads of a residence open, using the named connection's own vault",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/connection/outbox.rs",
+     "purpose": "The machine's outbox (FIX 3966): the queued updates it still owes its home, window by window, each with the…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -92276,7 +92291,8 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 55
+      "mod": 55,
+      "re-export": 1
      }
     },
     {
@@ -92504,6 +92520,16 @@
      "purpose": "A Steward grant narrowed to one project, for the integration test of the substrate reads behind a grant…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/sync_outbox.rs",
+     "purpose": "Door for `tests/sync_outbox.rs`, mounted inside `sync::connection` so it drives the production…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -96009,7 +96035,7 @@
       "enum": 1,
       "fn": 9,
       "mod": 1,
-      "re-export": 125,
+      "re-export": 126,
       "struct": 34
      }
     },
@@ -97037,6 +97063,24 @@
      "surface": {
       "fn": 6,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SyncOutbox",
+      "SyncOutboxAnswer",
+      "SyncOutboxReceipt",
+      "SyncOutboxRow",
+      "SyncOutboxUnreached",
+      "SyncOutboxWindow"
+     ],
+     "path": "src/verbs/sync_outbox.rs",
+     "purpose": "`vault.sync.outbox` (FIX 3966): what one of the owner's machines still owes its home",
+     "surface": {
+      "enum": 2,
+      "struct": 4
      }
     },
     {
@@ -101691,6 +101735,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_pins_put_pipeline.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 3 (Engine task 12 Nov 19:38): green pins for six put-pipeline write gates of…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -102550,6 +102602,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/note_bind_reply_stamp.rs",
+     "purpose": "A sync client that carries a NOTE session accepts the home's `auth.bind` reply with the call receipt stamp…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/note_bm25f_fields.rs",
      "purpose": "FIX 7789 (ARCH-0032 #bm25f): a NOTE's title is a BM25F field of its own",
      "surface": {}
@@ -103372,6 +103432,14 @@
      "notable": [],
      "path": "tests/symbol_lease_observe.rs",
      "purpose": "NO-DOOR SYMBOL-LEASE-OBSERVATION (tests/e2e/code-custody.test.ts CODE-CUSTODY-03): a leased run reads its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sync_outbox.rs",
+     "purpose": "The owner's outbox read (FIX 3966): what one of the owner's machines still owes its home",
      "surface": {}
     },
     {
@@ -105084,7 +105152,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 413,
+     "files": 414,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105140,7 +105208,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105252,7 +105320,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 138,
+     "files": 139,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105317,8 +105385,8 @@
    },
    "over_bar": 263,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7445,
-   "test_files": 1129
+   "source_files": 7448,
+   "test_files": 1132
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -105641,6 +105709,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/quickjs_factory_compiles_once.rs",
+     "purpose": "FIX AGENT-RUN-START-LATENCY-4S: a QuickJS runtime handle reuses its factory's compiled component",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/wait_park/fixture.rs",
      "purpose": "The shared fixture of `code_mode_wait_park.rs` and `callable_wait_park.rs` (ENGINE CALL…",
      "surface": {
@@ -105660,7 +105736,7 @@
    "over_bar": 1,
    "purpose": "`oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1)",
    "source_files": 22,
-   "test_files": 9
+   "test_files": 10
   },
   "oneiron-android": {
    "files": [
@@ -127581,7 +127657,7 @@
      "path": "src/api/booking/public_fixture.rs",
      "purpose": "Shared fixtures for tests that enter the real public router",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -130353,7 +130429,7 @@
      "path": "src/api/facade/residence_doors.rs",
      "purpose": "The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -145683,7 +145759,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 4
+      "mod": 5
      }
     },
     {
@@ -145694,6 +145770,16 @@
      "purpose": "Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/resident_pump.rs",
+     "purpose": "Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -146835,6 +146921,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/note_session_bind_reply.rs",
+     "purpose": "A sync client that carries a NOTE session accepts the home's `auth.bind` reply (FIX-LIST…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -146848,6 +146942,14 @@
      "notable": [],
      "path": "tests/openapi_off_record_rooms.rs",
      "purpose": "The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/resident_pump_claim_latency.rs",
+     "purpose": "FIX AGENT-RUN-START-LATENCY-4S, fix 1: the agent run pump claims a run dispatched to it while idle on that…",
      "surface": {}
     },
     {
@@ -147441,7 +147543,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -147506,8 +147608,8 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1840,
-   "test_files": 209
+   "source_files": 1841,
+   "test_files": 211
   },
   "oneiron-skill-attribution": {
    "files": [
