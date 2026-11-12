@@ -72,6 +72,12 @@ pub use authoring::{
     apply_eval_authoring_plan, eval_authoring_inventory, eval_authoring_inventory_sourced,
     setup_eval_cohorts,
 };
+pub use authoring::{
+    EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,
+    EvalAuthoringExecuteAnswer, EvalAuthoringExecuteRequest, EvalAuthoringExecution,
+    EvalAuthoringOutcome, EvalAuthoringSkillRun, admit_eval_authoring_execution,
+    eval_authoring_execute_admits, eval_authoring_execution,
+};
 pub use cohort::{
     CohortRetirement, EvalCohort, EvalCohortRetirementAuthor, EvalExposure, EvalExposureCounts,
     EvalExposureKind, EvalRelease,
