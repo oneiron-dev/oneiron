@@ -13,7 +13,7 @@
 use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::memory::{
     AllRelationships, ClaimInput, ClaimRelationships, ClaimScope, CommitOutcome, CommitReceipt,
-    ScopedClaimInput,
+    ScopedClaimInput, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::{ClaimApprovalStatus, EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::json;
@@ -223,10 +223,45 @@ fn owner_sensitive_and_restricted_stamps_park_proposed() {
 
 #[test]
 fn owner_public_stamped_inferred_claim_parks_proposed() {
-    let (receipt, stored) = scoped_write("inferred", Some(0));
+    // A concluded claim names the TURN it was concluded from.
+    let fixture = stamp_approval_vault();
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let turn = memory
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            messages: vec![WitnessMessage {
+                id: None,
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "call me Owen".to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: 1_772_400_000,
+            assertions: WitnessAssertions::default(),
+        })
+        .expect("the evidence turn")
+        .turn_id;
+    let id = EntityId::now();
+    let mut input = scoped_input(&fixture, id, "inferred", Some(0));
+    input.evidence_turn_refs = vec![turn.to_hex()];
+    let receipt = memory.claim_upsert_scoped(&input).unwrap_or_else(|error| {
+        panic!(
+            "the owner's inferred claim at band 0 is admitted, got {}: {}",
+            error.code, error.message,
+        )
+    });
     assert_eq!(
-        receipt, "proposed",
+        receipt.approval, "proposed",
         "only user_stated and observed ask auto; the stamp changes nothing else",
     );
-    assert_eq!(stored, ClaimApprovalStatus::Proposed);
+    assert_eq!(
+        stored_approval(&fixture, id, &receipt),
+        ClaimApprovalStatus::Proposed
+    );
 }
