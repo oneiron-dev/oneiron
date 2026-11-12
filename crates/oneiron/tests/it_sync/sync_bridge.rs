@@ -418,9 +418,11 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     message.extend_from_slice(&update);
     let responses = client.handle_server_message(&message).unwrap();
 
-    // Under sync all this device follows every world readable here, so the
-    // root's newly listed window is asked for at once, and nothing else.
-    let requested: Vec<(String, u8)> = responses
+    // Under sync all this device follows every world readable here, so once
+    // the root is durable it asks for the root's newly listed window and for
+    // every window this vault already holds (its setup window and the month
+    // its fixture rows were written in): one vector request each.
+    let mut requested: Vec<(String, u8)> = responses
         .iter()
         .map(|frame| {
             assert_eq!(frame.first(), Some(&TAG_WINDOW_SYNC), "a window frame");
@@ -429,10 +431,17 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
             (key.to_owned(), sub_tag)
         })
         .collect();
-    assert_eq!(
-        requested,
-        vec![("2026-03".to_string(), window_sub_tags::VV_REQUEST)]
-    );
+    requested.sort();
+    let expected: Vec<(String, u8)> = oneiron::sync::discover_local_window_keys(&vault)
+        .unwrap()
+        .iter()
+        .map(|key| key.as_str().to_owned())
+        .chain(std::iter::once("2026-03".to_string()))
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .map(|key| (key, window_sub_tags::VV_REQUEST))
+        .collect();
+    assert_eq!(requested, expected);
     assert_eq!(client.server_windows(), vec!["2026-03".to_string()]);
     assert_eq!(
         vault
