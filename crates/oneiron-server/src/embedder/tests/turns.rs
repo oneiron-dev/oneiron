@@ -30,6 +30,7 @@ impl Served {
         let mock = MockEndpoint::start(MockBehaviour::Concepts);
         let dir = tempfile::tempdir().unwrap();
         let vault = test_vault(dir.path());
+        crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
         let owner = vault.ensure_embedded_owner_actor().unwrap();
         let config = EmbedderConfig {
             idle_interval_ms: 20,
@@ -98,7 +99,7 @@ impl Served {
             })
             .collect::<Vec<_>>();
         self.post(
-            "witness",
+            "vault.witness",
             json!({"conversation_ref": conversation, "occurred_at": at, "messages": messages}),
         )
         .await
@@ -110,7 +111,7 @@ impl Served {
         let mut pack = Value::Null;
         for _ in 0..600 {
             pack = self
-                .post("recall", json!({"query": query, "limit": limit}))
+                .post("vault.recall", json!({"query": query, "limit": limit}))
                 .await;
             if done(&pack) {
                 break;
@@ -220,7 +221,7 @@ fn a_recall_never_returns_a_turn_beside_its_own_message() {
             .await;
         let pack = served
             .post(
-                "recall",
+                "vault.recall",
                 json!({"query": "automobile mechanic", "limit": 5}),
             )
             .await;

@@ -138,7 +138,9 @@ pub use scope_stamp::{
     ClaimRecordScope, PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id,
     substrate_facet_id,
 };
-pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
+pub(crate) use scope_stamp::{
+    archived_default_facet, default_facet_in, record_scope_at, upgrade_pre_scope_body,
+};
 pub use scoped_read::*;
 // On its own line so no other change to the re-export list below collides
 // with it (FIX 11766).

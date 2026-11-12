@@ -212,6 +212,7 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
             HANDLES.delete(store, txn, key)?;
         }
     }
+    super::backfill::TURN_BACKFILL.delete(store, txn, &room)?;
     super::hosting::delete_room_host_pin(store, txn, room)?;
     super::participation::delete_room_facts(store, txn, room)?;
     crate::workspace_roster::join_receipt::delete_room_joins(store, txn, room)?;

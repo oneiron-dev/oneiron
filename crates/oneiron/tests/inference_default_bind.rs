@@ -23,6 +23,8 @@ fn request(model: ModelId, locality: ModelLocality) -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -37,6 +39,7 @@ fn bind(vault: &Vault, role: ModelRole, request: &mut LlmRequest) -> Result<(), 
         binding: oneiron::llm::HostInferenceBinding::Advertised {
             model: request.model.clone(),
             locality: request.envelope.locality,
+            keyless: false,
         },
         extraction_egress: None,
     };
@@ -64,12 +67,16 @@ fn registered_local_model_uses_the_stored_default_without_nested_lmdb_reader() {
                 output_per_million: "0".into(),
                 cache_read_per_million: None,
                 cache_write_per_million: None,
+                currency: None,
             }),
             capabilities: vec![],
             metadata: Default::default(),
         },
         scores: Default::default(),
         fetched_at: Default::default(),
+        tokens_per_o200k: None,
+        stale_since: None,
+        source_rows: None,
     };
     vault
         .put_model_registry_row(&local_row)

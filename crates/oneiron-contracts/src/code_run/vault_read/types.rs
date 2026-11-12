@@ -125,8 +125,13 @@ pub struct CoreHydrateRequest {
     pub view: Option<View>,
     /// Whether the reader's model takes images in: a live generated image
     /// is then served as its bytes, base64, rather than its text form.
-    /// Defaults to `false`.
-    #[serde(default, rename = "image_input", alias = "imageInput")]
+    /// Defaults to `false`, which the encoded request leaves out.
+    #[serde(
+        default,
+        rename = "image_input",
+        alias = "imageInput",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub image_input: bool,
     /// The task the reader's model serves. With `image_input`, the host's
     /// per-image pick reads it beside each image's description, and an image
@@ -159,8 +164,13 @@ pub struct CoreBatchShortIdHydrateRequest {
     pub view: Option<View>,
     /// Whether the reader's model takes images in: a live generated image
     /// is then served as its bytes, base64, rather than its text form.
-    /// Defaults to `false`.
-    #[serde(default, rename = "image_input", alias = "imageInput")]
+    /// Defaults to `false`, which the encoded request leaves out.
+    #[serde(
+        default,
+        rename = "image_input",
+        alias = "imageInput",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub image_input: bool,
     /// The task the reader's model serves. With `image_input`, the host's
     /// per-image pick reads it beside each image's description, and an image

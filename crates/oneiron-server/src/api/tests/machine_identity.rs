@@ -8,7 +8,7 @@ use base64::Engine as _;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_PROOF_HEADER,
-    MachineEncryptionKey, PeerMachine, machine_connection_transcript,
+    MachineDeviceClass, MachineEncryptionKey, PeerMachine, machine_connection_transcript,
     machine_profile_proof_transcript, machine_proof_header_value, pairing_binding_transcript,
 };
 use serde_json::json;
@@ -55,16 +55,20 @@ fn redemption(
             key: vec![5; MACHINE_ENCRYPTION_KEY_LEN],
         };
         let key = machine_key.verifying_key().to_bytes();
+        // The machine declares its class, and its proof binds it.
+        let device_class = MachineDeviceClass::Computer;
         let proof = machine_key.sign(&machine_profile_proof_transcript(
             &vault_id,
             machine,
             &key,
+            device_class,
             &encryption_key,
         ));
         body["machine"] = json!({
             "vault_id": hex(&vault_id),
             "machine": machine.to_hex(),
             "machine_key": hex(&key),
+            "device_class": device_class.wire(),
             "encryption_suite": MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
             "encryption_key": base64::engine::general_purpose::STANDARD.encode(&encryption_key.key),
             "machine_proof": hex(&proof.to_bytes()),

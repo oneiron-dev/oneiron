@@ -233,7 +233,9 @@ fn the_code_check_is_off_by_default_and_enforce_is_refused() {
     assert_eq!(default.mode, CheckMode::Off);
     assert_eq!(default.backend, BackendKind::TscRs);
     let shadow = check("mode = \"shadow\"").unwrap().code_mode.check;
-    assert_eq!(shadow.mode, CheckMode::Shadow);
+    // CheckMode::Shadow is gone; Feedback is its successor (#3903,
+    // 3748955211e, FIX 8277) (rule D).
+    assert_eq!(shadow.mode, CheckMode::Feedback);
     let error = check("mode = \"enforce\"").unwrap_err();
     assert!(
         error.to_string().contains("code_check_enforce_reserved"),

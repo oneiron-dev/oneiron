@@ -101,6 +101,10 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }
+            // SPAWN-KNOB: a power refusal keeps its Gate reason.
+            SelfDispatchOutcome::Denied(denied) => Err(MemoryError::from(
+                crate::code_run::payload::replay_denied_trap_error(&denied),
+            )),
             _ => Err(host_result_mismatch()),
         }
     }

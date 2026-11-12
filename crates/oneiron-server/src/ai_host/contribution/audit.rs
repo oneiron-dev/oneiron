@@ -9,7 +9,9 @@
 //! first on the audit's own call. The checks use that protocol and those
 //! objectives, each fork's answer's text in the place of the result, as the
 //! audit read the step's answer. Each fork passes by the audit's own rule:
-//! no finding names a flaw ([`flaw_free`]). The pair waits while the
+//! no finding names a flaw ([`flaw_free`]). Each objective is one question
+//! on the decision ladder (ARCH-0076 #decide-required, DECIDE-BYPASS-2), the
+//! frozen judge its one rung ([`ReplayJudge`]). The pair waits while the
 //! checker's protocol, or the judge's route or route prompt, is not the
 //! frozen one, or the audit froze no rung (`AnchorUnresolved`), or that
 //! judge is not served there now (`ModelUnavailable`). No other rung or
@@ -18,13 +20,20 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use oneiron::code_run::{
     ContributionForkScorer, ContributionReplayUnavailable, ReplayAnchor, ScoredFork,
 };
+use oneiron::dreamer_runner::maintenance::seal_checks::{
+    SealObjectiveCheck, SealObjectiveDecision, SealObjectiveDecisions,
+};
 use oneiron::learning::Anchor;
 use oneiron::learning::honesty::SEAL_QUALITY_AXIS;
 use oneiron::limit_ask::EngineLimit;
+use oneiron::llm::decision::{
+    DecisionCall, DecisionPack, DecisionProvider, DecisionRung, ProviderDecision, ProviderPin,
+};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::self_heal::audit::{AuditContract, SealCheckKind, audit_contract, flaw_free};
 use oneiron::skill_attribution::ContributionCandidate;
@@ -36,7 +45,8 @@ use oneiron::{
 use super::{answer_text, measure};
 use crate::ai_host::coach_host::seal_checks::PURPOSE;
 use crate::ai_host::coach_host::seal_checks::checker::{
-    audit_objective, check_messages, independent, parse, protocol_digest,
+    FLAW_WORDING, answers, audit_objective, check_state, independent, pack_messages,
+    protocol_digest,
 };
 use crate::models::RoleCall;
 use crate::server::SyncServer;
@@ -68,7 +78,11 @@ impl ContributionForkScorer for AuditScorer<'_> {
         }
         // The judge is admitted as a fork's check admits it, an empty
         // answer in the place of the fork's.
-        let messages = audit_messages(&contract, "");
+        let Some((check, state)) = audit_check(&contract, "")? else {
+            return Ok(Err(ContributionReplayUnavailable::AnchorUnresolved));
+        };
+        let questions: Vec<_> = check.questions().iter().collect();
+        let messages = pack_messages(&state, &questions);
         if let Err(unavailable) = self.admit_judge(vault, &contract, messages) {
             return Ok(Err(unavailable));
         }
@@ -102,14 +116,89 @@ impl ContributionForkScorer for AuditScorer<'_> {
         if rubric(&contract)? != anchor.rubric {
             return Ok(None);
         }
-        let asked: Vec<&str> = contract.objectives.iter().map(String::as_str).collect();
         let answer = answer_text(fork.response);
         measure(vault, EngineLimit::ContributionJudgeAnswerBytes, &answer);
-        let messages = audit_messages(&contract, &answer);
-        let Some(text) = self.ask_judge(vault, &contract, messages, clock)? else {
+        let Some((check, state)) = audit_check(&contract, &answer)? else {
             return Ok(None);
         };
-        Ok(parse(&text, &asked, fork.receipt).map(|findings| flaw_free(&findings)))
+        let judge = ReplayJudge {
+            scorer: self,
+            vault,
+            contract: &contract,
+            pin: ProviderPin {
+                rung: DecisionRung::Big,
+                model: contract.judge_revision.clone(),
+                version: contract.judge_revision.clone(),
+            },
+            unanswered: AtomicBool::new(false),
+        };
+        let bands = self.server.decision_host().bands();
+        let decided = check.decide(
+            vault.coach_authority()?.entity_ref(),
+            fork.receipt,
+            &state,
+            &SealObjectiveDecisions {
+                judge: &judge,
+                bands: &bands,
+                budget: clock.decision_time_left(),
+            },
+        )?;
+        if judge.unanswered.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        Ok(match decided {
+            SealObjectiveDecision::Decided { findings, .. } => Some(flaw_free(&findings)),
+            SealObjectiveDecision::Inconclusive => None,
+        })
+    }
+}
+
+/// The audit's frozen judge as the decision ladder's one Big rung: each
+/// pack goes to that judge alone on its frozen rung ([`AuditScorer::ask_judge`]),
+/// on the pack's clock, and its answer is read as each question's yes/no
+/// weights. `unanswered` is set when a call was not admitted or failed.
+struct ReplayJudge<'a> {
+    scorer: &'a AuditScorer<'a>,
+    vault: &'a Vault,
+    contract: &'a AuditContract,
+    pin: ProviderPin,
+    unanswered: AtomicBool,
+}
+
+impl DecisionProvider for ReplayJudge<'_> {
+    fn pin(&self) -> ProviderPin {
+        self.pin.clone()
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        let pack = DecisionPack {
+            questions: std::slice::from_ref(&call.question),
+            evidence: call.evidence,
+            images: call.images,
+            audio: call.audio,
+            state: call.state,
+            deadline: call.deadline,
+            run: call.run,
+            labels: call.labels,
+        };
+        self.decide_pack(&pack)?
+            .pop()
+            .ok_or_else(|| Error::InvalidConfig("an audit judge answered no question".into()))
+    }
+
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        let messages = pack_messages(pack.state, pack.questions);
+        let text = self
+            .scorer
+            .ask_judge(self.vault, self.contract, messages, pack.deadline)?;
+        if text.is_none() {
+            self.unanswered.store(true, Ordering::Relaxed);
+        }
+        Ok(answers(
+            text.as_deref().unwrap_or_default(),
+            pack.questions,
+            None,
+        ))
     }
 }
 
@@ -223,16 +312,31 @@ impl AuditScorer<'_> {
     }
 }
 
-/// The audit's check of `answer`: the text alone of each objective the
-/// audit examined, in its order, and `answer` in the place of the result.
-fn audit_messages(contract: &AuditContract, answer: &str) -> Vec<LlmMessage> {
-    let objectives = contract
-        .objectives
+/// The audit's check of `answer`: one question for each objective the
+/// audit examined, in its order, and as their state the text alone of each
+/// objective and `answer` in the place of the result. `None` when an
+/// objective repeats.
+fn audit_check(
+    contract: &AuditContract,
+    answer: &str,
+) -> oneiron::Result<Option<(SealObjectiveCheck, serde_json::Value)>> {
+    let asked: Vec<&str> = contract.objectives.iter().map(String::as_str).collect();
+    let Some(check) = SealObjectiveCheck::new(
+        SealCheckKind::RandomAudit,
+        &asked,
+        &protocol_digest(),
+        FLAW_WORDING,
+    )?
+    else {
+        return Ok(None);
+    };
+    let objectives = asked
         .iter()
-        .map(String::as_str)
-        .map(audit_objective)
+        .zip(check.questions())
+        .map(|(objective, question)| audit_objective(objective, question.id))
         .collect();
-    check_messages(SealCheckKind::RandomAudit, objectives, answer)
+    let state = check_state(SealCheckKind::RandomAudit, objectives, answer);
+    Ok(Some((check, state)))
 }
 
 /// The frozen contract of the audit `candidate`'s outcome names, when the

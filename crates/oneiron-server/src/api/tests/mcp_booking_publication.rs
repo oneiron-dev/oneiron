@@ -69,6 +69,8 @@ fn publication(config: &EventTypeConfig, owner_display: &str) -> serde_json::Val
             window_secs: 86_400,
             visitor_tz: "UTC".to_owned(),
         },
+        constraint_front: None,
+        sponsor: None,
     })
     .expect("publication")
 }
@@ -93,6 +95,7 @@ fn claim(predicate: &str, subject: oneiron::EntityId, value: serde_json::Value) 
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -233,7 +236,7 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
             MCP_TOOL_FIRST_PATH,
             label,
             "upsert",
-            oneiron::task_verb::sdk::AgentVerb::ClaimUpsert.as_str(),
+            oneiron::task_verb::sdk::AgentVerb::VaultClaimsUpsert.as_str(),
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "write_memory"),
                 json!({"arguments": {"spec": input}}),
