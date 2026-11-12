@@ -23,6 +23,53 @@ pub enum ClaimDemotionRung {
     Stale,    // wire = "stale"
 }
 
+/// Why a decay may not follow a claim's current demotion rung and ClaimOf
+/// weight ([`decay_transition`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecayRefusal {
+    /// The claim is weakened or stale: decay is the ladder's first rung, and
+    /// rungs only move forward.
+    OutOfOrder,
+    /// The new weight is not finite in `[0, 1]`.
+    InvalidWeight,
+    /// The new weight is not below the current one. A higher weight is no
+    /// decay, and an equal one changes nothing.
+    NotLower,
+}
+
+/// The one decay transition (FIX 22387). The live demotion door, the
+/// demotion batch binding and the signed-history fold all rule with it, so
+/// the curator, which reaches the door or the fold, rules the same way. A
+/// claim with no rung or the `decayed` rung decays to a ClaimOf weight
+/// finite in `[0, 1]` and strictly below its current weight, and carries
+/// `decayed` after; a decayed claim's second decay to a lower weight is the
+/// documented re-decay.
+///
+/// # Errors
+///
+/// The [`DecayRefusal`] that names the broken condition.
+pub fn decay_transition(
+    rung: Option<ClaimDemotionRung>,
+    current_weight: f32,
+    new_weight: f32,
+) -> std::result::Result<ClaimDemotionRung, DecayRefusal> {
+    if matches!(
+        rung,
+        Some(ClaimDemotionRung::Weakened | ClaimDemotionRung::Stale)
+    ) {
+        return Err(DecayRefusal::OutOfOrder);
+    }
+    if !new_weight.is_finite() || !(0.0..=1.0).contains(&new_weight) {
+        return Err(DecayRefusal::InvalidWeight);
+    }
+    // A current weight that is not a number orders below nothing, so no
+    // decay follows it.
+    if new_weight.partial_cmp(&current_weight) != Some(std::cmp::Ordering::Less) {
+        return Err(DecayRefusal::NotLower);
+    }
+    Ok(ClaimDemotionRung::Decayed)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ClaimDemotionAction {
     Decay { new_claim_of_weight: f32 },

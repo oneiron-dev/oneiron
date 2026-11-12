@@ -5,6 +5,7 @@ use crate::edge::{EdgeKind, validate_edge_weight};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{DecayRefusal, decay_transition};
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 impl Vault {
@@ -110,12 +111,6 @@ impl Vault {
                 new_claim_of_weight,
             } => {
                 validate_edge_weight(new_claim_of_weight)?;
-                if matches!(
-                    rung,
-                    Some(ClaimDemotionRung::Weakened | ClaimDemotionRung::Stale)
-                ) {
-                    return Err(Error::InvalidClaimBody("decay is out of order"));
-                }
                 let ClaimSubject::Entity(subject) = body.subject else {
                     return Err(Error::InvalidClaimBody("decay requires entity subject"));
                 };
@@ -136,13 +131,21 @@ impl Vault {
                     }
                 }
                 let current = found.ok_or(Error::InvalidClaimBody("ClaimOf edge missing"))?;
-                if new_claim_of_weight > current {
-                    return Err(Error::InvalidEdgeWeight {
-                        value: new_claim_of_weight,
-                    });
-                }
+                // The rule the signed fold and the batch binding share (FIX
+                // 22387): a strictly lower weight, so an equal one refuses.
+                let decayed = match decay_transition(rung, current, new_claim_of_weight) {
+                    Ok(decayed) => decayed,
+                    Err(DecayRefusal::OutOfOrder) => {
+                        return Err(Error::InvalidClaimBody("decay is out of order"));
+                    }
+                    Err(DecayRefusal::InvalidWeight | DecayRefusal::NotLower) => {
+                        return Err(Error::InvalidEdgeWeight {
+                            value: new_claim_of_weight,
+                        });
+                    }
+                };
                 (
-                    ClaimDemotionRung::Decayed,
+                    decayed,
                     Some((subject, new_claim_of_weight)),
                     super::transition::ClaimTransitionKind::Decay,
                     super::transition::TransitionDelta::ClaimOfWeight(new_claim_of_weight),
