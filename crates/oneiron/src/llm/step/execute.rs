@@ -17,8 +17,10 @@ use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
     DurableStepResult, ReplyCheck, StepEffectBinding, StepOutcome, StepProgression,
 };
+use crate::agent_dispatch::SpendCapRefusal;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, current_legibility};
 use crate::error::Error;
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 // FIX 4816: the recovery moved to `recovery`; its names stay reachable here.
 pub(super) use super::recovery::{recover_step, recovery_in_txn};
@@ -258,13 +260,16 @@ async fn durable_step(
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
-            return budget_trap(
+            let trapped = budget_trap(
                 ctx,
                 step_hash,
                 BUDGET_PARK_REASON,
                 Some(guard.reserve_units()),
-            )
-            .inspect(|_| step_budget_hit(ctx, guard, &request));
+            );
+            if budget_acted(&trapped) {
+                step_budget_hit(ctx, guard, &request);
+            }
+            return trapped;
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -407,11 +412,11 @@ async fn durable_step(
                 BudgetDenied::Exhausted => Some(guard.reserve_units()),
                 _ => None,
             };
-            return budget_trap(ctx, step_hash, reason, asked_units).inspect(|_| {
-                if denied == BudgetDenied::Exhausted {
-                    step_budget_hit(ctx, guard, &request);
-                }
-            });
+            let trapped = budget_trap(ctx, step_hash, reason, asked_units);
+            if denied == BudgetDenied::Exhausted && budget_acted(&trapped) {
+                step_budget_hit(ctx, guard, &request);
+            }
+            return trapped;
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
@@ -661,7 +666,10 @@ pub(super) const HOST_CHECK_PARK_REASON: &str = "durable step held by a host che
 /// trap that records `reason`. The trap and its park land in one
 /// transaction: an open trap over an unparked attempt reads as plain leased
 /// work, which boot recovery requeues and a fresh budget runs without the
-/// signal.
+/// signal. A spend scope refused for good, by a closed boundary or a
+/// ceiling, has no write to wait for: the step refuses with that typed
+/// reason before any trap opens, and nothing parks
+/// (BUDGET-TRAP-UNTYPED-NO-SENDER).
 pub(super) fn budget_trap(
     ctx: &DurableStepContext<'_>,
     step_hash: [u8; 32],
@@ -672,6 +680,15 @@ pub(super) fn budget_trap(
         resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
     let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
+        let refusal = match (&ctx.spend_scope, asked_units) {
+            (Some(scope), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .hard_cap_refusal_in_txn(wtxn, scope, units)?,
+            _ => None,
+        };
+        let wait = match budget_wait(refusal) {
+            Ok(wait) => wait,
+            Err(refused) => return Ok(Err(refused)),
+        };
         let trap = open_trap_in_txn(
             ctx.vault,
             wtxn,
@@ -681,17 +698,6 @@ pub(super) fn budget_trap(
             reason,
             TrapBindingScope::Attempt,
         )?;
-        let wait = match (&ctx.spend_scope, asked_units) {
-            (Some(scope), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
-                .hard_cap_refusal_in_txn(wtxn, scope, units)?
-                .map(
-                    |(scope, asked_units)| crate::dreamer_runner::DreamerParkWait::Budget {
-                        scope,
-                        asked_units,
-                    },
-                ),
-            _ => None,
-        };
         store.park_attempt_with_wait_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
@@ -704,13 +710,56 @@ pub(super) fn budget_trap(
             },
             wait,
         )?;
-        Ok(trap)
+        Ok(Ok(trap))
     })?;
+    let trap = trap.map_err(DurableStepError::BudgetRefused)?;
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
     Ok(StepOutcome::Trapped {
         trap,
         failure_policy,
     })
+}
+
+/// The typed wait of a step an open hard cap refused, which that cap's
+/// top-up wakes; `None` when no spend scope refused it. A scope refused for
+/// good, by a closed boundary or a ceiling, is the step's typed refusal.
+fn budget_wait(
+    refusal: Option<SpendCapRefusal>,
+) -> std::result::Result<Option<crate::dreamer_runner::DreamerParkWait>, StepBudgetRefusal> {
+    let refused = match refusal {
+        None => return Ok(None),
+        Some(SpendCapRefusal::HardCap { scope, asked_units }) => {
+            return Ok(Some(crate::dreamer_runner::DreamerParkWait::Budget {
+                scope,
+                asked_units,
+            }));
+        }
+        Some(SpendCapRefusal::BoundaryClosed {
+            scope,
+            available_units,
+            asked_units,
+        }) => StepBudgetRefusal::BoundaryClosed {
+            scope: scope.as_str().to_owned(),
+            available_units,
+            asked_units,
+        },
+        Some(SpendCapRefusal::CeilingReached {
+            scope,
+            available_units,
+            asked_units,
+        }) => StepBudgetRefusal::CeilingReached {
+            scope: scope.as_str().to_owned(),
+            available_units,
+            asked_units,
+        },
+    };
+    Err(refused)
+}
+
+/// Whether the host acted on a spent budget: it trapped the step, or
+/// refused it typed.
+fn budget_acted(outcome: &DurableStepResult<StepOutcome>) -> bool {
+    matches!(outcome, Ok(_) | Err(DurableStepError::BudgetRefused(_)))
 }
 
 /// `host.budget.hit` for a step whose budget is spent, once the host acted
