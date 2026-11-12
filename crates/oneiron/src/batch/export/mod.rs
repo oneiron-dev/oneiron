@@ -62,6 +62,7 @@ use std::collections::BTreeSet;
 mod agent_person_import;
 mod asset_reserve;
 mod document_import;
+pub(crate) use document_import::OwnerArchiveRestorePermit;
 mod document_snapshot;
 mod document_types;
 mod document_validation;

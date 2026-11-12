@@ -1,5 +1,7 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
+use crate::batch::export::OwnerArchiveRestorePermit;
+use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::gate::experiment_selection_policy::SelectionPolicyRow;
 use crate::gate::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, PolicyPrecedence, WaveHandoffPolicy,
@@ -15,7 +17,7 @@ use crate::gate::fanout_policy::{FanoutControls, FanoutPrecedence, FanoutScopedR
 
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
-    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
+    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling, SourceTrustRow,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
@@ -345,6 +347,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(crate) owner_change_wait_secs: Option<u64>,
+    pub(super) inquiry_policy: Option<crate::inquiry::InquiryPolicy>,
     pub(super) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(super) check_in_policy: Option<crate::check_in::CheckInPolicy>,
     pub(crate) code_consent_settlement:
@@ -394,6 +397,25 @@ pub(crate) struct PolicyManifestResolution {
 }
 
 impl PolicyManifestResolution {
+    /// Changes only an in-memory copy for one expression batch of the owner's restore.
+    /// The stored manifest, its cache and frontier, and every other policy axis stay untouched.
+    pub(crate) fn with_owner_archive_restore_permit(
+        mut self,
+        permit: &OwnerArchiveRestorePermit,
+    ) -> Self {
+        self.source_trust.bind_actor_row(
+            ClaimSource::Imported,
+            SourceTrustRow {
+                max_auto_sensitivity: Some(UNSTAMPED_CLAIM_SENSITIVITY_BAND),
+                receipted: true,
+                warned: true,
+                actor_ref: Some(permit.owner()),
+                auto_checker: None,
+            },
+        );
+        self
+    }
+
     /// A malformed policy cannot authorize use of failed model output.
     pub(crate) fn dreamer_failure_decision(
         &self,

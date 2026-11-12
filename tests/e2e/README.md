@@ -7,12 +7,14 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 251 IDs, 443 public registry rows, and three explicit
+The pinned plan has 29 files, 259 IDs, 443 public registry rows, and three explicit
 excluded rows. The owner plan's 242 IDs plus MUSE-RECALL-01..08 in `retrieval.test.ts`
-(Engine order, 10 Nov 12:54 JST) and MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
-11 Nov 05:37 JST) cite their drivable PROMISE-REGISTER ids in
-`promises`; each `source` lists those promises' canon anchors. The retrieval file
-has 21 cases and an estimated 300 seconds. The plan pin's `expectedFacts` counts
+(Engine order, 10 Nov 12:54 JST), MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
+11 Nov 05:37 JST) and MUSE-LOOP-01..08 in `coordination.test.ts` and
+`artifacts.test.ts` (Engine answer MUSE-LOOP-REGISTRATION, 10 Nov 11:52 JST) cite
+their drivable PROMISE-REGISTER ids in `promises`; each `source` lists those promises' canon anchors. The retrieval file
+has 21 cases and an estimated 300 seconds, the coordination file 16 cases and
+160 seconds, and the artifacts file 10 cases and 85 seconds. The plan pin's `expectedFacts` counts
 are derived from the plan, not maintained independently, and the `support/run.ts`
 preflight reads its file and ID counts from that pin. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
@@ -82,7 +84,7 @@ to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
-relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
+relayed by the Engine at 10:35, instead defers MEMORY-04, MEMORY-06,
 PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
 RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
 the Observed producer (FIX 21842). These cases remain registered with their reasons
@@ -177,6 +179,30 @@ Readiness observations may repeat. Mutations and failed public calls are never
 silently retried. A bind collision is an explicit failure, not a hidden retry.
 Fresh ephemeral reservations reduce collisions; pairing proves the answering
 server owns this fixture's bootstrap link.
+
+### Device peers and the sync link
+
+`await engine.startDevicePeer({id, ownership?, homeOrigin?, serverConfig?, serverLog?})` runs a second
+server process of the **same logical vault** on this host, in its own root, port and keystore. It
+initialises an empty peer vault (no `token bootstrap`), waits until the home's authority checkpoint is
+attested (`GET /v1/owner/checkpoint-policy/roots`), has the owner issue one machine pairing link
+(`token pair --url <homeOrigin ?? engine.url> --principal-ref <owner> --actor-class human --machine
+<ownership ?? "yours">`), runs `device enrol <peer vault> --config <peer toml>` on the stopped peer with
+the link on stdin, and serves it. The returned `DevicePeer` has `url`, `root`, `enrolment` (the
+parsed `device enrol` output), `client` and `cli` (the **home owner's own paired credential**, pointed
+at the peer; the test mints nothing), `kill()`, `restart()` and `close()`. It is ready when the peer
+serves and admits the owner (`self.actor` answers 200), not when a first sync round has finished: a
+case waits on the public read it asserts. The server build needs the `mesh` feature (the shared
+artifact set builds it).
+
+`await SyncLinkProxy.start({target: engine.url})` (support/sync_link.ts) relays TCP between the device
+and its home; pass its `url` as `homeOrigin` so the link names it and the device dials it. Plain HTTP
+and every WebSocket handshake pass byte for byte. After an upgrade it acts on whole data messages per
+direction (`to_home`, `to_device`): `drop(direction, n)`, `duplicate(direction, n)`,
+`hold(direction)` with `release(direction, {order: "fifo" | "reverse"})`; `cut()` closes the relayed
+sockets and refuses new upgrades until `heal()`. `counts(direction)` gives seen, forwarded (a duplicate
+counts twice), dropped, duplicated and held; `awaitSeen(direction, n)` is a barrier. Counters report
+what the relay did, never convergence. Control frames always pass. The proxy is an owned resource.
 
 ## Request and startup diagnostics
 
@@ -389,7 +415,7 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 251-ID plan. The prepared manifest must identify
+never claims completion of the 259-ID plan. The prepared manifest must identify
 the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
@@ -402,7 +428,7 @@ SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
 cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
 but does not turn an independently passing sibling into FAIL. Owner-deferred
 SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
-coverage still requires passing evidence for all 251 IDs. Partial and optional-profile
+coverage still requires passing evidence for all 259 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
