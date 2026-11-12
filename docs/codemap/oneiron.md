@@ -158,6 +158,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/spend_lease/funding.rs` | src | s | 1 crate-vis | — | Funding a scope from its existing parent tree |
 | `src/agent_dispatch/spend_lease/hard_cap_refusal.rs` | src | s | 1 fn · 3 crate-vis | — | Read-only identification of the spend scope that refuses a reservation, and why: an open hard cap a top-up… |
 | `src/agent_dispatch/spend_lease/late_spend.rs` | src | s | 2 crate-vis | — | Corrections when already-consumed units land after a scope closed |
+| `src/agent_dispatch/spend_lease/pending.rs` | src | s | 4 fn | — | A live lease's staged spend ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]) |
 | `src/agent_dispatch/spend_record.rs` | src | m | 7 struct · 2 enum · 1 fn · 2 re-export · 8 crate-vis | GrantSpendBinding, SpendCalibrationSample, SpendCapGeneration, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendSettlement +1 | Durable spend scopes and their typed reads (OF-532) |
 | `src/agent_dispatch/tables.rs` | src | s | — | — | The side tables `agent_dispatch` keeps (core split slice 1): each row declares one, and the crate's build… |
 | `src/agent_dispatch/task_type_tree.rs` | src | m | 1 struct · 5 fn · 1 re-export · 6 crate-vis | SourcedTypeTree | The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and… |
@@ -5267,10 +5268,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/decay_tests.rs` | test | m | — | — | ONE-1402 · read-side memory decay at the pipeline seam |
 | `src/pipeline/execution/channels/admit.rs` | src | s | 4 crate-vis | — | The admit step every channel shares: signal components, the optional trace record, and the ranked-list push |
 | `src/pipeline/execution/channels/categories.rs` | src | s | 1 crate-vis | — | Independent memory, skill and agent budgets on one retrieval snapshot |
-| `src/pipeline/execution/channels/entity_rank.rs` | src | s | 2 crate-vis | — | Rows the query did not match, below the content it did match |
+| `src/pipeline/execution/channels/entity_rank.rs` | src | s | 3 crate-vis | — | Rows the query did not match, below the content it did match |
 | `src/pipeline/execution/channels/mod.rs` | src | L | 1 crate-vis | — | Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE… |
 | `src/pipeline/execution/channels/post_blend.rs` | src | s | 3 crate-vis | — | Post-blend filters: scope and authority, the rerank shadow ladder, contiguity, facet, world, corpus, and… |
-| `src/pipeline/execution/channels/ppr_expand.rs` | src | s | 4 crate-vis | — | The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying… |
+| `src/pipeline/execution/channels/ppr_expand.rs` | src | m | 4 crate-vis | — | The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying… |
 | `src/pipeline/execution/channels/ppr_visibility.rs` | src | s | 2 crate-vis | — | Caller-visible PPR walks for narrowed retrieval attempts |
 | `src/pipeline/execution/channels/ppr_work.rs` | src | s | 1 crate-vis | — | One fair task-work admission for PPR's snapshot |
 | `src/pipeline/execution/channels/rerank.rs` | src | m | 3 crate-vis | — | RET-010 rerank hook: the post-sort score-ladder reassignment over the top-N block |
@@ -5440,7 +5441,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ppr/cache_store.rs` | src | m | 31 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |
 | `src/ppr/cache_store/invalidation_plan.rs` | src | s | 8 crate-vis | — | Ordered PPR invalidation against a writer or its caller-owned read projection |
 | `src/ppr/cache_store/purge.rs` | src | s | 1 crate-vis | — | Destructive PPR-cache purge for hard erase |
-| `src/ppr/community.rs` | src | s | 6 crate-vis | — | Community-boost bridge adapter over ppr_community |
+| `src/ppr/community.rs` | src | m | 7 crate-vis | — | Community-boost bridge adapter over ppr_community |
 | `src/ppr/invalidation.rs` | src | s | 1 crate-vis | — | PPR's implementation of the store's transaction-local invalidation contract |
 | `src/ppr/mod.rs` | src | s | 11 crate-vis | — | — |
 | `src/ppr/policy.rs` | src | s | 9 crate-vis | — | PPR alphas, seed weighting, specificity counts, and recency policy |
@@ -6776,7 +6777,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/policy_record.rs` | src | s | 5 crate-vis | — | Core half of `store::policy_record`: its store-layer items live in `oneiron_store::policy_record` and are… |
 | `src/store/positive_skill_proposals.rs` | src | s | 1 struct · 1 enum · 2 crate-vis | PositiveFinding, PositiveSkillProposal | The pending positive skill proposals (`SKILL_ATTRIBUTION_POSITIVE_PROPOSAL` rows): what a succeeded attempt… |
 | `src/store/ppr_cache_invalidation.rs` | src | s | 4 crate-vis | — | Transaction-local invalidation of a retrieval cache after stored graph writes |
-| `src/store/ppr_community.rs` | src | s | 9 crate-vis | — | Bounded, local community snapshots in the existing `vault_meta` database |
+| `src/store/ppr_community.rs` | src | m | 10 crate-vis | — | Bounded, local community snapshots in the existing `vault_meta` database |
 | `src/store/ppr_community_indexed.rs` | src | s | 2 crate-vis | — | Indexed query validation is deliberately not whole-family validation |
 | `src/store/project_kind.rs` | src | s | 4 crate-vis | — | The run-time kind lookups for PROJECT and its revision companion: the pack and short-id prefixes they are… |
 | `src/store/project_writes.rs` | src | s | 1 trait | StoreProjectWrites | The project write hooks the store layer's batch put and import paths run, supplied by the engine when a… |
@@ -8271,6 +8272,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/claim_scope_string_readers.rs` | test | m | — | — | FIX-LIST CLAIM-SCOPE-STRING-REFUSED (OPUS-GATECENSUS row 2, Engine ruling 12 Nov 16:2x): a critic's… |
 | `tests/claim_settle_supersession.rs` | test | m | — | — | Settling a proposal closes the supersession it proposed (e2e MEMORY-01; ARCH-0040 `mcp:5`: a destructive… |
 | `tests/claim_source_recheck_decide.rs` | test | s | — | — | DECIDE-BYPASS-1: the claim re-check judges each live claim drawn from a mail message deleted at the provider… |
+| `tests/claim_stamp_approval.rs` | test | s | — | — | FIX CLAIM-SENSITIVITY-STAMP-FORCES-PROPOSED: the approval an owner's claim write asks for routes on its… |
 | `tests/coach_binding_fence.rs` | test | s | — | — | A read key that names the Coach is held to its Steward grant and its live MACHINE binding whichever… |
 | `tests/coach_budgets.rs` | test | s | — | — | The Coach's work-budget changes stay inside the owner's caps (untangle 6.6b, the B1 and B2 families… |
 | `tests/coach_engine_controls.rs` | test | s | — | — | The Coach's default grant (untangle 6.6a; S66-MAP ruled A, A, A, A): `read` and the four `engine.controls`… |
@@ -8455,6 +8457,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/raw_replay_compilefail/a_put_replicated_private_with_sync.rs` | test | s | — | — | — |
 | `tests/reader_doors_take_no_owner_actor_id.rs` | test | s | — | — | A holder or reader door takes no owner by actor id (review of #6999, round 2) |
 | `tests/recall_light_render_text.rs` | test | s | — | — | E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every… |
+| `tests/recall_now_anchor_query_slots.rs` | test | s | — | — | A light recall keeps every TURN its query matched before the rows only the effort's now anchor found… |
 | `tests/recall_zero_match_returns_no_memory.rs` | test | s | — | — | E2E MUSE-RECALL-04: recall without query evidence returns no memory and records an empty serving run… |
 | `tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs` | test | s | — | — | (a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor… |
 | `tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs` | test | s | — | — | (a.1) Out-of-boundary construction of `AttestedRelayDomain` must fail: BOTH fields are private — the trust… |
@@ -8491,6 +8494,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/run_wait_agents.rs` | test | m | — | — | Primitive D, slice 6.5b (SLICE6-MAP row D; ENGINE CALL S65-NAMES = A): `tasks.wait` keeps its name and gains… |
 | `tests/sandbox_backend_selection.rs` | test | s | — | — | Slice 5b.1 (the SandboxBackends inversion): a sandbox run selects its backend through the `SandboxBackends`… |
 | `tests/sandbox_backends_per_vault.rs` | test | s | — | — | F1-6 (lead, Tue 10 Nov 06:5x): the isolating backends ride on the vault, read through its `RuntimeHandle`… |
+| `tests/scoped_community_prior.rs` | test | s | — | — | A narrowed Uniform expansion takes the configured community prior (RECALL-SCOPED-PPR-DROPS-COMMUNITY-PRIOR… |
 | `tests/seal_check_decide.rs` | test | m | — | — | DECIDE-BYPASS-2 (ARCH-0076 #decide-required: "Every such call goes through decide()"): the seal checker's… |
 | `tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs` | test | s | — | — | (a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and… |
 | `tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs` | test | s | — | — | (b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`… |

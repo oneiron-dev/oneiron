@@ -1,8 +1,9 @@
 //! One app-tier socket's loop, chosen at its upgrade and fixed for the
 //! socket's life: full replication for the owner-grade caller its upgrade
-//! admitted ([`replication`]), or a stale owner sign-in's booking calls and
-//! nothing more ([`booking`], FIX 11712). No frame moves a socket from one
-//! loop to the other.
+//! admitted ([`replication`]), a stale owner sign-in's booking calls and
+//! nothing more ([`booking`], FIX 11712), or a scoped caller's facade calls
+//! and subscriptions and nothing more ([`facade`], FIX-LIST 23077). No frame
+//! moves a socket from one loop to the other.
 
 use std::sync::Arc;
 
@@ -13,6 +14,8 @@ use crate::server::SyncServer;
 
 // A stale owner sign-in's loop, which serves no sync state.
 mod booking;
+// A scoped caller's loop: facade calls and subscriptions, no sync state.
+mod facade;
 // The full-replication loop, as it was before the booking loop came beside it.
 mod replication;
 
@@ -34,6 +37,14 @@ pub(super) enum SocketMode {
     /// A stale owner sign-in's socket: the five booking verbs and nothing
     /// more (FIX 11712).
     Booking(BookingCaller),
+    /// A caller whose own slip verified but is narrower than full
+    /// replication: facade calls and subscriptions, and nothing more
+    /// (FIX-LIST 23077). The slip's revocable token id, and the slip as its
+    /// upgrade verified it, whose liveness each frame asks again.
+    Facade {
+        session_jti: Option<String>,
+        credential: CoreAuth,
+    },
 }
 
 /// Main connection lifecycle: the loop `mode` names, over `socket` and the
@@ -73,6 +84,21 @@ pub(super) async fn handle_connection(
                 server,
                 conn_id,
                 caller,
+                locality,
+                machine,
+                signing_request_transport,
+            )
+            .await;
+        }
+        SocketMode::Facade {
+            session_jti,
+            credential,
+        } => {
+            facade::serve(
+                socket,
+                server,
+                conn_id,
+                (session_jti, credential),
                 locality,
                 machine,
                 signing_request_transport,
