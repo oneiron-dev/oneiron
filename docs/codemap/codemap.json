@@ -126380,7 +126380,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/ai_host/tests.rs",
@@ -127294,7 +127294,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/booking/public_lifecycle_tests.rs",
@@ -145342,7 +145342,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 18
      }
     },
     {
