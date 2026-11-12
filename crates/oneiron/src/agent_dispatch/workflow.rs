@@ -125,6 +125,7 @@ impl AgentDispatcher<'_> {
             room: spawn.room,
             objectives: spawn.objectives.clone(),
             comm: spawn.comm,
+            powers: spawn.powers,
             task: None,
         };
         Ok((definition, intent))
@@ -412,6 +413,14 @@ impl AgentDispatcher<'_> {
             .steps
             .get(ordinal)
             .ok_or_else(|| invalid("workflow step is missing"))?;
+        // SPAWN-KNOB: the real parent's powers decide the leaf before any
+        // reservation, at its first admission and at every release.
+        let powers = self.child_powers_in_txn(
+            txn,
+            record.intent.parent,
+            frozen.target.agent_definition_ref()?,
+            record.intent.powers.unwrap_or_default(),
+        )?;
         let model = frozen.plan.as_ref().map(|plan| &plan.plan.model);
         let launch = self.admit_leaf_in_txn(txn, record.root, requested, ordinal, model, now)?;
         frozen.launch = Some(launch.statement.clone());
@@ -446,6 +455,14 @@ impl AgentDispatcher<'_> {
             frozen.funding.clone(),
             now,
         )?;
+        if let Some(powers) = powers {
+            crate::agent_def::stage_agent_powers_in_txn(
+                &self.vault.store,
+                txn,
+                crate::agent_def::AgentPowerTarget::Attempt(status.attempt.id),
+                powers,
+            )?;
+        }
         let index: Vec<_> = frozen
             .definition
             .skills

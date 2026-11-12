@@ -41,46 +41,40 @@ struct CheckpointRow {
 impl BudgetGuard {
     /// Captures the exact settled meter after its calls have all closed.
     /// No admission, settlement, threshold emission or scope booking occurs.
-    /// The caller must also finish booking the meter's spend on its scope
-    /// before durably parking it, and fence use of the original guard.
+    /// The meter stays open: this is a snapshot. A host that parks a workflow
+    /// on the checkpoint calls [`Self::park`] instead, which fences the meter.
     ///
     /// # Errors
     ///
     /// [`BudgetDenied::LeaseInvalid`] while any lease is still open, even
     /// an unmetered lease that holds no reservation.
     pub fn checkpoint(&self) -> Result<BudgetCheckpoint, BudgetDenied> {
-        let state = self.lock_state();
-        if state
-            .leases
-            .values()
-            .any(|lease| lease.state == LeaseState::Open)
-        {
-            return Err(BudgetDenied::LeaseInvalid);
-        }
-        let rows = state
-            .policy
-            .rows()
-            .iter()
-            .zip(&state.row_tallies)
-            .map(|(policy, tally)| CheckpointRow {
-                policy: policy.clone(),
-                used_units: tally.used_units,
-                floor_used_units: tally.floor_used_units,
-                fired_thresholds: tally.fired_thresholds.clone(),
-            })
-            .collect();
-        Ok(BudgetCheckpoint {
-            attempt_id: state.attempt_id.clone(),
-            limit_units: state.limit_units,
-            reserve_units: state.reserve_units,
-            on_budget_exhausted: state.on_budget_exhausted,
-            actor: state.actor,
-            used_units: state.used_units,
-            shared_used_units: state.shared_used_units,
-            next_lease_seq: state.next_lease_seq,
-            fired_thresholds: state.fired_thresholds.clone(),
-            rows,
-        })
+        checkpoint_locked(&self.lock_state())
+    }
+
+    /// Parks the settled meter for a workflow that waits (FIX BUDGET-PARK).
+    /// In one lock it takes the checkpoint [`Self::checkpoint`] takes and
+    /// sets a Parked phase that every clone of this guard shares. From then
+    /// on no handle of this meter admits: every admission refuses
+    /// [`BudgetDenied::AdmissionDenied`], unmetered and free work included.
+    /// [`Self::begin_dispatch`] needs no arm of its own: a park leaves no open
+    /// lease, and none is issued after it. The workflow goes on only on the
+    /// meter [`Self::from_checkpoint`] rebuilds, with a fresh identity.
+    /// Reads and settlement replays answer as before. A second park takes
+    /// the checkpoint again, and the meter stays parked.
+    ///
+    /// The host must still finish booking the meter's spend on its scope
+    /// before it parks, since no booking may stay behind a durable park.
+    ///
+    /// # Errors
+    ///
+    /// [`BudgetDenied::LeaseInvalid`] while any lease is still open, as
+    /// [`Self::checkpoint`]. A refused park fences nothing.
+    pub fn park(&self) -> Result<BudgetCheckpoint, BudgetDenied> {
+        let mut state = self.lock_state();
+        let checkpoint = checkpoint_locked(&state)?;
+        state.parked = true;
+        Ok(checkpoint)
     }
 
     /// Rebuilds that same meter with a fresh guard identity and no live
@@ -131,4 +125,39 @@ impl BudgetGuard {
             state: Arc::new(Mutex::new(state)),
         })
     }
+}
+
+/// The checkpoint of a meter whose lock the caller holds.
+fn checkpoint_locked(state: &BudgetState) -> Result<BudgetCheckpoint, BudgetDenied> {
+    if state
+        .leases
+        .values()
+        .any(|lease| lease.state == LeaseState::Open)
+    {
+        return Err(BudgetDenied::LeaseInvalid);
+    }
+    let rows = state
+        .policy
+        .rows()
+        .iter()
+        .zip(&state.row_tallies)
+        .map(|(policy, tally)| CheckpointRow {
+            policy: policy.clone(),
+            used_units: tally.used_units,
+            floor_used_units: tally.floor_used_units,
+            fired_thresholds: tally.fired_thresholds.clone(),
+        })
+        .collect();
+    Ok(BudgetCheckpoint {
+        attempt_id: state.attempt_id.clone(),
+        limit_units: state.limit_units,
+        reserve_units: state.reserve_units,
+        on_budget_exhausted: state.on_budget_exhausted,
+        actor: state.actor,
+        used_units: state.used_units,
+        shared_used_units: state.shared_used_units,
+        next_lease_seq: state.next_lease_seq,
+        fired_thresholds: state.fired_thresholds.clone(),
+        rows,
+    })
 }

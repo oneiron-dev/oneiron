@@ -164,8 +164,14 @@ pub async fn explain_review_bundle(
                 receipt.calls.push(call);
                 receipt.escalation = ReviewExplainerEscalation::Completed;
             }
+            // A host-paid call nothing funds, or a resident's spent share,
+            // stops the escalation as the spent budget it read as before D3.
             Err(ReviewExplainerError::Budget(
-                BudgetDenied::Exhausted | BudgetDenied::AdmissionDenied | BudgetDenied::HostCheck,
+                BudgetDenied::Exhausted
+                | BudgetDenied::AdmissionDenied
+                | BudgetDenied::HostCheck
+                | BudgetDenied::Unfunded
+                | BudgetDenied::ResidentShareSpent { .. },
             )) => {
                 receipt.escalation = ReviewExplainerEscalation::BudgetLimited;
                 break;

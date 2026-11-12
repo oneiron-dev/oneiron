@@ -116,7 +116,7 @@ fn serve() -> (tempfile::TempDir, Arc<SyncServer>, Caller, EntityId) {
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("device-local".into()),
@@ -332,7 +332,7 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
             .call(
                 from,
                 "POST",
-                "/v1/core/facade/export",
+                "/v1/core/facade/vault.export",
                 Some(json!({"format": "json"})),
             )
             .await;

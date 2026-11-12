@@ -12,6 +12,7 @@
   "output": "crate::task_verb::sdk::Bm25Search",
   "call": "crate::task_verb::sdk::search_bm25(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true,
     "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"

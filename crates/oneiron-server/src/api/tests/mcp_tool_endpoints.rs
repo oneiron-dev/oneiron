@@ -412,6 +412,8 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
             crate::mcp::McpSurfaceMode::Primary,
             "axis-admission",
             &mcp_credential_headers(&server, credential),
+            // No forwarded connection: the caller is the device itself.
+            &axum::http::Extensions::new(),
             oneiron::claim::CallerLocality::OnDevice,
             &server,
         )
@@ -625,7 +627,9 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
     use oneiron::workspace_roster::ProjectRecord;
 
     let (_dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x2511_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let other = seeded_test_entity_id(0x2511_0002);
     let credential = "mcp-room-scope-owner";
     register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
@@ -656,8 +660,12 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 2,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .expect("speak");
     let history = |id: &'static str, arguments: Value| {
@@ -705,7 +713,9 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     use oneiron::workspace_roster::{ProjectRecord, RoomClaimOutcome, RoomPage};
 
     let (_dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x2510_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let other = seeded_test_entity_id(0x2510_0002);
     let credential = "mcp-agent-room-owner";
     let other_credential = "mcp-agent-room-other";
@@ -743,8 +753,12 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: at + 2,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .expect("speak");
         turns.push(turn);
@@ -936,8 +950,12 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 metadata: Some(json!({"room_thread_of": turns[0].to_hex()})),
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 1_000,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .expect("thread");
     for (verb, args) in [
@@ -1129,7 +1147,9 @@ async fn mcp_room_with_turns(
     use oneiron::workspace_roster::ProjectRecord;
 
     let (dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x2570_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
     let project = oneiron::EntityId::now();
     let root = server.vault.root_project().expect("root");
@@ -1153,8 +1173,12 @@ async fn mcp_room_with_turns(
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: at + 2,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .expect("speak");
         turns.push(turn);

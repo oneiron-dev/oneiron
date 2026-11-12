@@ -15,6 +15,7 @@
   "output": "crate::memory::DeleteReceipt",
   "call": "memory.safe_delete(&input.entity_ref, input.reason)?",
   "scope": "Write",
+  "act_class": "delete",
   "admission": {},
   "section": false,
   "binding": {

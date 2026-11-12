@@ -90,6 +90,8 @@ mod bundle_types;
 mod bundle_validation;
 pub use bundle_types::*;
 pub(crate) use bundle_validation::OmissionLedger;
+#[cfg(oneiron_test_support)]
+pub(crate) use bundle_validation::reserved_claim_import;
 #[cfg(test)]
 mod bundle_tests;
 

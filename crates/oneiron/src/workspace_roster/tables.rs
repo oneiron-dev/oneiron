@@ -166,6 +166,10 @@ crate::side_table::side_tables! {
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::store::actor_scrubs::erase_turn_actor_in_txn;
+    /// Version (u64be) of the one-time room-row backfill a writable open completed for one room
+    /// (THREAD-TASK-EVERY-ROOM P2). Key: id16 (room).
+    ROOMS_TURN_BACKFILL: VaultMeta b"rooms.turn_backfill.v1/" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw

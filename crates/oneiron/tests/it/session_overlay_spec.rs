@@ -58,8 +58,12 @@ fn turn_of(content: &str, at: u64) -> WitnessTurn {
             metadata: None,
             is_visible: true,
             order: 0,
+            parts: None,
+            quote: None,
         }],
         occurred_at: at,
+        thread_audience: None,
+        assertions: Default::default(),
     }
 }
 
@@ -90,6 +94,7 @@ fn session_content_is_invisible_to_every_public_base_reader() {
             &session,
             &turn_of("specdirtyvisibilitytoken", 901),
             Some("summary of a private room"),
+            None,
         )
         .expect("session witness");
     let turn_id = EntityId::from_hex(

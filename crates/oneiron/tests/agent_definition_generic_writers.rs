@@ -807,6 +807,7 @@ fn grant_base_reach(fixture: &Fixture, writer: EntityId) {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("the owner grants the agent base reality");

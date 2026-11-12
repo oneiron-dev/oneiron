@@ -923,13 +923,8 @@ fn bind_artifact_member_to_divergent_pacts(
     use oneiron::federation::{
         FederationDirectionScope, FederationPactScope, ScopeAxis, encode_federation_pact_scope,
     };
-    let signing = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        b"secret",
-    ));
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let (issuer, signing) = crate::test_credentials::rooting_host_issuer(vault, b"secret");
     let host_key = issuer.public_key();
-    assert_eq!(signing.verifying_key().to_bytes(), issuer.binding_key());
     let fold = vault.authority_fold().unwrap();
     let vault_id = fold.vault_id.unwrap();
     let mut heads = fold.valid_entries.clone();
@@ -993,9 +988,15 @@ fn bind_artifact_member_to_divergent_pacts(
             .to_vec();
         row
     };
+    // The scope digest is keyed (scope openings). No opening is stored for
+    // these pacts, so a fixed key stands for the one Connect would mint.
+    let scope_key = [0x6f; 32];
     let connect = |pact_id: [u8; 32], grant: oneiron::EntityId, nonce: [u8; 16]| {
-        let digest =
-            federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
+        let digest = federation_scope_digest(
+            &scope_key,
+            &nonce,
+            &encode_federation_pact_scope(&scope).unwrap(),
+        );
         let gesture = sign_federation_pact_gesture(
             FederationLifecycleKind::Connect,
             &pact_id,

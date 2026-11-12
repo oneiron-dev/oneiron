@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::RoomThreadPage",
   "call": "memory.rooms_find_threads_page(crate::EntityId::from_hex(&input.room_ref)?, input.after.as_deref().map(crate::EntityId::from_hex).transpose()?, input.limit.unwrap_or(256))?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

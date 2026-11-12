@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 fn test_server() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"federation-test-root");
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -84,8 +85,9 @@ fn entity_id(byte: u8) -> oneiron::EntityId {
 }
 
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(33 + body.len());
     blob.push(entity_type);
+    blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
@@ -136,6 +138,14 @@ fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
             Value::Binary(claim.scope_project.as_bytes().to_vec()),
         ),
         ("scopeVersion".into(), 2_u64.into()),
+        (
+            "confBand".into(),
+            Value::from(claim.confidence_band.as_str()),
+        ),
+        (
+            "confBasis".into(),
+            Value::from(claim.confidence_basis.as_str()),
+        ),
     ]);
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &body).unwrap();
@@ -195,6 +205,20 @@ fn drain_broadcasts(
         }
     }
     frames
+}
+
+/// A raw window update as the PadFree envelope one socket frame carries.
+fn pad_free_update_envelope(update: &[u8]) -> Vec<u8> {
+    oneiron::sync::transport::WindowPadEnvelope {
+        kind: oneiron::sync::transport::WindowPadKind::Update,
+        form: oneiron::sync::transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: update.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
 }
 
 /// The WindowSync UPDATE frames a given connection fanned out for `key`.
@@ -287,6 +311,7 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         &payload,
         &tx,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -316,6 +341,7 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         &loro::VersionVector::new().encode(),
         &tx,
         &mut state,
+        &|| false,
     )
     .await;
     assert!(matches!(denied, Err(ProtocolError::InvalidPayload(_))));
@@ -395,6 +421,7 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         &payload,
         &tx,
         &mut state,
+        &|| false,
     )
     .await;
     assert!(
@@ -499,6 +526,7 @@ async fn residence_replay_refuses_a_birth_scope_restamp() {
         &payload,
         &tx,
         &mut state,
+        &|| false,
     )
     .await;
     assert!(
@@ -555,6 +583,7 @@ async fn vv_request_sends_delta_and_vv_response() {
         &client_doc.oplog_vv().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -613,6 +642,7 @@ async fn vv_request_malformed_vv_fails_closed_no_fallback() {
             payload,
             &direct_tx,
             &mut conn_state,
+            &|| false,
         )
         .await;
         assert!(
@@ -651,6 +681,7 @@ async fn vv_response_sends_local_diff_only() {
         &client_doc.oplog_vv().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -725,14 +756,16 @@ async fn imported_update_is_visible_exportable_and_vv_advanced_without_commit() 
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_legacy_conn_state();
+    let framed = pad_free_update_envelope(&update);
     handle_window_sync(
         &server,
         conn_id,
         key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -833,6 +866,7 @@ async fn imported_update_persists_before_broadcast() {
     insert_entity(&author, entity, 1, b"relayed");
     author.commit();
     let update = author.export(ExportMode::all_updates()).unwrap();
+    let framed = pad_free_update_envelope(&update);
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_legacy_conn_state();
@@ -844,9 +878,10 @@ async fn imported_update_persists_before_broadcast() {
         conn_id,
         durable_key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -891,9 +926,10 @@ async fn imported_update_persists_before_broadcast() {
         conn_id,
         failing_key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap_err();
@@ -1051,6 +1087,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
         &payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1117,6 +1154,7 @@ async fn selector_connection_rejects_full_window_bypass() {
         &payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1130,6 +1168,7 @@ async fn selector_connection_rejects_full_window_bypass() {
         &VersionVector::new().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1156,6 +1195,7 @@ async fn legacy_selector_protocol_rejects_first_message_full_window_sync() {
         &VersionVector::new().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1194,6 +1234,7 @@ async fn selector_request_authorizes_before_window_creation() {
         &payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1292,6 +1333,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         &empty_payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1320,6 +1362,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         &incremental_payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1383,6 +1426,7 @@ async fn root_vv_replies_with_delta_and_rejects_malformed() {
         SyncMessage::RootVersionVector(client_root.oplog_vv().encode()),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1402,6 +1446,7 @@ async fn root_vv_replies_with_delta_and_rejects_malformed() {
         SyncMessage::RootVersionVector(b"{}".to_vec()),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
     assert_matches!(result, Err(ProtocolError::VvDecode(_)));
@@ -2835,7 +2880,7 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
     // build takes to verify the logged slips.
     let mut config = oneiron::VaultConfig::device();
     config.store_clock = oneiron::store::ports::ManualClock::new(1_772_000_000).bundle();
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         Arc::new(oneiron::Vault::open(dir.path(), config).unwrap()),
         SyncServerConfig {
             auth_secret: Some("federation-test-root".into()),
@@ -2885,6 +2930,7 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
             &payload,
             &tx,
             &mut state,
+            &|| false,
         )
         .await
         .unwrap();
@@ -2910,7 +2956,8 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
                     window_sub_tags::SELECTOR_RETRY,
                     &bytes,
                     &tx,
-                    &mut impostor
+                    &mut impostor,
+                    &|| false,
                 )
                 .await,
                 Err(ProtocolError::InvalidPayload(_))
@@ -2924,6 +2971,7 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
                 &bytes,
                 &tx,
                 &mut reconnected,
+                &|| false,
             )
             .await
             .unwrap();
@@ -2952,7 +3000,8 @@ async fn selector_shared_secret_without_bound_principal_never_creates_a_request(
             window_sub_tags::SELECTOR_VV_REQUEST,
             b"malformed",
             &tx,
-            &mut state
+            &mut state,
+            &|| false,
         )
         .await,
         Err(ProtocolError::RpcNoPrincipal)
@@ -2977,6 +3026,16 @@ async fn owner_socket_combines_document_and_chunk_sync_without_selector_downgrad
     document_batch_exchange(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION).await;
 }
 
+/// The vault's local owner writing as a human, at the vault's now: who and
+/// when a synced text edit names since FIX 8873.
+fn owner_edit_stamp(vault: &oneiron::Vault) -> (oneiron::WriteActor, u64) {
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    (
+        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        vault.now_recorded_at(),
+    )
+}
+
 async fn document_batch_exchange(version: u8) {
     use oneiron::sync::transport::{
         self, document_sub_tags, encode_document, encode_document_batch,
@@ -2998,20 +3057,27 @@ async fn document_batch_exchange(version: u8) {
     for vault in [server.vault.as_ref(), client_vault.as_ref()] {
         vault
             .put_entity(
-                &id,
-                oneiron::registry::ENTITY_TYPE_TURN,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"ledger",
-            )
-            .unwrap();
-        vault
-            .put_entity(
                 &facet,
                 oneiron::registry::ENTITY_TYPE_FACET,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
                 b"shared document facet",
+            )
+            .unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        vault
+            .set_default_facet(
+                facet,
+                oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            )
+            .unwrap();
+        vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"ledger",
             )
             .unwrap();
         vault
@@ -3035,7 +3101,8 @@ async fn document_batch_exchange(version: u8) {
         vec![oneiron::federation::SelectorRange::Core],
     );
     let source = server.reassert_manager.documents().open(id).unwrap();
-    let notice = source.edit_text(0, 0, "shared").unwrap();
+    let (actor, at) = owner_edit_stamp(&server.vault);
+    let notice = source.edit_text(actor, at, 0, 0, "shared").unwrap();
     for state in [test_legacy_conn_state(), test_selector_conn_state()] {
         assert!(
             super::documents::document_delivery(&server, &state, &notice)
@@ -3074,6 +3141,7 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&batch).unwrap(),
             &direct,
             &mut state,
+            &|| false,
         )
         .await,
         Err(ProtocolError::RpcNoPrincipal)
@@ -3088,6 +3156,7 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&batch).unwrap(),
             &direct,
             &mut impostor,
+            &|| false,
         )
         .await,
         Err(ProtocolError::InvalidPayload(_))
@@ -3100,6 +3169,7 @@ async fn document_batch_exchange(version: u8) {
         protocol::parse_message(&batch).unwrap(),
         &direct,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -3115,13 +3185,15 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&ack).unwrap(),
             &direct,
             &mut state,
+            &|| false,
         )
         .await
         .unwrap();
     }
     let local = manager.documents().open(id).unwrap();
     assert_eq!(local.text().unwrap(), "shared");
-    let edit = local.edit_text(6, 0, " edit").unwrap();
+    let (actor, at) = owner_edit_stamp(&client_vault);
+    let edit = local.edit_text(actor, at, 6, 0, " edit").unwrap();
     assert_eq!(local.pending_frames().unwrap().len(), 1);
     assert!(matches!(
         handle_sync_message(
@@ -3130,6 +3202,7 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&edit).unwrap(),
             &direct,
             &mut state,
+            &|| false,
         )
         .await,
         Err(ProtocolError::RpcNoPrincipal)
@@ -3148,6 +3221,7 @@ async fn document_batch_exchange(version: u8) {
         protocol::parse_message(&edit).unwrap(),
         &direct,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -3170,6 +3244,9 @@ async fn document_batch_exchange(version: u8) {
             selector: Vec::new(),
             have: Vec::new(),
             want: None,
+            request: 1,
+            cursor: None,
+            read: None,
         })
         .unwrap();
     let frame = transport::encode_lfs_chunk_sync(&request)
@@ -3181,6 +3258,7 @@ async fn document_batch_exchange(version: u8) {
         protocol::parse_message(&frame).unwrap(),
         &direct,
         &mut state,
+        &|| false,
     )
     .await;
     if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION {
@@ -3210,7 +3288,8 @@ async fn document_batch_exchange(version: u8) {
     }
 
     // A queued notice cannot disclose after its grant is gone.
-    let notice = source.edit_text(11, 0, "!").unwrap();
+    let (actor, at) = owner_edit_stamp(&server.vault);
+    let notice = source.edit_text(actor, at, 11, 0, "!").unwrap();
     server.vault.delete_entity(&grant_id).unwrap();
     assert!(
         super::documents::document_delivery(&server, &state, &notice)
@@ -3230,7 +3309,8 @@ async fn document_batch_exchange(version: u8) {
             1,
             protocol::parse_message(&no_admission).unwrap(),
             &direct,
-            &mut state
+            &mut state,
+            &|| false,
         )
         .await
         .is_err()

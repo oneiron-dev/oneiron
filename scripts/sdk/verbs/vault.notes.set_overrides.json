@@ -8,6 +8,7 @@
   "output": "crate::note::NoteDefaultsView",
   "call": "memory.set_note_overrides(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

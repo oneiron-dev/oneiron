@@ -5,6 +5,7 @@
   "output": "crate::feedback::ReportReceipt",
   "call": "memory.report(input)?",
   "scope": "Read",
+  "act_class": "unstated",
   "mcp_scope": "filtered",
   "section": false,
   "admission": {

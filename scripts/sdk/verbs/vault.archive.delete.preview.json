@@ -5,6 +5,7 @@
   "output": "crate::memory::ArchiveDeletePreviewView",
   "call": "crate::memory::preview_archive_delete_wire(memory, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

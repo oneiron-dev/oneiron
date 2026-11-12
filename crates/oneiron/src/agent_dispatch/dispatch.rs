@@ -1,7 +1,7 @@
 //! Core dispatch admission: dispatchability, depth bound, enqueue, dedupe.
 
 use crate::Vault;
-use crate::agent_def::AgentDefinition;
+use crate::agent_def::{AgentDefinition, AgentPowerTarget, AgentPowers, ChildPowerRequest};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
@@ -58,6 +58,23 @@ fn spawn_intent_digest(
         ))
     })?;
     let digest = blake3::hash(&bytes);
+    // SPAWN-KNOB: a child's power request joins its intent only when it
+    // names one, so every spawn without one keeps its digest.
+    let digest = match &spawn.powers {
+        Some(powers) => {
+            let powers = serde_json::to_vec(powers).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "spawn powers cannot be encoded",
+                ))
+            })?;
+            blake3::Hasher::new()
+                .update(POWERS_INTENT_DOMAIN)
+                .update(digest.as_bytes())
+                .update(&powers)
+                .finalize()
+        }
+        None => digest,
+    };
     // FIX 7766: a root's selected funding Grant joins its intent only when
     // it has one, so every spawn without one keeps its digest.
     Ok(match funding {
@@ -74,6 +91,8 @@ fn spawn_intent_digest(
 
 /// Domain of a funded spawn's intent digest (FIX 7766).
 const FUNDING_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.funding_intent.v1";
+/// SPAWN-KNOB: the domain a child's power request joins its spawn intent under.
+const POWERS_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.powers_intent.v1";
 
 /// The owner's selection of a root launch's funding Grant (FIX 7766): who
 /// selected it, proved in the dispatch writer, and the Grant.
@@ -81,6 +100,16 @@ const FUNDING_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.funding_intent.v1"
 struct FundingSelection<'a> {
     owner: &'a AuthenticatedOwner,
     grant: EntityId,
+}
+
+/// A minted project's goal-intake interview (OF-501): the one root run a
+/// dispatch admits into a project other than the vault's. The dispatch
+/// writer proves it against the stored card before it admits it.
+struct GoalIntakeEntry {
+    card: String,
+    project: EntityId,
+    home_room: EntityId,
+    leader: EntityId,
 }
 
 pub struct AgentDispatcher<'a> {
@@ -92,6 +121,9 @@ pub struct AgentDispatcher<'a> {
     /// The owner's selected funding Grant for a root launch (FIX 7766),
     /// proved in the dispatch writer: [`Self::funded_by`].
     funding: Option<FundingSelection<'a>>,
+    /// The goal-intake interview this dispatcher launches, proved in the
+    /// dispatch writer: [`Self::admitting_goal_intake`].
+    goal_intake: Option<GoalIntakeEntry>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -103,7 +135,33 @@ impl<'a> AgentDispatcher<'a> {
             runner: DreamerRunnerStore::new(vault),
             seats: None,
             funding: None,
+            goal_intake: None,
         }
+    }
+
+    /// This dispatcher, for the goal-intake interview the host-held `card`
+    /// seeds in the `project` it minted (OF-501): `leader`'s root run, from
+    /// `home_room`. Any other spawn into a project other than the vault's
+    /// needs a real parent in its ancestor project. The dispatch writer
+    /// admits this root run only while the stored card minted `project` and
+    /// `leader` still leads it, only for that leader with no parent, and
+    /// spends every ancestor project's explicit depth on it, as the vault's
+    /// root run spawning down to `project` would.
+    #[must_use]
+    pub(crate) fn admitting_goal_intake(
+        mut self,
+        card: &str,
+        project: EntityId,
+        home_room: EntityId,
+        leader: EntityId,
+    ) -> Self {
+        self.goal_intake = Some(GoalIntakeEntry {
+            card: card.to_owned(),
+            project,
+            home_room,
+            leader,
+        });
+        self
     }
 
     /// This dispatcher, for ROOT agent launches the owner's agent Grant
@@ -359,6 +417,14 @@ impl<'a> AgentDispatcher<'a> {
         }
         let requested_parent = input.parent_attempt;
         let requested_ref = input.target.agent_definition_ref()?;
+        // SPAWN-KNOB: the parent's powers decide the child before any
+        // reservation or enqueue; the grant it is born with lands below.
+        let child_powers = self.child_powers_in_txn(
+            wtxn,
+            requested_parent,
+            requested_ref,
+            spawn.powers.unwrap_or_default(),
+        )?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
         let token_ceiling = spawn.token_ceiling;
@@ -430,6 +496,14 @@ impl<'a> AgentDispatcher<'a> {
                     dispatch_input.funding.clone(),
                     input.now,
                 )?;
+                if let Some(powers) = child_powers {
+                    crate::agent_def::stage_agent_powers_in_txn(
+                        &self.vault.store,
+                        wtxn,
+                        AgentPowerTarget::Attempt(status.attempt.id),
+                        powers,
+                    )?;
+                }
                 if let Some(case) = &dispatch_input.healer_case {
                     crate::failure_ladder::oversight::opened_in_txn(
                         self.vault,
@@ -528,6 +602,17 @@ impl<'a> AgentDispatcher<'a> {
             self.inherited_caller_origin_in_txn(wtxn, requested_parent, spawn.caller_origin)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
+        // A goal-intake entry admits one root run: its project's leader, in
+        // that project.
+        if let Some(entry) = &self.goal_intake
+            && (requested_parent.is_some()
+                || requested_target != entry.leader
+                || spawn.project_ref != Some(entry.project))
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a goal-intake entry dispatches only its project's leader, as a root run",
+            )));
+        }
         let funding =
             self.dispatch_funding_in_txn(wtxn, &spawn, requested_parent, requested_target)?;
 
@@ -795,6 +880,48 @@ impl<'a> AgentDispatcher<'a> {
         };
         Self::ensure_dispatchable_definition(*id, &definition)?;
         Ok(definition)
+    }
+
+    /// The grant a child of `parent` is born with (SPAWN-KNOB): the parent
+    /// instance's powers met with `target`'s root grant and the parent's
+    /// request. `None` for a root, and for a child whose parent is no agent's
+    /// attempt (an engine job's).
+    ///
+    /// # Errors
+    ///
+    /// A Gate deny when the parent's `spawn` is off
+    /// (`gate.deny.agent_power.spawn_off`) or the request asks a power the
+    /// parent does not hold (`gate.deny.agent_power.above_parent`).
+    pub(super) fn child_powers_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: Option<AttemptId>,
+        target: EntityId,
+        requested: ChildPowerRequest,
+    ) -> Result<Option<AgentPowers>> {
+        let Some(parent) = parent else {
+            return Ok(None);
+        };
+        let Some(parent_input) = self.parent_dispatch_input_in_txn(txn, parent)? else {
+            return Ok(None);
+        };
+        let (held, _) = crate::agent_def::effective_agent_powers_in_txn(
+            &self.vault.store,
+            txn,
+            parent_input.target.agent_definition_ref()?,
+            Some(AgentPowerTarget::Attempt(parent)),
+        )?;
+        if !held.spawn {
+            return Err(crate::agent_def::power_refusal(crate::agent_def::SPAWN_OFF));
+        }
+        let root = crate::agent_def::agent_powers_in_txn(
+            &self.vault.store,
+            txn,
+            AgentPowerTarget::Agent(target),
+        )?;
+        crate::agent_def::child_agent_powers(held, root, requested)
+            .map(Some)
+            .map_err(crate::agent_def::power_refusal)
     }
 
     /// The parent attempt's decoded dispatch input, read outside any caller

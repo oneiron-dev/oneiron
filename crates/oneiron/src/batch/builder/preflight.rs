@@ -39,6 +39,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
     checker: Option<&BoundedAutoChecker>,
     origin: BaseWriteOrigin<'_>,
     caller_envelopes: &HashMap<EntityId, crate::WriteEnvelope>,
+    owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
     births: &[(EntityId, crate::provenance::birth::RowBirth)],
     defer_pending_auto: bool,
 ) -> Result<Option<DeferredPreflight>> {
@@ -206,7 +207,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
                             .filter(|_| body.approval == ClaimApprovalStatus::Auto),
                         defer_metrics_until_commit: true,
                         transition: None,
-                        owner_authored: None,
+                        owner_authored,
                         pending_prompt: pending_prompt.as_deref(),
                     },
                     &policy,

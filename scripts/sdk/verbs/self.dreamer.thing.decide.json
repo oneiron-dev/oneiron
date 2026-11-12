@@ -5,6 +5,7 @@
   "output": "crate::dreamer_consolidation::ThingDecideOutput",
   "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.decide\", &input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "context": "scoped_child",
   "mcp": "none",
   "section": false

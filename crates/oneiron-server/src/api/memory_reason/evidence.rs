@@ -143,6 +143,7 @@ pub(super) fn collect_evidence(
                         continue;
                     }
                     let Value::Object(fields) = crate::projection::project_entity_parts(
+                        vault,
                         &id,
                         kind,
                         learned_at,

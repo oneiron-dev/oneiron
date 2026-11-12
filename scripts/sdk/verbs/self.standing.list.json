@@ -5,6 +5,7 @@
   "output": "Vec<crate::task_verb::sdk::StandingBlockView>",
   "call": "crate::task_verb::sdk::list_own_standing_blocks(memory)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

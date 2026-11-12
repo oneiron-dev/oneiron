@@ -2,9 +2,7 @@
 //! local lookup recipes, never tokens.
 use super::*;
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{
-    CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
-};
+use oneiron::authority::{CapabilitySlip, PairingPrincipal, pairing_binding_transcript};
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 
 fn cache_key(label: &str) -> String {
@@ -27,9 +25,7 @@ pub(super) fn pair_mcp_credential(
     class: oneiron::EdgeActorClass,
     scope: &crate::mcp::McpConnectorScope,
 ) -> String {
-    let issuer =
-        HostSlipIssuer::from_secret(server.config.auth_secret.as_ref().unwrap().as_bytes())
-            .unwrap();
+    let issuer = crate::test_credentials::host_issuer(server);
     let mut authority = Scope::top();
     if let Some(world) = scope.world_ref {
         authority.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(world)]));
@@ -47,6 +43,7 @@ pub(super) fn pair_mcp_credential(
                 actor_class: Some(class.gate_actor_class().to_owned()),
                 org_ref: None,
                 write_facet: scope.facet_ref.map(|facet| facet.to_hex()),
+                comm: None,
             },
         )
         .unwrap();
@@ -131,8 +128,9 @@ pub(super) fn bind_mcp_request(server: &SyncServer, request: Request<Body>) -> R
     crate::test_credentials::bind_slip_request(server, &slip, &key, request)
 }
 
-/// The host root the server is configured with, which signs the authority
-/// entries the room fixtures write.
+/// The host root secret the server is configured with; the root that signs
+/// the authority entries the room fixtures write is rebuilt from it
+/// (`test_credentials::rooting_host_issuer`).
 fn host_secret(server: &SyncServer) -> &[u8] {
     server
         .config
@@ -153,21 +151,19 @@ pub(super) fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
 /// one live binding, so `actor` is the vault's only bound actor.
 pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, class: &str) {
     use oneiron::authority::{
-        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthoritySignature, HostSlipIssuer,
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthoritySignature,
         actor_binding_is_active, authority_entry_hash, authority_transcript,
     };
     use std::collections::BTreeSet;
 
-    let issuer = HostSlipIssuer::from_secret(host_secret(server)).unwrap();
+    let (issuer, signing) =
+        crate::test_credentials::rooting_host_issuer(&server.vault, host_secret(server));
     let host_key = issuer.public_key();
-    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", host_secret(server));
-    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-    assert_eq!(signing.verifying_key().to_bytes(), issuer.binding_key());
     let fold = server.vault.authority_fold().unwrap();
     let Some(op) = crate::test_credentials::binding_op(&fold, &host_key, actor, class) else {
         return;
     };
-    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<_> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0;
     for row in server
         .vault
@@ -230,10 +226,23 @@ pub(super) fn create_owned_project(
     project: oneiron::EntityId,
     record: &oneiron::workspace_roster::ProjectRecord,
 ) {
-    let signing = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        host_secret(server),
-    ));
+    // The host signs the project's state for the owner with its project.write
+    // slip, under the same host key.
+    let (issuer, signing) =
+        crate::test_credentials::rooting_host_issuer(&server.vault, host_secret(server));
+    let project_signer = server
+        .vault
+        .owner_project_signer(&issuer)
+        .expect("the host's owner project signer");
+    let authenticated = server
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("the owner authenticates");
     server
         .vault
         .create_project_with_owner(
@@ -243,6 +252,8 @@ pub(super) fn create_owned_project(
             1,
             oneiron::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
             |message| Ok(signing.sign(message).to_bytes().to_vec()),
+            &authenticated,
+            &project_signer,
         )
         .expect("owner-signed project birth");
 }
