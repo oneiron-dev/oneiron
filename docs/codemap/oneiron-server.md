@@ -121,7 +121,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/stewardship/sources.rs` | src | s | 8 crate-vis | — | What each model a follow-up draft goes to may read of its sources (FIX 8714) |
 | `src/ai_host/sync_wake.rs` | src | s | 3 crate-vis | — | A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's… |
 | `src/ai_host/test_support.rs` | src | s | 11 crate-vis | — | Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake… |
-| `src/ai_host/tests.rs` | test | m | — | — | The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model… |
+| `src/ai_host/tests.rs` | test | L | — | — | The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model… |
 | `src/ai_host/trained_serving.rs` | src | s | 2 crate-vis | — | Actual trained-checkpoint serving, separate from a bound custody receipt |
 | `src/ai_host/training_offer.rs` | src | m | 2 crate-vis | — | The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads… |
 | `src/ai_host/training_offer/check.rs` | src | s | 1 crate-vis | — | The check of one approved offer's promise against the seat's metered calls: fixed code, no model call |
@@ -213,7 +213,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/public_availability.rs` | src | s | 6 crate-vis | — | Query-bound slot cache |
 | `src/api/booking/public_availability_tests.rs` | test | s | — | — | — |
 | `src/api/booking/public_fixture.rs` | src | m | 35 crate-vis | — | Shared fixtures for tests that enter the real public router |
-| `src/api/booking/public_lifecycle_tests.rs` | test | m | — | — | — |
+| `src/api/booking/public_lifecycle_tests.rs` | test | L | — | — | — |
 | `src/api/booking/public_tests.rs` | test | m | — | — | — |
 | `src/api/booking/quarantine_restore.rs` | src | s | 2 crate-vis | — | `POST /v1/owner/booking/quarantine/{claim_ref}/restore`: the owner's restore of a quarantined confirm (FIX… |
 | `src/api/booking/socket_gate.rs` | src | s | 1 crate-vis | — | The serve gate of a stale owner sign-in's held booking socket (FIX 5935) |
@@ -1927,7 +1927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/slide_render.rs` | src | m | 16 crate-vis | — | The host's review renderer (ARCH-0077 "Review images"): LibreOffice Impress headless exports the deck to… |
 | `src/slide_render/scratch.rs` | src | s | 8 crate-vis | — | The renderer's selected scratch filesystem and its private directories |
 | `src/slide_render/scratch/bounded.rs` | src | s | 5 crate-vis | — | The opt-in Linux scratch mount and file-content write fence |
-| `src/test_credentials.rs` | src | m | 13 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
+| `src/test_credentials.rs` | src | m | 18 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/test_doors/big_rung.rs` | src | s | 1 fn | — | Doors for `tests/big_rung_written_reply.rs` (FIX 22368): the decision the Big rung stores from a written reply |
 | `src/test_doors/coach_round.rs` | src | s | 1 fn | — | Door for `tests/eval_authoring_execute_lapsed_lease.rs`: one Coach host round, the nightly worker's unit of… |
 | `src/test_doors/mod.rs` | src | s | 3 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
