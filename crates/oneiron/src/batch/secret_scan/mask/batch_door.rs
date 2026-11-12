@@ -81,6 +81,7 @@ pub(in crate::batch) fn mask_batch_ops(
         known: known.clone(),
         known_only,
         shapes_read,
+        places_split_phrases: true,
         text_log: TextLog::recording(),
         ..Masker::default()
     };

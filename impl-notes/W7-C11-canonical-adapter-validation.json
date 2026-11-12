@@ -40,7 +40,7 @@
     }
   ],
   "combined_front_check_rc": 0,
-  "build_host": "owen@example.com:/Volumes/Cinema/w7-build/wt/W7-C11-int",
+  "build_host": "owner@macbook:/Volumes/Cinema/w7-build/wt/W7-C11-int",
   "cargo_dispatch": "release factory/bin/cargo; MacBook-only host list; isolated worktree target; 3 jobs",
   "base_compile_prerequisite": [
     {

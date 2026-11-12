@@ -34,7 +34,7 @@ use super::create_validation::consult_refusal;
 use super::task_actor::TaskActor;
 use super::wave_port;
 use super::{
-    ConsultFanOutChoice, ConsultFanOutMode, ConsultFanOutPause, ConsultFanOutScope, TaskAskClass,
+    CheckInMode, ConsultFanOutChoice, ConsultFanOutPause, ConsultFanOutScope, TaskAskClass,
     TaskAskHandle, TaskAskHoldReason, TaskAskLaunchHold, TaskAskReceipt, TaskAskSpec,
 };
 use crate::Vault;
@@ -271,12 +271,7 @@ impl LaunchPayload {
     /// counts. Edges run from the launch's root (the epic, the ask group),
     /// never from the actor, so a cut that assigns its own actor is no
     /// consult cycle.
-    fn plan(
-        &self,
-        launch_ref: EntityId,
-        actor: EntityId,
-        mode: ConsultFanOutMode,
-    ) -> Result<FanoutPlan> {
+    fn plan(&self, launch_ref: EntityId, actor: EntityId, mode: CheckInMode) -> Result<FanoutPlan> {
         let payload_hash = blake3::hash(&self.identity_bytes()?).to_hex().to_string();
         let (root, brief_ref, targets): (String, String, Vec<String>) = match self {
             Self::Wave { cut, .. } => (
@@ -700,7 +695,7 @@ impl WaveLaunchGate {
         };
         let scope = wave_scope(actor, cut.epic_task_ref());
         let standing = standing_policy_for(vault, &scope, EscalationTrigger::Budget)?;
-        let disposition = if !recorded && governed.policy.mode == ConsultFanOutMode::Auto {
+        let disposition = if !recorded && governed.policy.mode == CheckInMode::AskWhenUnsure {
             let plan =
                 LaunchPayload::wave(cut, origin).plan(launch_ref, actor, governed.policy.mode)?;
             let estimate = fanout_estimate(&plan)?;

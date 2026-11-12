@@ -64,7 +64,8 @@ export interface BuildManifest {
     readonly bindings: Readonly<Record<string, "real" | "stub">>;
   };
 }
-export interface PlannedTest { readonly id: string; readonly name: string; readonly rows: readonly string[]; readonly source: readonly string[] }
+// estimatedSeconds: the case's own measured child wall, used for dispatch order; absent = an equal share of its file's estimate.
+export interface PlannedTest { readonly id: string; readonly name: string; readonly estimatedSeconds?: number; readonly rows: readonly string[]; readonly source: readonly string[] }
 export interface PlannedFile {
   readonly file: string; readonly area: string; readonly slots: 1 | 2;
   readonly estimatedSeconds: number; readonly tests: readonly PlannedTest[];

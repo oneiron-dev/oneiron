@@ -24,17 +24,20 @@ use crate::fake_llm::{FakeLlm, Reply};
 
 const SECRET: &str = "code-mode-compaction-issuer-key";
 /// The window a run parks at; it starts compacting at half of it or later.
-const WINDOW_TOKENS: u64 = 80_000;
+/// Sized past the step-zero request (~253K tokens: the taught verb catalog
+/// dominates it, ONE-2510 S2), so the run works before it compacts.
+const WINDOW_TOKENS: u64 = 350_000;
 /// What each step's program adds to the run's request.
 const STEP_TOKENS: u64 = WINDOW_TOKENS / 10;
 const SUMMARY_FACT: &str = "the deploy checklist has four items";
 /// The model context the compaction seat shares with the run.
-const CONTEXT_TOKENS: u64 = 200_000;
+const CONTEXT_TOKENS: u64 = 500_000;
 /// NUL characters each step's console prints in the escape-heavy run.
-const NULS: usize = 12_000;
+/// Sized with the window: one rendered step fits the seat, two do not.
+const NULS: usize = 24_000;
 /// The escape-heavy run's model context: past the reply and the prompt it
 /// holds one step's rendered input, not two.
-const NUL_CONTEXT_TOKENS: u64 = 100_000;
+const NUL_CONTEXT_TOKENS: u64 = 360_000;
 const FILLER: &str = "alpha beta gamma delta ";
 const CONSOLE_FRAME: &str = "Console after durable step";
 
