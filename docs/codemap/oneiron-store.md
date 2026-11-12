@@ -175,7 +175,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_residency.rs` | src | s | 2 fn · 1 const | — | The exact refusal of a turn whose witnessed message is not resident |
 | `src/conversation_span.rs` | src | s | 1 enum | ConversationSpanRead | Result vocabulary for a fingerprint-pinned conversation span read |
 | `src/conversation_summary.rs` | src | s | 1 fn | — | Coverage references encoded in stored conversation summaries |
-| `src/core_write/batch.rs` | src | s | 4 struct · 1 enum | CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | The `vault.batch` row's input and receipt types (OF-181) |
+| `src/core_write/batch.rs` | src | s | 5 struct · 2 enum · 1 fn | AgentDefinitionWriteDisposition, AgentDefinitionWriteReceipt, CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | The `vault.batch` row's input and receipt types (OF-181) |
 | `src/core_write/conversations.rs` | src | s | 3 struct · 1 fn | ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt | The `vault.conversations.create` and `vault.conversations.turns.create` rows' input and receipt types (OF-181) |
 | `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 1 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input… |
 | `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages… |
