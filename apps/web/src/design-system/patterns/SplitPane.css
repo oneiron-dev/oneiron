@@ -64,6 +64,20 @@
   white-space: nowrap;
 }
 
+/* A title that may take two lines, then truncates. */
+.sl-split-head[data-lines="2"] {
+  align-items: flex-start;
+}
+
+.sl-split-head[data-lines="2"] .sl-split-head-title {
+  display: -webkit-box;
+  padding-top: 4px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  text-wrap: pretty;
+}
+
 .sl-split-head-actions {
   display: flex;
   align-items: center;
@@ -89,4 +103,126 @@
   white-space: nowrap;
   pointer-events: none;
   transform: translateX(-100%);
+}
+
+/* A pane beside the room keeps the rule's width (set as the grid track);
+   the room takes the rest. The edge rests as a hairline. */
+.sl-split-pane[data-pane] > .sl-split-handle {
+  background: var(--sl-rule);
+}
+
+.sl-split-pane[data-pane] > .sl-split-handle:hover,
+.sl-split-pane[data-pane] > .sl-split-handle:focus-visible,
+.sl-split-pane[data-pane][data-dragging] > .sl-split-handle {
+  background: var(--sl-ink-4);
+}
+
+/* The pane for one thing: the head, a scrolling body, the write box at
+   the foot outside the scroll. */
+.sl-split-thing {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px 16px;
+}
+
+.sl-split-thing-head {
+  padding: 0 2px 4px 8px;
+}
+
+.sl-split-thing-head .sl-split-head-title {
+  font-weight: 600;
+}
+
+.sl-split-thing-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px 0;
+  scrollbar-width: thin;
+}
+
+/* The thing itself, with no card frame. An ask opened here drops its
+   first line (the head already says it) and keeps its answers. */
+.sl-split-thing-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sl-split-thing-item .sl-needs-you-line {
+  display: none;
+}
+
+.sl-split-thing-item .sl-needs-you-ask[data-asker] .sl-needs-you-answers {
+  margin-left: 0;
+}
+
+/* A composed card opened here drops its title line the same way. */
+.sl-split-thing-item .sl-composed-card-head {
+  display: none;
+}
+
+.sl-split-thing-note {
+  max-width: 60ch;
+  padding: 10px 0 2px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  text-wrap: pretty;
+}
+
+/* The thread: message rows under a hairline. */
+.sl-split-thing-thread {
+  display: flex;
+  flex-direction: column;
+  margin-top: 14px;
+  padding-top: 4px;
+  box-shadow: 0 -1px 0 var(--sl-rule);
+}
+
+.sl-split-thing-write {
+  flex: none;
+  margin: 10px 8px 2px;
+}
+
+/* A work area too narrow for the column and the pane side by side: the
+   pane (one thing, or a list) lies over the room. It comes from the right
+   edge at the work area's full height, in the island tone with the
+   popover shadow; the room under it keeps its column. */
+.sl-split-pane[data-over] > .sl-split-handle {
+  display: none;
+}
+
+.sl-split-pane[data-over] > .sl-split-pane-pane ~ .sl-split-pane-pane {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--sl-z-sheet);
+  width: var(--sl-pane-over-width, 340px);
+  border-radius: var(--sl-radius);
+  background: var(--sl-island);
+  box-shadow: var(--sl-pop-shadow);
+  animation: sl-pane-over-in 240ms var(--sl-ease-out) both;
+}
+
+@keyframes sl-pane-over-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-split-pane[data-over] > .sl-split-pane-pane ~ .sl-split-pane-pane {
+    animation-name: sl-pane-over-fade;
+  }
+}
+
+@keyframes sl-pane-over-fade {
+  from {
+    opacity: 0;
+  }
 }

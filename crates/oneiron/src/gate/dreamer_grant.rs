@@ -297,16 +297,23 @@ fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
     encode_live(entries).map(Some)
 }
 
-/// `live` as the policy fold reads it once a base agent holds its reach
-/// through a Steward grant (untangle 6.3): every row that names `actor_ref`
-/// in `actor_ceilings`, `scoped_grants` and `source_trust` taken out, then
-/// the rows the grant's `verbs` give put back. `read` gives the read grant,
-/// over `read_scope`: the standing grant's own scope met with the read preset
-/// (S67-READ-AXES = C), so a grant the owner narrowed on worlds, bands,
-/// audience or sensitivity reads inside them. `derive` gives the Auto actor
-/// ceiling and the `Generated` permit. They are the rows [`with_dreamer_rows`]
-/// writes, so a grant with both verbs and every data axis whole, as the host
-/// mints it, reads exactly as the three rows did. `None` when nothing moved.
+/// `live` as the policy fold reads it once base agents hold their reach
+/// through Steward grants (untangle 6.3, 6.6), one rewrite per agent:
+/// - the Dreamer: every row that names it in `actor_ceilings`,
+///   `scoped_grants` and `source_trust` taken out, then the rows its grant's
+///   verbs give put back. `read` gives the read grant; `derive` gives the
+///   Auto actor ceiling and the `Generated` permit. They are the rows
+///   [`with_dreamer_rows`] writes, so a grant with both verbs and every data
+///   axis whole, as the host mints it, reads exactly as the three rows did.
+/// - the Coach: only its core-read rows taken out, then one read row put
+///   back when its grant holds `read`. Its offer row
+///   (`tasks.ask.training_offer_owner`) is not the grant's, and stays.
+///
+/// Each read row is over the agent's `read_scope`: its standing grant's own
+/// scope met with the read preset (S67-READ-AXES = C), so a grant the owner
+/// narrowed on worlds, bands, audience or sensitivity reads inside them.
+///
+/// `None` when nothing moved.
 ///
 /// Taking the rows out never fails on a shape the policy decode accepts, so
 /// a pack that decodes is never read as it was written (review of #6913).
@@ -318,32 +325,115 @@ fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
 /// A live policy that is not a map.
 pub(crate) fn body_with_steward_rows(
     live: &[u8],
-    actor_ref: &str,
-    verbs: &std::collections::BTreeSet<String>,
-    read_scope: Option<&crate::federation::Scope>,
+    rewrites: &[crate::federation::StewardRows],
 ) -> Result<Option<Vec<u8>>> {
     let mut entries = decode_live(live)?;
-    let stripped = strip_actor_rows(&mut entries, actor_ref);
-    let derive = verbs.contains(crate::federation::grant_scope::STEWARD_DERIVE_VERB);
-    if derive {
-        list_generated_shorthand(&mut entries);
-    }
-    let read =
-        read_scope.filter(|_| verbs.contains(crate::federation::grant_scope::STEWARD_READ_VERB));
-    let changed = match push_dreamer_rows(&mut entries, actor_ref, read, derive) {
-        Ok(pushed) => stripped | pushed,
-        // A list that will not take the grant's rows leaves the pack with
-        // the agent's written rows out, never as it was written: the written
-        // rows are not the grant's.
+    let changed = match rewrite_steward_rows(&mut entries, rewrites, true) {
+        Ok(changed) => changed,
+        // A list that will not take a grant's rows leaves the pack with the
+        // agents' written rows out, never as it was written: the written
+        // rows are not the grants'.
         Err(_) => {
             entries = decode_live(live)?;
-            strip_actor_rows(&mut entries, actor_ref)
+            rewrite_steward_rows(&mut entries, rewrites, false)?
         }
     };
     if !changed {
         return Ok(None);
     }
     encode_live(entries).map(Some)
+}
+
+/// Takes each agent's written rows out and, when `grant`, puts the rows its
+/// grant gives back. Returns whether any row moved.
+fn rewrite_steward_rows(
+    entries: &mut Vec<(Value, Value)>,
+    rewrites: &[crate::federation::StewardRows],
+    grant: bool,
+) -> Result<bool> {
+    use crate::federation::SystemAgent;
+    use crate::federation::grant_scope::{STEWARD_DERIVE_VERB, STEWARD_READ_VERB};
+    let mut changed = false;
+    for rewrite in rewrites {
+        let read = rewrite
+            .read_scope
+            .as_ref()
+            .filter(|_| grant && rewrite.verbs.contains(STEWARD_READ_VERB));
+        match rewrite.agent {
+            SystemAgent::Dreamer => {
+                changed |= strip_actor_rows(entries, &rewrite.actor_ref);
+                let derive = grant && rewrite.verbs.contains(STEWARD_DERIVE_VERB);
+                if derive {
+                    list_generated_shorthand(entries);
+                }
+                changed |= push_dreamer_rows(entries, &rewrite.actor_ref, read, derive)?;
+            }
+            SystemAgent::Coach => {
+                changed |= rewrite_read_row(entries, &rewrite.actor_ref, read)?;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Takes `actor_ref`'s core-read rows out of `scoped_grants`, its other
+/// scoped grants left as they are, and puts one read row back, over the
+/// scope `read`, when there is one. Returns whether the list moved.
+fn rewrite_read_row(
+    entries: &mut Vec<(Value, Value)>,
+    actor_ref: &str,
+    read: Option<&crate::federation::Scope>,
+) -> Result<bool> {
+    let list = entry_mut(entries, POLICY_SCOPED_GRANTS_KEY);
+    let mut rows = match std::mem::replace(list, Value::Nil) {
+        Value::Nil => Vec::new(),
+        Value::Array(rows) => rows,
+        single @ Value::Map(_) => vec![single],
+        _ => return Err(invalid("policy rows are not a list")),
+    };
+    let before = rows.clone();
+    rows.retain(|row| !(binds_actor(row, actor_ref) && is_core_read(row)));
+    if let Some(scope) = read {
+        rows.push(read_row(actor_ref, scope)?);
+    }
+    let changed = rows != before;
+    if rows.is_empty() {
+        entries.retain(|(name, _)| name.as_str() != Some(POLICY_SCOPED_GRANTS_KEY));
+    } else {
+        *entry_mut(entries, POLICY_SCOPED_GRANTS_KEY) = Value::Array(rows);
+    }
+    Ok(changed)
+}
+
+fn is_core_read(row: &Value) -> bool {
+    row.as_map().is_some_and(|fields| {
+        fields.iter().any(|(name, field)| {
+            name.as_str() == Some("effector")
+                && field.as_str() == Some(SCOPED_READ_EFFECTOR_CORE_READ)
+        })
+    })
+}
+
+/// A base agent's receipt-free read grant over `scope`: the Dreamer's
+/// shipped read row over the whole read preset, and each agent's from its
+/// grant's `read`, inside the grant's own data axes.
+fn read_row(actor_ref: &str, scope: &crate::federation::Scope) -> Result<Value> {
+    Ok(Value::Map(vec![
+        (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+        (
+            Value::from(ACTOR_CLASS_KEY),
+            Value::from(DREAMER_ACTOR_CLASS),
+        ),
+        (
+            Value::from("effector"),
+            Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+        ),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(scope)?,
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ]))
 }
 
 /// Writes a lone `Generated` shorthand row (`false`, a band number or a band
@@ -491,22 +581,7 @@ fn push_dreamer_rows(
         changed |= push_unless_bound(
             entry_mut(entries, POLICY_SCOPED_GRANTS_KEY),
             actor_ref,
-            Value::Map(vec![
-                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
-                (
-                    Value::from(ACTOR_CLASS_KEY),
-                    Value::from(DREAMER_ACTOR_CLASS),
-                ),
-                (
-                    Value::from("effector"),
-                    Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
-                ),
-                (
-                    Value::from("scope"),
-                    crate::federation::scope_codec::encode_scope_value(scope)?,
-                ),
-                (Value::from("receipt_required"), Value::Boolean(false)),
-            ]),
+            read_row(actor_ref, scope)?,
         )?;
     }
     if derive {

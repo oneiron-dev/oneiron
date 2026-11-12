@@ -1,0 +1,91 @@
+/* A bar chart in ink tones only. Bars and the bracket draw with crisp
+   edges; rings and type are smoothed. */
+.sl-bar-chart {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 6px 0 0;
+}
+
+.sl-bar-chart-plot {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  shape-rendering: crispEdges;
+}
+
+.sl-bar-chart-bar {
+  fill: var(--sl-ink-2);
+}
+
+/* The column under the pointer lifts one step of ink. */
+.sl-bar-chart-bar[data-hover] {
+  fill: var(--sl-ink-1);
+}
+
+.sl-bar-chart-ring {
+  fill: var(--sl-mark-ground, var(--sl-island));
+  stroke: var(--sl-ink-1);
+  stroke-width: 1.4;
+  shape-rendering: auto;
+}
+
+.sl-bar-chart-bracket {
+  fill: none;
+  stroke: var(--sl-ink-3);
+  stroke-width: 1;
+}
+
+.sl-bar-chart-axis,
+.sl-bar-chart-value {
+  font-family: var(--sl-mono);
+  font-feature-settings: "tnum" 1;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--sl-t-badge);
+  fill: var(--sl-ink-3);
+  shape-rendering: auto;
+}
+
+.sl-bar-chart-value {
+  fill: var(--sl-ink-1);
+}
+
+.sl-bar-chart-range {
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-figure);
+  fill: var(--sl-ink-3);
+  shape-rendering: auto;
+}
+
+.sl-bar-chart-hit {
+  fill: transparent;
+}
+
+/* The legend line: a key mark and its word, then the unit. */
+.sl-bar-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 2px 0 8px;
+  font-size: var(--sl-t-figure);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+}
+
+.sl-bar-chart-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sl-bar-chart-legend svg {
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.sl-bar-chart-key {
+  fill: var(--sl-ink-2);
+  shape-rendering: crispEdges;
+}

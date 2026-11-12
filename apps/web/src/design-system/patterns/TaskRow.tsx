@@ -1,11 +1,12 @@
 import * as React from 'react'
 import { ProgressDonut } from '../marks/ProgressDonut'
-import type { DonutArc } from '../marks/donut-segments'
+import { arcsDone, type DonutArc } from '../marks/donut-segments'
+import { Icon } from '../primitives/Icon'
 import { Unfold } from '../primitives/Unfold'
 import { Verb } from '../primitives/Verb'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
 import { taskCountWords } from './task-group'
-import { WriteLine, type WriteLineProps } from './WriteLine'
+import { Composer, type ComposerProps } from './Composer'
 
 /* ── the list's open row ───────────────────────────────────────────────── */
 
@@ -21,7 +22,8 @@ export const TaskListContext = React.createContext<TaskListContextValue | null>(
 
 export interface TaskRowProps extends Omit<React.ComponentPropsWithRef<'div'>, 'id'> {
   id: string
-  /* The task's steps, in order, for its donut. */
+  /* The task's steps, in order, for its donut. All done: a plain check
+     in place of the donut. */
   arcs: readonly DonutArc[]
   /* The task waits on the person: a dot in the donut. */
   needsYou?: boolean
@@ -36,7 +38,8 @@ export interface TaskRowProps extends Omit<React.ComponentPropsWithRef<'div'>, '
   onOpenChange?: (open: boolean) => void
 }
 
-/* One task under a message: its donut, what it is, who has it. A click
+/* One task under a message: its donut (a plain check once done), what it
+   is, who has it. A click
    unfolds its children (a TaskRow.Body) in place under the row; Escape
    inside folds it and puts focus back on the row. */
 function TaskRowRoot({
@@ -93,7 +96,11 @@ function TaskRowRoot({
       {...props}
     >
       <Unfold.Trigger ref={triggerRef} className="sl-task-row">
-        <ProgressDonut arcs={arcs} needsYou={needsYou} />
+        {!needsYou && arcsDone(arcs) ? (
+          <Icon name="check" size={15} className="sl-task-check" role="img" aria-label="done" aria-hidden={undefined} />
+        ) : (
+          <ProgressDonut arcs={arcs} needsYou={needsYou} />
+        )}
         <span className="sl-task-name">{name}</span>
         {who !== undefined ? <span className="sl-task-who">{who}</span> : null}
       </Unfold.Trigger>
@@ -108,7 +115,7 @@ export interface TaskRowBodyProps extends React.ComponentPropsWithRef<'div'> {}
 
 /* What unfolds under the row, with a hairline at its left: the task's last
    lines, what it asks (a question and a NeedsYou.Picks line inside a
-   NeedsYou.Answer), a line to write to it, its own tasks. */
+   NeedsYou.Answer), the small write box, its own tasks. */
 function TaskRowBody({ className, ...props }: TaskRowBodyProps) {
   return <div className={cx('sl-task-body', className)} {...props} />
 }
@@ -127,12 +134,12 @@ function TaskRowQuestion({ className, ...props }: TaskRowQuestionProps) {
   return <p className={cx('sl-task-question', className)} {...props} />
 }
 
-export interface TaskRowWriteProps extends WriteLineProps {}
+export interface TaskRowWriteProps extends Omit<ComposerProps, 'size'> {}
 
-/* One line to write to the task: a WriteLine. Enter sends; Escape leaves
-   the line and folds the row. */
+/* One line to write to the task: the small write box. Enter sends; Escape
+   leaves the field and folds the row. */
 function TaskRowWrite({ placeholder = 'Write to this task', className, ...props }: TaskRowWriteProps) {
-  return <WriteLine className={cx('sl-task-write', className)} placeholder={placeholder} {...props} />
+  return <Composer size="small" className={cx('sl-task-write', className)} placeholder={placeholder} {...props} />
 }
 
 export interface TaskRowOwnProps extends Omit<React.ComponentPropsWithRef<'div'>, 'children'> {

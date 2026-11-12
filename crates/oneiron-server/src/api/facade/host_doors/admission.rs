@@ -109,8 +109,29 @@ pub(in crate::api::facade) fn door_admits(
         Proof::ModelStepCaller => {
             crate::api::facade::model_step_doors::step_caller_admits(server, auth, verb)
         }
+        // A substrate read (untangle 6.6c): the owner under its proof, or a person or agent on its own slip,
+        // whose Steward grant the engine reader checks at the read.
+        Proof::SubstrateReader => {
+            crate::api::facade::substrate_read_doors::substrate_reader(server, auth, verb).map(drop)
+        }
+        // An engine-control knob (untangle 6.6d): the owner under its proof, or a person or agent on
+        // its own slip, whose engine.controls grant the knob's writer checks in the write.
+        Proof::EngineController => {
+            crate::api::facade::engine_control_doors::engine_controller(server, auth, verb)
+                .map(drop)
+        }
         Proof::ClaimSettler => {
             crate::api::facade::claim_settle_doors::settler_admits(server, auth, verb)
+        }
+        // The owner's proof, or an actor-bound credential whose own live Grant the proposal
+        // writer checks. A caller bound to no actor keeps the owner refusal.
+        Proof::ModelBindingProposer => {
+            owner_proof(auth, server, verb)
+                .map(drop)
+                .or_else(|refusal| {
+                    crate::api::facade::owner_binding::facade_caller_or(server, auth, || refusal)
+                        .map(drop)
+                })
         }
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)

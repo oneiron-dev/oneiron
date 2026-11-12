@@ -46,8 +46,9 @@ pub(super) fn fold_policy_manifest(
     let mut value_seeds = crate::gate::policy_value_seeds::SeededPolicyValueRows::default();
     let mut code_consent_settlement =
         crate::gate::code_consent_settlement::CodeConsentSettlementFold::default();
-    // Once a host has minted the Dreamer's Steward grant (untangle 6.3), its
-    // rows come from that grant, not from the manifest rows that name it.
+    // Once a host has minted a base agent's Steward grant (untangle 6.3,
+    // 6.6), its rows come from that grant, not from the manifest rows that
+    // name it.
     let steward_rows = crate::federation::steward_rows_rewrite(store, txn)?;
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
@@ -105,12 +106,10 @@ pub(super) fn fold_policy_manifest(
         // every trusted pack, so they read as the shipped rows did, the read
         // row inside the grant's own data axes. A pack that does not decode
         // keeps its own bytes and its own diagnostic.
-        let steward_body = match &steward_rows {
-            Some((actor_ref, verbs, read_scope)) => {
-                crate::gate::body_with_steward_rows(body, actor_ref, verbs, read_scope.as_ref())
-                    .unwrap_or(None)
-            }
-            None => None,
+        let steward_body = if steward_rows.is_empty() {
+            None
+        } else {
+            crate::gate::body_with_steward_rows(body, &steward_rows).unwrap_or(None)
         };
         let decoded_row = store
             .manifest_memo()

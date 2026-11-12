@@ -8,8 +8,8 @@
 //! successor copies exactly the six fields `retries_the_same_attempt`
 //! compares, so the link holds as a lineage.
 
-use crate::attempt_queue::cancel::{AttemptCancelState, AttemptLandingReserve};
 use crate::attempt_queue::encoding::{DedupeIndexKeys, decode_record, ready_at, ready_key};
+use crate::attempt_queue::lifecycle::{NewAttempt, RunLifecycle};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState};
 use crate::error::{Error, Result};
@@ -124,57 +124,45 @@ impl AttemptQueue<'_> {
 /// Modelled on the landing successor, without its resume point: what a
 /// continuation resumes from is its own row, never this one's.
 fn failed_successor(source: &AttemptRecord, id: AttemptId, now: u64) -> AttemptRecord {
-    AttemptRecord {
-        id,
-        kind: source.kind.clone(),
-        payload: source.payload.clone(),
-        state: AttemptState::Queued,
-        lease_owner: None,
-        attempt_count: 0,
-        lease_expirations: Vec::new(),
-        claimed_at: None,
-        scheduled_at: None,
-        retry_of: Some(source.id),
-        folded_retries: 0,
-        backoff_until: None,
-        last_error: None,
-        task_ref: source.task_ref.clone(),
-        run_id: source.run_id.clone(),
-        dedupe_key: source.dedupe_key.clone(),
-        dedupe_actor_ref: source.dedupe_actor_ref.clone(),
-        created_at: now,
-        updated_at: now,
-        settled_at: None,
-        events: Vec::new(),
-        manifest: Vec::new(),
-        executor_model: None,
-        executor_seat: None,
-        executor_role: None,
-        planned_binding: None,
-        read_set: None,
-        // The dial's values carry over; its one-shot mark and the spent
-        // reserve do not: the successor's own admission dials it.
-        cancel_state: AttemptCancelState {
-            reserve: AttemptLandingReserve {
-                spent_units: 0,
-                dial_generation: None,
-                ..source.cancel_state.reserve
-            },
-            ..AttemptCancelState::default()
+    RunLifecycle::successor_row(
+        NewAttempt {
+            id,
+            kind: source.kind.clone(),
+            payload: source.payload.clone(),
+            lease_expirations: Vec::new(),
+            claimed_at: None,
+            retry_of: Some(source.id),
+            folded_retries: 0,
+            backoff_until: None,
+            last_error: None,
+            task_ref: source.task_ref.clone(),
+            run_id: source.run_id.clone(),
+            dedupe_key: source.dedupe_key.clone(),
+            dedupe_actor_ref: source.dedupe_actor_ref.clone(),
+            created_at: now,
+            updated_at: now,
+            events: Vec::new(),
+            manifest: Vec::new(),
+            executor_model: None,
+            executor_seat: None,
+            executor_role: None,
+            planned_binding: None,
+            read_set: None,
+            signals: Vec::new(),
+            asks: Vec::new(),
+            placement: source.placement.as_ref().map(|placement| {
+                crate::attempt_queue::AttemptPlacement {
+                    worker: placement.worker.clone(),
+                    // Below its predecessor, not beside it.
+                    parent: Some(source.id),
+                }
+            }),
+            result_ref: None,
+            history: Vec::new(),
+            terminal_exhaust: None,
+            signal_intents: Vec::new(),
         },
-        signals: Vec::new(),
-        asks: Vec::new(),
-        placement: source.placement.as_ref().map(|placement| {
-            crate::attempt_queue::AttemptPlacement {
-                worker: placement.worker.clone(),
-                // Below its predecessor, not beside it.
-                parent: Some(source.id),
-            }
-        }),
-        result_ref: None,
-        history: Vec::new(),
-        active_pause: None,
-        terminal_exhaust: None,
-        signal_intents: Vec::new(),
-    }
+        None,
+        source,
+    )
 }

@@ -4,9 +4,12 @@
 //! anything is made ([`open_image_payload`]): its bundles read back to the
 //! locators they were sealed with, its entity rows offered to the image's
 //! own checks, and the image's rows that hold an id link to an owner that
-//! did not open taken out (FIX 6376). Once the image's rows are in, each
-//! opened bundle lands through its getter's or carrier's restore, and each
-//! unavailable call through the ledger's own sink
+//! did not open taken out (FIX 6376). The body descriptors and digest
+//! holders that opened go among the image's rows there and then, so every
+//! reference pass reads them as it reads the image's
+//! (`land_body_descriptors_in_image`). Once the image's rows are in,
+//! each other opened bundle lands through its getter's or carrier's
+//! restore, and each unavailable call through the ledger's own sink
 //! ([`restore_opened_in_txn`]). Each window the payload split is joined from
 //! its carrier in the image and the copies that opened, before anything is
 //! made, and its rows and markers land with the bundles (FIX 10277). An
@@ -56,14 +59,16 @@ pub(in crate::recovery::checkpoint) struct OpenedPayload {
 /// Opens `sealed`, the payload an artifact carries apart from its image,
 /// before anything is made: each compartment it names is required through
 /// `plan`, a live one opens, and a retired one's owner is unopened; the rows
-/// of `image` that hold an id link to an unopened owner go. `None` for an
+/// of `image` that hold an id link to an unopened owner go, and the body
+/// descriptors and holders that opened join its rows. `None` for an
 /// artifact that carries no payload.
 ///
 /// # Errors
 ///
 /// A missing compartment leaf (lost custody refuses, KS-4, as
 /// `custody_key_missing`), a stream or bundle that does not read back as
-/// sealed, and custody faults.
+/// sealed, a descriptor part its codecs refuse or a row the image holds
+/// too, and custody faults.
 pub(in crate::recovery::checkpoint) fn open_image_payload(
     sealed: Option<SealedPayload<'_>>,
     plan: &mut CustodyPlan,
@@ -132,12 +137,69 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
              stay out"
         );
     }
+    land_body_descriptors_in_image(&mut bundles, image)?;
     Ok(Some(OpenedPayload {
         bundles,
         unopened,
         call_rows: take_call_rows(image),
         window_rows,
     }))
+}
+
+/// Moves each opened body descriptor and digest holder (KS7-2) out of
+/// `bundles` into `image`'s `vault_meta` rows, before anything reads them:
+/// a restore reads them there alone, as references, and rewrites them there
+/// (the retired-body prune, KS-2A, `carried_bodies::require`; a step start's
+/// replay landing, FIX 9180), so they land with the image's rows and never
+/// through their getter's restore, which would put back what those passes
+/// rewrote. A part an owner that did not open holds up stays out: an erased
+/// owner's descriptors do not come back (FIX
+/// [PROVENANCE-BODY-OWNER-FAMILY-READ-BEFORE-LANDING]). An image cut while
+/// these rows stayed in it opens no bundle of them, and its rows stand.
+///
+/// # Errors
+///
+/// A part the getter's codecs refuse, and a row two compartments, or a
+/// compartment and the image, both hold.
+fn land_body_descriptors_in_image(
+    bundles: &mut Vec<(BundleRole, OpenedOwnerRows)>,
+    image: &mut CheckpointImage,
+) -> Result<()> {
+    let (descriptors, others): (Vec<_>, Vec<_>) = std::mem::take(bundles)
+        .into_iter()
+        .partition(|(role, _)| *role == BundleRole::Content(Getter::ProvenanceBody));
+    *bundles = others;
+    let mut opened = BTreeMap::new();
+    for (_, rows) in &descriptors {
+        for (key, value) in crate::provenance::body::checkpoint::image_rows(rows)? {
+            if opened.insert(key, value).is_some() {
+                return Err(twice_held());
+            }
+        }
+    }
+    if opened.is_empty() {
+        return Ok(());
+    }
+    let rows = image
+        .databases
+        .get_mut("vault_meta")
+        .ok_or(Error::CorruptedIndex(
+            "checkpoint image has no vault_meta rows",
+        ))?;
+    if opened.keys().any(|key| {
+        rows.binary_search_by(|(row, _)| row.as_slice().cmp(key))
+            .is_ok()
+    }) {
+        return Err(twice_held());
+    }
+    let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = std::mem::take(rows).into_iter().collect();
+    merged.extend(opened);
+    *rows = merged.into_iter().collect();
+    Ok(())
+}
+
+fn twice_held() -> Error {
+    Error::CorruptedIndex("a body descriptor row held twice in a checkpoint")
 }
 
 /// Each split window's rows and markers, joined from its carrier in
@@ -455,9 +517,11 @@ fn held_up(opened: &OpenedOwnerRows, at: &RowLocator) -> bool {
         .any(|dependency| dependency.at == *at && opened.unavailable.contains(&dependency.on))
 }
 
-/// Lands every bundle once the image's rows are in. Only blob versions
-/// missing their actor part wait for the authenticated landing continuation:
-/// its native claim reads need all history/custody rows and the type index.
+/// Lands every bundle once the image's rows are in; the body descriptors
+/// joined them as the payload opened (`land_body_descriptors_in_image`).
+/// Only blob versions missing their actor part wait for the authenticated
+/// landing continuation: its native claim reads need all history/custody
+/// rows and the type index.
 /// Unavailable calls (FIX 6260) and the accounting of calls that did not
 /// open (FIX 12117) still land through the ledger's own sinks, last.
 ///
@@ -468,7 +532,6 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     opened: OpenedPayload,
-    retired_digests: &BTreeSet<[u8; 32]>,
 ) -> Result<Vec<OpenedOwnerRows>> {
     #[cfg(feature = "sync")]
     let carriers = SyncCarriers::new(store);
@@ -478,12 +541,9 @@ pub(in crate::recovery::checkpoint) fn restore_opened_in_txn(
     for (role, rows) in opened.bundles {
         match role {
             BundleRole::Content(Getter::ProvenanceBody) => {
-                crate::provenance::body::checkpoint::restore_pruned_in_txn(
-                    store,
-                    txn,
-                    rows,
-                    retired_digests,
-                )?;
+                return Err(Error::InvariantViolation(
+                    "a body descriptor bundle lands among the image's rows as it opens",
+                ));
             }
             BundleRole::Content(Getter::BlobArtifact) => {
                 if let Some(deferred) =

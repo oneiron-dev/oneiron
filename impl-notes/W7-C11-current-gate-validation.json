@@ -117,7 +117,7 @@
     "nested_cases_not_added_to_rust_test_total": true,
     "generated_manifest_sudachi": {
       "version": "0.6.11",
-      "path": "<host-home>/w7-build/wt/W7-C11/crates/oneiron/vendor/sudachi-0.6.11/sudachi/"
+      "path": "crates/oneiron/vendor/sudachi-0.6.11/sudachi/"
     }
   },
   "full_run_totals": {

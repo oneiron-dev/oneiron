@@ -37,17 +37,15 @@ export interface MicroSidebarProps extends React.ComponentPropsWithRef<'nav'> {
   /* `none`, the default: the symbol alone, its name in a tooltip. `word`:
      a small word under each symbol. */
   labels?: 'none' | 'word'
-  /* `field`: bare on the printed field, in the on-field inks. `paper`: on
-     a near-opaque strip of the ground. */
-  ground?: 'field' | 'paper'
 }
 
 /* The narrow strip at the far left that never hides: the places a person
-   goes to, one symbol each. Children: MicroSidebar.Item, .More, .Divider,
-   .Pinned, and one .Foot at the bottom. */
+   goes to, one symbol each. It has no surface of its own: it stands on the
+   window ground, in the ground's ink. Children: MicroSidebar.VaultMark
+   first, then .Item, .More, .Divider, .Pinned, and one .Foot at the
+   bottom. */
 function MicroSidebarRoot({
   labels = 'none',
-  ground = 'field',
   className,
   children,
   'aria-label': ariaLabel = 'places',
@@ -65,7 +63,6 @@ function MicroSidebarRoot({
         aria-label={ariaLabel}
         className={cx('sl-micro-sidebar', className)}
         data-labels={labels}
-        data-ground={ground}
         {...props}
       >
         <div className="sl-micro-sidebar-items">{items}</div>
@@ -254,6 +251,38 @@ function MicroSidebarItem({
   )
 }
 
+/* ── the vault's mark: home ─────────────────────────────────────────────── */
+
+export interface MicroSidebarVaultMarkProps extends Omit<MicroSidebarItemProps, 'icon' | 'label' | 'children' | 'onUnpin'> {
+  /* The vault's name: the item's label, and its initial is the mark. */
+  name: string
+  /* A picture in place of the initial (a URL). */
+  picture?: string
+  /* Render the single child element (a router link to Home) as the item. */
+  children?: React.ReactElement
+}
+
+/* The first item of the strip: the vault's mark, a small square of the
+   ground's ink holding the vault's initial (or a picture). It is the home
+   item: its label is the vault's name, it takes `current` while Home is on
+   screen, and it opens Home. Its `id` is `home` unless given. */
+function MicroSidebarVaultMark({ id = 'home', name, picture, ...props }: MicroSidebarVaultMarkProps) {
+  const initial = Array.from(name.trim())[0]?.toLocaleUpperCase() ?? ''
+  return (
+    <MicroSidebarItem
+      id={id}
+      label={name}
+      data-vault-mark=""
+      icon={
+        <span className="sl-micro-vault-mark" data-picture={picture ? '' : undefined}>
+          {picture ? <img src={picture} alt="" draggable={false} /> : initial}
+        </span>
+      }
+      {...props}
+    />
+  )
+}
+
 /* ── more: the places that are not on the strip ─────────────────────────── */
 
 export interface MicroSidebarMoreProps
@@ -396,9 +425,10 @@ function MicroSidebarFoot({ className, ...props }: MicroSidebarFootProps) {
   return <div className={cx('sl-micro-sidebar-foot', className)} {...props} />
 }
 
-/* Compound parts: MicroSidebar, .Item, .More, .MoreItem, .Divider, .Pinned,
-   .Foot. */
+/* Compound parts: MicroSidebar, .VaultMark, .Item, .More, .MoreItem,
+   .Divider, .Pinned, .Foot. */
 export const MicroSidebar = Object.assign(MicroSidebarRoot, {
+  VaultMark: MicroSidebarVaultMark,
   Item: MicroSidebarItem,
   More: MicroSidebarMore,
   MoreItem: MicroSidebarMoreItem,
