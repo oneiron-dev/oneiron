@@ -881,6 +881,18 @@ impl Env {
         Ok(flags)
     }
 
+    /// ONEIRON FORK (PAGE-FULL trace): the environment's page size
+    /// (`mdb_env_stat`), without opening a transaction.
+    pub fn page_size(&self) -> Result<u32> {
+        let mut stat = mem::MaybeUninit::uninit();
+        // SAFETY: `self` holds the open environment alive, and LMDB initializes
+        // the output on success. This call neither opens nor mutates a transaction.
+        unsafe {
+            mdb_result(ffi::mdb_env_stat(self.env_mut_ptr(), stat.as_mut_ptr()))?;
+            Ok(stat.assume_init().ms_psize)
+        }
+    }
+
     /// Returns some basic informations about this environment.
     pub fn info(&self) -> EnvInfo {
         let mut raw_info = mem::MaybeUninit::uninit();
