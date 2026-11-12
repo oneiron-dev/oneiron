@@ -37,7 +37,12 @@ replay path. Each admits the captured model through the current native route
 of the role that admitted the captured call (FIX 6359), and of no other role,
 and selects the rung that answered the capsule: the one picked rung of that
 model, served at the captured locality (`for_replay_binding`). A ladder with no
-such rung is no replay (`no_exact_rung` for a shadow call). The selected rung's
+such rung is no replay (`no_exact_rung` for a shadow call). A captured call that
+ran wider than the role's route went out on the owner's standing quota fallback
+(`use_fallback`) for one of the route's offers. Its replay re-reads that choice
+at replay time: it is admitted while the owner's fallback still names the model
+at that locality, and refused once the owner has turned it off or named another
+(`fallback_no_longer_allowed` for a shadow call). The selected rung's
 configured prompt must match the stored digest; otherwise the replay is refused
 (`route_prompt_moved`). An owner fallback whose prompt differs from the model's
 current standalone prompt is therefore not replayed. The replay then reads the
