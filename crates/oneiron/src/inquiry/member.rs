@@ -35,9 +35,9 @@ use crate::Vault;
 use crate::authority::{AuthorityFold, VerifiedSlip};
 use crate::check_in::{
     ActClass, CheckInAnswer, CheckInMode, CheckInRequest, CheckInScope, GoReason, HolderAnswer,
-    NoAgentVerdict, OpenPendingCheckIn, PendingCheckIn, PendingState, RolePreset, UnsureTest,
-    VerifiedChain, advance_pending_check_in_in_txn, answer_pending_check_in_in_txn, check_in,
-    open_pending_check_in_in_txn, pending_check_in_in_txn,
+    HolderReply, NoAgentVerdict, OpenPendingCheckIn, PendingCheckIn, PendingState, RolePreset,
+    UnsureTest, VerifiedChain, advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
+    check_in, open_pending_check_in_in_txn, pending_check_in_in_txn,
 };
 use crate::claim::ClaimBody;
 use crate::consent::AuthenticatedOwner;
@@ -352,8 +352,10 @@ pub(crate) fn answer_inquiry_in_txn(
         txn,
         person,
         &pending,
-        &effect_digest(grant, &logged.inquiry)?,
-        holder_answer,
+        HolderReply {
+            effect_digest: effect_digest(grant, &logged.inquiry)?,
+            answer: holder_answer,
+        },
         &VerifiedChain::new(&NoAgentVerdict),
         now,
     )?;

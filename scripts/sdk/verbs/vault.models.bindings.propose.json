@@ -1,6 +1,6 @@
 {
   "name": "vault.models.bindings.propose",
-  "description": "Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it.",
+  "description": "Proposes a role model change from a completed held-out trial offer, including an unknown one, retaining catalog revision and real trial cost; an agent whose Grant names this verb may propose; only the owner accepts.",
   "input": "crate::llm::catalog_doors::ModelBindingPropose",
   "output": "crate::llm::catalog_doors::ModelBindingProposal",
   "call": "memory.vault().propose_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.propose\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "model_binding_proposer"
 }

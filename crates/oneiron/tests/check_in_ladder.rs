@@ -10,6 +10,9 @@
 //! - only a holder pinned on the current rung answers, as themself;
 //! - a holder whose own check-in for the act would wait, or whose grant does
 //!   not admit the verb, is not asked: the rung is skipped, naming why;
+//! - a holder whose grant does not cover the effect's world is not asked, and
+//!   once its grant is narrowed away from that world it no longer answers or
+//!   extends (review round 1 of #7112);
 //! - an Owner who minted the grant is asked once, not again at rung 4;
 //! - a grant ref that names another principal's grant finds no grantor.
 //!
@@ -37,7 +40,8 @@ use oneiron::check_in::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::test_doors::check_in::{
-    FixedChain, FixedVerdicts, advance, advance_verified, answer_verified, open, open_verified,
+    FixedChain, FixedVerdicts, advance, advance_verified, answer_verified, extend_verified,
+    narrow_grant_worlds, open, open_verified,
 };
 
 /// The shared vault's id.
@@ -54,6 +58,7 @@ struct Ladder {
     member: (EntityId, AuthenticatedOwner),
     owner_grant: EntityId,
     first_admin_grant: EntityId,
+    second_admin_grant: EntityId,
     agent: EntityId,
     /// The agent's delegate grant, minted by the first Admin.
     delegate: EntityId,
@@ -97,6 +102,7 @@ impl Ladder {
             accepted.push(receipt.grants);
         }
         let first_admin_grant = EntityId::from_hex(&accepted[0][0]).expect("admin grant id");
+        let second_admin_grant = EntityId::from_hex(&accepted[1][0]).expect("admin grant id");
         let (agent, _) = fx
             .vault
             .get_seeded_agent_definition_by_logical_id("sys.team_lead")
@@ -121,6 +127,7 @@ impl Ladder {
             member,
             owner_grant,
             first_admin_grant,
+            second_admin_grant,
             agent,
             delegate,
         }
@@ -361,5 +368,72 @@ fn an_agent_holder_with_no_verdict_passes_the_ask_up_at_once() {
         advance(&fx.vault, &row.id, &chain).expect("advance"),
         Some(CheckInTransition::Climbed(Rung::ChainHolders)),
         "at the same instant"
+    );
+}
+
+#[test]
+fn a_holder_whose_grant_does_not_cover_the_effects_world_neither_is_asked_nor_answers() {
+    let l = Ladder::new();
+    let (world_a, world_b) = (EntityId::now(), EntityId::now());
+    let ask_in = |world: EntityId| {
+        let mut ask = l.ask(l.delegate, ActClass::MemberAdd, "org:add-member");
+        ask.scope.world_ref = Some(world.to_hex());
+        l.open(ask)
+    };
+
+    let row = ask_in(world_b);
+    assert_eq!(
+        l.climb(&row.id),
+        Some(CheckInTransition::Climbed(Rung::ChainHolders))
+    );
+    assert_eq!(
+        pinned(&l.fx.row(&row.id)),
+        (Rung::ChainHolders, vec![person(l.second_admin.0)]),
+        "the second Admin's grant covers every world"
+    );
+    narrow_grant_worlds(&l.fx.vault, l.second_admin_grant, &[world_a]).expect("narrow");
+    let due = l.fx.row(&row.id).current_rung().expect("a rung").due_at();
+    assert!(
+        answer_verified(
+            &l.fx.vault,
+            &l.second_admin.1,
+            &row.id,
+            &DIGEST,
+            HolderAnswer::Approve
+        )
+        .is_err(),
+        "a grant narrowed to world A approves nothing in world B"
+    );
+    assert!(
+        extend_verified(&l.fx.vault, &l.second_admin.1, &row.id, due + fixture::DAY).is_err(),
+        "nor gives it more time"
+    );
+    assert_eq!(l.fx.row(&row.id).state, PendingState::Open);
+
+    let row = ask_in(world_b);
+    assert_eq!(
+        l.climb(&row.id),
+        Some(CheckInTransition::Climbed(Rung::Owner))
+    );
+    let row = l.fx.row(&row.id);
+    assert_eq!(
+        skipped(&row),
+        [(
+            Rung::ChainHolders,
+            "no holder whose live grant and own check-in admit the act".to_owned()
+        )],
+        "no other Admin covers world B"
+    );
+    assert_eq!(pinned(&row), (Rung::Owner, vec![person(l.owner.0)]));
+
+    let row = ask_in(world_a);
+    assert_eq!(
+        l.climb(&row.id),
+        Some(CheckInTransition::Climbed(Rung::ChainHolders))
+    );
+    assert_eq!(
+        pinned(&l.fx.row(&row.id)),
+        (Rung::ChainHolders, vec![person(l.second_admin.0)]),
+        "its grant still covers world A"
     );
 }
