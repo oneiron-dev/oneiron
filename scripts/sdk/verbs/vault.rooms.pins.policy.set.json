@@ -1,0 +1,16 @@
+{
+  "name": "vault.rooms.pins.policy.set",
+  "description": "Sets who may change a room's shared pins, every member or only its managers; only a person who runs the room sets it.",
+  "input": "crate::workspace_roster::RoomPinPolicySet",
+  "output": "crate::workspace_roster::RoomPinPolicySet",
+  "call": "memory.rooms_pins_policy_set(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

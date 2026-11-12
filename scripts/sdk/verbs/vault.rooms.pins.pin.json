@@ -1,0 +1,16 @@
+{
+  "name": "vault.rooms.pins.pin",
+  "description": "Pins one record in a room's shared pins for the caller, a current member or that member's pen agent; the record keeps who pinned it, the acting agent and when.",
+  "input": "crate::workspace_roster::RoomPinRequest",
+  "output": "crate::workspace_roster::RoomPinReply",
+  "call": "memory.rooms_pins_pin(&input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -24,6 +24,7 @@ mod offer_settle;
 mod offers;
 mod participants;
 mod participation;
+mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
@@ -123,6 +124,7 @@ pub(crate) use participation::{
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
+pub use pins::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
@@ -204,6 +206,9 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
+    // The view never carries the room's shared pins: a reader gets them only
+    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    room.pins.clear();
     Ok(room)
 }
 pub(in crate::workspace_roster) fn require_member(
