@@ -100,6 +100,10 @@ pub struct Vault {
     /// What the runtime witnesses of each leased attempt it runs now (OF-568
     /// L5). In memory only: never persisted, never restored.
     pub(crate) attempt_activity: crate::code_run::activity::AttemptActivityRuntime,
+    /// The answers of task-kept inquiries this vault asked (INQUIRE-1 PR 4),
+    /// each until its task ends or its `valid_until`. In memory only: never
+    /// persisted, never restored.
+    pub(crate) inquiry_answers: crate::inquiry::InquiryAnswerHolder,
     /// Task work's one fair line on this vault, whichever door the work came
     /// in by ([`Vault::admit_task_work`]).
     pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,
