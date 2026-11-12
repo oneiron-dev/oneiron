@@ -53,12 +53,14 @@ impl Memory<'_> {
             text_fields,
             birth,
         };
-        let refused = self.with_actor_content_write_txn(|content| {
+        let (refused, written) = self.with_actor_content_write_txn(|content| {
             self.write_structural_in_txn(content, guard, write)
         })?;
         if refused {
             return Err(hard_deleted_refusal(&id));
         }
-        self.entity_ref_receipt_of(&id, type_byte)
+        let mut receipt = self.entity_ref_receipt_of(&id, type_byte)?;
+        receipt.agent_definition = written.get(&id);
+        Ok(receipt)
     }
 }

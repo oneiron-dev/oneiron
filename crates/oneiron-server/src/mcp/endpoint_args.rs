@@ -325,10 +325,18 @@ pub struct McpVerbArguments {
     /// `describe`'s last observed status digest for its handle.
     #[serde(default)]
     pub after: Option<String>,
+    /// `tasks.create.from_message`'s source MESSAGE or TURN, resolved by the
+    /// engine (a short-id ref or a 32-hex id).
+    #[serde(default)]
+    pub source_ref: Option<String>,
+    /// `tasks.create.from_message`'s create, as `tasks.create` names it,
+    /// decoded with the input.
+    #[serde(default)]
+    pub create: Option<Value>,
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 22] {
+    fn present_fields(&self) -> [(&'static str, bool); 24] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -352,6 +360,8 @@ impl McpVerbArguments {
             ("watch", self.watch.is_some()),
             ("handle", self.handle.is_some()),
             ("after", self.after.is_some()),
+            ("source_ref", self.source_ref.is_some()),
+            ("create", self.create.is_some()),
         ]
     }
 

@@ -25,6 +25,27 @@ pub(super) fn role_in(
     authorize(vault, txn, actor)?;
     let id = actor.entity_ref();
     require_kind(vault, txn, id, ENTITY_TYPE_PERSON)?;
+    person_role_in(
+        vault,
+        txn,
+        room,
+        id,
+        actor.actor_class() == crate::EdgeActorClass::Human,
+    )
+}
+
+/// The role PERSON `id` holds in ordinary room `room`, read as [`role_in`]
+/// reads it for that PERSON acting itself; `human` says whether it acts as
+/// a human, the only class the vault owner's binding makes the room's owner.
+/// The room pin doors read a delegate agent's pen PERSON through it, so the
+/// agent never stands above that PERSON. Refused for a non-member.
+pub(crate) fn person_role_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    id: EntityId,
+    human: bool,
+) -> Result<RoomRole> {
     let body = body::body_in(vault, txn, room)?;
     // The vault owner's active authority binding is the implicit owner role.
     // It is never inferred from untrusted replicated body metadata.
@@ -36,10 +57,9 @@ pub(super) fn role_in(
     }
     if (fold.vault_id.is_none()
         && (creator.as_deref() == Some(id.as_bytes().as_slice())
-            || (actor.actor_class() == crate::EdgeActorClass::Human
-                && id == crate::vault::embedded_owner_actor_id()?)))
+            || (human && id == crate::vault::embedded_owner_actor_id()?)))
         || (fold.vault_id.is_some()
-            && actor.actor_class() == crate::EdgeActorClass::Human
+            && human
             && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, id).is_ok())
     {
         return Ok(RoomRole::Owner);
