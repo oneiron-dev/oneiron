@@ -819,7 +819,7 @@ Response fields:
 - Each node includes `job_id`, `run_id`, `parent_id`, `worker_kind`, `status`, `timestamps`, optional `failure`, and ordered `children`.
 - `status`: one of `queued`, `running`, `completed`, or `failed`.
 - `failure.reason`: summarized terminal failure text copied from the backing queue row only when `status` is `failed`.
-- `failure.budget_refusal`: present only when the try's step was refused for good on its budget, copied from the backing queue row: `reason` `boundary_closed` or `ceiling_reached` (a spend scope refused it: `scope`, the refusing spend scope's id, `available_units` and `asked_units`), or `unbound` (its budget was spent and no wake pass or spend scope refills it: `asked_units` when known).
+- `failure.budget_refusal`: present only when the try's step was refused for good on its budget, copied from the backing queue row: `reason` `boundary_closed` or `ceiling_reached` (a spend scope refused it: `scope`, the refusing spend scope's id, `available_units` and `asked_units`), `unbound` (its budget was spent and no wake pass or spend scope refills it: `asked_units` when known), or `unfunded` (no allocation of the host funds its host-paid call: `asked_units` when known).
 - `repairs`: render-time repair records, currently `missing_parent` and `parent_cycle`.
 
 Notes:

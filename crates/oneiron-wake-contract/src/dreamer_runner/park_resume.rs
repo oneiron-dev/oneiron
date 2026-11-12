@@ -128,11 +128,13 @@ pub enum ParkResumer {
     SeatAvailable,
     /// A wake pass's start, whose guard has room for a pass budget wait's asked units; it wakes the park's trap.
     PassStart,
+    /// The owner's write of a resident's share that frees a resident share wait; it wakes the park's trap.
+    ResidentShareRaise,
 }
 
 impl ParkResumer {
     /// Every resumer, in table order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::LaterPass,
         Self::TrapConsume,
         Self::OutageSweep,
@@ -149,6 +151,7 @@ impl ParkResumer {
         Self::BudgetTopUp,
         Self::SeatAvailable,
         Self::PassStart,
+        Self::ResidentShareRaise,
     ];
 }
 
@@ -176,6 +179,7 @@ impl ParkResume {
     /// | BudgetTopUp | none here: only [`Self::admits_wait`] admits it, for a Budget or PassBudget wait on a Trap park | none |
     /// | SeatAvailable | none here: only [`Self::admits_wait`] admits it, for a Seat wait | none |
     /// | PassStart | none here: only [`Self::admits_wait`] admits it, for a PassBudget wait on a Trap park | none |
+    /// | ResidentShareRaise | none here: only [`Self::admits_wait`] admits it, for a ResidentShare wait on a Trap park | none |
     ///
     /// Typed waits narrow these rows through [`Self::admits_wait`]:
     ///
@@ -183,6 +187,7 @@ impl ParkResume {
     /// |---|---|---|
     /// | Budget | BudgetTopUp, TrapConsume, OwnerRelease | Trap |
     /// | PassBudget | PassStart, BudgetTopUp, TrapConsume, OwnerRelease | Trap |
+    /// | ResidentShare | ResidentShareRaise, TrapConsume, OwnerRelease | Trap |
     /// | Consent, Peer, Human | TrapConsume through the wait's own delivery | Trap; none for other owners |
     /// | Seat | SeatAvailable, OwnerRelease | any |
     ///
@@ -238,21 +243,28 @@ impl ParkResume {
                         Owner::DreamerServer | Owner::AgentRuns | Owner::Workflows | Owner::Other
                     )
             }
-            // Only admits_wait can admit a top-up, a seat-available write or a pass start: the
-            // scope, seat or asked units named by its typed wait are required.
-            ParkResumer::BudgetTopUp | ParkResumer::SeatAvailable | ParkResumer::PassStart => false,
+            // Only admits_wait can admit a top-up, a seat-available write, a pass start or a
+            // resident share write: the scope, seat, asked units or resident named by its typed
+            // wait are required.
+            ParkResumer::BudgetTopUp
+            | ParkResumer::SeatAvailable
+            | ParkResumer::PassStart
+            | ParkResumer::ResidentShareRaise => false,
         }
     }
 
     /// Whether `resumer` may resume a park of `cause` under an owner of class `owner` that carries
     /// the typed wait `wait`. The resumer's other gates still apply.
     ///
-    /// Without a wait (`None`) this is [`Self::admits`], except `BudgetTopUp`, `SeatAvailable` and
-    /// `PassStart`, which resume nothing: an untyped park waits on no scope, seat or pass. With a
+    /// Without a wait (`None`) this is [`Self::admits`], except `BudgetTopUp`, `SeatAvailable`,
+    /// `PassStart` and `ResidentShareRaise`, which resume nothing: an untyped park waits on no
+    /// scope, seat, pass or resident share. With a
     /// `Budget` wait under a `Trap` owner, only `BudgetTopUp`, `TrapConsume` and `OwnerRelease`
     /// admit; with a `PassBudget` wait under a `Trap` owner, only `PassStart`, `BudgetTopUp`,
     /// `TrapConsume` and `OwnerRelease` (a top-up wakes only a pass budget wait that names its
-    /// scope, B3). The owner's release wakes the park's trap, or stops its try (D2,
+    /// scope, B3); with a `ResidentShare` wait under a `Trap` owner, only `ResidentShareRaise`,
+    /// `TrapConsume` and `OwnerRelease` (D3). The owner's release wakes the park's trap, or stops
+    /// its try (D2,
     /// BUDGET-TRAP-UNTYPED-NO-SENDER). Other owners keep the untyped rules; the writer refuses
     /// typed waits on those owners. A later pass, a boot recovery, an outage sweep or a
     /// provider recovery must never blind-retry a park that waits on a scope refill (constraint
@@ -277,7 +289,10 @@ impl ParkResume {
             None => {
                 !matches!(
                     resumer,
-                    ParkResumer::BudgetTopUp | ParkResumer::SeatAvailable | ParkResumer::PassStart
+                    ParkResumer::BudgetTopUp
+                        | ParkResumer::SeatAvailable
+                        | ParkResumer::PassStart
+                        | ParkResumer::ResidentShareRaise
                 ) && Self::admits(cause, owner, resumer)
             }
             Some(DreamerParkWaitClass::Budget) => {
@@ -300,6 +315,20 @@ impl ParkResume {
                         resumer,
                         ParkResumer::PassStart
                             | ParkResumer::BudgetTopUp
+                            | ParkResumer::TrapConsume
+                            | ParkResumer::OwnerRelease
+                    )
+                } else {
+                    Self::admits(cause, owner, resumer)
+                }
+            }
+            // A resident's spent pinned share: the owner's share write that frees it is its sender
+            // (D3); no top-up or pass gives a resident a share.
+            Some(DreamerParkWaitClass::ResidentShare) => {
+                if matches!(owner, ParkOwnerClass::Trap) {
+                    matches!(
+                        resumer,
+                        ParkResumer::ResidentShareRaise
                             | ParkResumer::TrapConsume
                             | ParkResumer::OwnerRelease
                     )
@@ -885,6 +914,10 @@ mod tests {
                 !ParkResume::admits(cause, owner, ParkResumer::PassStart),
                 "{cause:?} {owner:?}"
             );
+            assert!(
+                !ParkResume::admits(cause, owner, ParkResumer::ResidentShareRaise),
+                "{cause:?} {owner:?}"
+            );
         }
     }
 
@@ -960,7 +993,7 @@ mod tests {
 
     #[test]
     fn a_typed_budget_wait_narrows_a_trap_park_to_its_top_up_and_trap_consume() {
-        assert_eq!(ParkResumer::ALL.len(), 16);
+        assert_eq!(ParkResumer::ALL.len(), 17);
         for cause in CAUSES {
             for owner in ParkOwnerClass::ALL {
                 for resumer in ParkResumer::ALL {
@@ -970,6 +1003,7 @@ mod tests {
                         ParkResumer::BudgetTopUp
                             | ParkResumer::SeatAvailable
                             | ParkResumer::PassStart
+                            | ParkResumer::ResidentShareRaise
                     ) {
                         assert!(!untyped, "{cause:?} {owner:?} {resumer:?}");
                     } else {
@@ -1014,6 +1048,26 @@ mod tests {
                         ParkResume::admits(cause, owner, resumer)
                     };
                     assert_eq!(pass_typed, pass_admitted, "{cause:?} {owner:?} {resumer:?}");
+                    let share_typed = ParkResume::admits_wait(
+                        cause,
+                        owner,
+                        Some(DreamerParkWaitClass::ResidentShare),
+                        resumer,
+                    );
+                    let share_admitted = if owner == ParkOwnerClass::Trap {
+                        matches!(
+                            resumer,
+                            ParkResumer::ResidentShareRaise
+                                | ParkResumer::TrapConsume
+                                | ParkResumer::OwnerRelease
+                        )
+                    } else {
+                        ParkResume::admits(cause, owner, resumer)
+                    };
+                    assert_eq!(
+                        share_typed, share_admitted,
+                        "{cause:?} {owner:?} {resumer:?}"
+                    );
                     for class in [
                         DreamerParkWaitClass::Consent,
                         DreamerParkWaitClass::Peer,
@@ -1054,6 +1108,7 @@ mod tests {
                 for class in [
                     DreamerParkWaitClass::Budget,
                     DreamerParkWaitClass::PassBudget,
+                    DreamerParkWaitClass::ResidentShare,
                 ] {
                     assert!(
                         !ParkResume::admits_wait(cause, ParkOwnerClass::Trap, Some(class), resumer),
@@ -1075,6 +1130,27 @@ mod tests {
                 Some(DreamerParkWaitClass::PassBudget),
                 ParkResumer::BudgetTopUp
             ));
+            // No top-up or pass gives a resident a share, and a share write wakes no scope's or
+            // pass's wait (D3).
+            for resumer in [ParkResumer::BudgetTopUp, ParkResumer::PassStart] {
+                assert!(!ParkResume::admits_wait(
+                    cause,
+                    ParkOwnerClass::Trap,
+                    Some(DreamerParkWaitClass::ResidentShare),
+                    resumer
+                ));
+            }
+            for class in [
+                DreamerParkWaitClass::Budget,
+                DreamerParkWaitClass::PassBudget,
+            ] {
+                assert!(!ParkResume::admits_wait(
+                    cause,
+                    ParkOwnerClass::Trap,
+                    Some(class),
+                    ParkResumer::ResidentShareRaise
+                ));
+            }
         }
         // A Seat wait admits only its seat's available write and the owner's release, under any
         // owner and for any cause; every blind resumer and the trap consume refuse it (C5).
@@ -1088,6 +1164,7 @@ mod tests {
                     ParkResumer::TrapConsume,
                     ParkResumer::BudgetTopUp,
                     ParkResumer::PassStart,
+                    ParkResumer::ResidentShareRaise,
                 ] {
                     assert!(
                         !ParkResume::admits_wait(

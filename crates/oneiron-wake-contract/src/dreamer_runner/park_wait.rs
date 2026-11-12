@@ -17,6 +17,9 @@ pub enum DreamerParkWaitClass {
     Human,
     /// A spent model seat's availability: the seat's own available write wakes the park.
     Seat,
+    /// A resident's spent pinned share of the host's allocation: the owner's share write that
+    /// frees it wakes the park's trap.
+    ResidentShare,
 }
 
 impl DreamerParkWaitClass {
@@ -30,6 +33,7 @@ impl DreamerParkWaitClass {
             Self::Peer => "peer",
             Self::Human => "human",
             Self::Seat => "seat",
+            Self::ResidentShare => "resident_share",
         }
     }
 
@@ -42,6 +46,7 @@ impl DreamerParkWaitClass {
             "peer" => Some(Self::Peer),
             "human" => Some(Self::Human),
             "seat" => Some(Self::Seat),
+            "resident_share" => Some(Self::ResidentShare),
             _ => None,
         }
     }

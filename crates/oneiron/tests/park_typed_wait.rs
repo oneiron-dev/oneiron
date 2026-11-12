@@ -2413,6 +2413,7 @@ fn seat_parks_wake_only_on_their_own_seat_available_write() -> Result<(), Box<dy
         Some(DreamerParkWaitClass::Consent),
         Some(DreamerParkWaitClass::Peer),
         Some(DreamerParkWaitClass::Human),
+        Some(DreamerParkWaitClass::ResidentShare),
     ];
     for wait in other_waits {
         for cause in causes {
