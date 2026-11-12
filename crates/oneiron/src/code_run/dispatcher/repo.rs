@@ -118,6 +118,9 @@ impl HostSelfDispatcher<'_> {
             RepoRunCall::SymbolsRelease(input) => {
                 answered(effect, memory.repo_symbols_release_for_run(&binding, input))
             }
+            RepoRunCall::SymbolsObserve(input) => {
+                answered(effect, memory.repo_symbols_observe_for_run(&binding, input))
+            }
             RepoRunCall::ProposalSubmit(input) => {
                 let change = RepoChange {
                     path: input.path.clone(),

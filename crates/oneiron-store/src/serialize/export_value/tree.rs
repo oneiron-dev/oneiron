@@ -73,6 +73,8 @@ pub enum NodeIn {
     String(String),
     EntityReference(Vec<u8>),
     BinaryText(String),
+    Binary(Vec<u8>),
+    Ext(i8, Vec<u8>),
     Array(usize),
     Map(usize),
     #[serde(untagged)]

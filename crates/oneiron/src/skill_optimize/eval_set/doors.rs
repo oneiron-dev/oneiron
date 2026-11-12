@@ -43,6 +43,11 @@ pub struct EvalAuthoringResult {
     pub state: AttemptState,
     pub terminal: bool,
     pub last_error: Option<String>,
+    /// The kept record of a pass `vault.evals.authoring.execute` requested:
+    /// its caller, outcome and report. A nightly or queued-only pass has
+    /// none.
+    #[serde(default)]
+    pub execution: Option<super::EvalAuthoringExecution>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -193,6 +198,7 @@ pub fn authoring_result(
         state: status.attempt.state,
         terminal: status.attempt.state.is_terminal(),
         last_error: status.attempt.last_error,
+        execution: super::eval_authoring_execution(vault, &input.attempt)?,
     }))
 }
 
@@ -385,3 +391,6 @@ pub fn pick_label(
         vault.now_recorded_at(),
     )
 }
+
+mod cohort_retire;
+pub use cohort_retire::{EvalCohortRetireRequest, retire_cohort};

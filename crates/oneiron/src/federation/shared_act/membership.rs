@@ -410,6 +410,8 @@ impl Vault {
             // A genuine leave: the departure is built here, after the
             // authorized transition, and consumed in this same writer. A
             // downgrade never arrives here; recovery's genuine leave does.
+            // The seat's inquiry route ends with it (INQUIRE-1 PR 4).
+            crate::inquiry::end_inquiry_route_in_txn(&self.store, txn, vault_id, member)?;
             let departure = SharedMemberDeparture::for_genuine_leave(&mut *txn, vault_id, member);
             let DetachOutcome {
                 withdrawn,

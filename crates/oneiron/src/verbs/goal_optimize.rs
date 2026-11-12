@@ -1,13 +1,16 @@
 //! Full witnessed goal intake and explicit optimizer proposal/admission doors.
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{self as optimize, GoalAxisBandit, GoalAxisReport, HeldOutReplayNotes};
 use crate::workspace_roster::{GoalInterviewTurns, GoalRecord};
 use crate::{EntityId, Error, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 
-use super::{SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner};
+use super::{
+    ProjectGoalDismissReceipt, ProjectGoalDismissRequest, ProjectGoalDismissTarget,
+    SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +34,41 @@ pub struct ProjectGoalView {
     pub project_ref: EntityId,
     pub goal_claim: Option<EntityId>,
     pub record: Option<GoalRecord>,
+}
+
+/// `vault.projects.goal.dismiss` on the caller's handle: a vault owner sets
+/// aside a preference proposal or a full goal proposal; `false` when an
+/// identical retry wrote nothing.
+///
+/// # Errors
+///
+/// FORBIDDEN for a caller that is not a recorded vault owner; a malformed
+/// reference, a moved goal, a missing proposal, a blank or unbounded reason;
+/// storage errors.
+pub fn project_goal_dismiss(
+    memory: &Memory<'_>,
+    input: ProjectGoalDismissRequest,
+) -> MemoryResult<ProjectGoalDismissReceipt> {
+    let project = EntityId::from_hex(&input.project_ref)?;
+    let dismissed = match input.target {
+        ProjectGoalDismissTarget::Preference {
+            expected_goal_ref,
+            question_digest,
+        } => memory.projects_goal_dismiss(
+            project,
+            EntityId::from_hex(&expected_goal_ref)?,
+            &question_digest,
+        )?,
+        ProjectGoalDismissTarget::Proposal {
+            proposal_ref,
+            reason,
+        } => memory.projects_goal_proposal_dismiss(
+            project,
+            EntityId::from_hex(&proposal_ref)?,
+            &reason,
+        )?,
+    };
+    Ok(ProjectGoalDismissReceipt { dismissed })
 }
 
 pub fn project_goal_intake_complete_as_owner(
