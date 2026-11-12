@@ -15,7 +15,10 @@
 //! gave its offer card; A is the bound TASK's assignee. Agent B, in neither,
 //! asks into each thread by a thread offer card. Each thread is a native DAG
 //! turn on the trunk and owen's plain reply on it, its root; a quiet
-//! thread's turns are dated 90 days back.
+//! thread's turns are dated 90 days back. The ordinary room dates from a day
+//! before that: a group room reads each member's history from that member's
+//! join (ILDF2 P5, `conversation/visibility.rs`), so a thread older than the
+//! room is read by no one and ends nothing.
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron --all-features --test room_offer_ageing`.
@@ -47,6 +50,10 @@ const FIXTURE_PATH: &str = "crates/oneiron/tests/room_offer_ageing.rs";
 
 /// How far back a quiet thread's turns are dated, in seconds.
 const QUIET_AGE_SECS: u64 = 90 * 24 * 60 * 60;
+
+/// How far back the ordinary room is dated, in seconds: a day before its
+/// quiet thread, so owen's membership window holds that thread.
+const ROOM_AGE_SECS: u64 = QUIET_AGE_SECS + 24 * 60 * 60;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -154,13 +161,14 @@ fn home_room(vault: &Vault, owen: EntityId, seated: &[EntityId]) -> TestResult<E
     Ok(EntityId::from_hex(&record.home_room)?)
 }
 
-/// An ordinary group room owen creates, and so hosts, holding owen alone.
+/// An ordinary group room owen creates, and so hosts, holding owen alone,
+/// dated [`ROOM_AGE_SECS`] back.
 fn ordinary_room(vault: &Vault, owen: EntityId, title: &str) -> TestResult<EntityId> {
     let receipt = vault
         .memory(owen, EdgeActorClass::Human)
         .conversations_create(&ConversationCreateInput {
             id: None,
-            occurred_start: None,
+            occurred_start: Some(vault.now_recorded_at().saturating_sub(ROOM_AGE_SECS)),
             occurred_end: None,
             learned_at: None,
             body: serde_json::json!({
@@ -357,11 +365,14 @@ fn ordinary_room_thread_card_ages_out_with_its_quiet_thread() -> TestResult {
 }
 
 /// A quiet thread with an open TASK bound to it is live, so its card stays
-/// open: the fold reads the binding from the thread's room row.
+/// open: the fold reads the binding from the thread's room row. A second
+/// quiet thread in the same room, with no TASK, ages out, so the first card
+/// is open for its TASK alone.
 #[test]
 fn ordinary_room_thread_card_stays_open_while_a_bound_task_is_open() -> TestResult {
     let fixture = open_fixture(RoomKind::Ordinary)?;
     let kept = thread(&fixture, QUIET_AGE_SECS)?;
+    let unbound = thread(&fixture, QUIET_AGE_SECS)?;
     let spec = TaskCreateSpec::new(
         rmpv::Value::Nil,
         Some(FIXTURE_PATH.into()),
@@ -380,9 +391,11 @@ fn ordinary_room_thread_card_stays_open_while_a_bound_task_is_open() -> TestResu
         .vault
         .bind_room_thread_task(fixture.owen, fixture.room, kept, task)?;
     thread_card(&fixture, kept)?;
+    thread_card(&fixture, unbound)?;
     assert!(
         matches!(card_state(&fixture, kept)?, OfferState::Open { .. }),
         "the bound open TASK keeps the thread, and its card, live"
     );
+    assert_eq!(card_state(&fixture, unbound)?, OfferState::AgedOut);
     Ok(())
 }
