@@ -1,0 +1,16 @@
+{
+  "name": "vault.agents.powers.set",
+  "description": "The owner sets the spawn and save_agent powers an agent, attempt or reader child holds, when it still holds the expected ones; only this door switches a power back on.",
+  "input": "crate::agent_def::AgentPowerSetRequest",
+  "output": "crate::agent_def::AgentPowers",
+  "call": "crate::agent_def::set_agent_powers_from_request_as(memory.vault(), &memory.embedded_owner(\"vault.agents.powers.set\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

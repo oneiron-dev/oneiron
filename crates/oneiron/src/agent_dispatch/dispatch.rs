@@ -1,7 +1,7 @@
 //! Core dispatch admission: dispatchability, depth bound, enqueue, dedupe.
 
 use crate::Vault;
-use crate::agent_def::AgentDefinition;
+use crate::agent_def::{AgentDefinition, AgentPowerTarget, AgentPowers, ChildPowerRequest};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
@@ -58,6 +58,23 @@ fn spawn_intent_digest(
         ))
     })?;
     let digest = blake3::hash(&bytes);
+    // SPAWN-KNOB: a child's power request joins its intent only when it
+    // names one, so every spawn without one keeps its digest.
+    let digest = match &spawn.powers {
+        Some(powers) => {
+            let powers = serde_json::to_vec(powers).map_err(|_| {
+                Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "spawn powers cannot be encoded",
+                ))
+            })?;
+            blake3::Hasher::new()
+                .update(POWERS_INTENT_DOMAIN)
+                .update(digest.as_bytes())
+                .update(&powers)
+                .finalize()
+        }
+        None => digest,
+    };
     // FIX 7766: a root's selected funding Grant joins its intent only when
     // it has one, so every spawn without one keeps its digest.
     Ok(match funding {
@@ -74,6 +91,8 @@ fn spawn_intent_digest(
 
 /// Domain of a funded spawn's intent digest (FIX 7766).
 const FUNDING_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.funding_intent.v1";
+/// SPAWN-KNOB: the domain a child's power request joins its spawn intent under.
+const POWERS_INTENT_DOMAIN: &[u8] = b"oneiron.agent_dispatch.powers_intent.v1";
 
 /// The owner's selection of a root launch's funding Grant (FIX 7766): who
 /// selected it, proved in the dispatch writer, and the Grant.
@@ -359,6 +378,14 @@ impl<'a> AgentDispatcher<'a> {
         }
         let requested_parent = input.parent_attempt;
         let requested_ref = input.target.agent_definition_ref()?;
+        // SPAWN-KNOB: the parent's powers decide the child before any
+        // reservation or enqueue; the grant it is born with lands below.
+        let child_powers = self.child_powers_in_txn(
+            wtxn,
+            requested_parent,
+            requested_ref,
+            spawn.powers.unwrap_or_default(),
+        )?;
         let spend = spawn.spend.clone();
         let budget = spawn.budget;
         let token_ceiling = spawn.token_ceiling;
@@ -430,6 +457,14 @@ impl<'a> AgentDispatcher<'a> {
                     dispatch_input.funding.clone(),
                     input.now,
                 )?;
+                if let Some(powers) = child_powers {
+                    crate::agent_def::stage_agent_powers_in_txn(
+                        &self.vault.store,
+                        wtxn,
+                        AgentPowerTarget::Attempt(status.attempt.id),
+                        powers,
+                    )?;
+                }
                 if let Some(case) = &dispatch_input.healer_case {
                     crate::failure_ladder::oversight::opened_in_txn(
                         self.vault,
@@ -795,6 +830,48 @@ impl<'a> AgentDispatcher<'a> {
         };
         Self::ensure_dispatchable_definition(*id, &definition)?;
         Ok(definition)
+    }
+
+    /// The grant a child of `parent` is born with (SPAWN-KNOB): the parent
+    /// instance's powers met with `target`'s root grant and the parent's
+    /// request. `None` for a root, and for a child whose parent is no agent's
+    /// attempt (an engine job's).
+    ///
+    /// # Errors
+    ///
+    /// A Gate deny when the parent's `spawn` is off
+    /// (`gate.deny.agent_power.spawn_off`) or the request asks a power the
+    /// parent does not hold (`gate.deny.agent_power.above_parent`).
+    pub(super) fn child_powers_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: Option<AttemptId>,
+        target: EntityId,
+        requested: ChildPowerRequest,
+    ) -> Result<Option<AgentPowers>> {
+        let Some(parent) = parent else {
+            return Ok(None);
+        };
+        let Some(parent_input) = self.parent_dispatch_input_in_txn(txn, parent)? else {
+            return Ok(None);
+        };
+        let (held, _) = crate::agent_def::effective_agent_powers_in_txn(
+            &self.vault.store,
+            txn,
+            parent_input.target.agent_definition_ref()?,
+            Some(AgentPowerTarget::Attempt(parent)),
+        )?;
+        if !held.spawn {
+            return Err(crate::agent_def::power_refusal(crate::agent_def::SPAWN_OFF));
+        }
+        let root = crate::agent_def::agent_powers_in_txn(
+            &self.vault.store,
+            txn,
+            AgentPowerTarget::Agent(target),
+        )?;
+        crate::agent_def::child_agent_powers(held, root, requested)
+            .map(Some)
+            .map_err(crate::agent_def::power_refusal)
     }
 
     /// The parent attempt's decoded dispatch input, read outside any caller
