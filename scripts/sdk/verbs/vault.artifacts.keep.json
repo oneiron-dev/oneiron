@@ -8,6 +8,7 @@
   "output": "crate::blob_artifact::KeptProposal",
   "call": "memory.artifacts_keep(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {},
   "section": false,
   "binding": {

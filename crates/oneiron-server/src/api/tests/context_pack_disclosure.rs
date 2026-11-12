@@ -719,6 +719,8 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         member_ids: roster.roster.clone(),
         claims_scope_ref: roster.claims_scope_ref.clone(),
         origin: None,
+        pins: Vec::new(),
+        pin_policy: Default::default(),
     };
     // A public batch can submit the exact derived room beside its PROJECT
     // edit; the owner-signed birth above admitted the PROJECT itself.
@@ -1063,6 +1065,8 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
         member_ids: roster.roster.clone(),
         claims_scope_ref: roster.claims_scope_ref.clone(),
         origin: None,
+        pins: Vec::new(),
+        pin_policy: Default::default(),
     };
     server
         .vault

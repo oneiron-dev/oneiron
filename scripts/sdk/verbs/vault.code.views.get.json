@@ -5,6 +5,7 @@
   "output": "crate::memory::code_view_doors::CodeWorkingView",
   "call": "memory.code_view_get_as(&memory.embedded_owner(\"vault.code.views.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

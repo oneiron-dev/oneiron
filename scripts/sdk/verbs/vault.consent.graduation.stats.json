@@ -5,6 +5,7 @@
   "output": "Option<crate::consent_graduation::api::GraduationStats>",
   "call": "crate::consent_graduation::api::stats(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.stats\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

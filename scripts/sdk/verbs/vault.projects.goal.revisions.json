@@ -1,10 +1,11 @@
 {
   "name": "vault.projects.goal.revisions",
-  "description": "The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first.",
+  "description": "A project's goal in force, the learned preferences proposed under it and not dismissed, and every full goal proposal with its status, oldest first.",
   "input": "ProjectRefRequest",
-  "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
+  "output": "crate::workspace_roster::ProjectGoalRevisionsView",
   "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
