@@ -520,6 +520,10 @@ impl Memory<'_> {
         let (type_ref, stale_pins) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             observe_key_in(self.vault(), &txn, &post.intent_key, task_ref);
+            // Plan mode, before the pin checks: a plan-doc pinned at a
+            // revision the owner has not approved is a plan refusal, not a
+            // moved pin.
+            self.require_approved_plan_pins_in(&txn, &post.brief)?;
             let stale_pins = if copy.is_some() {
                 post.brief
                     .validate_copy_in(self.vault(), &txn, Some(post.assignee))?
@@ -528,7 +532,6 @@ impl Memory<'_> {
                     .validate_in(self.vault(), &txn, Some(post.assignee))?;
                 Vec::new()
             };
-            self.require_approved_plan_pins_in(&txn, &post.brief)?;
             (
                 brief_type_ref_in(self.vault(), &txn, &post.brief)?,
                 stale_pins,
