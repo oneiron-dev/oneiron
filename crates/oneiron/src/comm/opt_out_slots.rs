@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use super::claims::{CommResult, PREDICATE_COMM_OPT_OUT};
 use super::parties::active_comm_party_key_in_txn;
 use super::projection_writes::matching_claims_in_txn;
-use super::records::{CommRecord, put_comm_record_in_txn};
+use super::records::{CommEventKind, CommRecord, put_comm_record_in_txn};
 use crate::Vault;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
@@ -79,6 +79,45 @@ pub(super) fn pending_clear_request_at(
         }
         _ => None,
     }
+}
+
+/// The restrictive-wins rule of the clear flow: a STOP that occurred at
+/// `stop_at` makes a clear requested at `request_at` stale when it occurred at
+/// or after the request. Approval authorizes the request, not the current
+/// state, so the restriction forces a fresh request. The approval in `consent`
+/// and the projector's gate consume both decide by this rule.
+pub(super) fn stop_supersedes_clear_request(stop_at: u64, request_at: u64) -> bool {
+    stop_at >= request_at
+}
+
+/// Whether `record` is an inbound STOP on one of `subjects` for the
+/// normalized `channel_class` that re-asserts the opt-out past the newest
+/// standing head (`newest_head`) and supersedes a clear requested at
+/// `request_at`.
+///
+/// The `projected` flag is not read. A STOP recorded here but not projected
+/// yet is the party's word as much as a projected one: an approval that let
+/// it pass would close the slot at the ruling, and the STOP's own projection,
+/// landing behind that boundary, would be retracted for good (FIX 22384).
+/// The event keeps its source spelling, so it is compared normalized, as the
+/// projector reads it (F06 R3-F3).
+pub(super) fn recorded_stop_supersedes_clear(
+    record: &CommRecord,
+    subjects: &BTreeSet<EntityId>,
+    channel_class: &str,
+    request_at: u64,
+    newest_head: u64,
+) -> bool {
+    matches!(record, CommRecord::Event {
+        kind: CommEventKind::InboundStop,
+        party_ref,
+        channel_class: Some(event_channel),
+        occurred_at,
+        ..
+    } if subjects.contains(party_ref)
+        && normalize_channel_class(event_channel) == channel_class
+        && *occurred_at > newest_head
+        && stop_supersedes_clear_request(*occurred_at, request_at))
 }
 
 /// Marks each pending clear gate consumed, keeping what it recorded.
