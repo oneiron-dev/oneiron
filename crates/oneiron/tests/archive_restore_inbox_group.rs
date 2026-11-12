@@ -29,7 +29,11 @@
 //! on the base, where the page lists no restore group and `restore` is no kind.
 //! Public doors and the Dreamer's test door; neutral fixtures (`owen`); vaults
 //! in tempdirs; each destination opens at least one wall-clock second after
-//! its source (sleep 1100 ms), as in `whole_vault_restore_seeds.rs`.
+//! its source (sleep 1100 ms), as in `whole_vault_restore_seeds.rs`. The
+//! destination of each owner restore is rooted under a host first, which binds
+//! its owner under the root, as a served vault is: the run review doors that
+//! answer and revert the group act only for the root owner (`verify_owner`),
+//! as in `owner_approval_criticality_floor.rs`.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -40,6 +44,7 @@ use std::io::Cursor;
 use std::time::Instant;
 
 use oneiron::agent_inbox_lens::InboxRunGroupsRequest;
+use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::inbox::InboxGroupResolveRequest;
 use oneiron::memory::run_review::RevertRunRequest;
@@ -212,8 +217,26 @@ fn open_later_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-/// The archive restored as the destination's bound owner: the vault, its
-/// owner, the owner's proof and the restore receipt's ref.
+/// `vault` rooted under a host, which binds its embedded owner under the
+/// root (H149), with this install's signing keys loaded.
+fn root_under_a_host(vault: &Vault) {
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("the destination's embedded owner");
+    let issuer =
+        HostSlipIssuer::from_secret(b"archive-restore-inbox-group").expect("fixture host issuer");
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("the host root binds the owner");
+}
+
+/// The archive restored as the destination's bound owner, into a destination
+/// rooted under a host: the vault, its owner, the owner's proof and the
+/// restore receipt's ref.
 fn restore_as_owner(
     archive: &[u8],
 ) -> (
@@ -224,6 +247,7 @@ fn restore_as_owner(
     String,
 ) {
     let (dir, dest) = open_later_vault();
+    root_under_a_host(&dest);
     let owner = owner_proof(&dest);
     let dest_owner = dest
         .ensure_embedded_owner_actor()
@@ -570,6 +594,11 @@ fn a_restore_of_2000_claims_about_one_person_times_its_page_read() {
     let started = Instant::now();
     let group = the_restore_group(&memory, &owner, &receipt_ref);
     let page_read = started.elapsed();
+    // Printed before the answer, so a refused answer still reports the read.
+    println!(
+        "## R6-PAGE-READ claims={CLAIMS} page_read_ms={}",
+        page_read.as_millis()
+    );
     assert!(
         group["open_members"].as_u64().expect("open_members") >= CLAIMS as u64,
         "{group:#}"
