@@ -61,28 +61,26 @@ impl Memory<'_> {
         ))
     }
 
-    /// [`Self::evaluate_deletion_gate`] for an archive delete (OF-449 L4):
-    /// `authority` is read in the gate's own snapshot in place of the owner
-    /// binding, and the decision record states the role and Grant it
-    /// admitted. [`Self::evaluate_deletion_gate`] is unchanged.
-    pub(in crate::memory) fn evaluate_archive_delete_gate(
+    /// [`Self::evaluate_deletion_gate`] for a delete the delete authority
+    /// admits (ARCH-0043 DEL-2; the archive door, OF-449 L4): `authority` is
+    /// read in the gate's own snapshot in place of the owner binding, and
+    /// the decision record states the role and Grant it admitted and the
+    /// `door`. [`Self::evaluate_deletion_gate`] is unchanged.
+    pub(in crate::memory) fn evaluate_admitted_delete_gate(
         &self,
-        authority: &dyn Fn(
-            &heed::RoTxn<'_>,
-        ) -> MemoryResult<crate::federation::ArchiveDeleteAuthority>,
-    ) -> MemoryResult<(
-        DeletionGateContext,
-        crate::federation::ArchiveDeleteAuthority,
-    )> {
+        authority: &dyn Fn(&heed::RoTxn<'_>) -> MemoryResult<crate::federation::DeleteAuthority>,
+        door: crate::deletion::AdmittedDeleteDoor,
+    ) -> MemoryResult<(DeletionGateContext, crate::federation::DeleteAuthority)> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let admitted = authority(&rtxn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
-        let context = DeletionGateContext::new_archive(
+        let context = DeletionGateContext::new_admitted(
             self.actor,
             self.actor_class,
             crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
             admitted,
+            door,
         );
         Ok((context, admitted))
     }

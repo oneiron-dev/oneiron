@@ -136,7 +136,9 @@ pub(crate) use erase::{
     clear_held_ask_forward_intent_in_txn, held_ask_forward_intents_in_txn,
     owe_held_ask_forward_intents_in_txn,
 };
-pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
+pub(crate) use gate::{
+    AdmittedDeleteDoor, DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority,
+};
 pub(crate) use receipt::decode_redaction_audit_receipt;
 // A corrupt CLAIM's repair event is no erase receipt (FIX 7800).
 pub(crate) use receipt::is_corrupt_claim_repair_event;

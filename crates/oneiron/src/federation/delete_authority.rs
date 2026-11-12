@@ -1,5 +1,7 @@
-//! Who may delete one record the cleanup archived (ARCH-0073 §7, OF-449 L4),
-//! judged from the vault's own rows in the caller's snapshot.
+//! Who may delete one record (ARCH-0043 DEL-2, owner 9 Oct; ARCH-0073 §7,
+//! OF-449 L4), judged from the vault's own rows in the caller's snapshot.
+//! Every non-owner delete reads it: the cleanup archive's door and a
+//! record's own (`Memory::safe_delete` once the owner predicate refuses).
 //!
 //! The live Owner deletes anything its bound credential reaches. An Admin
 //! or a Deputy deletes what the resource axes of its live membership grant
@@ -12,7 +14,7 @@
 //! under ONE live Grant that names the `delete` class and holds the record,
 //! given by a live Owner or by an Admin still holding it. No second
 //! permission ledger is kept, and nothing a request carries asserts a role,
-//! an owner or a Grant: the answer is a sealed [`ArchiveDeleteAuthority`],
+//! an owner or a Grant: the answer is a sealed [`DeleteAuthority`],
 //! read again in each write that deletes.
 
 use std::collections::BTreeSet;
@@ -38,16 +40,16 @@ const DELETE_VERB: &str = "delete";
 
 pub(crate) use crate::deletion::archive_role::ArchiveDeleteRole;
 
-/// One record's admitted archive delete: the role, and the grant that
-/// admitted it when one did. Only [`require_archive_delete_in_txn`] builds
+/// One record's admitted delete: the role, and the grant that
+/// admitted it when one did. Only [`require_delete_authority_in_txn`] builds
 /// one, so no caller can assert it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ArchiveDeleteAuthority {
+pub(crate) struct DeleteAuthority {
     role: ArchiveDeleteRole,
     grant: Option<EntityId>,
 }
 
-impl ArchiveDeleteAuthority {
+impl DeleteAuthority {
     /// The role this delete was admitted under.
     pub(crate) const fn role(&self) -> ArchiveDeleteRole {
         self.role
@@ -63,79 +65,109 @@ impl ArchiveDeleteAuthority {
 /// Who asks: the actor and class a host bound, and the credential it
 /// verified for that actor, if any. Identity, never authority.
 #[derive(Clone, Copy)]
-pub(crate) struct ArchiveDeleteCaller<'a> {
+pub(crate) struct DeleteCaller<'a> {
     pub(crate) actor: EntityId,
     pub(crate) class: EdgeActorClass,
     pub(crate) credential: Option<&'a VerifiedSlip>,
 }
 
-/// Why one archived record may not be deleted by this caller. Each refuses
-/// that record alone.
+/// Why one record may not be deleted by this caller. Each refuses that
+/// record alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArchiveDeleteRefusal {
+pub(crate) enum DeleteRefusal {
     /// The person holds no live write binding; a root bound to no PERSON
     /// is no one here.
     Unbound,
-    /// No role or Grant this caller holds deletes this record.
+    /// The person holds no membership role in this vault that deletes (a
+    /// personal vault has none), or no such record is stored.
     NoStanding,
+    /// A Member, Steward or Admin role deletes only an item it owns, and
+    /// this caller does not own this one.
+    NotOwnerOfItem,
+    /// An Admin role holds no live grant whose resource axes hold this
+    /// record, and the caller does not own it.
+    OutOfAdminScope,
+    /// The agent holds no one live Grant that names `delete`, holds this
+    /// record and was given by a live Owner or an Admin still holding it.
+    NoDeleteGrant,
     /// The bound credential does not reach this record.
     CredentialBounds,
     /// A row this check reads could not be read.
     Unreadable(ErrorKind),
 }
 
-impl ArchiveDeleteRefusal {
+impl DeleteRefusal {
+    /// The refusal's code, the reason a typed refusal names.
+    pub(crate) const fn code(self) -> &'static str {
+        match self {
+            Self::Unbound => "unbound",
+            Self::NoStanding => "no_standing",
+            Self::NotOwnerOfItem => "not_owner_of_item",
+            Self::OutOfAdminScope => "out_of_admin_scope",
+            Self::NoDeleteGrant => "no_delete_grant",
+            Self::CredentialBounds => "credential_bounds",
+            Self::Unreadable(_) => "unreadable",
+        }
+    }
+
     /// The refusal's text; its code leads it.
     pub(crate) fn message(self) -> String {
-        match self {
-            Self::Unbound => {
-                "archive_delete_unbound: the caller holds no live authority binding".to_owned()
+        let text = match self {
+            Self::Unbound => "the caller holds no live authority binding".to_owned(),
+            Self::NoStanding => {
+                "the caller holds no role in this vault that deletes this record".to_owned()
             }
-            Self::NoStanding => "archive_delete_no_standing: no role or Grant the caller holds \
-                                 deletes this archived record"
-                .to_owned(),
-            Self::CredentialBounds => {
-                "archive_delete_credential_bounds: the bound credential does not reach this \
-                 archived record"
+            Self::NotOwnerOfItem => {
+                "a Member deletes only a NOTE or TASK it owns, and this caller does not own \
+                 this record"
                     .to_owned()
             }
-            Self::Unreadable(kind) => format!(
-                "archive_delete_unreadable: the authority for this archived record could not be \
-                 read ({kind:?})"
-            ),
-        }
+            Self::OutOfAdminScope => {
+                "no Admin grant the caller holds holds this record, and the caller does not \
+                 own it"
+                    .to_owned()
+            }
+            Self::NoDeleteGrant => "the agent holds no live Grant that names delete and holds \
+                                    this record"
+                .to_owned(),
+            Self::CredentialBounds => "the bound credential does not reach this record".to_owned(),
+            Self::Unreadable(kind) => {
+                format!("the authority for this record could not be read ({kind:?})")
+            }
+        };
+        format!("{}: {text}", self.code())
     }
 }
 
-/// The authority `caller` holds in `txn` to delete the archived `target`.
+/// The authority `caller` holds in `txn` to delete `target`.
 ///
 /// The Owner arm runs first and counts every live owner of the vault,
 /// co-owners included (`policy_model::owners_in_txn`), with no clearance
 /// term: an Owner deletes any record its bound credential reaches. A person
 /// must first hold a live write binding, so a root bound to no PERSON gets
 /// no role. A failure to read the credential check or any other arm refuses
-/// this record alone ([`ArchiveDeleteRefusal::Unreadable`]).
+/// this record alone ([`DeleteRefusal::Unreadable`]).
 ///
 /// # Errors
 /// A store or fold failure of the binding or owners read, as the owner's
 /// own delete path meets. A missing or unbound person, or a fold with two
-/// roots, is [`ArchiveDeleteRefusal::Unbound`].
-pub(crate) fn require_archive_delete_in_txn(
+/// roots, is [`DeleteRefusal::Unbound`].
+pub(crate) fn require_delete_authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    caller: ArchiveDeleteCaller<'_>,
+    caller: DeleteCaller<'_>,
     target: EntityId,
-) -> Result<std::result::Result<ArchiveDeleteAuthority, ArchiveDeleteRefusal>> {
+) -> Result<std::result::Result<DeleteAuthority, DeleteRefusal>> {
     if caller.class == EdgeActorClass::Human {
         match vault.verify_write_actor_in_txn(txn, &WriteActor::new(caller.actor, caller.class)) {
             Ok(_) => {}
             Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
-                return Ok(Err(ArchiveDeleteRefusal::Unbound));
+                return Ok(Err(DeleteRefusal::Unbound));
             }
             Err(error) => return Err(error),
         }
         if crate::policy_model::owners_in_txn(vault, txn)?.contains(&caller.actor) {
-            let owner = ArchiveDeleteAuthority {
+            let owner = DeleteAuthority {
                 role: ArchiveDeleteRole::Owner,
                 grant: None,
             };
@@ -147,39 +179,45 @@ pub(crate) fn require_archive_delete_in_txn(
             };
             return Ok(match reaches {
                 Ok(true) => Ok(owner),
-                Ok(false) => Err(ArchiveDeleteRefusal::CredentialBounds),
-                Err(error) => Err(ArchiveDeleteRefusal::Unreadable(error.kind())),
+                Ok(false) => Err(DeleteRefusal::CredentialBounds),
+                Err(error) => Err(DeleteRefusal::Unreadable(error.kind())),
             });
         }
     }
     Ok(other_arms(vault, txn, caller, target)
-        .unwrap_or_else(|error| Err(ArchiveDeleteRefusal::Unreadable(error.kind()))))
+        .unwrap_or_else(|error| Err(DeleteRefusal::Unreadable(error.kind()))))
 }
 
 /// The Admin, Member and agent arms, then the bound credential.
 fn other_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    caller: ArchiveDeleteCaller<'_>,
+    caller: DeleteCaller<'_>,
     target: EntityId,
-) -> Result<std::result::Result<ArchiveDeleteAuthority, ArchiveDeleteRefusal>> {
+) -> Result<std::result::Result<DeleteAuthority, DeleteRefusal>> {
     let Some(record) = TargetRecord::read_in(vault, txn, target)? else {
-        return Ok(Err(ArchiveDeleteRefusal::NoStanding));
+        return Ok(Err(match caller.class {
+            EdgeActorClass::Human => DeleteRefusal::NoStanding,
+            EdgeActorClass::Agent | EdgeActorClass::System => DeleteRefusal::NoDeleteGrant,
+        }));
     };
     let admitted = match caller.class {
         EdgeActorClass::Human => person_arms(vault, txn, caller.actor, &record)?,
-        EdgeActorClass::Agent | EdgeActorClass::System => agent_arm(vault, txn, caller, &record)?,
+        EdgeActorClass::Agent | EdgeActorClass::System => {
+            agent_arm(vault, txn, caller, &record)?.ok_or(DeleteRefusal::NoDeleteGrant)
+        }
     };
-    let Some(admitted) = admitted else {
-        return Ok(Err(ArchiveDeleteRefusal::NoStanding));
+    let admitted = match admitted {
+        Ok(admitted) => admitted,
+        Err(refusal) => return Ok(Err(refusal)),
     };
     if !credential_reaches(vault, txn, caller, Some(&record), false)? {
-        return Ok(Err(ArchiveDeleteRefusal::CredentialBounds));
+        return Ok(Err(DeleteRefusal::CredentialBounds));
     }
     Ok(Ok(admitted))
 }
 
-/// The archived record as `txn` holds it: its kind, body and the position
+/// The record as `txn` holds it: its kind, body and the position
 /// the scoped doors select it at. `None` where no row is stored.
 struct TargetRecord {
     id: EntityId,
@@ -195,10 +233,10 @@ impl TargetRecord {
             return Ok(None);
         };
         let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("archived record header"))?;
+            .ok_or(Error::CorruptedIndex("deleted record header"))?;
         let body = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("archived record header"))?
+            .ok_or(Error::CorruptedIndex("deleted record header"))?
             .to_vec();
         let position = super::record_scope::disclosure_scope_for_stored_row(
             &vault.store,
@@ -230,19 +268,23 @@ impl TargetRecord {
 /// An Admin's in-scope delete, a Steward's in-scope delete under the
 /// `delete` class its grant names, else an Admin's, a Steward's or a
 /// Member's own item, each under one live membership grant over this shared
-/// vault. A personal vault has no membership roles.
+/// vault. A personal vault has no membership roles. The refusal names the
+/// role the person holds: none, an Admin role out of scope, or a role that
+/// deletes only its own items.
 fn person_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person: EntityId,
     record: &TargetRecord,
-) -> Result<Option<ArchiveDeleteAuthority>> {
+) -> Result<std::result::Result<DeleteAuthority, DeleteRefusal>> {
     let Some(shared) = vault.shared_vault_creation_in_txn(txn)? else {
-        return Ok(None);
+        return Ok(Err(DeleteRefusal::NoStanding));
     };
     let scope = FederationGrantScope::vault(shared.vault_id);
     let mut owns = None;
     let mut own_grant = None;
+    let mut holds_role = false;
+    let mut holds_admin = false;
     for (id, grant) in live_grants_in(vault, txn)? {
         if grant.member_ref != person || grant.scope != scope {
             continue;
@@ -262,6 +304,8 @@ fn person_arms(
         ) {
             continue;
         }
+        holds_role = true;
+        holds_admin |= role.is_admin();
         if role == FederationGrantRole::Steward
             && names_delete(&grant.authority_scope)
             && record.position.as_ref().is_some_and(|position| {
@@ -272,7 +316,7 @@ fn person_arms(
                 )
             })
         {
-            return Ok(Some(ArchiveDeleteAuthority {
+            return Ok(Ok(DeleteAuthority {
                 role: ArchiveDeleteRole::Steward,
                 grant: Some(id),
             }));
@@ -283,7 +327,7 @@ fn person_arms(
                 .as_ref()
                 .is_some_and(|position| role_axes_admit(&grant.authority_scope, position))
         {
-            return Ok(Some(ArchiveDeleteAuthority {
+            return Ok(Ok(DeleteAuthority {
                 role: ArchiveDeleteRole::Admin,
                 grant: Some(id),
             }));
@@ -298,10 +342,15 @@ fn person_arms(
             }
         }
     }
-    Ok(own_grant.map(|grant| ArchiveDeleteAuthority {
-        role: ArchiveDeleteRole::Member,
-        grant: Some(grant),
-    }))
+    Ok(match own_grant {
+        Some(grant) => Ok(DeleteAuthority {
+            role: ArchiveDeleteRole::Member,
+            grant: Some(grant),
+        }),
+        None if !holds_role => Err(DeleteRefusal::NoStanding),
+        None if holds_admin => Err(DeleteRefusal::OutOfAdminScope),
+        None => Err(DeleteRefusal::NotOwnerOfItem),
+    })
 }
 
 /// Whether `person` provably owns `record`: a TASK by its Owner fact, a NOTE
@@ -336,9 +385,9 @@ fn owned_by(
 fn agent_arm(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    caller: ArchiveDeleteCaller<'_>,
+    caller: DeleteCaller<'_>,
     record: &TargetRecord,
-) -> Result<Option<ArchiveDeleteAuthority>> {
+) -> Result<Option<DeleteAuthority>> {
     if !crate::authority::live_agent_principal_in(&vault.store, txn, caller.actor, caller.class)? {
         return Ok(None);
     }
@@ -379,7 +428,7 @@ fn agent_arm(
         if !issuer_stands || (shared && pact_lapsed(vault, txn, id, &grant)?) {
             continue;
         }
-        return Ok(Some(ArchiveDeleteAuthority {
+        return Ok(Some(DeleteAuthority {
             role: ArchiveDeleteRole::Agent,
             grant: Some(id),
         }));
@@ -447,7 +496,7 @@ fn pact_lapsed(
 fn credential_reaches(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    caller: ArchiveDeleteCaller<'_>,
+    caller: DeleteCaller<'_>,
     record: Option<&TargetRecord>,
     owner: bool,
 ) -> Result<bool> {
