@@ -293,9 +293,10 @@ async fn stub_extract(
     }
 }
 
-/// An endpoint section in shadow mode, with a short timeout and no retry
-/// backoff so a test can watch every attempt. Its vault ([`open_vault`]) is
-/// armed in shadow too.
+/// An endpoint section in shadow mode, with a short timeout and the shortest
+/// retry backoff the section admits (one second: `validate` refuses a zero
+/// first delay, and `build_slot` validates since 68071b65132), so a test can
+/// watch every attempt. Its vault ([`open_vault`]) is armed in shadow too.
 pub(super) fn endpoint_config(base: &str) -> OneironerConfig {
     OneironerConfig {
         provider: OneironerProvider::Endpoint,
@@ -306,8 +307,8 @@ pub(super) fn endpoint_config(base: &str) -> OneironerConfig {
         labels: [("PERSON".to_owned(), "PERSON".to_owned())].into(),
         timeout_ms: 500,
         idle_interval_ms: 1_000,
-        retry_backoff_secs: 0,
-        max_retry_backoff_secs: 0,
+        retry_backoff_secs: 1,
+        max_retry_backoff_secs: 1,
         ..OneironerConfig::default()
     }
 }
