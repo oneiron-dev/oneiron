@@ -960,6 +960,29 @@ pub(super) fn seed_reactive_turn(vault: &oneiron::Vault, id: &oneiron::EntityId,
         .expect("seed reactive turn");
 }
 
+/// A TURN whose body is the canonical empty `txt` map: the sync plane births
+/// its document lazily on the first edit (FIX 11794). Any other TURN body
+/// stays on the sequence-row plane, which has no head document to edit.
+pub(super) fn seed_reactive_document_turn(
+    vault: &oneiron::Vault,
+    id: &oneiron::EntityId,
+    learned_at: u64,
+) {
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"txt": ""})).unwrap();
+    vault
+        .put_entity(
+            id,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        )
+        .expect("seed reactive document turn");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ONE-1704 MATERIAL7 — fail-closed acceptance
 // ═══════════════════════════════════════════════════════════════════════════

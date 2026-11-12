@@ -346,7 +346,9 @@ async fn a_lag_reexports_each_selector_document_from_its_last_version() {
             registry::ENTITY_TYPE_TURN,
             TimeRange { start: 1, end: 1 },
             1,
-            b"placeholder turn",
+            // A canonical empty txt map: its document is born on the first
+            // edit (FIX 11794).
+            &rmp_serde::to_vec_named(&serde_json::json!({"txt": ""})).unwrap(),
         )
         .unwrap();
     vault

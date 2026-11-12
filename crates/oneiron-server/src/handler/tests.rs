@@ -3100,7 +3100,9 @@ async fn document_batch_exchange(version: u8) {
                 oneiron::registry::ENTITY_TYPE_TURN,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
-                b"ledger",
+                // A canonical empty txt map: both vaults birth the same
+                // document on its first edit (FIX 11794, FIX 11795).
+                &rmp_serde::to_vec_named(&serde_json::json!({"txt": ""})).unwrap(),
             )
             .unwrap();
         vault

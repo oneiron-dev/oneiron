@@ -503,7 +503,9 @@ fn selector_documents(
             oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
         )
         .unwrap();
-    let ids = [b"placeholder one", b"placeholder two"].map(|body| {
+    // Canonical txt maps: each TURN's document is born lazily (FIX 11794).
+    let ids = ["placeholder one", "placeholder two"].map(|text| {
+        let body = rmp_serde::to_vec_named(&serde_json::json!({ "txt": text })).unwrap();
         let id = EntityId::now();
         vault
             .put_entity(
@@ -511,7 +513,7 @@ fn selector_documents(
                 registry::ENTITY_TYPE_TURN,
                 TimeRange { start: 1, end: 1 },
                 1,
-                body,
+                &body,
             )
             .unwrap();
         vault
