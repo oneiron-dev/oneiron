@@ -185,6 +185,24 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
             let pointer = Some((quote.target_turn, quote.anchor));
             facts.extend(fact_in(vault, &txn, reply, citer, pointer, turn.at)?);
         }
+        // A plain thread reply's row keeps no quote: its TURN's own reply
+        // pointer holds it (THREAD-TASK-ONE-SURFACE). A witness turn that
+        // quotes keeps every quote in its row instead.
+        if turn.quotes.is_empty()
+            && let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_TURN,
+                body,
+            } = live_entity_row_in_txn(&vault.store, &txn, &reply)?
+        {
+            facts.extend(fact_in(
+                vault,
+                &txn,
+                reply,
+                reply,
+                read_pointer(&body)?,
+                turn.at,
+            )?);
+        }
         facts.extend(message_facts_in(vault, &txn, reply, turn.at, &cited)?);
     }
     // A native append lands no room row, so only the DAG chain holds it.
