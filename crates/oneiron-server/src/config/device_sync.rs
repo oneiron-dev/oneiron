@@ -54,6 +54,12 @@ pub struct DeviceSyncConfig {
     /// while its Dreamer runs. Off by default.
     #[serde(default)]
     pub primary: bool,
+    /// The file still names the removed `worlds` key. Its value is read and
+    /// dropped; `validate` refuses the section and names what replaced the
+    /// key. A parse failure prints no message (FIX 9477), so the key parses
+    /// and the refusal is a validation error.
+    #[serde(default, rename = "worlds", deserialize_with = "key_present")]
+    names_removed_worlds: bool,
 }
 
 /// A home named by hand: all three of its fields.
@@ -82,6 +88,11 @@ impl DeviceSyncConfig {
     }
 
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.names_removed_worlds,
+            "`[device_sync] worlds` was removed; set a device's projects with \
+             vault.residence.worlds"
+        );
         if let Some(home) = self.named_home()? {
             validate_home_url(home.url)
                 .map_err(|error| anyhow::anyhow!("[device_sync] {error}"))?;
@@ -92,6 +103,12 @@ impl DeviceSyncConfig {
         );
         Ok(())
     }
+}
+
+/// True for a key the file names, whatever its value; the value is read and
+/// dropped.
+fn key_present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| true)
 }
 
 /// A home's MACHINE id.
