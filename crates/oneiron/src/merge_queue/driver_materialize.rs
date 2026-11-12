@@ -206,20 +206,30 @@ impl QueueStageOverlap {
         batch: &MergeBatch,
         retained: &[MergeBatch],
     ) -> Result<QueueOverlapFinding> {
-        // A source already handed off and superseded, or one whose handoff
-        // this batch's own TASK resolves, is no new overlap.
+        // A source already handed off and superseded, or one whose open
+        // conflict this batch's own proposals resolve, is no new overlap. The
+        // resolution is matched by its conflict, not by the TASK it runs
+        // under (RULING CODECUSTODY-RECONCILE-SUCCESSOR = A).
+        let mut resolving = BTreeSet::new();
+        for proposal in &batch.proposals {
+            let Ok(id) = EntityId::from_hex(&proposal.id) else {
+                continue;
+            };
+            if let Some(row) = queue.vault.repo_proposal(id)?
+                && let RepoProposalOperation::ResolveConflictFile {
+                    open_conflict_claim_id,
+                    ..
+                } = row.operation
+            {
+                resolving.insert(open_conflict_claim_id);
+            }
+        }
         let resolved = |other: &MergeBatch| {
             other
                 .drive
                 .as_ref()
                 .and_then(|drive| drive.overlap.as_ref())
-                .is_some_and(|link| {
-                    link.superseded
-                        || batch
-                            .run_order
-                            .as_ref()
-                            .is_some_and(|order| link.task == Some(order.task))
-                })
+                .is_some_and(|link| link.superseded || resolving.contains(&link.conflict))
         };
         let peers = retained.iter().filter(|other| {
             other.id != batch.id
