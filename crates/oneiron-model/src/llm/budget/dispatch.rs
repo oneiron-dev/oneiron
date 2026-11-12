@@ -100,7 +100,7 @@ impl BudgetGuard {
             return Err(BudgetDenied::AdmissionDenied);
         }
         let mut state = self.lock_state();
-        let lease = state.issue_lease(0, false, "local", Some(binding));
+        let lease = state.issue_lease(0, false, "local", Some(binding))?;
         let read = state.read();
         Ok(BudgetAdmission {
             lease,
