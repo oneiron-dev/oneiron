@@ -171,6 +171,8 @@ impl Fixture {
         {
             EnqueueDreamerAttemptOutcome::Enqueued(status)
             | EnqueueDreamerAttemptOutcome::Existing(status) => status,
+            // The outcome enum is `#[non_exhaustive]` outside the crate.
+            other => panic!("unexpected enqueue outcome {other:?}"),
         };
         let run = DreamerRunContext {
             run_id: RUN_ID.to_owned(),
