@@ -3471,8 +3471,9 @@ function museRecall03AssertBaseFirst(
     if (storyIndex < baseIndex) {
       // Slot order only: which world each matching item carries, never its text.
       const order = hits.map((item) => (item.value_text.includes(baseSentinel) ? "base" : item.world === baseLabel ? "base-world" : "story"));
+      // FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY], fixed by #7216.
       throw new Error(
-        `MUSE-RECALL-03 ENGINE DEFECT 2026-11-12: FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY] P-RECALL-011 base section first (ARCH-0004 #world-scope); the pack partitions worlds only under the All scope, so a {story, include_base} recall stays flat in score order; base_index=${baseIndex} story_index=${storyIndex} order=${JSON.stringify(order)}`,
+        `MUSE-RECALL-03 P-RECALL-011 base section first (ARCH-0004 #world-scope): a story claim ranks before the base claim in a {story, include_base} recall; base_index=${baseIndex} story_index=${storyIndex} order=${JSON.stringify(order)}`,
       );
     }
     expect(storyIndex).toBeGreaterThan(baseIndex);
