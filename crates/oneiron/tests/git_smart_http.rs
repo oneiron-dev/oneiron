@@ -719,7 +719,10 @@ fn git_smart_http_binary_diff_push_streams_whole_through_landed_scan() {
         refusals.is_empty(),
         "binary bytes are scanned, never refused: {refusals:?}"
     );
-    assert_admitted_marked(&origin, "logo.png", "github_token", &blob);
+    // The mark in a binary blob names the generic env class
+    // (`gate.secret_scan.sensitive_env`), not the provider code a text blob
+    // gets: assert the secret-scan class, the path and the blob.
+    assert_admitted_marked(&origin, "logo.png", "gate.secret_scan.", &blob);
 }
 
 /// Added lines that begin with `++` and `+++ b/...` are content, not headers.
