@@ -62,7 +62,7 @@
   min-width: 0;
   overflow: hidden;
   font-size: var(--sl-t-place);
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.25;
   color: var(--sl-ink-1);
   text-overflow: ellipsis;

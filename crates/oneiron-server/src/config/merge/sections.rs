@@ -183,6 +183,12 @@ impl PartialServeConfig {
         if let Some(value) = self.allowed_origins {
             resolved.allowed_origins = normalize_list(value);
         }
+        if let Some(value) = self.house_role {
+            let Some(role) = oneiron::workspace_roster::parse_house_role(value.trim()) else {
+                anyhow::bail!("house_role must be member, steward, admin or owner");
+            };
+            resolved.house_role = Some(role);
+        }
         if let Some(value) = self.artifact_domains {
             resolved.artifact_domains = normalize_list(value);
         }

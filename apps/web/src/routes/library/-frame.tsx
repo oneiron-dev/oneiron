@@ -19,6 +19,7 @@ import {
   MicroSidebar,
   NeedsYou,
   PeopleTable,
+  Place,
   PlaceHead,
   SafelightRoot,
   Sidebar,
@@ -46,6 +47,7 @@ import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
 import { formatAnswerTime } from '~/design-system'
 import { GALLERY_THEMES } from './-themes'
 import { RoomHeadSection } from './-room'
+import { Face } from './-faces'
 
 /* Frame sections of the /library gallery: the sidebar, the microsidebar,
    the app frame on each theme, the vault switch, the activity list, the
@@ -634,9 +636,10 @@ function HomeHeadParts() {
 }
 
 /* Home's sidebar: the person's companion and the vault's lead, then
-   pinned, rooms and projects. The person is Owen. */
-function HomeSidebar({ specimen }: { specimen: string }) {
-  const [current, setCurrent] = React.useState('eiri')
+   pinned, rooms and projects. The person is Owen. `faces` shows the
+   companion and the lead by their pictures. */
+export function HomeSidebar({ specimen, defaultCurrent = 'eiri', faces = false }: { specimen: string; defaultCurrent?: string; faces?: boolean }) {
+  const [current, setCurrent] = React.useState(defaultCurrent)
   const row = (id: string, label: string, icon: IconName, extra: { shared?: boolean; childRows?: React.ReactNode } = {}) => (
     <Sidebar.Row key={id} id={id} icon={<Icon name={icon} />} label={label} current={current === id} onClick={() => setCurrent(id)} {...extra} />
   )
@@ -646,8 +649,14 @@ function HomeSidebar({ specimen }: { specimen: string }) {
         <HomeHeadParts />
       </Sidebar.Head>
       <Sidebar.Group id="top">
-        <Sidebar.Row id="eiri" glyph={line(EIRI)} label="eiri" current={current === 'eiri'} onClick={() => setCurrent('eiri')} />
-        <Sidebar.Row id="antevon" glyph={line(ANTEVON)} label="Antevon" current={current === 'antevon'} onClick={() => setCurrent('antevon')} />
+        <Sidebar.Row id="eiri" glyph={faces ? <Face who={EIRI} size={20} /> : line(EIRI)} label="eiri" current={current === 'eiri'} onClick={() => setCurrent('eiri')} />
+        <Sidebar.Row
+          id="antevon"
+          glyph={faces ? <Face who={ANTEVON} size={20} /> : line(ANTEVON)}
+          label="Antevon"
+          current={current === 'antevon'}
+          onClick={() => setCurrent('antevon')}
+        />
       </Sidebar.Group>
       <Sidebar.Group id="pinned" label="pinned">
         {row('acme-forecast', 'acme-forecast', 'hash', { shared: true })}
@@ -787,7 +796,7 @@ function sidebarFor(id: string, specimen: string): React.ReactNode | null {
    with its count, the vault, more; the divider; the pinned lenses (they
    reorder and unpin); the person at the foot. Alone, it stands on a
    window ground of its own with the readout under it. */
-function MicroSidebarDemo({
+export function MicroSidebarDemo({
   labels,
   current,
   onCurrent,
@@ -888,74 +897,75 @@ function MicroSidebarAlone({ labels, waiting, specimen }: { labels?: 'none' | 'w
   )
 }
 
-/* The person's companion room in the work area: the head, the day's
-   messages ending at the bottom, two asks in a needs-you card, and the
-   write box. */
+/* The person's companion in the work area, laid out with Place: the head
+   (a PlaceHead), the day's messages ending at the bottom, two asks in a
+   needs-you card, and the write box at the foot. */
 function RoomConversation({ specimen }: { specimen: string }) {
   const [sent, setSent] = React.useState<string[]>([])
   return (
-    <div className="lib-room" data-specimen={specimen}>
-      <PlaceHead icon={<Glyph glyph="wing" label="Eiri" size={24} />} title="eiri" />
-      <div className="lib-room-trunk">
-        <div className="lib-room-messages">
-          <DayDivider>Today</DayDivider>
-          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:02">
-            <MessageRow.Text>Morning. Two things wait on you. Metryon finished the store pull overnight.</MessageRow.Text>
-            <NeedsYou aria-label="needs you" className="lib-room-asks">
-              <NeedsYou.Group room="acme-forecast">
-                <NeedsYou.Ask
-                  id="promo"
-                  asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
-                  question="Should the fit treat weeks 44 to 46 as promo weeks?"
-                  note="Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline."
-                >
-                  <NeedsYou.Picks>
-                    <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
-                    <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
-                    <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
-                    <NeedsYou.OwnAnswer />
-                  </NeedsYou.Picks>
-                </NeedsYou.Ask>
-              </NeedsYou.Group>
-              <NeedsYou.Group room="the house">
-                <NeedsYou.Ask
-                  id="extracts"
-                  asker={<Glyph glyph="owl" label="Tory" size={20} />}
-                  question="Pull three paid registry extracts?"
-                  note="Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house."
-                >
-                  <NeedsYou.YesNo figure="¥2,400" />
-                </NeedsYou.Ask>
-              </NeedsYou.Group>
-            </NeedsYou>
+    <Place data-specimen={specimen}>
+      <Place.Head>
+        <PlaceHead icon={<Glyph glyph="wing" label="Eiri" size={24} />} title="eiri" />
+      </Place.Head>
+      <Place.Body>
+        <DayDivider>Today</DayDivider>
+        <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:02">
+          <MessageRow.Text>Morning. Two things wait on you. Metryon finished the store pull overnight.</MessageRow.Text>
+          <NeedsYou aria-label="needs you" className="lib-room-asks">
+            <NeedsYou.Group room="acme-forecast">
+              <NeedsYou.Ask
+                id="promo"
+                asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+                question="Should the fit treat weeks 44 to 46 as promo weeks?"
+                note="Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline."
+              >
+                <NeedsYou.Picks>
+                  <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+                  <NeedsYou.OwnAnswer />
+                </NeedsYou.Picks>
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+            <NeedsYou.Group room="the house">
+              <NeedsYou.Ask
+                id="extracts"
+                asker={<Glyph glyph="owl" label="Tory" size={20} />}
+                question="Pull three paid registry extracts?"
+                note="Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house."
+              >
+                <NeedsYou.YesNo figure="¥2,400" />
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+          </NeedsYou>
+        </MessageRow>
+        <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="09:10">
+          <MessageRow.Text>Check the supplier notes against the filings.</MessageRow.Text>
+        </MessageRow>
+        <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:10">
+          <MessageRow.Text>I gave this to Tory.</MessageRow.Text>
+        </MessageRow>
+        {sent.map((text, i) => (
+          <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
+            <MessageRow.Text>{text}</MessageRow.Text>
           </MessageRow>
-          <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="09:10">
-            <MessageRow.Text>Check the supplier notes against the filings.</MessageRow.Text>
-          </MessageRow>
-          <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:10">
-            <MessageRow.Text>I gave this to Tory.</MessageRow.Text>
-          </MessageRow>
-          {sent.map((text, i) => (
-            <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
-              <MessageRow.Text>{text}</MessageRow.Text>
-            </MessageRow>
-          ))}
-        </div>
-      </div>
-      <Composer
-        className="lib-room-write"
-        placeholder="Write to eiri"
-        persona={<Composer.Persona initial="o" note="You write as Owen. Saved in your own vault." aria-label="Owen" />}
-        onVoice={() => {}}
-        onDictate={() => {}}
-        onSend={(text) => setSent((s) => [...s.slice(-2), text])}
-      >
-        <Composer.Add label="Add to the message">
-          <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
-          <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
-        </Composer.Add>
-      </Composer>
-    </div>
+        ))}
+      </Place.Body>
+      <Place.Foot>
+        <Composer
+          placeholder="Write to eiri"
+          persona={<Composer.Persona initial="o" note="You write as Owen. Saved in your own vault." aria-label="Owen" />}
+          onVoice={() => {}}
+          onDictate={() => {}}
+          onSend={(text) => setSent((s) => [...s.slice(-2), text])}
+        >
+          <Composer.Add label="Add to the message">
+            <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+            <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+          </Composer.Add>
+        </Composer>
+      </Place.Foot>
+    </Place>
   )
 }
 
@@ -1077,7 +1087,22 @@ function PromoAsk({ id, answer, onAnswerChange, onOpen }: { id: string; answer: 
    beside the room as one thing (SplitPane.Thing), with its note and its
    thread. Writing in the pane starts the thread, and the ask in the talk
    then carries a thread line. */
-function BesideDemo({ width, height, withThread, specimen, caption }: { width: number; height: number; withThread: boolean; specimen: string; caption: string }) {
+function BesideDemo({
+  width,
+  height,
+  withThread,
+  writeTools = false,
+  specimen,
+  caption,
+}: {
+  width: number
+  height: number
+  withThread: boolean
+  /* The write box carries add and dictation (SplitPane.Thing writeBox). */
+  writeTools?: boolean
+  specimen: string
+  caption: string
+}) {
   const [current, setCurrent] = React.useState('home')
   const [sidebarOpen, setSidebarOpen] = React.useState(true)
   const [open, setOpen] = React.useState(true)
@@ -1155,6 +1180,20 @@ function BesideDemo({ width, height, withThread, specimen, caption }: { width: n
                   onClose={() => setOpen(false)}
                   note={PROMO_NOTE}
                   onSend={send}
+                  writeBox={
+                    writeTools
+                      ? {
+                          tools: 'always',
+                          onDictate: () => {},
+                          add: (
+                            <Composer.Add label="Add to the message">
+                              <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+                              <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
+                            </Composer.Add>
+                          ),
+                        }
+                      : undefined
+                  }
                   data-specimen={`${specimen}-thing`}
                   thread={thread.map((m, i) => (
                     <MessageRow key={i} author={threadAuthor(m.who)} name={m.who} time={m.time}>
@@ -1269,7 +1308,7 @@ function SortCycleSpecimen() {
 
 /* On the field: the sidebar alone, the microsidebar alone, then the app
    frame on each theme, open, folded with a peek, and with no sidebar. */
-export function FieldSections() {
+export function FieldSections({ children }: { children?: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(true)
   return (
     <div className="lib-field-region">
@@ -1351,8 +1390,9 @@ export function FieldSections() {
           width={1440}
           height={760}
           withThread
+          writeTools
           specimen="beside-1440-thread"
-          caption="1440 wide, with a thread: the write box now says reply; the ask in the talk carries the thread line"
+          caption="1440 wide, with a thread: the write box now says reply and carries add and dictation (writeBox); the ask in the talk carries the thread line"
         />
         <BesideDemo
           width={1100}
@@ -1363,6 +1403,8 @@ export function FieldSections() {
         />
         <BesideDemo width={1100} height={680} withThread specimen="beside-1100-thread" caption="1100 wide, with a thread: over the room" />
       </section>
+
+      {children}
     </div>
   )
 }

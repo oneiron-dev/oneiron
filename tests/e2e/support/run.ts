@@ -366,6 +366,11 @@ function selectFiles(plan: SuitePlan, profile: Profile, names: readonly string[]
   for (const name of names) if (!available.some(file => file.file === name)) throw new Error(`Unknown file for ${profile}: ${name}`);
   return available.filter(file => names.length === 0 || names.includes(file.file));
 }
+// Dispatch estimate of one planned case: its own measured estimatedSeconds when the plan has one,
+// else an equal share of its file's estimate. The scheduler starts the longest estimate first.
+export function caseEstimateSeconds(file: PlannedFile, planIndex: number): number {
+  return file.tests[planIndex]?.estimatedSeconds ?? file.estimatedSeconds/file.tests.length;
+}
 export async function preflight(profile: Profile, names: readonly string[] = []): Promise<Preflight> {
   assertLinux();
   const catalog = await loadFixtures();
@@ -401,6 +406,9 @@ export async function preflight(profile: Profile, names: readonly string[] = [])
   const allIds = new Set(plannedIds);
   if (allIds.size !== plannedIds.length) throw new Error("Pinned registry plan repeats an ID");
   if (allIds.size !== counts.plannedTests || plan.files.length !== counts.plannedFiles) throw new Error("Pinned registry plan is incomplete");
+  for (const file of plan.files) for (const test of file.tests)
+    if (test.estimatedSeconds !== undefined && !(Number.isFinite(test.estimatedSeconds) && test.estimatedSeconds > 0))
+      throw new Error(`Pinned registry plan has an invalid estimate for ${test.id}`);
   for (const manifest of catalog.manifests) for (const asset of manifest.value.assets) {
     for (const id of asset.scenarios) if (!allIds.has(id)) throw new Error(`Unknown scenario ${id} in ${asset.id}`);
   }
@@ -446,7 +454,10 @@ export async function runSuite(profile: Profile, workers = 4, names: readonly st
   const verifiedRoot = await tempRoot("verified",dirname(resolve(output)));
   const verifiedPath = resolve(verifiedRoot,"build.json");
   const selectedIds = (file:PlannedFile) => file.tests.filter(t => profile === "deterministic" || plan.optionalIds.includes(t.id)).map(t => t.id);
-  const jobs = ready.files.flatMap(file => selectedIds(file).map(id => ({file,id,planIndex:file.tests.findIndex(test => test.id === id),estimate:file.estimatedSeconds/file.tests.length})));
+  const jobs = ready.files.flatMap(file => selectedIds(file).map(id => {
+    const planIndex = file.tests.findIndex(test => test.id === id);
+    return {file,id,planIndex,estimate:caseEstimateSeconds(file,planIndex)};
+  }));
   const pending = jobs.sort((a,b) => b.estimate-a.estimate || a.file.file.localeCompare(b.file.file) || a.planIndex-b.planIndex);
   const running = new Map<string,{file:PlannedFile; id:string; process:ManagedProcess; ownerDir:string; resultFile:string; junitFile:string; fileRoot:string; done:Promise<string>}>();
   const results = new Map<string,IdResult>();

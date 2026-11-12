@@ -360,6 +360,7 @@ pub async fn run_weave_lens(
         subject: reader.id(),
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
+        spend_scope: None,
     };
     let mut charges = StepChargeTally::default();
     let mut reason = String::new();
