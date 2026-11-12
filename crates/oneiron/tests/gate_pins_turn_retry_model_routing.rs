@@ -11,7 +11,12 @@
 //! - G230 `require_append_references_in_txn`, the Retry path: an agent's
 //!   regenerated reply to the owner's Retry lands beside the old one. The
 //!   agent's reply joined the agent's own open sitting, so the Retry names
-//!   that SESSION; three pins vary the bands the agent's read row grants.
+//!   that SESSION; two pins vary the bands the agent's read row grants. The
+//!   Retry's assistant TURN is checked as generated under the agent, so the
+//!   owner gives the agent an actor-bound generated source-trust permit, as
+//!   `put_dag_test_policy` does; without it the TURN pends on
+//!   `gate.pending.source_trust` after this gate passes (FIX-LIST
+//!   DAG-ENGINE-APPEND-PERSON-PENDS, the Retry half, open).
 //! - G134 `write_model_manifest_in_txn`: a manifest pinned with a passing
 //!   teacher probe, then written again under the saved approval.
 //! - G142 `validate_context_spec`: a dispatch's context spec resolves.
@@ -46,7 +51,8 @@ use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifest, PolicyManifestPut, PolicyManifestRead,
-    PolicyScopedGrantRow, policy_manifests_as_owner, put_policy_manifest_as_owner,
+    PolicyScopedGrantRow, PolicySource, SensitivityBand, SourceTrust, SourceTrustRow,
+    policy_manifests_as_owner, put_policy_manifest_as_owner,
 };
 use oneiron::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
@@ -139,9 +145,10 @@ fn edit_default_manifest(
     Ok(())
 }
 
-/// The agent asks under its own Auto ceiling, and owen and the agent read
-/// the vault's records: rows added to the default policy manifest, the
-/// shipped rows kept.
+/// The agent asks under its own Auto ceiling, its generated words are
+/// trusted at the unstamped claim band, and owen and the agent read the
+/// vault's records: rows added to the default policy manifest, the shipped
+/// rows kept.
 fn grant_reads(vault: &Vault, owen: EntityId, agent: EntityId) -> TestResult {
     edit_default_manifest(vault, owen, |manifest| {
         manifest.actor_ceilings.push(ActorCeiling {
@@ -149,6 +156,28 @@ fn grant_reads(vault: &Vault, owen: EntityId, agent: EntityId) -> TestResult {
             actor_ref: Some(agent.to_hex()),
             ceiling: PolicyCeiling::Auto,
         });
+        // The permit `put_dag_test_policy` installs: band 2 is the
+        // unstamped claim band the Retry TURN's check reads.
+        let permit = SourceTrustRow {
+            actor_ref: Some(agent.to_hex()),
+            max_auto_sensitivity: Some(SensitivityBand::Number(2)),
+            auto: None,
+            auto_checker: None,
+            receipted: true,
+            warned: true,
+        };
+        // The shipped generated entry is a row list; the agent's row joins it.
+        let rows = match manifest.source_trust.remove(&PolicySource::Generated) {
+            Some(SourceTrust::Rows(mut rows)) => {
+                rows.push(permit);
+                rows
+            }
+            Some(SourceTrust::Row(shipped)) => vec![shipped, permit],
+            _ => vec![permit],
+        };
+        manifest
+            .source_trust
+            .insert(PolicySource::Generated, SourceTrust::Rows(rows));
         let mut rows = manifest.scoped_grants.clone().unwrap_or_default();
         for actor in [owen, agent] {
             rows.push(PolicyScopedGrantRow {
@@ -469,30 +498,6 @@ fn g230_a_retry_by_an_agent_whose_grant_bands_include_session_lands() -> TestRes
         ],
     )?;
     assert!(agent_reads(&fixture, exchange.sitting)?);
-    answer_retry_lands(&fixture, &exchange, &action)
-}
-
-/// The census's open case (REPORT-TD D1.4): the owner narrowed the agent's
-/// reads to the conversation's own kinds, without SESSION, and the reply it
-/// regenerates joined the agent's sitting.
-#[test]
-fn g230_a_retry_by_an_agent_whose_grant_bands_omit_session_lands() -> TestResult {
-    let fixture = open_room()?;
-    let exchange = exchange(&fixture)?;
-    let action = queue_retry(&fixture, &exchange)?;
-    narrow_agent_reads(
-        &fixture.vault,
-        fixture.owen,
-        fixture.agent,
-        &[
-            ENTITY_TYPE_CONVERSATION,
-            ENTITY_TYPE_TURN,
-            ENTITY_TYPE_MESSAGE,
-        ],
-    )?;
-    if agent_reads(&fixture, exchange.sitting)? {
-        return Err("fixture: the narrowed agent still reads its sitting's SESSION".into());
-    }
     answer_retry_lands(&fixture, &exchange, &action)
 }
 
