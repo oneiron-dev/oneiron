@@ -534,6 +534,26 @@ impl NoVouch {
     }
 }
 
+/// [`NoVouch::cap`] of `fold`, with `no_vouch` standing for the fold with no
+/// vouch and `after` for the rows the candidate handoffs `handoffs` precede:
+/// the authority-internal half of the FIX 23218 integration-test door.
+#[cfg(oneiron_test_support)]
+pub(super) fn cap_by_no_vouch_fold(
+    fold: &mut AuthorityFold,
+    no_vouch: AuthorityFold,
+    handoffs: BTreeSet<AuthorityEntryHash>,
+    after: BTreeSet<AuthorityEntryHash>,
+) {
+    NoVouch {
+        fold: no_vouch,
+        handoffs,
+        after,
+        held: BTreeSet::new(),
+        deadline: None,
+    }
+    .cap(fold);
+}
+
 /// The rows a handoff in `handoffs` precedes.
 fn after_handoffs(
     by_hash: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
