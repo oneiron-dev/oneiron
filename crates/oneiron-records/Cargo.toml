@@ -19,7 +19,7 @@ oneiron-verb-wire = { version = "0.1.0", path = "../oneiron-verb-wire" }
 # in the engine.
 sync = ["oneiron-verb-wire/sync"]
 test-support = ["oneiron-verb-wire/test-support"]
-test-hooks = []
+test-hooks = ["oneiron-verb-wire/test-hooks"]
 
 [lints]
 workspace = true
