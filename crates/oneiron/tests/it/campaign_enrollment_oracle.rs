@@ -241,6 +241,7 @@ fn step_draft(step: EntityId, call_seq: u64) -> CampaignProgramStepDraft {
             // An email outbound carries a subject (FIX 11641).
             subject: Some("enrollment oracle".to_owned()),
         }),
+        arm: None,
     }
 }
 
