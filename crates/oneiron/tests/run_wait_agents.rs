@@ -427,3 +427,195 @@ fn a_retried_child_is_one_child_and_its_newest_try_answers_the_wait() -> TestRes
     assert_eq!(done.settled[0].state, "completed");
     Ok(())
 }
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_metered_task_child_settles_its_task_row_scope_and_wait_in_one_write() -> TestResult {
+    use oneiron::EdgeActorClass;
+    use oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest;
+    use oneiron::agent_dispatch::{LAUNCH_COST_PRIOR_UNITS, SpendScopeId, SpendState};
+    use oneiron::attempt_queue::{AttemptResultRef, AttemptState, SetAttemptResult};
+    use oneiron::context_board::TaskBoardStatus;
+    use oneiron::dreamer_runner::{
+        CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerRunnerStore,
+    };
+    use oneiron::task_verb::{
+        HostBinding, TaskAssignee, TaskCreateSpec, TaskRouteOutcome, TaskTerminalDisposition,
+    };
+    use oneiron::test_doors::code_run_answer::install_actor_ceiling;
+    use oneiron::test_doors::spend::reserve_child_scope;
+
+    let dir = tempfile::tempdir()?;
+    let vault = open_vault(dir.path())?;
+    let (parent, actor) = root_run(&vault, RUN, 1)?;
+    // The definition is Auto; its actor also needs an Auto policy ceiling
+    // for a create to dispatch immediately rather than park a proposal.
+    install_actor_ceiling(&vault, &actor.entity_ref(), "auto")?;
+    let parent_lease = claim(&vault, parent)?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let launch_cap_units = 1_000;
+    let parent_cap_units = 100;
+    let spent_units = 3;
+    oneiron::verbs::vault_budgets_lease_open(
+        &vault.memory(owner, EdgeActorClass::Human),
+        OpenSpendLeaseRequest {
+            launch: "task-child-settlement".to_owned(),
+            cap_units: launch_cap_units,
+            unit: "units".to_owned(),
+            shown_at_ms: 1,
+            funding_grant_ref: None,
+        },
+    )?;
+    let launch = SpendScopeId::launch("task-child-settlement")?;
+    let parent_scope = SpendScopeId::for_attempt(&parent);
+    reserve_child_scope(&vault, &launch, &parent, parent_cap_units, 1)?;
+    let memory = vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .with_task_host(HostBinding::from_leased(&parent_lease, None)?);
+    // No typed brief: the runner's durable result is sufficient for Done,
+    // with no model verdict or confession needed. The bound creator makes
+    // the TASK's realizing dispatch a child under the parent's open scope.
+    let created = memory.tasks_create(
+        &TaskCreateSpec::new(
+            rmpv::Value::Nil,
+            Some("settle a metered child".to_owned()),
+            None,
+            Some(2),
+        )
+        .with_assignee(TaskAssignee::AgentDef {
+            agent_def_ref: actor.entity_ref(),
+        }),
+    )?;
+    let task = created.task_ref.ok_or("the child TASK is created")?;
+    let Some(TaskRouteOutcome::AgentDispatch {
+        attempt_ref: child, ..
+    }) = created.route
+    else {
+        return Err("the bound TASK dispatches an agent child".into());
+    };
+    let dispatcher = AgentDispatcher::new(&vault);
+    let child_scope = SpendScopeId::for_attempt(&child);
+    // With no calibration or budget pin, dispatch holds the smaller of
+    // LAUNCH_COST_PRIOR_UNITS and the fixture's 100-unit parent carve.
+    let reserved_units = LAUNCH_COST_PRIOR_UNITS.min(parent_cap_units);
+    let unused_units = reserved_units - spent_units;
+    let opened = dispatcher
+        .read_spend_scope(&child_scope)?
+        .ok_or("dispatch reserves the child's spend scope")?;
+    assert_eq!(opened.parent, Some(parent_scope.clone()));
+    assert_eq!(opened.state, SpendState::Open);
+    assert_eq!(opened.cap_units, reserved_units);
+    assert_eq!(opened.spent_units, 0);
+    assert_eq!(opened.held_units, 0);
+    let before = dispatcher
+        .read_spend_scope(&parent_scope)?
+        .ok_or("the parent's carved scope exists")?;
+    assert_eq!(before.state, SpendState::Open);
+    assert_eq!(before.cap_units, parent_cap_units);
+    assert_eq!(before.spent_units, 0);
+    assert_eq!(before.held_units, reserved_units);
+
+    let host = HostSelfDispatcher::for_leased_agent_attempt(&vault, actor, &parent_lease)?;
+    let waiting = host.wait_agents_from_host(wait_on(&[child], None, "metered-task-child"))?;
+    assert!(!waiting.done);
+    assert!(waiting.settled.is_empty());
+    assert_eq!(waiting.pending, vec![hex(child)]);
+    assert_eq!(delivered(&vault, &waiting.wait)?, None);
+
+    let leased = claim(&vault, child)?;
+    let task_hex = task.to_hex();
+    assert_eq!(leased.task_ref.as_deref(), Some(task_hex.as_str()));
+    assert_eq!(leased.lease_owner.as_deref(), Some(WORKER));
+    let result = vault.create_note("research", "the child's durable result", actor)?;
+    let result_hex = result.to_hex();
+    AttemptQueue::new(&vault).set_result(SetAttemptResult {
+        id: child,
+        lease_owner: WORKER.to_owned(),
+        attempt_count: leased.attempt_count,
+        result_ref: AttemptResultRef::new(result_hex.clone())?,
+        now: leased.updated_at,
+    })?;
+    // This fixture explicitly books 3 units, not the estimated reservation.
+    dispatcher.record_guard_spend(&child_scope, spent_units)?;
+    let completed = DreamerRunnerStore::new(&vault).complete(CompleteDreamerAttempt {
+        id: child,
+        lease_owner: WORKER.to_owned(),
+        attempt_count: leased.attempt_count,
+        now: leased.updated_at,
+    })?;
+    assert!(matches!(
+        completed,
+        CompleteDreamerAttemptOutcome::Completed(_)
+    ));
+
+    // These public readers have no common snapshot door: read the TASK,
+    // attempt, both scopes and delivered reply consecutively, with no write
+    // between them. This checks the completed call's durable results, not
+    // that a concurrent reader could never see an intermediate transaction.
+    let tasks = memory.describe_rows()?;
+    let row = AttemptQueue::new(&vault)
+        .get(child)?
+        .ok_or("the completed child row exists")?;
+    let closed = dispatcher
+        .read_spend_scope(&child_scope)?
+        .ok_or("the settled child scope exists")?;
+    let charged = dispatcher
+        .read_spend_scope(&parent_scope)?
+        .ok_or("the charged parent scope exists")?;
+    let reply = delivered(&vault, &waiting.wait)?;
+
+    let task_row = tasks
+        .intents
+        .iter()
+        .find(|intent| intent.id == task_hex)
+        .ok_or("the TASK's durable report reads back")?;
+    assert_eq!(
+        task_row.terminal_disposition,
+        Some(TaskTerminalDisposition::Completed),
+        "the runner completion must write the TASK's Done fact"
+    );
+    assert_eq!(task_row.status, TaskBoardStatus::Done);
+    assert_eq!(task_row.result_ref.as_deref(), Some(result_hex.as_str()));
+    assert_eq!(row.state, AttemptState::Completed);
+    assert_eq!(
+        row.result_ref.as_ref().map(AttemptResultRef::as_str),
+        Some(result_hex.as_str())
+    );
+    assert_eq!(row.lease_owner, None);
+    assert_eq!(
+        closed.state,
+        SpendState::Closed,
+        "the runner completion must close the child's spend scope"
+    );
+    assert_eq!(closed.closed_at, Some(leased.updated_at));
+    assert_eq!(closed.spent_units, spent_units);
+    assert_eq!(closed.held_units, 0);
+    assert_eq!(charged.state, SpendState::Open);
+    assert_eq!(
+        charged.spent_units, spent_units,
+        "the parent pays the child's 3 booked units"
+    );
+    assert_eq!(
+        charged.held_units, 0,
+        "the child's entire reservation is no longer held"
+    );
+    assert_eq!(charged.local_available(), parent_cap_units - spent_units);
+    assert_eq!(
+        charged.local_available() - before.local_available(),
+        unused_units,
+        "the unused part of the child's reservation returns to the parent"
+    );
+    let reply = reply.ok_or("completion delivers the parent's child wait")?;
+    assert!(reply.done);
+    assert_eq!(reply.wait, waiting.wait);
+    assert_eq!(reply.reason.as_deref(), Some("all"));
+    assert!(reply.pending.is_empty());
+    assert_eq!(reply.settled.len(), 1);
+    assert_eq!(reply.settled[0].attempt, hex(child));
+    assert_eq!(reply.settled[0].state, "completed");
+    assert_eq!(
+        reply.settled[0].result_ref.as_deref(),
+        Some(result_hex.as_str())
+    );
+    Ok(())
+}

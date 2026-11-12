@@ -446,6 +446,7 @@ async fn ask_judge(
         subject,
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
+        spend_scope: None,
     };
     // The judge request quotes the kept mail's words, which the replay
     // capture's owners would not retire when that mail is erased: this
