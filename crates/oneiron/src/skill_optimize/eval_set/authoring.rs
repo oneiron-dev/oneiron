@@ -26,6 +26,7 @@
 //!   before anything applies. How many cases it keeps is the skill's call.
 
 mod apply;
+mod executions;
 mod lineage;
 mod sourced;
 
@@ -49,6 +50,12 @@ pub use apply::{
     CaseDecision, CutDecision, EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip,
     EvalCohortDecision, EvalCohortSetup, FamilyDecision, apply_eval_authoring_plan,
     setup_eval_cohorts,
+};
+pub use executions::{
+    EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,
+    EvalAuthoringExecuteAnswer, EvalAuthoringExecuteRequest, EvalAuthoringExecution,
+    EvalAuthoringOutcome, EvalAuthoringSkillRun, admit_eval_authoring_execution,
+    eval_authoring_execute_admits, eval_authoring_execution,
 };
 pub(super) use lineage::{LineageReader, SOURCE_TURN_ROOT, amendment_artifact};
 use lineage::{ReceiptLineage, receipt_seat};

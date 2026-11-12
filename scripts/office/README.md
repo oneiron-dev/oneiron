@@ -84,7 +84,7 @@ session's activated list: sorted JSON rows `{root_label, relative_path, bytes,
 sha256}` over `/System/Library/Fonts`, `/Library/Fonts`, the account's
 `~/Library/Fonts` and PowerPoint's bundled `Contents/Resources/DFonts` and
 `Fonts`, with a row for each missing root or unreadable file. Approve it on vel,
-in a source checkout, once per account (`olety` over ssh, `decktest` in its own
+in a source checkout, once per account (the owner account over ssh, `decktest` in its own
 logged-in Terminal):
 
 ```sh

@@ -421,14 +421,7 @@ pub(crate) fn import_agent_fork_hash_in_txn(
     id: &EntityId,
     hash: Option<&str>,
 ) -> Result<()> {
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
-        .ok_or(Error::EntityNotFound)?;
-    let header =
-        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("imported agent header"))?;
-    if header.entity_type != ENTITY_TYPE_AGENT_DEF {
-        return Err(Error::EntityNotFound);
-    }
-    let def = decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    let def = stored_agent_definition_in_txn(store, txn, id, "imported agent header")?;
     if def.enabled
         || def.ceiling != super::AgentCeiling::Proposed
         || def.approval_status != crate::claim::ClaimApprovalStatus::Proposed
@@ -438,16 +431,54 @@ pub(crate) fn import_agent_fork_hash_in_txn(
             "archive agent binding requires inert imported definition".into(),
         ));
     }
+    write_fork_hash_binding_in_txn(store, txn, id, &def, hash)
+}
+
+/// The archived fork hash of a seed AGENT_DEF an owner restore replaced in a
+/// fresh vault. The caller proved the owner, the fresh destination and the
+/// census seed, so the inert-imported check does not apply. An absent archived
+/// hash deletes the destination binding; a present one is written as archived,
+/// never recomputed.
+pub(crate) fn restore_seed_agent_fork_hash_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    hash: Option<&str>,
+) -> Result<()> {
+    let def = stored_agent_definition_in_txn(store, txn, id, "restored agent header")?;
+    write_fork_hash_binding_in_txn(store, txn, id, &def, hash)
+}
+
+fn stored_agent_definition_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    header_label: &'static str,
+) -> Result<AgentDefinition> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex(header_label))?;
+    if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+        return Err(Error::EntityNotFound);
+    }
+    decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
+}
+
+fn write_fork_hash_binding_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    def: &AgentDefinition,
+    hash: Option<&str>,
+) -> Result<()> {
     match hash {
-        Some(hash) => {
-            put_binding(
-                store,
-                txn,
-                id,
-                &def.forked_from.unwrap_or(*id),
-                SkillContentHash::parse_hex(hash)?,
-            )?;
-        }
+        Some(hash) => put_binding(
+            store,
+            txn,
+            id,
+            &def.forked_from.unwrap_or(*id),
+            SkillContentHash::parse_hex(hash)?,
+        )?,
         None => {
             PORTABLE_BIRTH.delete(store, txn, id)?;
         }

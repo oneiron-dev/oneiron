@@ -438,10 +438,12 @@ impl RunLifecycle {
                 | S::Cancelled
                 | S::Abandoned => RunStep::Refuse,
             },
+            // A terminal row never names a live pause: the hard cancel
+            // clears it as the operator's Cancel does.
             RunEvent::ForceCancel => match row.state {
                 S::Queued | S::Leased | S::Paused | S::Scheduled | S::Landing => RunStep::Move {
                     to: S::Cancelled,
-                    pause: row.pause,
+                    pause: None,
                 },
                 S::Cancelled => RunStep::Replay,
                 S::Completed | S::Failed | S::Abandoned => RunStep::Keep,
@@ -849,10 +851,11 @@ impl RunLifecycle {
         step
     }
 
-    /// Applies `ForceCancel`, writing state, active_pause, lease_owner,
-    /// scheduled_at, settled_at, cancel_state.pressure.pending and
-    /// cancel_state.cancellation. The site keeps authority, receipts, indexes,
-    /// backoff_until, last_error and updated_at.
+    /// Applies `ForceCancel`, writing state, active_pause (cleared, as
+    /// `Cancel` clears it), lease_owner, scheduled_at, settled_at,
+    /// cancel_state.pressure.pending and cancel_state.cancellation. The site
+    /// keeps authority, receipts, indexes, backoff_until, last_error and
+    /// updated_at.
     pub(crate) fn force_cancel(
         record: &mut AttemptRecord,
         now: u64,
