@@ -121,6 +121,7 @@ impl Vault {
                         None,
                         BTreeSet::new(),
                         None,
+                        None,
                     )?;
                     grants.push(minted.standing.id);
                 }
