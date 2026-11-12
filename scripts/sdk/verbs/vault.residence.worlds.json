@@ -1,6 +1,6 @@
 {
   "name": "vault.residence.worlds",
-  "description": "Sets the worlds (projects) one of the owner's machines follows: the owner's pick, replacing the one before; an empty list follows none. That machine's own sync connection applies it and renegotiates at once. A world the machine may not read is never followed, and under sync all it follows every world it may read. A machine this host does not reach answers state queued, naming the directive.",
+  "description": "Sets the worlds one of the owner's machines follows, replacing its earlier pick; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.",
   "input": "crate::task_verb::sdk::ResidenceWorldsRequest",
   "output": "crate::task_verb::sdk::ResidenceWorldsAnswer",
   "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.worlds\", &input)?",

@@ -485,8 +485,11 @@ impl SyncClient {
             None => FollowedWorlds::All,
             Some([]) if device && sync_all => self.readable_worlds_in(&txn)?,
             Some([]) if device => {
-                let pick = crate::sync::residence::device_world_pick_in(&self.vault, &txn)
-                    .map_err(|error| TransportError::Storage(error.to_string()))?;
+                let pick: Vec<crate::EntityId> =
+                    crate::sync::residence::device_world_pick_in(&self.vault, &txn)
+                        .map_err(|error| TransportError::Storage(error.to_string()))?
+                        .into_iter()
+                        .collect();
                 self.readable_worlds_in(&txn)?.narrowed_to(&pick)
             }
             Some(worlds) if device => self.readable_worlds_in(&txn)?.narrowed_to(worlds),
@@ -744,10 +747,10 @@ impl FollowedWorlds {
     }
 
     /// The named worlds this set follows.
-    fn narrowed_to<'a>(&self, worlds: impl IntoIterator<Item = &'a crate::EntityId>) -> Self {
+    fn narrowed_to(&self, worlds: &[crate::EntityId]) -> Self {
         Self::Only(
             worlds
-                .into_iter()
+                .iter()
                 .filter(|world| self.contains(world))
                 .copied()
                 .collect(),
