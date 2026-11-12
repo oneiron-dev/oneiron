@@ -57,7 +57,7 @@ impl DisclosureBand {
     }
 
     pub fn of_claim(body: &ClaimBody) -> Self {
-        match oneiron_authority::claim_history_handoff::claim_sensitivity_band(body) {
+        match oneiron_store::write_envelope::claim_body::claim_sensitivity_band(body) {
             Some(0) => Self::Public,
             Some(1) => Self::Private,
             Some(2) => Self::Sensitive,

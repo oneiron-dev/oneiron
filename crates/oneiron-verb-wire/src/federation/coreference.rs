@@ -39,9 +39,11 @@ impl CoreferenceStatus {
     /// The `core.coreference.status` value string.
     const fn wire(self) -> &'static str {
         match self {
-            Self::Proposed => oneiron_authority::claim_history_handoff::COREFERENCE_STATUS_PROPOSED,
+            Self::Proposed => {
+                oneiron_store::write_envelope::claim_predicate::COREFERENCE_STATUS_PROPOSED
+            }
             Self::Confirmed => {
-                oneiron_authority::claim_history_handoff::COREFERENCE_STATUS_CONFIRMED
+                oneiron_store::write_envelope::claim_predicate::COREFERENCE_STATUS_CONFIRMED
             }
         }
     }
