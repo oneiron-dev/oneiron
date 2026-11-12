@@ -13,7 +13,7 @@ use super::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::settings::ReadDestination;
-use crate::share_travel::effective_copy_refs;
+use crate::share_travel::{CopyTravelChoice, effective_copy_refs};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 

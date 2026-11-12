@@ -10,8 +10,8 @@ use super::live::ShapeSources;
 use super::plan::ShapePlanItem;
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::channel_identity::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, DelegatedGrant,
-    DelegatedProvisionRequest, SelfHeldShape,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+    DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest, SelfHeldShape,
 };
 use crate::channel_identity_lifecycle::{
     BindIntent, ChannelIdentityLifecycleActor, ChannelIdentityLifecycleGate,

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     ComputeDestination, EvalExposure, EvalExposureKind, EvalRelease, EvalSeat, OfferCandidate,
-    OfferModelPin, SufficiencyCard, sufficiency_card,
+    OfferModelPin, SufficiencyCard, SufficiencyInput, sufficiency_card,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::limit_ask::EngineLimit;

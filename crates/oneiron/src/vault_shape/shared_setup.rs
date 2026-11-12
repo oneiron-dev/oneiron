@@ -17,6 +17,8 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::federation::InitialSharedMember;
 use crate::{EntityId, Vault};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::vault_shape::shared_setup::{

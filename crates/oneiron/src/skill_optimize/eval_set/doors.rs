@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::cohort::{EXPOSURE_PREFIX, cohort_in_txn, exposure_in_txn, retired_families_in_txn};
 use super::{
-    CASE_PREFIX, EvalCase, EvalCaseDraft, EvalCohort, EvalCutAudit, EvalExposure,
-    EvalExposureCounts, EvalLabelAsk, EvalRelease, EvalSeat, FAMILY_PREFIX, FamilyPurpose,
-    SourceFamily, SufficiencyCard, SufficiencyInput, assign_family_in_txn, record_case_in_txn,
-    rows_in_txn, sufficiency_card,
+    CASE_PREFIX, DerivationKind, EvalCase, EvalCaseDraft, EvalCohort, EvalCutAudit, EvalExposure,
+    EvalExposureCounts, EvalExposureKind, EvalLabelAsk, EvalRelease, EvalSeat, FAMILY_PREFIX,
+    FamilyPurpose, SourceFamily, SufficiencyCard, SufficiencyInput, assign_family_in_txn,
+    record_case_in_txn, rows_in_txn, sufficiency_card,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::claim::maintenance_kind::COACH_EVAL_AUTHORING_FACET;

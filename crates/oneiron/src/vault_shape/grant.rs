@@ -4,7 +4,13 @@
 //! a grant only lands through the consent doors: the owner's mint, or an
 //! agent's proposal to the owner's widen inbox.
 use crate::Vault;
+use crate::consent::{
+    ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope,
+    BoundSubject, DisclosureClass, DisclosureEnvelope, GrantBound,
+};
 use crate::error::Result;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::vault_shape::grant::ShapeGrantBound;

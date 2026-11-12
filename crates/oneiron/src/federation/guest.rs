@@ -3,8 +3,9 @@
 use rmpv::Value;
 
 use super::codec::encode_msgpack_value;
-use super::grant::encode_scope;
+use super::grant::{FederationGrantScope, encode_scope};
 
+use crate::entity_id::EntityId;
 use crate::error::Result;
 
 /// Current guest-share envelope body schema version.

@@ -17,7 +17,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
 use crate::error::GateError;
-use crate::genui::{ConsentActionRequest, ProjectProposalCard};
+use crate::genui::{
+    ConsentActionRequest, ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
+};
 use crate::llm::decision::DecisionReceipt;
 use crate::memory::{Memory, MemoryResult};
 use crate::ports::JobQueue;

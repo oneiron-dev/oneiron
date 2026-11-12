@@ -2,7 +2,9 @@
 //! The host answers pending work; the engine never chooses or calls a model here.
 use serde::{Deserialize, Serialize};
 
-use super::{CompletionRequest, HydeRequest};
+use super::{
+    CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpansion, HydeOptions, HydeRequest,
+};
 use crate::memory::{ClaimView, Memory, MemoryResult};
 
 #[doc(hidden)]

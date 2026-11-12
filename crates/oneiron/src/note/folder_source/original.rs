@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use super::super::import::NOTES_IMPORT_SOURCE;
 use super::{FILES, file_key};
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};

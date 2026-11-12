@@ -49,7 +49,7 @@ use crate::team::team_shape::team_pattern;
 
 use super::market::market;
 use super::observations::team_run_observations;
-use super::pattern::{TeamPattern, pattern_skills};
+use super::pattern::{TeamAxis, TeamPattern, pattern_skills};
 use super::receipt::{
     Coverage, DecidedBy, PatternSkillRef, TeamReceipt, TeamShape, record_team_receipt, team_receipt,
 };

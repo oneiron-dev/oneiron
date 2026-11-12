@@ -1,8 +1,11 @@
 //! The caller origin a dispatch keeps (FIX 4973). This records how the root
 //! reached admission; it never changes authority or where execution reads.
 
+use serde::{Deserialize, Serialize};
+
 use crate::attempt_queue::AttemptId;
 use crate::error::Result;
+use crate::settings::CallerLocality;
 
 use super::AgentDispatcher;
 

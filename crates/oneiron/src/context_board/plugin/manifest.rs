@@ -8,6 +8,7 @@ use crate::store::skill_package::HubPackage;
 use crate::vault::Vault;
 use crate::write_envelope::skill_record::{SkillContentHash, SkillRecord};
 use crate::write_envelope::skill_source::HubRef;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Pinned schema version of [`SectionManifestEnvelope`]. Admission accepts this

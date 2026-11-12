@@ -2,6 +2,11 @@
 //! `vault.tasks.linear.mapping`, `vault.tasks.linear.mapping.edit` and
 //! `vault.tasks.linear.provenance`.
 
+use serde::{Deserialize, Serialize};
+
+use super::mirror_event::LinearMirrorEvent;
+use super::model::{LinearFieldConflict, LinearIssueRef};
+
 /// A provenance page's rows when the caller names no limit, or zero.
 pub const LINEAR_PROVENANCE_PAGE_DEFAULT: u32 = 50;
 

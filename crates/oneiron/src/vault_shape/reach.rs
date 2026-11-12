@@ -28,6 +28,8 @@ use crate::consent::{
 use crate::error::Result;
 use crate::reaction::person_name_in;
 use crate::{EntityId, Vault};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The verb class an outbound send is consented under, as the send door
@@ -39,12 +41,12 @@ const SEND_VERB: &str = "send";
 const CONNECTOR_CHANNEL: &str = "connector";
 
 #[doc(hidden)]
-use oneiron_verb_wire::vault_shape::reach::label;
-#[doc(hidden)]
 pub use oneiron_verb_wire::vault_shape::reach::{
     REACH_LINE_MAX_CHANGES, REACH_LINE_NO_CHANGE, REACH_LINE_NONE, ShapePlanReach, ShapeReach,
     ShapeReachFact, ShapeReachVerdict,
 };
+#[doc(hidden)]
+use oneiron_verb_wire::vault_shape::reach::{label, sentence};
 
 impl Vault {
     /// The stored name of the entity `reference` names, when it is an

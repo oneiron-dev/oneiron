@@ -26,11 +26,13 @@
 
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
+
 use super::mirror_run::MirrorTrigger;
 use super::publish::{MirrorRunScope, MirrorSelection};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, ErrorKind, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 
 /// The least a full-auto mirror waits after a published-ref move or a green

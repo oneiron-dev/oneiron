@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{DeleteReason, DeletionGateContext, GatedDeletion};
 use crate::edge::EdgeActorClass;

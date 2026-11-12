@@ -4,10 +4,11 @@
 pub use oneiron_store::key_custody::protocol::*;
 
 pub use super::identity::{CustodyNamespace, CustodyVaultId};
-use crate::error::Result;
+use crate::EntityId;
+use crate::error::{Error, Result};
 pub use oneiron_store::key_custody::log::{CustodyEpoch, CustodyPosition};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 // Where a restore asks its residence home to start the log (FIX 12045).
 pub use self::drain::{

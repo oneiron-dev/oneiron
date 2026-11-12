@@ -3,5 +3,9 @@
 
 pub use oneiron_store::compaction::host_request::*;
 
+use super::CompactionWindowMessage;
+use crate::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::compaction::host_request::HostCompactRequest;

@@ -5,6 +5,7 @@ pub use oneiron_store::model_step_submission::*;
 
 use crate::entity_id::EntityId;
 use crate::side_table::Named;
+use oneiron_model::llm::{FatalLlmError, LlmError, LlmRequest, LlmResponse, LlmUsage};
 use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]

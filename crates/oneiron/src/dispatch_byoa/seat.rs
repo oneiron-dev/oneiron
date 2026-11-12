@@ -27,7 +27,7 @@ use crate::code_sandbox::SandboxCredentialHandle;
 use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::llm::limit;
+use crate::llm::{RetryableLlmError, SpentKind, limit};
 
 use super::connector::{ByoaConnectorSpec, ByoaDispatchOutcome, CliSandboxSpec};
 use super::error::{
@@ -162,6 +162,8 @@ impl<'a> SeatIdentity<'a> {
     }
 }
 
+#[doc(hidden)]
+use oneiron_verb_wire::dispatch_byoa::seat::OPENAI_HOSTED_PLAN_APPROVAL;
 #[doc(hidden)]
 pub use oneiron_verb_wire::dispatch_byoa::seat::{OnSeatSpent, SeatAuth, SeatSpent};
 

@@ -2,6 +2,8 @@
 //! target, its events and the owner's policy. Ids, digests, states, counts
 //! and times only: never conversation text, tokens, weights or keys.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;

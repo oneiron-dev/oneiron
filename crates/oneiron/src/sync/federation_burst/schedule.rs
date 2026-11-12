@@ -8,6 +8,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use serde::{Deserialize, Serialize};
+
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;

@@ -18,6 +18,7 @@ use super::join_history::{
 };
 use crate::conversation::HistoryChoice;
 use crate::error::{Error, Result};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::spend_scope::SpendScopeId;

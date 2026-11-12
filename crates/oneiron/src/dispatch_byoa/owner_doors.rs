@@ -29,8 +29,8 @@ use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher};
 use super::error::{ByoaError, ByoaResult};
 use super::exhaust::{ByoaEgressLease, ByoaEgressPort};
 use super::provider::ProviderAdapterRegistry;
-use super::seat::{RunnerSeat, RunnerSeatPolicy};
-use super::seat_quota::{OwnerTopUp, seat_quota_in_txn, top_up_seat_quota_in_txn};
+use super::seat::{RunnerSeat, RunnerSeatPolicy, SkippedRunnerSeat};
+use super::seat_quota::{OwnerTopUp, RunnerSeatQuota, seat_quota_in_txn, top_up_seat_quota_in_txn};
 use super::work_binding::{RunnerSeatChoice, RunnerWorkBindingId};
 use super::work_resume::{ResumeRunnerWork, RunnerWorkResume};
 

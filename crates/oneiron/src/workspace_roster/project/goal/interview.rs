@@ -11,6 +11,7 @@ use crate::store::Store;
 use crate::workspace_roster::rooms::{RoomTurn, require_member, room_thread_turns_in_txn, turn_in};
 use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::project::goal::interview::GoalInterviewTurns;

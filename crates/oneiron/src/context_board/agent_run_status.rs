@@ -1,6 +1,7 @@
 //! AgentRunStatus contract shared by Context Board and run-tree viewers.
 
 use crate::attempt_queue::run_tree_view::RunTreeStatus;
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::context_board::agent_run_status::AgentRunStatus;

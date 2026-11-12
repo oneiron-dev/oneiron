@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::fold_kinds::{FoldKind, FoldedOutput};
+use super::fold_kinds::{FoldByKind, FoldKind, FoldedOutput};
 use crate::entity_id::EntityId;
 use oneiron_contracts::claim::ClaimSource;
 
@@ -21,6 +21,8 @@ pub use oneiron_verb_wire::compaction::folds::{
     FoldCompactInput, FoldDescription, FoldList, FoldMarkInput, FoldPending, FoldReply, FoldSpan,
     FoldUnfold, FoldUnfoldInput, FoldsInput,
 };
+#[doc(hidden)]
+use oneiron_verb_wire::compaction::folds::{FoldMarkOptions, FoldMarkWire};
 
 /// One fold verb call. Run and step come from the host binding, never from
 /// the guest.

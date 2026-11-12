@@ -15,12 +15,12 @@ use sha2::{Digest, Sha256};
 use super::masked_view::{join_unmasked_runs, mask_crossing_runs, masked_body_view};
 use super::{
     BodyBlockKind, BodyCell, BodyConditionalFormat, BodyFormat, BodyName, DeckBodyView, DocxBody,
-    OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
+    DocxBodyOp, OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
     OfficeBodyFork, OfficeBodyHead, OfficeBodyProposal, OfficeRecalcZone, ProposalSettleRequest,
-    ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxPreview, XlsxSheetVisibility, XlsxStyle,
-    XlsxTable,
+    ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxSheetVisibility,
+    XlsxStyle, XlsxTable,
 };
-use crate::batch::secret_scan::LiftedKeys;
+use crate::batch::secret_scan::{LiftedKeys, mask_unplaced_json};
 use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -31,6 +31,7 @@ use crate::secret_custody::SecretSight;
 use crate::typed_body::LiftedSources;
 use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::{DocxRun, DocxStoryScope};
+use oneiron_docedit::live::{ApproveScope, DeckOp};
 use oneiron_docedit::xlsx_body::XlsxLines;
 
 #[doc(hidden)]

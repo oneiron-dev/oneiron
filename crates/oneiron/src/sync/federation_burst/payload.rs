@@ -3,8 +3,9 @@
 use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::Instant;
 
-use oneiron_contracts::host_memory::MemoryLease;
+use oneiron_contracts::host_memory::{MachineMemory, MemoryLease, MemoryRefusal};
 use serde::{Deserialize, Serialize};
 
 /// Immutable payload bytes. Clones share both the buffer and its admission.

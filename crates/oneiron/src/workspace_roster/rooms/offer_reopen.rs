@@ -13,6 +13,8 @@
 //! second click on the same card, or one on a card that has moved since,
 //! returns the card as it stands and renews nothing.
 
+use serde::{Deserialize, Serialize};
+
 use super::offer_activity::{is_current_in_txn, room_offer_expired};
 use super::offer_history::live_offer;
 use super::offers::{OFFERS, OfferCard, OfferState, is_offer_id, join_refused};

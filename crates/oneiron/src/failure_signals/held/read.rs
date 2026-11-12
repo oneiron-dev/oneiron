@@ -10,6 +10,9 @@
 //! snapshot, never a reservation, and the next pass decides the batch as it
 //! always does (CALLS `FIX 6740 empty and broken states`).
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use super::{HELD, HeldBatch, HeldStage};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};

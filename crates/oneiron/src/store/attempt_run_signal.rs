@@ -3,6 +3,9 @@
 
 pub use oneiron_store::attempt_run_signal::*;
 
+use crate::store::attempt_cancel::CancelStanding;
+use serde::{Deserialize, Serialize};
+
 /// No answer variant grants effect confirmation: that remains at the
 /// authenticated effect/consent door, not at this message transport.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,5 +1,7 @@
 //! Explicit owner retry after the outbound ledger proves non-delivery.
 
+use serde::{Deserialize, Serialize};
+
 use super::super::{store, validate_ref};
 use super::{
     DELIVERIES, ENDPOINTS, ReportDeliveryKey, ReportDeliveryRecord, ReportFrozenSend, publisher_of,

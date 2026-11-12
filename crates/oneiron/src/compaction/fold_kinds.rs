@@ -21,8 +21,10 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use super::folds::{
-    FoldLedger, FoldMark, FoldRecord, STUB_IDS, escape_compacted_text, fold_handle,
+    FoldLedger, FoldMark, FoldMarkInput, FoldRecord, STUB_IDS, escape_compacted_text, fold_handle,
 };
 use crate::entity_id::EntityId;
 use oneiron_contracts::claim::ClaimSource;
@@ -31,6 +33,8 @@ use oneiron_contracts::claim::ClaimSource;
 pub(super) use oneiron_verb_wire::compaction::fold_kinds::FoldByKind;
 #[doc(hidden)]
 pub use oneiron_verb_wire::compaction::fold_kinds::{FoldKind, FoldedOutput, FoldedSpeech};
+#[doc(hidden)]
+use oneiron_verb_wire::compaction::fold_kinds::{FoldStepRef, UNBOUNDED_THROUGH};
 
 impl FoldLedger {
     /// The fold by `kind` whose stub step `seq` shows: the first one made

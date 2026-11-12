@@ -5,6 +5,7 @@ use crate::store::code_document_values::{
     CodeDocumentFrontier, CodeFileEdit, CodeFileMetadataEdit,
 };
 use crate::write_envelope::WriteActor;
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::store::code_document_receipt::CodeOpProvenance;

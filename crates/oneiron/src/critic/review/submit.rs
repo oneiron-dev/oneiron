@@ -10,7 +10,7 @@ use crate::EdgeActorClass;
 use crate::attempt_queue::AttemptId;
 use crate::critic::{CritiqueArtifact, CritiqueTriage, LensCatalog};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::learning::TypeRef;
 use crate::llm::decision::DecisionReceipt;
 use crate::write_envelope::WriteActor;

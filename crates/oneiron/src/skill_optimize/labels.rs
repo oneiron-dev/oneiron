@@ -28,7 +28,9 @@ mod anchor;
 mod rubric;
 
 pub use self::anchor::judge_label_anchor;
-pub(crate) use self::anchor::skill_label_anchor;
+pub(crate) use self::anchor::{
+    judge_label_anchor_sourced, skill_label_anchor, skill_label_anchor_sourced,
+};
 
 use self::rubric::repin_before_pick_in_txn;
 
@@ -37,7 +39,7 @@ pub use self::rubric::{
     JudgeLabelRegrade, judge_rubric, record_judge_label_regrade,
 };
 pub(crate) use self::rubric::{
-    judge_head_in_txn, judge_rubric_sourced_in_txn, recheck_judge_labels,
+    judge_head_in_txn, judge_rubric_in_txn, judge_rubric_sourced_in_txn, recheck_judge_labels,
 };
 
 /// Proposed calibration asks, keyed by the ask id (the digest of its immutable question).

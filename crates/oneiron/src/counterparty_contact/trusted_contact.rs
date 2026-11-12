@@ -8,6 +8,8 @@
 //! or sync peer can stamp a consent: each one is written here, behind the proof
 //! of the person it belongs to.
 
+use serde::{Deserialize, Serialize};
+
 use super::trusted_contact_notice::{
     TrustedContactNoticeAuthorization, consent_change_guard, erase_notices_naming_in_txn,
     inform_inboxes_in_txn, stage_notice_in_txn, withdraw_policy_notice_in_txn,

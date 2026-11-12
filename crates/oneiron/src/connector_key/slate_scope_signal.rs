@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use super::record::{ConnectorKeyStatus, invalid_body};
 use super::txn::read_connector_key_in_txn;
 use crate::consent::AuthenticatedOwner;
+use crate::consent::tool_scope::DataClass;
 use crate::consent::tool_scope::ScopedMcpCallContext;
 use crate::consent::tool_scope::ScopedMcpEscalationReason;
 use crate::consent::tool_scope::ToolGrantDataClass;

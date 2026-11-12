@@ -25,7 +25,7 @@ use loro::{
 };
 use oneiron_docedit::docx_body::{
     DocxAnchor, DocxBlock, DocxBlockKind, DocxChange, DocxLock, DocxMark, DocxParagraph, DocxRun,
-    DocxStory, canonical_runs,
+    DocxStory, DocxStoryScope, canonical_runs,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 pub use stories::{DocxStoryBody, StoryParagraph};

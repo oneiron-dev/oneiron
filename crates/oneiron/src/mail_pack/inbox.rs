@@ -7,8 +7,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
 use super::source::{MailSourceRow, SOURCES};
-use super::state::{MailOccurrence, MailPresence, OCCURRENCES};
+use super::state::{MailOccurrence, MailPresence, MailStage, OCCURRENCES};
+use super::wire::MailAttachmentRef;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault, source_audience};
 

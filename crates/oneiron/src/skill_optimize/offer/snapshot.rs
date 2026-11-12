@@ -8,7 +8,7 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::limit_ask::EngineLimit;
 use crate::skill_optimize::{EvalSeat, SufficiencyCard, SwitchOwner};
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::offer::snapshot::{

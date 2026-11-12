@@ -14,6 +14,8 @@
 //! decline stops her own act, never another agent's, a person's, or a policy
 //! hold.
 
+use serde::{Deserialize, Serialize};
+
 use super::types::AgentDefinition;
 use crate::Vault;
 use crate::error::Result;

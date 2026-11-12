@@ -1,9 +1,12 @@
 //! `describe(vault)`'s card (ARCH-0070 doors): the arrangement at a glance
 //! and what its actors can send, a free read. The editable seed is
 //! `vault.shape.read`; this card is what the arrangement amounts to.
+use super::ShapeReach;
 use super::reach::reach_projection;
 use crate::error::Result;
 use crate::{EntityId, Vault};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[doc(hidden)]

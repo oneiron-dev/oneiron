@@ -20,6 +20,8 @@
 //! [`REVIEW_POLICY_UNREADABLE`] until an owner sets or clears it; a store
 //! failure stays a failure.
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{Error, Result};
 use crate::repo_mutation::proposal::RepoProposalReview;
 use crate::side_table::{self, Named, SideTable};
@@ -47,6 +49,8 @@ pub(crate) use oneiron_verb_wire::merge_queue::review_policy::{
 };
 #[doc(hidden)]
 pub use oneiron_verb_wire::merge_queue::review_policy::{QueueReviewPolicy, QueueReviewThresholds};
+#[doc(hidden)]
+use oneiron_verb_wire::merge_queue::review_policy::{default_critics, default_votes};
 
 /// The singleton policy row. Key: ().
 const MERGE_QUEUE_REVIEW_POLICY: SideTable<(), QueueReviewPolicy, Named> =

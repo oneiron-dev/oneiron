@@ -21,6 +21,7 @@
 //! - `knowledge/selected.json`: the selected knowledge, as text.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
 

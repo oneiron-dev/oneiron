@@ -3,6 +3,7 @@
 //! seed syncs as authoritative and restores as content. The newest revision
 //! is the seed; no mutable pointer exists to drift.
 use super::{ShapeRow, ShapeSeed, invalid};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;

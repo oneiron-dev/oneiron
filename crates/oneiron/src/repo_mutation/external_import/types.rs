@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::git_wire::{GitOid, GitRefName};
+use crate::llm::BrokerIsolation;
 use crate::memory::merge_queue_doors::MergeQueueCheckWorkView;
 use crate::memory::origin_doors::CodePushIngressView;
 

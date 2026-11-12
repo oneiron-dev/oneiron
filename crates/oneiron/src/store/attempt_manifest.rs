@@ -1,7 +1,11 @@
 //! Retained pack-manifest entries for queued work.
 
+use serde::{Deserialize, Serialize};
+
+use crate::entity_id::EntityId;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::store::Store;
+use crate::store::revision_ref::RevisionRef;
 
 /// What one [`ManifestEntry`] names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -21,7 +21,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::booking::{ConstraintObject, EventTypeKey};
+use crate::booking::{ConstraintObject, EventTypeKey, RankedSlot};
 use crate::temporal::TimeRange;
 
 /// Wire version of [`BookingAgentInstructionsBlock`]. A block carrying any

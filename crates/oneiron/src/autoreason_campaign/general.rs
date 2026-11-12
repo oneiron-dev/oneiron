@@ -2,11 +2,11 @@
 //! budget spending remain at their existing gates, outside this schema.
 //! This `CampaignConfig` is the general schema; the fixed OF-366
 //! configuration lives in `super::config`.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{CampaignError, CampaignResult, CampaignSplits};
+use super::{CampaignDatasetRef, CampaignError, CampaignResult, CampaignSplits};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::autoreason_campaign::general::{

@@ -1,6 +1,6 @@
 //! The one blessed Plugin contract, installed by a verified person.
 
-use crate::error::Result;
+use crate::error::{Error, RecordError, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EdgeActorClass, EntityId};

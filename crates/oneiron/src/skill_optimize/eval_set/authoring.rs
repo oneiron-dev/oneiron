@@ -38,7 +38,8 @@ use sha2::{Digest, Sha256};
 
 use super::cohort::{cohorts_in_txn, exposure_in_txn};
 use super::{
-    EvalCase, EvalSeat, FamilyPurpose, SourceFamily, family_in_txn, invalid, root_family_in_txn,
+    EvalCase, EvalExposureCounts, EvalLabelKind, EvalSeat, FamilyPurpose, SourceFamily,
+    family_in_txn, invalid, root_family_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};

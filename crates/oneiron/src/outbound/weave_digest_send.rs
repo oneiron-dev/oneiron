@@ -13,6 +13,8 @@
 //! contact of the reader's. A reader with no route gets the inbox notice
 //! alone, and no error.
 
+use serde::{Deserialize, Serialize};
+
 use crate::agent_def::AgentWakeCadence;
 use crate::channel_identity::ChannelIdentityState;
 use crate::claim::WeaveDigestReader;

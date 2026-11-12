@@ -1,6 +1,7 @@
 //! Each triage source's state beside its continuation: what stopped its
 //! last walk, and the retry time the source named. A source that fails
 //! records it on its own row, and the sweep goes on to the next source.
+use serde::{Deserialize, Serialize};
 
 use super::{FeedbackTriageContinuation, SOURCES};
 use crate::{EntityId, Error, Result, Vault};

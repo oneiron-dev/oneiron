@@ -31,8 +31,8 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::{
-    ComposedEffect, ConsentDecision, StandingConsentGrant, evaluate_consent,
-    load_active_standing_grants,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, ConsentDecision,
+    EffectFacts, GrantBound, StandingConsentGrant, evaluate_consent, load_active_standing_grants,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -49,8 +49,9 @@ mod live_edit;
 pub(crate) use live_edit::LiveEditAdmission;
 pub(super) use live_edit::revoke_office_edit_grants_naming_in_txn;
 pub(super) use live_edit::{
-    admit_live_edit_in_txn, identical_live_edit_grant_active_in_txn, live_edit_admission_in_txn,
-    mint_live_edit_grant_in_txn, office_bound, office_effect_for, office_scope,
+    admit_live_edit_in_txn, covering_live_grant, identical_live_edit_grant_active_in_txn,
+    live_edit_admission_in_txn, live_edit_effect, mint_live_edit_grant_in_txn, office_bound,
+    office_effect_for, office_scope,
 };
 
 /// The action class a standing grant names to land an actor's office fork on

@@ -2,6 +2,7 @@
 //! Dismissing a proposal never clears its occurrence's secret or taint marks.
 
 use heed::RoTxn;
+use serde::{Deserialize, Serialize};
 
 use super::super::replay::ResultOccurrence;
 use super::records::{CodeRunSecretLiftProposal, RAW_OUTPUT_SECRETS, lift_proposal};

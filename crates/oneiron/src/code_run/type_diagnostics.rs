@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 use crate::EntityId;
+use crate::code_sandbox::source::PreparationNote;
 use crate::settings::ReleaseHold;
 
 #[doc(hidden)]

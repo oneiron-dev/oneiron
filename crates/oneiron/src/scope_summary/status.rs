@@ -8,6 +8,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_id::AttemptId;
 use crate::store::dreamer_attempt_kind::DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE;
 use crate::{EntityId, Vault};
+use serde::{Deserialize, Serialize};
 
 mod arc_status;
 

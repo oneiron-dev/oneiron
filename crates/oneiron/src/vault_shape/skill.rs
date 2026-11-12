@@ -10,6 +10,8 @@ use crate::skill_hub::pack_catalog::hub_pin;
 use crate::skill_hub::{HubSyncDisposition, SkillImportRows};
 use crate::write_envelope::skill_record::SkillLifecycle;
 use crate::{EntityId, TimeRange, Vault};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::vault_shape::skill::ShapeSkillSource;

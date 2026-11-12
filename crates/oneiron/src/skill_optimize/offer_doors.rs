@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    EvalSeat, OfferAnswerRecord, OfferCheck, TrainingOffer, settle_training_offer, training_offer,
-    training_offer_checks, training_offers, undo_training_offer_switch, union_source_rows,
+    EvalSeat, OfferAnswer, OfferAnswerRecord, OfferCheck, TrainingOffer, settle_training_offer,
+    training_offer, training_offer_checks, training_offers, undo_training_offer_switch,
+    union_source_rows,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::claim::maintenance_kind::COACH_HOST_QUEUE_KIND;

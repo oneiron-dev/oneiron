@@ -46,6 +46,11 @@ pub use self::scopes::{
     delegated_custody_scopes_for_grant, delegated_custody_subject_scope,
 };
 
+#[doc(hidden)]
+use oneiron_verb_wire::channel_identity::custody::{
+    MAX_DELEGATED_GRANT_REF_BYTES, MAX_DELEGATED_GRANT_SCOPES,
+};
+
 /// OAuth scope classes a `delegated_grant` row may carry.
 ///
 /// Two read classes and exactly one write class, `MailSend` (OF-374). There is

@@ -28,6 +28,7 @@ mod execute;
 mod plan;
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::claim::{

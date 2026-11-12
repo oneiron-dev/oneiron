@@ -1,5 +1,7 @@
 //! Closed issue vocabulary: defect categories and count keys.
 
+use crate::skill_attribution::AttributionVerdict;
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::edit_distance::publisher::vocab::IssueCategory;
 

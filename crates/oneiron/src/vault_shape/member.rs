@@ -8,8 +8,10 @@ use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeSeed, invalid};
 use crate::authority::HostSlipIssuer;
 use crate::error::Result;
-use crate::federation::SharedVaultPreset;
+use crate::federation::{FederationGrantRole, SharedVaultPreset};
 use crate::{EntityId, Vault};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 /// A member's role, as a seed states it. A delegate's expiring grant and
 /// an ask guest are not membership, so no row names them.

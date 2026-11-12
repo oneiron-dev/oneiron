@@ -1,6 +1,8 @@
 //! Typed public calls on a credential's attached live run. The run's own
 //! code-mode calls keep their implicit run and positional fold span.
 
+use serde::{Deserialize, Serialize};
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::code_run::fold_api::{
     FoldCompactRequest, FoldHistoryRequest, FoldMarkRequest, FoldRunRequest, FoldUnfoldRequest,
