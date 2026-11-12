@@ -352,7 +352,7 @@ pub struct RepoMergeQueueObserveOutput {
 #[serde(rename_all = "snake_case")]
 pub enum RepoQueueSuccessor {
     /// The successor batch id, 64 lower-hex characters: the run's lane
-    /// reads every proposal of it.
+    /// reads the successor's own completion receipt.
     Batch(String),
     /// Another batch, which the run's lane does not read; no id is shown.
     AnotherBatch,
@@ -379,7 +379,8 @@ pub struct RepoQueueEntryView {
     pub drive: QueueDriveStatus,
     /// Once `state` is `Superseded`: what carried its change, never landed
     /// itself (QUEUE Q1 = A). The green successor batch only when the run's
-    /// lane reads every one of its proposals, else `another_batch`.
+    /// lane reads that successor's own completion receipt, else
+    /// `another_batch`.
     pub superseded_by: Option<RepoQueueSuccessor>,
     pub base_green: String,
     pub expected_head: String,
