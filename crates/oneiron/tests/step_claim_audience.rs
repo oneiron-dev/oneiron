@@ -140,6 +140,7 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
         deadline: None,
         now_ms: 10_000,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let guard =
         BudgetGuard::with_reserve_units("step-test", 10_000, 500, BudgetExhaustionPolicy::Suspend);

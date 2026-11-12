@@ -63,7 +63,8 @@ pub(crate) struct KeepApproval {
     actor: WriteActor,
     /// The owner-tier proof that answers the claim's owner-answer
     /// obligation: an Owner's alone, never a delegate's.
-    owner_answer: Option<OwnerAuthoredWrite>,
+    /// Spent by the one approval it answers (`approve_in_txn`).
+    owner_answer: Cell<Option<OwnerAuthoredWrite>>,
     approved: Cell<Option<ApprovedKeep>>,
 }
 
@@ -82,7 +83,7 @@ impl KeepApproval {
     pub(crate) fn new(actor: WriteActor, owner_answer: Option<OwnerAuthoredWrite>) -> Self {
         Self {
             actor,
-            owner_answer,
+            owner_answer: Cell::new(owner_answer),
             approved: Cell::new(None),
         }
     }
@@ -138,7 +139,7 @@ impl KeepAs<'_> {
             claim,
             GateConsentBundleAction::Approve,
             approval.actor,
-            approval.owner_answer.as_ref(),
+            approval.owner_answer.take(),
             now,
         )?;
         approval.approved.set(Some(ApprovedKeep {

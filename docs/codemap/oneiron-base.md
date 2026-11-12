@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/panic_report.rs` | src | s | 1 fn · 1 const | — | The content-free panic report a host installs before it opens a vault |
 | `src/posterior.rs` | src | s | 2 re-export | — | Shared Beta posterior bandit seam |
 | `src/registry.rs` | src | s | 1 mod · 10 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
-| `src/registry/pack_namespaces.rs` | src | s | 3 const | — | Stable pack provenance and structural-kind short-id namespaces |
+| `src/registry/pack_namespaces.rs` | src | s | 1 struct · 1 fn · 7 const | CompiledProductKindName | Stable pack provenance and structural-kind short-id namespaces |
 | `src/request_limits.rs` | src | s | 10 fn · 10 const | — | Request boundary limits and pure validators |
 | `src/retrieval_quality.rs` | src | s | 1 re-export | — | Retrieval quality report vocabulary |
 | `src/skill_invocations.rs` | src | s | 2 struct · 4 fn | InvocationGuard, SkillInvocations | The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an… |

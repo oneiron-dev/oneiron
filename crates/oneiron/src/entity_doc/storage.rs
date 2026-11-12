@@ -281,6 +281,10 @@ pub(super) fn persist_scanned(
         // FIX 4817: a home part's new revision withdraws what wore the old one.
         let custody = crate::secret_custody::CustodyWrite::of(vault);
         crate::ports::withdraw_changed_home_dependents_in_txn(&custody, txn, entity)?;
+        // FIX SUMMARY-SHORT-REF-INDEX: a live read issues the row's short ref
+        // with its document projection's hash, which a birth (field order)
+        // or an edit (text) changes.
+        crate::vault::entity_revision::refresh_live_short_id_in_txn(store, txn, entity)?;
     }
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;

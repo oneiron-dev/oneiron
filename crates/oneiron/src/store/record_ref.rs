@@ -38,6 +38,11 @@ impl RecordRef {
 
     /// [`Self::from_id`], labelled by its kind from `body`, the JSON body
     /// the producer's own read already admitted, when it holds one.
+    ///
+    /// The kind is the static registry's spelling: use it for a compile-time
+    /// type constant. A type byte read from a stored row may be a kind this
+    /// vault registered at run time (PROJECT); name it with
+    /// [`Self::from_body_in_vault`].
     #[must_use]
     pub fn from_body(
         entity_type: u8,
@@ -49,6 +54,41 @@ impl RecordRef {
             || format!("TYPE_{entity_type}"),
             |entry| entry.kind.to_owned(),
         );
+        Self::from_kind_and_body(kind, id, short_id, body)
+    }
+
+    /// [`Self::from_id`] for a type byte read from a stored row, its kind
+    /// spelled by [`crate::Vault::entity_kind_name`]: a kind the vault
+    /// registered at run time reads back by its name, not `TYPE_<byte>`.
+    #[must_use]
+    pub fn from_id_in_vault(
+        vault: &crate::Vault,
+        entity_type: u8,
+        id: &crate::entity_id::EntityId,
+        short_id: Option<&str>,
+    ) -> Self {
+        Self::from_body_in_vault(vault, entity_type, id, short_id, None)
+    }
+
+    /// [`Self::from_body`] for a type byte read from a stored row, its kind
+    /// spelled by [`crate::Vault::entity_kind_name`].
+    #[must_use]
+    pub fn from_body_in_vault(
+        vault: &crate::Vault,
+        entity_type: u8,
+        id: &crate::entity_id::EntityId,
+        short_id: Option<&str>,
+        body: Option<&serde_json::Value>,
+    ) -> Self {
+        Self::from_kind_and_body(vault.entity_kind_name(entity_type), id, short_id, body)
+    }
+
+    fn from_kind_and_body(
+        kind: String,
+        id: &crate::entity_id::EntityId,
+        short_id: Option<&str>,
+        body: Option<&serde_json::Value>,
+    ) -> Self {
         let id = id.to_hex();
         let short_id = short_id.map(bare_short_ref);
         let label = body

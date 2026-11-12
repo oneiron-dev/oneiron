@@ -318,7 +318,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 3 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |
 | `src/merge_queue/types.rs` | src | s | 8 struct · 3 enum · 7 fn | BatchState, CheckReport, EffectIntent, LandingPermit, MergeFile, MergeFileExpected, MergeProposal, MergeQueuePointers +3 | Persisted queue records and sealed landing/check boundaries |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
-| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 52 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 53 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
 | `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
@@ -607,7 +607,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/cohort_claims/suppression.rs` | src | s | 2 struct · 1 enum | SuppressionCause, SuppressionInput, SuppressionReceipt | Restrictive contact-suppression inputs, causes and receipts |
 | `src/write_envelope/cohort_claims/types.rs` | src | m | 10 struct · 5 enum · 11 fn · 9 const | BounceKind, CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, ClaimClassDescriptorRow, CommBounceValue, CommDoNotContactValue +7 | CRM-pack claim predicates, value types, token enums, and descriptor table |
 | `src/write_envelope/commitment_actor.rs` | src | s | 1 fn | — | Deterministic identity used by commitment projection writes |
-| `src/write_envelope/commitment_transition.rs` | src | s | 2 fn · 1 const | — | Commitment successor identity rules |
+| `src/write_envelope/commitment_transition.rs` | src | s | 2 fn | — | Commitment successor identity rules |
 | `src/write_envelope/communication.rs` | src | s | 1 struct · 4 enum · 5 fn · 1 type · 25 const | ClaimClassDescriptorRow, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Communication predicate, error, send-override and descriptor-row vocabulary |
 | `src/write_envelope/communication_record.rs` | src | m | 2 enum · 18 fn · 2 const · 1 re-export | CommEventKind, CommRecord | Communication event, gate and receipt wire values and their strict MessagePack codec |
 | `src/write_envelope/communication_record/source_position.rs` | src | s | 1 struct · 2 crate-vis | ScopedTouchSource | Frozen source data for an explicitly born, scoped touch; not write authority |
