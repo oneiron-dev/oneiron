@@ -8,7 +8,7 @@
 //! member in its own savepoint and drops the savepoint of one left waiting.
 
 use super::*;
-use crate::inbox::{RestoreMemberWait, RestoredMemberSettle, RestoredMemberState};
+use crate::inbox::{OpenRestoredMember, RestoreMemberWait, RestoredMemberSettle};
 use crate::ports::TombstoneStoreRead;
 
 fn waiting(
@@ -24,31 +24,46 @@ fn waiting(
 }
 
 impl crate::Vault {
-    /// Where the restored claim `id` stands for its restore group, in `txn`:
-    /// closed, or open with the live head its approval would supersede, as a
-    /// review of it binds that head.
-    pub(crate) fn restored_member_state_in_txn(
+    /// The body of the restored claim `id` while it is an open proposal in
+    /// `txn`: not deleted, Proposed and Active. `None` when it is settled,
+    /// closed, deleted or gone.
+    fn open_restored_claim_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
-    ) -> crate::Result<RestoredMemberState> {
+    ) -> crate::Result<Option<ClaimBody>> {
         if self.store.port_deletion_state(txn, id)?.deleted {
-            return Ok(RestoredMemberState::Closed);
+            return Ok(None);
         }
-        let Some(body) = self.get_claim_in_txn(txn, id)? else {
-            return Ok(RestoredMemberState::Closed);
-        };
-        if body.approval != ClaimApprovalStatus::Proposed
-            || body.lifecycle != ClaimLifecycleStatus::Active
-        {
-            return Ok(RestoredMemberState::Closed);
+        Ok(self.get_claim_in_txn(txn, id)?.filter(|body| {
+            body.approval == ClaimApprovalStatus::Proposed
+                && body.lifecycle == ClaimLifecycleStatus::Active
+        }))
+    }
+
+    /// The restore group `members` still open in `txn`, in their order, each
+    /// with the live head its approval would supersede, as a review of it
+    /// binds that head. The claims about each subject are read once for all
+    /// the members (R6).
+    pub(crate) fn open_restored_members_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        members: &[EntityId],
+    ) -> crate::Result<Vec<OpenRestoredMember>> {
+        let mut heads = ConflictHeadIndex::default();
+        let mut open = Vec::new();
+        for id in members {
+            let Some(body) = self.open_restored_claim_in_txn(txn, id)? else {
+                continue;
+            };
+            let replaces = if self.has_deferred_claim_in_txn(txn, id)? {
+                None
+            } else {
+                heads.head_id(self, txn, id, &body)?
+            };
+            open.push(OpenRestoredMember { id: *id, replaces });
         }
-        let replaces = if self.has_deferred_claim_in_txn(txn, id)? {
-            None
-        } else {
-            conflict_head_in_txn(self, txn, id, &body)?.map(|head| head.id)
-        };
-        Ok(RestoredMemberState::Open { replaces })
+        Ok(open)
     }
 }
 
@@ -71,10 +86,12 @@ impl Memory<'_> {
         action: GateConsentBundleAction,
         now: u64,
     ) -> MemoryResult<RestoredMemberSettle> {
-        if !matches!(
-            self.vault.restored_member_state_in_txn(&*wtxn, &id)?,
-            RestoredMemberState::Open { .. }
-        ) {
+        // The review read below binds the live head, so this check reads none.
+        if self
+            .vault
+            .open_restored_claim_in_txn(&*wtxn, &id)?
+            .is_none()
+        {
             return Ok(RestoredMemberSettle::Closed);
         }
         let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;

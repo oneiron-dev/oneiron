@@ -17,7 +17,7 @@ use super::*;
 use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::inbox::{
     InboxBulkVerb, InboxGroupResolveRequest, RestoreInboxResolution, RestoreMemberOutcome,
-    RestoreMemberVerdict, RestoreMemberWait, RestoredMemberSettle, RestoredMemberState,
+    RestoreMemberVerdict, RestoreMemberWait, RestoredMemberSettle,
 };
 use crate::ports::EntityStoreRead;
 
@@ -96,7 +96,7 @@ fn restore_group_members(
         ));
     }
     let mut members = crate::batch::export::owner_restore_members_in_txn(vault, txn, group_key)?;
-    members.sort_unstable_by(|a, b| b.cmp(a));
+    members.sort_unstable_by_key(|member| std::cmp::Reverse(*member));
     Ok(members)
 }
 
@@ -185,18 +185,17 @@ impl Memory<'_> {
             .read_txn()
             .map_err(crate::Error::from)?;
         let actor = require_owner(self, &txn, owner)?;
-        let mut members = Vec::new();
-        for id in restore_group_members(self, &txn, group_key, actor)? {
-            if let RestoredMemberState::Open { replaces } =
-                self.vault().restored_member_state_in_txn(&txn, &id)?
-            {
-                members.push(RestoreMemberOutcome {
-                    waiting: Some(RestoreMemberWait::ReviewEach),
-                    replaces_ref: replaces.map(|head| head.to_hex()),
-                    ..outcome(id, RestoreMemberVerdict::Waiting, None)
-                });
-            }
-        }
+        let recorded = restore_group_members(self, &txn, group_key, actor)?;
+        let members: Vec<RestoreMemberOutcome> = self
+            .vault()
+            .open_restored_members_in_txn(&txn, &recorded)?
+            .into_iter()
+            .map(|member| RestoreMemberOutcome {
+                waiting: Some(RestoreMemberWait::ReviewEach),
+                replaces_ref: member.replaces.map(|head| head.to_hex()),
+                ..outcome(member.id, RestoreMemberVerdict::Waiting, None)
+            })
+            .collect();
         self.produced_from(
             members
                 .iter()

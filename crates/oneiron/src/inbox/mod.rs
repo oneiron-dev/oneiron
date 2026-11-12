@@ -65,7 +65,7 @@ pub use self::unified::{
 
 pub(crate) use self::notification::{notification_id, scrub_finding_notification_actor_in_txn};
 pub(crate) use self::projection::inbox_claim_hash;
-pub(crate) use self::restore_group::{RestoredMemberSettle, RestoredMemberState};
+pub(crate) use self::restore_group::{OpenRestoredMember, RestoredMemberSettle};
 
 pub(crate) mod tables;
 #[cfg(test)]
