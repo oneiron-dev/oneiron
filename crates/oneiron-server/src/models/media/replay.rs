@@ -432,7 +432,6 @@ impl MediaRuntime {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
                 self.lock_jobs().remove(id);
-                self.book_job_scope(id);
                 return Ok(self.lost(id, row));
             }
             Err(error) => {
@@ -469,12 +468,24 @@ impl MediaRuntime {
             error: LlmError::Fatal(FatalLlmError::JobLost),
         };
         row.ended = Some(state.clone());
-        if let Some(store) = &self.store
-            && let Err(error) = store
-                .update(id, row.clone())
-                .or_else(|_| store.hold(id, row).map(|()| JobWrite::Kept))
-        {
-            tracing::error!(%error, ticket = id, "a lost media job's end was not kept");
+        let Some(store) = &self.store else {
+            return state;
+        };
+        // What its send charged the scope that funds it, when one does, is
+        // staged in the commit that writes its end (S7299-P1).
+        let stage = self.end_stage(id);
+        let written = store
+            .update_staged(id, row.clone(), stage.as_ref())
+            .map(drop)
+            .or_else(|_| store.hold_staged(id, row, stage.as_ref()));
+        match written {
+            Ok(()) => {
+                let staged = self.end_committed(id, stage);
+                self.drain_end_stage(staged);
+            }
+            Err(error) => {
+                tracing::error!(%error, ticket = id, "a lost media job's end was not kept");
+            }
         }
         state
     }
