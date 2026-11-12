@@ -151,7 +151,8 @@ pub struct ClaimInput {
 pub struct CommitReceipt {
     /// Short-id ref of the written claim.
     pub claim_short_id: String,
-    /// Final approval as stored: `auto`/`proposed`.
+    /// Final approval as stored: `auto`/`proposed`. A retract answers
+    /// `pending` when it is parked for the holder's consent.
     pub approval: String,
     /// Short-id ref of the claim this write superseded, if any.
     pub superseded_short_id: Option<String>,
