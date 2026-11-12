@@ -12,12 +12,16 @@
 //! decoded member, and the plan's copy is rebuilt around it as a serving
 //! door's is (OF-067 C, `container`).
 //!
+//! A recovery phrase split over a file's parts (one word per MessagePack
+//! item or JSON byte array) is marked word by word, one custody record
+//! holding the phrase (LABEL-04, `split_phrase`).
+//!
 //! What the door finds but cannot place still refuses the whole write: a
-//! recovery phrase, a key split over members, an entity the engine itself
-//! authors or a peer replicated, and a replayed batch. A plan runs first on
-//! a copy, with a stand-in handle for each secret and each file's keys
-//! overwritten, and the door reads that copy again; only a clean copy mints
-//! custody records.
+//! recovery phrase split over a body's parts, a key split over members, an
+//! entity the engine itself authors or a peer replicated, and a replayed
+//! batch. A plan runs first on a copy, with a stand-in handle for each
+//! secret and each file's keys overwritten, and the door reads that copy
+//! again; only a clean copy mints custody records.
 
 pub(super) mod admit;
 mod batch_door;
@@ -33,6 +37,7 @@ mod leaf_keys;
 mod promoted_message_parts;
 pub(super) mod retained_repo;
 pub(super) mod side_row;
+mod split_phrase;
 pub(super) mod spool;
 pub(super) mod stream_known;
 mod text;
@@ -406,6 +411,11 @@ struct Masker {
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
+    /// The batch door's plan: a recovery phrase split over a file's parts
+    /// is marked word by word, one record for its words (LABEL-04). A
+    /// carrier's text is placed as before, such a phrase left unplaced: a
+    /// lifted text's handle stands for one value (`carrier::LiftedKeys`).
+    places_split_phrases: bool,
     /// Each file's key places by its bytes' hash: marked before, or by this
     /// plan.
     marked: HashMap<[u8; 32], KeyPlaces>,
