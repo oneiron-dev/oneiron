@@ -248,6 +248,10 @@ fn launched_campaign(
     let version = created["definition"]["definition_version"]
         .as_u64()
         .unwrap();
+    // The JSON door stamps the campaign with the vault's clock (Unix
+    // seconds); every later write is dated at or after it, or the launch
+    // refuses an `updated_at` before `created_at`.
+    let now = vault.now_recorded_at();
     let program = create_campaign_program(
         vault,
         owner,
@@ -258,7 +262,7 @@ fn launched_campaign(
             steps: steps.clone(),
             audience: None,
         },
-        1,
+        now,
     )
     .unwrap()
     .program
@@ -274,15 +278,15 @@ fn launched_campaign(
                 outbound.call_seq,
                 &outbound.payload,
                 WriteActor::new(owner, EdgeActorClass::Human),
-                1,
+                now,
             )
             .unwrap();
     }
-    launch_campaign(vault, owner, EdgeActorClass::Human, campaign, version, 1).unwrap();
+    launch_campaign(vault, owner, EdgeActorClass::Human, campaign, version, now).unwrap();
     elect_campaign_home_node_designation(
         vault,
         &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],
-        1,
+        now,
     )
     .unwrap();
     (campaign, program)
@@ -298,6 +302,8 @@ fn claimed_attempt(
     member: EntityId,
 ) -> AttemptRecord {
     let vault = &base.vault;
+    // After the launch, on the vault's clock (see `launched_campaign`).
+    let now = vault.now_recorded_at();
     let read = sweep_owner_read(vault, base.owner, EdgeActorClass::Human)
         .unwrap()
         .expect("the owner has a usable read");
@@ -315,7 +321,7 @@ fn claimed_attempt(
             query_ref: base.query,
             campaign_ref: campaign,
             entity_ref: member,
-            now: 2,
+            now: now + 1,
         },
     ))
     .unwrap()
@@ -332,7 +338,7 @@ fn claimed_attempt(
                 program_step_ref: step,
             },
             None,
-            3,
+            now + 2,
         )
         .unwrap()
     {
@@ -340,7 +346,7 @@ fn claimed_attempt(
         other => panic!("unexpected enqueue outcome: {other:?}"),
     }
     match runner
-        .claim_if_home(HOME_NODE, format!("worker:{HOME_NODE}"), 4)
+        .claim_if_home(HOME_NODE, format!("worker:{HOME_NODE}"), now + 3)
         .unwrap()
     {
         CampaignEnrollmentClaim::Queue(ClaimOutcome::Claimed(record)) => record,
@@ -419,10 +425,12 @@ impl OutboundResultSender for NoSend {
     }
 }
 
-/// Drives the leg; it must be held for the owner's press.
+/// Drives the leg, at wall milliseconds after its claim; it must be held for
+/// the owner's press.
 fn drive_held(vault: &Vault, attempt: &AttemptRecord) {
+    let at_ms = (vault.now_recorded_at() + 4) * 1000;
     let drive = vault
-        .drive_enrollment_outbound_leg(HOME_NODE, attempt, &mut NoSend, 10_000)
+        .drive_enrollment_outbound_leg(HOME_NODE, attempt, &mut NoSend, at_ms)
         .unwrap();
     assert!(
         matches!(drive, EnrollmentLegDrive::AwaitingApproval { .. }),
@@ -711,7 +719,6 @@ mod arms {
     use std::collections::BTreeMap;
 
     const REPLIED: &str = "replied";
-    const REPLY_AT: u64 = 1_754_400_000;
     const HUMAN_BODY: &[u8] = b"Hi, I wrote this one myself. Could we talk next week?";
 
     fn key(token: &str) -> StageKey {
@@ -832,6 +839,8 @@ mod arms {
         let human_attempt = claimed_attempt(&base, campaign, program, human_step, human_member);
         drive_held(&base.vault, &human_attempt);
 
+        // The reply comes after every send, on the vault's clock.
+        let reply_at = base.vault.now_recorded_at() + 10;
         let replied = apply_coded_reply(
             &base.vault,
             &ladder(),
@@ -842,7 +851,7 @@ mod arms {
                 message_ref: EntityId::now(),
                 thread_ref: None,
                 code: ReplyCode::PositiveNow,
-                occurred_at: REPLY_AT,
+                occurred_at: reply_at,
             },
             PromotionMode::Auto,
         )
