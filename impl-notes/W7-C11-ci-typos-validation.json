@@ -7,52 +7,52 @@
     "jobId": 106043299462,
     "name": "Checks",
     "runnerId": 23,
-    "runnerName": "Oletymac",
+    "runnerName": "macmini",
     "host": "Mac mini 100.81.227.117",
     "tool": "typos-cli 1.45.1",
     "exitCode": 2,
     "cause": "Spelling diagnostics; unrelated to the earlier MacBook semaphore incident",
     "rawEvidence": [
       {
-        "path": "/home/lexi/w7-build/recovery/rejected-continuation-20260919/c11-required-checks/job-complete.log",
+        "path": "<host-home>/w7-build/recovery/rejected-continuation-20260919/c11-required-checks/job-complete.log",
         "sha256": "388967b27b0970bb6d3637f19488837e77e82e72fc908398c28a51432595050a"
       },
       {
-        "path": "/home/lexi/w7-build/recovery/rejected-continuation-20260919/c11-required-checks/job.json",
+        "path": "<host-home>/w7-build/recovery/rejected-continuation-20260919/c11-required-checks/job.json",
         "sha256": "d6926fa7f152835aafa6ee470590d2e3223c828bd9a439c072456bf73f2525b4"
       },
       {
-        "path": "/home/lexi/w7-build/recovery/rejected-continuation-20260919/c11-required-checks/runner-host-binding.json",
+        "path": "<host-home>/w7-build/recovery/rejected-continuation-20260919/c11-required-checks/runner-host-binding.json",
         "sha256": "8449b85f2a9231e182a56931de83673fe70b6b38d0f78b8c0ff6dd42b3b2307c"
       }
     ]
   },
   "validation": {
-    "cwd": "/home/lexi/w7-build/wt/W7-C11",
+    "cwd": "<host-home>/w7-build/wt/W7-C11",
     "argv": [
-      "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/bin/typos"
+      "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/bin/typos"
     ],
     "version": "typos-cli 1.45.1",
     "platform": "Linux x86_64, official release binary; no Cargo install or host change",
     "release": "https://github.com/crate-ci/typos/releases/tag/v1.45.1",
     "archive": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/typos-v1.45.1-x86_64-unknown-linux-musl.tar.gz",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/typos-v1.45.1-x86_64-unknown-linux-musl.tar.gz",
       "sha256": "33447531a0eff29796d6fb9b555b4628723db72c6bad129e168d97ac86ceb0f1"
     },
     "binary": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/bin/typos",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/bin/typos",
       "sha256": "0ca5ebc28c57edecae137dcdad2f3ee85d6b37487bce64d6e198895387c0ffea"
     },
     "before": {
       "exitCode": 2,
       "distinctFindings": 11,
       "diagnostics": 16,
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/before.log",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/before.log",
       "sha256": "40a8d67740653372d9520025157fb2b406dc8a82c744264ad78e5e123aa4a144"
     },
     "afterPolicy": {
       "exitCode": 0,
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-policy.log",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-policy.log",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "negativeControls": [
@@ -61,7 +61,7 @@
         "path": "impl-notes/W7-C11-typos-negative-control.txt",
         "exitCode": 2,
         "findingCount": 12,
-        "log": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-owned-prose.log",
+        "log": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-owned-prose.log",
         "logSha256": "9ebe924656995798982cfd77ba75eab9a91afc58b06437fbe42ce39f7680afb7"
       },
       {
@@ -69,7 +69,7 @@
         "path": "impl-notes/typos-policy-negative-control/error.rs",
         "exitCode": 2,
         "findingCount": 2,
-        "log": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-owned-same-basename.log",
+        "log": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-owned-same-basename.log",
         "logSha256": "451380f2e7ae34d8a6dea8260e97454e59243749f35427106eca4c3587f2e0a5"
       },
       {
@@ -77,7 +77,7 @@
         "path": "crates/oneiron/vendor/sudachi-0.6.11/typos-negative-control.txt",
         "exitCode": 2,
         "findingCount": 12,
-        "log": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-vendor-still-checked.log",
+        "log": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-vendor-still-checked.log",
         "logSha256": "be2c3e6bcd9161c0c807d0fb4bc4b7978d14d343103150bc077f87938686832c"
       },
       {
@@ -85,7 +85,7 @@
         "path": "impl-notes/typos-policy-negative-control/W7-C11-merge-validation.json",
         "exitCode": 2,
         "findingCount": 2,
-        "log": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-receipt-other-prose.log",
+        "log": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-receipt-other-prose.log",
         "logSha256": "5674e99689f1ff05fb928e4a757f103666e2f3a3e540e565d1506e6a80cf0723"
       },
       {
@@ -93,7 +93,7 @@
         "path": "impl-notes/typos-policy-negative-control/W7-C11-merge-validation.json",
         "exitCode": 2,
         "findingCount": 1,
-        "log": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-receipt-other-identity.log",
+        "log": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-receipt-other-identity.log",
         "logSha256": "a929d3ce492bf0cae7c7fde60cc4e9cb9cca28f350aafe45e0c39f1dc52e04af"
       },
       {
@@ -101,31 +101,31 @@
         "path": "impl-notes/W7-C11-typos-negative-control.json",
         "exitCode": 2,
         "findingCount": 1,
-        "log": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-other-file-same-identity.log",
+        "log": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/control-other-file-same-identity.log",
         "logSha256": "4f8fbaf2db5b30db8feb0fc9317b01a4c8f84515718599ce5b97d1e7a08f56b2"
       }
     ],
     "afterControls": {
       "exitCode": 0,
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-controls.log",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-controls.log",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "negativeControlInputs": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/negative-control-inputs.json",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/negative-control-inputs.json",
       "sha256": "b8145d847f66d8ffc7a740b2f87a72e5498c6ba4b09178d40e23af008a4b8f80"
     },
     "config": {
-      "path": "/home/lexi/w7-build/wt/W7-C11/typos.toml",
+      "path": "typos.toml",
       "sha256": "3002aee8b456baa50e31453a5b9c3b20bf558998c131a50575372200d3bf42de"
     },
     "afterNotes": {
       "exitCode": 0,
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-notes.log",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-notes.log",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "afterIntake": {
       "exitCode": 0,
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-intake.log",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/after-intake.log",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   },
@@ -235,11 +235,11 @@
     "actualVendorFilesInRootWalk": 121,
     "walkDiagnostic": {
       "argv": [
-        "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/bin/typos",
+        "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/bin/typos",
         "--files"
       ],
       "exitCode": 0,
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/checked-files.log",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/checked-files.log",
       "sha256": "2bbe06dabe1e7799522eceedd5a9107ad0443b4e50de203406af83256b4e7ce5"
     }
   },
@@ -247,18 +247,18 @@
     "vendorFileCount": 140,
     "allVendorBytesUnchanged": true,
     "vendorManifest": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/vendor-sha256-before.json",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/vendor-sha256-before.json",
       "sha256": "18ae08d183af77e9d89687d2d8d12406b7952dc09069cd91fb66958c9a9dc1c1"
     },
     "rawEvidenceUnchanged": true,
     "rawManifest": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/raw-evidence-sha256-before.json",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/raw-evidence-sha256-before.json",
       "sha256": "6a2f1e0904391ff70c2fb5caf639daa73f209531b2745c8f23c9ba2509432091"
     },
     "mergeReceiptUnchanged": true,
     "mergeReceipt": {
-      "path": "/home/lexi/w7-build/wt/W7-C11/impl-notes/W7-C11-merge-validation.json",
-      "sha256": "ecaa864ce057252e40a82e5df5d11dc749553a14c409c3a4e787cf044b12b08d"
+      "path": "impl-notes/W7-C11-merge-validation.json",
+      "sha256": "c2a6b3ea4d212ee2bfd8df3aee78bcadf65d3f1c33bcbc4198a444251370116d"
     }
   },
   "notRun": [
@@ -279,11 +279,11 @@
     "threads": 23,
     "paginationComplete": true,
     "report": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/intake/report.md",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/intake/report.md",
       "sha256": "81c15e2ba4b22d985a3875016cadbddb7bae88173843ed62f2613e61a131a462"
     },
     "manifest": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/intake/fetch-manifest.json",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/intake/fetch-manifest.json",
       "sha256": "462937d865b4f7915a899268c2c44d6b6528463e92859b8078ab723e1b689e73"
     },
     "newFollowUps": [
@@ -312,7 +312,7 @@
     "url": "https://github.com/oneiron-dev/oneiron/pull/944#issuecomment-5748582010",
     "bodyVerifiedByGet": true,
     "getReceipt": {
-      "path": "/home/lexi/w7-build/tickets/W7-C11/ci-typos-repair-20260920/pr-explanation-get.json",
+      "path": "<host-home>/w7-build/tickets/W7-C11/ci-typos-repair-20260920/pr-explanation-get.json",
       "sha256": "23a6df1ae0451b0236dd48ff4973f9dbf26333b1ab63c91757b0662187780b55"
     }
   }

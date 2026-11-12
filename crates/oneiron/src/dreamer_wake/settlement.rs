@@ -347,6 +347,39 @@ impl DreamerWakeDriver<'_> {
         Ok(())
     }
 
+    /// Parks a current lease on its seat in the write that records the refusal.
+    pub(super) fn park_on_seat(
+        &mut self,
+        admitted: &DreamerAdmittedAttempt,
+        reason: String,
+        seat: crate::dreamer_runner::ModelSeatId,
+        reset_at_s: Option<u64>,
+        park_owner: &str,
+        now: u64,
+    ) -> Result<()> {
+        let input = ParkDreamerAttempt {
+            attempt_id: admitted.status.attempt.id,
+            reason,
+            cause: DreamerParkCause::Signal,
+            park_owner: park_owner.to_owned(),
+            carried_spend: None,
+            now,
+        };
+        let lease = admitted_lease(admitted, park_owner);
+        if let Some(record) = self
+            .store
+            .park_on_seat_if_current_lease(input, lease, seat, reset_at_s)?
+        {
+            self.publish(
+                record.attempt_id,
+                ProgressKind::Parked,
+                Some(record.reason),
+                now,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Settles a failed or plainly parked attempt's reservation on `line`
     /// with what it charged (SCAN C012): its run line's charge and what its
     /// executor's tally spent before an error (FIX 7432), pinning in that

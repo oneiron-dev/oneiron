@@ -1,0 +1,22 @@
+/* The word at the figure size in the quiet ink, a rule hairline on each
+   side. */
+.sl-word-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--sl-t-figure);
+  line-height: 1.4;
+  color: var(--sl-ink-3);
+}
+
+.sl-word-divider::before,
+.sl-word-divider::after {
+  content: "";
+  flex: 1 1 0;
+  height: 1px;
+  background: var(--sl-rule);
+}
+
+.sl-word-divider-word {
+  flex: none;
+}

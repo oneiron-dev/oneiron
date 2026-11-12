@@ -7,82 +7,82 @@
     "origin_main": "cf8d4ce473ddffb6bf278f11263ae0cf84461117",
     "public_sources": [
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/scripts/sdk/agent-verbs.json",
+        "path": "scripts/sdk/agent-verbs.json",
         "repositoryPath": "scripts/sdk/agent-verbs.json",
         "sha256": "d4fa36be976e4195323bf342a0e21a49f8965a2533536d7f6c0c2b9f2570911a"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron-client/src/facade.ts",
+        "path": "packages/oneiron-client/src/facade.ts",
         "repositoryPath": "packages/oneiron-client/src/facade.ts",
         "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron-client/src/facade-types.ts",
+        "path": "packages/oneiron-client/src/facade-types.ts",
         "repositoryPath": "packages/oneiron-client/src/facade-types.ts",
         "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron/src/facade-types.ts",
+        "path": "packages/oneiron/src/facade-types.ts",
         "repositoryPath": "packages/oneiron/src/facade-types.ts",
         "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/packages/oneiron/README.md",
+        "path": "packages/oneiron/README.md",
         "repositoryPath": "packages/oneiron/README.md",
         "sha256": "6459fe7b752d2b9ae516ef58475252aa047f04c5f1e432a393e6a4d960348097"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/cli.rs",
+        "path": "crates/oneiron-server/src/cli.rs",
         "repositoryPath": "crates/oneiron-server/src/cli.rs",
         "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/openapi_registry.rs",
+        "path": "crates/oneiron-server/src/api/openapi_registry.rs",
         "repositoryPath": "crates/oneiron-server/src/api/openapi_registry.rs",
         "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/openapi/endpoints_merge.rs",
+        "path": "crates/oneiron-server/src/api/openapi/endpoints_merge.rs",
         "repositoryPath": "crates/oneiron-server/src/api/openapi/endpoints_merge.rs",
         "sha256": "edbcb928be6877398c1a0417f399852d7cf7dd617ec98fc6af063bb36956ba0f"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/openapi/owner_paths.rs",
+        "path": "crates/oneiron-server/src/api/openapi/owner_paths.rs",
         "repositoryPath": "crates/oneiron-server/src/api/openapi/owner_paths.rs",
         "sha256": "7bb5654c2e2e5bedb9b8392bfea116bca68a14a4771968e0c2eb51703f927761"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_http/routes.rs",
+        "path": "crates/oneiron-server/src/api/git_http/routes.rs",
         "repositoryPath": "crates/oneiron-server/src/api/git_http/routes.rs",
         "sha256": "8d8d22ec536a86c1de229b0ef19570c40570554d75897c156fa6824d4816de60"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_http/gate.rs",
+        "path": "crates/oneiron-server/src/api/git_http/gate.rs",
         "repositoryPath": "crates/oneiron-server/src/api/git_http/gate.rs",
         "sha256": "099e3119af5545ecb6c46a6b82226ea810e2b2d33fa1dc2e1fe423592642ed94"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_lfs/mod.rs",
+        "path": "crates/oneiron-server/src/api/git_lfs/mod.rs",
         "repositoryPath": "crates/oneiron-server/src/api/git_lfs/mod.rs",
         "sha256": "10351b3c98c0b10d788d8750018e480091d82f7cc12597a9c142995617242b7d"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_lfs/gate.rs",
+        "path": "crates/oneiron-server/src/api/git_lfs/gate.rs",
         "repositoryPath": "crates/oneiron-server/src/api/git_lfs/gate.rs",
         "sha256": "7c7183fa680dff3595b571a7317b3e08af14193db18b1b2c17f020122239c29e"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/git_lfs/wire.rs",
+        "path": "crates/oneiron-server/src/api/git_lfs/wire.rs",
         "repositoryPath": "crates/oneiron-server/src/api/git_lfs/wire.rs",
         "sha256": "f8567d12d6c849118f361dc3064c14ba7b0074604f651e124b363458ecadcc54"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/crates/oneiron-server/src/api/mod.rs",
+        "path": "crates/oneiron-server/src/api/mod.rs",
         "repositoryPath": "crates/oneiron-server/src/api/mod.rs",
         "sha256": "c8ac1a8955d8ff7a6a5669ada79b88b6c896670835bef4314191f83f1ca4b587"
       },
       {
-        "path": "/Users/olety/.claude/worktrees/solq-e2e-code-custody/oneiron.skills.md",
+        "path": "oneiron.skills.md",
         "repositoryPath": "oneiron.skills.md",
         "sha256": "9335428a1e29b40abddaf55350c9d95bbce6d50385ada010f5fff2b422851ace"
       }
@@ -90,37 +90,37 @@
     "canon_sources": [
       {
         "uri": "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/",
-        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world.md",
         "sha256": "fd5c36e3c88430eaef2592ae8ce7fef734561295d95af57967866263fbfad888"
       },
       {
         "uri": "/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1/",
-        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1.md",
         "sha256": "cc8f12a513b6b3c0f3ab177a5300e048aa9dec4c442e296b7714d569e117745f"
       },
       {
         "uri": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
-        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
         "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
       },
       {
         "uri": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
-        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
         "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
       },
       {
         "uri": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
-        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
         "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
       },
       {
         "uri": "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/",
-        "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md",
         "sha256": "b3bb0a5ee003e3baf6cd3b43bccc30bd26571b6af3c5ab40a403378db29d4538"
       }
     ],
     "registry": {
-      "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "path": "<workspace>/oneiron-docs/registry/oneiron.json",
       "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
       "rows": [
         "OF-316",

@@ -1,6 +1,10 @@
 //! The bound actor's one read lane. Every Memory read verb opens it, so each
 //! verb admits exactly what `ScopedRead` admits and returns its receipt.
 
+mod connector_source_rows;
+mod masked_asset_read;
+mod skill_package_read;
+
 use super::structural::kind_string_for_type;
 use super::support::*;
 use super::*;
@@ -14,6 +18,7 @@ use crate::error::Error;
 use crate::vault::ReadMode;
 
 mod hydrate_filtered;
+mod revisions_read;
 
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
