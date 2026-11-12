@@ -2039,6 +2039,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/slip_clock.rs` | test | m | — | — | An agent's holder proof is judged on wall time, not on time the vault was seen running (perf pass, 2026-10-11) |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
+| `tests/ladder_caller_census.rs` | test | m | — | — | Every file of this crate that reaches a fallback ladder, and where the world of the call it sends comes from… |
 | `tests/live_lease_pending_spend.rs` | test | s | — | — | [RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]: a host's live lease stages each settled call's spend on its scope… |
 | `tests/managed_mode.rs` | test | XL | — | — | — |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
@@ -2054,4 +2055,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/support/eval_authoring_fixture.rs` | test | m | 22 crate-vis | — | Shared fixture for the `vault.evals.authoring.execute` server tests: a rooted vault served over the real… |
 | `tests/support/fake_llm.rs` | test | m | 11 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
+| `tests/window_sync_ask_drain.rs` | test | m | — | — | FIX 20468 (last part): the server drains the relayed ask intents a window update landed, as the client lane… |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |

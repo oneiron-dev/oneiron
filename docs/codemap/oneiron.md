@@ -8238,6 +8238,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/wrap.rs` | src | s | 3 crate-vis | — | One world key sealed to one recipient, and opened back with the recipient's secret |
 | `tests/admin_reads_no_steward_read.rs` | test | s | — | — | Steward is a named grant preset, never a rank, and never reachable through Admin (lead 10 Nov 06:5x… |
 | `tests/agent_append_provenance.rs` | test | s | — | — | Blob append provenance follows the bound writer class |
+| `tests/agent_definition_edit_window_open.rs` | test | s | — | — | An owner's edit of an agent definition survives the next cold open of the window that carries the row (FIX… |
 | `tests/agent_definition_generic_writers.rs` | test | L | — | — | An agent's generic row writers follow ARCH-0053:20 for AGENT_DEF rows |
 | `tests/agent_definition_named_server_grant.rs` | test | m | — | — | Named-server grants are part of a generic AGENT_DEF writer's usable slice |
 | `tests/agent_definition_person_in_txn.rs` | test | s | — | — | An agent definition and its person land in one write transaction |
