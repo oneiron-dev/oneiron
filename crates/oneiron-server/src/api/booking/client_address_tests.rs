@@ -31,7 +31,7 @@ fn install_slot_list_rate(fixture: &Fixture) {
             rule,
             version: 1,
             amended_at: 0,
-            amended_by: fixture.page,
+            amended_by: fixture.owner_actor(),
             owner_stamp_ref: None,
         },
         None,

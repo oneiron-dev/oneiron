@@ -13,16 +13,24 @@ pub(super) async fn register_mcp_actor(
         oneiron::EdgeActorClass::Agent => oneiron::registry::ENTITY_TYPE_MACHINE,
         oneiron::EdgeActorClass::System => oneiron::registry::ENTITY_TYPE_MACHINE,
     };
-    server
+    // An actor already on file (the vault's embedded owner) keeps its row.
+    if server
         .vault
-        .put_entity(
-            &actor_ref,
-            actor_type,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"mcp actor",
-        )
-        .expect("seed mcp actor entity");
+        .get_entity_type(&actor_ref)
+        .expect("read the mcp actor's type")
+        .is_none()
+    {
+        server
+            .vault
+            .put_entity(
+                &actor_ref,
+                actor_type,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"mcp actor",
+            )
+            .expect("seed mcp actor entity");
+    }
     let credential = pair_mcp_credential(
         server,
         credential,

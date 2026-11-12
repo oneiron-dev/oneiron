@@ -174,7 +174,13 @@ pub(crate) mod tests {
                 &server.vault,
                 &crate::test_credentials::embedded_owner(&server.vault),
                 0,
-                row,
+                oneiron::booking::anti_abuse::BookingAntiAbuseRuleRow {
+                    amended_by: server
+                        .vault
+                        .ensure_embedded_owner_actor()
+                        .expect("embedded owner"),
+                    ..row
+                },
                 None,
             )
             .expect("install row");
