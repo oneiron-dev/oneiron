@@ -627,7 +627,9 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
     use oneiron::workspace_roster::ProjectRecord;
 
     let (_dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x2511_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let other = seeded_test_entity_id(0x2511_0002);
     let credential = "mcp-room-scope-owner";
     register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
@@ -711,7 +713,9 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     use oneiron::workspace_roster::{ProjectRecord, RoomClaimOutcome, RoomPage};
 
     let (_dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x2510_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let other = seeded_test_entity_id(0x2510_0002);
     let credential = "mcp-agent-room-owner";
     let other_credential = "mcp-agent-room-other";
@@ -1143,7 +1147,9 @@ async fn mcp_room_with_turns(
     use oneiron::workspace_roster::ProjectRecord;
 
     let (dir, server) = auth_test_server();
-    let owner = seeded_test_entity_id(0x2570_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
     let project = oneiron::EntityId::now();
     let root = server.vault.root_project().expect("root");
