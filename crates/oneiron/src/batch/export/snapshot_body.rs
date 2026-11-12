@@ -116,7 +116,7 @@ fn note_body<'b>(
 /// An archive (`attaches_files`) carries a file-plane ASSET's stored file
 /// as it streams when no probe needs it whole: no entity-document head
 /// projects it, the archive attaches it as it is
-/// ([`crate::serialize::attaches_as_file`], judged as it streams), and it
+/// ([`crate::serialize::export_value::attaches_as_file`], judged as it streams), and it
 /// opens no JSON object or array, so no birth source is it. Any other
 /// file-plane ASSET is read whole, as every body was.
 ///
