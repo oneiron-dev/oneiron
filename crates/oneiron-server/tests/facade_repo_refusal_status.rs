@@ -2,7 +2,8 @@
 //! router (NO-DOOR REPO-MEMBER-SNAPSHOT-SYMBOL-READ): a caller no Grant
 //! admits to a repo is refused with 403 `repo_no_membership`, never a server
 //! failure. `vault.repo.symbols.observe` (NO-DOOR SYMBOL-LEASE-OBSERVATION)
-//! is a routed run door: an unknown live run meets the live-run guard first.
+//! and `vault.repo.proposal_resolve` are routed run doors: an unknown live
+//! run meets the live-run guard first.
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -149,5 +150,30 @@ async fn repo_refusals() {
         (status, code.as_deref()),
         (StatusCode::FORBIDDEN, Some("live_run_unavailable")),
         "an unknown live run at vault.repo.symbols.observe: {body}"
+    );
+
+    // `vault.repo.proposal_resolve` (row PROPOSAL-DECLARATION-QUEUE-BINDING)
+    // is a routed run door too: the public mirror of the native resolution.
+    let (status, code, body) = caller
+        .call(
+            "vault.repo.proposal_resolve",
+            &json!({
+                "live_run": "lr1.11111111111111111111111111111111.22222222222222222222222222222222",
+                "spec": {
+                    "work": EntityId::now().to_hex(),
+                    "branch_subject": EntityId::now().to_hex(),
+                    "conflict": EntityId::now().to_hex(),
+                    "branch": "refs/heads/main",
+                    "path": "math.rs",
+                    "content": [],
+                    "message": "a resolution",
+                },
+            }),
+        )
+        .await;
+    assert_eq!(
+        (status, code.as_deref()),
+        (StatusCode::FORBIDDEN, Some("live_run_unavailable")),
+        "an unknown live run at vault.repo.proposal_resolve: {body}"
     );
 }

@@ -5,6 +5,7 @@
   "output": "crate::memory::repo_doors::RepoSymbolsObserveOutput",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.symbols.observe\", &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },
