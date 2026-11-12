@@ -109,9 +109,11 @@ pub(super) fn bound_to_thread(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
     )
 }
 
-/// The gate check an appended record passes, labelled by who composed its
-/// words: [`policy::check_append_policy`] or
-/// [`policy::check_composed_append_policy`].
+/// The gate check an appended record passes: labelled by who composed its
+/// words ([`policy::check_append_policy`] or
+/// [`policy::check_composed_append_policy`]), or, for a Retry's TURN, the
+/// transcript gate its reply's MESSAGE meets
+/// ([`policy::check_regenerated_turn_policy`]).
 type AppendPolicy = fn(&Vault, &mut RwTxn<'_>, &EntityId, &AppendRecord, &[u8]) -> Result<()>;
 
 /// Appends a record that holds its writer's own words. Reply revisions are
@@ -146,24 +148,27 @@ pub(crate) fn append_composed_in_txn(
     summary: Option<EntityId>,
     thread: bool,
 ) -> Result<AppendedRecord> {
-    append_composed_at_in_txn(
+    append_at_in_txn(
         vault,
         txn,
         input,
         summary,
         thread,
         vault.store.clock.entity_id()?,
+        policy::check_composed_append_policy,
     )
 }
 
-/// [`append_composed_in_txn`] under the record id `id` its caller
-/// allocated: a Retry's assistant TURN lands at the id its reply's stream
-/// opened under, in the stream's terminal write (FIX 3152).
-pub(crate) fn append_composed_at_in_txn(
+/// Appends a Retry's assistant TURN under the record id `id` its reply's
+/// stream opened under, in the stream's terminal write (FIX 3152). The TURN
+/// holds no words: they are its MESSAGE's, witnessed in the same write. It
+/// is checked as the witness checks the first reply
+/// ([`policy::check_regenerated_turn_policy`]), so the regenerated reply
+/// lands wherever the reply it answers again landed.
+pub(crate) fn append_regenerated_turn_at_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     input: &AppendRecord,
-    summary: Option<EntityId>,
     thread: bool,
     id: EntityId,
 ) -> Result<AppendedRecord> {
@@ -171,10 +176,10 @@ pub(crate) fn append_composed_at_in_txn(
         vault,
         txn,
         input,
-        summary,
+        None,
         thread,
         id,
-        policy::check_composed_append_policy,
+        policy::check_regenerated_turn_policy,
     )
 }
 
