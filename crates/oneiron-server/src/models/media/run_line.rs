@@ -13,6 +13,12 @@
 //! rungs charged before its row is kept, and the rest when its permit is
 //! taken and settled with a charge, before its end is written. A permit
 //! handed off, a paid end or one already taken books nothing.
+//! Each booking stages its part on the scope first, in a commit of its own,
+//! and then drains the scope ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH]), as a
+//! live lease's look does: a booking that fails after its stage, or a
+//! process that dies there, loses none of the job's spend, and the scope's
+//! next drain books it once (`AgentDispatcher::drain_lease_spend`; the
+//! server drains every scope at each lifecycle tick, its start included).
 //! Entry: `MediaRuntime::submit_run_admitted` (calls.rs), `submit_scoped`,
 //! `poll_on_line`.
 use std::collections::BTreeMap;
@@ -21,7 +27,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::llm::media::{MediaJobState, MediaReplayKey, MediaRequest};
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
-use oneiron::{BudgetGuard, EntityId};
+use oneiron::{BudgetGuard, EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -53,12 +59,87 @@ pub(super) struct ProgramLine {
 }
 
 /// A job a spend scope funds (FIX 11496): the scope, the run on a guard of
-/// the scope's own that holds the job's permit, and what of that guard's
-/// use the scope already holds.
+/// the scope's own that holds the job's permit, and the ledger of what of
+/// that guard's use the scope already holds.
 struct ScopedJob {
     scope: SpendScopeId,
     run: RunAdmission,
-    booked: u64,
+    ledger: JobSpendLedger,
+}
+
+/// What of one scoped job's guard use is durable on the scope that funds
+/// it, booked there or staged, and the key of the job's staged-spend row
+/// ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH]). A part is counted only once
+/// its stage committed.
+pub(crate) struct JobSpendLedger {
+    /// The key of this job's staged-spend row on its scope.
+    id: EntityId,
+    /// How much of the guard's use is durable on the scope.
+    staged: u64,
+}
+
+impl JobSpendLedger {
+    pub(crate) fn new() -> Self {
+        Self {
+            id: EntityId::now(),
+            staged: 0,
+        }
+    }
+
+    /// Books on `scope` what the job's guard `used` past what is durable
+    /// there: stages that part in its own commit, then drains the scope. A
+    /// stage the vault refuses is logged and leaves the part to the job's
+    /// next booking; a drain that fails is logged, and what was staged books
+    /// at the scope's next drain. Never a refusal.
+    pub(crate) fn book(&mut self, vault: &Vault, scope: &SpendScopeId, used: u64) {
+        let dispatcher = AgentDispatcher::new(vault);
+        match self.stage(&dispatcher, scope, used) {
+            Ok(false) => {}
+            Ok(true) => {
+                if let Err(error) = dispatcher.drain_lease_spend(scope) {
+                    tracing::warn!(
+                        %error,
+                        %scope,
+                        "a media job's staged spend waits for its scope's next drain"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, %scope, "a media job's spend was not staged on its scope");
+            }
+        }
+    }
+
+    /// A booking's first commit alone, the stage, for the integration test
+    /// doors: a job whose process dies right after it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn stage_only(
+        &mut self,
+        vault: &Vault,
+        scope: &SpendScopeId,
+        used: u64,
+    ) -> oneiron::Result<()> {
+        self.stage(&AgentDispatcher::new(vault), scope, used)
+            .map(|_| ())
+    }
+
+    /// Stages on `scope` what the guard `used` past what is staged, in its
+    /// own commit, and only then counts it staged. Answers whether a part
+    /// was staged.
+    fn stage(
+        &mut self,
+        dispatcher: &AgentDispatcher<'_>,
+        scope: &SpendScopeId,
+        used: u64,
+    ) -> oneiron::Result<bool> {
+        let part = used.saturating_sub(self.staged);
+        if part == 0 {
+            return Ok(false);
+        }
+        dispatcher.stage_lease_spend(scope, self.id, part)?;
+        self.staged = used;
+        Ok(true)
+    }
 }
 
 impl HeldJob {
@@ -211,8 +292,8 @@ impl MediaRuntime {
     /// submit booked. A job no scope funds books nothing.
     pub(crate) fn book_job_scope(&self, id: &str) {
         let job = self.lock_scoped().remove(id);
-        if let Some(job) = job {
-            self.book(&job.scope, &job.run, job.booked);
+        if let Some(mut job) = job {
+            self.book(&job.scope, &job.run, &mut job.ledger);
         }
     }
 
@@ -220,7 +301,7 @@ impl MediaRuntime {
     /// settled rungs charged `run`, the job's own guard (FIX 11496).
     pub(super) fn book_failed_submit(&self, scope: Option<&SpendScopeId>, run: &RunAdmission) {
         if let Some(scope) = scope {
-            self.book(scope, run, 0);
+            self.book(scope, run, &mut JobSpendLedger::new());
         }
     }
 
@@ -255,31 +336,23 @@ impl MediaRuntime {
     /// it replaces, a take-up whose permit settled as it failed, books what
     /// it charged past its booking first, so no guard's spend is lost.
     pub(super) fn hold_scoped(&self, ticket: &str, scope: SpendScopeId, run: RunAdmission) {
-        let booked = self.book(&scope, &run, 0);
+        let mut ledger = JobSpendLedger::new();
+        self.book(&scope, &run, &mut ledger);
         let replaced = self
             .lock_scoped()
-            .insert(ticket.to_owned(), ScopedJob { scope, run, booked });
-        if let Some(replaced) = replaced {
-            self.book(&replaced.scope, &replaced.run, replaced.booked);
+            .insert(ticket.to_owned(), ScopedJob { scope, run, ledger });
+        if let Some(mut replaced) = replaced {
+            self.book(&replaced.scope, &replaced.run, &mut replaced.ledger);
         }
     }
 
-    /// Books on `scope` what `run`'s own guard used past `booked`, what the
-    /// scope already holds of it, as an entry's meter is booked (FIX
-    /// 11496), and answers what the scope holds now. A booking the vault
-    /// refuses is logged, never a refusal.
-    fn book(&self, scope: &SpendScopeId, run: &RunAdmission, booked: u64) -> u64 {
-        let used = run.read().used_units;
-        let part = used.saturating_sub(booked);
-        let Some(store) = self.store.as_ref().filter(|_| part > 0) else {
-            return booked;
-        };
-        match AgentDispatcher::new(store.vault()).record_guard_spend(scope, part) {
-            Ok(_) => used,
-            Err(error) => {
-                tracing::error!(%error, %scope, "a media job's spend did not reach its scope");
-                booked
-            }
+    /// Books on `scope` what `run`'s own guard used past what `ledger`
+    /// holds durable there, as an entry's meter is booked (FIX 11496):
+    /// staged first, then drained ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH]).
+    /// A booking the vault refuses is logged, never a refusal.
+    fn book(&self, scope: &SpendScopeId, run: &RunAdmission, ledger: &mut JobSpendLedger) {
+        if let Some(store) = self.store.as_ref() {
+            ledger.book(store.vault(), scope, run.read().used_units);
         }
     }
 
