@@ -5,15 +5,18 @@
 //! vault's store clock once per transaction. One call moves the ask at most
 //! one rung, and a rung's wait starts when its entry is recorded, so a late
 //! tick delays a rung and never skips its holders. A rung with no verified
-//! holder skips no holder, so it is passed at once, with a receipt. At the
-//! due instant the climb wins over an answer; at a delay window's end, its
+//! holder skips no holder, so it is passed at once, with a receipt. A rung
+//! pins only the holders who may answer when it is entered; an agent holder
+//! answers then or passes the ask up (ruling R2, P22-SHAPE Q4), and once no
+//! pinned person may still answer, the ask climbs at once. At the due
+//! instant the climb wins over an answer; at a delay window's end, its
 //! settlement wins over an answer; at `until`, let-go wins over everything.
 
 use super::act_class::{ActClass, UndoClass};
 use super::mode::CheckInMode;
 use super::pending::{
-    CapturedWait, HolderKind, PENDING, PendingCheckIn, PendingState, Rung, RungEntry, RungMembers,
-    RungResolver,
+    CapturedWait, HolderAnswer, HolderKind, PENDING, PendingCheckIn, PendingState, Rung, RungEntry,
+    RungMembers, RungResolver,
 };
 use super::policy::{CheckInScope, ClassWait, class_wait};
 use super::receipt::{CheckInOutcome, ReceiptFields, write_check_in_receipt_in_txn};
@@ -52,6 +55,8 @@ pub(super) fn class_wait_in_txn(
 pub enum CheckInTransition {
     /// The asker's `until` passed: let go.
     LetGo,
+    /// An agent holder answered when the ask entered its rung.
+    Answered(Rung),
     /// The delay window ended in silence.
     WindowPassed,
     /// The delay window ended with an objection standing.
@@ -69,7 +74,9 @@ pub enum CheckInTransition {
 
 /// Makes the one transition due at `now` for the pending check-in `id`, in
 /// `txn`: let-go at `until`, then the delay window's end, then the current
-/// rung's end (a climb, or the chain's end). `None` when nothing is due.
+/// rung's end (a climb, or the chain's end). The current rung ends early
+/// once no person pinned on it may still answer. `None` when nothing is
+/// due.
 ///
 /// # Errors
 ///
@@ -122,8 +129,7 @@ pub(crate) fn advance_pending_check_in_in_txn(
             )?;
             CheckInTransition::WindowPassed
         }
-    } else if row.chain_exhausted_at.is_some()
-        || row.current_rung().is_none_or(|entry| now < entry.due_at())
+    } else if row.chain_exhausted_at.is_some() || !current_rung_ended(vault, txn, &row, chain, now)?
     {
         return Ok(None);
     } else {
@@ -133,9 +139,68 @@ pub(crate) fn advance_pending_check_in_in_txn(
     Ok(Some(transition))
 }
 
+/// Whether the current rung of the open `row` has ended at `now`: its wait
+/// is over, or no person pinned on it may still answer.
+fn current_rung_ended(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &PendingCheckIn,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<bool> {
+    let Some(entry) = row.current_rung() else {
+        return Ok(false);
+    };
+    if now >= entry.due_at() {
+        return Ok(true);
+    }
+    for holder in entry
+        .holders
+        .iter()
+        .filter(|holder| holder.kind == HolderKind::Person)
+    {
+        if chain.may_answer(vault, txn, row, holder, now)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The holders of `members` who may answer `row` at `now` (never an empty
+/// list), or the missing link of a rung with none.
+fn answerable_holders(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &PendingCheckIn,
+    chain: &dyn RungResolver,
+    members: RungMembers,
+    now: u64,
+) -> Result<RungMembers> {
+    let holders = match members {
+        RungMembers::Missing(link) => return Ok(RungMembers::Missing(link)),
+        RungMembers::Holders(holders) if holders.is_empty() => {
+            return Ok(RungMembers::Missing("no live holder".to_owned()));
+        }
+        RungMembers::Holders(holders) => holders,
+    };
+    let mut answerable = Vec::with_capacity(holders.len());
+    for holder in holders {
+        if chain.may_answer(vault, txn, row, &holder, now)? {
+            answerable.push(holder);
+        }
+    }
+    if answerable.is_empty() {
+        return Ok(RungMembers::Missing(
+            "no holder whose live grant and own check-in admit the act".to_owned(),
+        ));
+    }
+    Ok(RungMembers::Holders(answerable))
+}
+
 /// Moves the ask from its current rung (rung 1 at open) to the next rung
-/// with a verified holder, passing each rung with none with a `skipped`
-/// receipt, and pins the holders there with a `climbed` receipt. Past the
+/// with a holder who may answer, passing each rung with none with a
+/// `skipped` receipt, and pins those holders there with a `climbed` receipt.
+/// The first agent holder there with a verdict answers at once. Past the
 /// Owner rung, the chain is exhausted: canon's table decides.
 pub(super) fn enter_next_rung(
     vault: &Vault,
@@ -149,8 +214,9 @@ pub(super) fn enter_next_rung(
         Some(entry) => entry.rung.next(),
     };
     while let Some(rung) = next {
-        match chain.members(&vault.store, txn, row, rung)? {
-            RungMembers::Holders(holders) if !holders.is_empty() => {
+        let members = chain.members(vault, txn, row, rung)?;
+        match answerable_holders(vault, txn, row, chain, members, now)? {
+            RungMembers::Holders(holders) => {
                 let wait = if holders
                     .iter()
                     .any(|holder| holder.kind == HolderKind::Person)
@@ -184,13 +250,13 @@ pub(super) fn enter_next_rung(
                     fields,
                     now,
                 )?;
+                if let Some((agent, answer)) = first_agent_verdict(row, chain) {
+                    answer_as_agent(vault, txn, row, rung, agent, answer, now)?;
+                    return Ok(CheckInTransition::Answered(rung));
+                }
                 return Ok(CheckInTransition::Climbed(rung));
             }
-            members => {
-                let link = match members {
-                    RungMembers::Missing(link) => link,
-                    RungMembers::Holders(_) => "no live holder".to_owned(),
-                };
+            RungMembers::Missing(link) => {
                 let fields = ReceiptFields::new(row)
                     .with("rung", rung.as_str().to_owned())
                     .with("missing_link", link.clone());
@@ -216,6 +282,53 @@ pub(super) fn enter_next_rung(
         }
     }
     exhaust(vault, txn, row, now)
+}
+
+/// The first agent pinned on the current rung that gives a verdict, with it.
+fn first_agent_verdict(
+    row: &PendingCheckIn,
+    chain: &dyn RungResolver,
+) -> Option<(EntityId, HolderAnswer)> {
+    row.current_rung()?
+        .holders
+        .iter()
+        .filter(|holder| holder.kind == HolderKind::Agent)
+        .find_map(|holder| {
+            chain
+                .agent_verdict(row, holder)
+                .map(|answer| (holder.principal, answer))
+        })
+}
+
+/// Lands an agent holder's verdict as the answer, with its receipt.
+fn answer_as_agent(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &mut PendingCheckIn,
+    rung: Rung,
+    agent: EntityId,
+    answer: HolderAnswer,
+    now: u64,
+) -> Result<()> {
+    row.state = PendingState::Answered {
+        answer,
+        by: Some(agent),
+        rung,
+        at: now,
+    };
+    let fields = ReceiptFields::new(row)
+        .with("rung", rung.as_str().to_owned())
+        .with("by", agent.to_hex())
+        .with("answer", answer.as_str().to_owned());
+    write_check_in_receipt_in_txn(
+        &vault.store,
+        txn,
+        row,
+        CheckInOutcome::Answered,
+        Some(agent),
+        fields,
+        now,
+    )
 }
 
 fn climbed_fields(row: &PendingCheckIn, entry: &RungEntry) -> ReceiptFields {
