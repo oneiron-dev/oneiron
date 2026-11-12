@@ -42,7 +42,7 @@ async fn supervisor_pumps_one_pass_per_wake_then_stops_when_exhausted() {
     let (_dir, vault) = open_vault();
     enqueue_micro(&vault, "driver-smoke", 10);
 
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
         .expect("open channel");
     drop(wake);
@@ -201,6 +201,7 @@ impl DreamerAttemptExecutor for ShutdownRequestingExec {
         self.handle.shutdown();
         Ok(DreamerAttemptExecution::Completed {
             completed_units: 40,
+            step_bindings: Vec::new(),
         })
     }
 }
@@ -266,7 +267,7 @@ async fn shutdown_during_synchronous_pass_stops_at_the_next_attempt_boundary() {
 #[tokio::test]
 async fn shutdown_between_passes_stops_the_loop() {
     let (_dir, vault) = open_vault();
-    let (push, _wake, _hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, _wake, _hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     let factory = TestExecFactory {
         panics_left: 0,
         factory_panics_left: 0,
@@ -384,7 +385,7 @@ async fn budget_exhausted_with_due_deadline_does_not_busy_loop() {
         crate::AttemptQueueDeadlines::new(&vault, 1),
         Arc::clone(&now_ms),
     );
-    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let (push, wake, hint) = PushTick::channel(crate::TEST_SESSION_IDLE_FLOOR_SECS * 1_000);
     // No push producers: once the queue is empty the hybrid source
     // exhausts and the supervisor must stop.
     drop(wake);
@@ -753,8 +754,6 @@ async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_pu
         Arc::clone(&now_ms),
     );
     let (push, wake, _hint) = PushTick::channel_with_clock(now_ms, 1_000);
-    wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
-        .unwrap();
     let mut ticks = HybridTick::new(timer, push);
     let first = ticks.next_tick().await.unwrap();
     assert!(
@@ -812,6 +811,10 @@ async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_pu
         store.status(macro_id).unwrap().unwrap().attempt.state,
         AttemptState::Completed
     );
+    // FIX 11403: a buffered push takes the first turn ahead of a due deadline.
+    // Queue it after the deadline reads, while the digest fault is still present.
+    wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+        .unwrap();
     let third = tokio::time::timeout(Duration::from_secs(2), ticks.next_tick())
         .await
         .unwrap();

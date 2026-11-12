@@ -140,7 +140,7 @@ fn owner_proof(
 
 /// `act` under the host's slip issuer, the one `api/pairing.rs` builds for
 /// its own slip doors.
-fn with_slips<T>(
+pub(super) fn with_slips<T>(
     server: &SyncServer,
     verb: &str,
     act: impl FnOnce(&HostSlipIssuer) -> MemoryResult<T>,

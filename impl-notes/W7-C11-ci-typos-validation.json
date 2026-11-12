@@ -115,7 +115,7 @@
       "sha256": "b8145d847f66d8ffc7a740b2f87a72e5498c6ba4b09178d40e23af008a4b8f80"
     },
     "config": {
-      "path": "<host-home>/w7-build/wt/W7-C11/typos.toml",
+      "path": "typos.toml",
       "sha256": "3002aee8b456baa50e31453a5b9c3b20bf558998c131a50575372200d3bf42de"
     },
     "afterNotes": {
@@ -257,8 +257,8 @@
     },
     "mergeReceiptUnchanged": true,
     "mergeReceipt": {
-      "path": "<host-home>/w7-build/wt/W7-C11/impl-notes/W7-C11-merge-validation.json",
-      "sha256": "ecaa864ce057252e40a82e5df5d11dc749553a14c409c3a4e787cf044b12b08d"
+      "path": "impl-notes/W7-C11-merge-validation.json",
+      "sha256": "c2a6b3ea4d212ee2bfd8df3aee78bcadf65d3f1c33bcbc4198a444251370116d"
     }
   },
   "notRun": [

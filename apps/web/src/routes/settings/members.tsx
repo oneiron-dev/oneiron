@@ -26,7 +26,7 @@ const MEMBERS: Member[] = [
   {
     id: 'o',
     seal: 'o',
-    name: 'Owen',
+    name: 'owen',
     role: 'owner',
     reach: 'everything',
     reachTip: 'every world, plus grants, export and forget',
@@ -36,7 +36,7 @@ const MEMBERS: Member[] = [
   {
     id: 'y',
     seal: 'y',
-    name: 'Yuki',
+    name: 'yuki',
     role: 'member',
     reach: 'base · clients',
     reachTip: 'worlds base and clients · writes land, sends still ask',

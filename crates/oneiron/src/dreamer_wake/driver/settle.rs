@@ -183,6 +183,31 @@ impl DreamerWakeDriver<'_> {
                 )?;
                 report.parked += 1;
             }
+            DreamerAttemptExecution::ParkOnSeat {
+                reason,
+                seat,
+                reset_at_s,
+            } => {
+                let settled =
+                    self.settle_metered_charge(line, attempt_id, spend_meter, input.now)?;
+                self.park_on_seat(
+                    admitted,
+                    reason,
+                    crate::EntityId::from_bytes(seat)?,
+                    reset_at_s,
+                    &input.lease_owner,
+                    input.now,
+                )?;
+                self.log_attempt_outcome(
+                    admitted,
+                    stage.unwrap_or("park_on_seat"),
+                    None,
+                    Some(DreamerParkCause::Signal),
+                    settled,
+                    "committed",
+                );
+                report.parked += 1;
+            }
             DreamerAttemptExecution::Park { reason, cause } => {
                 // The lease is not settled as spent: what its run line
                 // charged stays spent (SCAN C012), the rest of the
