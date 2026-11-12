@@ -562,7 +562,9 @@ async fn submit(
                 )?;
             }
             Some(ModelStepResult::Failed { failure }) => {
-                queue.fail_in_txn(
+                // A typed budget refusal settles on the step's own row beside
+                // its text, so its run tree and receipt read it typed.
+                queue.fail_with_refusal_in_txn(
                     txn,
                     FailAttempt {
                         id,
@@ -571,6 +573,7 @@ async fn submit(
                         reason: failure.message.clone(),
                         now,
                     },
+                    failure.budget_refusal.clone(),
                 )?;
             }
             _ => {}
