@@ -80,6 +80,11 @@ async fn init_bootstrap_redeem_and_protected_read_need_no_preexisting_slip() {
     assert!(!stdout.contains(SECRET));
     let vault =
         Arc::new(oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap());
+    // The shipped `token bootstrap` rooted this vault with this install's
+    // host issuer seed; install this install's keystore as `oneiron serve`
+    // does, so the in-process server loads that same issuer instead of
+    // serving rootless (pairing redeem is unauthorized without it).
+    oneiron_server::config::KeystoreConfig::default().install_on(&vault, &vault_path);
     assert!(
         vault
             .get(&oneiron::EntityId::from_hex(&owner).unwrap())
