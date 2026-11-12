@@ -332,7 +332,7 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
             .call(
                 from,
                 "POST",
-                "/v1/core/facade/export",
+                "/v1/core/facade/vault.export",
                 Some(json!({"format": "json"})),
             )
             .await;
