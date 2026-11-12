@@ -170,17 +170,34 @@ fn reads_all(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, ids: &[EntityId]) -> 
         .all(|readable| readable))
 }
 
+/// Whether `action`'s source is an indexed turn of a project's home room,
+/// the one room whose Retry stands on its regeneration permit (FIX 3149).
+fn home_room_source_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    action: &TurnActionAttempt,
+) -> Result<bool> {
+    Ok(
+        crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?.is_some()
+            && crate::workspace_roster::room_project_in(vault, txn, action.conversation)?.is_some(),
+    )
+}
+
 /// The room regeneration permit `agent` answers a Retry `action` under, in
-/// `txn` (FIX 3149), when its source is a project room's indexed turn;
-/// `None` anywhere else. A room that no longer lets the agent answer its
-/// claimed turn again refuses as an invalid state.
+/// `txn` (FIX 3149), when its source is an indexed turn of a project's home
+/// room. That room's witness lets an agent answer only a claim, so there a
+/// source whose parent holds none is refused here, before any reply is
+/// queued, as before. `None` in every other room, where a Retry of any
+/// turn, rowed or not, claimed or not, takes its DAG path, as a plain
+/// reply's (THREAD-TASK-NATIVE-AGENT-RETRY). A room that no longer lets the
+/// agent answer its claimed turn again refuses as an invalid state.
 fn room_regeneration_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     action: &TurnActionAttempt,
     agent: EntityId,
 ) -> MemoryResult<Option<RoomRegenerationPermit>> {
-    if crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?.is_none() {
+    if !home_room_source_in(vault, txn, action)? {
         return Ok(None);
     }
     RoomRegenerationPermit::prove_in(vault, txn, action, agent)
@@ -295,10 +312,10 @@ impl Memory<'_> {
     /// the source turn, MESSAGE and conversation are live and still bound
     /// as the action names them, the MESSAGE is this agent's, the requester
     /// reads them, as the agent does where the Retry writes a DAG TURN or a
-    /// room row, and the agent and the requester both read the source's
-    /// thread. A project room's indexed source answers again only under the
-    /// room's regeneration permit (FIX 3149), returned here; anywhere else,
-    /// `None`.
+    /// home room's row, and the agent and the requester both read the
+    /// source's thread. A project's home room's indexed source answers again
+    /// only under the room's regeneration permit (FIX 3149), returned here;
+    /// anywhere else, `None`.
     pub(crate) fn check_action_retry_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -332,12 +349,10 @@ impl Memory<'_> {
                 ));
             }
         }
-        let indexed =
-            crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?
-                .is_some();
-        // The agent reads them too wherever the Retry writes topology, a
-        // DAG TURN or a room row; a plain chat's reply writes none.
-        let topology = indexed
+        // The agent reads them too wherever the Retry writes topology: a DAG
+        // TURN, or the home room's row its permit admits. A plain chat's
+        // reply writes none.
+        let topology = home_room_source_in(vault, txn, action)?
             || crate::conversation_dag::keeps_dag_topology(
                 &vault.store,
                 txn,
@@ -362,10 +377,7 @@ impl Memory<'_> {
                 return Err(gone());
             }
         }
-        if indexed {
-            return room_regeneration_in(vault, txn, action, self.actor());
-        }
-        Ok(None)
+        room_regeneration_in(vault, txn, action, self.actor())
     }
 
     /// A Retry's terminal step, in the write that lands its reply (FIX
@@ -374,9 +386,9 @@ impl Memory<'_> {
     /// its new assistant TURN at `turn_id`, the id its stream opened under:
     /// a sibling of the old turn at its parent replying to the user turn,
     /// or, in a thread, a reply to the old turn itself, HEAD left where it
-    /// is. A project room's indexed source lands no TURN here: the permit
-    /// returned admits the reply's room row. The requester never names the
-    /// agent that answers.
+    /// is; its append keeps the TURN's room row. A project's home room's
+    /// indexed source lands no TURN here: the permit returned admits the
+    /// reply's room row. The requester never names the agent that answers.
     pub(crate) fn prepare_action_retry_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

@@ -5,6 +5,7 @@
   "output": "crate::campaign::surface::CampaignProgramReadResult",
   "call": "memory.campaign_program_read(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

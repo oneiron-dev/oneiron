@@ -138,12 +138,14 @@ impl MediaGate {
             .inner
             .run_progress_released(request, lease, release)
             .await;
+        // The meter decides whether the call sent nothing: it refuses the
+        // unsent mark once any physical attempt began (FIX BUDGET-LEASE).
         let refused_before_send = answer.as_ref().err().is_some_and(|stopped| {
             matches!(
                 &stopped.error,
                 LlmError::Retryable(retry) if retry.is_not_sent_stage("media_release")
             )
-        }) && lease.physical_attempts() == 0;
+        }) && self.run.guard.mark_unsent(lease).is_ok();
         if refused_before_send {
             opened.dispatch = None;
         }

@@ -3,6 +3,7 @@
   "input": "crate::code_run::AgentSpawnInput",
   "output": "crate::code_run::AgentSpawnOutput",
   "scope": "Write",
+  "act_class": "spawn",
   "context": "run",
   "effect": "AgentsSpawn",
   "host": {
@@ -11,5 +12,7 @@
     "description": "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity.",
     "host_door_lists": true
   },
-  "run_surface": "live"
+  "run_surface": "live",
+  "grant_class": "parent's slice and spend cap (ARCH-0079)",
+  "power": "spawn"
 }

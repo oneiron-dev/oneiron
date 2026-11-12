@@ -5,6 +5,7 @@
   "output": "crate::policy_model::PolicyModelEnforcement",
   "call": "crate::policy_model::doors::enforce_owner_policy_embedded(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "host_door": true,
   "host_door_precheck": false,
   "host_door_lists": true,

@@ -20,7 +20,9 @@ pub(super) fn demotion_body(
     tail: &[BatchOp],
 ) -> Result<ClaimBody> {
     use crate::edge::{EdgeKind, validate_edge_weight};
-    use crate::write_envelope::claim_body::{ClaimDemotionRung, ClaimSubject, claim_demotion_rung};
+    use crate::write_envelope::claim_body::{
+        ClaimDemotionRung, ClaimSubject, claim_demotion_rung, decay_transition,
+    };
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
         return Err(binding_error());
@@ -56,9 +58,9 @@ pub(super) fn demotion_body(
                     return Err(binding_error());
                 }
             }
-            if *weight > current.ok_or(binding_error())? {
-                return Err(binding_error());
-            }
+            // The one decay rule (FIX 22387): a strictly lower weight.
+            decay_transition(before, current.ok_or(binding_error())?, *weight)
+                .map_err(|_| binding_error())?;
             "decayed"
         }
         (
@@ -71,7 +73,7 @@ pub(super) fn demotion_body(
         }
         _ => return Err(binding_error()),
     };
-    stamp_rung(&mut expected, rung)?;
+    stamp_rung(&mut expected, rung);
     Ok(expected)
 }
 
@@ -102,7 +104,7 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
             }
             // A weakened number reads in its own house band (FIX 7761).
             next.set_confidence(confidence, None);
-            stamp_rung(&mut next, "weakened")?;
+            stamp_rung(&mut next, "weakened");
         }
         ClaimSuccession::Fork { facet, .. } => {
             if facet == prior.scope_facet {
@@ -114,19 +116,16 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
     Ok(next)
 }
 
-fn stamp_rung(body: &mut ClaimBody, rung: &'static str) -> Result<()> {
-    use crate::write_envelope::claim_body::CLAIM_SCOPE_DEMOTION_RUNG_KEY;
+fn stamp_rung(body: &mut ClaimBody, rung: &'static str) {
+    use crate::write_envelope::claim_body::{CLAIM_SCOPE_DEMOTION_RUNG_KEY, scope_map_entries};
 
-    let mut scope = match body.scope.take() {
-        None => Vec::new(),
-        Some(Value::Map(entries)) => entries,
-        Some(_) => return Err(binding_error()),
-    };
+    // A scope that is not a map carries no recognized entry: the rung starts
+    // a map of its own, as the demotion door writes it.
+    let mut scope = scope_map_entries(body.scope.take());
     scope.retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
     scope.push((
         Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
         Value::from(rung),
     ));
     body.scope = Some(Value::Map(scope));
-    Ok(())
 }

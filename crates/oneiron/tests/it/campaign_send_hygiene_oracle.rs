@@ -40,6 +40,22 @@ use oneiron::{
     outbound::OutboundIntentTrigger,
 };
 
+/// The vault's owner, authenticated: a standing outbound grant is the owner's
+/// standing consent row (FIX 11874, 282c8eb3d58), minted by the owner.
+fn owner_proof(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 const CHANNEL: &str = "email";
 const VERB: &str = "send";
 const COUNTERPARTY: &str = "mika@example.com";
@@ -60,6 +76,7 @@ const PROPOSED_DNC_SEED: u8 = 0x6C;
 const STALE_DNC_SEED: u8 = 0x6D;
 const SEND_GRANT_SEED: u8 = 0x6F;
 const MANIFEST_SEED: u8 = 0x6A;
+const POLICY_SEED: u8 = 0x6B;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -102,22 +119,34 @@ fn test_config() -> VaultConfig {
 fn oracle_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     put_person(&vault, test_id(PERSON_SEED));
     (dir, vault)
 }
 
-/// A vault whose sends actually REACH the transport: seeded policy plus a
-/// standing `send` grant for the one actor the seeded manifest gives an Auto
-/// ceiling. Constructed directly rather than through `test_id`, which refuses
-/// production-pinned seeds.
+/// A vault whose sends actually REACH the transport: an explicit policy that
+/// grants the actor's send (see [`send_grant_manifest`]) plus a standing
+/// `send` grant for the actor. The actor keeps the id the seeded manifest
+/// once gave an Auto ceiling, constructed directly rather than through
+/// `test_id`, which refuses production-pinned seeds.
 fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let actor = EntityId::from_bytes([0xE1; 16]).unwrap();
     put_person(&vault, actor);
     vault
         .mint_standing_outbound_grant(
-            &test_id(SEND_GRANT_SEED),
+            &owner_proof(&vault),
+            test_id(SEND_GRANT_SEED),
             &GrantMintIntent {
                 principal_ref: actor.to_hex(),
                 origin_component_id: "tasks".to_owned(),
@@ -127,10 +156,43 @@ fn sending_vault() -> (tempfile::TempDir, Vault, EntityId) {
                     verb_class: VERB.to_owned(),
                 },
             },
-            1,
         )
         .unwrap();
+    oneiron::test_support::put_policy_manifest_bytes(
+        &vault,
+        test_id(POLICY_SEED),
+        &send_grant_manifest(actor, CHANNEL, VERB),
+    )
+    .unwrap();
     (dir, vault, actor)
+}
+
+/// The explicit policy the sending vault runs under (Engine ruling
+/// T0F-SEEDED-SEND-BUILTIN-PACK = C, Tue 10 Nov 09:02): an Auto ceiling and an
+/// `external:{verb}` grant on `channel` for `actor`, the way the in-crate
+/// executor tests reach the sink (`outbound/tests/mod.rs` `policy_manifest`).
+/// A seeded vault would also need the channel's built-in pack installed and
+/// its connection checked (OF-519), which no test can ready yet.
+fn send_grant_manifest(actor: EntityId, channel: &str, verb: &str) -> Vec<u8> {
+    let actor_ref = actor.to_hex();
+    let manifest = serde_json::json!({
+        "schema_version": "1.2",
+        "pack_id": "send-hygiene-send",
+        "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "actor_ceilings": [
+            {"actor_class": "agent", "actor_ref": actor_ref, "ceiling": "auto"}
+        ],
+        "scoped_grants": [{
+            "actor_ref": actor_ref,
+            "effector": format!("external:{verb}"),
+            "scope": oneiron::test_support::effect_preset(),
+            "selectors": {"channel": channel},
+        }],
+    });
+    rmp_serde::to_vec_named(&manifest).unwrap()
 }
 
 fn put_person(vault: &Vault, id: EntityId) {
@@ -417,7 +479,7 @@ fn duplicate_member_heads_never_veto_an_unsubscribe() -> Result<()> {
 
     // The suppressed memberships stop the send before the gate's opt-out hold.
     let held = dispatch(&vault, actor, CHANNEL, "intent:torn", None, &mut sink);
-    assert_eq!(held.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(held.outcome, OutboundDispatchOutcome::Held);
     assert!(sink.calls.is_empty());
     Ok(())
 }

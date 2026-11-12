@@ -740,6 +740,8 @@ impl Vault {
                 input.reply_to = Some(target);
             }
             input.advance = false;
+            // Its append keeps its room row and stages its wakes in this
+            // write (THREAD-TASK-ONE-SURFACE).
             let appended = super::append_in_txn(self, txn, &input, None, true)?;
             // A nested reply also changes the ancestor trunk's meta line.
             let mut cursor = Some(target);

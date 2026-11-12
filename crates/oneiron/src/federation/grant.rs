@@ -17,9 +17,11 @@ use crate::error::Result;
 mod detach;
 mod git_push;
 mod guest_key;
+mod inquiry_terms;
 mod repo_bounds;
 mod verb_classes;
 mod wallet_ref;
+mod working_view_bounds;
 
 pub use detach::ConnectMemberLeaveBinding;
 pub(crate) use git_push::git_push_scope;
@@ -49,9 +51,12 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// exact verbs (FIX 8735); `wallet_ref` an owner's agent grant that names
 /// the host wallet its funded work draws on (FIX 7766);
 /// `detach_on_member_leave` a Connect guest grant whose minting owner chose
-/// the local release (FIX 12555). Each optional tail key keeps its own named
-/// child constant, never a bare index alias.
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 16] = [
+/// the local release (FIX 12555); `inquiry_terms` the Connect guest grant
+/// that carries the verb class `inquire`, an inquiry edge (INQUIRE-1);
+/// `working_view_bounds` an owner's agent grant with repo bounds that edits
+/// one owner working view alone (row 6 WORKING-VIEW-EDIT). Each optional
+/// tail key keeps its own named child constant, never a bare index alias.
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 18] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -68,6 +73,8 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 16] = [
     verb_classes::KEY_VERB_CLASSES,
     wallet_ref::KEY_WALLET_REF,
     detach::KEY_DETACH_ON_MEMBER_LEAVE,
+    inquiry_terms::KEY_INQUIRY_TERMS,
+    working_view_bounds::KEY_WORKING_VIEW_BOUNDS,
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -184,6 +191,11 @@ impl FederationGrantScope {
 pub enum FederationGrantRole {
     /// Full owner privileges for the shared vault.
     Owner,
+    /// Admin's powers plus a Grant for delegated Owner powers, each Owner act
+    /// carrying a check-in mode (ARCH-0082 #roles; DEPUTY = A, the lead
+    /// 11 Nov 11:38). It rides the Admin envelope and never holds the org
+    /// root. The delegated Owner Grant is ROLES-CHECKIN PR 2.
+    Deputy,
     /// Administrative privileges without owner transfer semantics.
     Admin,
     /// A Steward looks after the vault's memory for its owners: it can read
@@ -203,8 +215,6 @@ pub enum FederationGrantRole {
     Member,
     /// Read-only member privileges.
     Viewer,
-    /// Legacy audit spelling; normalized to Viewer when a grant is minted or decoded.
-    Auditor,
     /// One-hop, expiring read privileges attenuated from an admin parent.
     ///
     /// A delegate is never administrative and can never itself delegate, so
@@ -222,36 +232,39 @@ impl FederationGrantRole {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",
+            Self::Deputy => "deputy",
             Self::Admin => "admin",
             Self::Steward => "steward",
             Self::Member => "member",
             Self::Viewer => "viewer",
-            Self::Auditor => "viewer",
             Self::Delegate => "delegate",
             Self::Guest => "guest",
         }
     }
 
-    /// Parses a pinned on-disk role string.
+    /// Parses a pinned on-disk role string. The retired `auditor` is refused,
+    /// with no alias (VS-OLD-NAMES = A, the lead 11 Nov 11:38).
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "owner" => Some(Self::Owner),
+            "deputy" => Some(Self::Deputy),
             "admin" => Some(Self::Admin),
             "steward" => Some(Self::Steward),
             "member" => Some(Self::Member),
             "viewer" => Some(Self::Viewer),
-            "auditor" => Some(Self::Viewer),
             "delegate" => Some(Self::Delegate),
             "guest" => Some(Self::Guest),
             _ => None,
         }
     }
 
-    /// Returns whether this role can administer membership or policy.
+    /// Returns whether this role can administer membership or policy. A
+    /// Deputy holds Admin's powers; the org root and the veto stay the
+    /// Owner's alone.
     #[must_use]
     pub const fn is_admin(self) -> bool {
-        matches!(self, Self::Owner | Self::Admin)
+        matches!(self, Self::Owner | Self::Deputy | Self::Admin)
     }
 
     /// Returns whether this role is the isolated ask-scoped guest role.
@@ -276,8 +289,6 @@ pub enum FederationGrantPreset {
     Member,
     /// Read-only capability envelope.
     ReadOnly,
-    /// Audit-only capability envelope.
-    Audit,
     /// Attenuated one-hop delegate envelope.
     Delegate,
     /// Ask-scoped read/propose-only guest envelope.
@@ -294,13 +305,13 @@ impl FederationGrantPreset {
             Self::Steward => "steward",
             Self::Member => "member",
             Self::ReadOnly => "read_only",
-            Self::Audit => "read_only",
             Self::Delegate => "delegate",
             Self::Guest => "guest",
         }
     }
 
-    /// Parses a pinned on-disk preset string.
+    /// Parses a pinned on-disk preset string. The retired `audit` is refused,
+    /// with no alias (VS-OLD-NAMES = A).
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -309,7 +320,6 @@ impl FederationGrantPreset {
             "steward" => Some(Self::Steward),
             "member" => Some(Self::Member),
             "read_only" => Some(Self::ReadOnly),
-            "audit" => Some(Self::ReadOnly),
             "delegate" => Some(Self::Delegate),
             "guest" => Some(Self::Guest),
             _ => None,
@@ -325,12 +335,15 @@ impl FederationGrantPreset {
     /// capability set while it still reads as attenuated. Steward is a 1:1
     /// pair for the same reason: an Owner or Admin envelope would hand a
     /// Steward admin-grade capability while it still reads as a Steward.
+    /// A Deputy rides only the Admin envelope: an Owner envelope would hand
+    /// it the org root while it still reads as a Deputy.
     #[must_use]
     pub const fn permits_role(self, role: FederationGrantRole) -> bool {
         match self {
             Self::Owner => !matches!(
                 role,
-                FederationGrantRole::Steward
+                FederationGrantRole::Deputy
+                    | FederationGrantRole::Steward
                     | FederationGrantRole::Delegate
                     | FederationGrantRole::Guest
             ),
@@ -344,15 +357,9 @@ impl FederationGrantPreset {
             Self::Steward => matches!(role, FederationGrantRole::Steward),
             Self::Member => matches!(
                 role,
-                FederationGrantRole::Member
-                    | FederationGrantRole::Viewer
-                    | FederationGrantRole::Auditor
+                FederationGrantRole::Member | FederationGrantRole::Viewer
             ),
-            Self::ReadOnly => matches!(
-                role,
-                FederationGrantRole::Viewer | FederationGrantRole::Auditor
-            ),
-            Self::Audit => matches!(role, FederationGrantRole::Auditor),
+            Self::ReadOnly => matches!(role, FederationGrantRole::Viewer),
             Self::Delegate => matches!(role, FederationGrantRole::Delegate),
             Self::Guest => matches!(role, FederationGrantRole::Guest),
         }
@@ -436,6 +443,15 @@ pub struct FederationGrant {
     /// (FIX 7766), an opaque host reference compared byte for byte; absent
     /// on every other grant and on an agent grant without one.
     pub wallet_ref: Option<crate::federation::WalletRef>,
+    /// The terms of an inquiry edge (INQUIRE-1): `Some` exactly on a
+    /// Connect guest grant whose verbs are the class `inquire` alone, over
+    /// the one opened WORLD the terms name; absent on every other grant.
+    pub inquiry_terms: Option<crate::inquiry::InquiryTerms>,
+    /// The one owner working view, and its account, this agent grant edits
+    /// (row 6 WORKING-VIEW-EDIT): it narrows `repo_bounds` to that view, and
+    /// every repo door but the view edit door refuses the grant; absent on
+    /// every other grant.
+    pub working_view_bounds: Option<crate::federation::WorkingViewEditBounds>,
 }
 
 impl FederationGrant {
@@ -455,16 +471,8 @@ impl FederationGrant {
             authority_scope: super::grant_scope::membership_preset(role),
             scope,
             member_ref,
-            role: if role == FederationGrantRole::Auditor {
-                FederationGrantRole::Viewer
-            } else {
-                role
-            },
-            preset: if preset == FederationGrantPreset::Audit {
-                FederationGrantPreset::ReadOnly
-            } else {
-                preset
-            },
+            role,
+            preset,
             expires_at: None,
             delegated_by: None,
             guest: None,
@@ -475,6 +483,8 @@ impl FederationGrant {
             detach_on_member_leave: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            inquiry_terms: None,
+            working_view_bounds: None,
         }
     }
 
@@ -507,6 +517,8 @@ impl FederationGrant {
             detach_on_member_leave: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            inquiry_terms: None,
+            working_view_bounds: None,
         };
         grant.validate()?;
         Ok(grant)
@@ -573,18 +585,17 @@ impl FederationGrant {
             detach_on_member_leave: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            inquiry_terms: None,
+            working_view_bounds: None,
         })
     }
 
     /// Validates scope, role/preset policy, and role-conditional field shape.
     pub fn validate(&self) -> Result<()> {
         self.scope.validate()?;
-        // Legacy Auditor is only a decoder input. Guest grants are checked
-        // below against their ask scope and guest payload.
-        if self.role == FederationGrantRole::Auditor
-            || self.preset == FederationGrantPreset::Audit
-            || !self.preset.permits_role(self.role)
-        {
+        // Guest grants are checked below against their ask scope and guest
+        // payload.
+        if !self.preset.permits_role(self.role) {
             return Err(invalid_grant());
         }
         let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);
@@ -607,6 +618,8 @@ impl FederationGrant {
         detach::validate(self)?;
         verb_classes::validate(self)?;
         wallet_ref::validate(self)?;
+        inquiry_terms::validate(self)?;
+        working_view_bounds::validate(self)?;
         // Each purpose has its one role class: Ask and Connect are Guest, and
         // only Ask carries the fact payload; a shared vault is never Guest.
         match (self.scope, self.role.is_guest(), self.guest.as_ref()) {
@@ -772,6 +785,8 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
     entries.extend(detach::body_entry(grant));
     entries.extend(verb_classes::body_entry(grant));
     entries.extend(wallet_ref::body_entry(grant));
+    entries.extend(inquiry_terms::body_entry(grant));
+    entries.extend(working_view_bounds::body_entry(grant));
 
     encode_msgpack_value(
         &Value::Map(entries),
@@ -846,6 +861,8 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     let detach_on_member_leave = detach::decode_body_entry(entries)?;
     let verb_classes = verb_classes::decode_body_entry(entries)?;
     let wallet_ref = wallet_ref::decode_body_entry(entries)?;
+    let inquiry_terms = inquiry_terms::decode_body_entry(entries)?;
+    let working_view_bounds = working_view_bounds::decode_body_entry(entries)?;
 
     let grant = FederationGrant {
         authority_scope: if legacy {
@@ -872,6 +889,8 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         detach_on_member_leave,
         verb_classes,
         wallet_ref,
+        inquiry_terms,
+        working_view_bounds,
     };
     // Role-conditional presence is enforced here: a five-key Delegate body and
     // a seven-key Owner body both die at `validate`, not at the key allowlist.

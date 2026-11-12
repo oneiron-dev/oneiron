@@ -13,21 +13,24 @@ use crate::ports::EntityStoreRead;
 ///
 /// `display_name` is the owner override when present and the deployment's
 /// `venture_name` otherwise; both are runtime intent data and neither is
-/// compiled in. `subject_ref` resolves through the anchor so a merged ORG reads
-/// as its survivor, and falls back to the stated `org_ref` when the anchor is
+/// compiled in. `subject_ref` is the ORG the preset says the house runs
+/// (HOUSE-BIND = A), never the house agent's own anchor, which stays its model
+/// PERSON. It resolves through identity redirects so a merged ORG reads as its
+/// survivor, and falls back to the stated `org_ref` when the redirects are
 /// ambiguous (a split shell) — the roster answers with what the writer stated
 /// rather than guessing a head.
 pub(super) fn house_mind_entry(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
-    at: u64,
 ) -> Result<WorkspaceRosterEntry> {
     let display_name = preset
         .house_display_name
         .clone()
         .unwrap_or_else(|| preset.venture_name.clone());
-    let subject_ref =
-        actor_subject_anchor(vault, &preset.house_actor_ref, at)?.unwrap_or(preset.org_ref);
+    let subject_ref = match vault.resolve_entity(&preset.org_ref)?.as_slice() {
+        [head] => *head,
+        _ => preset.org_ref,
+    };
     Ok(WorkspaceRosterEntry {
         workspace_ref: preset.workspace_ref.clone(),
         role: WorkspaceRosterRole::HouseMind,
@@ -181,8 +184,9 @@ pub(super) const COMPANION_PRINCIPAL: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::WORKSPACE_ROSTER_COMPANION_PRINCIPAL);
 
 /// The principal a companion PERSON was onboarded for, from the guard row
-/// above; `None` for a person who is no one's companion (OF-531).
-pub(super) fn companion_principal_in_txn(
+/// above; `None` for a person who is no one's companion (OF-531). The
+/// check-in ladder reads it for the person behind a companion (rung 2).
+pub(crate) fn companion_principal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     companion: EntityId,

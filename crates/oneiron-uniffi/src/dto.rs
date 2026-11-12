@@ -512,6 +512,9 @@ pub struct EntityRefReceipt {
     /// The written entity as a typed record ref (OF-063): the generated
     /// facade record.
     pub record: Option<crate::RecordRef>,
+    /// For an agent's AGENT_DEF put, what its author writer made of it
+    /// (ARCH-0053:20): `active` or `proposed`.
+    pub agent_definition_disposition: Option<String>,
 }
 
 /// One lexical hit, carrying engine index scores verbatim.

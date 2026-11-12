@@ -5,6 +5,7 @@
   "output": "crate::conversation_dag::ReplyStripsPage",
   "call": "memory.rooms_reply_strips(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

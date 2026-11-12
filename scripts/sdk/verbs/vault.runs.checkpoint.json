@@ -8,6 +8,7 @@
   "host_door_lists": true,
   "host_door_caller": true,
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

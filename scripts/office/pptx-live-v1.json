@@ -64,7 +64,6 @@
   "office": {
     "timeout_seconds": 90,
     "observer": "system-events",
-    "owner_accounts": ["owen"],
     "scripts": [
       "deck_gate.py",
       "deck_oracle.py",

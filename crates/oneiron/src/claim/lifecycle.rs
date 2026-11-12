@@ -34,12 +34,12 @@ fn lifecycle_effective_end(body: &ClaimBody, header: &EntityMetadataHeader, now:
 
 /// The family a want derived from behaviour is minted into, beside the
 /// user's own statement (ARCH-0003, ruled 2026-07-29).
-const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
+pub(super) const PREFERENCE_PREDICATE_PREFIX: &str = "preference.";
 
 /// OF-023: an `observed` `preference.*` claim is held beside the
 /// `user_stated` one on its key and never outranks or closes it.
 pub(crate) fn is_observed_preference(source: Option<ClaimSource>, predicate: &str) -> bool {
-    source == Some(ClaimSource::Observed) && predicate.starts_with(PREFERENCE_PREDICATE_PREFIX)
+    source == Some(ClaimSource::Observed) && is_preference_predicate(predicate)
 }
 
 /// How a supersession closes its old head: directly, attributed to a typed
@@ -820,6 +820,12 @@ impl Vault {
         }
 
         self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false)?;
+        // FIX 22383: a commitment instance retracted while its promise is open
+        // is withdrawn. Its due phases go in this transaction, so it never
+        // wakes and never enters a lapse sweep; its status stays as it was.
+        if body.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD {
+            self.clear_withdrawn_commitment_due_in_txn(wtxn, id)?;
+        }
         Ok(consent_receipt
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))
     }

@@ -8,6 +8,7 @@
   "host_door_lists": true,
   "host_door_session": true,
   "scope": "Write",
+  "act_class": "spawn",
   "mcp_fields": {
     "spec": "$"
   },

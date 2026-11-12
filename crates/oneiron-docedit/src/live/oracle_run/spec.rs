@@ -213,11 +213,9 @@ pub(super) struct OfficeSpec {
     /// inconclusive.
     pub(super) timeout_seconds: u64,
     pub(super) observer: String,
-    /// macOS accounts that never open an untrusted (corpus-derived)
-    /// candidate.
-    pub(super) owner_accounts: Vec<String>,
     /// The Office-side files copied into the run, relative to
-    /// `scripts/office/`.
+    /// `scripts/office/`. Their `environment.json` names the accounts that
+    /// may open an untrusted (corpus-derived) candidate.
     pub(super) scripts: Vec<String>,
 }
 

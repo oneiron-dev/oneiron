@@ -120,14 +120,17 @@ pub(super) fn check_request_owner_act(
     Ok(auth)
 }
 
-/// `/api/search_text`'s gate (FIX 3604): whatever [`check_request_owner_act`]
-/// admits, and also a verified slip that holds core read. Such a slip reads
-/// its local page under its own key ([`scoped_read_for_legacy_api`]) and asks
-/// the home with its forwarded proof. A scoped credential that verifies no
-/// slip stays out, because the legacy read lane reads it as the host root. A
-/// search is an owner act: a hosted operator's root is refused (FIX 2222), and
-/// a scoped slip keeps its own key.
-pub(super) fn check_search_text_auth(
+/// The gate of the legacy reads `/api/search/text` (FIX 3604) and
+/// `/api/search/vector`, `/api/entity/{id}` and `/api/edges/{id}`
+/// (BOUNDED-LEGACY-READ): whatever [`check_request_owner_act`] admits, and
+/// also a verified slip that holds core read (`core:read`, the grant each of
+/// these reads checks). Such a slip reads under its own key
+/// ([`scoped_read_for_legacy_api`]), so its world ceiling clamps every row,
+/// and text search asks the home with its forwarded proof. A scoped
+/// credential that verifies no slip stays out: the legacy read lane has no
+/// key for it. A legacy read is an owner act: a hosted operator's root is
+/// refused (FIX 2222), and a scoped slip keeps its own key.
+pub(super) fn check_legacy_read_auth(
     parts: &Parts,
     server: &SyncServer,
 ) -> Result<CoreAuth, ApiError> {

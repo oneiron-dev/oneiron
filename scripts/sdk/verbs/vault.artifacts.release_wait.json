@@ -5,6 +5,7 @@
   "output": "crate::blob_artifact::ReleasedWait",
   "call": "memory.artifacts_release_wait(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {},
   "section": false,
   "binding": {

@@ -9,6 +9,7 @@ use oneiron_authority::federation::Scope;
 
 mod ceiling;
 mod live_audience;
+mod pins;
 mod projection;
 mod thread_readers;
 mod upkeep_posture;

@@ -5,7 +5,10 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::skill_optimize::eval_doors;
 
-use super::host_doors::support::{Listed, internal, owner_proof};
+use oneiron::skill_optimize::EVAL_AUTHORING_EXECUTE_VERB;
+
+use super::FacadeApiError;
+use super::host_doors::support::{Listed, credential_listing, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -42,6 +45,42 @@ pub(crate) async fn vault_evals_author_now(
         move |vault, owner| eval_doors::author_now(vault, owner, input),
     )
     .await
+}
+
+/// `vault.evals.authoring.execute`: one Coach eval-authoring pass run now on
+/// this host, for the owner or an agent whose own Grant lists the verb,
+/// checked in the writer that admits the request's own Coach attempt. The
+/// answer is the pass's kept record, which names the caller; the eval rows
+/// it wrote are the Coach's, so the door lists none.
+pub(crate) async fn vault_evals_authoring_execute(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::skill_optimize::EvalAuthoringExecuteRequest,
+) -> Listed<oneiron::skill_optimize::EvalAuthoringExecuteAnswer> {
+    let caller = match super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)
+    {
+        Ok(caller) => caller,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        EVAL_AUTHORING_EXECUTE_VERB,
+        move |server, _, memory| crate::ai_host::execute_eval_authoring(server, &memory, input),
+    )
+    .await
+}
+
+/// The execute row's early authority check: the caller's own admission for
+/// the verb, judged in a read snapshot before the row's verb hooks fire.
+/// The writer that admits the Coach attempt checks it again.
+pub(super) fn execute_admits(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
+    let (actor, class) =
+        super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+    let memory =
+        crate::api::credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
+    oneiron::skill_optimize::eval_authoring_execute_admits(&memory)
 }
 
 pub(crate) async fn vault_evals_authoring_result(

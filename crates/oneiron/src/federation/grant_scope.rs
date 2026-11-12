@@ -77,8 +77,10 @@ pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
     match role {
         super::FederationGrantRole::Owner => Scope::top(),
         // The ADMIN ceiling is structural. Which named powers it starts with
-        // is chosen by vault-resident manifest rows at the minting writer.
-        super::FederationGrantRole::Admin => Scope::top(),
+        // is chosen by vault-resident manifest rows at the minting writer. A
+        // Deputy holds Admin's powers; its delegated Owner powers are a
+        // separate Grant.
+        super::FederationGrantRole::Deputy | super::FederationGrantRole::Admin => Scope::top(),
         // The non-vault Delegate constructor keeps its historical narrow
         // ceiling; the vault minting writer resolves the policy row instead.
         super::FederationGrantRole::Delegate => super::scope_codec::read_preset(),
@@ -103,6 +105,6 @@ pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
             scope
         }
         super::FederationGrantRole::Guest => Scope::default(),
-        _ => super::scope_codec::read_preset(),
+        super::FederationGrantRole::Viewer => super::scope_codec::read_preset(),
     }
 }

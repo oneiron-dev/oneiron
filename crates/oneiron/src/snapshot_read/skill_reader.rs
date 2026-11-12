@@ -69,8 +69,9 @@ fn admitted_view_in_txn(
 /// `package`, in its bytes or its path: the scan by which the package store
 /// keeps no replicated carrier for such a tree (`skill_hub::package_codec`).
 /// The record is a SKILL row, which the batch write door scans as it lands;
-/// the package is a side table no write door scans.
-fn package_holds_credential(package: &crate::skill_hub::HubPackage) -> bool {
+/// the package is a side table no write door scans. `self.skills.package`
+/// withholds such a package from a masked caller by the same scan.
+pub(crate) fn package_holds_credential(package: &crate::skill_hub::HubPackage) -> bool {
     package.files.iter().any(|file| {
         crate::batch::secret_scan::scan_file_content(&file.path, &file.content).is_some()
             || crate::batch::secret_scan::scan_file_content("", file.path.as_bytes()).is_some()

@@ -4,6 +4,7 @@ use super::access_gate::HeldAuthority;
 use super::*;
 use crate::retrieval_depth::SessionScope;
 use crate::vault::ReadMode;
+use crate::workspace_roster::project::extra_room_redaction;
 
 /// One admitted revision: the served bytes (the live projection on a live
 /// read) and the content hash of the stored revision they came from.
@@ -440,7 +441,44 @@ impl ScopedRead<'_> {
             raw.truncate(ENTITY_METADATA_HEADER_LEN);
             raw.extend_from_slice(&body);
         }
+        let mut raw = self.redact_extra_room_key_in_txn(txn, raw)?;
+        // A room's shared pins never leave in its served body: a reader gets
+        // them only through the room's admitted projection (ROOM-SCOPED-PINS).
+        if raw.first() == Some(&crate::registry::ENTITY_TYPE_CONVERSATION)
+            && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
+            && let Some(served) = crate::conversation::served_room_body(body)?
+        {
+            raw.truncate(ENTITY_METADATA_HEADER_LEN);
+            raw.extend_from_slice(&served);
+        }
         Ok(Some(AdmittedRevision { raw, content_hash }))
+    }
+
+    /// Served-copy redaction of the extra-room link key: a CONVERSATION body
+    /// keeps `project_group` only for a caller who reads the named project.
+    /// Writers and own-device sync never read through this lane.
+    fn redact_extra_room_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut raw: Vec<u8>,
+    ) -> Result<Vec<u8>> {
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION)
+        {
+            return Ok(raw);
+        }
+        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        let redacted = match EntityId::from_hex(self.actor_key.actor_ref()) {
+            Ok(caller) => extra_room_redaction::redact_body_bytes_for_caller_in_txn(
+                self.vault, txn, &body, caller,
+            )?,
+            Err(_) => {
+                extra_room_redaction::strip_project_group_from_body_bytes(&body).unwrap_or(body)
+            }
+        };
+        raw.truncate(ENTITY_METADATA_HEADER_LEN);
+        raw.extend_from_slice(&redacted);
+        Ok(raw)
     }
 
     /// The stored bytes `id` reads at `mode` in `txn` once every row gate
@@ -465,6 +503,10 @@ impl ScopedRead<'_> {
         };
         if !self.is_entity_raw_readable_held_in(txn, policy, id, &judged, filter, authority)? {
             return Ok(None);
+        }
+        // The caller projects the admitted live NOTE core exactly once.
+        if mode == ReadMode::Live && judged.first() == Some(&crate::registry::ENTITY_TYPE_NOTE) {
+            return Ok(Some(judged));
         }
         let Some(raw) = self.revision_raw_in(txn, id, mode)? else {
             return Ok(None);

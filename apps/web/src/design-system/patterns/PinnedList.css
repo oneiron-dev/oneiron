@@ -1,0 +1,14 @@
+/* The pinned list: one sentence, aligned with the names, then the rows. */
+.sl-pinned-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-pinned-list-note {
+  max-width: var(--sl-col);
+  margin: 0 0 14px 36px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+  text-wrap: pretty;
+}

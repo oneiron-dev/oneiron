@@ -1,0 +1,21 @@
+{
+  "name": "vault.revisions.read",
+  "description": "Reads each ref as its entity view with the record's live revision under the caller's lane and receipt; a missing or withheld ref answers none.",
+  "input": "crate::task_verb::sdk::RevisionsReadRequest",
+  "output": "crate::claim::ScopedReadResult<Vec<Option<crate::task_verb::sdk::RevisionEntry>>>",
+  "call": "crate::task_verb::sdk::vault_revisions_read_embedded(memory, input)?",
+  "scope": "Read",
+  "grant_class": "vault.revisions.read grant + caller read lane",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true,
+    "validate": "input.validate()?;"
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}

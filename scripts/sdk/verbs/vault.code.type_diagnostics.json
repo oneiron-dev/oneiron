@@ -5,6 +5,7 @@
   "output": "Option<crate::code_run::ProgramStepFeedbackRelease>",
   "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
