@@ -14,9 +14,11 @@ doctest = false
 [dependencies]
 
 [features]
-# Forwarded from `oneiron/sync` and `oneiron/test-support`: a moved item keeps the gate it had in the engine.
+# Forwarded from `oneiron/sync`, `oneiron/test-support` and `oneiron/test-hooks`: a moved item keeps the gate it had
+# in the engine.
 sync = []
 test-support = []
+test-hooks = []
 
 [lints]
 workspace = true
