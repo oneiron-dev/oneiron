@@ -3,7 +3,9 @@
 //!
 //! The owner reads under its proof. A live Steward reader reads only claims
 //! and sources its grant and scoped read both reach. A withheld source carries
-//! no id or detail, so the page never reveals whether an unread source moved.
+//! no id, position or detail, so the page never reveals whether an unread
+//! source moved. An unread claim is absent: it changes no page, whatever the
+//! cursor.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -38,8 +40,6 @@ pub struct StrengthObservationsPage {
     pub config: SelectionConfig,
     pub config_pin: String,
     pub claims: Vec<ObservedClaim>,
-    /// Unread claims in this page's key range, with no identifying detail.
-    pub withheld_claims: u32,
     pub next: Option<String>,
 }
 
@@ -59,6 +59,7 @@ pub struct ObservedClaim {
     pub predicate: String,
     pub last_activity_ms: u64,
     pub status: ObservedClaimStatus,
+    /// The readable sources in id order, then one bare entry per withheld one.
     pub sources: Vec<ObservedSource>,
     /// The full source list exceeds an otherwise empty page's byte bound.
     pub sources_omitted: bool,
@@ -66,7 +67,8 @@ pub struct ObservedClaim {
     pub pin: Option<String>,
 }
 
-/// A source's coarse status; withheld sources disclose nothing else.
+/// A source's coarse status; withheld sources disclose nothing else, and are
+/// served after every readable one so their place in the id order stays unread.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ObservedSource {
@@ -86,9 +88,11 @@ pub struct ObservedSignals {
 /// Reads observations through the caller's live reach and scoped read.
 ///
 /// As with snapshot pages, the byte bound counts encoded rows, not the
-/// envelope. Unread claims add only to the count; the cursor names the last
-/// served claim, never an unread one. Source lists too large for an empty
-/// page are omitted only after their complete status and signals are judged.
+/// envelope. Unread claims are skipped and counted nowhere; the cursor names
+/// the last served claim, and a full page sets it only when a later claim
+/// reads, so no unread row changes the answer. Source lists too large for an
+/// empty page are omitted only after their complete status and signals are
+/// judged.
 ///
 /// # Errors
 ///
@@ -121,20 +125,17 @@ pub fn strength_observations_page(
             config: vault.consolidation_selection_in_txn(txn)?,
             config_pin: selection_config_pin_in_txn(vault, txn)?,
             claims: Vec::new(),
-            withheld_claims: 0,
             next: None,
         };
         let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
         let mut rows = OBSERVATIONS.iter_range(&vault.store, txn, start, Bound::Unbounded)?;
         let mut bytes = 0u64;
         let mut shown = after;
-        let mut withheld = 0u32;
         while let Some(entry) = rows.next() {
             let (id, observations) = entry?;
             let Some(mut claim) =
                 observed_claim_in_txn(vault, txn, &read, scope.as_ref(), id, observations)?
             else {
-                withheld = withheld.saturating_add(1);
                 continue;
             };
             let mut size = serde_json::to_vec(&claim)
@@ -158,19 +159,19 @@ pub fn strength_observations_page(
             }
             bytes = bytes.saturating_add(size);
             page.claims.push(claim);
-            page.withheld_claims = page.withheld_claims.saturating_add(withheld);
-            withheld = 0;
             shown = Some(id);
             if page.claims.len() as u64 >= u64::from(limit) {
-                page.next = rows
-                    .next()
-                    .transpose()?
-                    .map(|_| format!("strength-observations:{}", id.to_hex()));
+                let mut later = false;
+                for entry in rows.by_ref() {
+                    let (later_id, _) = entry?;
+                    if observed_claim_reads_in_txn(vault, txn, &read, scope.as_ref(), later_id)? {
+                        later = true;
+                        break;
+                    }
+                }
+                page.next = later.then(|| format!("strength-observations:{}", id.to_hex()));
                 break;
             }
-        }
-        if page.next.is_none() {
-            page.withheld_claims = page.withheld_claims.saturating_add(withheld);
         }
         Ok(page)
     })
@@ -223,6 +224,19 @@ fn observation_record_reached_in_txn(
     }
 }
 
+/// Whether the observed claim's own row reads for this caller: the scope
+/// reaches its record and the scoped read finds it live.
+fn observed_claim_reads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &ScopedRead<'_>,
+    scope: Option<&Scope>,
+    id: EntityId,
+) -> Result<bool> {
+    Ok(observation_record_reached_in_txn(vault, txn, scope, id)?
+        && read.entity_raw_live_in(txn, &id)?.is_some())
+}
+
 fn observed_claim_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -231,12 +245,11 @@ fn observed_claim_in_txn(
     id: EntityId,
     observations: StrengthObservations,
 ) -> Result<Option<ObservedClaim>> {
-    if !observation_record_reached_in_txn(vault, txn, scope, id)?
-        || read.entity_raw_live_in(txn, &id)?.is_none()
-    {
+    if !observed_claim_reads_in_txn(vault, txn, read, scope, id)? {
         return Ok(None);
     }
     let mut sources = Vec::with_capacity(observations.sources.len());
+    let mut withheld = 0usize;
     let mut status = ObservedClaimStatus::Current;
     for source in &observations.sources {
         let raw = if observation_record_reached_in_txn(vault, txn, scope, source.source)? {
@@ -247,7 +260,8 @@ fn observed_claim_in_txn(
         let served = match raw {
             None => {
                 status = ObservedClaimStatus::Withheld;
-                ObservedSource::Withheld
+                withheld = withheld.saturating_add(1);
+                continue;
             }
             Some(raw) if *blake3::hash(&raw).as_bytes() == source.revision => {
                 ObservedSource::Current {
@@ -265,6 +279,7 @@ fn observed_claim_in_txn(
         };
         sources.push(served);
     }
+    sources.extend(std::iter::repeat_n(ObservedSource::Withheld, withheld));
     let current = status == ObservedClaimStatus::Current;
     let signals = current.then(|| {
         let diversity: BTreeSet<_> = observations

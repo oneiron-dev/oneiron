@@ -11,7 +11,7 @@ use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::define_agent;
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
-use oneiron::test_doors::derive::claim_subject;
+use oneiron::test_doors::derive::{claim_subject, narrow_steward_grant_to_project};
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, STEWARD_VERBS, dreamer, record_strength_observations, stand_steward_grant,
     stand_steward_grant_in_bands,
@@ -137,8 +137,49 @@ fn assert_current_observation(page: &Value, claim: EntityId, sources: &[EntityId
         })
     );
     assert_strength_pin(&observed["pin"]);
-    assert_eq!(page["withheld_claims"], 0);
     assert!(page["next"].is_null());
+}
+
+/// Observes two claims, moves the one with the higher id into a project of
+/// its own, and holds the Dreamer's Steward grant to the other's project, so
+/// the Dreamer reads the lower claim and not the higher; `(read, unread)`.
+fn observe_a_read_and_an_unread_claim(
+    vault: &Vault,
+) -> StrengthPageTestResult<(EntityId, EntityId)> {
+    let (mut claims, _, _) = observe_strength_claim(vault, &["profile.name", "profile.nickname"])?;
+    claims.sort_by_key(EntityId::to_hex);
+    let (read, unread) = (claims[0], claims[1]);
+    let mut body = vault
+        .get_claim(&unread)?
+        .unwrap_or_else(|| panic!("the observed claim exists"));
+    body.scope_project = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_claim(&unread, &body, TimeRange { start: at, end: at }, at)?;
+    let project = vault
+        .get_claim(&read)?
+        .unwrap_or_else(|| panic!("the observed claim exists"))
+        .scope_project;
+    let grant = stand_steward_grant(vault, dreamer(vault)?, &STEWARD_VERBS)?;
+    narrow_steward_grant_to_project(vault, grant, project)?;
+    Ok((read, unread))
+}
+
+fn page_claim_ids(page: &Value) -> Vec<String> {
+    page["claims"]
+        .as_array()
+        .unwrap_or_else(|| panic!("claims is an array"))
+        .iter()
+        .map(|claim| {
+            claim["claim"]
+                .as_str()
+                .unwrap_or_else(|| panic!("the claim id is a string"))
+                .to_owned()
+        })
+        .collect()
+}
+
+fn observation_cursor(id: EntityId) -> Value {
+    json!({"cursor": format!("strength-observations:{}", id.to_hex())})
 }
 
 #[test]
@@ -221,10 +262,72 @@ fn a_source_the_reader_may_not_read_is_withheld_with_no_detail() -> StrengthPage
         vec!["status"]
     );
     assert_eq!(withheld, &json!({"status": "withheld"}));
+    assert_eq!(
+        served.last(),
+        Some(withheld),
+        "a withheld source has no place"
+    );
     assert!(served.contains(&json!({"status": "current", "source": sources[1].to_hex()})));
     assert!(!page.to_string().contains(&sources[0].to_hex()));
     assert!(claim["signals"].is_null());
     assert!(claim["pin"].is_null());
+    Ok(())
+}
+
+#[test]
+fn a_claim_the_reader_may_not_read_changes_no_page_whatever_the_cursor()
+-> StrengthPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = open_strength_observation_vault(&dir)?;
+    let (read, unread) = observe_a_read_and_an_unread_claim(&vault)?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let whole = read_strength_observation_page(&vault, owner, EdgeActorClass::Human, json!({}))?;
+    assert_eq!(page_claim_ids(&whole), vec![read.to_hex(), unread.to_hex()]);
+    let actor = dreamer(&vault)?;
+    let first = read_strength_observation_page(&vault, actor, EdgeActorClass::System, json!({}))?;
+    assert_eq!(page_claim_ids(&first), vec![read.to_hex()]);
+    let before_unread = read_strength_observation_page(
+        &vault,
+        actor,
+        EdgeActorClass::System,
+        observation_cursor(read),
+    )?;
+    let after_unread = read_strength_observation_page(
+        &vault,
+        actor,
+        EdgeActorClass::System,
+        observation_cursor(unread),
+    )?;
+    assert_eq!(
+        before_unread, after_unread,
+        "the unread claim moves no answer"
+    );
+    assert!(page_claim_ids(&before_unread).is_empty());
+    assert!(before_unread["next"].is_null());
+    let keys = before_unread
+        .as_object()
+        .unwrap_or_else(|| panic!("a page is an object"))
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        BTreeSet::from([
+            "claims",
+            "config",
+            "config_pin",
+            "next",
+            "policy",
+            "policy_pin"
+        ])
+    );
+    let limited =
+        read_strength_observation_page(&vault, actor, EdgeActorClass::System, json!({"limit": 1}))?;
+    assert_eq!(page_claim_ids(&limited), vec![read.to_hex()]);
+    assert!(limited["next"].is_null(), "no later claim reads");
+    for page in [&first, &before_unread, &after_unread, &limited] {
+        assert!(!page.to_string().contains(&unread.to_hex()));
+    }
     Ok(())
 }
 
