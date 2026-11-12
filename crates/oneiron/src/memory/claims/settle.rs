@@ -246,7 +246,7 @@ struct ReviewedProposal {
     /// rejection needs its tray row.
     machine: bool,
     /// The actors that opened it: its authenticated author and the actor its
-    /// envelope names.
+    /// envelope names, unless the owner's whole-vault restore brought it back.
     openers: Vec<EntityId>,
 }
 
@@ -316,8 +316,16 @@ impl ReviewedProposal {
         {
             openers.push(author.entity_ref());
         }
+        // The owner's whole-vault restore opened a claim it brought back, not
+        // the owner its envelope names (D5, RULING 00:08 13 Nov).
         if let Some(actor) = claim_envelope_actor(&body)
             && !openers.contains(&actor)
+            && !crate::batch::export::owner_restore_opened_claim_in_txn(
+                &vault.store,
+                txn,
+                &body,
+                actor,
+            )?
         {
             openers.push(actor);
         }
