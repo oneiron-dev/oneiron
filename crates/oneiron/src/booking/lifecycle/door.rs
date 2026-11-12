@@ -457,7 +457,7 @@ fn finalize_attempt(
 }
 
 /// A non-empty, bounded failure reason for the attempt row.
-fn attempt_failure_reason(failure: &BookingError) -> String {
+pub(super) fn attempt_failure_reason(failure: &BookingError) -> String {
     let mut reason = failure.to_string();
     if reason.is_empty() {
         return "booking lifecycle transition failed".to_owned();

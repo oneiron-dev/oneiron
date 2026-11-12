@@ -79,9 +79,11 @@ pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // The typed `cause` key is mandatory too: a row without one fails closed.
 // v3 adds the mandatory `carried_spend` key (`None` encodes as nil).
 // v4 adds the mandatory `wait` key (nil, or the pinned wait map); v3 rows fail closed.
-// The wait map's class is Budget (`scope`, `asked_units`), one answer class (Consent, Peer,
-// Human: `wait_run`, `wait_id`, `wait_generation`) or Seat (`seat`, `seat_generation`,
-// `reset_at_s` only when the refusal named one); every map carries `lease_generation`.
+// The wait map's class is Budget (`scope`, `asked_units`), PassBudget (`asked_units`, and
+// `scope` only when the step's spend scope named one), one
+// answer class (Consent, Peer, Human: `wait_run`, `wait_id`, `wait_generation`) or Seat (`seat`,
+// `seat_generation`, `reset_at_s` only when the refusal named one); every map carries
+// `lease_generation`. A new class value under the pinned keys keeps the schema at 4.
 pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 4;
 pub(super) const DREAMER_BUDGET_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,

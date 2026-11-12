@@ -25,10 +25,10 @@ use super::wake_event::{
     required_string, required_u64,
 };
 use super::wake_fire::{
-    WakeEligibility, current_wake_eligibility, current_wake_eligibility_in_txn,
+    CommitmentWakeSkip, WakeEligibility, instance_wake_eligibility,
+    instance_wake_eligibility_in_txn,
 };
 use super::wake_proposal::CommitmentWakeProposalDraft;
-use crate::commitment::decode_commitment_claim;
 use crate::error::ClaimError;
 
 // ---------------------------------------------------------------------------
@@ -269,41 +269,25 @@ fn require_live_commitment_in_txn(
     txn: &heed::RoTxn<'_>,
     instance_id: &EntityId,
 ) -> Result<()> {
-    let head = vault.commitment_head_in_txn(txn, instance_id)?;
-    let body = vault
-        .get_claim_in_txn(txn, &head)?
-        .ok_or(Error::InvalidClaimBody(
-            "commitment wake proposal names a missing commitment",
-        ))?;
-    let record = decode_commitment_claim(&body)?.ok_or(Error::InvalidClaimBody(
-        "commitment wake proposal names a missing commitment",
-    ))?;
-    if !matches!(
-        current_wake_eligibility_in_txn(vault, txn, &record)?,
-        WakeEligibility::Eligible
-    ) {
-        return Err(Error::InvalidClaimBody(
-            "commitment wake proposal names a closed or ineligible commitment",
-        ));
-    }
-    Ok(())
+    require_eligible(instance_wake_eligibility_in_txn(vault, txn, instance_id)?)
 }
 
 fn require_live_commitment(vault: &Vault, instance_id: &EntityId) -> Result<()> {
-    let record = vault
-        .get_commitment_claim(instance_id)?
-        .ok_or(Error::InvalidClaimBody(
+    require_eligible(instance_wake_eligibility(vault, instance_id)?)
+}
+
+/// A proposal acts only for an eligible instance: a missing one, a closed or
+/// withdrawn one (FIX 22383), or one its series no longer fires is refused.
+fn require_eligible(eligibility: WakeEligibility) -> Result<()> {
+    match eligibility {
+        WakeEligibility::Eligible(_) => Ok(()),
+        WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance) => Err(Error::InvalidClaimBody(
             "commitment wake proposal names a missing commitment",
-        ))?;
-    if !matches!(
-        current_wake_eligibility(vault, &record)?,
-        WakeEligibility::Eligible
-    ) {
-        return Err(Error::InvalidClaimBody(
+        )),
+        WakeEligibility::Skip(_) => Err(Error::InvalidClaimBody(
             "commitment wake proposal names a closed or ineligible commitment",
-        ));
+        )),
     }
-    Ok(())
 }
 
 pub(super) fn claim_provenance(body: &ClaimBody) -> Option<Value> {

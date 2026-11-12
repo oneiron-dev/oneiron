@@ -927,7 +927,7 @@ impl StepRunner {
         let mut saved_tool_state = continuation.is_some();
         let mut save = |request: &LlmRequest,
                         cursor: &oneiron::agent_dispatch::WorkflowToolCursor,
-                        wait,
+                        wait: Option<oneiron::agent_dispatch::WorkflowToolWait>,
                         answer: Option<(&LlmResponse, &ModelCallBinding)>,
                         refreshed_sources: &[EntityId]|
          -> oneiron::Result<()> {
@@ -938,7 +938,18 @@ impl StepRunner {
             }
             // No new scope booking may remain behind a durable cursor/park.
             live.book_rest()?;
-            let budget = guard.checkpoint().map_err(|denied| {
+            // A park fences the meter: no handle of it admits again, and the
+            // workflow resumes only on the meter its checkpoint rebuilds (FIX
+            // BUDGET-PARK). A cursor save is a snapshot: the conversation goes
+            // on with this meter. A park whose durable write then fails ends
+            // the step with that error (StepConversationFault::Checkpoint),
+            // so nothing runs on the fenced meter.
+            let budget = if wait.is_some() {
+                guard.park()
+            } else {
+                guard.checkpoint()
+            }
+            .map_err(|denied| {
                 Error::InvalidConfig(format!("workflow checkpoint budget: {denied}"))
             })?;
             let progress = WorkflowToolProgress {

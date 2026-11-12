@@ -363,6 +363,12 @@ impl ConsolidationExecutor<'_> {
             Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
                 return Ok(PortServed::End(PartitionRun::Checkpoint));
             }
+            // A spend scope refused the slice's step for good: the branch
+            // ends, and the try ends Failed, typed; a refused step spent
+            // nothing (BUDGET-TRAP-UNTYPED-NO-SENDER).
+            Err(error @ DurableStepError::BudgetRefused(_)) => {
+                return Ok(PortServed::End(PartitionRun::refused_by(error)));
+            }
             Err(error) => {
                 if let DurableStepError::SpentLlm { usage, .. }
                 | DurableStepError::SpentFallback { usage, .. } = &error
@@ -524,9 +530,7 @@ impl ConsolidationExecutor<'_> {
                     reason: format!("correction read refused: {}", errors.join("; ")),
                 })
             }
-            Err(error) => PortServed::End(PartitionRun::Refused {
-                reason: error.to_string(),
-            }),
+            Err(error) => PortServed::End(PartitionRun::refused_by(error)),
         })
     }
 }
@@ -629,7 +633,7 @@ const fn stop_code(run: &PartitionRun) -> &'static str {
     match run {
         PartitionRun::Trapped => THING_CHILD_TRAPPED,
         PartitionRun::Checkpoint => THING_CHILD_CHECKPOINT,
-        PartitionRun::Refused { .. } => THING_CHILD_REFUSED,
+        PartitionRun::Refused { .. } | PartitionRun::BudgetRefused { .. } => THING_CHILD_REFUSED,
         PartitionRun::Completed { .. } | PartitionRun::Held { .. } => THING_CHILD_PARENT_FAILED,
     }
 }
