@@ -74,6 +74,8 @@ mod video_length;
 mod voice_reference;
 
 pub(crate) use agent::AgentMediaCall;
+#[cfg(oneiron_test_support)]
+pub(crate) use run_line::JobSpendLedger;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
 use run_line::{JobLine, ProgramLine};
