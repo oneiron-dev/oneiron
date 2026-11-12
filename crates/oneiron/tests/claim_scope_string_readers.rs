@@ -617,6 +617,19 @@ fn a_same_as_between_critic_outcome_shaped_claims_commits() -> TestResult {
         at,
         &rmp_serde::to_vec_named(&json!({"title": "critic review fixture"}))?,
     )?;
+    // `ClaimBody::new` births a claim about the SESSION in the SESSION's
+    // substrate facet, which no put stores, so the birth gate refuses it
+    // InvalidFacet (#4389). The critic's writer takes the candidate door,
+    // which stamps the vault default facet instead. The fixture stores the
+    // SESSION's facet, as `put_lens_skill` stores the SKILL's; the SameAs
+    // status claim is born in its anchor's facet.
+    vault.put_entity(
+        &oneiron::claim::substrate_facet_id(session)?,
+        oneiron::registry::ENTITY_TYPE_FACET,
+        TimeRange { start: at, end: at },
+        at,
+        &rmp_serde::to_vec_named(&json!({"name": "critic review session facet"}))?,
+    )?;
     let first = put_outcome_shaped_claim(&vault, session, "flaw:missing_guard")?;
     let second = put_outcome_shaped_claim(&vault, session, "flaw:invalid_bound")?;
     let committed = commit(
