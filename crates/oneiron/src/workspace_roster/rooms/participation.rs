@@ -526,9 +526,11 @@ pub(super) fn require_thread_standing(
 }
 
 /// Whether `actor` stands in `room`'s thread `root` now, as a bound TASK's
-/// assignee must (THREAD-TASK-EVERY-ROOM): a seat on the room's roster, or a
-/// live Ready receipt that covers the thread, an agent's own or, through its
-/// pen, a person's (OF-417). It reads standing and records nothing.
+/// assignee must (THREAD-TASK-EVERY-ROOM, Q3): a seat on the room's roster,
+/// or a live Ready receipt that covers the thread, an agent's own or,
+/// through its pen, a person's (OF-417). A room host's role, which lets a
+/// person read and speak in the room, is no assignee's standing. It reads
+/// standing and records nothing.
 pub(in crate::workspace_roster) fn stands_in_thread_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -541,7 +543,20 @@ pub(in crate::workspace_roster) fn stands_in_thread_in(
         Some(JoinSubject::Agent(agent)) => {
             Ok(agent_standing_in_txn(vault, txn, room, Some(root), agent, None)?.is_some())
         }
-        subject => person_stands_in_txn(vault, txn, room, Some(root), actor, subject),
+        Some(JoinSubject::Person(person)) => {
+            let seats = room_access_in(vault, txn, room)?.member_ids;
+            if [person, actor]
+                .iter()
+                .any(|id| seats.contains(&id.to_hex()))
+            {
+                return Ok(true);
+            }
+            let subject = JoinSubject::Person(person);
+            let receipt =
+                require_join_covering_in_txn(vault, txn, room, Some(root), &subject, None);
+            Ok(joined(receipt)?.is_some())
+        }
+        None => Ok(false),
     }
 }
 
