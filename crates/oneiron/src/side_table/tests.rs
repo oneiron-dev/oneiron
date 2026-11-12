@@ -615,6 +615,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SYNC_CALENDAR_ORIGIN_PENDING",
         "SYNC_DISCARDED_WORLD_ROW",
         "SYNC_MESSAGE_WRITER",
+        "SYNC_RESIDENCE_DEVICE_WORLDS",
         "SYNC_RESIDENCE_INDEX",
         "SYNC_RESIDENCE_ITEM_BLOB",
         "SYNC_RESIDENCE_ITEM_CONTENT_WORLD",

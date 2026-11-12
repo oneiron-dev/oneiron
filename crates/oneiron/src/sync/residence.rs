@@ -113,10 +113,13 @@ pub use pad_custody::{
     PAD_FETCH_PAGE_KEYS, WorldPadCapsule, WorldPadFetch, WorldPadPage, WorldPadSelection,
     pad_wire_from_hex, pad_wire_hex, world_pad_capsule,
 };
-pub(crate) use policy::set_device_sync_preference_in_txn;
+pub(crate) use policy::{
+    device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
+};
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
-    local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
+    load_device_world_pick, local_is_elected_home, resolve_residence_mode,
+    set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::checkpoint_read_cache_keys;
 pub(crate) use prune::demote_resident_window;
