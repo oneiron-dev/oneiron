@@ -20,7 +20,6 @@ use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, LoroDoc};
 use oneiron::authority::HostSlipIssuer;
 use oneiron::policy_model::SecretScanMode;
-use oneiron::store::GateDecisionId;
 use oneiron::sync::WindowKey;
 use oneiron::sync::transport::{self, window_sub_tags};
 use oneiron::task_verb::{
@@ -197,18 +196,15 @@ fn server_window_sync_drains_landed_ask_intents() {
 async fn drains_landed_ask_intents() {
     let dir = tempfile::tempdir().unwrap();
     let vault = open_vault(dir.path());
-    // FIX-LIST [ASK-FORWARD-INTENT-TOKEN-MASKED]: with the write-door secret
-    // scan on, the mask replaces the intent's `proof.token` (a credential
-    // key name) with a custody handle, and the intent put refuses it. The
-    // owner switches the scan off so the intent stores; the drain under test
-    // runs the same either way.
+    // The write-door secret scan stays on, its default: the stored intent
+    // keeps its holder slip under a non-credential key (FIX-LIST
+    // [ASK-FORWARD-INTENT-TOKEN-MASKED]), so the mask leaves it intact.
+    assert_eq!(
+        vault.secret_scan_mode().unwrap(),
+        SecretScanMode::On,
+        "the write-door secret scan is on, its default"
+    );
     let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let owner_proof = vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .unwrap();
-    vault
-        .set_secret_scan_mode(&owner_proof, SecretScanMode::Off, vault.now_recorded_at())
-        .unwrap();
     let (addr, server, handle) = spawn_server(vault.clone()).await;
     let mut socket = connect_root(addr, &server).await;
     let _ = next_binary(&mut socket).await; // root snapshot
