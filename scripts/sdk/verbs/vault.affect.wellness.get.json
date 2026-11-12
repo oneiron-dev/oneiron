@@ -5,6 +5,7 @@
   "output": "crate::memory::wellness_doors::WellnessProjection",
   "call": "memory.wellness_get_as_owner(&memory.embedded_owner(\"vault.affect.wellness.get\")?, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

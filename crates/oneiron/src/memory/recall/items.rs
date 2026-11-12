@@ -188,7 +188,7 @@ impl Memory<'_> {
             }
             crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
         };
-        let kind = kind_string_for_type(entity_type);
+        let kind = self.vault.entity_kind_name(entity_type);
         let mut record = crate::lens::RecordRef::from_view(&view);
         if let Some(handle) = &handle {
             record.label.clone_from(handle);

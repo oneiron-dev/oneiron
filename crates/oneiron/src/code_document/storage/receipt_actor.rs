@@ -16,14 +16,14 @@ use crate::receipt::ERASED_CALL_IDENTITY;
 /// (FIX 3520). It reads and writes as the actor's hex id, or as
 /// [`ERASED_CALL_IDENTITY`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ReceiptActor {
+pub(crate) enum ReceiptActor {
     Actor(EntityId),
     Erased,
 }
 
 impl ReceiptActor {
     /// The actor, while it is not erased.
-    pub(super) const fn id(self) -> Option<EntityId> {
+    pub(crate) const fn id(self) -> Option<EntityId> {
         match self {
             Self::Actor(id) => Some(id),
             Self::Erased => None,
@@ -31,7 +31,7 @@ impl ReceiptActor {
     }
 
     /// Makes this no one when it is `actor`; whether it was.
-    fn forget(&mut self, actor: EntityId) -> bool {
+    pub(crate) fn forget(&mut self, actor: EntityId) -> bool {
         let named = *self == Self::Actor(actor);
         if named {
             *self = Self::Erased;

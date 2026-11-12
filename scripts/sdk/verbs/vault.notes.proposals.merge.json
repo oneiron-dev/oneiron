@@ -5,6 +5,7 @@
   "output": "crate::note::NoteProposalView",
   "call": "memory.settle_note_proposal(&input, crate::note::NoteVerdict::Merge)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

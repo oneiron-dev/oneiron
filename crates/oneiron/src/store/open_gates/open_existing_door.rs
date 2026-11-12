@@ -273,34 +273,118 @@ impl Store {
         };
         Ok(Self {
             custody_leaves: Default::default(),
-            entities: OverlayDb::canonical(core.raw.entities),
-            edges_out: OverlayDb::canonical(core.raw.edges_out),
-            edges_in: OverlayDb::canonical(core.raw.edges_in),
-            vectors: OverlayDb::canonical(core.raw.vectors),
-            hnsw_neighbors: OverlayDb::canonical(core.raw.hnsw_neighbors),
-            hnsw_meta: OverlayDb::canonical(core.raw.hnsw_meta),
-            text_postings: OverlayDb::canonical(core.raw.text_postings),
-            text_meta: OverlayDb::canonical(core.raw.text_meta),
-            text_forward: OverlayDb::canonical(core.raw.text_forward),
-            text_bm25_field_stats: OverlayDb::canonical(core.raw.text_bm25_field_stats),
-            text_doc_field_lengths: OverlayDb::canonical(core.raw.text_doc_field_lengths),
-            vault_meta: OverlayDb::canonical(core.raw.vault_meta),
-            ppr_cache: OverlayDb::canonical(core.raw.ppr_cache),
-            ppr_cache_deps: OverlayDb::canonical(core.raw.ppr_cache_deps),
-            type_index: OverlayDb::canonical(core.raw.type_index),
-            temporal_occurred_start: OverlayDb::canonical(core.raw.temporal_occurred_start),
-            temporal_occurred_end: OverlayDb::canonical(core.raw.temporal_occurred_end),
-            temporal_learned: OverlayDb::canonical(core.raw.temporal_learned),
-            temporal_long_intervals: OverlayDb::canonical(core.raw.temporal_long_intervals),
-            phonetic_index: OverlayDb::canonical(core.raw.phonetic_index),
-            phonetic_forward: OverlayDb::canonical(core.raw.phonetic_forward),
-            short_ids: OverlayDb::canonical(core.raw.short_ids),
-            short_ids_reverse: OverlayDb::canonical(core.raw.short_ids_reverse),
-            sync_state: OverlayStrDb::canonical(core.raw.sync_state),
-            sync_queue: OverlayDb::canonical(core.raw.sync_queue),
-            attempt_records: OverlayDb::canonical(core.raw.attempt_records),
-            attempt_ready: OverlayDb::canonical(core.raw.attempt_ready),
-            attempt_dedupe: OverlayDb::canonical(core.raw.attempt_dedupe),
+            entities: OverlayDb::canonical_named(
+                core.raw.entities,
+                super::open_version_keys::DB_MANIFEST[0].name,
+            ),
+            edges_out: OverlayDb::canonical_named(
+                core.raw.edges_out,
+                super::open_version_keys::DB_MANIFEST[13].name,
+            ),
+            edges_in: OverlayDb::canonical_named(
+                core.raw.edges_in,
+                super::open_version_keys::DB_MANIFEST[14].name,
+            ),
+            vectors: OverlayDb::canonical_named(
+                core.raw.vectors,
+                super::open_version_keys::DB_MANIFEST[5].name,
+            ),
+            hnsw_neighbors: OverlayDb::canonical_named(
+                core.raw.hnsw_neighbors,
+                super::open_version_keys::DB_MANIFEST[6].name,
+            ),
+            hnsw_meta: OverlayDb::canonical_named(
+                core.raw.hnsw_meta,
+                super::open_version_keys::DB_MANIFEST[7].name,
+            ),
+            text_postings: OverlayDb::canonical_named(
+                core.raw.text_postings,
+                super::open_version_keys::DB_MANIFEST[8].name,
+            ),
+            text_meta: OverlayDb::canonical_named(
+                core.raw.text_meta,
+                super::open_version_keys::DB_MANIFEST[9].name,
+            ),
+            text_forward: OverlayDb::canonical_named(
+                core.raw.text_forward,
+                super::open_version_keys::DB_MANIFEST[10].name,
+            ),
+            text_bm25_field_stats: OverlayDb::canonical_named(
+                core.raw.text_bm25_field_stats,
+                super::open_version_keys::DB_MANIFEST[11].name,
+            ),
+            text_doc_field_lengths: OverlayDb::canonical_named(
+                core.raw.text_doc_field_lengths,
+                super::open_version_keys::DB_MANIFEST[12].name,
+            ),
+            vault_meta: OverlayDb::canonical_named(
+                core.raw.vault_meta,
+                super::open_version_keys::DB_MANIFEST[4].name,
+            ),
+            ppr_cache: OverlayDb::canonical_named(
+                core.raw.ppr_cache,
+                super::open_version_keys::DB_MANIFEST[15].name,
+            ),
+            ppr_cache_deps: OverlayDb::canonical_named(
+                core.raw.ppr_cache_deps,
+                super::open_version_keys::DB_MANIFEST[16].name,
+            ),
+            type_index: OverlayDb::canonical_named(
+                core.raw.type_index,
+                super::open_version_keys::DB_MANIFEST[1].name,
+            ),
+            temporal_occurred_start: OverlayDb::canonical_named(
+                core.raw.temporal_occurred_start,
+                super::open_version_keys::DB_MANIFEST[17].name,
+            ),
+            temporal_occurred_end: OverlayDb::canonical_named(
+                core.raw.temporal_occurred_end,
+                super::open_version_keys::DB_MANIFEST[18].name,
+            ),
+            temporal_learned: OverlayDb::canonical_named(
+                core.raw.temporal_learned,
+                super::open_version_keys::DB_MANIFEST[19].name,
+            ),
+            temporal_long_intervals: OverlayDb::canonical_named(
+                core.raw.temporal_long_intervals,
+                super::open_version_keys::DB_MANIFEST[20].name,
+            ),
+            phonetic_index: OverlayDb::canonical_named(
+                core.raw.phonetic_index,
+                super::open_version_keys::DB_MANIFEST[21].name,
+            ),
+            phonetic_forward: OverlayDb::canonical_named(
+                core.raw.phonetic_forward,
+                super::open_version_keys::DB_MANIFEST[22].name,
+            ),
+            short_ids: OverlayDb::canonical_named(
+                core.raw.short_ids,
+                super::open_version_keys::DB_MANIFEST[2].name,
+            ),
+            short_ids_reverse: OverlayDb::canonical_named(
+                core.raw.short_ids_reverse,
+                super::open_version_keys::DB_MANIFEST[3].name,
+            ),
+            sync_state: OverlayStrDb::canonical_named(
+                core.raw.sync_state,
+                super::open_version_keys::DB_MANIFEST[23].name,
+            ),
+            sync_queue: OverlayDb::canonical_named(
+                core.raw.sync_queue,
+                super::open_version_keys::DB_MANIFEST[24].name,
+            ),
+            attempt_records: OverlayDb::canonical_named(
+                core.raw.attempt_records,
+                super::open_version_keys::DB_MANIFEST[25].name,
+            ),
+            attempt_ready: OverlayDb::canonical_named(
+                core.raw.attempt_ready,
+                super::open_version_keys::DB_MANIFEST[26].name,
+            ),
+            attempt_dedupe: OverlayDb::canonical_named(
+                core.raw.attempt_dedupe,
+                super::open_version_keys::DB_MANIFEST[27].name,
+            ),
             core,
             owner,
         })

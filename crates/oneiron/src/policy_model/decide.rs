@@ -398,7 +398,13 @@ pub(super) async fn safeguard_verdict(
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
         Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(denied))) => {
             let reason = match denied {
-                crate::llm::BudgetDenied::Exhausted => PolicySkipReason::BudgetExhausted,
+                // A host-paid read nothing funds, or a resident's spent share,
+                // skips as the spent budget it read as before D3.
+                crate::llm::BudgetDenied::Exhausted
+                | crate::llm::BudgetDenied::Unfunded
+                | crate::llm::BudgetDenied::ResidentShareSpent { .. } => {
+                    PolicySkipReason::BudgetExhausted
+                }
                 crate::llm::BudgetDenied::LeaseInvalid
                 | crate::llm::BudgetDenied::AdmissionDenied
                 | crate::llm::BudgetDenied::HostCheck => PolicySkipReason::AdmissionDenied,

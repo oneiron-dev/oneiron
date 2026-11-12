@@ -22,22 +22,28 @@ use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentEvent,
     CampaignEnrollmentRunner, CampaignHomeNodeAdmission, CampaignHomeNodeCandidate,
-    CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, DetectEnrollment,
+    CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStepDraft, DetectEnrollment,
     EnrollmentDetection, EnrollmentExecution, accept_enrollment_baseline,
-    campaign_enrollment_event, campaign_home_node_designation, derive_enrollment_outbound_request,
-    elect_campaign_home_node_designation, encode_enrollment_attempt_payload, enrollment_dedupe_key,
-    put_campaign_program, put_campaign_program_step, require_campaign_home_node,
+    campaign_enrollment_event, campaign_home_node_designation, create_campaign_program,
+    derive_enrollment_outbound_request, elect_campaign_home_node_designation,
+    encode_enrollment_attempt_payload, enrollment_dedupe_key, require_campaign_home_node,
+    update_campaign_program,
 };
 use oneiron::campaign::register_crm_pack;
+use oneiron::campaign::surface::{
+    CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest, create_campaign, launch_campaign,
+};
+use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
+use oneiron::claim::ScopedReadActorKey;
 use oneiron::dreamer_runner::DreamerRunnerStore;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use oneiron::saved_query::{
     SAVED_QUERY_SCHEMA_VERSION, commit_membership_plan, create_saved_query, derived_member_value,
-    membership_events, next_membership_epoch, update_saved_query,
+    membership_events, next_membership_epoch, sweep_owner_read, update_saved_query,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId, Error,
-    Result, TimeRange, Vault, VaultConfig, saved_query::ClaimComparison,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EdgeKind,
+    EntityId, Error, Result, TimeRange, Vault, VaultConfig, saved_query::ClaimComparison,
     saved_query::CreateSavedQueryRequest, saved_query::EvalMode, saved_query::EvalPolicy,
     saved_query::FilterAst, saved_query::MatcherSpec, saved_query::MembershipCause,
     saved_query::MembershipEvent, saved_query::MembershipTransition,
@@ -89,6 +95,11 @@ fn test_config() -> VaultConfig {
 fn oracle_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     register_crm_pack(
         &vault,
         107,
@@ -127,17 +138,23 @@ impl Fixture {
     }
 }
 
+/// The query, campaign and program are written through their owner's checked
+/// doors (FIX 2773, 556025b6f5f: raw program puts are crate-only). The owner
+/// is the vault's own, whose read the evaluator reads through; the campaign is
+/// launched, so its program enrolls.
 fn install_fixture(vault: &Vault) -> Fixture {
-    let owner = test_id(0x30);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let person = test_id(0x31);
-    let campaign = test_id(0x32);
-    let program = test_id(0x33);
     let step = test_id(0x34);
     put_person(vault, person);
     put_claim(vault, test_id(0x35), person, SENIORITY, "vp");
+    put_sender(vault, owner);
     let query = create_saved_query(
         vault,
         owner,
+        EdgeActorClass::Human,
         &CreateSavedQueryRequest {
             schema_version: SAVED_QUERY_SCHEMA_VERSION,
             scope: QueryScope::default(),
@@ -154,16 +171,42 @@ fn install_fixture(vault: &Vault) -> Fixture {
         1,
     )
     .unwrap();
-    put_campaign_program(
+    let campaign = create_campaign(
         vault,
-        &CampaignProgram {
-            schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
-            program_ref: program,
-            campaign_ref: campaign,
+        owner,
+        &CreateCampaignRequest {
+            schema_version: CAMPAIGN_SCHEMA_VERSION,
+            name: "enrollment oracle campaign".to_owned(),
+            reply_snooze_policy: None,
         },
+        1,
     )
     .unwrap();
-    put_step(vault, program, step, 7);
+    let program = create_campaign_program(
+        vault,
+        owner,
+        campaign.campaign_ref,
+        CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
+        &CampaignProgramDraft {
+            name: "enrollment oracle program".to_owned(),
+            steps: vec![step_draft(step, 7)],
+            audience: None,
+        },
+        1,
+    )
+    .unwrap()
+    .program
+    .program_ref;
+    launch_campaign(
+        vault,
+        owner,
+        EdgeActorClass::Human,
+        campaign.campaign_ref,
+        campaign.definition.definition_version,
+        1,
+    )
+    .unwrap();
+    let campaign = campaign.campaign_ref;
     elect_campaign_home_node_designation(
         vault,
         &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],
@@ -180,25 +223,39 @@ fn install_fixture(vault: &Vault) -> Fixture {
     }
 }
 
-fn put_step(vault: &Vault, program: EntityId, step: EntityId, call_seq: u64) {
-    put_campaign_program_step(
-        vault,
-        &CampaignProgramStep {
-            schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
-            program_ref: program,
-            step_ref: step,
-            channel: CHANNEL.to_owned(),
-            sender_ref: test_id(0x36),
-            basis_evidence: test_id(0x37),
-            outbound: Some(CampaignProgramOutbound {
-                call_seq,
-                verb: "send".to_owned(),
-                payload: b"enrollment-body".to_vec(),
-                idempotency_supported: true,
-            }),
-        },
-    )
-    .unwrap();
+/// The program's one step: channel `email`, the sticky sender
+/// [`put_sender`] stores, and an outward leg at `call_seq`.
+fn step_draft(step: EntityId, call_seq: u64) -> CampaignProgramStepDraft {
+    CampaignProgramStepDraft {
+        step_ref: step,
+        channel: CHANNEL.to_owned(),
+        sender_ref: test_id(0x36),
+        basis_evidence: test_id(0x37),
+        outbound: Some(CampaignProgramOutbound {
+            call_seq,
+            verb: "send".to_owned(),
+            payload: b"enrollment-body".to_vec(),
+            idempotency_supported: true,
+            // An email outbound carries a subject (FIX 11641).
+            subject: Some("enrollment oracle".to_owned()),
+        }),
+    }
+}
+
+/// A step's sticky sender is a live channel identity of its channel; this
+/// one is the owner's email address.
+fn put_sender(vault: &Vault, owner: EntityId) {
+    let identity = crate::common::self_held_identity_in_state(
+        CHANNEL,
+        "sender@enrollment-oracle.test",
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::actor(owner),
+        ChannelIdentityState::Active,
+        1,
+    );
+    vault
+        .create_channel_identity(&test_id(0x36), &identity)
+        .unwrap();
 }
 
 fn seniority_is(value: &str) -> FilterAst {
@@ -256,12 +313,28 @@ fn put_claim(vault: &Vault, claim_id: EntityId, subject: EntityId, predicate: &s
         .unwrap();
 }
 
-fn evaluator<'a>(vault: &'a Vault, grants: &'a QueryScope) -> SavedQueryEvaluator<'a> {
+fn evaluator<'a>(
+    vault: &'a Vault,
+    grants: &'a QueryScope,
+    owner_read: &'a ScopedReadActorKey,
+) -> SavedQueryEvaluator<'a> {
     SavedQueryEvaluator {
         vault,
         owner_grants: grants,
+        owner_read,
         judge: None,
     }
+}
+
+/// The owner's read key, resolved as the server's enrollment pump resolves
+/// it (`sweep_owner_read`): the vault's owner reads all of its vault.
+fn owner_read(vault: &Vault) -> ScopedReadActorKey {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    sweep_owner_read(vault, owner, EdgeActorClass::Human)
+        .unwrap()
+        .expect("the owner has a usable read")
 }
 
 /// Detection through the public door; panics unless a transition was recorded.
@@ -281,7 +354,8 @@ fn detect_entity(
     grants: &QueryScope,
     now: u64,
 ) -> CampaignEnrollmentEvent {
-    let evaluator = evaluator(vault, grants);
+    let read = owner_read(vault);
+    let evaluator = evaluator(vault, grants, &read);
     match block_on(oneiron::campaign::enrollment::detect_enrollment(
         &evaluator,
         fixture.owner,
@@ -327,7 +401,8 @@ fn execute(
     grants: &QueryScope,
     now: u64,
 ) -> EnrollmentExecution {
-    let evaluator = evaluator(vault, grants);
+    let read = owner_read(vault);
+    let evaluator = evaluator(vault, grants, &read);
     block_on(CampaignEnrollmentRunner::new(vault).execute_claimed(node, record, &evaluator, now))
         .unwrap()
 }
@@ -780,7 +855,19 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
     assert_ne!(request.attempt_id, record.id);
 
     // Move the PERSISTED program step; the derived request moves with it.
-    put_step(&vault, fixture.program, fixture.step, 9);
+    update_campaign_program(
+        &vault,
+        fixture.owner,
+        fixture.campaign,
+        fixture.program,
+        1,
+        &CampaignProgramDraft {
+            name: "enrollment oracle program".to_owned(),
+            steps: vec![step_draft(fixture.step, 9)],
+            audience: None,
+        },
+        101,
+    )?;
     assert_eq!(
         derive_enrollment_outbound_request(&vault, &payload, &event, 1_000)?
             .expect("the step declares an outward leg")
@@ -790,15 +877,31 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
 
     // A program belonging to another campaign is not usable just because the
     // payload points at it.
-    let foreign = test_id(0x3B);
-    put_campaign_program(
+    let foreign_campaign = create_campaign(
         &vault,
-        &CampaignProgram {
-            schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
-            program_ref: foreign,
-            campaign_ref: test_id(0x3C),
+        fixture.owner,
+        &CreateCampaignRequest {
+            schema_version: CAMPAIGN_SCHEMA_VERSION,
+            name: "enrollment oracle foreign campaign".to_owned(),
+            reply_snooze_policy: None,
         },
-    )?;
+        102,
+    )?
+    .campaign_ref;
+    let foreign = create_campaign_program(
+        &vault,
+        fixture.owner,
+        foreign_campaign,
+        CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
+        &CampaignProgramDraft {
+            name: "enrollment oracle foreign program".to_owned(),
+            steps: vec![step_draft(test_id(0x3B), 7)],
+            audience: None,
+        },
+        102,
+    )?
+    .program
+    .program_ref;
     assert!(matches!(
         derive_enrollment_outbound_request(
             &vault,
@@ -920,7 +1023,12 @@ fn older_epoch_cannot_overwrite_newer_epoch() -> Result<()> {
         query_ref: fixture.query.query_ref,
         campaign_ref: fixture.campaign,
         entity_ref: fixture.person,
-        epoch: next_membership_epoch(&vault, fixture.query.query_ref, fixture.person)?,
+        epoch: next_membership_epoch(
+            &vault,
+            fixture.query.query_ref,
+            fixture.campaign,
+            fixture.person,
+        )?,
         valid_at: 200,
         detected_at: 200,
         transition: MembershipTransition::Exited,

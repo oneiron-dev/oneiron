@@ -44,6 +44,7 @@ fn reader(vault: &Vault, owner: &AuthenticatedOwner, bands: Option<u8>) -> Entit
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("the owner's read grant");

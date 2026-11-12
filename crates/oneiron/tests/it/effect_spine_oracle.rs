@@ -16,6 +16,22 @@
 
 use oneiron::{HnswConfig, Vault, VaultConfig};
 
+/// The vault's owner, authenticated: a standing outbound grant is the owner's
+/// standing consent row (FIX 11874, 282c8eb3d58), minted by the owner.
+fn owner_proof(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 fn test_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 16 * 1024 * 1024;
@@ -27,9 +43,64 @@ fn test_config() -> VaultConfig {
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
+    open_vault_with_config(test_config())
+}
+
+fn open_vault_with_config(config: VaultConfig) -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
+    // The host installs this device's keystore after each open and loads the
+    // install's signing keys from it (P6c): a topology op's seal is signed
+    // with the install's machine key.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
     seam::reset_fan_out_oracle();
+    (dir, vault)
+}
+
+/// ES-02 send fixture under an explicit actor-scoped policy (Engine ruling
+/// T0F-SEEDED-SEND-BUILTIN-PACK = C), without the seeded built-in pack gate.
+fn open_send_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+    seam::reset_fan_out_oracle();
+    // schedule_send binds this human actor and the send verb; the executor
+    // keeps the TASK's actor class and actor reference.
+    let actor = oneiron::EntityId::from_bytes([0x71; 16]).expect("connector-task actor id");
+    let actor_ref = actor.to_hex();
+    let manifest = serde_json::json!({
+        "schema_version": "1.2",
+        "pack_id": "effect-spine-send",
+        "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "actor_ceilings": [
+            {"actor_class": "human", "actor_ref": actor_ref, "ceiling": "auto"}
+        ],
+        "scoped_grants": [{
+            "actor_ref": actor_ref,
+            "effector": "external:send",
+            "scope": oneiron::test_support::effect_preset(),
+            "selectors": {"channel": "email"},
+        }],
+    });
+    oneiron::test_support::put_policy_manifest_bytes(
+        &vault,
+        oneiron::EntityId::from_bytes([0x73; 16]).expect("send policy id"),
+        &rmp_serde::to_vec_named(&manifest).expect("encode send policy"),
+    )
+    .expect("put send policy");
     (dir, vault)
 }
 
@@ -37,8 +108,8 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 /// projector's comm.* claim writes land instead of flooring to Critical/Pending
 /// under the default gate; the comm oracle runs cacheless without that gate.
 /// Gate-integrated comm semantics (default-manifest seed + the Recorded
-/// write-class door) re-arm in ONE-1752. Pre-existing spine legs (es02 send
-/// pipeline, later-armed tests) keep the seeded manifest via open_vault().
+/// write-class door) re-arm in ONE-1752. The es02 send pipeline uses an explicit
+/// actor-scoped manifest via open_send_vault(); later legs use open_vault().
 fn open_comm_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
@@ -153,12 +224,14 @@ mod seam {
                 trigger_ref: "effect-spine:es02".to_owned(),
                 job_ref: None,
                 occurred_at: Some(100),
+                mention: None,
             })
             .expect("schedule connector-send task");
         let grant_id = oneiron::EntityId::from_bytes([0x72; 16]).expect("grant id");
         vault
             .mint_standing_outbound_grant(
-                &grant_id,
+                &super::owner_proof(vault),
+                grant_id,
                 &oneiron::genui::GrantMintIntent {
                     principal_ref: actor.to_hex(),
                     origin_component_id: "effect_spine_oracle".to_owned(),
@@ -168,7 +241,6 @@ mod seam {
                         channel: channel.to_owned(),
                     },
                 },
-                100,
             )
             .expect("mint executor grant");
     }
@@ -722,7 +794,9 @@ mod seam {
     /// Read-time confidence: f(claim confidence, actor.confidence_prior).
     pub(crate) fn effective_confidence(vault: &Vault, claim_ref: &str) -> f32 {
         let claim_ref = oneiron::EntityId::from_hex(claim_ref).unwrap();
-        oneiron::provider_confidence::effective_confidence(vault, &claim_ref).unwrap()
+        oneiron::provider_confidence::effective_confidence(vault, &claim_ref)
+            .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error)
+            .unwrap()
     }
 
     /// Stored (unmodified) claim confidence — read-time wiring must never
@@ -764,7 +838,7 @@ mod seam {
 /// only record).
 #[test]
 fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_send_vault();
     seam::schedule_send(&vault, "party-yuki", "email");
     // Scheduling alone must not send: zero receipts and zero wire
     // dispatches until the EXECUTOR runs (doc 13 §1/§9.2 — the pipeline is
@@ -903,7 +977,7 @@ fn es06_deny_ruling_dispatches_nothing_and_records_denial() {
 // replays frozen bytes instead of minting anything.
 
 mod calendar_invite_fixture {
-    use super::{Vault, open_vault};
+    use super::{Vault, VaultConfig, open_vault_with_config, test_config};
 
     pub(super) const UID: &str = "one-1786-oracle@oneiron.test";
     pub(super) const RECIPIENT: &str = "guest@example.test";
@@ -925,7 +999,13 @@ mod calendar_invite_fixture {
     /// domain, the R7 booking-page standing grant, and the rendered invitation
     /// in the blob store.
     pub(super) fn admitted_vault() -> (tempfile::TempDir, Vault, String) {
-        let (dir, vault) = open_vault();
+        admitted_vault_with_config(test_config())
+    }
+
+    pub(super) fn admitted_vault_with_config(
+        config: VaultConfig,
+    ) -> (tempfile::TempDir, Vault, String) {
+        let (dir, vault) = open_vault_with_config(config);
         let actor = actor_ref();
         vault
             .put_entity(
@@ -967,7 +1047,8 @@ mod calendar_invite_fixture {
 
         vault
             .mint_standing_outbound_grant(
-                &id(0x94),
+                &super::owner_proof(&vault),
+                id(0x94),
                 &oneiron::genui::GrantMintIntent {
                     principal_ref: actor.to_hex(),
                     origin_component_id: "effect_spine_oracle".to_owned(),
@@ -977,7 +1058,6 @@ mod calendar_invite_fixture {
                         contact_ref: RECIPIENT.to_owned(),
                     },
                 },
-                100,
             )
             .expect("mint booking grant");
 
@@ -1016,6 +1096,7 @@ mod calendar_invite_fixture {
             sequence: 0,
             ics_blob_ref: blob_ref.to_owned(),
             recipient: RECIPIENT.to_owned(),
+            mention: None,
         }
     }
 
@@ -1063,7 +1144,10 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
     use calendar_invite_fixture as fixture;
     use oneiron::outbound_intent_ledger::{IntentState, intent_ledger_records};
 
-    let (_dir, vault, blob_ref) = fixture::admitted_vault();
+    let clock = oneiron_store::ports::manual_clock::ManualClock::new(0);
+    let mut config = test_config();
+    config.store_clock = clock.bundle();
+    let (_dir, vault, blob_ref) = fixture::admitted_vault_with_config(config);
     vault
         .memory(fixture::actor_ref(), oneiron::EdgeActorClass::Human)
         .calendar_invite(&fixture::invite(&blob_ref))
@@ -1072,6 +1156,7 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
         uncertain_first: true,
         ..Default::default()
     };
+    clock.set(200);
     assert_eq!(
         vault
             .run_connector_task_executor(&mut sink, 200)
@@ -1090,6 +1175,7 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
 
     // The transport curve re-arms at 200+60. No new UID, SEQUENCE or method
     // may be minted when that durable attempt resumes.
+    clock.set(261);
     assert_eq!(
         vault
             .run_connector_task_executor(&mut sink, 261)
@@ -1255,7 +1341,7 @@ fn calendar_invite_gate_and_intent_ledger_oracle() {
 
 mod one1891 {
     use super::{Vault, test_config};
-    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
     use oneiron::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
         EntityResolutionCandidate, EntityResolutionWaterfallDecision, TimeRange,
@@ -1302,7 +1388,7 @@ mod one1891 {
         id
     }
 
-    /// A PERSON carrying exactly the `provider_key` body the truth scan looks
+    /// A MACHINE carrying exactly the `provider_key` body the truth scan looks
     /// for. Minting actors HERE — rather than letting `write_provider_prior`
     /// mint them — is what lets these tests own the ids the shortcut rows are
     /// supposed to be disposable about.
@@ -1313,7 +1399,7 @@ mod one1891 {
             Value::from(provider),
         )]));
         vault
-            .put_entity(&id, ENTITY_TYPE_PERSON, at(100), 100, &body)
+            .put_entity(&id, ENTITY_TYPE_MACHINE, at(100), 100, &body)
             .expect("put provider actor");
         id
     }
@@ -1394,7 +1480,9 @@ mod one1891 {
     }
 
     pub(super) fn effective(vault: &Vault, claim: &EntityId) -> f32 {
-        oneiron::provider_confidence::effective_confidence(vault, claim).expect("effective")
+        oneiron::provider_confidence::effective_confidence(vault, claim)
+            .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error)
+            .expect("effective")
     }
 
     pub(super) fn decide(
@@ -1685,9 +1773,13 @@ fn one1891_enrichment_validator_rejects_unattributable_bodies_on_every_door() {
 #[test]
 fn one1891_enrichment_validator_rejects_edge_subjects_on_every_door() {
     let (_dir, vault) = one1891::open_unseeded_vault();
+    vault.ensure_embedded_owner_actor().expect("fixture owner");
     let actor = one1891::put_person(&vault, 0xa2);
     let source = one1891::put_person(&vault, 0xb2);
     let target = one1891::put_person(&vault, 0xb3);
+    vault
+        .put_edge(&source, oneiron::EdgeKind::Mentions, &target, 1.0)
+        .expect("fixture edge");
     let edge_subject = oneiron::ClaimSubject::Edge {
         source,
         kind: oneiron::EdgeKind::Mentions,
@@ -1935,10 +2027,13 @@ mod one1891_ruling {
                 cached.then_some(prior.as_bytes()),
             );
             let before = f::counts(&vault);
-            assert_stranded(oneiron::provider_confidence::effective_confidence(
-                &vault,
-                &candidate.confidence_claim_ref,
-            ));
+            assert_stranded(
+                oneiron::provider_confidence::effective_confidence(
+                    &vault,
+                    &candidate.confidence_claim_ref,
+                )
+                .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error),
+            );
             assert_eq!(f::counts(&vault), before);
             assert_stranded(oneiron::provider_confidence::write_provider_prior(
                 &vault,
@@ -1951,10 +2046,13 @@ mod one1891_ruling {
                 vault.get_claim(&prior).unwrap().unwrap().subject,
                 ClaimSubject::Entity(actor),
             );
-            assert_stranded(oneiron::provider_confidence::effective_confidence(
-                &vault,
-                &candidate.confidence_claim_ref,
-            ));
+            assert_stranded(
+                oneiron::provider_confidence::effective_confidence(
+                    &vault,
+                    &candidate.confidence_claim_ref,
+                )
+                .and_then(oneiron::provider_confidence::EffectiveConfidence::resolved_or_error),
+            );
             assert_eq!(f::counts(&vault), before);
         }
     }

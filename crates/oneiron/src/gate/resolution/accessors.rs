@@ -844,6 +844,20 @@ impl PolicyManifestResolution {
             .unwrap_or_else(crate::consent::CatastropheFloor::pinned)
     }
 
+    /// The check-in row (ARCH-0082 #waits) this resolution carries. A
+    /// loaded manifest that fails closed reads as unreadable, which the
+    /// check-in receipts name; a vault with no manifest has no row.
+    #[must_use]
+    pub(crate) fn check_in_policy(&self) -> crate::check_in::CheckInPolicyRead<'_> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return crate::check_in::CheckInPolicyRead::Unreadable;
+        }
+        match &self.check_in_policy {
+            Some(policy) => crate::check_in::CheckInPolicyRead::Row(policy),
+            None => crate::check_in::CheckInPolicyRead::NoRow,
+        }
+    }
+
     pub(crate) fn scoped_grants(&self) -> &[PolicyScopedGrant] {
         if self.is_fail_closed() {
             &[]

@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserSwitchEngineOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.switch_engine(input)?)",
   "scope": "Write",
+  "act_class": "reversible_work",
   "context": "browser",
   "mcp": "none",
   "section": false,

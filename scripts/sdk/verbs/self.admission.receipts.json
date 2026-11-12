@@ -5,6 +5,7 @@
   "output": "Vec<crate::receipt::admission::AdmissionReceipt>",
   "call": "memory.admission_receipts(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

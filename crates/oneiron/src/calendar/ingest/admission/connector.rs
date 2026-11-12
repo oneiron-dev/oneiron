@@ -34,6 +34,7 @@ fn connector_admission<'a>(
         source: None,
         verdict_fold: VerdictFold::default(),
         continuations: None,
+        owed_booking_moves: 0,
     }
 }
 /// Checks every event's values before any is admitted. Value checks run no
@@ -90,22 +91,28 @@ impl<'a> From<&'a str> for ConnectorAdmissionSource<'a> {
 /// source's screen, one pass's count of new property claims, and a queued
 /// continuation reading the archived resource version again for the rest
 /// (FIX 12163), which runs the same screen.
+///
+/// True when a pending emergency delivery held the event's booking move
+/// back (FIX 22385): nothing of the event was admitted, and the caller keeps
+/// the resource owed so the next pull reads it again.
 pub(in crate::calendar) fn admit_connector_event<'a>(
     vault: &'a Vault,
     system: &'a str,
     source: impl Into<ConnectorAdmissionSource<'a>>,
     event: &ParsedVEvent,
     now: u64,
-) -> Result<(), CalendarError> {
+) -> Result<bool, CalendarError> {
     let source = source.into();
     let mut admission = connector_admission(vault, system, source, now);
     admission.source = source.source;
     let Some(source_version) = source.source_version else {
-        return admission.apply_event(event);
+        admission.apply_event(event)?;
+        return Ok(admission.owed_booking_moves > 0);
     };
     admission.continuations = Some(Vec::new());
     admission.apply_event(event)?;
-    admission.queue_property_continuations_reading(source_version)
+    admission.queue_property_continuations_reading(source_version)?;
+    Ok(admission.owed_booking_moves > 0)
 }
 /// Sweeps one resource's omitted events under the source's screen, as a
 /// complete feed's sweep runs under its poll's.

@@ -690,20 +690,20 @@ async fn room_owner_json(
 #[tokio::test]
 async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     let (_dir, server) = interlocutor_test_server();
-    let owner = seeded_test_entity_id(0x2094_0101);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let peer = seeded_test_entity_id(0x2094_0102);
-    for person in [owner, peer] {
-        server
-            .vault
-            .put_entity(
-                &person,
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"room member",
-            )
-            .expect("onboard person");
-    }
+    server
+        .vault
+        .put_entity(
+            &peer,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"room member",
+        )
+        .expect("onboard person");
     bind_room_owner(&server, owner);
     let root = server.vault.root_project().expect("root project");
     let project = seeded_test_entity_id(0x2094_0103);
@@ -941,17 +941,9 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
 #[tokio::test]
 async fn owner_only_room_requires_an_authenticated_person_binding() {
     let (_dir, server) = interlocutor_test_server();
-    let owner = seeded_test_entity_id(0x2094_0201);
-    server
-        .vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     bind_room_owner(&server, owner);
     let root = server.vault.root_project().unwrap();
     let project = seeded_test_entity_id(0x2094_0202);
@@ -1001,18 +993,10 @@ async fn owner_only_room_requires_an_authenticated_person_binding() {
 #[tokio::test]
 async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     let (_dir, server) = interlocutor_test_server();
-    let owner = seeded_test_entity_id(0x2094_0301);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let agent = seeded_test_entity_id(0x2094_0302);
-    server
-        .vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"room member",
-        )
-        .expect("onboard person");
     bind_room_owner(&server, owner);
     // The host key holds the owner's binding, so the vault's own agent here
     // is one of its live agent definitions.
@@ -1102,8 +1086,12 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
                 metadata: Some(json!({ "rel": space.to_hex() })),
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 2,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .expect("speak");
 
@@ -1136,6 +1124,7 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
                         created_at: 1,
                         revoked_at: None,
                         expires_at: None,
+                        companion_bounds: None,
                     },
                 )
                 .expect("grant the message's space");

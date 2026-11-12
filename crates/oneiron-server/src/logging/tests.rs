@@ -153,7 +153,18 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             teacher_target: None,
             purpose: Some(format!("summarise {SENTINEL}")),
             rules_enforced: true,
+            model: None,
+            payer_person: None,
+            allocation_unit: None,
+            call_purpose: None,
+            attribution: None,
+            funding: None,
+            seat: None,
+            source_rows: None,
+            initiator: None,
         })),
+        instance: oneiron::EntityId::now(),
+        occurred_at: 0,
     };
     let dispatched = RunReceipt {
         run: format!("{SENTINEL} nightly digest"),
@@ -167,6 +178,8 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             broker_isolation: None,
             answered: true,
         },
+        instance: oneiron::EntityId::now(),
+        occurred_at: 0,
     };
     let digest_from_backend = RunReceipt {
         run: "nightly".to_owned(),
@@ -180,6 +193,8 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             broker_isolation: None,
             answered: true,
         },
+        instance: oneiron::EntityId::now(),
+        occurred_at: 0,
     };
     let denied = RunReceipt {
         run: format!("{SENTINEL} nightly digest"),
@@ -192,6 +207,8 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
                 connector: format!("{SENTINEL} connector"),
             },
         },
+        instance: oneiron::EntityId::now(),
+        occurred_at: 0,
     };
     // A callsite registration racing another test can miss one capture; the
     // request digest proves this capture saw the rows.

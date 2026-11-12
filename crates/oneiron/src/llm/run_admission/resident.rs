@@ -104,7 +104,10 @@ impl Residents {
         let after = committed.saturating_add(units);
         let overdraft_units = after.saturating_sub(standing.share_units.max(committed));
         if standing.pinned && overdraft_units > 0 {
-            return Err(RunDenied::ResidentShareSpent { resident });
+            return Err(RunDenied::ResidentShareSpent {
+                resident,
+                needed_units: after,
+            });
         }
         in_flight.insert(key, held.saturating_add(units));
         Ok(ResidentDraw {

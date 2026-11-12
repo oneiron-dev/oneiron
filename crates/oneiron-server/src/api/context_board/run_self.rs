@@ -109,7 +109,7 @@ pub(super) fn credential_pins_family(
                 manifest: true,
                 hooks: &hooks,
             };
-            super::board_pins_projection(&server.vault, auth, read, None, &pins)
+            super::board_pins_projection(&server.vault, auth, read, None, None, &pins)
         });
     match projected {
         Ok(pins) => brief_pins_family(pins.as_ref().map(|pins| &pins.section)),

@@ -8,6 +8,7 @@
   "output": "crate::blob_artifact::esign::EsignSealView",
   "call": "memory.esign_seal_get(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

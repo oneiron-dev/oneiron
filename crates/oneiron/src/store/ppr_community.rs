@@ -11,12 +11,16 @@ use crate::config::community_graph::{
     CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
     CommunitySnapshot, PPR_COMMUNITY_CACHE_PREFIX, PprCommunityConfig, compute_communities,
 };
-use crate::edge::parse_strict_edge_record;
+use crate::edge::{DecodedEdgeValue, EdgeValueLayout, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
-use crate::ports::{DeletionMarker, EdgeStoreInventory, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{
+    DeletionMarker, EdgeDirection, EdgeStoreInventory, EdgeStoreRead, EntityStoreRead,
+    TombstoneStoreRead,
+};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::EngineScan;
 use crate::store::graph_version::read_graph_version;
@@ -251,6 +255,80 @@ impl Store {
             now,
             config,
         )
+        .map_err(cache_error)
+    }
+
+    /// The community graph of one narrowed walk: the `admitted` rows (the
+    /// walk's reached rows and its readable seeds, all of which the caller
+    /// may read) and the outgoing edges between two of them, under the same
+    /// liveness, claim and edge-kind rules as the canonical scan above. It
+    /// reads no shared community row and its snapshot is scored and dropped,
+    /// never published: a hidden row cannot join a community, bridge two, or
+    /// count toward the graph-size denominator.
+    pub(crate) fn compute_admitted_ppr_communities_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        admitted: &BTreeSet<EntityId>,
+        now: u64,
+        config: &PprCommunityConfig,
+        deadline: Option<&RetrievalDeadline>,
+    ) -> Result<CommunitySnapshot> {
+        crate::config::validate_ppr_community(config)?;
+        let checkpoint = || deadline.map_or(Ok(()), RetrievalDeadline::checkpoint);
+        let mut entities = BTreeSet::new();
+        for id in admitted {
+            checkpoint()?;
+            let Some(raw) = self.port_entity_raw(txn, id)? else {
+                continue;
+            };
+            if self.ppr_community_live_entity_in_txn(txn, id, &raw)? {
+                entities.insert(*id);
+            }
+        }
+        let mut edges = Vec::new();
+        // Outgoing rows only, as the canonical scan: the inverse index would
+        // double each weight.
+        for source in &entities {
+            for entry in self.port_edges(txn, source, EdgeDirection::Out, None, None)? {
+                checkpoint()?;
+                let edge = entry?;
+                if !entities.contains(&edge.target) {
+                    continue;
+                }
+                let layout = match (edge.vad, edge.provenance) {
+                    (None, _) => EdgeValueLayout::Structural,
+                    (Some(_), None) => EdgeValueLayout::SemanticBare,
+                    (Some(_), Some(_)) => EdgeValueLayout::SemanticProvenanced,
+                };
+                edges.push(CommunityEdge {
+                    source: *source,
+                    target: edge.target,
+                    kind: edge.kind,
+                    value: DecodedEdgeValue {
+                        layout,
+                        weight: edge.weight,
+                        created_at: edge.created_at,
+                        vad: edge.vad,
+                        provenance: edge.provenance,
+                    },
+                    deleted: false,
+                });
+            }
+        }
+        checkpoint()?;
+        let entities: Vec<_> = entities.into_iter().collect();
+        compute_communities(
+            &CommunityGraphInput {
+                entities: &entities,
+                edges: &edges,
+                changed: &[],
+                graph_version: read_graph_version(self, txn)?,
+            },
+            None,
+            now,
+            config,
+        )
+        .map(|(snapshot, _)| snapshot)
         .map_err(cache_error)
     }
 

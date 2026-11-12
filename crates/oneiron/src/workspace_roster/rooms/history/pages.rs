@@ -147,13 +147,13 @@ impl Memory<'_> {
         let reach = self.room_turn_snapshot(room)?;
         let turns = reach.placed();
         let roots = super::super::liveness::thread_root_map(turns)?;
-        let members = self
-            .vault()
-            .project_room(room)?
-            .ok_or_else(invalid)?
-            .member_ids
-            .into_iter()
-            .collect();
+        let members = {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            super::super::room_access_in(self.vault(), &txn, room)?
+                .member_ids
+                .into_iter()
+                .collect()
+        };
         // Task and result reads run inside the room too, on every transport.
         let bindings = super::super::liveness::thread_task_bindings(turns, &roots)?;
         let tasks = crate::task_verb::room_thread_tasks(
@@ -287,13 +287,13 @@ impl Memory<'_> {
         if !roots.contains_key(&handle) || roots.get(&handle) != Some(&handle) {
             return Ok(None);
         }
-        let members = self
-            .vault()
-            .project_room(room)?
-            .ok_or_else(invalid)?
-            .member_ids
-            .into_iter()
-            .collect();
+        let members = {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            super::super::room_access_in(self.vault(), &txn, room)?
+                .member_ids
+                .into_iter()
+                .collect()
+        };
         let now = crate::unix_seconds_now();
         // The caller's own thread settings, resolved before any reader is
         // rebound to the room or the thread.

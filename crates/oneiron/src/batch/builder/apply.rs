@@ -193,6 +193,7 @@ impl BatchBuilder<'_> {
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
             .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
             .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes))
+            .with_owner_authored(self.owner_authored.take())
             .with_prepared_person_substrate(self.prepared_person_substrate.take())
             .with_prepared_agent_birth(self.prepared_agent_birth.take());
         let deferred =
@@ -208,6 +209,7 @@ impl BatchBuilder<'_> {
                     None,
                     self.origin,
                     &gate_mode.caller_envelopes,
+                    gate_mode.owner_authored.as_ref(),
                     &gate_mode.births,
                     true,
                 )?;

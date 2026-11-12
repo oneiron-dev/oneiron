@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use loro::{ExportMode, VersionVector};
 use oneiron::SyncEngineContext;
+use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::{self, WindowKey};
 use tokio::task::JoinHandle;
@@ -329,6 +330,14 @@ impl SyncServer {
             Err(err) => {
                 tracing::error!(kind = ?err.kind(), "ra drain tick failed");
             }
+        }
+
+        // A live lease's spend that no drain booked yet books on its scope
+        // once, a lease whose process died between a call's answer and its
+        // booking included ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]). The
+        // first tick runs at the server's start.
+        if let Err(err) = AgentDispatcher::new(&self.vault).drain_all_lease_spend() {
+            tracing::error!(kind = ?err.kind(), "staged lease spend drain failed");
         }
     }
 

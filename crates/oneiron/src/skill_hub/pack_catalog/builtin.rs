@@ -259,6 +259,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             kinds: source.manifest.kinds.iter().cloned().collect(),
             skills: skills.iter().map(EntityId::to_hex).collect(),
             agent: None,
+            agent_author: None,
             installed_at: 0,
             notices: Vec::new(),
             owner_activated: Vec::new(),

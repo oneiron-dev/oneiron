@@ -32,7 +32,6 @@ Office pass and no receipt come from an incomplete run.
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 from pathlib import Path
@@ -49,9 +48,9 @@ sys.path.insert(0, str(ROOT))
 import deck_oracle as oracle_mod  # noqa: E402  (beside this file, in the repo and in a run)
 import deck_session  # noqa: E402
 
-RUN_SCHEMA = 'oneiron.deck-gate-run/1'
+RUN_SCHEMA = 'oneiron.deck-gate-run/2'
 JOURNAL = 'results.jsonl'
-JOURNAL_SCHEMA = 'oneiron.deck-gate-journal/1'
+JOURNAL_SCHEMA = 'oneiron.deck-gate-journal/2'
 PROFILE = 'pptx-live-v1'
 CASE_MANIFEST = 'scripts/office/pptx-live-v1.json'
 ORACLE, NON_PDF, REGRESSION = 6, 7, 8
@@ -541,7 +540,7 @@ def font_families(paths: list[Path]) -> set[str]:
 def font_versions(run: Path, manifest: dict, environment: dict) -> list[str]:
     """Canon: PowerPoint, macOS and font versions on every receipt (step 8)."""
     lines = [f"font inventory sha256 {environment.get('font_inventory_sha256')} "
-             f"(account {environment.get('font_account')})"]
+             f"(account {environment.get('font_account')}, role {environment.get('font_role')})"]
     families = font_families([run / entry['file'] for entry in manifest['candidates'] if entry['trust'] == 'fixture'])
     try:
         out = subprocess.run(['system_profiler', '-json', 'SPFontsDataType'], capture_output=True,
@@ -575,9 +574,10 @@ def cmd_office(args) -> int:
     office = manifest['office']
     observer = args.observer or office['observer']
     timeout = args.timeout or office['timeout_seconds']
-    user = getpass.getuser()
-    if args.isolated_account and user in office['owner_accounts']:
-        print(f'REFUSED: {user} is an owner account; untrusted decks open only in the isolated test account', file=sys.stderr)
+    user = oracle_mod.font_account()
+    if args.isolated_account and oracle_mod.font_role(user) != 'isolated':
+        print(f'REFUSED: {user} is not an isolated test account (environment.json `isolated_accounts`); '
+              'untrusted decks open only in one', file=sys.stderr)
         return 2
     # The approved pin's locale is empty, as the recorded Mac mini runs were.
     for name in list(os.environ):

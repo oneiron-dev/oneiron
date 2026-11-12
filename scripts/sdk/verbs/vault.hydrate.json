@@ -11,6 +11,7 @@
   "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>",
   "call": "memory.with_read_filter(input.filter.as_ref()).hydrate(&input.refs)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

@@ -118,6 +118,7 @@ impl Vault {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 inquiry_terms: None,
+                working_view_bounds: None,
             };
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
@@ -137,6 +138,7 @@ impl Vault {
                     verb_classes: BTreeSet::new(),
                     wallet_ref: None,
                     steward: false,
+                    working_view_bounds: None,
                 },
             )?;
             self.apply_grant_row_op_in_txn(

@@ -116,6 +116,7 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
                 spend_scope: None,
+                wake_pass_bound: true,
             };
             // Suspended mid-merge, the attempt is parked: STOP and surface the
             // trap. Writing a contradiction gap here would fabricate a

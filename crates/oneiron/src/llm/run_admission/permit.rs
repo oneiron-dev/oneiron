@@ -104,10 +104,16 @@ impl RunPermit {
         self.settle_with(outcome, Vec::new())
     }
 
-    /// Settles a refusal proved not to have sent any physical attempt:
-    /// releases the reservation and records no dispatched receipt.
+    /// Settles a refusal that sent no physical attempt: releases the
+    /// reservation and records no dispatched receipt.
+    ///
+    /// # Errors
+    ///
+    /// [`RunDenied::Budget`] when a meter refuses the unsent mark, for one
+    /// when a physical attempt began under the lease (FIX BUDGET-LEASE). The
+    /// permit then settles on drop as a started call that failed, so its
+    /// reservation is charged, never left held.
     pub fn settle_unsent(mut self) -> Result<BudgetSettlement, RunDenied> {
-        self.settled = true;
         let run = Arc::clone(&self.run);
         run.guard
             .mark_unsent(&self.lease)
@@ -117,6 +123,7 @@ impl RunPermit {
                 .mark_unsent(&hold.lease)
                 .map_err(|denied| RunDenied::Budget { denied })?;
         }
+        self.settled = true;
         run.settle(&self, CallOutcome::Failed, None, Vec::new())
     }
 
@@ -573,8 +580,10 @@ fn priced(
             from: native.clone(),
             to: target.clone(),
         },
+        // No allocation holds a price past its unit: nothing funds the
+        // call, and no budget write frees it (D3).
         Unpriced::TooLarge => RunDenied::Budget {
-            denied: BudgetDenied::Exhausted,
+            denied: BudgetDenied::Unfunded,
         },
     })
 }

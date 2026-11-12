@@ -191,12 +191,48 @@ impl ResidentLedger for VaultResidentLedger {
     }
 }
 
+/// Whether `share` frees a call of its resident that needed a share of
+/// `needed_units`, in the allocation's unit (D3): an unpinned share never
+/// refuses, and a pinned share in units fits it from `needed_units` up. The
+/// default split's room depends on the host's live allocation, which only its
+/// run admission reads, so a call under it meets that admission again.
+pub(crate) const fn resident_share_frees(share: ResidentShare, needed_units: u64) -> bool {
+    if !share.pinned {
+        return true;
+    }
+    match share.units {
+        Some(units) => units >= needed_units,
+        None => true,
+    }
+}
+
+/// Whether the share on record for `resident` already fits a call that
+/// needed a share of `needed_units`, read in the caller's write: the owner's
+/// share write that landed after the run admission refused the call (D3). A
+/// share on record that is unpinned, or pinned in units from `needed_units`
+/// up, fits. No row (a share this vault never set) and the default split
+/// (whose room only the host's run admission knows) do not: the park waits
+/// for the owner's next share write.
+pub(crate) fn resident_share_fits_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    resident: EntityId,
+    needed_units: u64,
+) -> Result<bool> {
+    let Some(row) = RESIDENTS.get(&vault.store, txn, &resident)? else {
+        return Ok(false);
+    };
+    Ok(!row.share.pinned || row.share.units.is_some_and(|units| units >= needed_units))
+}
+
 impl Vault {
     /// Sets `resident`'s share of the host-paid allocation (FIX 7767): a
     /// share in units, or `None` for the default split; pinned, it refuses
     /// the resident's new paid work once a call no longer fits it. The
     /// owner's act: the caller has checked the owner's proof. Depletion
-    /// stays as it stands.
+    /// stays as it stands. In the same write it wakes each of the
+    /// resident's steps parked on its spent share that the new share frees;
+    /// a share still short wakes none (D3).
     pub fn set_resident_share(&self, resident: EntityId, share: ResidentShare) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
         let mut row = RESIDENTS
@@ -204,7 +240,14 @@ impl Vault {
             .unwrap_or_default();
         row.share = share;
         RESIDENTS.put(&self.store, &mut txn, &resident, &row)?;
+        let now_ms = self.store.clock.now_recorded_at().saturating_mul(1000);
+        let resumed =
+            crate::llm::wake_resident_share_traps_in_txn(self, &mut txn, resident, share, now_ms)?;
         txn.commit()?;
+        if !resumed.is_empty() {
+            self.store.notify_attempt_observers();
+            self.store.notify_proactivity_changes();
+        }
         Ok(())
     }
 

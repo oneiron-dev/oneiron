@@ -111,6 +111,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) owner_change_wait_secs: Option<u64>,
     pub(in crate::gate) inquiry_policy: Option<crate::inquiry::InquiryPolicy>,
     pub(in crate::gate) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
+    pub(in crate::gate) check_in_policy: Option<crate::check_in::CheckInPolicy>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
