@@ -46,6 +46,10 @@ crate::side_table::side_tables! {
     /// Learned owner tradeoff preferences of one goal (MessagePack named map). Key: id16 (goal).
     SKILL_OPTIMIZE_TRADEOFF_PREFERENCES: VaultMeta b"skill_optimize/tradeoff_preferences/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One requested eval-authoring pass: its caller, outcome and report (MessagePack named
+    /// map). Key: id16 (the pass's Coach attempt).
+    SKILL_OPTIMIZE_EVAL_AUTHORING_EXECUTION: VaultMeta b"skill_optimize:eval_authoring_execution:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// One date-cut sealed eval cohort (MessagePack named map). Key: id16 (cohort).
     SKILL_OPTIMIZE_EVAL_COHORT: VaultMeta b"skill_optimize:eval_cohort:v1:" Raw
         // Restore class: A restore cannot make a spent cohort fresh: cut, audit, retirement and

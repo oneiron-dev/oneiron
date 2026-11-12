@@ -170,6 +170,17 @@ impl SpendScope {
     }
 }
 
+/// The cap of a spend scope's nearest open hard scope, as one read saw it.
+/// The owner's top-up is the only writer of an open hard scope's cap, and it
+/// always raises it, so the cap is that scope's generation: a different cap
+/// means a top-up landed since the read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpendCapGeneration {
+    /// The nearest hard scope: the scope a hard-cap refusal names.
+    pub scope: SpendScopeId,
+    pub cap_units: u64,
+}
+
 pub use crate::workspace_roster::spend_scope::ChildSpend;
 
 /// The one refusal of the lease tree: spend or a reservation beyond the cap.

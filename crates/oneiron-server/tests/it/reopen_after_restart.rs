@@ -18,7 +18,7 @@ const TEXT: &str = "The spare key to the Quillamere boathouse hangs behind the t
 
 /// A running `oneiron serve`. Dropping it kills the process, so a failed
 /// assertion never leaves a server holding the vault.
-pub(super) struct Server(Child);
+pub(super) struct Server(pub(super) Child);
 
 impl Drop for Server {
     fn drop(&mut self) {
@@ -52,8 +52,16 @@ pub(super) fn stdout(mut command: Command) -> String {
 /// Starts `oneiron serve` and waits until the facade router answers: an
 /// unauthenticated call must reach the auth extractor and be refused.
 pub(super) fn serve(config: &Path, port: u16, log: &Path) -> Server {
-    let port = port.to_string();
-    let mut command = oneiron(&["serve", "--host", "127.0.0.1", "--port", &port], config);
+    let port_arg = port.to_string();
+    let command = oneiron(
+        &["serve", "--host", "127.0.0.1", "--port", &port_arg],
+        config,
+    );
+    serve_command(command, port, log)
+}
+
+/// Starts a caller-configured server with the same logged router-ready probe.
+pub(super) fn serve_command(mut command: Command, port: u16, log: &Path) -> Server {
     // The server logs to stdout; its log file takes both streams.
     let file = File::create(log).expect("server log file");
     command
@@ -61,7 +69,7 @@ pub(super) fn serve(config: &Path, port: u16, log: &Path) -> Server {
         .stderr(file);
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
     let probe = reqwest::blocking::Client::new();
-    let url = format!("http://127.0.0.1:{port}/v1/core/facade/receipts");
+    let url = format!("http://127.0.0.1:{port}/v1/core/facade/vault.receipts");
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if let Some(status) = server.0.try_wait().expect("poll oneiron serve") {
@@ -104,11 +112,16 @@ pub(super) fn sigterm(mut server: Server) {
 /// The reference recall returns for [`TEXT`]: the turn that says it.
 fn recalled_ref(client: &OneironClient) -> String {
     let pack = client
-        .recall(
+        .vault_recall(
             "Quillamere boathouse",
             RecallEffort::Medium,
             &RecallScope::default(),
             10,
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -178,10 +191,10 @@ fn witnessed_text_is_found_under_the_same_reference_after_sigterm_and_restart() 
     let link = stdout(oneiron(&["token", "bootstrap", "--url", &origin], &config));
 
     let first = serve(&config, port, &dir.path().join("serve-1.log"));
-    let (url, credential) = OneironClient::pair(link.trim()).unwrap();
+    let (url, credential, _comm) = OneironClient::pair(link.trim()).unwrap();
     let client = OneironClient::connect(&url, &credential).unwrap();
     client
-        .witness(&WitnessTurn {
+        .vault_witness(&WitnessTurn {
             conversation_ref: "44444444444444444444444444444444".into(),
             turn_ref: None,
             messages: vec![WitnessMessage {
@@ -192,8 +205,12 @@ fn witnessed_text_is_found_under_the_same_reference_after_sigterm_and_restart() 
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: unix_seconds_now(),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .unwrap();
     let recalled = recalled_ref(&client);

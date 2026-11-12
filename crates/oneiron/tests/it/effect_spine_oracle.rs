@@ -839,7 +839,7 @@ mod seam {
 #[test]
 fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
     let (_dir, vault) = open_send_vault();
-    seam::schedule_send(&vault, "party-Yuki", "email");
+    seam::schedule_send(&vault, "party-yuki", "email");
     // Scheduling alone must not send: zero receipts and zero wire
     // dispatches until the EXECUTOR runs (doc 13 §1/§9.2 — the pipeline is
     // the executor, not a bystander to an immediate send).
@@ -859,38 +859,38 @@ fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
 #[test]
 fn es03_clearing_opt_out_is_human_gated_and_receipted() {
     let (_dir, vault) = open_comm_vault();
-    seam::record_inbound_stop(&vault, "party-Yuki", "email");
+    seam::record_inbound_stop(&vault, "party-yuki", "email");
     seam::run_comm_projector(&vault);
 
-    let outcome = seam::request_opt_out_clear(&vault, "party-Yuki", "email");
+    let outcome = seam::request_opt_out_clear(&vault, "party-yuki", "email");
     assert_eq!(outcome, ClearOptOutOutcome::PendingHumanRuling);
     // fail closed: still opted out, one pending gate row, nothing receipted.
     assert_eq!(
-        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-Yuki", "email"),
+        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-yuki", "email"),
         1
     );
     assert_eq!(seam::count_pending_comm_consent_gates(&vault), 1);
-    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-Yuki"), 0);
+    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-yuki"), 0);
 
     // §4 human-gated means HUMAN (authorization, not just sequencing): an
     // agent principal's approval is REFUSED — nothing clears, the gate
     // stays pending, nothing is receipted.
-    seam::attempt_agent_opt_out_clear_approval(&vault, "party-Yuki", "email");
+    seam::attempt_agent_opt_out_clear_approval(&vault, "party-yuki", "email");
     assert_eq!(
-        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-Yuki", "email"),
+        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-yuki", "email"),
         1
     );
     assert_eq!(seam::count_pending_comm_consent_gates(&vault), 1);
-    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-Yuki"), 0);
+    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-yuki"), 0);
 
-    seam::approve_pending_opt_out_clear(&vault, "party-Yuki", "email");
+    seam::approve_pending_opt_out_clear(&vault, "party-yuki", "email");
     assert_eq!(
-        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-Yuki", "email"),
+        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-yuki", "email"),
         0
     );
     // §4 one-shot: the human approval CONSUMES the pending gate.
     assert_eq!(seam::count_pending_comm_consent_gates(&vault), 0);
-    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-Yuki"), 1);
+    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-yuki"), 1);
 }
 
 // ===== ONE-1719 (ES-06) — fan-out estimate-then-approve gate =====

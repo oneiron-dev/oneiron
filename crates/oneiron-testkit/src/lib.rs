@@ -15,6 +15,8 @@
 //! | No sleeps, wall clock, network or real model | [`lint`] |
 //! | The PR, nightly and quarantine tiers | [`quarantine`] |
 //! | Tests waiting on a product door, nightly only | [`pending_door`] |
+//! | Private words that must not reach a reader outside their audience | [`canary`]: [`CanaryVault`] |
+//! | One Dreamer wake pass in process, its model scripted | [`dreamer`]: [`DreamerPass`] |
 //!
 //! The rules a door test keeps (Fable, section 4):
 //! 1. The test's name is the promise, in one sentence a user or agent would say.
@@ -35,8 +37,10 @@
 //! Everything here reaches the engine through public API and public verbs.
 //! This crate adds no door into the engine and is a dev-dependency only.
 
+pub mod canary;
 pub mod clock;
 pub mod door;
+pub mod dreamer;
 pub mod embedder;
 pub mod fault;
 pub mod fixture;
@@ -48,7 +52,9 @@ pub mod receipt;
 #[cfg(unix)]
 pub mod server;
 
+pub use canary::{CanaryActor, CanaryVault};
 pub use clock::{FAKE_EPOCH, FakeClock};
+pub use dreamer::{DreamerPass, DreamerPassReport};
 pub use embedder::HashingEmbedder;
 pub use fixture::{FixtureCache, FixtureError, FixtureVault, TestVault};
 pub use provider::{PromptDigest, Reply, ScriptedBackend, ScriptedProvider, Step};
