@@ -2860,7 +2860,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AcceptAttemptLanding",
@@ -3215,7 +3215,7 @@
      "path": "src/attempt_queue/lifecycle.rs",
      "purpose": "The run lifecycle (untangle slice 5.0c, S5-3): ONE transition table for an attempt row's state and pause…",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 47,
       "enum": 2,
       "fn": 3
      }
@@ -9174,13 +9174,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/short_id.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -26811,7 +26811,7 @@
      "purpose": "Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 4,
       "struct": 2
      }
@@ -26834,7 +26834,7 @@
      "purpose": "Federated multi-world partitioning and staleness annotation (ARCH-0004 / ARCH-0022 / ONE-1411)",
      "surface": {
       "const": 1,
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -30329,7 +30329,7 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "Partition executor: runs one prepared consolidation partition end to end",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 1,
       "struct": 1
      }
@@ -31649,7 +31649,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -35164,7 +35164,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 33,
       "fn": 19,
       "struct": 1
      }
@@ -35230,7 +35230,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 11,
-      "fn": 16,
+      "fn": 17,
       "re-export": 5,
       "struct": 24
      }
@@ -35394,7 +35394,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerWakeDriver"
@@ -35777,7 +35777,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TurnProgramExecutor",
@@ -51470,9 +51470,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/budget_wait.rs",
-     "purpose": "Waking typed budget trap parks in the spend scope top-up transaction",
+     "purpose": "Waking typed budget trap parks: in the spend scope top-up transaction, at a wake pass's start, and at the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -51502,7 +51502,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -74587,7 +74587,7 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 13,
-      "mod": 2,
+      "mod": 3,
       "re-export": 7,
       "struct": 7
      }
@@ -74669,6 +74669,20 @@
      "surface": {
       "crate-vis": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NonBaseWorldClaimFraction"
+     ],
+     "path": "src/settings/non_base_world_claim_fraction.rs",
+     "purpose": "The owner's non-base world claim fraction (ARCH-0004 #world-scope: \"The non-base fraction is a budget knob…",
+     "surface": {
+      "const": 2,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -92025,7 +92039,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 46
+      "mod": 47
      }
     },
     {
@@ -92080,6 +92094,19 @@
      "purpose": "Door for `tests/repo_anchor_symbol_manifest.rs` (FIX RUN-DECLARE-ANCHOR-MANIFEST): the production selector a…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MarkedHit"
+     ],
+     "path": "src/test_doors/repo_secret_marks.rs",
+     "purpose": "Doors for `tests/git_smart_http.rs` (SMART-HTTP-SECRET-PUSH-EXPECTATIONS): the hits a marked push's intent…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -93168,13 +93195,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 2,
       "re-export": 1
      }
@@ -97947,6 +97974,7 @@
      "path": "src/workspace_roster/house_link.rs",
      "purpose": "A house mind's link to the org it runs (HOUSE-BIND = A: the owner, 10 Nov 07:43; the Engine's link shapes…",
      "surface": {
+      "const": 1,
       "crate-vis": 10,
       "fn": 3
      }
@@ -100685,6 +100713,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/booking_calendar_cancel_reschedule.rs",
+     "purpose": "A booking whose calendar provider cancelled it cannot be moved (FIX 22385)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/budget_scope_hosts.rs",
+     "purpose": "Row B3 of BUDGET-TRAP-UNTYPED-NO-SENDER: the hosts whose steps spend under a spend scope",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100926,6 +100970,14 @@
      "notable": [],
      "path": "tests/consolidation_facade_facet.rs",
      "purpose": "Regression for a facade claim's facet on the consolidation root-pin path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_world_set_partition.rs",
+     "purpose": "ARCH-0004 #world-scope: a context pack whose scope selects base reality beside a named world partitions its…",
      "surface": {}
     },
     {
@@ -101198,6 +101250,14 @@
      "notable": [],
      "path": "tests/graph_ask_centre_owner_read.rs",
      "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_bind_deputy.rs",
+     "purpose": "HOUSE-ROLE-DEPUTY-AFTER-7071 = A (the Engine, 12 Nov 09:36), on DEPUTY = A (the owner, 10 Nov 07:45) and…",
      "surface": {}
     },
     {
@@ -101985,6 +102045,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/non_base_world_claim_fraction_owner_door.rs",
+     "purpose": "ARCH-0004 #world-scope: \"The non-base fraction is a budget knob, and the vault owner sets it\" (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102078,6 +102146,14 @@
      "notable": [],
      "path": "tests/park_typed_wait.rs",
      "purpose": "6.5d-1 (budget typed wait): a step refused by its spend scope's hard cap parks typed on that scope, and only…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pass_budget_wait.rs",
+     "purpose": "Row B2 of BUDGET-TRAP-UNTYPED-NO-SENDER: a step's spent budget waits on the write that refills it, or…",
      "surface": {}
     },
     {
@@ -102333,6 +102409,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lease_parked.rs",
+     "purpose": "FIX RUN-LEASE: an attempt parked on its signal keeps its lease until the signal resumes it, so no lease rung…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -102392,6 +102476,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_terminal_commit.rs",
+     "purpose": "FIX RUN-SETTLE-RECIPE: every terminal door of the attempt queue settles its row through one commit…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/run_tree_reader.rs",
      "purpose": "Primitive D, slice 6.5a (SLICE6-MAP row D; ENGINE CALLS S65-NAMES and S65-BUDGET = A)…",
      "surface": {}
@@ -102434,6 +102526,14 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/short_ref_after_document_pointer.rs",
+     "purpose": "The short ref `vault.get` issues for a row whose body became a document resolves through…",
      "surface": {}
     },
     {
@@ -104237,7 +104337,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "settings": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -104426,7 +104526,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104601,10 +104701,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 257,
+   "over_bar": 260,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7418,
-   "test_files": 1084
+   "source_files": 7420,
+   "test_files": 1093
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -124876,7 +124976,7 @@
      "path": "src/ai_host/coach_host.rs",
      "purpose": "The host Coach's nightly jobs (ARCH-0066 #coach, OF-420)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -128905,7 +129005,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 189
+      "crate-vis": 190
      }
     },
     {
@@ -129286,6 +129386,16 @@
      "purpose": "Owner-proof shared model streams: subscriptions can attach before one admitted producer opens",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/non_base_world_claim_fraction_doors.rs",
+     "purpose": "Typed doors over the owner's non-base world claim fraction (ARCH-0004 #world-scope; FIX…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -133775,7 +133885,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/auth/binding_admission.rs",
@@ -144872,10 +144982,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/coach_round.rs",
+     "purpose": "Door for `tests/eval_authoring_execute_lapsed_lease.rs`: one Coach host round, the nightly worker's unit of…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 1
+      "mod": 2
      }
     },
     {
@@ -145656,6 +145776,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/eval_authoring_execute_lapsed_lease.rs",
+     "purpose": "`vault.evals.authoring.execute` on a requested attempt whose host stopped before it settled the lease (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/eval_authoring_execute_served.rs",
+     "purpose": "`vault.evals.authoring.execute` served over the real facade route (FIX EVAL-AUTHORING-EXECUTE-SERVER-CASE)…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/facade_live_run_status.rs",
      "purpose": "Live-run guard refusals keep their status through the real facade router",
      "surface": {}
@@ -145674,6 +145810,22 @@
      "notable": [],
      "path": "tests/federation_connect_host_fault_status.rs",
      "purpose": "Connect host faults keep their server status while invalid peer proofs remain request errors",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/git_lfs_prehandler_refusal_envelope.rs",
+     "purpose": "A slip the owner revoked is refused at the binding door, before any route runs",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_finish_role.rs",
+     "purpose": "The role a workspace's house runs its org in when the owner finishes the workspace…",
      "surface": {}
     },
     {
@@ -145996,6 +146148,16 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/support/eval_authoring_fixture.rs",
+     "purpose": "Shared fixture for the `vault.evals.authoring.execute` server tests: a rooted vault served over the real…",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/support/fake_llm.rs",
      "purpose": "A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and…",
      "surface": {
@@ -146042,7 +146204,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 770,
+     "files": 771,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -146525,7 +146687,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -146590,8 +146752,8 @@
    },
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1833,
-   "test_files": 197
+   "source_files": 1835,
+   "test_files": 202
   },
   "oneiron-skill-attribution": {
    "files": [

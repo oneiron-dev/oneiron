@@ -447,6 +447,7 @@ async fn ask_judge(
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
         spend_scope: None,
+        wake_pass_bound: true,
     };
     // The judge request quotes the kept mail's words, which the replay
     // capture's owners would not retire when that mail is erased: this
@@ -548,6 +549,15 @@ impl Spend {
         error: DurableStepError,
         ctx: &WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
+        // A spend scope refused the step for good: the try ends Failed,
+        // typed, this spend settled with its paid steps.
+        if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(
+            &error,
+            self.units,
+            &self.step_bindings,
+        ) {
+            return Ok(failed);
+        }
         Ok(match error {
             DurableStepError::SpentFinalizeRefused { usage } => {
                 self.units = self.units.saturating_add(units(&usage));
