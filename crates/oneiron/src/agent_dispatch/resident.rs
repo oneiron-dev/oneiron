@@ -102,7 +102,13 @@ impl Vault {
                 ]))?,
                 ClaimApprovalStatus::Approved,
             );
+            // The owner binds in person, so the binding carries the owner's
+            // proof: its Approved claim lands on any criticality class. A
+            // narrowed or delegated credential has none and is gated as any
+            // other Approved write.
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             self.batch_in()
+                .with_owner_authored(owner_authored)
                 .claim_candidate(
                     &id,
                     ClaimCandidate::new(
