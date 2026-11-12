@@ -6,6 +6,7 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::dreamer_wake::WakeTrigger;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
@@ -408,6 +409,9 @@ pub struct FailDreamerAttempt {
     pub lease_owner: String,
     pub attempt_count: u32,
     pub reason: String,
+    /// The typed refusal when a spend scope refused the try's step for good;
+    /// the failed row keeps it beside `reason`. `None` for every other failure.
+    pub budget_refusal: Option<StepBudgetRefusal>,
     pub now: u64,
 }
 

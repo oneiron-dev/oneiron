@@ -386,6 +386,14 @@ impl JobQueue for Vault {
     fn port_job_fail(&self, txn: &mut RwTxn<'_>, input: FailAttempt) -> Result<FailOutcome> {
         AttemptQueue::new(self).port_job_fail(txn, input)
     }
+    fn port_job_fail_with_refusal(
+        &self,
+        txn: &mut RwTxn<'_>,
+        input: FailAttempt,
+        budget_refusal: Option<crate::store::model_step_submission::StepBudgetRefusal>,
+    ) -> Result<FailOutcome> {
+        AttemptQueue::new(self).port_job_fail_with_refusal(txn, input, budget_refusal)
+    }
 }
 impl<T: crate::store::ManifestDbs> JobQueueRead for T {
     fn port_job_row(&self, txn: &RoTxn<'_>, id: &AttemptId) -> Result<Option<Vec<u8>>> {

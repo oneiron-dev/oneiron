@@ -8,14 +8,17 @@
 //! exactly those edits without effect, whichever of the world's agent edits
 //! they are, live or superseded (FIX 22381). An edit's strength rests on its
 //! machine's standing, never on the world's other edits, so the kept
-//! verdicts hold for every such set. The fold state itself stays the log's:
-//! nothing here changes what a later generation resumes from.
+//! verdicts hold for every such set. Where the install caps such a world by
+//! the fold with no vouch ([`super::install_fold`]), the view reads it under
+//! the same cap, with the same edits refused in both folds. The fold state
+//! itself stays the log's: nothing here changes what a later generation
+//! resumes from.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::machine_standing::{InstallCounted, Standing, StandingView};
-use super::world_privacy::judged_world;
+use super::world_privacy::{judged_world, meet_effective};
 use super::world_strength::{FrontierEdit, full_strength};
 use super::*;
 use crate::entity_id::EntityId;
@@ -27,6 +30,31 @@ use crate::entity_id::EntityId;
 pub(super) struct AgentWorldUndo {
     each: BTreeMap<AuthorityEntryHash, EntityId>,
     worlds: BTreeMap<EntityId, JudgedFrontier>,
+    /// The install's cap on each such world, where the fold with no vouch
+    /// bounds this install's view ([`Self::cap`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cap: Option<NoVouchCap>,
+}
+
+/// How the fold with no vouch caps the worlds an agent edited: each world's
+/// settings meet that fold's, unless only edits after a settled handoff
+/// stand in it ([`super::install_fold`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct NoVouchCap {
+    /// The edits of those worlds that come after a settled handoff.
+    fresh: BTreeSet<AuthorityEntryHash>,
+    /// That fold's reading of each of those worlds.
+    bounds: BTreeMap<EntityId, NoVouchWorld>,
+}
+
+/// The fold with no vouch's reading of one world.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum NoVouchWorld {
+    /// Its edits of the world as it judged them: an agent edited the world
+    /// there too, so a refused edit is undone there as well.
+    Judged(JudgedFrontier),
+    /// Its settings of the world, which no agent edit there reaches.
+    Settings(EffectiveWorldPrivacy),
 }
 
 /// One world's edits, live and superseded, with each edit's strength under
@@ -130,10 +158,66 @@ impl AgentWorldUndo {
             let Some(judged) = fold.agent_world_undo.worlds.get(&world) else {
                 continue;
             };
-            let read = judged.read_without(&hashes);
+            let mut read = judged.read_without(&hashes);
+            if let Some(cap) = &fold.agent_world_undo.cap {
+                cap.bound(world, &hashes, &mut read);
+            }
             fold.worlds.insert(world, read);
             fold.refused_world_edits.extend(hashes);
         }
+    }
+
+    /// Every edit of the worlds an agent edited, live or superseded.
+    pub(super) fn edits(&self) -> impl Iterator<Item = &AuthorityEntryHash> {
+        self.worlds.values().flat_map(|judged| {
+            judged
+                .frontier
+                .live
+                .keys()
+                .chain(judged.frontier.superseded.keys())
+        })
+    }
+
+    /// Keeps the install's cap on each world an agent edited: `no_vouch` is
+    /// the fold with no vouch, and `fresh` the edits of those worlds that
+    /// come after a settled handoff ([`super::install_fold`]).
+    pub(super) fn cap(&mut self, no_vouch: &AuthorityFold, fresh: BTreeSet<AuthorityEntryHash>) {
+        let bounds = self
+            .worlds
+            .keys()
+            .map(|world| {
+                let bound = match no_vouch.agent_world_undo.worlds.get(world) {
+                    Some(theirs) if !no_vouch.vault_root_is_conflicted() => {
+                        NoVouchWorld::Judged(theirs.clone())
+                    }
+                    _ => NoVouchWorld::Settings(no_vouch.world_privacy(*world)),
+                };
+                (*world, bound)
+            })
+            .collect();
+        self.cap = Some(NoVouchCap { fresh, bounds });
+    }
+}
+
+impl NoVouchCap {
+    /// `read`, `world` with `refused` undone, under the install's cap: unless
+    /// only edits after a settled handoff stand in it, its settings meet the
+    /// fold with no vouch's, with `refused` undone there too.
+    fn bound(
+        &self,
+        world: EntityId,
+        refused: &BTreeSet<AuthorityEntryHash>,
+        read: &mut FoldedWorld,
+    ) {
+        if !read.live.is_empty() && read.live.keys().all(|edit| self.fresh.contains(edit)) {
+            return;
+        }
+        let bound = match self.bounds.get(&world) {
+            Some(NoVouchWorld::Judged(theirs)) => theirs.read_without(refused).effective,
+            Some(NoVouchWorld::Settings(settings)) => settings.clone(),
+            None => return,
+        };
+        read.effective = meet_effective(&read.effective, &bound);
     }
 }
 
