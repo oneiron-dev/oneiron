@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::EntityId;
+use crate::config::bm25::NoteTextField;
 use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
 use crate::error::{Error, RecordError, Result};
 use crate::memory::CommitReceipt;
@@ -24,6 +25,8 @@ const ID: &str = "id";
 const PINS: &str = "pins";
 /// meta's title field, one value in the common encoding.
 pub(super) const TITLE: &str = "title";
+/// The editable field the tags sit under, an array of strings.
+const TAGS: &str = "tags";
 /// The root map of operation provenance, never editable metadata.
 const AUTHORSHIP: &str = "authorship";
 /// The part size a Dreamer-written text splits into (`note_parts`). No NOTE
@@ -164,6 +167,59 @@ fn decode_title(bytes: &[u8]) -> Result<String> {
     validate_title(title)?;
     validate_metadata_shape(TITLE, &value)?;
     Ok(title.to_owned())
+}
+
+/// A NOTE image's title, as `meta.title` holds it in the common encoding.
+fn meta_title(doc: &LoroDoc) -> Result<Option<String>> {
+    match doc.get_map(META).get(TITLE) {
+        None => Ok(None),
+        Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
+            decode_title(bytes.as_slice()).map(Some)
+        }
+        _ => Err(invalid("invalid NOTE title")),
+    }
+}
+
+/// A NOTE image's tags, as `meta.tags` holds them in the common encoding:
+/// its strings, in order; none when it holds none.
+fn meta_tags(doc: &LoroDoc) -> Result<Vec<String>> {
+    match doc.get_map(META).get(TAGS) {
+        None => Ok(Vec::new()),
+        Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
+            let value = decode_metadata_value(bytes.as_slice())
+                .map_err(|_| invalid("invalid NOTE tags"))?;
+            let tags = value
+                .as_array()
+                .ok_or_else(|| invalid("invalid NOTE tags"))?;
+            Ok(tags
+                .iter()
+                .filter_map(|tag| tag.as_str().map(str::to_owned))
+                .collect())
+        }
+        _ => Err(invalid("invalid NOTE tags")),
+    }
+}
+
+/// The text fields a NOTE's text index publishes from one image (ARCH-0032
+/// #bm25f, FIX 7789): its title, its tags and its body, each under the NOTE
+/// field it ranks as. Every publication of a NOTE's text reads them here
+/// (`revision::index_fields`), so no path puts the NOTE back under one
+/// pooled field. Target names are not published yet: no rule names which
+/// targets' names they are.
+pub(super) fn index_fields(doc: &LoroDoc) -> Result<Vec<(&'static str, String)>> {
+    let mut fields = Vec::with_capacity(3);
+    if let Some(title) = meta_title(doc)?.filter(|title| !title.is_empty()) {
+        fields.push((NoteTextField::Title.source_name(), title));
+    }
+    let tags = meta_tags(doc)?;
+    if !tags.is_empty() {
+        fields.push((NoteTextField::Tags.source_name(), tags.join(" ")));
+    }
+    fields.push((
+        NoteTextField::Body.source_name(),
+        doc.get_text(BODY).to_string(),
+    ));
+    Ok(fields)
 }
 
 /// `title` in the common encoding, checked as a load checks it.
@@ -397,13 +453,7 @@ impl NoteDocument {
     }
 
     pub(super) fn title(&self) -> Result<Option<String>> {
-        match self.doc.get_map(META).get(TITLE) {
-            None => Ok(None),
-            Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
-                decode_title(bytes.as_slice()).map(Some)
-            }
-            _ => Err(invalid("invalid NOTE title")),
-        }
+        meta_title(&self.doc)
     }
 
     /// Every editable field at this version, each one value in the common

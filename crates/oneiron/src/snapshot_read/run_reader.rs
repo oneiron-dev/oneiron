@@ -1,5 +1,6 @@
 //! The grant-scoped forms of `vault.runs.step` and `vault.runs.checkpoint`
-//! (primitive A, slice 6.4c; ENGINE CALL S64-3 = A: the same verb names). The
+//! (primitive A, slice 6.4c; ENGINE CALL S64-3 = A: the same verb names), and
+//! of `vault.code.reply_evidence` (RAW-PROVIDER-EVIDENCE-READ). The
 //! owner reads as before. Any other caller reads a run it is the actor of,
 //! through its own read lane: every claim, artifact and source the answer
 //! derives from must read for it, as the existing caller projections judge.
@@ -10,6 +11,7 @@
 use crate::attempt_queue::AttemptId;
 use crate::edge::EdgeActorClass;
 use crate::engine_executor::checkpoint_read::{CheckpointReadRequest, CheckpointView};
+use crate::engine_executor::reply_evidence::{ReplyEvidenceRequest, ReplyEvidenceView};
 use crate::llm::model_step::{SettledStepRequest, SettledStepView};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::model_step_record::CallerSettledStep;
@@ -172,6 +174,32 @@ pub fn checkpoint_as_reader(
     crate::engine_executor::checkpoint_read::checkpoint_projection(memory, input)
 }
 
+/// `vault.code.reply_evidence` for a caller other than the owner: one step's
+/// kept reply of a code run the caller is the actor of, or of any code run
+/// for a Steward, every check of the read run on its own lane.
+///
+/// # Errors
+///
+/// A malformed request; a run the caller is not the actor of, for a caller
+/// that is no Steward, or a source that does not read for it (`FORBIDDEN`);
+/// and storage errors.
+pub fn reply_evidence_as_reader(
+    memory: &Memory<'_>,
+    input: &ReplyEvidenceRequest,
+) -> MemoryResult<Option<ReplyEvidenceView>> {
+    const VERB: &str = "vault.code.reply_evidence";
+    let run = crate::engine_executor::reply_evidence::reply_evidence_run(input)?;
+    let own = {
+        let txn = memory.vault().store.env.read_txn().map_err(Error::from)?;
+        is_code_run_actor_in_txn(memory.vault(), &txn, caller_of(memory), &run)?
+            || is_steward_in_txn(memory.vault(), &txn, caller_of(memory))?
+    };
+    if !own {
+        return Err(not_the_callers(VERB));
+    }
+    crate::engine_executor::reply_evidence::reply_evidence_projection(memory, input)
+}
+
 /// `vault.runs.step` on an in-process handle: the embedded owner's read, or
 /// [`settled_step_as_reader`] for any other caller.
 ///
@@ -203,5 +231,23 @@ pub fn checkpoint_embedded(
             crate::engine_executor::checkpoint_read::checkpoint_as_owner(memory, &owner, input)
         }
         Err(_) => checkpoint_as_reader(memory, input),
+    }
+}
+
+/// `vault.code.reply_evidence` on an in-process handle: the embedded owner's
+/// read, or [`reply_evidence_as_reader`] for any other caller.
+///
+/// # Errors
+///
+/// As the read it takes.
+pub fn reply_evidence_embedded(
+    memory: &Memory<'_>,
+    input: &ReplyEvidenceRequest,
+) -> MemoryResult<Option<ReplyEvidenceView>> {
+    match memory.embedded_owner("vault.code.reply_evidence") {
+        Ok(owner) => {
+            crate::engine_executor::reply_evidence::reply_evidence_as_owner(memory, &owner, input)
+        }
+        Err(_) => reply_evidence_as_reader(memory, input),
     }
 }
