@@ -68,6 +68,20 @@ pub const CRATES: &[(&str, &str)] = &[
     ("oneiron_records", "crates/oneiron-records/src"),
 ];
 
+/// The crates below `oneiron` that mirror its module tree (lib split, stage A): a type moved into one keeps its
+/// module path, and `oneiron` re-exports it at that path.
+pub(crate) const LIB_MIRRORS: &[&str] = &["oneiron_verb_wire", "oneiron_records"];
+
+/// `oneiron` for a crate of `LIB_MIRRORS`, else the crate's own name: the lookup by name ranks a moved type as one
+/// of `oneiron`'s own, so it picks what it picked before the move.
+pub(crate) fn lib_family(crate_name: &str) -> &str {
+    if LIB_MIRRORS.contains(&crate_name) {
+        "oneiron"
+    } else {
+        crate_name
+    }
+}
+
 /// The source directory `CRATES` gives a crate name (`CRATES[crate]`), or `None` for a name it does not hold.
 pub(crate) fn crate_dir(name: &str) -> Option<&'static str> {
     CRATES
