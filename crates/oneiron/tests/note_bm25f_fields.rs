@@ -31,9 +31,7 @@ fn note_title_word_ranks_above_the_same_word_in_a_body() {
         .expect("bodied NOTE");
     // An edited NOTE's text publishes at idle, not at the edit: publish the
     // title edit as the idle loop does (no vector in this vault), then search.
-    vault
-        .set_indexed_idle_delay_ms(0)
-        .expect("idle delay row");
+    vault.set_indexed_idle_delay_ms(0).expect("idle delay row");
     let published = vault
         .refresh_staged_indexed_at_idle(u64::MAX)
         .expect("idle publication");

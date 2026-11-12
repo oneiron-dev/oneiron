@@ -19,9 +19,7 @@ fn note_with_bm25f_fields_self_heals_a_lost_posting_on_deindex() {
         .memory(owner, EdgeActorClass::Human)
         .set_note_title(note, "alpha")
         .expect("set title");
-    vault
-        .set_indexed_idle_delay_ms(0)
-        .expect("idle delay row");
+    vault.set_indexed_idle_delay_ms(0).expect("idle delay row");
     let published = vault
         .refresh_staged_indexed_at_idle(u64::MAX)
         .expect("idle publication");
@@ -39,7 +37,9 @@ fn note_with_bm25f_fields_self_heals_a_lost_posting_on_deindex() {
     oneiron::test_doors::note_bm25f_repair::deindex_after_lost_posting(&vault, &note, "alpha")
         .expect("the self-heal proves the NOTE counted in its pooled stats");
 
-    let hits = vault.search_text("alpha", 10).expect("text search after deindex");
+    let hits = vault
+        .search_text("alpha", 10)
+        .expect("text search after deindex");
     assert!(
         !hits.iter().any(|hit| hit.id == note),
         "the deindexed NOTE is no longer found: {hits:?}"
