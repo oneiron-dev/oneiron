@@ -276,7 +276,7 @@ impl GmailSendPlan {
         Ok(self)
     }
 
-    /// Sets the From display name (the member's own name, e.g. "Yura"). The
+    /// Sets the From display name (the member's own name, e.g. "Yuki"). The
     /// address stays the plan's From address; only the phrase is added.
     ///
     /// # Errors
