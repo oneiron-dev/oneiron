@@ -340,6 +340,7 @@ impl BudgetState {
                 shared_reserved_units: allocation.shared_units,
                 binding,
                 dispatched: false,
+                physical_attempts: lease.physical_attempt_evidence(),
             },
         );
         lease
