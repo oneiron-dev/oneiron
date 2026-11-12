@@ -368,8 +368,22 @@ impl Vault {
     /// Storage errors.
     pub fn pending_check_in(&self, id: &EntityId) -> Result<Option<PendingCheckIn>> {
         let txn = self.store.env.read_txn()?;
-        PENDING.get(&self.store, &txn, id)
+        pending_check_in_in_txn(&self.store, &txn, id)
     }
+}
+
+/// The pending check-in `id`, as it stands in `txn`: for a caller that
+/// reads it in the writer that changes it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn pending_check_in_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<PendingCheckIn>> {
+    PENDING.get(store, txn, id)
 }
 
 /// Opens a pending check-in at `now` and enters its first rung that has a
