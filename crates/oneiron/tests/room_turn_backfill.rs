@@ -720,6 +720,46 @@ fn reopen_rows_no_reply_under_a_hard_erased_reply() -> TestResult {
     ])
 }
 
+/// A native thread reply whose parent keeps no row keeps none itself, so
+/// the thread reads on its anchor still answer (review round 2 of #7265, P1
+/// at turn_record.rs:107). In an ordinary room, owen's trunk turn A holds a
+/// thread opened by R. Every row but A's is stripped: R then keeps no row,
+/// as in a room the open has not rowed yet (one with a waiting erase, Q3)
+/// or under a reply the pass skips. owen's next plain reply C on A lands
+/// under R, the DAG's tip. C keeps no row and the thread reads on A answer,
+/// with no rowed thread; the pass then rows R and C, and A's thread reads
+/// R, C.
+#[test]
+fn native_reply_under_an_unrowed_reply_keeps_no_row() -> TestResult {
+    let rig = open_rig()?;
+    let room = make_room(&rig, RoomKind::Ordinary)?;
+    let a = native_trunk(&rig, room, vec![])?;
+    let r = plain_reply(&rig, room, a)?;
+    doors::strip_room_turn_rows(&rig.vault, room, &[a])?;
+    let c = plain_reply(&rig, room, a)?;
+    let row_c = doors::room_turn_row(&rig.vault, c)?;
+    println!("UNROWED-PARENT before the pass: C row {row_c:?}");
+    assert_eq!(row_c, None, "C keeps no row under R, which keeps none");
+    assert_eq!(
+        rig.vault.thread_roots(a)?,
+        Vec::<EntityId>::new(),
+        "no rowed thread on A"
+    );
+    let thread = rig.vault.thread(a)?;
+    assert_eq!(thread.root, None, "{thread:?}");
+    assert_eq!(rig.vault.thread_meta(a)?, None, "no rowed thread on A");
+    let pass = doors::run_room_turn_backfill(&rig.vault)?;
+    println!("UNROWED-PARENT pass {pass:?}");
+    assert_eq!(rig.vault.thread_roots(a)?, vec![r], "the thread roots on A");
+    let thread = rig.vault.thread(a)?;
+    assert_eq!(thread.root, Some(r), "{thread:?}");
+    assert_eq!(thread.replies, vec![r, c], "{thread:?}");
+    let row_c = doors::room_turn_row(&rig.vault, c)?.ok_or("the pass rows C")?;
+    assert_eq!(row_c.reply_to, Some(r.to_hex()), "C answers R");
+    assert_eq!(row_c.thread_of, Some(a.to_hex()), "C is in A's thread");
+    Ok(())
+}
+
 /// The time the pass takes for one room of `BULK_TURNS` TURNs, all in one
 /// write, measured on its own and as the difference between the open that
 /// runs it and an open that finds every room marked. No ceiling is asserted:
