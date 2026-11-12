@@ -350,7 +350,7 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
       const rejectedRunId = await codeRuntime02NoExecution(engine, tools, packagingRow.runRef);
 
       // (c) Keep the configured provider model promised by CR02-B/P-OTHER-065, not the server's seat/config digest.
-      // CODE-RUNTIME-02 ENGINE DEFECT 2026-11-11: the repair record currently copies the synthetic generative seat id.
+      // CODE-RUNTIME-02: the repair record names the configured provider model, not the synthetic generative seat id (#7054).
       const attributedRun = runs[0];
       if (!attributedRun) throw new Error("No forged-console run completed for attribution");
       const corrections = await owner.call("vault.code.corrections", { run_ref: attributedRun.runId });
@@ -360,7 +360,7 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
       try {
         expect(repair.model_id).toBe(engineModelId);
       } catch (error) {
-        throw new Error(`CODE-RUNTIME-02 ENGINE DEFECT 2026-11-11: repair model_id must name the configured provider model; expected=${engineModelId} received=${repair.model_id}`, { cause: error });
+        throw new Error(`CODE-RUNTIME-02 repair model_id must name the configured provider model (fixed by #7054); expected=${engineModelId} received=${repair.model_id}`, { cause: error });
       }
 
       // Both stored-read doors promise owner authority: refuse a paired agent and read each receipt.
@@ -392,7 +392,7 @@ suite.test(test, "CODE-RUNTIME-02", "Forged console text is never accepted, pack
       try {
         expect(afterRepair.model_id).toBe(engineModelId);
       } catch (error) {
-        throw new Error(`CODE-RUNTIME-02 ENGINE DEFECT 2026-11-11: repair model_id after restart must name the configured provider model; expected=${engineModelId} received=${afterRepair.model_id}`, { cause: error });
+        throw new Error(`CODE-RUNTIME-02 repair model_id after restart must name the configured provider model (fixed by #7054); expected=${engineModelId} received=${afterRepair.model_id}`, { cause: error });
       }
       expect(await codeRuntime02NoExecution(engine, tools, packagingRow.runRef)).toBe(rejectedRunId);
       expect(providers.seenFixtureCalls.map(call => call.fixtureId)).toEqual(script.map(step => step.id));

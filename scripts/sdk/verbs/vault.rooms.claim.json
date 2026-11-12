@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::RoomClaimOutcome",
   "call": "memory.rooms_claim(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?, crate::unix_seconds_now())?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "room_ref": "room_ref",
     "turn_ref": "turn_ref"

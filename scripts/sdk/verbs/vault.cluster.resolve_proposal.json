@@ -5,6 +5,7 @@
   "output": "crate::memory::clustering::ClusterTopologyReceipt",
   "call": "{ let owner = if input.grant_ref.is_none() { Some(memory.embedded_owner(\"vault.cluster.resolve_proposal\")?) } else { None }; memory.cluster_resolve_proposal(owner.as_ref(), &input)? }",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

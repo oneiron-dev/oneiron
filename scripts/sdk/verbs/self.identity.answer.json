@@ -5,6 +5,7 @@
   "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
   "call": "memory.identity_answer_with_evidence_as_owner(&memory.embedded_owner(\"self.identity.answer\")?, &input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

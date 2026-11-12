@@ -5,6 +5,7 @@
   "output": "crate::memory::repo_doors::RepoMergeQueueObserveOutput",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.merge_queue.observe\", &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

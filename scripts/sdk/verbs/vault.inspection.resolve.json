@@ -5,6 +5,7 @@
   "output": "crate::lens::InspectionResolved",
   "call": "memory.inspection_resolve(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

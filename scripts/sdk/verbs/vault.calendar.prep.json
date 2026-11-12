@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::calendar::PrepPack>>",
   "call": "memory.calendar_prep(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

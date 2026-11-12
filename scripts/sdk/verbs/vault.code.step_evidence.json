@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::code_run_doors::CodeRunStepEvidenceView>",
   "call": "memory.code_run_step_evidence_as(&memory.embedded_owner(\"vault.code.step_evidence\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

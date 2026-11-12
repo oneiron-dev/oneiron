@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::ProjectRoomLink",
   "call": "memory.projects_rooms_link(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "mcp_fields": {
     "spec": "$",
     "room_ref": "=room_ref"

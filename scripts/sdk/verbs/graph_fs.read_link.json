@@ -5,6 +5,7 @@
   "output": "crate::memory::graph_fs_doors::GraphFsLinkView",
   "call": "memory.graph_fs_read_link(input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

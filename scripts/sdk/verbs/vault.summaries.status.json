@@ -5,6 +5,7 @@
   "output": "crate::scope_summary::ScopeSummaryStatus",
   "call": "memory.summary_status(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
