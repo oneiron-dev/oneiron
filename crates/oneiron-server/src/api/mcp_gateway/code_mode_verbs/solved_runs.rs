@@ -271,7 +271,7 @@ fn draft_span(input: &Value) -> Result<CheckedSpan, String> {
         type_ref,
         source: SolvedSource::UnfiledDraft,
         after_seq: input.after_seq,
-        through_seq: input.through_seq,
+        through_seq: None,
     })
 }
 
