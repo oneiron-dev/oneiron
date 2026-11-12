@@ -81,10 +81,9 @@ macro_rules! mirror {
 pub use oneiron_verb_wire::share_travel::agent_pack::{
     AgentPackBudgetSplit, AgentPackCeiling, AgentPackCompaction, AgentPackDreaming,
     AgentPackKnowledge, AgentPackMcp, AgentPackMemoryProfile, AgentPackOptionalMemory,
-    AgentPackOptionalMemoryProfile, AgentPackOutputDecay, AgentPackPolicy, AgentPackRefusal,
-    AgentPackRefusalLevel, AgentPackScope, AgentPackSkillCall, AgentPackSkillDependency,
-    AgentPackSkillFormat, AgentPackSkillRef, AgentPackSkillRole, AgentPackView,
-    AgentPackWakeCadence,
+    AgentPackOptionalMemoryProfile, AgentPackOutputDecay, AgentPackRefusalLevel, AgentPackScope,
+    AgentPackSkillCall, AgentPackSkillDependency, AgentPackSkillFormat, AgentPackSkillRef,
+    AgentPackSkillRole, AgentPackView, AgentPackWakeCadence,
 };
 
 mirror!(AgentPackCeiling <=> AgentCeiling { Auto, Proposed });
@@ -249,6 +248,53 @@ impl From<AgentPackWakeCadence> for AgentWakeCadence {
 }
 
 mirror!(AgentPackRefusalLevel <=> RefusalLevel { None, Voice, Veto, Full });
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPackRefusal {
+    pub bond: Option<AgentPackRefusalLevel>,
+    pub logistics: Option<AgentPackRefusalLevel>,
+}
+
+impl From<RefusalDial> for AgentPackRefusal {
+    fn from(value: RefusalDial) -> Self {
+        Self {
+            bond: value.bond.map(Into::into),
+            logistics: value.logistics.map(Into::into),
+        }
+    }
+}
+
+impl From<AgentPackRefusal> for RefusalDial {
+    fn from(value: AgentPackRefusal) -> Self {
+        Self {
+            bond: value.bond.map(Into::into),
+            logistics: value.logistics.map(Into::into),
+        }
+    }
+}
+
+/// The configuration the agent asks for. Every field is a request the
+/// destination meets against its own grants; none confers authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPackPolicy {
+    pub scope: AgentPackScope,
+    pub ceiling: AgentPackCeiling,
+    /// Connector names; the destination resolves its own.
+    pub connectors: Vec<String>,
+    pub code_mode_mcps: Vec<AgentPackMcp>,
+    pub model_tier: Option<String>,
+    pub memory_profile: Option<AgentPackMemoryProfile>,
+    pub dreaming: Option<AgentPackDreaming>,
+    pub dreaming_model: Option<String>,
+    pub wake_cadence: Option<AgentPackWakeCadence>,
+    pub refusal: Option<AgentPackRefusal>,
+    /// The models the agent runs on, each with when (FIX 4472); the
+    /// destination seats only those its own catalog serves.
+    pub models: Vec<AgentModel>,
+    pub compaction_model: Option<ModelId>,
+}
 
 impl From<AgentPackSkillFormat> for SkillPackageFormat {
     fn from(format: AgentPackSkillFormat) -> Self {

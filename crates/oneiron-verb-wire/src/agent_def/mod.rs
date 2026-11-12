@@ -5,7 +5,6 @@ pub use crate::agent_def::powers::ChildPowerRequest;
 pub use crate::agent_def::proposed_change::ProposedAgentDefinitionChangeDecision;
 pub use crate::agent_def::refusal::RefusalOutcome;
 pub use crate::store::agent_refusal::REFUSAL_DIAL_KEYS;
-pub use crate::store::agent_refusal::RefusalDial;
 pub use crate::store::agent_refusal::RefusalDomain;
 pub use crate::store::agent_refusal::RefusalLevel;
 pub(crate) use oneiron_store::agent_birth_identity::birth_source_id;

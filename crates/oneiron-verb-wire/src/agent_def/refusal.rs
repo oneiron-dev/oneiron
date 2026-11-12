@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::store::agent_refusal::REFUSAL_DIAL_KEYS;
-pub use crate::store::agent_refusal::RefusalDial;
 pub use crate::store::agent_refusal::RefusalDomain;
 pub use crate::store::agent_refusal::RefusalLevel;
 use serde::Deserialize;

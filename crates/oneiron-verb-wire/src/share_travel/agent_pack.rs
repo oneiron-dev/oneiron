@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/share_travel/agent_pack.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::store::agent_refusal::RefusalDial;
-use oneiron_model::llm::ModelId;
-use oneiron_store::agent_model::AgentModel;
 use oneiron_store::write_envelope::skill_record::identity::canonical_skill_tree_hash;
 use oneiron_store::write_envelope::skill_record::record::SkillDependency;
 use oneiron_store::write_envelope::skill_record::role::SkillCallContract;
@@ -128,53 +125,6 @@ pub enum AgentPackRefusalLevel {
     Voice,
     Veto,
     Full,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackRefusal {
-    pub bond: Option<AgentPackRefusalLevel>,
-    pub logistics: Option<AgentPackRefusalLevel>,
-}
-
-impl From<RefusalDial> for AgentPackRefusal {
-    fn from(value: RefusalDial) -> Self {
-        Self {
-            bond: value.bond.map(Into::into),
-            logistics: value.logistics.map(Into::into),
-        }
-    }
-}
-
-impl From<AgentPackRefusal> for RefusalDial {
-    fn from(value: AgentPackRefusal) -> Self {
-        Self {
-            bond: value.bond.map(Into::into),
-            logistics: value.logistics.map(Into::into),
-        }
-    }
-}
-
-/// The configuration the agent asks for. Every field is a request the
-/// destination meets against its own grants; none confers authority.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackPolicy {
-    pub scope: AgentPackScope,
-    pub ceiling: AgentPackCeiling,
-    /// Connector names; the destination resolves its own.
-    pub connectors: Vec<String>,
-    pub code_mode_mcps: Vec<AgentPackMcp>,
-    pub model_tier: Option<String>,
-    pub memory_profile: Option<AgentPackMemoryProfile>,
-    pub dreaming: Option<AgentPackDreaming>,
-    pub dreaming_model: Option<String>,
-    pub wake_cadence: Option<AgentPackWakeCadence>,
-    pub refusal: Option<AgentPackRefusal>,
-    /// The models the agent runs on, each with when (FIX 4472); the
-    /// destination seats only those its own catalog serves.
-    pub models: Vec<AgentModel>,
-    pub compaction_model: Option<ModelId>,
 }
 
 /// How a travelling skill's source fields relate to its native metadata.
