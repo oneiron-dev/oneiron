@@ -455,6 +455,11 @@ fn person_body(name: &str) -> TestResult<Vec<u8>> {
 #[test]
 fn g41_g117_the_owner_deletes_a_note() -> TestResult {
     let fixture = Fixture::open()?;
+    // Every delete loads this install's signing keys before its first
+    // transaction, from the keystore a host installs after each open.
+    fixture.vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let subject = EntityId::now();
     fixture
         .vault
