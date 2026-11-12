@@ -135,6 +135,7 @@ pub(super) fn stage_same_as_in_txn(
             id: status_claim,
             candidate: &candidate,
             source: ClaimSource::Generated,
+            beside_stated: false,
         },
         crate::core_write::CoreWriteLaneRef::Unbound,
     )?;

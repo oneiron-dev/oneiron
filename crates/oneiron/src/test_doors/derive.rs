@@ -1263,7 +1263,6 @@ pub fn refusal_tokens() -> Vec<&'static str> {
     [
         DeriveRefusal::NoLandingRows,
         DeriveRefusal::OptedOut,
-        DeriveRefusal::GrantGone,
         DeriveRefusal::GrantLacksDerive,
         DeriveRefusal::GrantLacksArchive,
         DeriveRefusal::OutsideGrant,

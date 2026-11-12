@@ -15,9 +15,10 @@ use super::authority::TurnProgramAuthority;
 use super::erase::scrub_actor_admission_instruments_in_txn;
 use super::run::{scrub_actor_step_bodies_in_txn, undecodable_actor_steps_in_txn};
 use super::types::{
-    ArmTurnProgram, ProgramRecipePin, ProgramTrigger, TurnProgramArming, TurnProgramRegistration,
+    ArmTurnProgram, ProgramRecipePin, ProgramTrigger, TurnProgramArming, TurnProgramDisarm,
+    TurnProgramRegistration,
 };
-use super::{ARM, WAKE};
+use super::{ARM, DISARMED, WAKE};
 
 const CONTRACT_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-contract:v1";
 
@@ -100,17 +101,27 @@ pub(crate) fn arm_turn_program_in_txn(
 }
 
 /// Disarms one of `actor`'s programs; `true` when it was armed. A wake its
-/// turns already owed is refused at admission.
+/// turns already owed is refused at admission. A turn program's disarm is
+/// kept, with its time, so the arming another window of the vault still
+/// carries arms it nowhere again (FIX 5266). An arming another trigger wakes
+/// never rides a window, so its disarm leaves no row.
 pub(crate) fn disarm_turn_program_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     registration: EntityId,
 ) -> Result<bool> {
-    if let Some(arming) = ARM.get(vault, &*txn, &(actor, registration))? {
-        super::trigger::unindex_trigger_in_txn(vault, txn, &arming)?;
+    let key = (actor, registration);
+    let Some(arming) = ARM.get(vault, &*txn, &key)? else {
+        return Ok(false);
+    };
+    super::trigger::unindex_trigger_in_txn(vault, txn, &arming)?;
+    ARM.delete(vault, txn, &key)?;
+    if arming.trigger.is_turn() {
+        let at = vault.store.clock.now_recorded_at();
+        DISARMED.put(vault, txn, &key, &TurnProgramDisarm { at })?;
     }
-    ARM.delete(vault, txn, &(actor, registration))
+    Ok(true)
 }
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
@@ -143,6 +154,7 @@ pub(crate) fn erase_turn_program_actor_in_txn(
         super::trigger::unindex_trigger_in_txn(vault, txn, arming)?;
     }
     ARM.delete_from(vault, txn, actor.as_bytes())?;
+    DISARMED.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
         super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;

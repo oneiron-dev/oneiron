@@ -55,6 +55,7 @@ fn refs(named: Vec<DeriveRef>) -> Vec<ItemRef> {
 }
 
 /// A derived claim.
+/// The engine stamps Observed when cited user TURNs meet the preference bar; the caller never supplies a source.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeriveClaimInput {

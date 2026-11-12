@@ -230,6 +230,7 @@ fn stop_in_txn(
     if let Some(park) = PARKED.get(&vault.store, &*wtxn, &attempt)? {
         super::super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
         super::hold_index::unindex_program_hold_in_txn(vault, wtxn, &park)?;
+        super::super::seat_wait::unindex_seat_wait_in_txn(vault, wtxn, &park)?;
     }
     PARKED.delete(&vault.store, wtxn, &attempt)?;
     abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);

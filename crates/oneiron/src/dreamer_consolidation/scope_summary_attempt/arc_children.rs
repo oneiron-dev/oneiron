@@ -339,6 +339,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             subject: scope.conversation,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         let mut run = ArcRun {
             plan,

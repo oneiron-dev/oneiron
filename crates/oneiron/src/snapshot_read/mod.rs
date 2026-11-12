@@ -16,7 +16,7 @@ mod evidence_spans;
 mod policy_preflight;
 mod run_reader;
 mod settings_doors;
-mod skill_reader;
+pub(crate) mod skill_reader;
 mod snapshot;
 mod source_version;
 pub(crate) mod tables;
@@ -34,7 +34,9 @@ pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, settled_step_as_reader, settled_step_embedded,
 };
 pub(crate) use run_reader::{is_attempt_actor_in_txn, is_steward_in_txn, not_the_callers};
-pub use settings_doors::{read_snapshot_read_settings, replace_snapshot_read_settings};
+pub use settings_doors::{
+    read_snapshot_read_settings, replace_snapshot_read_settings, snapshot_read_settings_as_holder,
+};
 pub use skill_reader::{
     skill_library_get_as_reader, skill_library_get_embedded, skill_library_list_as_reader,
     skill_library_list_embedded,
