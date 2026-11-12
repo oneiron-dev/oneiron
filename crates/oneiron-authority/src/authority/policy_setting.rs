@@ -85,8 +85,8 @@ pub enum PolicySetting {
     /// #facets: "Every vault has one default facet ... the owner may set
     /// another").
     DefaultFacet,
-    /// The undo-send window an agent's send waits in on each outbound
-    /// channel (DEC-0006 #undo-send; REV-8 = B).
+    /// The undo-send window every send waits in on each outbound channel
+    /// (DEC-0006 #undo-send; REV-8 = B).
     UndoSend,
 }
 
