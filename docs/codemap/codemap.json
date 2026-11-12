@@ -30329,7 +30329,7 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "Partition executor: runs one prepared consolidation partition end to end",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 1,
       "struct": 1
      }
@@ -31649,7 +31649,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -35230,7 +35230,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 11,
-      "fn": 16,
+      "fn": 17,
       "re-export": 5,
       "struct": 24
      }
@@ -35394,7 +35394,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerWakeDriver"
@@ -35777,7 +35777,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TurnProgramExecutor",
@@ -51470,9 +51470,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/budget_wait.rs",
-     "purpose": "Waking typed budget trap parks in the spend scope top-up transaction",
+     "purpose": "Waking typed budget trap parks: in the spend scope top-up transaction, at a wake pass's start, and at the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -51502,7 +51502,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -100700,6 +100700,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/budget_scope_hosts.rs",
+     "purpose": "Row B3 of BUDGET-TRAP-UNTYPED-NO-SENDER: the hosts whose steps spend under a spend scope",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102117,6 +102125,14 @@
      "notable": [],
      "path": "tests/park_typed_wait.rs",
      "purpose": "6.5d-1 (budget typed wait): a step refused by its spend scope's hard cap parks typed on that scope, and only…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pass_budget_wait.rs",
+     "purpose": "Row B2 of BUDGET-TRAP-UNTYPED-NO-SENDER: a step's spent budget waits on the write that refills it, or…",
      "surface": {}
     },
     {
@@ -104648,10 +104664,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 258,
+   "over_bar": 260,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7419,
-   "test_files": 1088
+   "test_files": 1090
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -124923,7 +124939,7 @@
      "path": "src/ai_host/coach_host.rs",
      "purpose": "The host Coach's nightly jobs (ARCH-0066 #coach, OF-420)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -144929,10 +144945,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/coach_round.rs",
+     "purpose": "Door for `tests/eval_authoring_execute_lapsed_lease.rs`: one Coach host round, the nightly worker's unit of…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 1
+      "mod": 2
      }
     },
     {
@@ -145713,6 +145739,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/eval_authoring_execute_lapsed_lease.rs",
+     "purpose": "`vault.evals.authoring.execute` on a requested attempt whose host stopped before it settled the lease (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/eval_authoring_execute_served.rs",
+     "purpose": "`vault.evals.authoring.execute` served over the real facade route (FIX EVAL-AUTHORING-EXECUTE-SERVER-CASE)…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/facade_live_run_status.rs",
      "purpose": "Live-run guard refusals keep their status through the real facade router",
      "surface": {}
@@ -146064,6 +146106,16 @@
      "path": "tests/runtime_clock.rs",
      "purpose": "The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/support/eval_authoring_fixture.rs",
+     "purpose": "Shared fixture for the `vault.evals.authoring.execute` server tests: a rooted vault served over the real…",
+     "surface": {
+      "crate-vis": 22
+     }
     },
     {
      "bucket": "m",
@@ -146598,7 +146650,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -146663,8 +146715,8 @@
    },
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1834,
-   "test_files": 199
+   "source_files": 1835,
+   "test_files": 202
   },
   "oneiron-skill-attribution": {
    "files": [
