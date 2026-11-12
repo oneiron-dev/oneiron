@@ -3,6 +3,7 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// One tested state of a file: as the code revision `revision_ref` tested
 /// it, or, with no revision, the document's live head.

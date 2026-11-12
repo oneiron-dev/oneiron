@@ -3,6 +3,7 @@
 
 use crate::agent_dispatch::spend_calibration::AgentSpendCalibration;
 pub use crate::workspace_roster::spend_scope::SpendState;
+use heed::RwTxn;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;

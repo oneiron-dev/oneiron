@@ -4,6 +4,8 @@
 use crate::agent_inbox_lens::*;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 /// One INBOX row's read state as its agent reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

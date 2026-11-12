@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::dreamer_wake::policy::observation::*;
-use crate::dreamer_wake::policy::*;
 use oneiron_base::error::Error;
 pub use oneiron_store::dreamer_wake_policy::AgentWakeRole;
 pub use oneiron_store::dreamer_wake_policy::AgentWakeSignals;
@@ -11,6 +10,7 @@ pub use oneiron_store::dreamer_wake_policy::CadencePrecedence;
 pub use oneiron_store::dreamer_wake_policy::WeaveRecipePriority;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 
 pub fn invalid() -> Error {
     Error::InvalidConfig("invalid dreamer wake policy row".into())

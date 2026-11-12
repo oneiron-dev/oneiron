@@ -7,6 +7,7 @@ use oneiron_model::llm::BudgetExhaustionPolicy;
 pub use oneiron_store::compaction::host_request::HostCompactResult;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

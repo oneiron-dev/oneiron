@@ -2,12 +2,14 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::eval_set::sufficiency::SufficiencyCard;
+use heed::RoTxn;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::embedding::KindSlotBindings;
 use oneiron_store::embedding_vocabulary::InputKind;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Where a kind slot's vectors are searched.

@@ -6,6 +6,9 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// A particular version in the vault's existing blob custody.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -5,6 +5,8 @@ use crate::workspace_roster::rooms::*;
 pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// What an add shares with the person it adds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

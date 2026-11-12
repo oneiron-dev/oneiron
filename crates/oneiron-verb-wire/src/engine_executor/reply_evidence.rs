@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/engine_executor/reply_evidence.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use base64::Engine as _;
 use serde::Deserialize;
 use serde::Serialize;
 

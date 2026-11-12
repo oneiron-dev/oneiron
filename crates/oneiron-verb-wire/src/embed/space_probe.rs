@@ -1,12 +1,14 @@
 //! Moved from `crates/oneiron/src/embed/space_probe.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use heed::RoTxn;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::embedding_vocabulary::InputKind;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Longest probe query, in bytes.

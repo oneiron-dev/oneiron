@@ -3,6 +3,8 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use std::time::Duration;
+use std::time::Instant;
 
 /// External gold anchor a taste judgment was scored against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

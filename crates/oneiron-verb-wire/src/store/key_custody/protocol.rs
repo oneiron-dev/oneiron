@@ -13,6 +13,9 @@ pub use oneiron_store::key_custody::protocol::drain::drain_placement;
 pub use oneiron_store::key_custody::protocol::*;
 use serde::Deserialize;
 use serde::Serialize;
+use std::path::Path;
+use std::path::PathBuf;
+use zeroize::Zeroizing;
 
 /// A custody position in an ack: vault (64 hex), namespace (32 hex), writer
 /// epoch, log sequence number and tip (64 hex).

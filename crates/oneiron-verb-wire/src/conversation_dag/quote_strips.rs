@@ -1,8 +1,11 @@
 //! Moved from `crates/oneiron/src/conversation_dag/quote_strips.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use heed::RoTxn;
+use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// One page of a thread's quote replies, grouped by the MESSAGE they quote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

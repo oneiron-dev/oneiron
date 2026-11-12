@@ -7,8 +7,10 @@ pub use crate::workspace_roster::project::goal::proposals::ProjectGoalProposalIm
 pub use crate::workspace_roster::project::goal::proposals::ProjectGoalProposalReasons;
 pub(crate) use oneiron_policy_vocabulary::policy_model::goal_limits::GoalLimits;
 use oneiron_run_budget::run_budget::LeaseUnit;
+use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// A named observation that can be checked against receipts or a held-out trial.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

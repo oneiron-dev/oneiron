@@ -1,6 +1,11 @@
 //! Moved from `crates/oneiron/src/share_travel/pack_notice.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+
 /// The owner's own export carried a world his recipient choice would keep
 /// from where the pack goes.
 pub const OWNER_PACK_EXPORT_RECIPIENT_NOTICE: &str = "owner_pack_export_recipient_notice";

@@ -21,6 +21,9 @@ pub use crate::office_body::verbs::OfficeBodyProposalSettleRequest;
 pub use crate::office_body::verbs::OfficeBodyReadRequest;
 pub use crate::office_body::verbs::OfficeBodyReviewedFork;
 pub use crate::office_body::xlsx::XlsxBodyOp;
+use heed::RoTxn;
+use heed::RwTxn;
+use loro::LoroDoc;
 pub use oneiron_docedit::contract::ContractError;
 pub use oneiron_docedit::contract::DocumentLocationArgs;
 pub use oneiron_docedit::contract::ErrorCode;
@@ -51,6 +54,8 @@ pub use oneiron_store::entity_doc::document_resources::document_resources_until;
 pub(crate) use oneiron_store::entity_doc::document_resources::machine_memory_refused;
 pub use oneiron_store::entity_doc::document_resources::register_document_memory;
 pub use oneiron_store::typed_body::live_pin::LivePin;
+use serde::Deserialize;
+use serde::Serialize;
 
 pub mod consent;
 pub mod docx;

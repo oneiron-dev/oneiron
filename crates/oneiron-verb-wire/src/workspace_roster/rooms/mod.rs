@@ -40,6 +40,9 @@ pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_KEY;
 pub(crate) use oneiron_store::conversation_body::THREAD_NOTICE_PRODUCER;
 pub(crate) use oneiron_store::conversation_body::ThreadBinding;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeSet;
 
 pub mod audience_doors;
 pub mod audience_events;

@@ -4,6 +4,7 @@
 use crate::compaction::folds::FoldMarkInput;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// The kind of content one fold by kind folds in each step of its span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

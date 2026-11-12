@@ -3,6 +3,7 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// `vault.mail.threads.share` and `.unshare`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

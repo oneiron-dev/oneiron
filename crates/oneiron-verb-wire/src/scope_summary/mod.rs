@@ -21,6 +21,8 @@ pub use oneiron_store::scope_summary::codec::SummarySourceMessage;
 pub use oneiron_store::scope_summary::codec::SummarySourceNote;
 pub use oneiron_store::scope_summary::codec::decode_scope_summary_body;
 pub use oneiron_store::scope_summary::codec::encode_scope_summary_body;
+use serde::Deserialize;
+use serde::Serialize;
 
 pub mod derivation;
 pub mod purpose;

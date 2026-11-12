@@ -2,11 +2,19 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::runtime_hooks::source::FactPosition;
+use aes_gcm::Aes256Gcm;
+use aes_gcm::Nonce;
+use aes_gcm::aead::Aead;
+use aes_gcm::aead::KeyInit;
+use aes_gcm::aead::Payload;
+use base64::Engine as _;
 use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::ports::records::ChangeOp;
+use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// A position in one source. Two positions compare only within one source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

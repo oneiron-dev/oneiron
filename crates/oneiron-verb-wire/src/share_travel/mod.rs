@@ -15,6 +15,9 @@ pub use oneiron_authority::share_travel::BornWith;
 pub use oneiron_authority::share_travel::BornWithField;
 pub use oneiron_authority::share_travel::TravelChoice;
 pub use oneiron_authority::share_travel::TravelKind;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeSet;
 
 pub mod agent_pack;
 pub mod agent_pack_export;

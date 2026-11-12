@@ -7,6 +7,7 @@ use oneiron_store::conversation_body::RoomPin;
 use oneiron_store::conversation_body::RoomPinPolicy;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// `vault.rooms.pins.pin` and `vault.rooms.pins.unpin`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

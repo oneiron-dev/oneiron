@@ -13,10 +13,13 @@ pub use crate::batch::secret_scan::lift_history::SecretLiftProgress;
 pub use crate::batch::secret_scan::lift_history::SecretLiftReceipt;
 pub use crate::batch::secret_scan::lift_history::SecretLiftRequest;
 pub use crate::batch::secret_scan::lift_history::SecretLiftStatus;
+use heed::RoTxn;
+use heed::RwTxn;
 pub(crate) use oneiron_store::batch::secret_scan::container::is_container;
 pub(crate) use oneiron_store::batch::secret_scan::container::projection_edit::RetainedProjectionEdit;
 pub(crate) use oneiron_store::batch::secret_scan::whole_read::Encoding;
 pub(crate) use oneiron_store::batch::secret_scan::whole_read::encode_as_stored;
+use zeroize::Zeroizing;
 
 /// The vault's `secrets` setting: whether the write door scans what a host
 /// writes into this vault for credential shapes. On by default; only the

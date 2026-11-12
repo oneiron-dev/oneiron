@@ -9,6 +9,8 @@ use oneiron_store::side_table::key::FixedSideKey;
 use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
 /// exactly 32 bytes, or the array of exactly 32 numbers serde_json writes for

@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/settings/destination.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use heed::RoTxn;
 use oneiron_base::error::Error;
 use oneiron_base::error::RecordError;
 use oneiron_base::error::Result;
@@ -8,6 +9,7 @@ use oneiron_base::machine_destination::Destination;
 use oneiron_base::machine_destination::EffectiveRead;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_wake_contract::settings::destination::ReadDestination;
+use std::collections::BTreeSet;
 
 /// Where a read's caller sits relative to this device (DEC-0005). Only the
 /// host decides it, from the connection the caller reached it on; nothing the

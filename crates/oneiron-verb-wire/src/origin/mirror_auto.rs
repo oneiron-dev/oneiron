@@ -6,6 +6,7 @@ use oneiron_base::error::ErrorKind;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashSet;
 
 /// What the mirror's automatic pushes last did beyond the run record.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

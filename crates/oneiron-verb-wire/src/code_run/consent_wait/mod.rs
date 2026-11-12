@@ -9,5 +9,8 @@ pub(crate) use oneiron_consent_state::consent::code_wait_state::CodeConsentCallS
 pub use oneiron_consent_state::consent::code_wait_state::CodeConsentChoice;
 pub use oneiron_consent_state::consent::code_wait_state::CodeConsentSettleOutcome;
 pub use oneiron_consent_state::consent::code_wait_state::CodeConsentWaitState;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
 
 pub mod standing_offer;

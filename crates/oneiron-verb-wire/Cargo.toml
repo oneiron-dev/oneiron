@@ -12,8 +12,12 @@ homepage.workspace = true
 doctest = false
 
 [dependencies]
+aes-gcm = "0.10"
+base64 = "0.22"
 blake3 = { workspace = true, features = ["zeroize"] }
 ed25519-dalek = { workspace = true }
+getrandom = { version = "=0.4.3", features = ["sys_rng"] }
+heed = { workspace = true }
 loro = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
@@ -34,12 +38,19 @@ oneiron-skill-attribution = { version = "0.1.0", path = "../oneiron-skill-attrib
 oneiron-store = { version = "0.1.0", path = "../oneiron-store" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
+rand = "0.8"
+rand_core = { workspace = true }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
+sha2 = "0.10"
 thiserror = { workspace = true }
+unicode-normalization = "0.1"
+uuid = { workspace = true }
+xxhash-rust = { workspace = true }
+zeroize = "1"
 
 [features]
 # Forwarded from `oneiron/sync` and `oneiron/test-support`: a moved item keeps the gate it had in the engine, and

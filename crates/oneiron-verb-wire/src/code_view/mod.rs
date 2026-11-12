@@ -6,6 +6,9 @@ use oneiron_base::error::Result;
 use oneiron_store::git_wire::path_text::git_path_bytes;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

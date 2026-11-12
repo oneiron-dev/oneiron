@@ -5,6 +5,7 @@ use crate::dreamer_wake::policy::*;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 
 /// One real scheduler check. Reads of this receipt never run the scheduler.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -60,7 +60,6 @@ pub use crate::workspace_roster::rooms::thread_join::ThreadJoinRequestView;
 pub use crate::workspace_roster::rooms::upkeep_voice::RoomUpkeepNudge;
 pub use crate::workspace_roster::rooms::upkeep_voice::RoomUpkeepPendingRequest;
 pub use crate::workspace_roster::rooms::upkeep_voice::RoomUpkeepVoiceRequest;
-use crate::workspace_roster::*;
 pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_PACK;
 pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_REVISION_SHORT_ID_PREFIX;
 pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_SHORT_ID_PREFIX;
@@ -80,6 +79,8 @@ pub use oneiron_store::conversation_body::RoomOriginCard;
 pub(crate) use oneiron_store::conversation_body::THREAD_NOTICE_PRODUCER;
 pub(crate) use oneiron_store::conversation_body::ThreadBinding;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
+use rmpv::Value;
+use std::io::Cursor;
 
 pub mod join_receipt;
 pub mod project;

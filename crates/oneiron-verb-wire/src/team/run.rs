@@ -5,6 +5,8 @@ use crate::team::pattern::TeamAxis;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 /// `self.team.start`: a team run under `pattern`, its members spawned into it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

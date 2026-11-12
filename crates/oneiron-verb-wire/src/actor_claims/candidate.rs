@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::claim::ClaimApprovalStatus;
+use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

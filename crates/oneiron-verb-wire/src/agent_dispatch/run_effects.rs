@@ -3,6 +3,8 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::PoisonError;
 
 /// What the owner's answer to a replayed effect's ask came to (FIX 4747
 /// slice 7).

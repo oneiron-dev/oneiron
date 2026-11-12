@@ -10,6 +10,8 @@ pub use oneiron_contracts::retrieval_telemetry::RetrievalSignal;
 pub(crate) use oneiron_store::retrieval_telemetry::types::*;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
+use uuid::Uuid;
 
 pub const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 

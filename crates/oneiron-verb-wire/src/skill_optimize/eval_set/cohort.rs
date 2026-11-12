@@ -6,6 +6,9 @@ use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
+use std::collections::BTreeSet;
 
 /// The decision to retire one cohort: its bounded reason, who made it, and
 /// the exposure the retiring writer read.

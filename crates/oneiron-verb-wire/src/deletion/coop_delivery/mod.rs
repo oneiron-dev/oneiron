@@ -5,5 +5,7 @@ pub use oneiron_store::deletion::coop_delivery::types::CooperativeDeleteRecord;
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeDeleteRecordState;
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeDeletionRetention;
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeRestrictionLiftAttestation;
+use serde::Deserialize;
+use serde::Serialize;
 
 pub mod types;

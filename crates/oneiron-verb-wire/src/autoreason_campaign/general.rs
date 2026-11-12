@@ -5,6 +5,7 @@ use crate::autoreason_campaign::config::CampaignDatasetRef;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// A bounded, tunable search dimension.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

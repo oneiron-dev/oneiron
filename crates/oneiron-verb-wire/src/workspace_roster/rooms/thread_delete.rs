@@ -4,6 +4,7 @@
 use crate::workspace_roster::rooms::*;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// `vault.rooms.thread_delete`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

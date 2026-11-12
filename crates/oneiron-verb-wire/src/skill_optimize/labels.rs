@@ -4,6 +4,7 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// The evidence for raising a calibration question. Both kinds have two
 /// explicit alternatives, so an uncertainty does not silently supply a label.

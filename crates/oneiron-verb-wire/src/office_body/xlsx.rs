@@ -1,10 +1,20 @@
 //! Moved from `crates/oneiron/src/office_body/xlsx.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use loro::Container;
+use loro::LoroDoc;
+use loro::LoroMap;
+use loro::LoroMapValue;
+use loro::LoroValue;
+use loro::ValueOrContainer;
 use oneiron_docedit::xlsx_body::XlsxConditionalFormat;
 use oneiron_docedit::xlsx_body::XlsxFormat;
 use oneiron_docedit::xlsx_body::XlsxSheetVisibility;
 use oneiron_docedit::xlsx_body::XlsxValue;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// One typed operation on an XLSX body. A cell is an A1 address (`B12`,
 /// `$B$12`); a formula may carry its leading `=`.

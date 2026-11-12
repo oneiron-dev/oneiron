@@ -11,6 +11,7 @@ pub use oneiron_store::code_revision_record::CodePathRetirement;
 use oneiron_store::critic_lens::LensCatalog;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// The owner's explicit promotion request over one exact manifest: its
 /// digest, the exact checked Baseline revision, the review catalog the

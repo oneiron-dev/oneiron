@@ -3,9 +3,15 @@
 
 use crate::skill_optimize::gate::*;
 use oneiron_contracts::entity_id::EntityId;
+use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::VecDeque;
+use std::sync::OnceLock;
 
 /// One rung of the responsible-role chain a tradeoff ask climbs. Live people
 /// and live bound agents are members (ROLES-EVERYWHERE): a pick by either

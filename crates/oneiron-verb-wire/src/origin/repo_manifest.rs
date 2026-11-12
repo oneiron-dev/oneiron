@@ -3,7 +3,11 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::Serializer;
+#[cfg(feature = "sync")]
+use std::cmp::Ordering;
 
 /// The manifest version this build writes and reads: 2 adds the refs
 /// writer's signature (FIX 12765).

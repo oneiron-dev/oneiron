@@ -7,6 +7,7 @@ use crate::connector_key::slate::SlateDisposition;
 use oneiron_consent_state::consent::tool_scope::DataClass;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// One tool's grant and the per-grant key that governs its calls.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]

@@ -12,6 +12,9 @@ pub use oneiron_store::model_step_submission::ModelStepFailure;
 pub use oneiron_store::model_step_submission::ModelStepFailureClass;
 pub use oneiron_store::model_step_submission::ModelStepResult;
 pub use oneiron_store::model_step_submission::StepBudgetRefusal;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::HashSet;
 
 impl Default for ModelStepRetryPolicy {
     fn default() -> Self {

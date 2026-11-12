@@ -3,6 +3,8 @@
 
 use crate::workspace_roster::*;
 use oneiron_contracts::entity_id::EntityId;
+use rmpv::Value;
+use std::io::Cursor;
 
 /// Stable refs a completed onboarding produced.
 #[derive(

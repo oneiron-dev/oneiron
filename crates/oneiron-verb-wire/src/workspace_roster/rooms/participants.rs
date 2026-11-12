@@ -4,6 +4,8 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
+use std::ops::Bound;
 
 /// One page of a room's, or one thread's, participants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

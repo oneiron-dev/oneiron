@@ -4,6 +4,9 @@
 use crate::counterparty_contact::trusted_contact::TrustedContactTier;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::PoisonError;
+use std::sync::RwLockReadGuard;
+use std::sync::RwLockWriteGuard;
 
 /// What authorized one notice, written with it in the transaction that
 /// staged it: the person's yes to their ask, or, for a just-call contact, the

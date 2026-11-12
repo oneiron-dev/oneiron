@@ -4,6 +4,7 @@
 use crate::context_board::frame::BudgetPolicyRef;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
 // §2 — versioned manifest schema

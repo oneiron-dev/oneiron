@@ -12,6 +12,7 @@ pub use crate::research_budget::RsiSpendPurpose;
 pub use crate::research_budget::RsiTopUp;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 pub type RsiResult<T> = std::result::Result<T, RsiBudgetError>;
 

@@ -39,6 +39,7 @@ pub use oneiron_store::embedding_vocabulary::EmbeddingDevice;
 pub use oneiron_store::embedding_vocabulary::EmbeddingProvenance;
 pub use oneiron_store::embedding_vocabulary::InputKind;
 pub(crate) use oneiron_store::embedding_vocabulary::TEXT_HASH_LEN;
+use std::borrow::Cow;
 
 pub mod binding_move;
 pub mod space_move;

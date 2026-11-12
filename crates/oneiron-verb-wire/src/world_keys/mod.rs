@@ -31,6 +31,7 @@ pub(crate) use oneiron_store::key_material::refused;
 pub use oneiron_store::vault_page_seal::VaultPageSeal;
 pub(crate) use oneiron_store::world_pad_codec::pad_row_of_item;
 pub(crate) use oneiron_store::world_pad_codec::pad_world_in_body;
+use zeroize::Zeroizing;
 
 pub mod owner_work;
 pub mod vault_key;

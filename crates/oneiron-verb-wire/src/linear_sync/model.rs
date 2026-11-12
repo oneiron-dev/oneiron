@@ -1,6 +1,9 @@
 //! Moved from `crates/oneiron/src/linear_sync/model.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+
 /// The tracker-side identity of a mirrored issue.
 #[derive(
     serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema,

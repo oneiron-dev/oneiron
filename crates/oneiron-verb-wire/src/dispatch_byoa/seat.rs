@@ -7,6 +7,10 @@ use oneiron_model::llm::SpentKind;
 use oneiron_model::llm::limit;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
+use serde_json::json;
+use std::collections::BTreeMap;
+use std::io::Read;
 
 /// Why a login may not run on a hosted node. Each bound names whose it is,
 /// and the same act works self-hosted.

@@ -3,8 +3,12 @@
 
 use crate::batch::secret_scan::SecretScanMode;
 use crate::secret_snapshot::SnapshotSecretLiftProposal;
+use heed::RoTxn;
+use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
+use std::borrow::Cow;
+use std::ops::Bound;
 
 /// A family of carriers the sweep walks, in walk order.
 #[derive(

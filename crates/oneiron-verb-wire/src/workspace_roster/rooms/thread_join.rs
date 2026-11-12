@@ -5,6 +5,7 @@ use crate::workspace_roster::rooms::*;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 /// `vault.rooms.thread_join.request`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

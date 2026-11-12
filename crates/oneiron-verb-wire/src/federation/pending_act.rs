@@ -4,6 +4,7 @@
 use crate::federation::grant::FederationGrantRole as Role;
 pub use crate::federation::pending_act::policy_change::SharedActPolicyChangeState;
 use oneiron_base::error::Error;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// The row an act without its own row resolves to.
