@@ -666,6 +666,12 @@ fn reply_under_an_erased_reply_keeps_its_thread_readable(reasons: &[DeleteReason
     let row_c = doors::room_turn_row(&rig.vault, c)?.ok_or("C keeps no row at P1")?;
     assert_eq!(row_c.reply_to, Some(p.to_hex()), "C answers P");
     doors::strip_room_turn_rows(&rig.vault, room, &[])?;
+    // A delete signs its receipt with this install's key, so it loads that
+    // key before its first write; a host installs its keystore after each
+    // open, as this does.
+    rig.vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     for &reason in reasons {
         rig.vault.delete_room_record(
             room,
