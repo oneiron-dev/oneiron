@@ -26,7 +26,7 @@ use crate::fake_llm::{FakeLlm, Reply};
 /// A run whose receipts go to `receipts`.
 fn run_into(receipts: Arc<dyn RunReceiptSink>) -> RunAdmission {
     let meter = BudgetGuard::new("kept-test", 100_000, BudgetExhaustionPolicy::Suspend);
-    undeclared_run("kept-test", meter, receipts)
+    undeclared_run("kept-test", meter, None, receipts)
 }
 
 /// The model each of the run's holds kept a call from: its `Denied` rows.
@@ -35,7 +35,7 @@ fn holds(rows: &[RunReceipt]) -> Vec<String> {
         .filter_map(|row| match &row.event {
             RunEvent::Denied {
                 subject,
-                reason: RunDenied::KeptOnDevice,
+                reason: RunDenied::KeptOnDevice { .. },
                 ..
             } => subject.clone(),
             _ => None,
@@ -125,6 +125,7 @@ async fn a_call_about_a_world_this_vault_does_not_hold_stays_on_the_device() {
     let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let deleted = portable_world(&vault);
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(vault.delete_entity(&deleted).unwrap());
     let error = seat
         .ladder
@@ -382,11 +383,15 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
         assert_eq!(text_of(&answer.expect("answered").message), "from second");
     }
     let image = dir.path().join("checkpoint");
+    // The host's keystore signs and wraps the checkpoint (FIX 843, FIX 12225).
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.ensure_vault_key().unwrap();
     vault.snapshot_checkpoint(&image, T0).unwrap();
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let restored = Vault::restore_checkpoint(
         &image,
+        &vault.checkpoint_key().unwrap(),
         &dir.path().join("restored"),
         config,
         RestoreReason::Restore,
