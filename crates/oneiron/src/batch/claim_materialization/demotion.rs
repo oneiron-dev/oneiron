@@ -20,7 +20,9 @@ pub(super) fn demotion_body(
     tail: &[BatchOp],
 ) -> Result<ClaimBody> {
     use crate::edge::{EdgeKind, validate_edge_weight};
-    use crate::write_envelope::claim_body::{ClaimDemotionRung, ClaimSubject, claim_demotion_rung};
+    use crate::write_envelope::claim_body::{
+        ClaimDemotionRung, ClaimSubject, claim_demotion_rung, decay_transition,
+    };
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
         return Err(binding_error());
@@ -56,9 +58,9 @@ pub(super) fn demotion_body(
                     return Err(binding_error());
                 }
             }
-            if *weight > current.ok_or(binding_error())? {
-                return Err(binding_error());
-            }
+            // The one decay rule (FIX 22387): a strictly lower weight.
+            decay_transition(before, current.ok_or(binding_error())?, *weight)
+                .map_err(|_| binding_error())?;
             "decayed"
         }
         (
