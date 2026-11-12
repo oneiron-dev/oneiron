@@ -22,20 +22,32 @@
 //! through a public door main already has, so this file builds on a tree
 //! without the window and fails there at the first verb call.
 //!
+//! The sends go out on `discord` and `email_resend`, two channels with a
+//! `send` verb that no built-in pack names: a seeded vault refuses a
+//! channel a built-in pack names (email, telegram) until that pack is
+//! installed and its connection checked (OF-519), which no test can ready.
+//! The owner gives the agent the full-access ceiling and each sender a
+//! standing `send` grant, so the Gate admits each send to the queue as it
+//! admits a granted send in production.
+//!
 //! `cargo test --locked -p oneiron --all-features --test outbound_undo_send`.
 
 use std::path::Path;
 use std::sync::Arc;
 
+use oneiron::agent_def::AgentCeiling;
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
 };
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::genui::{GrantMintIntent, GrantMintIntentScope};
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
     MEMORY_CODE_NOT_FOUND, MemoryResult,
 };
 use oneiron::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::{EdgeActorClass, EntityId, OutboundDraftInput, TimeRange, Vault, VaultConfig};
@@ -49,6 +61,10 @@ const UNDO: &str = "vault.outbound.undo_send";
 const SETTING: &str = "settings.undo_send";
 const NOW: u64 = 1_800_000_000;
 const TARGET: &str = "owen@example.com";
+/// A channel with a `send` verb that no built-in pack names.
+const CHANNEL: &str = "discord";
+/// A second such channel, which keeps the all-channel length.
+const OTHER_CHANNEL: &str = "email_resend";
 
 /// A device vault this process owns (the writer lease), on `clock`, as an
 /// embedded host opens it at each start: the owner's handle carries the
@@ -100,16 +116,51 @@ fn fixture() -> Fixture {
     let clock = ManualClock::new(NOW);
     let (vault, owner) = open_owned(dir.path(), &clock);
     let agent = put_actor(&vault, 0xC4);
-    Fixture {
+    let fx = Fixture {
         vault,
         clock,
         owner,
         agent,
         dir,
-    }
+    };
+    fx.vault
+        .grant_agent_principal(&fx.owner_proof(), &agent.to_hex(), AgentCeiling::Auto)
+        .expect("the owner gives the agent the full-access ceiling");
+    fx.permit_send(agent, 0xD4);
+    fx
 }
 
 impl Fixture {
+    fn owner_proof(&self) -> AuthenticatedOwner {
+        self.vault
+            .authenticate_owner(
+                self.owner,
+                &self.owner.to_hex(),
+                true,
+                GateDecisionId::now(),
+            )
+            .expect("the owner's proof")
+    }
+
+    /// The owner's standing grant for `actor`'s sends, under id `seed`.
+    fn permit_send(&self, actor: EntityId, seed: u8) {
+        self.vault
+            .mint_standing_outbound_grant(
+                &self.owner_proof(),
+                EntityId::from_bytes([seed; 16]).expect("grant id"),
+                &GrantMintIntent {
+                    principal_ref: actor.to_hex(),
+                    origin_component_id: "tasks".to_owned(),
+                    origin_action_id: "create".to_owned(),
+                    origin_receipt_ref: None,
+                    scope: GrantMintIntentScope::VerbClass {
+                        verb_class: "send".to_owned(),
+                    },
+                },
+            )
+            .expect("the owner grants the sends");
+    }
+
     fn call(
         &self,
         actor: EntityId,
@@ -232,7 +283,7 @@ fn undo_send_is_off_by_default_and_an_agent_send_goes_at_once() {
         "the window is off by default"
     );
 
-    let send = fx.agent_send("email", "off:1");
+    let send = fx.agent_send(CHANNEL, "off:1");
     let attempt = fx.attempt(send);
     assert_eq!(
         attempt.state,
@@ -252,7 +303,7 @@ fn undo_send_is_off_by_default_and_an_agent_send_goes_at_once() {
         .expect("the owner reads again");
     let first = read["first_agent_sends"].as_array().expect("first sends");
     assert_eq!(first.len(), 1, "the first agent send is recorded: {read}");
-    assert_eq!(first[0]["channel"], "email");
+    assert_eq!(first[0]["channel"], CHANNEL);
     assert_eq!(first[0]["at"], NOW);
     assert_eq!(
         task_ref(&first[0]["task_ref"]).to_hex(),
@@ -280,7 +331,7 @@ fn a_set_length_holds_an_agent_send_and_undo_cancels_it() {
         "a set that changes nothing records nothing"
     );
 
-    let send = fx.agent_send("email", "held:1");
+    let send = fx.agent_send(CHANNEL, "held:1");
     let attempt = fx.attempt(send);
     assert_eq!(
         attempt.state,
@@ -293,7 +344,7 @@ fn a_set_length_holds_an_agent_send_and_undo_cancels_it() {
     let held = fx.held();
     assert_eq!(held.len(), 1, "the owner sees the held send: {held:?}");
     assert_eq!(held[0]["release_at"], NOW + 60);
-    assert_eq!(held[0]["channel"], "email");
+    assert_eq!(held[0]["channel"], CHANNEL);
     assert_eq!(held[0]["target"], TARGET);
     assert_eq!(held[0]["actor_ref"], fx.agent.to_hex());
     assert_eq!(
@@ -338,7 +389,7 @@ fn a_set_length_holds_an_agent_send_and_undo_cancels_it() {
         .expect_err("a second undo finds nothing held");
     assert_eq!(again.code, MEMORY_CODE_NOT_FOUND);
 
-    let second = fx.agent_send("email", "held:2");
+    let second = fx.agent_send(CHANNEL, "held:2");
     assert_eq!(fx.attempt(second).state, AttemptState::Scheduled);
     let held = fx.held();
     assert_eq!(held.len(), 1);
@@ -354,7 +405,7 @@ fn a_set_length_holds_an_agent_send_and_undo_cancels_it() {
 fn undo_after_the_window_closes_is_refused_and_the_send_goes() {
     let fx = fixture();
     fx.set(json!({"all_channels_secs": 60}));
-    let send = fx.agent_send("email", "closed:1");
+    let send = fx.agent_send(CHANNEL, "closed:1");
     let task = task_ref(&fx.held()[0]["task_ref"]);
 
     fx.clock.set(NOW + 61);
@@ -383,25 +434,25 @@ fn a_channel_length_replaces_the_all_channel_length() {
     let fx = fixture();
     let set = fx.set(json!({
         "all_channels_secs": 60,
-        "channels": [{"channel": "Email", "secs": 0}],
+        "channels": [{"channel": "Discord", "secs": 0}],
     }));
     assert_eq!(
         set,
-        json!({"all_channels_secs": 60, "channels": [{"channel": "email", "secs": 0}]}),
+        json!({"all_channels_secs": 60, "channels": [{"channel": CHANNEL, "secs": 0}]}),
         "the channel is stored in its manifest spelling"
     );
-    let email = fx.agent_send("email", "channel:email");
-    let telegram = fx.agent_send("telegram", "channel:telegram");
+    let own = fx.agent_send(CHANNEL, "channel:own");
+    let other = fx.agent_send(OTHER_CHANNEL, "channel:other");
     assert_eq!(
-        fx.attempt(email).state,
+        fx.attempt(own).state,
         AttemptState::Queued,
-        "email's own length is 0"
+        "the channel's own length is 0"
     );
-    let held = fx.attempt(telegram);
+    let held = fx.attempt(other);
     assert_eq!(
         held.state,
         AttemptState::Scheduled,
-        "telegram takes every channel's length"
+        "another channel takes every channel's length"
     );
     assert_eq!(held.scheduled_at, Some(NOW + 60));
 }
@@ -415,7 +466,8 @@ fn a_persons_own_send_is_held_and_they_can_undo_it() {
     let human = EdgeActorClass::Human;
     let person = put_actor(&fx.vault, 0xC5);
     let other = put_actor(&fx.vault, 0xC6);
-    let send = fx.send(person, human, "email", "person:1");
+    fx.permit_send(person, 0xD5);
+    let send = fx.send(person, human, CHANNEL, "person:1");
     let attempt = fx.attempt(send);
     assert_eq!(
         attempt.state,
@@ -475,7 +527,7 @@ fn a_persons_own_send_is_held_and_they_can_undo_it() {
 fn the_hold_and_the_setting_survive_a_reopen() {
     let fx = fixture();
     fx.set(json!({"all_channels_secs": 120}));
-    let send = fx.agent_send("email", "reopen:1");
+    let send = fx.agent_send(CHANNEL, "reopen:1");
     let Fixture {
         vault,
         clock,
