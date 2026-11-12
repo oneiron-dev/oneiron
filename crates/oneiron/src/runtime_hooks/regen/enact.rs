@@ -106,16 +106,8 @@ impl HookPut<'_> {
     }
 }
 
-/// What a cancel set aside.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HookRegenCancel {
-    /// The candidate set aside, as BLAKE3 hex; absent for a failed regen's
-    /// decision, which holds none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub candidate_hash: Option<String>,
-    /// The contract the decision targeted, now declined.
-    pub declined: HookContractStamp,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::runtime_hooks::regen::enact::HookRegenCancel;
 
 /// The CALL behind the cancel fence: a cancel sets aside only the decision
 /// its caller read. A candidate is named by its hash; a failed regen's

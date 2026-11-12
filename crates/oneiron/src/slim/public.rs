@@ -12,37 +12,12 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::outbound_intent_ledger::{IntentState, intent_ledger_records};
 
-/// The serving host's declared policy; it is not a provider-call timeout.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SlimIdlePolicy {
-    pub long_outbound_wait_secs: u64,
-    pub exits_on_idle: bool,
-    pub lazy_rebuild: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SlimDropRequest {
-    pub cause: ShedCause,
-    pub waited_secs: std::num::NonZeroU64,
-}
-
-/// Identities only. Payloads, credentials and provider responses never leave here.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SlimResumeStep {
-    OutboundIntent {
-        intent_id: String,
-        attempt_id: String,
-        call_seq: u64,
-        updated_ms: u64,
-    },
-    Model {
-        attempt_id: String,
-        step_hash: String,
-        updated_ms: u64,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::slim::public::{
+    SavedIntentState, SavedResumeStep, SlimDropOutcome, SlimDropReceipt, SlimDropRequest,
+    SlimIdlePolicy, SlimResidueView, SlimResumeOutcome, SlimResumeReceipt, SlimResumeStep,
+    SlimResumeStepRequest, SlimStateSnapshot, SlimStateView,
+};
 
 impl From<JournaledResumeStep> for SlimResumeStep {
     fn from(step: JournaledResumeStep) -> Self {
@@ -71,12 +46,6 @@ impl From<JournaledResumeStep> for SlimResumeStep {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SlimResidueView {
-    pub step: SlimResumeStep,
-    pub entered_at_ms: u64,
-}
-
 impl From<SlimResidue> for SlimResidueView {
     fn from(residue: SlimResidue) -> Self {
         Self {
@@ -84,19 +53,6 @@ impl From<SlimResidue> for SlimResidueView {
             entered_at_ms: residue.entered_at_ms,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "residency", rename_all = "snake_case")]
-pub enum SlimStateView {
-    Full,
-    Slim { residue: SlimResidueView },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SlimStateSnapshot {
-    pub process_id: u32,
-    pub state: SlimStateView,
 }
 
 impl Vault {
@@ -114,34 +70,6 @@ impl Vault {
             state,
         }
     }
-}
-
-/// Returned only after the engine's fixed-order shed transaction finishes,
-/// or once the owner's request finds it owed nothing (`nothing_pending`).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SlimDropReceipt {
-    pub process_id: u32,
-    pub outcome: SlimDropOutcome,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum SlimDropOutcome {
-    Entered {
-        residue: SlimResidueView,
-        dropped: HeapDropReport,
-    },
-    AlreadySlim {
-        residue: SlimResidueView,
-        dropped: HeapDropReport,
-    },
-    Refused {
-        blocker: ShedBlocker,
-    },
-    /// The owner's request waited while more than one outbound step was
-    /// pending, then found none pending on a FULL vault: no shed was owed,
-    /// so none ran (FIX 10157). It says nothing of how any send ended.
-    NothingPending,
 }
 
 impl From<ShedOutcome> for SlimDropReceipt {
@@ -164,20 +92,6 @@ impl From<ShedOutcome> for SlimDropReceipt {
     }
 }
 
-/// Logical FULL only: this neither rebuilds indexes nor reissues the saved step.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SlimResumeReceipt {
-    pub process_id: u32,
-    pub outcome: SlimResumeOutcome,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum SlimResumeOutcome {
-    AlreadyFull,
-    Resumed { residue: SlimResidueView },
-}
-
 impl From<InboundResumeOutcome> for SlimResumeReceipt {
     fn from(outcome: InboundResumeOutcome) -> Self {
         let outcome = match outcome {
@@ -191,43 +105,6 @@ impl From<InboundResumeOutcome> for SlimResumeReceipt {
             outcome,
         }
     }
-}
-
-/// A retained pointer can be inspected again after FULL or a process restart.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum SlimResumeStepRequest {
-    Model {
-        attempt_id: String,
-        step_hash: String,
-    },
-    OutboundIntent {
-        intent_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SavedResumeStep {
-    Model {
-        attempt_id: String,
-        step_hash: String,
-        checkpoint: crate::model_step_record::ModelStepCheckpoint,
-    },
-    OutboundIntent {
-        step: SlimResumeStep,
-        state: SavedIntentState,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SavedIntentState {
-    Pending,
-    Done,
-    Abandoned,
-    /// The provider accepted the send as a remote task (FIX 7960).
-    Deferred,
 }
 
 /// Reads the existing journals only. No provider call, recovery pass or new ledger.

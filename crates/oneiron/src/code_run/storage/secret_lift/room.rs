@@ -7,13 +7,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::{Result, Vault};
 
-/// Selects an actual room and its named off-record stretch. No body is read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeRunRoomSecretLiftRequest {
-    pub room_ref: String,
-    pub session_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_run::storage::secret_lift::room::CodeRunRoomSecretLiftRequest;
 
 impl Vault {
     /// Lists positive MESSAGE-linked secret lift proposals from this room's

@@ -139,13 +139,8 @@ impl CommitmentReminderRoute {
     }
 }
 
-/// The UTC offset, in whole minutes, the IANA `zone` observes at `at`; `None`
-/// for a zone the embedded database does not know.
-pub(crate) fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
-    crate::calendar::tz::ResolvedTimeZone::new(zone)
-        .ok()?
-        .offset_minutes_at(at)
-}
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::commitment_wake::reminder::zone_offset_minutes_at;
 
 impl Vault {
     /// The owner's reminder route, when one is set.

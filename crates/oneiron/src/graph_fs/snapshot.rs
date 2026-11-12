@@ -17,15 +17,8 @@ use crate::store::code_snapshot::snapshot_asset_entity_id;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// A reference selects content, never authority. Historical references name
-/// retained imported snapshots, not a local folder on the serving host.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GraphFsReference {
-    LiveHead,
-    ForkHash { repo: EntityId, hash: String },
-    RepoSnapshot { snapshot: EntityId },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::graph_fs::snapshot::GraphFsReference;
 
 impl<'vault> ScopedRead<'vault> {
     /// Opens the file face under this read's own credential. Snapshot ids

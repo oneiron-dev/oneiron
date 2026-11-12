@@ -25,20 +25,8 @@ pub(super) const MAX_LINEAGE_DEPTH: usize = 8;
 const MAX_STORED_LINKS: usize = 32;
 const MAX_CHECKS_LISTED: usize = 1_000;
 
-/// One hop of a chain: a run of one binding on one fact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LineageLink {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub binding: EntityId,
-    pub run_key: String,
-    // The entity the run fired on, a verb run's caller; the erased marker,
-    // spelled `ERASED_CALL_IDENTITY`, once a permanent erase took it.
-    #[serde(with = "link_entity")]
-    #[schemars(with = "String")]
-    pub entity: EntityId,
-    pub position: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::runtime_hooks::lineage::{HookCheck, HookCheckReason, LineageLink};
 
 /// The entity an erase leaves in a link in place of the erased one: the
 /// reserved all-zero id, which no row has and no id parse yields, spelled
@@ -48,72 +36,9 @@ fn erased_entity() -> EntityId {
     EntityId::from_bytes_unchecked([0; 16])
 }
 
-/// A link's entity as its hex ref, or
-/// [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY) for
-/// [`erased_entity`].
-mod link_entity {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    use crate::EntityId;
-    use crate::receipt::ERASED_CALL_IDENTITY;
-
-    pub(super) fn serialize<S: Serializer>(
-        entity: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        if *entity == super::erased_entity() {
-            serializer.serialize_str(ERASED_CALL_IDENTITY)
-        } else {
-            serializer.serialize_str(&entity.to_hex())
-        }
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        if text == ERASED_CALL_IDENTITY {
-            return Ok(super::erased_entity());
-        }
-        EntityId::from_hex(&text).map_err(serde::de::Error::custom)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct HookLineage {
     chain: Vec<LineageLink>,
-}
-
-/// Why a check was raised.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HookCheckReason {
-    /// The same hook fired again inside its own causal chain.
-    Cycle,
-    /// The chain reached [`MAX_LINEAGE_DEPTH`].
-    Depth,
-}
-
-impl HookCheckReason {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Cycle => "cycle",
-            Self::Depth => "depth",
-        }
-    }
-}
-
-/// An "is everything okay" check for the owner, with the chain shown.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HookCheck {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub binding: EntityId,
-    pub run_key: String,
-    pub reason: HookCheckReason,
-    pub chain: Vec<LineageLink>,
-    pub raised_at: u64,
 }
 
 /// The chain behind `row`, empty when no hook landed it.

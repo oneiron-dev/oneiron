@@ -29,80 +29,10 @@ const HANDLES: SideTable<(EntityId, EntityId), SnapshotHandleRow, Named> =
 /// The most kinds one handle pages.
 pub const SNAPSHOT_MAX_KINDS: usize = 16;
 
-/// One kind of row a snapshot pages, by the vault's type index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SnapshotKind {
-    /// CLAIM rows.
-    Claim,
-    /// TURN rows, each served with its projected text.
-    Turn,
-    /// MESSAGE rows.
-    Message,
-    /// NOTE rows.
-    Note,
-    /// The rows of one other entity type code.
-    Entity {
-        /// The entity type code.
-        entity_type: u8,
-    },
-}
-
-impl SnapshotKind {
-    fn entity_type(self) -> u8 {
-        match self {
-            Self::Claim => ENTITY_TYPE_CLAIM,
-            Self::Turn => ENTITY_TYPE_TURN,
-            Self::Message => ENTITY_TYPE_MESSAGE,
-            Self::Note => ENTITY_TYPE_NOTE,
-            Self::Entity { entity_type } => entity_type,
-        }
-    }
-}
-
-/// One `vault.snapshot.open` request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SnapshotOpenRequest {
-    /// The kinds the handle pages, in this order.
-    pub kinds: Vec<SnapshotKind>,
-    /// A read filter that narrows every page (it never widens the caller's
-    /// read).
-    #[serde(default)]
-    pub filter: Option<crate::memory::ReadFilterInput>,
-    /// The handle's lifetime in seconds: the owner's default when absent,
-    /// and never above the owner's most lifetime or past the caller's
-    /// credential's end.
-    #[serde(default)]
-    pub lifetime_secs: Option<u64>,
-}
-
-/// One open snapshot handle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SnapshotHandle {
-    /// The handle, for `vault.snapshot.page`.
-    pub handle: EntityId,
-    /// When it opened, on the vault's clock.
-    pub opened_at: u64,
-    /// When it ends, on the vault's clock.
-    pub expires_at: u64,
-    /// The kinds it pages, in order.
-    pub kinds: Vec<SnapshotKind>,
-}
-
-/// One `vault.snapshot.page` request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SnapshotPageRequest {
-    /// The handle `vault.snapshot.open` returned to this caller.
-    pub handle: EntityId,
-    /// The `next` of the page before; absent for the first page.
-    #[serde(default)]
-    pub cursor: Option<String>,
-    /// The most rows this page serves, at most the owner's rows per page.
-    #[serde(default)]
-    pub limit: Option<u32>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::snapshot::{
+    SnapshotHandle, SnapshotKind, SnapshotOpenRequest, SnapshotOversizedRow, SnapshotPageRequest,
+};
 
 /// One page of a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -117,16 +47,6 @@ pub struct SnapshotPage {
     pub next: Option<String>,
     /// The rows this handle has served over all its pages.
     pub served: u64,
-}
-
-/// A row a page does not serve because it is larger than the owner's bytes
-/// per page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SnapshotOversizedRow {
-    /// The row.
-    pub entity: EntityId,
-    /// Its size as a page row would encode it, in bytes.
-    pub bytes: u64,
 }
 
 /// One row of a snapshot page.

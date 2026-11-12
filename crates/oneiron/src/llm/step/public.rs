@@ -46,14 +46,6 @@ pub use crate::store::model_step_submission::{
 };
 const WORKER: &str = "model-step-door";
 
-impl Default for ModelStepRetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: (DREAMER_STEP_RETRY_BACKOFF_MS.len() + 1) as u8,
-        }
-    }
-}
-
 /// What `ai.steps.submit` takes: one step, and the live run a run's own
 /// actor submits it on. The vault owner names no run.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

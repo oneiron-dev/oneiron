@@ -48,20 +48,8 @@ impl FederationPayloadBytes {
     }
 }
 
-pub(super) fn reserve_memory(size: u64) -> crate::Result<MemoryLease> {
-    MachineMemory::process()
-        .lease(size, Instant::now())
-        .map_err(|refusal| {
-            let kind = match refusal {
-                MemoryRefusal::Floor { .. } => std::io::ErrorKind::OutOfMemory,
-                MemoryRefusal::WaitedOut { .. } => std::io::ErrorKind::WouldBlock,
-            };
-            crate::Error::Io(std::io::Error::new(
-                kind,
-                format!("federation payload memory: {refusal:?}"),
-            ))
-        })
-}
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::sync::federation_burst::payload::reserve_memory;
 
 impl Serialize for FederationPayloadBytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

@@ -184,12 +184,8 @@ pub struct OfficeBodyProposal {
     pub ask_refused: Vec<ProposalAskRefusal>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SettleVerdict {
-    Accept,
-    Reject,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::office_body::consent::SettleVerdict;
 
 /// One member fork as the review read it: the diff's `fork_head`.
 #[derive(Debug, Clone, PartialEq, Eq)]

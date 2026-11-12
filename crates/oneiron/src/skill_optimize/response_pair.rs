@@ -24,16 +24,8 @@ const RESPONSE_PAIR: SideTable<String, ResponsePairPick, Named> =
 /// Longest pair reference kept, as a blind preference bounds it.
 const MAX_PAIR_REF_BYTES: usize = 256;
 
-/// The owner's pick on one blind preference pair.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ResponsePairPick {
-    pub pair_ref: String,
-    pub preferred: PreferredResponse,
-    /// The person who picked, 32 hex.
-    pub by: String,
-    /// Unix seconds.
-    pub picked_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::response_pair::ResponsePairPick;
 
 /// Records the owner's pick on `pair_ref`, once.
 ///

@@ -172,12 +172,14 @@ pub(crate) use crate::ppr::project_weight::HUB_BELONGS_TO_LAMBDA;
 
 const HUB_MEMBERSHIP_WEIGHT: f32 = 0.05;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectRole {
-    Project,
-    Corpus,
-}
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::workspace_roster::project::invalid;
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::{
+    ProjectParentWitness, ProjectProofVersion, ProjectRole,
+};
+#[doc(hidden)]
+use oneiron_verb_wire::workspace_roster::project::{default_depth_limit, home_room_id};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -238,10 +240,6 @@ pub struct ProjectRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapper_task: Option<String>,
 }
-const fn default_depth_limit() -> u64 {
-    10
-}
-
 /// What dispatch reads of a project: its effective parents and the live
 /// policy depth row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,16 +268,6 @@ pub struct ProjectAuthority {
     pub roster: Option<BTreeSet<String>>,
 }
 
-/// One parent's head as a re-parenting state saw it (ARCH-0079 stacking):
-/// the state names it, and that head's leader sits on the state's board.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectParentWitness {
-    pub project: EntityId,
-    pub head: ProjectRevisionHash,
-    pub leader: EntityId,
-}
-
 /// What a PROJECT write did. Past the history budget an authenticated
 /// revision off the frozen lineage is held, never refused: the project keeps
 /// serving its frozen frontier, and the owner is asked (OF-520).
@@ -290,22 +278,6 @@ pub enum ProjectWriteOutcome {
     /// The revision is held beside the frozen frontier, and the project's
     /// history question is open for the owner.
     Held(ProjectHistoryOverBudget),
-}
-
-/// The challenge a project proof signs. A proof from before v3 carries no
-/// tag, and its challenge leaves the roster out.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectProofVersion {
-    #[default]
-    V2,
-    V3,
-}
-
-impl ProjectProofVersion {
-    fn is_v2(&self) -> bool {
-        *self == Self::V2
-    }
 }
 
 /// The holder signs the authority fields, its signing time and the anchor
@@ -530,17 +502,11 @@ pub struct ProjectRoomChange {
     pub at: u64,
 }
 
-pub(super) fn invalid() -> Error {
-    Error::InvalidConfig("invalid project or home room".into())
-}
 pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| invalid())
 }
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid())
-}
-fn home_room_id(project: EntityId) -> Result<EntityId> {
-    EntityId::derive(PROJECT_HOME_ROOM, &[project.as_bytes()])
 }
 /// The root project's home room id and body exactly as root seeding
 /// projects them ([`seed_root_project`]): the seeded house agent alone on

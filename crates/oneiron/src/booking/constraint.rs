@@ -37,12 +37,12 @@ mod parse;
 
 pub use self::parse::parse_constraint_with_backend;
 
-/// Wire version of [`ConstraintObject`]. A payload carrying any other version
-/// fails closed rather than being coerced.
-pub const CONSTRAINT_SCHEMA_VERSION: u16 = 1;
-
-/// Exclusive upper bound for a local-minute-of-day.
-const MINUTES_PER_DAY: u16 = 1440;
+#[doc(hidden)]
+pub use oneiron_verb_wire::booking::constraint::{
+    CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey, LocalMinuteWindow, RankedSlot,
+};
+#[doc(hidden)]
+use oneiron_verb_wire::booking::constraint::{MINUTES_PER_DAY, is_strictly_ascending};
 
 /// Hard ceiling on the caller-configured input bound. The dial is
 /// [`ConstraintParseConfig::max_input_bytes`]; this only stops a config from
@@ -65,12 +65,6 @@ const OFF_TOPIC_QUESTION: &str = "Is the text something other than a scheduling 
 
 /// The time one shipped off-topic read may take.
 const OFF_TOPIC_BUDGET: Duration = Duration::from_secs(30);
-
-/// Host-configured event type. Configuration for the type (duration, pool,
-/// flex policy) is ONE-1823's `EventTypeConfig`; the key alone lives here.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct EventTypeKey(pub String);
 
 /// Booking error taxonomy. `Display` and `std::error::Error` are implemented
 /// by hand so the derive list stays exactly the seam's five traits.
@@ -180,36 +174,6 @@ mod opt_time_range_serde {
     }
 }
 
-// -------------------------------------------------------------------------
-// Normalized constraint
-// -------------------------------------------------------------------------
-
-/// Weekday axis of a normalized constraint.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ConstraintWeekday {
-    Monday,
-    Tuesday,
-    Wednesday,
-    Thursday,
-    Friday,
-    Saturday,
-    Sunday,
-}
-
-/// Half-open local-minute-of-day window.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-pub struct LocalMinuteWindow {
-    /// Inclusive, `0..1440`.
-    pub start_minute: u16,
-    /// Exclusive, `start < end <= 1440`.
-    pub end_minute: u16,
-}
-
 /// The deterministic, serializable constraint. This is pure data: it holds no
 /// source text and no model explanation, so free text cannot ride it into a
 /// solve. An empty weekday or window vector means "no restriction on that
@@ -295,10 +259,6 @@ impl ConstraintObject {
     }
 }
 
-fn is_strictly_ascending<T: Ord>(values: &[T]) -> bool {
-    values.windows(2).all(|pair| pair[0] < pair[1])
-}
-
 /// What one bounded parse pass concluded. `OffTopic` is a terminal disposition:
 /// it yields one structured deflect, never a second turn. It is the off-topic
 /// question's answer through the host's ladder; a constraint is the extraction
@@ -325,15 +285,6 @@ pub struct SolveRequest {
     pub window: TimeRange,
     pub constraint: Option<ConstraintObject>,
     pub visitor_tz: String,
-}
-
-/// One slot the oracle chose. UTC times are the oracle's; no caller rewrites,
-/// rounds, or invents them.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
-pub struct RankedSlot {
-    pub start_utc: u64,
-    pub end_utc: u64,
-    pub rank: f32,
 }
 
 /// Exact host choice made by routing for one half-open slot. This travels to

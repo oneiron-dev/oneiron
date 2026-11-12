@@ -22,24 +22,10 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 /// The most refs one `vault.policy.preflight` request names.
 pub const POLICY_PREFLIGHT_MAX_REFS: usize = 100;
 
-/// The act a preflight asks about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyPreflightAct {
-    /// Reading each ref through the caller's own scoped read.
-    Read,
-}
-
-/// One `vault.policy.preflight` request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyPreflightRequest {
-    /// The refs, at most [`POLICY_PREFLIGHT_MAX_REFS`]; each is answered in
-    /// this order.
-    pub refs: Vec<EntityId>,
-    /// The act the caller means to take on them.
-    pub act: PolicyPreflightAct,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::policy_preflight::{
+    PolicyPreflightAct, PolicyPreflightRequest,
+};
 
 /// What the caller's read lets it do with one ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

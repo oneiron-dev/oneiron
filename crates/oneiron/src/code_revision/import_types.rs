@@ -37,24 +37,8 @@ pub use crate::store::code_import_manifest::CodeImportAnchor;
 
 pub use crate::store::code_revision_record::CodePathRetirement;
 
-/// The owner's explicit promotion request over one exact manifest: its
-/// digest, the exact checked Baseline revision, the review catalog the
-/// owner selects for this import and, when that catalog has lenses, the
-/// saved review verdict. An empty lens list is quorum 0 on this import
-/// alone: the owner's acceptance of the digest is the review (CALL F).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CodeImportAcceptance {
-    /// The manifest digest the owner accepts, 64 lower-hex.
-    pub manifest_digest: String,
-    /// The checked Baseline revision whose untouched bytes it admits.
-    pub baseline_revision: EntityId,
-    /// The manifest-review catalog the owner selects for this import.
-    pub catalog: LensCatalog,
-    /// The persisted `vault.critic.review` verdict over the manifest;
-    /// required when the catalog has lenses, unused when it has none.
-    pub review_verdict: Option<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::code_revision::import_types::CodeImportAcceptance;
 
 pub(crate) use crate::store::code_import_manifest::CodeImportManifest;
 

@@ -13,37 +13,8 @@ use crate::store::RetrievalState;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[repr(u8)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalIntent {
-    #[default]
-    Unknown = 0,
-    FactRetrieval = 1,
-    ComplexReasoning = 2,
-    ContextualSummarize = 3,
-    CreativeGeneration = 4,
-}
-
-impl RetrievalIntent {
-    /// Cheap fallback classifier. A host's semantic classification takes precedence.
-    pub fn classify(query: &str) -> Self {
-        let query = query.to_lowercase();
-        let words: Vec<_> = query.split(|c: char| !c.is_alphanumeric()).collect();
-        let has = |terms: &[&str]| words.iter().any(|word| terms.contains(word));
-        if has(&["summarize", "summary", "recap"]) {
-            Self::ContextualSummarize
-        } else if has(&["brainstorm", "imagine", "draft", "creative"]) {
-            Self::CreativeGeneration
-        } else if has(&["compare", "why", "relationship", "connect", "explain"]) {
-            Self::ComplexReasoning
-        } else {
-            Self::FactRetrieval
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::pipeline::retrieval_policy::RetrievalIntent;
 
 pub use crate::store::retrieval_policy::{
     RetrievalPolicyAction, RetrievalPolicyDecision, RetrievalPolicyEnvelope,

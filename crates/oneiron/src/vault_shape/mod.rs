@@ -73,28 +73,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Longest name, id or reference a row may carry, in bytes.
-pub const SHAPE_NAME_MAX_BYTES: usize = 256;
-
-/// An actor's approval ceiling as a seed states it: `auto` lands its writes,
-/// `proposed` holds them for review.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeCeiling {
-    Auto,
-    Proposed,
-}
-
-impl From<crate::store::agent_record::AgentCeiling> for ShapeCeiling {
-    fn from(ceiling: crate::store::agent_record::AgentCeiling) -> Self {
-        match ceiling {
-            crate::store::agent_record::AgentCeiling::Auto => Self::Auto,
-            crate::store::agent_record::AgentCeiling::Proposed => Self::Proposed,
-        }
-    }
-}
+#[doc(hidden)]
+use oneiron_verb_wire::vault_shape::invalid;
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::{SHAPE_NAME_MAX_BYTES, ShapeCeiling};
 
 impl From<ShapeCeiling> for crate::store::agent_record::AgentCeiling {
     fn from(ceiling: ShapeCeiling) -> Self {
@@ -498,8 +480,4 @@ impl ShapePlanRequest {
             (seed, None) => Ok(seed.clone()),
         }
     }
-}
-
-fn invalid(message: impl Into<String>) -> Error {
-    Error::InvalidConfig(message.into())
 }

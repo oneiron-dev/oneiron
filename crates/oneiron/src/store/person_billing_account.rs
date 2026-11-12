@@ -13,15 +13,8 @@ use crate::side_table::{self, Named, SideTable};
 pub(crate) const PERSON_BILLING_ACCOUNT: SideTable<EntityId, FiledBillingAccount, Named> =
     SideTable::new(&side_table::PERSON_BILLING_ACCOUNT);
 
-/// One PERSON's own billing account, as filed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FiledBillingAccount {
-    /// The account's reference, as the PERSON gave it.
-    pub account: String,
-    /// When it was filed, in the vault's recorded seconds.
-    pub filed_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::store::person_billing_account::FiledBillingAccount;
 
 /// An erase of `entity` takes the billing account it filed with it.
 pub(crate) fn erase_billing_account_actor_in_txn(

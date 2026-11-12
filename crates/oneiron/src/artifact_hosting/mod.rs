@@ -70,8 +70,8 @@ const ARTIFACT_ADMISSIONS: SideTable<
     crate::side_table::LegacyJson,
 > = SideTable::new(&side_table::ARTIFACT_PUBLISH_ADMISSION);
 
-const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
-const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+#[doc(hidden)]
+use oneiron_verb_wire::artifact_hosting::{ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHANNEL_PUBLISHED};
 
 /// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
 /// exactly as `artifact_pointer_key` used to spell it.
@@ -174,17 +174,6 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 /// The trailing stamp records a stale-taint publish override on either kind.
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
-
-impl ArtifactPointerChannel {
-    #[must_use]
-    const fn from_key_byte(byte: u8) -> Option<Self> {
-        match byte {
-            ARTIFACT_CHANNEL_PUBLISHED => Some(Self::Published),
-            ARTIFACT_CHANNEL_PREVIEW => Some(Self::Preview),
-            _ => None,
-        }
-    }
-}
 
 /// Immutable admission for a publish. The pointer can be repointed or removed,
 /// but the receipt of the earlier public effect must survive both actions.

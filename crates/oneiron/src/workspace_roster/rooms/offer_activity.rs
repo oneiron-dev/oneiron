@@ -38,14 +38,8 @@ pub(crate) use crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS;
 /// room-wide cards it mentions in: an array of offer ids.
 const OFFER_REFS: &str = "room_offer_refs";
 
-/// An advisory ballot on a room-wide card, from someone in its room.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferVoteRequest {
-    pub offer_id: String,
-    /// What the voter would have the host answer: join, or not now.
-    pub action: OfferAnswer,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::rooms::offer_activity::OfferVoteRequest;
 
 /// Whether `card`, a room-wide card open in store, has aged out at `now`:
 /// past its fixed deadline, or a day past its last engagement when it has

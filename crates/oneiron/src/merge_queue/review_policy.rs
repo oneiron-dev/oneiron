@@ -43,51 +43,14 @@ pub const REVIEW_POLICY_DEFAULT: QueueReviewDefault = QueueReviewDefault::LandOn
 /// row is present but does not read (Engine 10-22 03:5x).
 pub const REVIEW_POLICY_UNREADABLE: &str = "review_policy_unreadable";
 
-/// Today's distinct accepting critics a reviewed proposal needs.
-pub(crate) const DEFAULT_QUEUE_REVIEW_CRITICS: u32 = 2;
-/// Today's most critic votes one proposal keeps.
-pub(crate) const DEFAULT_QUEUE_REVIEW_VOTES: u32 = 64;
-
-const fn default_critics() -> u32 {
-    DEFAULT_QUEUE_REVIEW_CRITICS
-}
-
-const fn default_votes() -> u32 {
-    DEFAULT_QUEUE_REVIEW_VOTES
-}
-
-/// A review policy's limits: defaults the owner may override, never floors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct QueueReviewThresholds {
-    /// Distinct accepting critics a proposal needs. Default 2.
-    #[serde(default = "default_critics")]
-    pub critics: u32,
-    /// The most critic votes one proposal keeps under the policy. Default 64.
-    #[serde(default = "default_votes")]
-    pub votes: u32,
-}
-
-impl Default for QueueReviewThresholds {
-    fn default() -> Self {
-        Self {
-            critics: DEFAULT_QUEUE_REVIEW_CRITICS,
-            votes: DEFAULT_QUEUE_REVIEW_VOTES,
-        }
-    }
-}
-
-/// The vault's one review policy row: the lenses inherited queue work must
-/// pass, its limits, and who set it when.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct QueueReviewPolicy {
-    pub catalog: LensCatalog,
-    pub thresholds: QueueReviewThresholds,
-    /// The Owner or Granted agent who set it; `None` once that actor was
-    /// erased (FIX 8519): the policy stands, its setter no longer named.
-    pub set_by: Option<EntityId>,
-    /// When it was set, Unix seconds.
-    pub set_at: u64,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::merge_queue::review_policy::{
+    DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,
+};
+#[doc(hidden)]
+pub use oneiron_verb_wire::merge_queue::review_policy::{QueueReviewPolicy, QueueReviewThresholds};
+#[doc(hidden)]
+use oneiron_verb_wire::merge_queue::review_policy::{default_critics, default_votes};
 
 /// The singleton policy row. Key: ().
 const MERGE_QUEUE_REVIEW_POLICY: SideTable<(), QueueReviewPolicy, Named> =

@@ -77,33 +77,17 @@ macro_rules! mirror {
     };
 }
 
-/// The run scope, with a world named rather than referenced. The destination
-/// binds a local world by that name or refuses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentPackScope {
-    All,
-    Base,
-    World { name: String },
-}
-
-/// The agent's own approval ceiling: a self-limit, never a grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPackCeiling {
-    Auto,
-    Proposed,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::share_travel::agent_pack::{
+    AgentPackBudgetSplit, AgentPackCeiling, AgentPackCompaction, AgentPackDreaming,
+    AgentPackKnowledge, AgentPackMcp, AgentPackMemoryProfile, AgentPackOptionalMemory,
+    AgentPackOptionalMemoryProfile, AgentPackOutputDecay, AgentPackPolicy, AgentPackRefusal,
+    AgentPackRefusalLevel, AgentPackScope, AgentPackSkillCall, AgentPackSkillDependency,
+    AgentPackSkillFormat, AgentPackSkillRef, AgentPackSkillRole, AgentPackView,
+    AgentPackWakeCadence,
+};
 
 mirror!(AgentPackCeiling <=> AgentCeiling { Auto, Proposed });
-
-/// A code-mode MCP the agent asks for, by key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackMcp {
-    pub key: String,
-    pub min_version: Option<String>,
-}
 
 impl From<&McpRef> for AgentPackMcp {
     fn from(value: &McpRef) -> Self {
@@ -123,23 +107,7 @@ impl From<AgentPackMcp> for McpRef {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPackCompaction {
-    Engine,
-    Byoa,
-}
-
 mirror!(AgentPackCompaction <=> CompactionOwnership { Engine, Byoa });
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackBudgetSplit {
-    pub claims: f32,
-    pub turns: f32,
-    pub summaries: f32,
-    pub other: f32,
-}
 
 impl From<ContextBudgetSplit> for AgentPackBudgetSplit {
     fn from(value: ContextBudgetSplit) -> Self {
@@ -156,13 +124,6 @@ impl From<AgentPackBudgetSplit> for ContextBudgetSplit {
     fn from(value: AgentPackBudgetSplit) -> Self {
         Self::new(value.claims, value.turns, value.summaries, value.other)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackOutputDecay {
-    pub overview_after_turns: u64,
-    pub stub_after_turns: u64,
 }
 
 impl From<OutputDecayPolicy> for AgentPackOutputDecay {
@@ -183,26 +144,7 @@ impl From<AgentPackOutputDecay> for OutputDecayPolicy {
     }
 }
 
-/// The detail an optional recall reads at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPackView {
-    Minimal,
-    Standard,
-    Full,
-}
-
 mirror!(AgentPackView <=> FieldProfile { Minimal, Standard, Full });
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentPackOptionalMemory {
-    None,
-    Budget {
-        tokens: NonZeroU64,
-        view: AgentPackView,
-    },
-}
 
 impl From<OptionalMemory> for AgentPackOptionalMemory {
     fn from(value: OptionalMemory) -> Self {
@@ -226,13 +168,6 @@ impl From<AgentPackOptionalMemory> for OptionalMemory {
             },
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackOptionalMemoryProfile {
-    pub default: AgentPackOptionalMemory,
-    pub families: BTreeMap<String, AgentPackOptionalMemory>,
 }
 
 impl From<&OptionalMemoryProfile> for AgentPackOptionalMemoryProfile {
@@ -259,21 +194,6 @@ impl From<AgentPackOptionalMemoryProfile> for OptionalMemoryProfile {
                 .collect(),
         }
     }
-}
-
-/// The agent's context-window memory profile.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackMemoryProfile {
-    pub window_token_budget: u64,
-    pub budget_split: Option<AgentPackBudgetSplit>,
-    /// A compaction backend key the destination resolves in its own registry.
-    pub compaction_backend: String,
-    pub compaction: AgentPackCompaction,
-    pub hot_steps: Option<u64>,
-    pub output_decay: Option<AgentPackOutputDecay>,
-    pub verbatim_pins: Vec<String>,
-    pub optional_memory: Option<AgentPackOptionalMemoryProfile>,
 }
 
 impl From<&MemoryProfile> for AgentPackMemoryProfile {
@@ -306,23 +226,7 @@ impl From<AgentPackMemoryProfile> for MemoryProfile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPackDreaming {
-    Own,
-    Inherit,
-    Off,
-}
-
 mirror!(AgentPackDreaming <=> DreamingMode { Own, Inherit, Off });
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum AgentPackWakeCadence {
-    Companion { every_turns: Option<u64> },
-    Leader { every_turns: Option<u64> },
-    Worker,
-}
 
 impl From<AgentWakeCadence> for AgentPackWakeCadence {
     fn from(value: AgentWakeCadence) -> Self {
@@ -344,105 +248,13 @@ impl From<AgentPackWakeCadence> for AgentWakeCadence {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPackRefusalLevel {
-    None,
-    Voice,
-    Veto,
-    Full,
-}
-
 mirror!(AgentPackRefusalLevel <=> RefusalLevel { None, Voice, Veto, Full });
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackRefusal {
-    pub bond: Option<AgentPackRefusalLevel>,
-    pub logistics: Option<AgentPackRefusalLevel>,
-}
-
-impl From<RefusalDial> for AgentPackRefusal {
-    fn from(value: RefusalDial) -> Self {
-        Self {
-            bond: value.bond.map(Into::into),
-            logistics: value.logistics.map(Into::into),
-        }
-    }
-}
-
-impl From<AgentPackRefusal> for RefusalDial {
-    fn from(value: AgentPackRefusal) -> Self {
-        Self {
-            bond: value.bond.map(Into::into),
-            logistics: value.logistics.map(Into::into),
-        }
-    }
-}
-
-/// The configuration the agent asks for. Every field is a request the
-/// destination meets against its own grants; none confers authority.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackPolicy {
-    pub scope: AgentPackScope,
-    pub ceiling: AgentPackCeiling,
-    /// Connector names; the destination resolves its own.
-    pub connectors: Vec<String>,
-    pub code_mode_mcps: Vec<AgentPackMcp>,
-    pub model_tier: Option<String>,
-    pub memory_profile: Option<AgentPackMemoryProfile>,
-    pub dreaming: Option<AgentPackDreaming>,
-    pub dreaming_model: Option<String>,
-    pub wake_cadence: Option<AgentPackWakeCadence>,
-    pub refusal: Option<AgentPackRefusal>,
-    /// The models the agent runs on, each with when (FIX 4472); the
-    /// destination seats only those its own catalog serves.
-    pub models: Vec<AgentModel>,
-    pub compaction_model: Option<ModelId>,
-}
-
-/// How a travelling skill's source fields relate to its native metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPackSkillFormat {
-    Folder,
-    Native,
-}
-
-impl From<SkillPackageFormat> for AgentPackSkillFormat {
-    fn from(format: SkillPackageFormat) -> Self {
-        match format {
-            SkillPackageFormat::Folder => Self::Folder,
-            SkillPackageFormat::Native => Self::Native,
-        }
-    }
-}
 
 impl From<AgentPackSkillFormat> for SkillPackageFormat {
     fn from(format: AgentPackSkillFormat) -> Self {
         match format {
             AgentPackSkillFormat::Folder => Self::Folder,
             AgentPackSkillFormat::Native => Self::Native,
-        }
-    }
-}
-
-/// A skill's native role, carried without granting its authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPackSkillRole {
-    Knowledge,
-    Workflow,
-    Callable,
-}
-
-impl From<SkillRole> for AgentPackSkillRole {
-    fn from(role: SkillRole) -> Self {
-        match role {
-            SkillRole::Knowledge => Self::Knowledge,
-            SkillRole::Workflow => Self::Workflow,
-            SkillRole::Callable => Self::Callable,
         }
     }
 }
@@ -457,49 +269,12 @@ impl From<AgentPackSkillRole> for SkillRole {
     }
 }
 
-/// The executable call contract a callable skill carries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackSkillCall {
-    pub reference: String,
-    pub arguments: serde_json::Value,
-    pub returns: serde_json::Value,
-}
-
-impl From<&SkillCallContract> for AgentPackSkillCall {
-    fn from(call: &SkillCallContract) -> Self {
-        Self {
-            reference: call.reference.clone(),
-            arguments: call.arguments.clone(),
-            returns: call.returns.clone(),
-        }
-    }
-}
-
 impl From<AgentPackSkillCall> for SkillCallContract {
     fn from(call: AgentPackSkillCall) -> Self {
         Self {
             reference: call.reference,
             arguments: call.arguments,
             returns: call.returns,
-        }
-    }
-}
-
-/// A reference-free skill dependency: its id and version floor, never an
-/// entity ref (FIX 3276).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackSkillDependency {
-    pub skill_id: String,
-    pub min_version: Option<String>,
-}
-
-impl From<&SkillDependency> for AgentPackSkillDependency {
-    fn from(dependency: &SkillDependency) -> Self {
-        Self {
-            skill_id: dependency.skill_id.clone(),
-            min_version: dependency.min_version.clone(),
         }
     }
 }
@@ -511,23 +286,6 @@ impl From<AgentPackSkillDependency> for SkillDependency {
             min_version: dependency.min_version,
         }
     }
-}
-
-/// One `skills.json` row: a skill dependency and the native metadata its
-/// receiver needs, pinned by content hash (FIX 3276).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackSkillRef {
-    pub skill_id: String,
-    pub version: String,
-    pub min_version: Option<String>,
-    /// `canonical_skill_tree_hash` over the skill's files, lowercase hex.
-    pub content_hash: String,
-    pub format: AgentPackSkillFormat,
-    pub desc: String,
-    pub role: AgentPackSkillRole,
-    pub call: Option<AgentPackSkillCall>,
-    pub dependencies: Vec<AgentPackSkillDependency>,
 }
 
 /// One skill the agent depends on, with its body and native metadata.
@@ -689,15 +447,6 @@ impl AgentPackSkill {
         }
         Ok(())
     }
-}
-
-/// One selected piece of knowledge about the agent, as text. The destination
-/// mints it as a local claim with this agent as the subject.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentPackKnowledge {
-    pub predicate: String,
-    pub text: String,
 }
 
 /// `policy.md`.

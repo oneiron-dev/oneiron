@@ -17,15 +17,10 @@ use crate::dreamer_runner::{
 use crate::embed::PendingEmbedderBinding;
 use crate::{EntityId, Error, Result, Vault};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferPassRequest {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferPassRef {
-    pub attempt: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::offer_doors::{
+    OfferAnswerRequest, OfferPassRef, OfferPassRequest, OfferRef, OfferUndoReceipt, TrainingRunRef,
+};
 
 /// Completion is the actual host attempt's terminal state, not the presence
 /// of an offer: the skill may choose to raise none.
@@ -45,12 +40,6 @@ pub struct OfferListRequest {
     pub seat: Option<EvalSeat>,
     #[serde(default)]
     pub pending_only: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferRef {
-    pub offer: EntityId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -83,25 +72,6 @@ impl OfferAnswerReply {
         let staged = vault.embedder_binding_move(&answer.offer)?;
         Ok(Self { answer, staged })
     }
-}
-
-/// All five engine choices are served, not just the switch approval.
-/// A train yes records intent; the existing training-offer owner routes
-/// prepare and authorize its run and retain the separate result-swap choice.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferAnswerRequest {
-    pub offer: EntityId,
-    pub digest: String,
-    pub answer: OfferAnswer,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferUndoReceipt {
-    pub offer: EntityId,
-    pub at: u64,
-    pub restored_model: String,
 }
 
 /// The rows the offers and checks `views` serve were drafted and checked
@@ -268,13 +238,6 @@ pub fn undo(
         at: receipt.undone.map_or(receipt.at, |undo| undo.at),
         restored_model: receipt.previous.model.as_str().to_owned(),
     })
-}
-
-/// A training run, by id.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TrainingRunRef {
-    pub run: EntityId,
 }
 
 /// Cancels a staged trained embedder swap while its binding still waits or

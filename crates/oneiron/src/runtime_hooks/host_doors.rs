@@ -20,36 +20,10 @@ use super::{BudgetHit, InvocationId};
 
 pub use crate::compaction::host_request::{HostCompactRequest, HostCompactResult};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HostWakeKind {
-    Compaction,
-    SessionEnd,
-    Event,
-    Timer,
-}
-
-impl HostWakeKind {
-    fn trigger(self) -> crate::dreamer_wake::WakeTrigger {
-        use crate::dreamer_wake::WakeTrigger;
-        match self {
-            Self::Compaction => WakeTrigger::Compaction,
-            Self::SessionEnd => WakeTrigger::SessionEnd,
-            Self::Event => WakeTrigger::Event,
-            Self::Timer => WakeTrigger::Timer,
-        }
-    }
-}
-
-/// The trigger is nominal: Timer schedules its maintenance lanes in the
-/// same write as consolidation, rather than becoming a generic enqueue.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HostWakeRequest {
-    pub wake_kind: HostWakeKind,
-    /// The host's queue snapshot, carried to the hooks and the queued wake.
-    pub queue_head: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::runtime_hooks::host_doors::{
+    HostBudgetHitRequest, HostWakeKind, HostWakeRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HostWakeResult {
@@ -59,15 +33,6 @@ pub struct HostWakeResult {
     pub already_queued: bool,
     /// Timer only: every job the wake queued carries it as its run id, beneath `attempt`.
     pub request_id: Option<crate::dreamer_wake::NightStepRequestId>,
-}
-
-/// Names an existing durable spend scope. Its cap's policy is Suspend;
-/// neither the policy nor accounting can be changed by this notification.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HostBudgetHitRequest {
-    pub seat: String,
-    pub policy: BudgetExhaustionPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

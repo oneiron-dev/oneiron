@@ -69,15 +69,8 @@ impl BindingSource {
     }
 }
 
-/// The space move that re-embeds for a binding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BindingMoveLink {
-    pub candidate: String,
-    pub incumbent: SpaceRef,
-    /// The move's `started_at`: which move to that candidate it is.
-    pub started_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::embed::binding_move::{BindingMoveLink, BindingNotApplied};
 
 /// Where a staged binding stands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -95,19 +88,6 @@ pub enum BindingMoveState {
     NotApplied { at: u64, why: BindingNotApplied },
     /// The owner undid it after it applied: the binding it replaced serves again.
     Undone { at: u64, owner: SwitchOwner },
-}
-
-/// Why a staged binding never applied.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BindingNotApplied {
-    /// The owner undid the switch before it applied.
-    Cancelled,
-    /// The binding it expects to replace, or its trained run, changed since it was staged.
-    Stale,
-    /// The manifest's own checks refused it at the swap: its validation, or the teacher's
-    /// probe approval.
-    Refused { reason: String },
 }
 
 /// One owner-approved retrieval embedder binding, staged until its space move swaps in.

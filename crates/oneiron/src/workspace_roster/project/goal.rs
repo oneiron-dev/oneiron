@@ -61,35 +61,10 @@ fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> 
 #[cfg(test)]
 mod tests;
 
-/// A named observation that can be checked against receipts or a held-out trial.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalAxis {
-    pub name: String,
-    pub measure: String,
-    pub bound: String,
-}
-
-/// One tradeoff the human actually chose; the loop may propose, not invent, these.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalPreference {
-    pub prefer: String,
-    pub over: String,
-    pub reason: String,
-}
-
-/// A goal's soft exploration share, not a grant or a vault budget lease.
-/// Spend and the slice are counted in `unit`; a skill trial is charged
-/// against the slice only when its run's launch estimate is in that unit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GoalExplorationBudget {
-    pub max_spend: u64,
-    pub exploration_slice: u64,
-    pub unit: LeaseUnit,
-    pub human_minutes: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::goal::{
+    GoalAxis, GoalExplorationBudget, GoalPreference,
+};
 
 /// Typed data for a project's admission target; never an agent prompt or authority grant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

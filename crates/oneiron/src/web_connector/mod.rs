@@ -29,105 +29,18 @@ pub const WEB_CONNECTOR_EFFECTOR: &str = "connector:web";
 /// The environment variable that holds the deploy's backend Tavily key. The
 /// deploy sets it (from skate `tavily-api` for ours); the engine never logs it.
 pub const BACKEND_KEY_ENV: &str = "TAVILY_API_KEY";
-/// Results a search returns when its caller names no count.
-pub const DEFAULT_MAX_RESULTS: u32 = 5;
-/// The most results one search returns.
-pub const MAX_RESULTS_CAP: u32 = 10;
+#[doc(hidden)]
+pub use oneiron_verb_wire::web_connector::{
+    DEFAULT_MAX_RESULTS, MAX_RESULTS_CAP, WebFetchInput, WebFetchOutput, WebSearchHit,
+    WebSearchInput, WebSearchOutput,
+};
+
 /// A result snippet's length cap in characters, as Afterglow's `search_web` cuts it.
 pub const SNIPPET_MAX_CHARS: usize = 300;
 /// A fetched page's text cap in characters.
 pub const FETCH_CONTENT_MAX_CHARS: usize = 50_000;
 
 pub use crate::settings::web_connector::WebTool;
-
-/// `search`'s input: a bare query string, or this object.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WebSearchInput {
-    pub query: String,
-    /// At most [`MAX_RESULTS_CAP`]; [`DEFAULT_MAX_RESULTS`] when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_results: Option<u32>,
-}
-
-impl WebSearchInput {
-    /// A call's arguments read as a search: a bare string is the query. `None`
-    /// when they name no query.
-    #[must_use]
-    pub fn from_arguments(arguments: &Value) -> Option<Self> {
-        let input = match arguments {
-            Value::String(query) => Self {
-                query: query.clone(),
-                max_results: None,
-            },
-            other => serde_json::from_value(other.clone()).ok()?,
-        };
-        (!input.query.trim().is_empty()).then_some(input)
-    }
-
-    /// The result count this search asks for, within the cap.
-    #[must_use]
-    pub fn result_count(&self) -> u32 {
-        self.max_results
-            .unwrap_or(DEFAULT_MAX_RESULTS)
-            .clamp(1, MAX_RESULTS_CAP)
-    }
-}
-
-/// `fetch`'s input: a bare URL string, or this object.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WebFetchInput {
-    pub url: String,
-}
-
-impl WebFetchInput {
-    /// A call's arguments read as a fetch: a bare string is the URL. `None`
-    /// unless they name an `http` or `https` URL.
-    #[must_use]
-    pub fn from_arguments(arguments: &Value) -> Option<Self> {
-        let input = match arguments {
-            Value::String(url) => Self { url: url.clone() },
-            other => serde_json::from_value(other.clone()).ok()?,
-        };
-        let url = input.url.trim();
-        (url.starts_with("https://") || url.starts_with("http://")).then(|| Self {
-            url: url.to_owned(),
-        })
-    }
-}
-
-/// One search result, as Afterglow's `search_web` returns it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct WebSearchHit {
-    pub title: String,
-    pub url: String,
-    /// At most [`SNIPPET_MAX_CHARS`] characters.
-    pub snippet: String,
-}
-
-/// `search`'s output, as Afterglow's `search_web` returns it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct WebSearchOutput {
-    pub provider: String,
-    pub results: Vec<WebSearchHit>,
-    pub latency_ms: u64,
-    /// `None` when the call is unpriced.
-    pub cost_usd: Option<f64>,
-}
-
-/// `fetch`'s output: one page's readable text.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct WebFetchOutput {
-    pub provider: String,
-    pub url: String,
-    pub title: Option<String>,
-    /// At most [`FETCH_CONTENT_MAX_CHARS`] characters.
-    pub content: String,
-    pub latency_ms: u64,
-    /// `None` when the call is unpriced.
-    pub cost_usd: Option<f64>,
-}
 
 /// `text` cut to at most `max` characters, on a character boundary.
 #[must_use]

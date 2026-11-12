@@ -20,15 +20,8 @@ const RETIRE_VERB: &str = "vault.evals.cohorts.retire";
 /// Why an agent with no conferring Grant is refused.
 const NO_GRANT: &str = "no live Grant from a live owner names this agent and lists the verb";
 
-/// `vault.evals.cohorts.retire`'s input: the cohort and why. Who retires it,
-/// the exposure it retires on and the time come from the engine.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCohortRetireRequest {
-    pub cohort: EntityId,
-    /// Why the cohort retires: at most 512 bytes once trimmed.
-    pub reason: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::doors::cohort_retire::EvalCohortRetireRequest;
 
 /// `vault.evals.cohorts.retire` on the caller's handle: the retired cohort,
 /// with its receipt. A cohort that already retired comes back with its first

@@ -10,21 +10,12 @@ use serde::{Deserialize, Serialize};
 const BRIEF_KIND_CONTRACT: SideTable<(), BriefKindContract, LegacyJson> =
     SideTable::new(&side_table::NOTE_BRIEF_KIND_CONTRACT);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteExtractionDefault {
-    Disabled,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteContextDefault {
-    RelationshipScoped,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteRetentionDefault {
-    Durable,
-}
+#[doc(hidden)]
+use oneiron_verb_wire::note::kind_contract::invalid_contract;
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::kind_contract::{
+    NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
+};
 
 /// Policy seed shipped by the brief pack. These defaults do not grant sharing
 /// or extraction authority; those doors still require their ordinary grants.
@@ -57,12 +48,6 @@ impl BriefKindContract {
         }
         Ok(value)
     }
-}
-
-fn invalid_contract() -> Error {
-    Error::Record(RecordError::InvalidNoteBody(
-        "invalid blessed brief contract",
-    ))
 }
 
 impl Memory<'_> {

@@ -187,80 +187,13 @@ impl FeedSource {
     }
 }
 
-/// A position in one source. Two positions compare only within one source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Position {
-    /// A change log or settlement feed position: the hooks' own.
-    Fact(FactPosition),
-    /// An edge feed sequence.
-    Edges(u64),
-    /// A redirty feed sequence.
-    Redirty(u64),
-}
-
-/// What an entry says happened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedEntryKind {
-    /// An entity was created or written again: a create, an update, a supersession, a merge or
-    /// a tier move.
-    Edit,
-    /// An entity was deleted, redacted or forgotten: a source anything derived from it stands on
-    /// is withdrawn.
-    Withdrawal,
-    /// A proposal was settled.
-    Settlement,
-    /// An edge was added or removed.
-    Edge,
-    /// A TURN's words changed with no new version of its own: what was derived from them is
-    /// due again.
-    Redirty,
-}
-
-/// The write behind an entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedOp {
-    Create,
-    Update,
-    Supersede,
-    Merge,
-    TierTransition,
-    Delete,
-    Redact,
-    Forget,
-    Settle,
-    EdgeAdded,
-    EdgeRemoved,
-    Redirty,
-}
-
-impl FeedOp {
-    const fn of_change(op: ChangeOp) -> Self {
-        match op {
-            ChangeOp::Create => Self::Create,
-            ChangeOp::Update => Self::Update,
-            ChangeOp::Supersede => Self::Supersede,
-            ChangeOp::Merge => Self::Merge,
-            ChangeOp::TierTransition => Self::TierTransition,
-            ChangeOp::Delete => Self::Delete,
-            ChangeOp::Redact => Self::Redact,
-            ChangeOp::Forget => Self::Forget,
-        }
-    }
-
-    const fn kind(self) -> FeedEntryKind {
-        match self {
-            Self::Create | Self::Update | Self::Supersede | Self::Merge | Self::TierTransition => {
-                FeedEntryKind::Edit
-            }
-            Self::Delete | Self::Redact | Self::Forget => FeedEntryKind::Withdrawal,
-            Self::Settle => FeedEntryKind::Settlement,
-            Self::EdgeAdded | Self::EdgeRemoved => FeedEntryKind::Edge,
-            Self::Redirty => FeedEntryKind::Redirty,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feeds::{
+    FeedEdge, FeedEntryKind, FeedGap, FeedOp, FeedReadRequest, FeedResyncFrom, FeedStart,
+    FeedSubscriptionRequest,
+};
+#[doc(hidden)]
+use oneiron_verb_wire::feeds::{Position, invalid};
 
 /// A position in one source. A reader is given only opaque tokens its subscription sealed
 /// (`fp1.` and base64): they name no sequence and no time. Inside the engine a cursor keeps the
@@ -337,19 +270,6 @@ pub struct FeedSelector {
     pub predicates: Vec<String>,
 }
 
-/// Where a new subscription starts.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedStart {
-    /// After everything committed so far.
-    #[default]
-    Head,
-    /// Before the oldest row each source still holds.
-    Beginning,
-}
-
 /// A request to subscribe.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -373,32 +293,6 @@ pub struct FeedSubscription {
     pub created_at: u64,
     /// Each source's cursor, one sealed token per source in selector order.
     pub cursors: Vec<FeedPosition>,
-}
-
-/// A request to read a subscription's next page.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FeedReadRequest {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub subscription: EntityId,
-    /// Entries to return from each source, at most [`FEED_READ_MAX_LIMIT`];
-    /// [`FEED_READ_DEFAULT_LIMIT`] when absent.
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-/// An edge an entry names.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FeedEdge {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub source: EntityId,
-    /// The edge kind's snake_case name.
-    pub kind: String,
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub target: EntityId,
 }
 
 /// One change a subscriber may see.
@@ -450,20 +344,6 @@ pub enum FeedRead {
     Gap(FeedGap),
 }
 
-/// The typed gap answer: resync, then rebuild from a snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FeedGap {
-    pub resync_from: FeedResyncFrom,
-}
-
-/// Where a reader past a gap rebuilds what it follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedResyncFrom {
-    /// A snapshot read of the vault, taken after [`Vault::feed_resync`].
-    Snapshot,
-}
-
 /// A request to move a subscription's cursors.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -474,15 +354,6 @@ pub struct FeedAckRequest {
     /// One sealed token per source to move to, from this subscription's pages. A position at or
     /// before the cursor moves nothing, and still refreshes it.
     pub through: Vec<FeedPosition>,
-}
-
-/// A request naming one of the caller's subscriptions: to end it, or to resync it past a gap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FeedSubscriptionRequest {
-    #[serde(with = "crate::serialize::entity_ref")]
-    #[schemars(with = "String")]
-    pub subscription: EntityId,
 }
 
 /// The stored subscription.
@@ -1771,8 +1642,4 @@ fn takes_predicate(selector: &FeedSelector, entry: &FeedEntry, body: &[u8]) -> b
             .iter()
             .any(|glob| crate::runtime_hooks::glob_match(glob, &claim.predicate))
     })
-}
-
-fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(reason.to_owned())
 }

@@ -1,0 +1,55 @@
+//! Moved from `crates/oneiron/src/vault_shape/channel.rs` (lib split W1: wire types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use crate::channel_identity::binding::ChannelIdentityFulfillment;
+use crate::channel_identity::custody::DelegatedGrant;
+use crate::channel_identity::custody::DelegatedGrantScope;
+use crate::channel_identity::lifecycle::ChannelIdentityState;
+use crate::vault_shape::apply::ShapeItemState;
+use crate::vault_shape::invalid;
+use oneiron_authority::channel_identity_shape::SelfHeldShape;
+use oneiron_base::error::Result;
+use oneiron_contracts::entity_id::EntityId;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Serialize;
+
+/// Who holds the address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "held", rename_all = "snake_case")]
+pub enum ShapeChannelCustody {
+    /// The vault holds it, in one of the self-held shapes.
+    SelfHeld { shape: ShapeSelfHeld },
+    /// A member's mailbox granted through a custody record, by the record's
+    /// name, with the scopes the grant covers.
+    Delegated {
+        custody_record_ref: String,
+        scopes: Vec<ShapeMailScope>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeSelfHeld {
+    DedicatedAddress,
+    DedicatedHandle,
+    SharedPresence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum ShapeMailScope {
+    #[serde(rename = "mail.read")]
+    MailRead,
+    #[serde(rename = "mail.metadata")]
+    MailMetadata,
+    #[serde(rename = "mail.send")]
+    MailSend,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeChannelFulfillment {
+    Api,
+    Manual,
+    Review,
+}

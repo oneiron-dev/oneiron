@@ -22,10 +22,10 @@ use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_tx
 use crate::side_table::{self, Named, SideTable};
 use crate::{Vault, WriteActor};
 
-/// The share a pack gives worlds other than base while the owner has set
-/// none: fiction takes at most half, so it never crowds base reality out
-/// (ARCH-0004 / ARCH-0022).
-pub const DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION: f32 = 0.5;
+#[doc(hidden)]
+pub use oneiron_verb_wire::settings::non_base_world_claim_fraction::{
+    DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION, NonBaseWorldClaimFraction,
+};
 
 /// The read verb's name, as a refusal names it.
 const READ_VERB: &str = "vault.settings.non_base_world_claim_fraction";
@@ -36,46 +36,6 @@ const SET_VERB: &str = "vault.settings.non_base_world_claim_fraction.set";
 /// The owner's fraction. Key: ().
 const FRACTION: SideTable<(), NonBaseWorldClaimFraction, Named> =
     SideTable::new(&side_table::NON_BASE_WORLD_CLAIM_FRACTION);
-
-/// The non-base world claim fraction: `vault.settings.non_base_world_claim_fraction`'s
-/// answer, and `.set`'s input and answer.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NonBaseWorldClaimFraction {
-    /// The most of a context pack's claims that worlds other than base may
-    /// hold, from 0 (base reality alone) to 1 (no cap): a partitioned pack
-    /// keeps at most `floor(fraction times its emitted claims)` of them.
-    pub fraction: f32,
-}
-
-impl NonBaseWorldClaimFraction {
-    /// The fraction while the owner has set none.
-    pub const DEFAULT: Self = Self {
-        fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
-    };
-
-    /// Refuses a fraction below 0, above 1, or not a number.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::InvalidConfig`] naming the fraction.
-    pub fn validate(self) -> Result<()> {
-        if (0.0..=1.0).contains(&self.fraction) {
-            Ok(())
-        } else {
-            Err(Error::InvalidConfig(format!(
-                "the non-base world claim fraction must be from 0 to 1, not {}",
-                self.fraction
-            )))
-        }
-    }
-}
-
-impl Default for NonBaseWorldClaimFraction {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
 
 /// The fraction in `txn`: the owner's row, or the default while there is none.
 fn fraction_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<NonBaseWorldClaimFraction> {

@@ -5,29 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Whether a copy carries its vault refs. An absent choice, `{}` and
-/// `{"refs": "preserve"}` all make today's copy.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-pub struct CopyTravelChoice {
-    /// What happens to the copy's vault ref slots.
-    #[serde(default)]
-    pub refs: CopyRefs,
-}
-
-/// `Preserve` copies the vault refs as today. `Omit` is the user's explicit
-/// request for a lossy copy: its typed ref slots are dropped, with
-/// copy-local labels where a handle is needed.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum CopyRefs {
-    #[default]
-    Preserve,
-    Omit,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::share_travel::copy::{CopyRefs, CopyTravelChoice};
 
 /// The ref choice a copy runs under; no choice is `Preserve`.
 #[must_use]

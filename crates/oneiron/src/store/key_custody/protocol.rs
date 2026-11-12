@@ -252,40 +252,8 @@ pub struct ResidenceCommit {
     pub operation_id: [u8; 32],
 }
 
-/// A custody position in an ack: vault (64 hex), namespace (32 hex), writer
-/// epoch, log sequence number and tip (64 hex).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AckPosition {
-    pub vault: String,
-    pub namespace: String,
-    pub epoch: u64,
-    pub seq: u64,
-    pub tip: String,
-}
-
-impl AckPosition {
-    pub fn of(position: &CustodyPosition) -> Self {
-        Self {
-            vault: hex(position.vault.as_bytes()),
-            namespace: hex(position.namespace.as_bytes()),
-            epoch: position.epoch.get(),
-            seq: position.seq,
-            tip: hex(&position.tip),
-        }
-    }
-
-    /// The position this names; `None` when a field does not parse.
-    pub fn position(&self) -> Option<CustodyPosition> {
-        Some(CustodyPosition {
-            vault: CustodyVaultId::from_bytes(hex_decode(&self.vault)?.try_into().ok()?),
-            namespace: CustodyNamespace::from_bytes(hex_decode(&self.namespace)?.try_into().ok()?),
-            epoch: CustodyEpoch(self.epoch),
-            seq: self.seq,
-            tip: hex_decode(&self.tip)?.try_into().ok()?,
-        })
-    }
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::store::key_custody::protocol::AckPosition;
 
 /// What a target did with a batch.
 #[derive(Clone, Debug, PartialEq, Eq)]

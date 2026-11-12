@@ -3,25 +3,10 @@ use super::*;
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 
-/// One real scheduler check. Reads of this receipt never run the scheduler.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct WakeCadenceReceipt {
-    pub sequence: u64,
-    pub observed_at: u64,
-    /// The deadline the preceding check armed, if any.
-    pub previous_due_at: Option<u64>,
-    pub boundary_reached: bool,
-    /// Sticky across later checks, so child completions cannot hide a boundary.
-    pub last_boundary_at: Option<u64>,
-    pub idle: WakeIdleState,
-    pub decision: WakePolicyDecision,
-    pub wake: Option<EntityId>,
-    pub processed_change_id: Option<[u8; 16]>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WakeCadenceRequest {}
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_wake::policy::observation::{
+    WakeCadenceReceipt, WakeCadenceRequest,
+};
 
 /// The policy, durable decision and unconsumed recipe ranges in one snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

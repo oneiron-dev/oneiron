@@ -79,11 +79,8 @@ impl BoardLegend {
     }
 }
 
-/// A plugin-facing budget policy name resolved through the frame-owned closed
-/// mapping [`section_policy_for_budget_ref`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct BudgetPolicyRef(pub String);
+#[doc(hidden)]
+pub use oneiron_verb_wire::context_board::frame::BudgetPolicyRef;
 
 /// Trusted harness/owner budget inputs. Never derived from claim content,
 /// board rows, or agent-written state.

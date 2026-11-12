@@ -15,19 +15,13 @@ use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::{Error, Result, Vault};
 
-const DAY: u64 = 24 * 60 * 60;
-
-/// How long retained federation work waits for its turn unless the owner
-/// sets another wait: a week.
-pub const FEDERATION_BURST_WAIT_SECS: u64 = 7 * DAY;
-
-/// How long a retained maintenance operation waits for its turn unless the
-/// owner sets another wait: a week.
-pub const MAINTENANCE_INGEST_WAIT_SECS: u64 = 7 * DAY;
-
-/// How long a held facet stamp waits for its row unless the owner sets
-/// another wait: 30 days, the hold the stamps always had.
-pub const FACET_STAMP_WAIT_SECS: u64 = 30 * DAY;
+#[doc(hidden)]
+use oneiron_verb_wire::sync::federation_burst::schedule::DAY;
+#[doc(hidden)]
+pub use oneiron_verb_wire::sync::federation_burst::schedule::{
+    FACET_STAMP_WAIT_SECS, FEDERATION_BURST_WAIT_SECS, MAINTENANCE_INGEST_WAIT_SECS,
+    RetainedWorkQueue,
+};
 
 /// The owner's wait for one queue, in seconds (u64 big-endian).
 const WAIT: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_RETAINED_WORK_WAIT);
@@ -35,40 +29,6 @@ const WAIT: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_R
 /// The caller one queue served last, so the next pass starts after it.
 const CURSOR: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RETAINED_WORK_CURSOR);
-
-/// A queue of retained peer work the one schedule serves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RetainedWorkQueue {
-    /// Deferred and isolated federation updates and deferred selector reads.
-    /// A caller is one peer under one selector.
-    FederationBurst,
-    /// Signed maintenance operations past their signer's share of a quota
-    /// window. A caller is one signer.
-    MaintenanceIngest,
-    /// Facet stamps held ahead of their rows. A caller is one sender's lane.
-    FacetStamp,
-}
-
-impl RetainedWorkQueue {
-    /// The queue's stable code: its key in the wait and cursor tables.
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::FederationBurst => "federation_burst",
-            Self::MaintenanceIngest => "maintenance_ingest",
-            Self::FacetStamp => "facet_stamp",
-        }
-    }
-
-    /// The wait the queue's work has when the owner sets none.
-    pub const fn default_wait_secs(self) -> u64 {
-        match self {
-            Self::FederationBurst => FEDERATION_BURST_WAIT_SECS,
-            Self::MaintenanceIngest => MAINTENANCE_INGEST_WAIT_SECS,
-            Self::FacetStamp => FACET_STAMP_WAIT_SECS,
-        }
-    }
-}
 
 /// One retained item as the schedule sees it.
 pub(crate) struct Waiting<T> {

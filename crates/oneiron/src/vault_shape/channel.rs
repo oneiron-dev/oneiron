@@ -34,27 +34,10 @@ pub struct ShapeChannelProvision {
     pub fulfillment: ShapeChannelFulfillment,
 }
 
-/// Who holds the address.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "held", rename_all = "snake_case")]
-pub enum ShapeChannelCustody {
-    /// The vault holds it, in one of the self-held shapes.
-    SelfHeld { shape: ShapeSelfHeld },
-    /// A member's mailbox granted through a custody record, by the record's
-    /// name, with the scopes the grant covers.
-    Delegated {
-        custody_record_ref: String,
-        scopes: Vec<ShapeMailScope>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeSelfHeld {
-    DedicatedAddress,
-    DedicatedHandle,
-    SharedPresence,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::vault_shape::channel::{
+    ShapeChannelCustody, ShapeChannelFulfillment, ShapeMailScope, ShapeSelfHeld,
+};
 
 impl From<ShapeSelfHeld> for SelfHeldShape {
     fn from(shape: ShapeSelfHeld) -> Self {
@@ -64,16 +47,6 @@ impl From<ShapeSelfHeld> for SelfHeldShape {
             ShapeSelfHeld::SharedPresence => Self::SharedPresence,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ShapeMailScope {
-    #[serde(rename = "mail.read")]
-    MailRead,
-    #[serde(rename = "mail.metadata")]
-    MailMetadata,
-    #[serde(rename = "mail.send")]
-    MailSend,
 }
 
 impl From<ShapeMailScope> for DelegatedGrantScope {
@@ -141,14 +114,6 @@ impl ShapeChannelBinding {
             Self::Vault { vault_id } => Ok(ChannelIdentityBinding::vault(*vault_id)),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeChannelFulfillment {
-    Api,
-    Manual,
-    Review,
 }
 
 impl From<ShapeChannelFulfillment> for ChannelIdentityFulfillment {

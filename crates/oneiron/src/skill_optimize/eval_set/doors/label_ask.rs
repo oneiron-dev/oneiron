@@ -28,18 +28,8 @@ const ASK_VERB: &str = "vault.evals.labels.ask";
 /// Why an agent with no conferring Grant is refused.
 const NO_GRANT: &str = "no live Grant from a live owner names this agent and lists the verb";
 
-/// `vault.evals.labels.ask`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalLabelAskRequest {
-    /// The pending stock-switch training offer that waits on the label.
-    pub offer: EntityId,
-    /// The case the responsible owner is asked to label.
-    pub case: EntityId,
-    /// The two answers the owner picks between.
-    pub option_a: String,
-    pub option_b: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::eval_set::doors::label_ask::EvalLabelAskRequest;
 
 /// The decision an ask on `offer` names: what `vault.evals.labels.blocked`
 /// filters on and `vault.evals.labels.pick` answers.

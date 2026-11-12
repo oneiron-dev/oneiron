@@ -22,15 +22,8 @@ use crate::federation::{Scope, grant_scope, holds_system_agent_grant, steward_re
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault};
 
-/// The next observation page, bounded by the effective snapshot page settings.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrengthObservationsPageRequest {
-    /// The preceding page's opaque cursor; absent on the first page.
-    pub cursor: Option<String>,
-    /// The most claims served, capped at the effective page row bound.
-    pub limit: Option<u32>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::strength_observations::StrengthObservationsPageRequest;
 
 /// One observation page and the policy and config it was read under.
 #[derive(Debug, Clone, Serialize, Deserialize)]

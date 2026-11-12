@@ -19,14 +19,10 @@ const RESERVATION: SideTable<([u8; 16], EntityId), ResearchReservation, Named> =
 /// The refusal of a reservation the campaign's lease has no room for.
 const LEASE_FULL: &str = "the reservation exceeds the campaign's lease";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResearchReservationLine {
-    /// Token-denominated loop work, by purpose.
-    Work { purpose: RsiSpendPurpose },
-    /// Exposure-denominated exploration.
-    Exploration,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::research::budget::{
+    ResearchBudgetRead, ResearchReservationLine,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,31 +34,6 @@ pub struct ResearchReservation {
     pub attempt: Option<AttemptId>,
     pub settlement: Option<RsiSettlement>,
     pub reserved_at: u64,
-}
-
-/// The campaign's lease and what it has committed against it.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ResearchBudgetRead {
-    pub max_units: u64,
-    pub exploration_units: u64,
-    pub work_reserved: u64,
-    pub work_spent: u64,
-    pub exploration_reserved: u64,
-    pub exploration_spent: u64,
-}
-
-impl ResearchBudgetRead {
-    fn work_committed(&self) -> u64 {
-        self.work_reserved.saturating_add(self.work_spent)
-    }
-
-    fn exploration_committed(&self) -> u64 {
-        self.exploration_reserved
-            .saturating_add(self.exploration_spent)
-    }
 }
 
 fn rsi_error(error: RsiBudgetError) -> Error {

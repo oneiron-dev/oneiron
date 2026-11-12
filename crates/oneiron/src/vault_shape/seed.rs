@@ -190,6 +190,5 @@ impl Vault {
     }
 }
 
-pub(super) fn hex(bytes: &[u8]) -> String {
-    bytes_to_hex_lower(bytes)
-}
+#[doc(hidden)]
+pub(super) use oneiron_verb_wire::vault_shape::seed::hex;

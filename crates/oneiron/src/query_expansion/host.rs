@@ -7,25 +7,12 @@ use super::{
 };
 use crate::memory::{ClaimView, Memory, MemoryResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydeHostConfig {
-    pub expander: String,
-    pub grounding: GroundingContext,
-    pub options: HydeOptions,
-}
-
-/// A null binding disables expansion and cancels unanswered work. Host state lasts one serve.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydeHostConfigureRequest {
-    pub binding: Option<HydeHostConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HydeHostConfiguration {
-    pub binding: Option<HydeHostConfig>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::query_expansion::host::{
+    HydeHostAnswer, HydeHostCompleteRequest, HydeHostConfig, HydeHostConfiguration,
+    HydeHostConfigureRequest, HydeHostPendingRequest, HydeHostReceipt, HydeHostReceiptRequest,
+    HydeHostStatus,
+};
 
 /// An admitted candidate at the words assessed by the engine. Claim values use the normal
 /// redacted ClaimView projection, not a raw storage body.
@@ -80,58 +67,4 @@ pub struct HydeHostWork {
     pub requested_at_ms: u64,
     pub deadline_at_ms: Option<u64>,
     pub input: HydeHostInput,
-}
-
-/// Both halves of HydeExpander have a typed answer. A host failure refuses recall, never
-/// substitutes generated text for evidence.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "stage", rename_all = "snake_case")]
-pub enum HydeHostAnswer {
-    Expansion { expansion: HydeExpansion },
-    Evidence { verdict: EvidenceVerdict },
-    Failed { reason: String },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydeHostCompleteRequest {
-    pub request_id: String,
-    pub answer: HydeHostAnswer,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydeHostReceiptRequest {
-    pub request_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HydeHostPendingRequest {
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HydeHostStatus {
-    Pending,
-    Expired,
-    Completed,
-    Failed,
-    DiscardedDeadline,
-    Cancelled,
-}
-
-/// Completion records arrival, not application. A late answer is explicitly discarded.
-/// No completion writes a claim or mutates an already delivered MemoryPack.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HydeHostReceipt {
-    pub request_id: String,
-    pub expander: String,
-    pub requested_at_ms: u64,
-    pub deadline_at_ms: Option<u64>,
-    pub completed_at_ms: Option<u64>,
-    pub status: HydeHostStatus,
-    pub received_bytes: usize,
 }
