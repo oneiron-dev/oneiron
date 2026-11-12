@@ -506,6 +506,15 @@ impl NoVouch {
                 &self.fold.world_privacy(*world),
             );
         }
+        // A view that holds some agent world edits refused reads their worlds
+        // under the same cap, with those edits undone in both folds (FIX 23218).
+        let fresh_edits = fold
+            .agent_world_undo
+            .edits()
+            .filter(|edit| self.fresh(fold, edit))
+            .copied()
+            .collect();
+        fold.agent_world_undo.cap(&self.fold, fresh_edits);
         let fresh_grants: BTreeSet<_> = fold
             .grant_travel
             .iter()
