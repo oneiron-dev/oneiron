@@ -43,6 +43,7 @@ pub mod retrieval_policy_default_floor;
 pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;
+pub mod skill_hub_restore;
 pub mod skill_package;
 pub mod skill_read_hold;
 pub mod source_audience;
