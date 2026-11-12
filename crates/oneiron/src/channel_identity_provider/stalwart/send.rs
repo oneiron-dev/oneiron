@@ -337,7 +337,10 @@ impl StalwartClient {
     /// since an unanswered submission may still be landing and Sent
     /// membership or a cleared `$draft` can be set by any client: every other
     /// answer, an ambiguous Message-ID and a failed read are `Unknown`
-    /// (REVIEW-5934).
+    /// (REVIEW-5934). Each of its reads is bounded by [`SENT_LOOKUP_TIMEOUT`],
+    /// as the sent lookup's are (FIX 22349): a read that does not answer in
+    /// time is a failed read, so a stalled server holds the replay pass for
+    /// one bound per read, not the client's whole request bound.
     fn read_back(&self, mailbox: &StalwartMailbox, message_id: &str, to: &str) -> DeliveryReadBack {
         self.read_back_checked(mailbox, message_id, to)
             .unwrap_or(DeliveryReadBack::Unknown)
@@ -349,12 +352,13 @@ impl StalwartClient {
         message_id: &str,
         to: &str,
     ) -> Result<DeliveryReadBack> {
-        let query = self.call(
+        let query = self.call_within(
             "Email/query",
             json!({
                 "accountId": &mailbox.account_id,
                 "filter": {"header": ["Message-ID", message_id]}, "limit": 2
             }),
+            SENT_LOOKUP_TIMEOUT,
         )?;
         let email_id = match array(&query, "ids")?.as_slice() {
             [id] => id
@@ -363,22 +367,24 @@ impl StalwartClient {
                 .to_owned(),
             _ => return Ok(DeliveryReadBack::Unknown),
         };
-        let submissions = self.call(
+        let submissions = self.call_within(
             "EmailSubmission/query",
             json!({
                 "accountId": &mailbox.account_id, "filter": {"emailIds": [&email_id]}
             }),
+            SENT_LOOKUP_TIMEOUT,
         )?;
         let ids = array(&submissions, "ids")?;
         if ids.is_empty() {
             return Ok(DeliveryReadBack::Unknown);
         }
-        let held = self.call(
+        let held = self.call_within(
             "EmailSubmission/get",
             json!({
                 "accountId": &mailbox.account_id, "ids": ids,
                 "properties": ["undoStatus", "envelope"]
             }),
+            SENT_LOOKUP_TIMEOUT,
         )?;
         // The envelope this sink submits: the mailbox's own address to the
         // frozen recipient alone. Another client's submission of the same
