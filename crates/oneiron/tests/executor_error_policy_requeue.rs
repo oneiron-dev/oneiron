@@ -47,7 +47,7 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 
 /// A temporary vault on `clock`, with a process-memory device keystore and its embedded owner,
 /// as the WAKE-D1 fixture opens one.
-fn open_vault(clock: &ManualClock) -> Result<(tempfile::TempDir, Vault)> {
+fn open_vault(clock: &Arc<ManualClock>) -> Result<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
