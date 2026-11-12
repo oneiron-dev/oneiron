@@ -151,6 +151,11 @@ impl Vault {
             if owner.revalidate_in_txn(self, txn)? != actor {
                 return Err(invalid("proposal actor is not the authenticated owner"));
             }
+            // The claim is about the sitting, a SESSION, which has no
+            // substrate facet (only a PERSON's put mints one), and a CLAIM's
+            // birth needs a live FACET (#4389): it is born in the vault
+            // default facet.
+            body.scope_facet = self.default_facet_in_txn(&*txn)?;
             let now = self.now_recorded_at();
             self.put_reserved_claim_in_txn(
                 txn,
