@@ -542,6 +542,24 @@ pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
 fn home_room_id(project: EntityId) -> Result<EntityId> {
     EntityId::derive(PROJECT_HOME_ROOM, &[project.as_bytes()])
 }
+/// The root project's home room id and body exactly as root seeding
+/// projects them ([`seed_root_project`]): the seeded house agent alone on
+/// the roster, claims scoped to the root, no origin card. `None` when the
+/// agent manifest names no seeded house agent.
+pub(crate) fn seeded_root_home_room(root: EntityId) -> Result<Option<(EntityId, Vec<u8>)>> {
+    let Some(leader) = crate::agent_def::legacy_logical_id_row(ROOT_SEED_LEADER)? else {
+        return Ok(None);
+    };
+    let room = ProjectRoom {
+        schema_version: 1,
+        kind: "channel".into(),
+        project_id: root.to_hex(),
+        member_ids: vec![leader.to_hex()],
+        claims_scope_ref: root.to_hex(),
+        origin: None,
+    };
+    Ok(Some((home_room_id(root)?, encode(&room)?)))
+}
 pub(super) fn record<T: for<'a> Deserialize<'a>>(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
