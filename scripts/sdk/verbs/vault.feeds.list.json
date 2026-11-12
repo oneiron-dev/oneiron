@@ -5,6 +5,7 @@
   "output": "Vec<crate::feeds::FeedSubscription>",
   "call": "memory.feed_subscriptions()?",
   "scope": "Read",
+  "act_class": "read",
   "openapi": true,
   "section": false
 }

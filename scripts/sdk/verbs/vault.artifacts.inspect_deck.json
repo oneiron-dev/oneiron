@@ -8,6 +8,7 @@
   "output": "crate::blob_artifact::DeckInspectionView",
   "call": "memory.artifacts_inspect_deck(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

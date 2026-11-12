@@ -5,6 +5,7 @@
   "output": "crate::LlmResponse",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.model.generate\", &input)?",
   "scope": "Read",
+  "act_class": "reversible_work",
   "admission": {
     "lane_record_scope": true
   },

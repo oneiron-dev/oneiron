@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchResult>",
   "call": "memory.query_vector(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true,
     "validate": "input.validate()?;"

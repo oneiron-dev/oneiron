@@ -9,6 +9,7 @@
   "output": "Vec<crate::memory::CommitOutcome>",
   "call": "memory.commit_scoped(&input.claims, false)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "claim_record_scope": true
   },

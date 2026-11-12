@@ -1,7 +1,7 @@
 //! Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the
 //! member's log and the asking side's receipt, each in one write transaction
-//! at the vault's store clock. Until PR 3 calls the log writers, only this
-//! door does. `tests/inquiry_asking_side.rs` (PR 4) ends a TASK through
+//! at the vault's store clock; the member side (PR 3) calls the log writers
+//! itself. `tests/inquiry_asking_side.rs` (PR 4) ends a TASK through
 //! [`cancel_task`] and counts the held answers through
 //! [`held_inquiry_answer_count`].
 
@@ -97,6 +97,33 @@ pub fn erase_actor_in_inquiry_tables(vault: &Vault, actor: &EntityId) -> Result<
     let mut ran = 0;
     for (decl, scrub) in crate::side_table::actor_scrubs() {
         if INQUIRY_TABLES.contains(&decl.name) {
+            scrub(vault, &mut wtxn, actor)?;
+            ran += 1;
+        }
+    }
+    wtxn.commit()?;
+    Ok(ran)
+}
+
+/// Runs the actor scrub each of `tables` registers, in the order of
+/// `tables` and in one writer, as an erase and a restore's rerun run them
+/// (`tests/inquiry_member_answer.rs`, INQUIRE-1 PR 3). Returns how many of
+/// `tables` registered one.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn erase_actor_in_tables_in_order(
+    vault: &Vault,
+    actor: &EntityId,
+    tables: &[&str],
+) -> Result<usize> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut ran = 0;
+    for name in tables {
+        if let Some((_, scrub)) =
+            crate::side_table::actor_scrubs().find(|(decl, _)| decl.name == *name)
+        {
             scrub(vault, &mut wtxn, actor)?;
             ran += 1;
         }

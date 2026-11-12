@@ -5,6 +5,7 @@
   "output": "Option<crate::receipt::ContextEmitReceipt>",
   "call": "memory.context_emit_receipt(&input.receipt_ref)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

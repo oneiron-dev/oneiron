@@ -101,6 +101,10 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
         ReceiptKind::RunHoldOverride,
         &["launch_ref", "artifact_ref", "thread_ref"],
     ),
+    // A check-in transition: the holders a rung pinned, the holder who
+    // answered or extended, and a skipped rung's missing link when it names
+    // a principal. (ROLES-CHECKIN P2.2)
+    (ReceiptKind::CheckIn, &["holders", "by", "missing_link"]),
     // A served form: the ASSET it served, and the ASSET_TEXT it read in
     // place of the body. (FIX 4848)
     (ReceiptKind::ServedForm, &["asset_ref", "asset_text_ref"]),
@@ -153,7 +157,10 @@ const REFILL_GROWTH: usize = 2;
 /// rows its family's [`ROW_FIELDS`] hold, a share's parties, and the rows a
 /// hook run's reads served. `None` when they cannot be known: a hook receipt
 /// whose run is not kept.
-fn referenced_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<EntityId>>> {
+pub(crate) fn referenced_rows(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<Option<Vec<EntityId>>> {
     let mut rows: Vec<EntityId> = receipt
         .trigger_ref
         .as_deref()

@@ -5,6 +5,7 @@
   "output": "crate::genui::ProjectProposalCard",
   "call": "memory.projects_propose(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "mcp_fields": {
     "spec": "$"
   },

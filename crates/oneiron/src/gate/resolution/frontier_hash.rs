@@ -131,6 +131,23 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "owner_change_wait_secs");
         hash_u64(hasher, wait_secs);
     }
+    // The check-in row moves rung deadlines: hashed only when present, so a
+    // manifest that never names it keeps its exact frontier hash, with a
+    // domain tag as the wait above has.
+    if let Some(policy) = &resolution.check_in_policy {
+        hash_str(hasher, "check_in");
+        hash_len(hasher, policy.rung_waits().len());
+        for row in policy.rung_waits() {
+            hash_str(hasher, &row.row_ref);
+            hash_str(
+                hasher,
+                row.act.map_or("", crate::check_in::ActClass::as_str),
+            );
+            hash_str(hasher, row.world_ref.as_deref().unwrap_or(""));
+            hash_str(hasher, row.project_ref.as_deref().unwrap_or(""));
+            hash_u64(hasher, row.secs);
+        }
+    }
     // The raw resolved table, never the fail-closed accessor: a malformed
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
