@@ -75,7 +75,7 @@ impl Fixture {
         let vault =
             Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("vault"));
         let server = Arc::new(
-            SyncServer::new(
+            crate::test_credentials::server_with_fixture_keystore(
                 vault,
                 crate::config::SyncServerConfig {
                     auth_secret: Some("owner-fixture-secret".to_owned()),
