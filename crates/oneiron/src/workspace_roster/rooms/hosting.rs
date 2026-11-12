@@ -210,6 +210,40 @@ pub(crate) fn room_project_in(
         .transpose()
 }
 
+/// Whether the project that groups a room does so as its home project or as
+/// an extra room.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectRoomPlace {
+    /// The room is the project's derived home room.
+    Home,
+    /// The room keeps its own members and scope; the project only groups it.
+    Extra,
+}
+
+/// The project that groups `room`, and whether as its home room or as an
+/// extra room; `None` for a room no live project groups.
+pub(crate) fn room_group_project_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<(EntityId, ProjectRoomPlace)>> {
+    if let Some(project) = room_project_in(vault, txn, room)? {
+        return Ok(Some((project, ProjectRoomPlace::Home)));
+    }
+    let Some(project) =
+        crate::workspace_roster::project::EXTRA_ROOM_PROJECT.get(&vault.store, txn, &room)?
+    else {
+        return Ok(None);
+    };
+    // A soft delete keeps the wiped row the fold reads: the row must be live too.
+    let live = crate::vault::live_entity_row_in_txn(&vault.store, txn, &project)?.is_live();
+    if !live || vault.effective_project_in_txn(txn, project)?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some((project, ProjectRoomPlace::Extra)))
+}
+
 /// Whether `actor` stands in `room` now (OF-529): an agent on its seat or a
 /// covering Ready receipt; a person, or a person's pen, on that person's
 /// standing. Anything else stands nowhere.
