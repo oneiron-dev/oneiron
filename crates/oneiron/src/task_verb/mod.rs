@@ -185,8 +185,8 @@ pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
 pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub(crate) use room_thread::{
     context_refs as room_thread_context_refs, open_thread_tasks_in as room_open_thread_tasks_in,
-    task_ids_in as room_thread_task_ids_in, task_roster_in as room_thread_task_roster_in,
-    thread_tasks as room_thread_tasks,
+    task_ids_in as room_thread_task_ids_in, task_room_standing_in as room_thread_task_standing_in,
+    task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
 };
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,

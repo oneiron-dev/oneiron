@@ -171,16 +171,23 @@ fn reads_all(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, ids: &[EntityId]) -> 
 }
 
 /// The room regeneration permit `agent` answers a Retry `action` under, in
-/// `txn` (FIX 3149), when its source is a project room's indexed turn;
-/// `None` anywhere else. A room that no longer lets the agent answer its
-/// claimed turn again refuses as an invalid state.
+/// `txn` (FIX 3149), when its source is an indexed turn that answers a
+/// claim; `None` anywhere else, where the Retry takes its DAG path: a turn
+/// with no row, or one whose parent holds no claim, as a plain reply's
+/// (THREAD-TASK-NATIVE-AGENT-RETRY). A room that no longer lets the agent
+/// answer its claimed turn again refuses as an invalid state.
 fn room_regeneration_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     action: &TurnActionAttempt,
     agent: EntityId,
 ) -> MemoryResult<Option<RoomRegenerationPermit>> {
-    if crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?.is_none() {
+    let Some(source) =
+        crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?
+    else {
+        return Ok(None);
+    };
+    if !RoomRegenerationPermit::answers_claim_in(vault, txn, &source)? {
         return Ok(None);
     }
     RoomRegenerationPermit::prove_in(vault, txn, action, agent)
@@ -374,9 +381,9 @@ impl Memory<'_> {
     /// its new assistant TURN at `turn_id`, the id its stream opened under:
     /// a sibling of the old turn at its parent replying to the user turn,
     /// or, in a thread, a reply to the old turn itself, HEAD left where it
-    /// is. A project room's indexed source lands no TURN here: the permit
-    /// returned admits the reply's room row. The requester never names the
-    /// agent that answers.
+    /// is; its append keeps the TURN's room row. A source that answers a
+    /// claim lands no TURN here: the permit returned admits the reply's room
+    /// row. The requester never names the agent that answers.
     pub(crate) fn prepare_action_retry_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
