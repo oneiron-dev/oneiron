@@ -528,7 +528,7 @@ fn fanout_tunable_threshold_auto_history_and_human_authentication() {
             &human,
             &ConsultFanOutPolicy {
                 approval_threshold: 1,
-                mode: ConsultFanOutMode::Manual,
+                mode: CheckInMode::AlwaysAsk,
                 peer_rate: None,
                 create_rate: ConsultFanOutPolicy::default().create_rate,
             },
@@ -546,7 +546,7 @@ fn fanout_tunable_threshold_auto_history_and_human_authentication() {
             &human,
             &ConsultFanOutPolicy {
                 approval_threshold: 1,
-                mode: ConsultFanOutMode::FullAccess,
+                mode: CheckInMode::NeverAsk,
                 peer_rate: None,
                 create_rate: ConsultFanOutPolicy::default().create_rate,
             },
