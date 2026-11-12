@@ -1,21 +1,8 @@
 //! Moved from `crates/oneiron/src/skill_optimize/judge_swap.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_optimize::gate::goal_axis::GoalAxisKind;
-use crate::skill_optimize::labels;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::model_decision::DecisionAnswer;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use serde_json::Value;
-use std::borrow::Borrow;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::btree_map::Entry;
 
 /// Who settles a disagreement that no pick and no settled outcome decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -42,6 +29,17 @@ pub struct JudgeSwapPolicy {
     /// Every swap asks the owners to rate its disagreements, rather than
     /// telling them. Default: off.
     pub hands_on: bool,
+}
+
+impl Default for JudgeSwapPolicy {
+    fn default() -> Self {
+        Self {
+            tie_breaker: JudgeTieBreaker::ThirdFamily,
+            floor_tie_breaker: JudgeTieBreaker::IncumbentHolds,
+            pinned_divergence: None,
+            hands_on: false,
+        }
+    }
 }
 
 /// The owner's hand-test answer to one disagreement: the judge whose answer

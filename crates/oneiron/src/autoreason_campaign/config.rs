@@ -32,15 +32,6 @@ pub use oneiron_verb_wire::autoreason_campaign::config::{
     CampaignMetricPin, CampaignSplits, CampaignTournamentConfig,
 };
 
-impl From<CampaignExecutableArm> for CampaignArmId {
-    fn from(arm: CampaignExecutableArm) -> Self {
-        match arm {
-            CampaignExecutableArm::SinglePass => Self::SinglePass,
-            CampaignExecutableArm::Tournament => Self::Tournament,
-        }
-    }
-}
-
 /// Validated campaign configuration.
 ///
 /// The type deserializes even when the values are wrong — `budget` stays an

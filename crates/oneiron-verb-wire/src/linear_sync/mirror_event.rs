@@ -5,13 +5,9 @@ use crate::linear_sync::model::LinearFieldConflict;
 use crate::linear_sync::model::LinearIssueRef;
 use crate::linear_sync::webhook::LinearExternalActor;
 use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 /// The first byte of an event key: what made the row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

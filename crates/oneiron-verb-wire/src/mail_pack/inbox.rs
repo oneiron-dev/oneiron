@@ -4,15 +4,8 @@
 use crate::mail_pack::state::MailPresence;
 use crate::mail_pack::state::MailStage;
 use crate::mail_pack::wire::MailAttachmentRef;
-use crate::source_audience;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// `vault.mail.inbox`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]

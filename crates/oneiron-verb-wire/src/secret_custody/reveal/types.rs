@@ -1,14 +1,8 @@
 //! Moved from `crates/oneiron/src/secret_custody/reveal/types.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::gate_decision::types::GateDecisionId;
-use oneiron_store::secret_record::CustodyClass;
-use oneiron_store::secret_record::SecretCustodyStatus;
-use oneiron_store::write_envelope::EffectDigest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt;
 
 /// The reach of the owner's standing answer to one reveal (FIX 2354): the
 /// grant "approve and stop asking" writes covers this connection × this

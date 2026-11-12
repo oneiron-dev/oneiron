@@ -2,15 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::federation::grant::FederationGrantRole as Role;
-use crate::federation::grant::FederationGrantScope;
 pub use crate::federation::pending_act::policy_change::SharedActPolicyChangeState;
-use oneiron_authority::authority::FederationGrantActivation;
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
-use oneiron_contracts::record_layout::EntityMetadataHeader;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// The row an act without its own row resolves to.

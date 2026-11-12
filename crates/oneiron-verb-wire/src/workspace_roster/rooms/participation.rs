@@ -1,23 +1,9 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/participation.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::rooms::hosting;
-use crate::workspace_roster::rooms::offers;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::ClaimError;
-use oneiron_base::error::Error;
-use oneiron_base::error::RecordError;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron_base::registry::ENTITY_TYPE_PERSON;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::room_join::JoinSubject;
-use oneiron_contracts::room_join::RoomJoinHold;
-use oneiron_store::side_table::key::SideKey;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Why a participant takes part in a room or thread.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

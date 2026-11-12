@@ -3,8 +3,6 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::BrokerIsolation;
-use oneiron_store::git_wire::ids::GitOid;
-use oneiron_store::git_wire::ids::GitRefName;
 use serde::Deserialize;
 use serde::Serialize;
 

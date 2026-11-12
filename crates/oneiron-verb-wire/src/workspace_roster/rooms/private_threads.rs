@@ -2,14 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::rooms::*;
-use oneiron_authority::authority::VerifiedSlip;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_authority::claim_history_handoff::ScopedRead;
-use oneiron_authority::federation::Scope;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron_base::registry::ENTITY_TYPE_TURN;
-use oneiron_store::scan_kind::EngineScan;
-use std::collections::BTreeMap;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// `vault.rooms.private_threads`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,13 +1,6 @@
 //! Moved from `crates/oneiron/src/world_keys/owner_work/diagnostics.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::authority::AuthorityEntryHash;
-use oneiron_authority::authority::AuthorityFold;
-use oneiron_authority::authority::OwnerWorkBody;
-use oneiron_authority::authority::OwnerWorkKind;
-use oneiron_authority::authority::WorldKeyId;
-use oneiron_authority::authority::WorldKeyMode;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Serialize;
 

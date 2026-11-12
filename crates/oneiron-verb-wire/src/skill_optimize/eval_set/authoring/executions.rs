@@ -2,16 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::eval_set::authoring::apply::EvalAuthoringReport;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::dreamer_attempt_payload::DreamerAttemptPayload;
-use oneiron_store::principal_record::NoStanding;
-use oneiron_store::principal_record::PACT_STANDING_LAPSED;
 use serde::Deserialize;
 use serde::Serialize;
 

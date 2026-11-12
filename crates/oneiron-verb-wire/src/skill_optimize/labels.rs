@@ -1,14 +1,9 @@
 //! Moved from `crates/oneiron/src/skill_optimize/labels.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::side_table::codec::CodecError;
-use oneiron_store::side_table::codec::RawValue;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The evidence for raising a calibration question. Both kinds have two
 /// explicit alternatives, so an uncertainty does not silently supply a label.

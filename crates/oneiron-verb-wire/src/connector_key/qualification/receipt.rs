@@ -1,12 +1,6 @@
 //! Moved from `crates/oneiron/src/connector_key/qualification/receipt.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::connector_key::qualification::QualificationPlan;
-use oneiron_base::error::Result;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
-
 pub const CONNECTOR_QUALIFICATION_SUITE: &str = "oneiron.connector.qualification.v1";
 
 /// A built-in connector pack's suite: the engine's own hash-verified adapter

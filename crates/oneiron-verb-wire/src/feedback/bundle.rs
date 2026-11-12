@@ -1,13 +1,8 @@
 //! Moved from `crates/oneiron/src/feedback/bundle.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::edge::EdgeKind;
-use oneiron_contracts::limit_ask::EngineLimit;
-use oneiron_store::config::VaultConfig;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// Maximum accepted length of any single reference token in bytes.
 pub const FEEDBACK_REF_MAX_BYTES: usize = 256;

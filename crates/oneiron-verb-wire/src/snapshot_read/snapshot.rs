@@ -1,18 +1,11 @@
 //! Moved from `crates/oneiron/src/snapshot_read/snapshot.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_authority::claim_history_handoff::ScopedReadResult;
 use oneiron_base::registry::ENTITY_TYPE_CLAIM;
 use oneiron_base::registry::ENTITY_TYPE_MESSAGE;
 use oneiron_base::registry::ENTITY_TYPE_NOTE;
 use oneiron_base::registry::ENTITY_TYPE_TURN;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN;
-use oneiron_contracts::memory::MEMORY_CODE_NOT_FOUND;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::vault::entity_view::EntityView;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,11 +1,8 @@
 //! Moved from `crates/oneiron/src/saved_query/receipts.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_model::llm::LlmUsage;
 use oneiron_store::model_decision::ProviderPin;
-use oneiron_store::query_memos::VerdictMemoRow;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,22 +1,14 @@
 //! Moved from `crates/oneiron/src/deletion/legal_hold/confirmation.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::deletion::legal_hold::types::ErasePendingReason;
-use crate::deletion::legal_hold::types::EraseWithdrawal;
 use crate::deletion::legal_hold::types::LIFT_AND_ERASE_PROMPT;
 use crate::deletion::legal_hold::types::LIFT_AND_ERASE_TITLE;
 use crate::deletion::legal_hold::types::LegalHold;
-use crate::deletion::legal_hold::types::LegalHoldEventKind;
 use crate::deletion::legal_hold::types::LegalHoldKind;
-use crate::deletion::legal_hold::types::LegalHoldReason;
 use crate::deletion::legal_hold::types::LegalHoldTarget;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// One standing customer hold as the confirm showed it, whole: a hold

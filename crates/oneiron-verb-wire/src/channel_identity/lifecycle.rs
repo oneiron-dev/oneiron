@@ -1,12 +1,6 @@
 //! Moved from `crates/oneiron/src/channel_identity/lifecycle.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::channel_identity::binding::ChannelIdentityFulfillment;
-use oneiron_base::error::Error;
-use oneiron_base::error::RecordError;
-use oneiron_base::error::Result;
-use oneiron_store::write_envelope::channel_identity::keys::DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS;
-
 /// ChannelIdentity lifecycle state as it appears on the wire (OF-347 R3/R5).
 ///
 /// A PROJECTION of [`SelfHeldLifecycle`] / [`DelegatedLifecycle`], never the

@@ -3,12 +3,8 @@
 
 use crate::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 use crate::workspace_roster::rooms::*;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron_base::registry::ENTITY_TYPE_PERSON;
-use oneiron_base::registry::ENTITY_TYPE_TURN;
-use oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE;
-use oneiron_store::conversation_body::ThreadBinding;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// `vault.rooms.thread_audience.add`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

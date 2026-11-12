@@ -55,6 +55,16 @@ pub struct ReportReview {
     pub duplicate_of: Option<String>,
 }
 
+impl Default for ReportReview {
+    fn default() -> Self {
+        Self {
+            status: ReportStatus::Accepted,
+            quality_score: None,
+            duplicate_of: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportDisclosure {

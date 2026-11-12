@@ -1,17 +1,7 @@
 //! Moved from `crates/oneiron/src/outbound/weave_digest_send.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::channel_identity::lifecycle::ChannelIdentityState;
-use oneiron_authority::claim_history_handoff::WeaveDigestReader;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_base::human_task_followup::HumanTaskError;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron_base::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
-use oneiron_base::registry::ENTITY_TYPE_NOTIFICATION;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::write_envelope::communication::PREDICATE_COMM_REACHABLE_VIA;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,16 +1,8 @@
 //! Moved from `crates/oneiron/src/disclosure/model_channel.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::claim_history_handoff::ScopedReadActorKey;
-use oneiron_authority::claim_history_handoff::claim_surfaceable;
-use oneiron_authority::federation::Scope;
 use oneiron_authority::federation::Sensitivity;
-use oneiron_authority::federation::SensitivityCeiling;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::write_envelope::claim_body::ClaimBody;
-use oneiron_store::write_envelope::claim_body::ClaimSubject;
 use serde::Deserialize;
 use serde::Serialize;
 

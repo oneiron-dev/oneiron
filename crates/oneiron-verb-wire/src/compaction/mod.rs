@@ -1,3 +1,26 @@
+pub use crate::compaction::driver::CompactionWindowMessage;
+pub use crate::compaction::fold_kinds::FoldKind;
+pub use crate::compaction::fold_kinds::FoldedOutput;
+pub use crate::compaction::fold_kinds::FoldedSpeech;
+pub use crate::compaction::folds::FoldCompactInput;
+pub use crate::compaction::folds::FoldDescription;
+pub use crate::compaction::folds::FoldList;
+pub use crate::compaction::folds::FoldMarkInput;
+pub use crate::compaction::folds::FoldPending;
+pub use crate::compaction::folds::FoldReply;
+pub use crate::compaction::folds::FoldSpan;
+pub use crate::compaction::folds::FoldUnfold;
+pub use crate::compaction::folds::FoldUnfoldInput;
+pub use crate::compaction::folds::FoldsInput;
+pub use oneiron_store::compaction::gate::CompactionCheck;
+pub use oneiron_store::compaction::gate::CompactionGateFailure;
+pub use oneiron_store::compaction::gate::CompactionGatePolicy;
+pub use oneiron_store::compaction::gate::CompactionOff;
+pub use oneiron_store::compaction::gate::CompactionRefusal;
+pub use oneiron_store::compaction::gate::CompactionSuppression;
+pub(crate) use oneiron_store::compaction::gate::compaction_pin_input_tokens;
+pub use oneiron_store::compaction::gate::compaction_reply_schema;
+
 pub mod driver;
 pub mod fold_kinds;
 pub mod folds;

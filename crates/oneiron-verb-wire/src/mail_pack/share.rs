@@ -1,14 +1,8 @@
 //! Moved from `crates/oneiron/src/mail_pack/share.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::source_audience;
-use oneiron_base::registry::ENTITY_TYPE_PERSON;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.mail.threads.share` and `.unshare`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

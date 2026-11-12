@@ -2,10 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::federation::grant::FederationGrantRole;
-use crate::vault_shape::invalid;
-use crate::vault_shape::plan::ShapeChange;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -64,6 +60,19 @@ impl ShapeMemberRole {
     /// `shared_act::membership` revokes them).
     pub fn move_lowers(was: Self, now: Self) -> bool {
         now.reach() < was.reach() || (now != was && (now == Self::Steward || was == Self::Steward))
+    }
+}
+
+impl From<ShapeMemberRole> for FederationGrantRole {
+    fn from(role: ShapeMemberRole) -> Self {
+        match role {
+            ShapeMemberRole::Owner => Self::Owner,
+            ShapeMemberRole::Deputy => Self::Deputy,
+            ShapeMemberRole::Admin => Self::Admin,
+            ShapeMemberRole::Steward => Self::Steward,
+            ShapeMemberRole::Member => Self::Member,
+            ShapeMemberRole::Viewer => Self::Viewer,
+        }
     }
 }
 

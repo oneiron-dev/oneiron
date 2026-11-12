@@ -1,18 +1,10 @@
 //! Moved from `crates/oneiron/src/edit_distance/reservoir/eligibility.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::claim_history_handoff::ScopedRead;
-use oneiron_base::edge::EdgeKind;
-use oneiron_base::error::Error;
-use oneiron_base::error::ErrorKind;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_TURN;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::ports::records::EdgeDirection;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// FIX 11352: who a source a training run's corpus would hold to the
 /// owner's tick holds.

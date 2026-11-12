@@ -1,24 +1,8 @@
 //! Moved from `crates/oneiron/src/mail_pack/mbox_import.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::mail_pack::source::MailCopySetting;
-use crate::mail_pack::source::MailProvider;
-use crate::mail_pack::source::MailSourceKind;
-use crate::mail_pack::source::MailSourceStatus;
-use crate::mail_pack::state::MailPresence;
-use crate::mail_pack::state::MailStage;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fs::File;
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::path::Path;
 
 /// The most refusal reasons one report lists.
 pub const MAX_REASONS: usize = 20;

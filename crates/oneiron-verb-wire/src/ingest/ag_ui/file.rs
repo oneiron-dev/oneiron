@@ -2,17 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::ingest::ag_ui::observations::AgUiCustomMapping;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_authority::claim_history_handoff::ScopedReadReceipt;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::claim::ClaimSource;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::write_envelope::WriteActor;
-use oneiron_store::write_envelope::claim_body::ClaimSubject;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/retrieval_depth/controls.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_store::embedding_vocabulary::InputKind;
 pub use oneiron_store::retrieval_deadline::RetrievalDeadline;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use oneiron_store::retrieval_deadline::SlowRetrievalStage;

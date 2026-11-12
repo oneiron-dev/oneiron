@@ -1,23 +1,12 @@
 //! Moved from `crates/oneiron/src/feeds/mod.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::runtime_hooks::source::ClaimChangelogPosition;
 use crate::runtime_hooks::source::FactPosition;
-use crate::runtime_hooks::source::FactSource;
-use crate::runtime_hooks::source::SettlementPosition;
-use base64::Engine as _;
-use oneiron_authority::claim_history_handoff::PointRead;
-use oneiron_authority::claim_history_handoff::ScopedRead;
-use oneiron_base::error::ClaimError;
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::ports::records::ChangeOp;
-use oneiron_store::revision_ref::RevisionRef;
-use oneiron_store::vault::entity_revision::types::ReadMode;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// A position in one source. Two positions compare only within one source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

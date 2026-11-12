@@ -1,23 +1,13 @@
 //! Moved from `crates/oneiron/src/embed/space_move.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::embed::space_probe::SpaceProbe;
 use crate::skill_optimize::eval_set::sufficiency::SufficiencyCard;
-use heed::RoTxn;
-use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_base::machine_destination::PeerMachine;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_retrieval::pipeline::ScoredEntity;
-use oneiron_store::embedding::EgressPredicate;
-use oneiron_store::embedding::EmbeddingSpace;
 use oneiron_store::embedding::KindSlotBindings;
-use oneiron_store::embedding::MediaEmbeddingInput;
 use oneiron_store::embedding_vocabulary::InputKind;
-use oneiron_wake_contract::settings::destination::ReadDestination;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Where a kind slot's vectors are searched.

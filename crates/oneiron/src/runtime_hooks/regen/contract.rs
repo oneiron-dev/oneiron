@@ -10,8 +10,11 @@ use crate::skill_hub::pack_catalog::{HookPhase, HookSelector};
 
 use super::super::filter::glob_match;
 
-#[doc(hidden)]
-pub(super) use oneiron_verb_wire::runtime_hooks::regen::contract::{HOOK_WORLD, VERB_TABLE};
+/// The code-mode declarations a hook body's verb shapes come from: the verb
+/// table half of [`super::HookContractStamp`].
+pub(super) const VERB_TABLE: &str = include_str!(concat!(env!("OUT_DIR"), "/code-mode.d.ts"));
+/// The hook world: the sandbox half of [`super::HookContractStamp`].
+pub(super) const HOOK_WORLD: &str = include_str!("../../../wit/hook/hook.wit");
 
 /// The most declaration text one regen hands its regenerator; the cut stops
 /// at a whole line before it.

@@ -9,7 +9,6 @@ pub use crate::store::attempt_cancel::AttemptLanding;
 pub use crate::store::attempt_cancel::CancelMode;
 pub use crate::store::attempt_cancel::CancelStanding;
 pub use crate::store::attempt_cancel::ForceCancelGrounds;
-use oneiron_base::error::Result;
 pub use oneiron_wake_contract::store::attempt_cancel::AttemptResumePoint;
 pub use oneiron_wake_contract::store::attempt_cancel::LandingTrigger;
 

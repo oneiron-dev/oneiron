@@ -1,13 +1,6 @@
 //! Moved from `crates/oneiron/src/engine_executor/reply_evidence.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_base::error::Error;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
 

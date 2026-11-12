@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/edit_settle/pending/view.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::write_envelope::provenance::made_by::MadeBy;
 use serde::Deserialize;
 use serde::Serialize;
 

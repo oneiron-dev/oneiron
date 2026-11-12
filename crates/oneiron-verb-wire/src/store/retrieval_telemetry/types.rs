@@ -3,22 +3,13 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_base::retrieval_quality::ConfidenceAdjustment;
-use oneiron_base::retrieval_quality::RetrievalDegradation;
-use oneiron_base::retrieval_quality::RetrievalQuality;
-use oneiron_base::retrieval_quality::RetrievalQualityReport;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
 pub use oneiron_contracts::retrieval_telemetry::RetrievalBlendSignal;
 pub use oneiron_contracts::retrieval_telemetry::RetrievalBlendWeights;
 pub use oneiron_contracts::retrieval_telemetry::RetrievalScoreComponent;
 pub use oneiron_contracts::retrieval_telemetry::RetrievalSignal;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::retrieval_signal::Signal;
-use oneiron_store::retrieval_telemetry::types::uuid::Uuid;
 pub(crate) use oneiron_store::retrieval_telemetry::types::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 pub const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 

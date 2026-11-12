@@ -2,15 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::share_travel::copy::CopyTravelChoice;
-use oneiron_base::error::Error;
-use oneiron_base::error::GateError;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::persona_snapshot_record::invalid_snapshot;
-use oneiron_wake_contract::settings::destination::ReadDestination;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Replaces only one accepted row's text. Its sources and attribution stay intact.

@@ -1,29 +1,10 @@
 //! Moved from `crates/oneiron/src/agent_dispatch/planner.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::team::receipt::PatternSkillRef;
-use oneiron_base::error::ArtifactError;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_model::llm::ModelId;
-use oneiron_model::llm::ReasoningEffort;
-use oneiron_store::model_decision::AnswerContract;
-use oneiron_store::model_decision::DecisionAnswer;
-use oneiron_store::model_decision::DecisionBand;
-use oneiron_store::model_decision::DecisionBandPolicy;
-use oneiron_store::model_decision::DecisionDial;
 use oneiron_store::model_decision::DecisionRung;
-use oneiron_store::model_decision::ProviderPin;
-use oneiron_store::model_decision::Reversibility;
-use oneiron_store::retrieval_deadline::RetrievalDeadline;
-use oneiron_store::setting_seed::PLANNER_BIG_PLAN_WIDTH;
-use oneiron_store::setting_seed::PLANNER_SOLO_MARGIN;
-use oneiron_store::setting_seed::PLANNER_SOLO_SUCCESS_FLOOR;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One rung of the planner ladder. Cheap rungs handle the easy cases; the
 /// strong rung is reserved for xhigh/max care or big plans.

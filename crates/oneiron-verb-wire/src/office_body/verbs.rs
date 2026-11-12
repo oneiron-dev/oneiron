@@ -4,29 +4,10 @@
 use crate::office_body::consent::SettleVerdict;
 use crate::office_body::docx::DocxBodyOp;
 use crate::office_body::xlsx::XlsxBodyOp;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_docedit::docx_body::DocxRun;
-use oneiron_docedit::docx_body::DocxStoryScope;
 use oneiron_docedit::live::ApproveScope;
 use oneiron_docedit::live::DeckOp;
-use oneiron_docedit::xlsx_body::XlsxArea;
-use oneiron_docedit::xlsx_body::XlsxLines;
-use oneiron_docedit::xlsx_body::XlsxSheetVisibility;
-use oneiron_docedit::xlsx_body::XlsxStyle;
-use oneiron_docedit::xlsx_body::XlsxTable;
-use oneiron_store::file_secret_marks::SecretSight;
-use oneiron_store::write_envelope::WriteActor;
-use oneiron_store::write_envelope::provenance::made_by::MadeBy;
-use oneiron_store::write_envelope::provenance::made_by::MadeByClass;
-use oneiron_store::write_envelope::provenance::made_by::MadeByProcess;
-use oneiron_store::write_envelope::provenance::text_commit::TextCommitReceipt;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.artifacts.body.head`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

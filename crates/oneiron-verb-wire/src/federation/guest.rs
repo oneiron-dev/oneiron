@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::federation::grant::FederationGrantScope;
-use oneiron_authority::federation::codec::encode_msgpack_value;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 
 /// Canonical, pre-sign guest-share envelope body.

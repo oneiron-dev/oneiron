@@ -18,19 +18,6 @@ pub use oneiron_verb_wire::vault_shape::member::{
     ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick,
 };
 
-impl From<ShapeMemberRole> for FederationGrantRole {
-    fn from(role: ShapeMemberRole) -> Self {
-        match role {
-            ShapeMemberRole::Owner => Self::Owner,
-            ShapeMemberRole::Deputy => Self::Deputy,
-            ShapeMemberRole::Admin => Self::Admin,
-            ShapeMemberRole::Steward => Self::Steward,
-            ShapeMemberRole::Member => Self::Member,
-            ShapeMemberRole::Viewer => Self::Viewer,
-        }
-    }
-}
-
 impl From<SharedVaultPreset> for ShapePreset {
     fn from(preset: SharedVaultPreset) -> Self {
         match preset {

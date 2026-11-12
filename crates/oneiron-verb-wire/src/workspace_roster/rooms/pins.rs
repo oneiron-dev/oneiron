@@ -2,16 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::rooms::*;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::ClaimError;
-use oneiron_base::registry::ENTITY_TYPE_CONVERSATION;
-use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
-use oneiron_contracts::record_layout::EntityMetadataHeader;
-use oneiron_store::conversation_body::ConversationBody;
+use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::conversation_body::RoomPin;
 use oneiron_store::conversation_body::RoomPinPolicy;
-use oneiron_store::conversation_body::RoomRole;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
 

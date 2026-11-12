@@ -75,17 +75,6 @@ pub(crate) fn check_incarnation() -> EntityId {
     *INCARNATION.get_or_init(EntityId::now)
 }
 
-impl From<ReleaseHold> for FeedbackWithheldReason {
-    fn from(hold: ReleaseHold) -> Self {
-        match hold {
-            ReleaseHold::Recipient(_) => Self::Recipient,
-            ReleaseHold::Placement => Self::Placement,
-            ReleaseHold::ProducersUnknown => Self::ProducersUnknown,
-            ReleaseHold::ConflictedRoot => Self::ConflictedRoot,
-        }
-    }
-}
-
 /// A run's kept program-step feedback, as a trusted host lists it (FIX
 /// 10389): every step's feedback the run keeps, in step order, or the typed
 /// fact that it could not be read. A read that failed is never an empty

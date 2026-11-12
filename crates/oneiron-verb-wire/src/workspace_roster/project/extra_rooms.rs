@@ -2,13 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::rooms::hosting::ProjectRoomPlace;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
 

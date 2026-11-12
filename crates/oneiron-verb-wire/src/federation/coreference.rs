@@ -1,21 +1,7 @@
 //! Moved from `crates/oneiron/src/federation/coreference.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::claim_history_handoff::COREFERENCE_PACT_ID_LEN;
-use oneiron_base::edge::EdgeKind;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::affect::Vad;
 use oneiron_contracts::claim::ClaimApprovalStatus;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
-use oneiron_contracts::claim::ClaimSource;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::batch::builder::ops::BatchOp;
-use oneiron_store::write_envelope::WriteActor;
-use oneiron_store::write_envelope::claim_body::ClaimBody;
-use oneiron_store::write_envelope::claim_body::ClaimSubject;
 
 // ---------------------------------------------------------------------------
 // Cross-vault coreference (FED-07, ONE-1414).

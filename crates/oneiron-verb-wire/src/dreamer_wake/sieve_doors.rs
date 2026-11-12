@@ -2,12 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::dreamer_wake::sieve::policy::SievePolicy;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use oneiron_wake_contract::dreamer_wake::recipes::WakeRecipePolicy;
-use oneiron_wake_contract::dreamer_wake::sieve::SieveSpan;
-use oneiron_wake_contract::dreamer_wake::sieve::SpanBand;
-use oneiron_wake_contract::dreamer_wake::sieve::SpanKind;
 use serde::Deserialize;
 use serde::Serialize;
 

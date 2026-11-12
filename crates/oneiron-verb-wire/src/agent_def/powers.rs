@@ -2,11 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use oneiron_base::error::GateError;
 use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
 

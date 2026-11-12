@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::vault_shape::reach::ShapeReach;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

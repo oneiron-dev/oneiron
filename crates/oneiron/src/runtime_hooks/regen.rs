@@ -60,12 +60,37 @@ const GOLDEN_ENTRIES: usize = 256;
 /// The `hub_ref` a vault's own pack records (`vault.packs.put`).
 const OWN_PACK_REF: &str = "vault.packs.put";
 
+/// What a hook body is written against: the verb table it calls and the
+/// sandbox world it runs in. A change to either runs the intent again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookContractStamp {
+    /// BLAKE3 of the verb table's declarations (`code-mode.d.ts`).
+    pub verb_table: String,
+    /// BLAKE3 of the hook world (`hook.wit`).
+    pub sandbox: String,
+}
+
+impl HookContractStamp {
+    /// This engine's contract.
+    #[must_use]
+    pub fn current() -> Self {
+        Self {
+            verb_table: blake3::hash(contract::VERB_TABLE.as_bytes())
+                .to_hex()
+                .to_string(),
+            sandbox: blake3::hash(contract::HOOK_WORLD.as_bytes())
+                .to_hex()
+                .to_string(),
+        }
+    }
+}
+
 #[doc(hidden)]
 use oneiron_verb_wire::runtime_hooks::regen::body_hash;
 #[doc(hidden)]
 pub use oneiron_verb_wire::runtime_hooks::regen::{
-    HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookGoldenManifest, HookRegenFailure,
-    HookRegenFailurePhase, HookRegenOutcome, HookRegenPrior, HookRegenRecord,
+    HookGoldenDiff, HookGoldenFingerprint, HookGoldenManifest, HookRegenFailure,
+    HookRegenFailurePhase,
 };
 
 /// The call purpose a served regenerator meters its model calls under.
@@ -97,6 +122,102 @@ pub trait HookRegenerator {
         &self,
         request: &HookRegenRequest,
     ) -> std::result::Result<String, HookRegenFailure>;
+}
+
+/// A regen's decision, kept on the hook's record until it is enacted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum HookRegenOutcome {
+    /// An identical fingerprint over successful runs: the candidate adopts
+    /// without a question.
+    AutoAdopt {
+        candidate: String,
+        target: HookContractStamp,
+        diff: HookGoldenDiff,
+        golden: HookGoldenManifest,
+    },
+    /// The golden replay differs, execution-failed, withheld, or lost history,
+    /// or there is none: the owner stamps it.
+    NeedsHumanStamp {
+        candidate: String,
+        target: HookContractStamp,
+        diff: HookGoldenDiff,
+        golden: HookGoldenManifest,
+    },
+    /// The last good body stands. `target` is the contract the regen ran
+    /// against, so the engine's own pass tries each contract once.
+    RolledBack {
+        failure: HookRegenFailure,
+        target: HookContractStamp,
+    },
+}
+
+impl HookRegenOutcome {
+    /// The candidate body's hash while one waits, as its binding records a
+    /// body: the hash an adoption names, and the record's body hash once
+    /// it is adopted. A rollback holds no candidate.
+    #[must_use]
+    pub fn candidate_hash(&self) -> Option<String> {
+        match self {
+            Self::AutoAdopt { candidate, .. } | Self::NeedsHumanStamp { candidate, .. } => {
+                Some(body_hash(candidate))
+            }
+            Self::RolledBack { .. } => None,
+        }
+    }
+
+    /// The contract this decision ran against.
+    #[must_use]
+    pub fn target(&self) -> &HookContractStamp {
+        match self {
+            Self::AutoAdopt { target, .. }
+            | Self::NeedsHumanStamp { target, .. }
+            | Self::RolledBack { target, .. } => target,
+        }
+    }
+}
+
+/// The body an adoption replaced, kept so the owner can roll the adoption
+/// back (FIX 4690): its exact text, hash and the contract it passed under.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookRegenPrior {
+    pub body: String,
+    /// BLAKE3 of `body`, lowercase hex.
+    pub body_hash: String,
+    pub stamp: HookContractStamp,
+}
+
+/// One hook's regen record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookRegenRecord {
+    /// The last good body, as BLAKE3 hex.
+    pub body_hash: String,
+    /// The contract that body last passed under.
+    pub stamp: HookContractStamp,
+    /// The intent it came from, when the author kept one.
+    pub intent: Option<String>,
+    /// The last regen's decision, until it is enacted.
+    pub pending: Option<HookRegenOutcome>,
+    /// The body the last adoption replaced, until it is rolled back or
+    /// another adoption replaces this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<HookRegenPrior>,
+    /// The contract the owner declined a regen under, by a cancel or a
+    /// rollback. The due list and the engine's own pass leave the hook on
+    /// its body until the contract moves again; the owner may still run a
+    /// regen by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declined: Option<HookContractStamp>,
+}
+
+impl HookRegenRecord {
+    /// [`HookRegenOutcome::candidate_hash`] of the decision waiting here.
+    #[must_use]
+    pub fn candidate_hash(&self) -> Option<String> {
+        self.pending
+            .as_ref()
+            .and_then(HookRegenOutcome::candidate_hash)
+    }
 }
 
 /// `source`'s files with `hook`'s `body.js` set to `body`, and the body it

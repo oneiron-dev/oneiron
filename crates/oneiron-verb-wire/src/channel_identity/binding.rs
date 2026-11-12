@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/channel_identity/binding.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-
 /// Async fulfillment lane for PENDING_FULFILLMENT.
 #[derive(
     Debug,

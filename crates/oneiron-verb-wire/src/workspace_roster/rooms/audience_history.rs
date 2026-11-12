@@ -2,9 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::rooms::*;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN;
-use oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// `vault.rooms.thread_audience.open_full_history`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

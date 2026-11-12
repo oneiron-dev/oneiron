@@ -5,7 +5,6 @@ pub use crate::store::agent_refusal::REFUSAL_DIAL_KEYS;
 pub use crate::store::agent_refusal::RefusalDial;
 pub use crate::store::agent_refusal::RefusalDomain;
 pub use crate::store::agent_refusal::RefusalLevel;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
 

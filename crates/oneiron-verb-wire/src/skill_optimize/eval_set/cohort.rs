@@ -1,14 +1,11 @@
 //! Moved from `crates/oneiron/src/skill_optimize/eval_set/cohort.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_optimize::eval_set::FamilyPurpose;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The decision to retire one cohort: its bounded reason, who made it, and
 /// the exposure the retiring writer read.
@@ -52,6 +49,29 @@ pub struct StoredCohortRetirement {
     revision: Option<String>,
     #[serde(default)]
     attempt: Option<EntityId>,
+}
+
+impl TryFrom<StoredCohortRetirement> for CohortRetirement {
+    type Error = &'static str;
+
+    fn try_from(stored: StoredCohortRetirement) -> std::result::Result<Self, Self::Error> {
+        let author = match (stored.author, stored.skill, stored.revision, stored.attempt) {
+            (Some(author), None, None, None) => author,
+            (None, Some(skill), Some(revision), Some(attempt)) => {
+                EvalCohortRetirementAuthor::Skill {
+                    attempt,
+                    skill,
+                    revision,
+                }
+            }
+            _ => return Err("a cohort retirement names one whole author"),
+        };
+        Ok(Self {
+            reason: stored.reason,
+            author,
+            exposure: stored.exposure,
+        })
+    }
 }
 
 /// What a serving of a sealed cohort was for. There is no search, authoring

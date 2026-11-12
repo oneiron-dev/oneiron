@@ -1,14 +1,6 @@
 //! Moved from `crates/oneiron/src/federation/agent_grant/grantless.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::authority::ActSurface;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-
 /// Why `vault.agents.grants.from_slip` minted nothing.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,

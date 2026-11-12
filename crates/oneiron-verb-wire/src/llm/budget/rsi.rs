@@ -10,10 +10,8 @@ pub use crate::research_budget::RsiOverdraftReceipt;
 pub use crate::research_budget::RsiSettlement;
 pub use crate::research_budget::RsiSpendPurpose;
 pub use crate::research_budget::RsiTopUp;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 pub type RsiResult<T> = std::result::Result<T, RsiBudgetError>;
 

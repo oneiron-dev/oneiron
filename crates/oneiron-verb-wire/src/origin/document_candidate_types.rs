@@ -1,11 +1,7 @@
 //! Moved from `crates/oneiron/src/origin/document_candidate_types.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::origin::document_ingress::ReceivedFileOperation;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::code_document_values::CodeDocumentFrontier;
-use oneiron_store::code_document_values::CodeFileMetadataEdit;
-use oneiron_store::code_tree_blob::CodeTreeBlob;
 use serde::Deserialize;
 use serde::Serialize;
 

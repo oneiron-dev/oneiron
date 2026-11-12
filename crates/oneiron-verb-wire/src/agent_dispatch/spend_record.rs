@@ -3,12 +3,7 @@
 
 use crate::agent_dispatch::spend_calibration::AgentSpendCalibration;
 pub use crate::workspace_roster::spend_scope::SpendState;
-use heed::RwTxn;
-use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_run_budget::run_budget::JobStartRefused;
-use oneiron_run_budget::run_budget::LeaseUnit;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
 

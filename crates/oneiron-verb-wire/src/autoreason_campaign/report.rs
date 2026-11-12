@@ -1,13 +1,6 @@
 //! Moved from `crates/oneiron/src/autoreason_campaign/report.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::autoreason_campaign::config::CampaignDatasetRef;
-use crate::autoreason_campaign::config::CampaignExecutableArm;
-use crate::autoreason_campaign::judge::BlindCampaignJudgeInput;
-use oneiron_base::extraction_eval::Of360Ar3MetricTier;
-use oneiron_base::extraction_eval::Of360ExtractionRun;
-use oneiron_base::extraction_eval::Of360GoldDataset;
-use oneiron_base::extraction_eval::of360_ar3_metric_tier;
 use serde::Deserialize;
 use serde::Serialize;
 

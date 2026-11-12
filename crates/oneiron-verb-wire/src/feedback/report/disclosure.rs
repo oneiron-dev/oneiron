@@ -1,23 +1,6 @@
 //! Moved from `crates/oneiron/src/feedback/report/disclosure.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::feedback::report::ReportDisclosure;
-use crate::feedback::report::ReportStatus;
-use crate::feedback::report::routing::ReportDisclosureChoice;
-use crate::feedback::report::routing::ReportRoute;
-use oneiron_base::error::Error;
-use oneiron_base::error::GateError;
-use oneiron_base::error::Result;
-use oneiron_consent_state::consent::effect::EffectFacts;
-use oneiron_consent_state::consent::effect::UndoFidelity;
-use oneiron_consent_state::consent::grant::StandingConsentGrant;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_store::consent_bound::AudienceBound;
-use oneiron_store::consent_bound::ConsentDecision;
-use oneiron_store::consent_bound::DisclosureClass;
-use oneiron_store::consent_bound::DisclosureEnvelope;
-use oneiron_store::consent_bound::GrantBound;
 use serde::Deserialize;
 use serde::Serialize;
 

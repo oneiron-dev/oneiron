@@ -1,14 +1,8 @@
 //! Moved from `crates/oneiron/src/runtime_hooks/source.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::store::pack_hook_proposal::HookPhase;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_CLAIM;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
-use oneiron_store::ports::records::ChangeOp;
-use oneiron_store::revision_ref::RevisionRef;
 use serde::Deserialize;
 use serde::Serialize;
 

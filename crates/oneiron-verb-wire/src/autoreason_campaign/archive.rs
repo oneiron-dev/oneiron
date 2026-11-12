@@ -4,11 +4,8 @@
 pub use crate::autoreason_campaign::archive::axes::ArchiveAxis;
 pub use crate::autoreason_campaign::archive::records::CampaignArchiveAdmission;
 pub use crate::autoreason_campaign::archive::records::CampaignArchiveRequest;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Coordinates use the axis order in the pinned definition. Cluster cells are
 /// deliberately unnamed and cannot mix with categorical cells.

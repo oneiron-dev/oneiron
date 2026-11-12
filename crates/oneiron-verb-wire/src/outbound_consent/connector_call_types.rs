@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::outbound_consent::tool_call::MutationIntent;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::secret_lease::grant::SecretGrantRef;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;

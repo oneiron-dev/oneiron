@@ -2,22 +2,13 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::agent_dispatch::planner::SkillRevisionRef;
-use crate::team::pattern::TeamAxis;
-use crate::team::pattern::TeamPattern;
 use crate::team::receipt::PatternSkillRef;
-use crate::team::spawn_intent::SpawnErasure;
-use crate::team::spawn_intent::SpawnPhase;
-use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use oneiron_model::llm::ReasoningEffort;
 use oneiron_store::model_decision::DecisionRung;
 use oneiron_store::model_decision::ProviderPin;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A type stamp on the wire: one node in one version of the tree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

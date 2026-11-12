@@ -27,12 +27,9 @@ pub use crate::vault_shape::shared_setup::ShapeLearningOutcome;
 pub use crate::vault_shape::shared_setup::ShapeLearningSetting;
 pub use crate::vault_shape::skill::ShapeSkillSource;
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Longest name, id or reference a row may carry, in bytes.
 pub const SHAPE_NAME_MAX_BYTES: usize = 256;

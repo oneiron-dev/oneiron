@@ -23,7 +23,6 @@ pub mod code_revision;
 pub mod code_run;
 pub mod code_sandbox;
 pub mod code_view;
-pub mod commitment_wake;
 pub mod compaction;
 pub mod connector_key;
 pub mod context_board;

@@ -2,12 +2,10 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::gate::*;
-use crate::workspace_roster::project::goal::GoalAxis;
-use crate::workspace_roster::project::goal::GoalPreference;
-use oneiron_contracts::limit_ask::EngineLimit;
+use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::BTreeSet;
 
 /// One rung of the responsible-role chain a tradeoff ask climbs. Live people
 /// and live bound agents are members (ROLES-EVERYWHERE): a pick by either

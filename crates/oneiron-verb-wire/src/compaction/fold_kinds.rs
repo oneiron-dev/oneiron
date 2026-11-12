@@ -2,11 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::compaction::folds::FoldMarkInput;
-use oneiron_contracts::claim::ClaimSource;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The kind of content one fold by kind folds in each step of its span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

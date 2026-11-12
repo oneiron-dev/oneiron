@@ -1,13 +1,8 @@
 //! Moved from `crates/oneiron/src/team/spawn_intent.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::team::pattern::PatternLaunchSpec;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::revision_ref::RevisionRef;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Where the owner's spawn stands: a planned intent before or at its
 /// launch, or a spawned agent the queue holds, which the spawn observation

@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::gate::measurement::PreferredResponse;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
 

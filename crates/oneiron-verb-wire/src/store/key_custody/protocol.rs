@@ -2,25 +2,17 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::store::key_custody::protocol::drain::DrainAck;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::key_custody::identity::CustodyNamespace;
 pub use oneiron_store::key_custody::identity::CustodyVaultId;
 use oneiron_store::key_custody::identity::hex_decode;
 pub use oneiron_store::key_custody::log::CustodyEpoch;
 pub use oneiron_store::key_custody::log::CustodyPosition;
-use oneiron_store::key_custody::log::frame_hash;
-use oneiron_store::key_custody::log::frame_name;
 pub use oneiron_store::key_custody::protocol::drain::DRAIN_VERSION;
 pub use oneiron_store::key_custody::protocol::drain::DrainToken;
 pub use oneiron_store::key_custody::protocol::drain::drain_placement;
-use oneiron_store::key_custody::protocol::zeroize::Zeroizing;
 pub use oneiron_store::key_custody::protocol::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::Path;
-use std::path::PathBuf;
 
 /// A custody position in an ack: vault (64 hex), namespace (32 hex), writer
 /// epoch, log sequence number and tip (64 hex).

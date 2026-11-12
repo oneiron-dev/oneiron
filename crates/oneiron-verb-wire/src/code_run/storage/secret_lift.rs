@@ -2,11 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::code_run::storage::secret_lift::room::CodeRunRoomSecretLiftRequest;
-use heed::RoTxn;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_store::gate_decision::types::GATE_DECISION_LEDGER_VERSION;
-use oneiron_store::gate_decision::types::GateDecisionId;
 use serde::Deserialize;
 use serde::Serialize;
 

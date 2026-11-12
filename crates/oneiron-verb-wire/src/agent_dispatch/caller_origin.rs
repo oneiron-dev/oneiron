@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::settings::destination::CallerLocality;
-use oneiron_base::error::Result;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -71,29 +71,6 @@ pub use oneiron_verb_wire::skill_optimize::eval_set::cohort::{
     EvalExposureKind,
 };
 
-impl TryFrom<StoredCohortRetirement> for CohortRetirement {
-    type Error = &'static str;
-
-    fn try_from(stored: StoredCohortRetirement) -> std::result::Result<Self, Self::Error> {
-        let author = match (stored.author, stored.skill, stored.revision, stored.attempt) {
-            (Some(author), None, None, None) => author,
-            (None, Some(skill), Some(revision), Some(attempt)) => {
-                EvalCohortRetirementAuthor::Skill {
-                    attempt,
-                    skill,
-                    revision,
-                }
-            }
-            _ => return Err("a cohort retirement names one whole author"),
-        };
-        Ok(Self {
-            reason: stored.reason,
-            author,
-            exposure: stored.exposure,
-        })
-    }
-}
-
 /// The release of a cohort's membership, after its serving was counted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalRelease {

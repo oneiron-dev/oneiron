@@ -1,13 +1,6 @@
 //! Moved from `crates/oneiron/src/vault_cleanup/attempt_delete_wire.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::attempt_archive_mark::CleanupMark;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::attempt_state::AttemptState;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

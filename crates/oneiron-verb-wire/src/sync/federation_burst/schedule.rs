@@ -1,12 +1,8 @@
 //! Moved from `crates/oneiron/src/sync/federation_burst/schedule.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::VecDeque;
 
 pub const DAY: u64 = 24 * 60 * 60;
 

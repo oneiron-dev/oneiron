@@ -1,15 +1,9 @@
 //! Moved from `crates/oneiron/src/agent_dispatch/fanout_statement.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::agent_dispatch::launch::LaunchRole;
-use crate::agent_dispatch::spend_calibration::DollarBasis;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_run_budget::run_budget::LeaseUnit;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// TASK deliveries to one recipient.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

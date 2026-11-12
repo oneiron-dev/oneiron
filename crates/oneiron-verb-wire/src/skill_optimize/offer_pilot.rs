@@ -2,22 +2,12 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::eval_set::cohort::EvalExposure;
-use crate::skill_optimize::eval_set::cohort::EvalExposureKind;
 use crate::skill_optimize::eval_set::sufficiency::SufficiencyCard;
 use crate::skill_optimize::eval_set::sufficiency::SufficiencyInput;
-use crate::skill_optimize::offer::snapshot::ComputeDestination;
-use crate::skill_optimize::offer::snapshot::OfferCandidate;
-use crate::skill_optimize::offer::snapshot::OfferModelPin;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::limit_ask::EngineLimit;
-use oneiron_model::llm::ModelId;
-use oneiron_model::llm::ModelLocality;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

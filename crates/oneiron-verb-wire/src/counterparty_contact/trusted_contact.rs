@@ -1,12 +1,7 @@
 //! Moved from `crates/oneiron/src/counterparty_contact/trusted_contact.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::counterparty_contact::trusted_contact_notice::TrustedContactNoticeAuthorization;
-use oneiron_base::error::Error;
-use oneiron_base::error::GateError;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::gate_decision::types::GateSystemNoticeRecord;
 use serde::Deserialize;
 use serde::Serialize;
 

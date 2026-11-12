@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::write_envelope::claim_body::ClaimSubject;
 use serde::Deserialize;
 use serde::Serialize;
 

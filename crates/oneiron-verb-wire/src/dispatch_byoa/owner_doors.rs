@@ -3,16 +3,8 @@
 
 use crate::dispatch_byoa::seat::SkippedRunnerSeat;
 use crate::dispatch_byoa::seat_quota::RunnerSeatQuota;
-use oneiron_base::error::Error;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_model::llm::LlmBackend;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// The named seats' quotas.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

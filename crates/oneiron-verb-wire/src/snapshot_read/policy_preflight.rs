@@ -1,12 +1,7 @@
 //! Moved from `crates/oneiron/src/snapshot_read/policy_preflight.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_authority::claim_history_handoff::PointRead;
-use oneiron_authority::claim_history_handoff::ScopedReadResult;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -2,7 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::dreamer_wake::sieve::*;
-use oneiron_base::error::Error;
+use oneiron_contracts::entity_id::EntityId;
+use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

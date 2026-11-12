@@ -1,14 +1,9 @@
 //! Moved from `crates/oneiron/src/connector_key/slate_scope_signal.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_consent_state::consent::tool_scope::DataClass;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::connector_key_status::ConnectorKeyStatus;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The grant axis one call exceeded and what the call asked for on it: never
 /// the payload, a header's value or a credential.

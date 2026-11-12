@@ -1,16 +1,8 @@
 //! Moved from `crates/oneiron/src/autoreason_campaign/research/estimator.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::autoreason_campaign::config::CampaignDatasetRef;
-use crate::autoreason_campaign::research::ExperimentNode;
-use crate::autoreason_campaign::research::bounded;
-use crate::autoreason_campaign::research::invalid;
-use oneiron_base::error::Result;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A rung of the cold-start ladder, in the order it seeds a new posterior.
 #[derive(

@@ -2,6 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::world_keys::vault_key::*;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Whether this vault has a data key, and whether this handle holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

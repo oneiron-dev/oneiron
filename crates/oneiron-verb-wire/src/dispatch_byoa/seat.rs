@@ -2,19 +2,11 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::RetryableLlmError;
 use oneiron_model::llm::SpentKind;
 use oneiron_model::llm::limit;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::config::HostingPrivacyPosture;
-use oneiron_store::sandbox_credential::SandboxCredentialHandle;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
-use serde_json::json;
-use std::collections::BTreeMap;
-use std::io::Read;
 
 /// Why a login may not run on a hosted node. Each bound names whose it is,
 /// and the same act works self-hosted.
@@ -29,6 +21,40 @@ pub enum HostedSeatBound {
         terms_ref: &'static str,
         approval_ref: &'static str,
     },
+}
+
+impl<'de> Deserialize<'de> for HostedSeatBound {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Wire {
+            ProviderTerms {
+                vendor: String,
+                terms_ref: String,
+                approval_ref: String,
+            },
+        }
+        let Wire::ProviderTerms {
+            vendor,
+            terms_ref,
+            approval_ref,
+        } = Wire::deserialize(deserializer)?;
+        for bound in [OPENAI_CODEX_APP_SERVER, OPENAI_SIGN_IN_WITH_CHATGPT] {
+            let Self::ProviderTerms {
+                vendor: known_vendor,
+                terms_ref: known_terms,
+                approval_ref: known_approval,
+            } = bound;
+            if vendor == known_vendor && terms_ref == known_terms && approval_ref == known_approval
+            {
+                return Ok(bound);
+            }
+        }
+        Err(serde::de::Error::custom("unknown hosted seat bound"))
+    }
 }
 
 impl HostedSeatBound {

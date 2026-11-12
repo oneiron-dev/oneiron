@@ -1,3 +1,4 @@
+use crate::batch::*;
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use oneiron_contracts::record_layout::ENTITY_BODY_OFFSET;
 #[cfg_attr(not(test), allow(unused_imports))]
@@ -11,7 +12,6 @@ pub(crate) use oneiron_contracts::record_layout::ENTITY_OCCURRED_START_OFFSET;
 pub(crate) use oneiron_contracts::record_layout::ENTITY_TYPE_OFFSET;
 pub(crate) use oneiron_contracts::record_layout::EntityMetadataHeader;
 pub(crate) use oneiron_store::batch::builder::ops::BatchOp;
-use oneiron_store::batch::leader_chat_admission;
 pub(crate) use oneiron_store::batch::phonetic_codes;
 pub use oneiron_store::batch::phonetic_codes::generate_phonetic_codes;
 pub(crate) use oneiron_store::batch::row_put;

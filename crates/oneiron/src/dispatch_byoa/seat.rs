@@ -57,40 +57,6 @@ use oneiron_verb_wire::dispatch_byoa::seat::{
     OPENAI_CODEX_APP_SERVER, OPENAI_HOSTED_PLAN_APPROVAL, OPENAI_SIGN_IN_WITH_CHATGPT,
 };
 
-impl<'de> Deserialize<'de> for HostedSeatBound {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case")]
-        enum Wire {
-            ProviderTerms {
-                vendor: String,
-                terms_ref: String,
-                approval_ref: String,
-            },
-        }
-        let Wire::ProviderTerms {
-            vendor,
-            terms_ref,
-            approval_ref,
-        } = Wire::deserialize(deserializer)?;
-        for bound in [OPENAI_CODEX_APP_SERVER, OPENAI_SIGN_IN_WITH_CHATGPT] {
-            let Self::ProviderTerms {
-                vendor: known_vendor,
-                terms_ref: known_terms,
-                approval_ref: known_approval,
-            } = bound;
-            if vendor == known_vendor && terms_ref == known_terms && approval_ref == known_approval
-            {
-                return Ok(bound);
-            }
-        }
-        Err(serde::de::Error::custom("unknown hosted seat bound"))
-    }
-}
-
 /// The exact identity a hosted-login prohibition is keyed by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeatIdentity<'a> {

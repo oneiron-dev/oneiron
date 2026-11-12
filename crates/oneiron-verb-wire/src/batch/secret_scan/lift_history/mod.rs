@@ -3,17 +3,8 @@
 
 use crate::batch::secret_scan::SecretScanMode;
 use crate::secret_snapshot::SnapshotSecretLiftProposal;
-use heed::RoTxn;
-use heed::RwTxn;
-use oneiron_base::error::Error;
-use oneiron_base::error::ErrorKind;
-use oneiron_base::error::GateError;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::borrow::Cow;
-use std::ops::Bound;
 
 /// A family of carriers the sweep walks, in walk order.
 #[derive(

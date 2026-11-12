@@ -1,9 +1,7 @@
 //! Moved from `crates/oneiron/src/autoreason_campaign/research.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::autoreason_campaign::config::CampaignDatasetRef;
 use crate::autoreason_campaign::general::Measurement;
-use crate::autoreason_campaign::general::MetricRole;
 pub use crate::autoreason_campaign::research::budget::ResearchBudgetRead;
 pub use crate::autoreason_campaign::research::budget::ResearchReservationLine;
 pub use crate::autoreason_campaign::research::estimator::BranchBelief;
@@ -13,20 +11,13 @@ pub use crate::autoreason_campaign::research::estimator::SelectionRanking;
 pub use crate::autoreason_campaign::research::promotion::ConfirmationReceipt;
 pub use crate::autoreason_campaign::research::promotion::HeldOutCall;
 pub use crate::autoreason_campaign::research::promotion::PromotionDisposition;
-use crate::skill_optimize::gate::goal_axis::GoalAxisKind;
-use crate::skill_optimize::gate::goal_axis::GoalAxisSpec;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::claim::ClaimApprovalStatus;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_contracts::limit_ask::EngineLimit;
 use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 pub const MAX_REF_BYTES: usize = 256;
 

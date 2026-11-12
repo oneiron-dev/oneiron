@@ -1,23 +1,9 @@
 //! Moved from `crates/oneiron/src/origin/repo_manifest.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-#[cfg(feature = "sync")]
-use oneiron_store::git_wire::ids::GitOid;
-#[cfg(feature = "sync")]
-use oneiron_store::git_wire::ids::GitRefName;
-use oneiron_store::origin::lfs::oid::LfsOid;
-use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::Serializer;
-#[cfg(feature = "sync")]
-use std::cmp::Ordering;
 
 /// The manifest version this build writes and reads: 2 adds the refs
 /// writer's signature (FIX 12765).

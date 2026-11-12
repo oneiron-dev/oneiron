@@ -2,14 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::channel_identity::binding::ChannelIdentityFulfillment;
-use crate::channel_identity::custody::DelegatedGrant;
 use crate::channel_identity::custody::DelegatedGrantScope;
-use crate::channel_identity::lifecycle::ChannelIdentityState;
-use crate::vault_shape::apply::ShapeItemState;
-use crate::vault_shape::invalid;
-use oneiron_authority::channel_identity_shape::SelfHeldShape;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -46,10 +39,50 @@ pub enum ShapeMailScope {
     MailSend,
 }
 
+impl From<ShapeMailScope> for DelegatedGrantScope {
+    fn from(scope: ShapeMailScope) -> Self {
+        match scope {
+            ShapeMailScope::MailRead => Self::MailRead,
+            ShapeMailScope::MailMetadata => Self::MailMetadata,
+            ShapeMailScope::MailSend => Self::MailSend,
+        }
+    }
+}
+
+impl From<DelegatedGrantScope> for ShapeMailScope {
+    fn from(scope: DelegatedGrantScope) -> Self {
+        match scope {
+            DelegatedGrantScope::MailRead => Self::MailRead,
+            DelegatedGrantScope::MailMetadata => Self::MailMetadata,
+            DelegatedGrantScope::MailSend => Self::MailSend,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeChannelFulfillment {
     Api,
     Manual,
     Review,
+}
+
+impl From<ShapeChannelFulfillment> for ChannelIdentityFulfillment {
+    fn from(mode: ShapeChannelFulfillment) -> Self {
+        match mode {
+            ShapeChannelFulfillment::Api => Self::Api,
+            ShapeChannelFulfillment::Manual => Self::Manual,
+            ShapeChannelFulfillment::Review => Self::Review,
+        }
+    }
+}
+
+impl From<ChannelIdentityFulfillment> for ShapeChannelFulfillment {
+    fn from(mode: ChannelIdentityFulfillment) -> Self {
+        match mode {
+            ChannelIdentityFulfillment::Api => Self::Api,
+            ChannelIdentityFulfillment::Manual => Self::Manual,
+            ChannelIdentityFulfillment::Review => Self::Review,
+        }
+    }
 }

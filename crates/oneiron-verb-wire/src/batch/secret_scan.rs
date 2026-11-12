@@ -13,21 +13,10 @@ pub use crate::batch::secret_scan::lift_history::SecretLiftProgress;
 pub use crate::batch::secret_scan::lift_history::SecretLiftReceipt;
 pub use crate::batch::secret_scan::lift_history::SecretLiftRequest;
 pub use crate::batch::secret_scan::lift_history::SecretLiftStatus;
-use heed::RoTxn;
-use heed::RwTxn;
-use oneiron_base::error::Error;
-use oneiron_base::error::GateError;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_ASSET;
-use oneiron_base::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use oneiron_store::batch::builder::ops::BatchOp;
-use oneiron_store::batch::export::archive_types::ExportSecretsNulledManifest;
 pub(crate) use oneiron_store::batch::secret_scan::container::is_container;
 pub(crate) use oneiron_store::batch::secret_scan::container::projection_edit::RetainedProjectionEdit;
 pub(crate) use oneiron_store::batch::secret_scan::whole_read::Encoding;
-use oneiron_store::batch::secret_scan::whole_read::JoinedText;
 pub(crate) use oneiron_store::batch::secret_scan::whole_read::encode_as_stored;
-use oneiron_store::batch::secret_scan::wordlist;
 
 /// The vault's `secrets` setting: whether the write door scans what a host
 /// writes into this vault for credential shapes. On by default; only the

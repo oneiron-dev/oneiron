@@ -1,21 +1,11 @@
 //! Moved from `crates/oneiron/src/vault_shape/reach.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::connector_key::slate::SlateDisposition;
-use crate::vault_shape::plan::ShapeChange;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::consent_bound::ActionClass;
-use oneiron_store::consent_bound::ActionEnvelope;
-use oneiron_store::consent_bound::ActorBound;
-use oneiron_store::consent_bound::BoundClass;
-use oneiron_store::consent_bound::BoundEnvelope;
-use oneiron_store::consent_bound::BoundSubject;
-use oneiron_store::consent_bound::GrantBound;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Most changes one reach line names before it counts the rest.
 pub const REACH_LINE_MAX_CHANGES: usize = 3;

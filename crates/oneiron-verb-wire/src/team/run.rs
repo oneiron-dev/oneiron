@@ -1,19 +1,10 @@
 //! Moved from `crates/oneiron/src/team/run.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::store::attempt_manifest::ManifestKind;
 use crate::team::pattern::TeamAxis;
-use crate::team::pattern::TeamPattern;
-use crate::team::receipt::PatternSkillRef;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::HashSet;
 
 /// `self.team.start`: a team run under `pattern`, its members spawned into it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

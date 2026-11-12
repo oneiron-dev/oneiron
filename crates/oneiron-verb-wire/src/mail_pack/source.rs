@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/mail_pack/source.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Where a source lives (MAIL-PROVIDERS = A, staged in this order).
 #[derive(

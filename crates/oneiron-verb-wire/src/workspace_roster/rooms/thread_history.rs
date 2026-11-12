@@ -2,6 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::rooms::*;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// One page of a room's turns, or of one thread of it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

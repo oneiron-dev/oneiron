@@ -3,10 +3,6 @@
 
 use crate::autoreason_campaign::report::CampaignEvaluationSplit;
 use oneiron_base::extraction_eval::Of360DerivationEnvelope;
-use oneiron_base::extraction_eval::Of360MetricDefinitionSet;
-use oneiron_base::extraction_eval::of360_metric_definitions;
-use oneiron_store::dreamer_attempt_kind::DEFAULT_DREAMER_TOURNAMENT_DEPTH_K;
-use oneiron_store::dreamer_attempt_kind::DEFAULT_DREAMER_TOURNAMENT_FANOUT_M;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -33,6 +29,15 @@ pub enum CampaignExecutableArm {
     SinglePass,
     /// OF-366 tournament claim authoring.
     Tournament,
+}
+
+impl From<CampaignExecutableArm> for CampaignArmId {
+    fn from(arm: CampaignExecutableArm) -> Self {
+        match arm {
+            CampaignExecutableArm::SinglePass => Self::SinglePass,
+            CampaignExecutableArm::Tournament => Self::Tournament,
+        }
+    }
 }
 
 /// Whether a declared arm is invoked or documented only.

@@ -1,17 +1,7 @@
 //! Moved from `crates/oneiron/src/origin/secret_purge.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::edge::EdgeKind;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::claim::ClaimApprovalStatus;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
-use oneiron_contracts::claim::ClaimSource;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::code_snapshot::ids::entity_id_from_hash_material;
-use oneiron_store::write_envelope::claim_body::ClaimBody;
-use oneiron_store::write_envelope::claim_body::ClaimSubject;
 use serde::Deserialize;
 use serde::Serialize;
 

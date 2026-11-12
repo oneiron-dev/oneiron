@@ -7,7 +7,6 @@ use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::OnceLock;
 
 /// The prefix of a step check's public reference.
 pub const CHECK_REF_PREFIX: &str = "type_diagnostics:";
@@ -338,4 +337,15 @@ pub enum FeedbackWithheldReason {
     ConflictedRoot,
     /// Its release check could not run.
     ReleaseCheckFailed,
+}
+
+impl From<ReleaseHold> for FeedbackWithheldReason {
+    fn from(hold: ReleaseHold) -> Self {
+        match hold {
+            ReleaseHold::Recipient(_) => Self::Recipient,
+            ReleaseHold::Placement => Self::Placement,
+            ReleaseHold::ProducersUnknown => Self::ProducersUnknown,
+            ReleaseHold::ConflictedRoot => Self::ConflictedRoot,
+        }
+    }
 }

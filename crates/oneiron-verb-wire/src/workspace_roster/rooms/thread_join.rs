@@ -1,16 +1,10 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/thread_join.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 use crate::workspace_roster::rooms::*;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron_base::registry::ENTITY_TYPE_PERSON;
-use oneiron_base::registry::ENTITY_TYPE_TURN;
-use oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN;
-use oneiron_contracts::memory::MEMORY_CODE_INVALID_STATE;
-use oneiron_store::conversation_body::ThreadBinding;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// `vault.rooms.thread_join.request`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,21 +1,8 @@
 //! Moved from `crates/oneiron/src/autoreason_campaign/judge.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::model_decision::AnswerContract;
-use oneiron_store::model_decision::DecisionAnswer;
-use oneiron_store::model_decision::DecisionBand;
-use oneiron_store::model_decision::DecisionBandPolicy;
-use oneiron_store::model_decision::DecisionDial;
-use oneiron_store::model_decision::DecisionRung;
-use oneiron_store::model_decision::Reversibility;
-use oneiron_store::model_decision::catalogue::CAMPAIGN_TASTE;
-use oneiron_store::retrieval_deadline::RetrievalDeadline;
-use oneiron_wake_contract::llm::decision::types::DecisionReceipt;
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::Duration;
-use std::time::Instant;
 
 /// External gold anchor a taste judgment was scored against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

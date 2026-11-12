@@ -2,17 +2,11 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::note::documents::invalid;
-use crate::note::lifecycle::NoteRefRequest;
-use oneiron_base::edge::EdgeActorClass;
 use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryResult;
 use oneiron_store::note_kind::ContextDefault;
 use oneiron_store::note_kind::ExtractionDefault;
 use oneiron_store::note_kind::NoteKindDescriptor;
 use oneiron_store::note_kind::RetentionDefault;
-use oneiron_store::side_table::key::HexId;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
 

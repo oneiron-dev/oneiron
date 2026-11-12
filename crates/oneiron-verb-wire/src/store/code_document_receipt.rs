@@ -2,10 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::code_document_values::CodeDocumentFrontier;
-use oneiron_store::code_document_values::CodeFileEdit;
-use oneiron_store::code_document_values::CodeFileMetadataEdit;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
 

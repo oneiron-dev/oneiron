@@ -1,17 +1,8 @@
 //! Moved from `crates/oneiron/src/connector_key/slate_revision.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::connector_key::lifecycle::tool_grant::ConnectorToolGrant;
-use crate::connector_key::slate::SlateOwnerOverride;
-use crate::connector_key::slate_scope_signal::ConnectorScopeExceed;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::connector_key_status::ConnectorKeyStatus;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The owner's answer that holds a scope revision's offer back (ED-05).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

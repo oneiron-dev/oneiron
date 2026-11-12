@@ -2,8 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::rooms::*;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use std::collections::BTreeMap;
+use oneiron_contracts::entity_id::EntityId;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// `vault.rooms.upkeep.pending`: the caller's unvoiced room nudges, only
 /// `room`'s when it names one.

@@ -3,7 +3,6 @@
 
 use crate::skill_optimize::gate::*;
 use crate::skill_optimize::goal_axes::AxisScores;
-use crate::workspace_roster::project::goal::GoalExplorationBudget;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,13 +1,8 @@
 //! Moved from `crates/oneiron/src/channel_identity_selection/selection_resolution.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::channel_identity_selection::selection_rules::ChannelIdentitySelectionRule;
-use crate::channel_identity_selection::selection_rules::ChannelIdentitySelectionRuleSet;
 use oneiron_authority::channel_identity_shape::ChannelIdentityShape;
-use oneiron_authority::channel_selection_vocabulary::CHANNEL_IDENTITY_SELECTION_SCHEMA_VERSION;
 use oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace;
-use oneiron_authority::channel_selection_vocabulary::RelationshipContext;
-use oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind;
 use oneiron_authority::channel_selection_vocabulary::is_valid_ref_token;
 use oneiron_contracts::entity_id::EntityId;
 

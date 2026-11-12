@@ -1,12 +1,7 @@
 //! Moved from `crates/oneiron/src/store/model_step_submission.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_model::llm::FatalLlmError;
-use oneiron_model::llm::LlmError;
 use oneiron_model::llm::LlmRequest;
-use oneiron_model::llm::LlmResponse;
-use oneiron_model::llm::LlmUsage;
 pub use oneiron_store::model_step_submission::*;
 use serde::Deserialize;
 use serde::Serialize;

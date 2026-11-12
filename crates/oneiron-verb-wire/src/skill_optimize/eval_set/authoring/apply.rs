@@ -1,21 +1,10 @@
 //! Moved from `crates/oneiron/src/skill_optimize/eval_set/authoring/apply.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_optimize::eval_set::DerivationKind;
-use crate::skill_optimize::eval_set::EvalLabel;
 use crate::skill_optimize::eval_set::FamilyPurpose;
-use crate::skill_optimize::eval_set::MAX_NAME_BYTES;
-use crate::skill_optimize::eval_set::cohort::EvalCohortRetirementAuthor;
-use crate::skill_optimize::eval_set::cut_audit::EvalCutAuthor;
-use oneiron_base::error::ArtifactError;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A purpose for one new source group, given before any case.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

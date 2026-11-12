@@ -2,13 +2,13 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::project::*;
-use oneiron_authority::authority::AuthorityFold;
-use oneiron_authority::authority::CapabilitySlip;
+use oneiron_base::error::Error;
+use oneiron_base::error::Result;
 pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_REVISION_SHORT_ID_PREFIX;
-use oneiron_contracts::entity_id::derived_domains::PROJECT_REVISION;
 use oneiron_store::side_table::key::FixedSideKey;
 use oneiron_store::side_table::key::SideKey;
-use std::collections::BTreeMap;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
 /// exactly 32 bytes, or the array of exactly 32 numbers serde_json writes for
@@ -32,6 +32,42 @@ impl Serialize for ProjectRevisionHash {
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProjectRevisionHash {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct Bytes32;
+        impl<'de> serde::de::Visitor<'de> for Bytes32 {
+            type Value = ProjectRevisionHash;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("32 bytes")
+            }
+            fn visit_bytes<E: serde::de::Error>(
+                self,
+                bytes: &[u8],
+            ) -> std::result::Result<Self::Value, E> {
+                bytes
+                    .try_into()
+                    .map(ProjectRevisionHash)
+                    .map_err(|_| E::invalid_length(bytes.len(), &self))
+            }
+            // serde_json writes the bytes as an array of numbers; exactly 32
+            // of them read back (FIX 3296).
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let mut bytes = Vec::with_capacity(32);
+                while let Some(byte) = seq.next_element::<u8>()? {
+                    bytes.push(byte);
+                }
+                self.visit_bytes(&bytes)
+            }
+        }
+        deserializer.deserialize_bytes(Bytes32)
     }
 }
 

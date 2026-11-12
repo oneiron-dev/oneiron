@@ -2,10 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::artifact_hosting::vocabulary::ArtifactPointerChannel;
-use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::artifact_hosting::door_types::*;
-use oneiron_store::artifact_hosting::vocabulary::ArtifactExportRef;
-use oneiron_store::artifact_hosting::vocabulary::ArtifactPublishVerbStatus;
 use serde::Deserialize;
 use serde::Serialize;
 

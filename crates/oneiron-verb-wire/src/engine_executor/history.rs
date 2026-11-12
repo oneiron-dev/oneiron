@@ -1,19 +1,12 @@
 //! Moved from `crates/oneiron/src/engine_executor/history.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::code_run::fold_api::FoldHistoryRequest;
-use crate::code_run::fold_api::FoldUnfoldRequest;
 use crate::code_run::type_diagnostics::ProgramPreparationNote;
 use crate::code_run::type_diagnostics::ProgramStepFeedbackRelease;
 use crate::code_run::type_diagnostics::TypeDiagnostics;
 use crate::compaction::folds::FoldDescription;
 use crate::compaction::folds::FoldList;
-use crate::compaction::folds::FoldReply;
 use crate::compaction::folds::FoldUnfold;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD;
 use serde::Deserialize;
 use serde::Serialize;
 

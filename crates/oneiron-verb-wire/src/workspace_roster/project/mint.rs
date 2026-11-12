@@ -1,26 +1,6 @@
 //! Moved from `crates/oneiron/src/workspace_roster/project/mint.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::project::invalid;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::edge::EdgeKind;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron_base::registry::ENTITY_TYPE_MESSAGE;
-use oneiron_base::registry::ENTITY_TYPE_PERSON;
-use oneiron_base::registry::ENTITY_TYPE_SKILL;
-use oneiron_base::registry::ENTITY_TYPE_TURN;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
-use oneiron_contracts::record_layout::EntityMetadataHeader;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::consent_bound::ActionClass;
-use oneiron_store::consent_bound::ActionEnvelope;
-use oneiron_store::consent_bound::ActorBound;
-use oneiron_store::consent_bound::GrantBound;
-use oneiron_store::gate_decision::types::GateDecisionId;
-use oneiron_store::ports::records::EdgeDirection;
 use serde::Deserialize;
 use serde::Serialize;
 

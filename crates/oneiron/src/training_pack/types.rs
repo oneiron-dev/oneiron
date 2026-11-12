@@ -23,7 +23,7 @@ pub struct SourcePin {
 #[doc(hidden)]
 pub use oneiron_verb_wire::training_pack::types::{
     ArtifactPin, CalibrationResult, CandleParityCheck, CheckpointFileKind, ExportCheck,
-    QuestionExportCheck,
+    QuestionExportCheck, TrainingOwner,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -193,69 +193,6 @@ pub struct TrainingDeclarationPin {
 }
 
 pub use crate::skill_optimize::training_choice::TrainingAuthorizationSource;
-
-/// The owner a run, an authorization or a swap receipt names: an actor, or
-/// no one once that actor was erased (FIX 3520). It reads and writes as the
-/// actor's hex id, or as [`ERASED_CALL_IDENTITY`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrainingOwner {
-    Actor(EntityId),
-    Erased,
-}
-
-impl TrainingOwner {
-    /// Whether this is `actor`.
-    #[must_use]
-    pub fn is(self, actor: EntityId) -> bool {
-        self == Self::Actor(actor)
-    }
-
-    /// Makes this no one when it is `actor`; whether it was.
-    pub(crate) fn forget(&mut self, actor: EntityId) -> bool {
-        let named = self.is(actor);
-        if named {
-            *self = Self::Erased;
-        }
-        named
-    }
-}
-
-impl Serialize for TrainingOwner {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for TrainingOwner {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
-    }
-}
-
-/// Its schema is its wire form: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
-impl schemars::JsonSchema for TrainingOwner {
-    fn schema_name() -> String {
-        "TrainingOwner".to_owned()
-    }
-
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        <String as schemars::JsonSchema>::json_schema(generator)
-    }
-}
 
 /// The owner's yes on one prepared spec and declaration. It holds no
 /// credential, key, lease or permit; the host takes a fresh permit at dispatch.

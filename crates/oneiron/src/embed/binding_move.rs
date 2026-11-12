@@ -70,25 +70,9 @@ impl BindingSource {
 }
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::embed::binding_move::{BindingMoveLink, BindingNotApplied};
-
-/// Where a staged binding stands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum BindingMoveState {
-    /// No declared space pins its model yet, or the slots it moves move elsewhere; the old
-    /// binding serves.
-    Waiting,
-    /// Its move's candidate fills while the old binding and slots serve.
-    Filling,
-    /// The manifest binds it. `verdict` is its move's last check reading, kept beside the
-    /// owner's yes; `None` when no check ran.
-    Applied { at: u64, verdict: Option<NotWorse> },
-    /// It never applied.
-    NotApplied { at: u64, why: BindingNotApplied },
-    /// The owner undid it after it applied: the binding it replaced serves again.
-    Undone { at: u64, owner: SwitchOwner },
-}
+pub use oneiron_verb_wire::embed::binding_move::{
+    BindingMoveLink, BindingMoveState, BindingNotApplied,
+};
 
 /// One owner-approved retrieval embedder binding, staged until its space move swaps in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

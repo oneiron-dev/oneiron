@@ -39,22 +39,9 @@ use crate::workspace_roster::join_receipt::{RosterActor, RosterErase, names_no_a
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::rooms::hosting::{
-    HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin, RoomSpeakingRole,
+    HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin, RoomHosting,
+    RoomSpeakingRole, RoomStanding,
 };
-
-/// A room's stored host: the latest pin or handoff. It wins outright while
-/// its agent may still host.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HostPin {
-    pub agent: EntityId,
-    /// Who pinned it, or the host who handed it on; no one once that actor
-    /// was erased.
-    pub by: RosterActor,
-    pub kind: HostPinKind,
-    /// When it was recorded, on the store's recorded-at clock (unix seconds).
-    pub at: u64,
-}
 
 /// Each room's stored host, latest write wins. Key: id16 (room).
 pub(super) const HOST_PINS: SideTable<EntityId, HostPin, Named> =
@@ -98,29 +85,6 @@ pub(crate) fn erase_host_pin_actor_in_txn(
         HOST_PINS.put(&vault.store, wtxn, room, pin)?;
     }
     Ok(())
-}
-
-/// Who holds a room's speaking duty now.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RoomHosting {
-    /// The agent holding it; `None` when no agent may, as in a room of
-    /// humans only.
-    pub host: Option<EntityId>,
-    /// The other present agents who may hold it by presence, earliest
-    /// arrival first: the nearest present leaders, or every present agent
-    /// when no leader is here. Shown, never chosen from.
-    pub candidates: Vec<EntityId>,
-    /// The stored pin or handoff that chose `host`; `None` when presence
-    /// chose it.
-    pub pin: Option<HostPin>,
-}
-
-/// A member's reading of its room's hosting and of its own speaking role.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct RoomStanding {
-    pub hosting: RoomHosting,
-    /// `None` for an actor that speaks as no persona.
-    pub role: Option<RoomSpeakingRole>,
 }
 
 fn refused(actor: EntityId) -> Error {

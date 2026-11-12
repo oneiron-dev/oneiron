@@ -3,23 +3,6 @@
 
 use crate::genui::project_proposal::ProjectGoalDraft;
 use crate::genui::project_proposal::ProjectProposalPicks;
-use crate::workspace_roster::project::invalid;
-use crate::workspace_roster::rooms;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::Error;
-use oneiron_base::error::GateError;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::attempt_inputs::ClaimAttempt;
-use oneiron_store::attempt_inputs::CompleteAttempt;
-use oneiron_store::attempt_inputs::EnqueueAttempt;
-use oneiron_store::attempt_inputs::FailAttempt;
-use oneiron_store::config::context_spec::ContextSpec;
-use oneiron_store::scan_kind::EngineScan;
-use oneiron_wake_contract::llm::decision::types::DecisionReceipt;
 use serde::Deserialize;
 use serde::Serialize;
 

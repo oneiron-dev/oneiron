@@ -1,12 +1,6 @@
 //! Moved from `crates/oneiron/src/agent_inbox_lens/serve.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::inbox::view_values::AgentInboxItemKind;
-use oneiron_store::inbox::view_values::InboxImpact;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/feedback/report/delivery.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::feedback::report::ReportDisclosure;
-use crate::feedback::report::ReportStatus;
 pub use crate::feedback::report::delivery::owner::ReportDeliveryRun;
 pub use crate::feedback::report::delivery::owner::ReportDeliveryRunRequest;
 pub use crate::feedback::report::delivery::owner::ReportDeliveryStatus;
@@ -10,12 +8,8 @@ pub use crate::feedback::report::delivery::owner::ReportDeliveryStatusRequest;
 pub use crate::feedback::report::delivery::owner::ReportPublisherBinding;
 pub use crate::feedback::report::delivery::owner::ReportPublisherBindingRequest;
 pub use crate::feedback::report::delivery::retry::ReportDeliveryRetryRequest;
-use crate::feedback::report::routing::ReportRoute;
-use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_consent_state::consent::grant::StandingConsentGrant;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::outbound_outcome::OutboundDispatchOutcome;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -35,14 +35,9 @@ pub use crate::skill_optimize::eval_set::sufficiency::SufficiencyCard;
 pub use crate::skill_optimize::eval_set::sufficiency::SufficiencyInput;
 pub use crate::skill_optimize::eval_set::sufficiency::SufficiencyVerdict;
 pub use crate::skill_optimize::eval_set::sufficiency::UnknownReason;
-use oneiron_base::error::Error;
-use oneiron_base::error::GateError;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::limit_ask::EngineLimit;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub const MAX_NAME_BYTES: usize = 64;
 

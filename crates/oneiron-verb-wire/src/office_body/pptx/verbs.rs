@@ -1,24 +1,9 @@
 //! Moved from `crates/oneiron/src/office_body/pptx/verbs.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_docedit::edit::Preset;
 use oneiron_docedit::live::ApproveScope;
-use oneiron_docedit::live::DeckDiff;
-use oneiron_docedit::live::ExportProfile;
-use oneiron_docedit::live::Gate;
-use oneiron_docedit::live::GeometryProps;
 use oneiron_docedit::live::Landing;
-use oneiron_docedit::live::LandingReceipt;
-use oneiron_docedit::live::NodeId;
-use oneiron_docedit::live::NodeKind;
-use oneiron_docedit::live::NodePayload;
 use oneiron_docedit::live::OracleReceipt;
-use oneiron_docedit::live::TextBody;
-use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
-use oneiron_docedit::live::effect_receipt;
 use serde::Deserialize;
 use serde::Serialize;
 

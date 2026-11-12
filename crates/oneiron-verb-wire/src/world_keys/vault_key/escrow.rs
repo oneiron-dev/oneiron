@@ -2,6 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::world_keys::vault_key::*;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// One escrow recipient retired after its secret was released, and the
 /// owner's receipt for it ([`Vault::retire_vault_key_escrow_as`]). Ids and

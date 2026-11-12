@@ -1,15 +1,6 @@
 //! Moved from `crates/oneiron/src/agent_dispatch/continuation.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::spend_scope::SpendState;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::attempt_state::AttemptState;
-use oneiron_store::dispatch_attempt_kind::AGENT_DISPATCH_ATTEMPT_TYPE;
-use oneiron_store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
-use oneiron_store::dreamer_attempt_payload::decode_dreamer_attempt_payload;
 use serde::Deserialize;
 use serde::Serialize;
 

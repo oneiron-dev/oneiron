@@ -1,16 +1,7 @@
 //! Moved from `crates/oneiron/src/dispatch_byoa/seat_quota.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::dispatch_byoa::owner_doors::RunnerSeatTopUpEffect;
-use crate::dispatch_byoa::seat::SeatAuth;
 use crate::dispatch_byoa::seat::SeatSpent;
-use oneiron_base::error::Error;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_model::llm::SpentKind;
-use oneiron_store::attempt_state::AttemptState;
-use oneiron_store::code_snapshot::ids::entity_id_from_hash_material;
-use oneiron_store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -1,21 +1,7 @@
 //! Moved from `crates/oneiron/src/federation/relationships.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::federation::codec::decode_canonical_entity_ref;
-use oneiron_authority::federation::pact_scope::SelectorRange;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::claim::ClaimApprovalStatus;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
-use oneiron_contracts::claim::ClaimSource;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::write_envelope::ClaimCandidate;
-use oneiron_store::write_envelope::WriteActor;
-use oneiron_store::write_envelope::WriteEnvelope;
-use oneiron_store::write_envelope::WriteProvenance;
-use oneiron_store::write_envelope::claim_body::ClaimBody;
-use oneiron_store::write_envelope::claim_body::ClaimSubject;
 
 /// Trust class a relationship label resolves to.
 ///

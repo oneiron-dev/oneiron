@@ -1,45 +1,10 @@
 //! Moved from `crates/oneiron/src/office_body/xlsx.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use loro::Container;
-use loro::LoroDoc;
-use loro::LoroMap;
-use loro::LoroMapValue;
-use loro::LoroValue;
-use loro::ValueOrContainer;
-use oneiron_base::error::Result;
-use oneiron_docedit::xlsx_body::SheetFate;
-use oneiron_docedit::xlsx_body::XlsxArea;
-use oneiron_docedit::xlsx_body::XlsxAxis;
-use oneiron_docedit::xlsx_body::XlsxAxisEdit;
-use oneiron_docedit::xlsx_body::XlsxBook;
-use oneiron_docedit::xlsx_body::XlsxChange;
 use oneiron_docedit::xlsx_body::XlsxConditionalFormat;
 use oneiron_docedit::xlsx_body::XlsxFormat;
-use oneiron_docedit::xlsx_body::XlsxLines;
-use oneiron_docedit::xlsx_body::XlsxLock;
-use oneiron_docedit::xlsx_body::XlsxSheetPlan;
 use oneiron_docedit::xlsx_body::XlsxSheetVisibility;
-use oneiron_docedit::xlsx_body::XlsxStyle;
-use oneiron_docedit::xlsx_body::XlsxTable;
 use oneiron_docedit::xlsx_body::XlsxValue;
-use oneiron_docedit::xlsx_body::a1;
-use oneiron_docedit::xlsx_body::calculated_fill;
-use oneiron_docedit::xlsx_body::check_cell;
-use oneiron_docedit::xlsx_body::check_conditional;
-use oneiron_docedit::xlsx_body::check_format;
-use oneiron_docedit::xlsx_body::check_name;
-use oneiron_docedit::xlsx_body::check_sheet_name;
-use oneiron_docedit::xlsx_body::drop_tables;
-use oneiron_docedit::xlsx_body::parse_a1;
-use oneiron_docedit::xlsx_body::retarget_sheets;
-use oneiron_docedit::xlsx_body::shift_axis_formula;
-use oneiron_docedit::xlsx_body::shift_conditional_range;
-use oneiron_docedit::xlsx_body::shift_lines;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::collections::HashSet;
 
 /// One typed operation on an XLSX body. A cell is an A1 address (`B12`,
 /// `$B$12`); a formula may carry its leading `=`.

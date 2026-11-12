@@ -12,8 +12,6 @@ pub use oneiron_authority::authority::WORLD_KEY_EPOCH;
 pub use oneiron_authority::authority::WorldKeyId;
 pub use oneiron_authority::authority::WrapRecipient;
 pub use oneiron_base::error::KitRecord;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_crypto::HybridPublicKey;
 pub use oneiron_crypto::HybridSecretKey;
 pub use oneiron_crypto::backup::VaultKeyWrapInfo;

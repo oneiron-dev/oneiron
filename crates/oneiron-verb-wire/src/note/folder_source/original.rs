@@ -1,18 +1,9 @@
 //! Moved from `crates/oneiron/src/note/folder_source/original.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::write_envelope::WriteActor;
-use oneiron_store::write_envelope::provenance::made_by::MadeBy;
-use oneiron_store::write_envelope::provenance::made_by::MadeByClass;
-use oneiron_store::write_envelope::provenance::made_by::MadeByProcess;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// A kept original: the version of its file's blob artifact that holds the
 /// bytes.

@@ -1,15 +1,6 @@
 //! Moved from `crates/oneiron/src/note/reads.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::note::documents::invalid;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_authority::claim_history_handoff::PointRead;
-use oneiron_authority::claim_history_handoff::ReadRow;
-use oneiron_authority::claim_history_handoff::ScopedReadResult;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::scan_checks::PendingScanChecks;
 use serde::Deserialize;
 use serde::Serialize;
 

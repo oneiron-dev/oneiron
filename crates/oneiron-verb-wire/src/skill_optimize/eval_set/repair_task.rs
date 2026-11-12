@@ -1,12 +1,6 @@
 //! Moved from `crates/oneiron/src/skill_optimize/eval_set/repair_task.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::ingest::ag_ui::file::AgUiFileReadInput;
-use oneiron_authority::claim_history_handoff::ScopedReadReceipt;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;

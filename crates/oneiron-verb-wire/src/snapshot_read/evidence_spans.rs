@@ -1,17 +1,9 @@
 //! Moved from `crates/oneiron/src/snapshot_read/evidence_spans.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::snapshot_read::source_version::SourceVersionCheck;
-use crate::snapshot_read::source_version::blake3_ref;
-use oneiron_authority::claim_history_handoff::ClaimReadStatus;
-use oneiron_authority::claim_history_handoff::PointRead;
-use oneiron_authority::claim_history_handoff::ScopedReadResult;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt::Write as _;
 
 /// One byte range over a TURN's projected text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

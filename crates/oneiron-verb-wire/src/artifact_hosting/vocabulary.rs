@@ -6,11 +6,7 @@ use crate::artifact_hosting::ARTIFACT_CHANNEL_PUBLISHED;
 use oneiron_base::error::CodeError;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::artifact_hosting::vocabulary::*;
-use oneiron_store::code_snapshot::snapshot::CodebaseForkHash;
-use oneiron_store::code_snapshot::snapshot::CodebaseSnapshot;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -24,24 +24,6 @@ pub use oneiron_verb_wire::compaction::folds::{
 #[doc(hidden)]
 use oneiron_verb_wire::compaction::folds::{FoldMarkOptions, FoldMarkWire};
 
-impl TryFrom<FoldMarkWire> for FoldMarkInput {
-    type Error = String;
-
-    fn try_from(wire: FoldMarkWire) -> std::result::Result<Self, Self::Error> {
-        let ([from, through], note) = match wire {
-            FoldMarkWire::Span(span) => (span, None),
-            FoldMarkWire::SpanWithOptions(span, options) => (span, options.note),
-            FoldMarkWire::Kind(wire) => return wire.normalize(),
-        };
-        Ok(Self {
-            from,
-            through,
-            note,
-            kind: None,
-        })
-    }
-}
-
 /// One fold verb call. Run and step come from the host binding, never from
 /// the guest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

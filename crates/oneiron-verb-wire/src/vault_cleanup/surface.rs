@@ -1,11 +1,8 @@
 //! Moved from `crates/oneiron/src/vault_cleanup/surface.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
 use oneiron_store::vault_cleanup::cleanup_types::CleanupCandidate;
-use oneiron_store::vault_cleanup::cleanup_types::CleanupKind;
 use oneiron_store::vault_cleanup::cleanup_types::CleanupPosture;
 use oneiron_store::vault_cleanup::cleanup_types::CleanupRunReport;
 use serde::Deserialize;

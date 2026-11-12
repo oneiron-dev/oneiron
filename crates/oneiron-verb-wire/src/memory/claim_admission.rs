@@ -1,15 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/claim_admission.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::federation::Scope;
-use oneiron_authority::federation::ScopeAxis;
-use oneiron_authority::federation::ScopeId;
-use oneiron_base::error::Error;
-use oneiron_contracts::claim::ClaimApprovalStatus;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::write_envelope::provenance::made_by::MadeByClass;
 use serde::Deserialize;
 use serde::Serialize;
 

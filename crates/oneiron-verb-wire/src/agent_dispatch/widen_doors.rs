@@ -1,13 +1,6 @@
 //! Moved from `crates/oneiron/src/agent_dispatch/widen_doors.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::config::context_spec::ContextSpec;
-use oneiron_store::inbox::view_values::AgentInboxItemKind;
-use oneiron_store::inbox::view_values::AgentInboxParticipant;
-use oneiron_store::inbox::view_values::InboxImpact;
 use serde::Deserialize;
 use serde::Serialize;
 

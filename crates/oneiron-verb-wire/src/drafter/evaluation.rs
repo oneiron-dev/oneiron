@@ -1,23 +1,11 @@
 //! Moved from `crates/oneiron/src/drafter/evaluation.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::drafter::types::DrafterActor;
 use crate::drafter::types::DrafterRollbackReason;
 use crate::drafter::types::DrafterServing;
-use crate::drafter::types::DrafterVersionState;
-use crate::world_keys::vault_key::vocabulary::VaultKeyStatus;
-use heed::RoTxn;
-use heed::RwTxn;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_model::llm::LlmRequest;
-use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::path::Path;
 
 /// The key under a recipe's settings that holds its qualification rule.
 pub const DRAFTER_QUALIFICATION_KEY: &str = "qualification";

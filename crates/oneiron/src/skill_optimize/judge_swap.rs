@@ -198,17 +198,6 @@ pub use oneiron_verb_wire::skill_optimize::judge_swap::{
     JudgeSwapPick, JudgeSwapPolicy, JudgeTieBreaker,
 };
 
-impl Default for JudgeSwapPolicy {
-    fn default() -> Self {
-        Self {
-            tie_breaker: JudgeTieBreaker::ThirdFamily,
-            floor_tie_breaker: JudgeTieBreaker::IncumbentHolds,
-            pinned_divergence: None,
-            hands_on: false,
-        }
-    }
-}
-
 /// What decided one disagreement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

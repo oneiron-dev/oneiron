@@ -1,15 +1,6 @@
 //! Moved from `crates/oneiron/src/secret_custody/reveal/file/repo.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Result;
-use oneiron_consent_state::consent::grant::StandingConsentGrant;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::consent_bound::AudienceBound;
-use oneiron_store::consent_bound::DisclosureClass;
-use oneiron_store::consent_bound::DisclosureEnvelope;
-use oneiron_store::consent_bound::GrantBound;
-use oneiron_store::file_secret_marks::SecretSight;
-use oneiron_store::secret_record::CustodyClass;
 pub(crate) use oneiron_store::secret_record::write_records::RepoFileKeys;
 pub(crate) use oneiron_store::secret_record::write_records::RepoFileOriginal;
 use serde::Deserialize;

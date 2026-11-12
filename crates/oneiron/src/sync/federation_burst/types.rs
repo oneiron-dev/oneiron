@@ -70,16 +70,6 @@ impl FederationBurstPeerRequest {
     }
 }
 
-impl Default for FederationBurstPolicy {
-    fn default() -> Self {
-        Self {
-            baseline: None,
-            unusual_rate: FederationBurstOutcome::Defer,
-            unusual_streak: FederationBurstOutcome::IsolateAndPropose,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FederationBurstPolicySetRequest {

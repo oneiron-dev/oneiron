@@ -16,7 +16,6 @@ pub(crate) use oneiron_store::scope_summary::arc_work::ArcWorkState;
 pub(crate) use oneiron_store::scope_summary::arc_work::ChildMode;
 pub(crate) use oneiron_store::scope_summary::arc_work::MemberKind;
 pub(crate) use oneiron_store::scope_summary::arc_work::owned_by_parts;
-use oneiron_store::scope_summary::codec;
 pub use oneiron_store::scope_summary::codec::ScopeSummaryBody;
 pub use oneiron_store::scope_summary::codec::SummarySourceMessage;
 pub use oneiron_store::scope_summary::codec::SummarySourceNote;

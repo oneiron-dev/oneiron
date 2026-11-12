@@ -1,15 +1,6 @@
 //! Moved from `crates/oneiron/src/mail_pack/attachments.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::mail_pack::state::MailPresence;
-use crate::mail_pack::wire::MailAttachmentRef;
-use crate::source_audience;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::derived_domains::MAIL_ATTACHMENT;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
 

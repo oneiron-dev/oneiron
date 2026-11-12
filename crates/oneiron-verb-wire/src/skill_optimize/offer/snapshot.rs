@@ -5,9 +5,6 @@ use crate::skill_optimize::eval_set::sufficiency::SufficiencyCard;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_contracts::limit_ask::EngineLimit;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -4,12 +4,8 @@
 use crate::compaction::fold_kinds::FoldByKind;
 use crate::compaction::fold_kinds::FoldKind;
 use crate::compaction::fold_kinds::FoldedOutput;
-use oneiron_contracts::claim::ClaimSource;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use serde_json::json;
 
 /// `self.fold`: marks steps `from..=through` of this run's log. The mark
 /// waits as pending; the log does not change until `self.compact`, or the
@@ -52,6 +48,24 @@ pub enum FoldMarkWire {
 pub struct FoldMarkOptions {
     #[serde(default)]
     note: Option<String>,
+}
+
+impl TryFrom<FoldMarkWire> for FoldMarkInput {
+    type Error = String;
+
+    fn try_from(wire: FoldMarkWire) -> std::result::Result<Self, Self::Error> {
+        let ([from, through], note) = match wire {
+            FoldMarkWire::Span(span) => (span, None),
+            FoldMarkWire::SpanWithOptions(span, options) => (span, options.note),
+            FoldMarkWire::Kind(wire) => return wire.normalize(),
+        };
+        Ok(Self {
+            from,
+            through,
+            note,
+            kind: None,
+        })
+    }
 }
 
 /// `self.compact`: folds every pending mark in one batch, and compacts the

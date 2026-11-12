@@ -49,26 +49,6 @@ impl From<ShapeSelfHeld> for SelfHeldShape {
     }
 }
 
-impl From<ShapeMailScope> for DelegatedGrantScope {
-    fn from(scope: ShapeMailScope) -> Self {
-        match scope {
-            ShapeMailScope::MailRead => Self::MailRead,
-            ShapeMailScope::MailMetadata => Self::MailMetadata,
-            ShapeMailScope::MailSend => Self::MailSend,
-        }
-    }
-}
-
-impl From<DelegatedGrantScope> for ShapeMailScope {
-    fn from(scope: DelegatedGrantScope) -> Self {
-        match scope {
-            DelegatedGrantScope::MailRead => Self::MailRead,
-            DelegatedGrantScope::MailMetadata => Self::MailMetadata,
-            DelegatedGrantScope::MailSend => Self::MailSend,
-        }
-    }
-}
-
 /// Whom the identity speaks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "to", rename_all = "snake_case")]
@@ -112,26 +92,6 @@ impl ShapeChannelBinding {
                 }
             }
             Self::Vault { vault_id } => Ok(ChannelIdentityBinding::vault(*vault_id)),
-        }
-    }
-}
-
-impl From<ShapeChannelFulfillment> for ChannelIdentityFulfillment {
-    fn from(mode: ShapeChannelFulfillment) -> Self {
-        match mode {
-            ShapeChannelFulfillment::Api => Self::Api,
-            ShapeChannelFulfillment::Manual => Self::Manual,
-            ShapeChannelFulfillment::Review => Self::Review,
-        }
-    }
-}
-
-impl From<ChannelIdentityFulfillment> for ShapeChannelFulfillment {
-    fn from(mode: ChannelIdentityFulfillment) -> Self {
-        match mode {
-            ChannelIdentityFulfillment::Api => Self::Api,
-            ChannelIdentityFulfillment::Manual => Self::Manual,
-            ChannelIdentityFulfillment::Review => Self::Review,
         }
     }
 }

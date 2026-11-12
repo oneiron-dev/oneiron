@@ -2,17 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::context_board::layout::BoardLayout;
-use crate::context_board::layout::BoardLayoutError;
-use crate::context_board::layout::FoldCounts;
-use heed::RwTxn;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// One actor's board layout: what renders now, and the batch the next turn
 /// applies.

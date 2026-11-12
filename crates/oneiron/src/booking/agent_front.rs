@@ -164,15 +164,8 @@ pub struct ConstraintSlotReply {
     pub visitor_tz: String,
 }
 
-/// The rung-2 envelope. It carries the same canonical constraint the oracle
-/// saw and no raw free text.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
-pub struct ConstraintContinuation {
-    pub event_type: EventTypeKey,
-    pub visitor_tz: String,
-    pub constraint: ConstraintObject,
-    pub session_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::booking::agent_front::ConstraintContinuation;
 
 /// One structured scheduling-only deflect. It has no controls, so it cannot
 /// carry an action of any kind.

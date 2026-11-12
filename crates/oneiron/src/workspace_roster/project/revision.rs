@@ -24,42 +24,6 @@ pub use oneiron_verb_wire::workspace_roster::project::revision::{
     ProjectRevisionHash, ProjectRevisionProof,
 };
 
-impl<'de> Deserialize<'de> for ProjectRevisionHash {
-    fn deserialize<D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> std::result::Result<Self, D::Error> {
-        struct Bytes32;
-        impl<'de> serde::de::Visitor<'de> for Bytes32 {
-            type Value = ProjectRevisionHash;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("32 bytes")
-            }
-            fn visit_bytes<E: serde::de::Error>(
-                self,
-                bytes: &[u8],
-            ) -> std::result::Result<Self::Value, E> {
-                bytes
-                    .try_into()
-                    .map(ProjectRevisionHash)
-                    .map_err(|_| E::invalid_length(bytes.len(), &self))
-            }
-            // serde_json writes the bytes as an array of numbers; exactly 32
-            // of them read back (FIX 3296).
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> std::result::Result<Self::Value, A::Error> {
-                let mut bytes = Vec::with_capacity(32);
-                while let Some(byte) = seq.next_element::<u8>()? {
-                    bytes.push(byte);
-                }
-                self.visit_bytes(&bytes)
-            }
-        }
-        deserializer.deserialize_bytes(Bytes32)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
 pub enum ProjectRevision {

@@ -2,15 +2,11 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::store::retrieval_policy::RetrievalPolicyAction;
-use crate::store::retrieval_policy::RetrievalPolicyAction::rand::Rng;
 pub use crate::store::retrieval_policy::RetrievalPolicyDecision;
 pub use crate::store::retrieval_policy::RetrievalPolicyEnvelope;
 pub use crate::store::retrieval_policy::RetrievalPolicyIdentity;
 pub use crate::store::retrieval_policy::RetrievalPolicyTier;
 pub use crate::store::retrieval_policy::RetrievalPolicyTrace;
-use crate::store::retrieval_telemetry::state::RetrievalState;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 

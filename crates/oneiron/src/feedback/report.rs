@@ -110,16 +110,6 @@ impl ReportRequest {
     }
 }
 
-impl Default for ReportReview {
-    fn default() -> Self {
-        Self {
-            status: ReportStatus::Accepted,
-            quality_score: None,
-            duplicate_of: None,
-        }
-    }
-}
-
 /// A provenance-carrying ISSUE record. Free text is untrusted data, not routing policy.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

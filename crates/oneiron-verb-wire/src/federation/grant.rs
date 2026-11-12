@@ -1,19 +1,12 @@
 //! Moved from `crates/oneiron/src/federation/grant.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::federation::codec::decode_canonical_entity_ref;
-use oneiron_authority::federation::codec::decode_entity_ref;
-use oneiron_authority::federation::codec::encode_msgpack_value;
 use oneiron_authority::federation::codec::invalid_grant;
-use oneiron_authority::federation::codec::optional_value;
-use oneiron_authority::federation::codec::required_value;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_FULL;
 pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_MINIMAL;
 pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_STANDARD;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// Scope addressed by a federation grant.
 #[derive(

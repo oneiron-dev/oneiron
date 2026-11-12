@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::eval_set::EvalLabelKind;
-use crate::skill_optimize::eval_set::FamilyPurpose;
 pub use crate::skill_optimize::eval_set::authoring::apply::CaseDecision;
 pub use crate::skill_optimize::eval_set::authoring::apply::EvalAuthoringReport;
 pub use crate::skill_optimize::eval_set::authoring::apply::EvalAuthoringSkip;
@@ -14,17 +13,9 @@ pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringExe
 pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringOutcome;
 pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringSkillRun;
 use crate::skill_optimize::eval_set::cohort::EvalExposureCounts;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_store::receipt_row::MAX_RECEIPT_QUERY_SCAN;
-use oneiron_store::receipt_row::ReceiptKind;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::btree_map::Entry;
 
 /// One label fixed code found for a candidate in grounded evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

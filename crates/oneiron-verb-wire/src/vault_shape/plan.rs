@@ -1,20 +1,9 @@
 //! Moved from `crates/oneiron/src/vault_shape/plan.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::vault_shape::ShapeCeiling;
-use crate::vault_shape::approval::ShapeApprovalDependencies;
-use crate::vault_shape::invalid;
-use crate::vault_shape::member::ShapeMemberRole;
-use crate::vault_shape::reach::ShapePlanReach;
-use crate::vault_shape::seed::hex;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::borrow::Borrow;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// What an item does to the named structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

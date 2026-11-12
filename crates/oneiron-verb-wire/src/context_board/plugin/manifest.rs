@@ -2,13 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::context_board::frame::BudgetPolicyRef;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::write_envelope::skill_record::SkillContentHash;
-use oneiron_store::write_envelope::skill_record::SkillRecord;
-use oneiron_store::write_envelope::skill_source::HubRef;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
 // §2 — versioned manifest schema

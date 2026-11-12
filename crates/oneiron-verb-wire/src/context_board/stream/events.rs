@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/context_board/stream/events.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::context_board::stream::frames::DeltaRow;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 #[derive(
     Debug,

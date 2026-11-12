@@ -1,11 +1,7 @@
 //! Moved from `crates/oneiron/src/agent_dispatch/budget_hold.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::agent_dispatch::spend_record::SpendSignal;
-use oneiron_base::error::Result;
 use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::attempt_inputs::AttemptInterventionKind;
-use oneiron_store::attempt_state::AttemptState;
 use oneiron_wake_contract::store::attempt_cancel::AttemptResumePoint;
 use serde::Deserialize;
 use serde::Serialize;

@@ -9,9 +9,7 @@ use oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace;
 use oneiron_authority::channel_selection_vocabulary::RelationshipContext;
 use oneiron_authority::channel_selection_vocabulary::SelectionRuleWriterKind;
 use oneiron_authority::channel_selection_vocabulary::is_valid_ref_token;
-use oneiron_base::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::write_envelope::WriteActor;
 use std::cmp::Reverse;
 
 /// One selection row.

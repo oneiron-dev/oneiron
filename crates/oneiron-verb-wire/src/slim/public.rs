@@ -3,11 +3,6 @@
 
 use crate::slim::ShedBlocker;
 use crate::slim::ShedCause;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::entity_id::bytes_to_hex_lower;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::attempt_id::AttemptId;
 use oneiron_store::heap_drop::HeapDropReport;
 use serde::Deserialize;
 use serde::Serialize;

@@ -1,20 +1,6 @@
 //! Moved from `crates/oneiron/src/share_travel/pack_notice.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::settings::destination::RecipientLimit;
-use crate::settings::destination::ReleaseHold;
-use oneiron_authority::share_travel::BornWith;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::record_layout::EntityMetadataHeader;
-use oneiron_store::write_envelope::provenance::made_by::MadeByInputRole;
-use oneiron_wake_contract::settings::destination::ReadDestination;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-
 /// The owner's own export carried a world his recipient choice would keep
 /// from where the pack goes.
 pub const OWNER_PACK_EXPORT_RECIPIENT_NOTICE: &str = "owner_pack_export_recipient_notice";

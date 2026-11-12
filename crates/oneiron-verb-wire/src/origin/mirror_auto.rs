@@ -3,14 +3,9 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::ErrorKind;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::git_wire::ids::GitOid;
-use oneiron_store::git_wire::ids::GitRefName;
-use oneiron_store::git_wire::repo::GitWireRepo;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
 
 /// What the mirror's automatic pushes last did beyond the run record.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

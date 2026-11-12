@@ -8,17 +8,8 @@ use crate::mail_pack::source::MailProviderDeleteSetting;
 use crate::mail_pack::source::MailSourceKind;
 use crate::mail_pack::source::MailSourceStatus;
 use crate::mail_pack::source::MailSourceView;
-use crate::source_audience;
-use crate::source_audience::SourceAudienceEventView;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
-use oneiron_base::registry::ENTITY_TYPE_PERSON;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.mail.sources.connect`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,17 +1,7 @@
 //! Moved from `crates/oneiron/src/slim.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-#[cfg(feature = "sync")]
-use oneiron_base::error::SyncError;
-use oneiron_store::attempt_id::AttemptId;
 pub use oneiron_store::heap_drop::HeapDropReport;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
-use std::sync::atomic::AtomicU64;
-use std::time::Instant;
 
 /// Why the host asked for a shed. Observability only — the engine never
 /// compares it, or `waited_secs`, against a policy constant.

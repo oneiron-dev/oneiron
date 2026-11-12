@@ -4,12 +4,7 @@
 use crate::store::key_custody::protocol::AckPosition;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_store::key_custody::identity::encode_native_path;
-use oneiron_store::key_custody::log::CustodyPosition;
 use oneiron_store::key_custody::protocol::DeletionEvidence;
-use oneiron_store::key_custody::protocol::TargetId;
-use oneiron_store::key_custody::protocol::TargetSpec;
-use oneiron_store::key_custody::protocol::drain::zeroize::Zeroizing;
 pub use oneiron_store::key_custody::protocol::drain::*;
 use oneiron_store::key_custody::protocol::hex;
 use serde::Deserialize;

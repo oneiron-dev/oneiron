@@ -2,11 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::rooms::*;
-use oneiron_base::edge::EdgeKind;
-use oneiron_base::registry::ENTITY_TYPE_TURN;
 pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
-use oneiron_store::conversation_body::ThreadBinding;
-use std::collections::BTreeMap;
+use serde::Deserialize;
+use serde::Serialize;
 
 /// What an add shares with the person it adds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

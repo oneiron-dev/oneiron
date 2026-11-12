@@ -1,22 +1,9 @@
 //! Moved from `crates/oneiron/src/channel_identity/custody.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::channel_identity::binding::ChannelIdentityFulfillment;
-use crate::channel_identity::lifecycle::ChannelIdentityState;
-use oneiron_authority::channel_address::AssignmentAddress;
-use oneiron_authority::channel_address::ChannelKey;
-use oneiron_authority::channel_identity_shape::ChannelIdentityShape;
-use oneiron_authority::channel_identity_shape::SelfHeldShape;
 use oneiron_base::error::Error;
 use oneiron_base::error::RecordError;
 use oneiron_base::error::Result;
-use oneiron_base::error::SecretError;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::secret_record::SECRET_SCOPE_READ;
-use oneiron_store::secret_record::SecretBinding;
-use oneiron_store::secret_record::SecretCustodyStatus;
-use oneiron_store::write_envelope::channel_identity::keys::SUBJECT_CLASS_SELF_HELD;
-use std::marker::PhantomData;
 
 pub const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
 

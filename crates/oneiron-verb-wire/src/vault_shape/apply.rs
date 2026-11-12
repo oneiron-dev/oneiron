@@ -1,28 +1,9 @@
 //! Moved from `crates/oneiron/src/vault_shape/apply.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::vault_shape::approval::ShapeApprovalDependencies;
-use crate::vault_shape::invalid;
-use crate::vault_shape::plan::ShapeChange;
-use crate::vault_shape::plan::ShapeItemClass;
-use crate::vault_shape::run::ShapeApplyRun;
-use crate::vault_shape::shared_setup::ShapeLearningOutcome;
-use oneiron_authority::authority::ActSurface;
-use oneiron_authority::authority::VerifiedSlip;
-use oneiron_base::edge::EdgeKind;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_FACET;
-use oneiron_base::registry::ENTITY_TYPE_PERSON;
-use oneiron_base::registry::ENTITY_TYPE_WORLD;
-use oneiron_contracts::claim::ClaimApprovalStatus;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::ports::records::EdgeDirection;
-use oneiron_store::write_envelope::skill_record::SkillLifecycle;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Where one item stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

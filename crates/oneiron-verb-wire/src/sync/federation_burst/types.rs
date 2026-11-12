@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/sync/federation_burst/types.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::federation::grant::FederationGrantScope;
-use oneiron_authority::federation::pact_scope::SelectorRange;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
@@ -45,6 +43,16 @@ pub struct FederationBurstPolicy {
     pub baseline: Option<FederationBurstBaseline>,
     pub unusual_rate: FederationBurstOutcome,
     pub unusual_streak: FederationBurstOutcome,
+}
+
+impl Default for FederationBurstPolicy {
+    fn default() -> Self {
+        Self {
+            baseline: None,
+            unusual_rate: FederationBurstOutcome::Defer,
+            unusual_streak: FederationBurstOutcome::IsolateAndPropose,
+        }
+    }
 }
 
 impl FederationBurstPolicy {

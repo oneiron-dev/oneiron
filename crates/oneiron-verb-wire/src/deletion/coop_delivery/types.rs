@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::deletion::legal_hold::types::LegalHold;
-use crate::deletion::legal_hold::types::LegalHoldKind;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::deletion::coop_delivery::types::*;
 use oneiron_store::deletion::coop_reply::CooperativeDeletionReplyOutcome;
 use serde::Deserialize;

@@ -1,12 +1,8 @@
 //! Moved from `crates/oneiron/src/settings/non_base_world_claim_fraction.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::authority::ActSurface;
-use oneiron_authority::authority::PolicySetting;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_contracts::memory::MemoryResult;
-use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
 

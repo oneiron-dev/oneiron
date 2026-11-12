@@ -4,15 +4,9 @@
 use crate::connector_key::credential_binding::ConnectorIssuerHaltView;
 use crate::connector_key::slate::SlateDataClass;
 use crate::connector_key::slate::SlateDisposition;
-use crate::connector_key::slate::SlateRow;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_consent_state::consent::tool_scope::DataClass;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::connector_key_status::ConnectorKeyStatus;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// One tool's grant and the per-grant key that governs its calls.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]

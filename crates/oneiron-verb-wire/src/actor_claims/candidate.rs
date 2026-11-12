@@ -1,28 +1,7 @@
 //! Moved from `crates/oneiron/src/actor_claims/candidate.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::ClaimError;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron_contracts::claim::ClaimApprovalStatus;
-use oneiron_contracts::claim::ClaimLifecycleStatus;
-use oneiron_contracts::claim::ClaimSource;
-use oneiron_contracts::entity_id::ENTITY_ID_LEN;
-use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::record_layout::EntityMetadataHeader;
-use oneiron_contracts::temporal::TimeRange;
-use oneiron_store::attempt_id::AttemptId;
-use oneiron_store::gate_decision::types::GATE_DECISION_LEDGER_VERSION;
-use oneiron_store::gate_decision::types::GateDecisionId;
-use oneiron_store::gate_decision::types::GateSystemNoticeRecord;
-use oneiron_store::inbox::view_values::AgentInboxItemKind;
-use oneiron_store::inbox::view_values::AgentInboxParticipant;
-use oneiron_store::inbox::view_values::InboxImpact;
-use oneiron_store::write_envelope::actor_predicate::PREDICATE_ACTOR_FAILURE_MODE;
-use oneiron_store::write_envelope::actor_predicate::PREDICATE_ACTOR_LESSON;
-use oneiron_store::write_envelope::claim_body::ClaimBody;
-use oneiron_store::write_envelope::claim_body::ClaimSubject;
 use serde::Deserialize;
 use serde::Serialize;
 

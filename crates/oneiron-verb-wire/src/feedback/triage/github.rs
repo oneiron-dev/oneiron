@@ -1,10 +1,6 @@
 //! Moved from `crates/oneiron/src/feedback/triage/github.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::feedback::triage::FeedbackTriageContinuation;
-use crate::feedback::triage::source::FeedbackTriageSourceError;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
 

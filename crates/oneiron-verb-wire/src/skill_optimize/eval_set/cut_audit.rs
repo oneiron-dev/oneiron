@@ -2,13 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::eval_set::FamilyPurpose;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The method a cut was audited by, pinned on its row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,16 +1,7 @@
 //! Moved from `crates/oneiron/src/workspace_roster/project/goal/interview.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::store::attempt_manifest::ManifestKind;
-use crate::workspace_roster::project::invalid;
-use heed::RoTxn;
-use heed::RwTxn;
-use oneiron_base::error::Result;
-use oneiron_base::registry::ENTITY_TYPE_MESSAGE;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
-use oneiron_contracts::record_layout::EntityMetadataHeader;
-use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
 
