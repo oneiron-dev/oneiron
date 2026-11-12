@@ -23,8 +23,8 @@
 //! - G78 `CommHeadWrites::before`: a bound raw put of a `comm.last_touch`
 //!   claim lands its comm head.
 //! - G392 `supersede_claim_for_code_run_trap` and G393
-//!   `put_edge_for_code_run_trap`: a code run supersedes its own claim and
-//!   puts an edge.
+//!   `put_edge_for_code_run_trap`: the owner's code run supersedes its own
+//!   claim and puts an edge.
 //!
 //! `cargo test --locked -p oneiron --all-features --test gate_pins_claim_producers`
 //! (the lane's runner also sets `RUSTFLAGS="--cfg oneiron_test_support"`).
@@ -435,7 +435,9 @@ fn g320_the_owners_core_batch_rewrites_a_person() -> TestResult {
 /// G78: the owner puts a `comm.last_touch` CLAIM through the bound raw put
 /// door, the door a host app's raw writes take. The commit routes the comm
 /// claim to the comm projector, whose head writes check that the bound
-/// reader can read each head they name.
+/// reader can read each head they name. A raw CLAIM body names no source
+/// (the raw door refuses one that does: the source belongs to the write
+/// envelope), so the pin drops the typed builder's `Observed` stamp.
 #[test]
 fn g78_a_bound_comm_claim_put_lands_its_comm_head() -> TestResult {
     const PARTY: &str = "pin@example.com";
@@ -445,13 +447,14 @@ fn g78_a_bound_comm_claim_put_lands_its_comm_head() -> TestResult {
         .ensure_embedded_owner_actor()
         .map_err(at("embedded owner"))?;
     let party_ref = resolve_or_create_comm_party(&vault, PARTY).map_err(at("the comm party"))?;
-    let body = CommClaimValue::LastTouch {
+    let mut body = CommClaimValue::LastTouch {
         party_ref,
         channel_class: CHANNEL.to_owned(),
         occurred_at: 10,
     }
     .claim_body()
     .map_err(at("the comm claim body"))?;
+    body.source = None;
     let data = encode_claim_body(&body).map_err(at("encode the comm claim"))?;
     vault
         .memory(owner, EdgeActorClass::Human)
@@ -472,9 +475,9 @@ fn g78_a_bound_comm_claim_put_lands_its_comm_head() -> TestResult {
     Ok(())
 }
 
-/// A policy manifest that lets `actor`, an agent, write `self.memory.*`
+/// A policy manifest that lets `actor`, a human, write `self.memory.*`
 /// at Auto from the code run's Generated source, as the code-run unit
-/// fixture installs (`code_run/tests.rs`).
+/// fixture installs for its agent (`code_run/tests.rs`).
 fn self_memory_policy(actor: EntityId) -> TestResult<Vec<u8>> {
     let axes = || {
         Value::Map(vec![
@@ -504,7 +507,7 @@ fn self_memory_policy(actor: EntityId) -> TestResult<Vec<u8>> {
         (
             Value::from("actor_ceilings"),
             Value::Array(vec![Value::Map(vec![
-                (Value::from("actor_class"), Value::from("agent")),
+                (Value::from("actor_class"), Value::from("human")),
                 (Value::from("actor_ref"), Value::from(actor.to_hex())),
                 (Value::from("ceiling"), Value::from("auto")),
             ])]),
@@ -526,21 +529,26 @@ fn self_memory_policy(actor: EntityId) -> TestResult<Vec<u8>> {
     Ok(data)
 }
 
-/// G392 and G393: an agent's code run writes two claims, supersedes the
+/// G392 and G393: the owner's code run writes two claims, supersedes the
 /// first with the second (`self.memory.supersede_claim`, G392) and puts an
 /// edge (`self.memory.put_edge`, G393) through the host dispatcher. Each
-/// trap checks its write against the vault policy before it lands.
+/// trap checks its write against the vault policy before it lands. Before
+/// each trap the run's rows meet the record-reference check under the
+/// actor's own read key (FIX 1214); the owner reads every record it names,
+/// where a bare agent with no Grant reads none (INVENTED_REFERENCE).
 #[test]
 fn g392_g393_a_code_run_supersedes_its_claim_and_puts_an_edge() -> TestResult {
     let (_dir, vault) = open_unseeded()?;
-    let actor = person(&vault)?;
+    let actor = vault
+        .ensure_embedded_owner_actor()
+        .map_err(at("embedded owner"))?;
     put_policy_manifest_bytes(&vault, EntityId::now(), &self_memory_policy(actor)?)
         .map_err(at("install the policy"))?;
     let subject = person(&vault)?;
     let edge_target = person(&vault)?;
     let dispatcher = HostSelfDispatcher::new(
         &vault,
-        WriteActor::new(actor, EdgeActorClass::Agent),
+        WriteActor::new(actor, EdgeActorClass::Human),
         "gate-pin-run",
     )
     .map_err(at("the dispatcher"))?;
