@@ -66,6 +66,7 @@ use super::wire_encode::canonical_bytes;
 mod brief;
 mod key;
 mod parking;
+mod plan_run;
 mod settlement;
 use self::key::{PostKey, observe_key_in};
 pub(crate) use self::settlement::settle_task_proposal_in_txn;
