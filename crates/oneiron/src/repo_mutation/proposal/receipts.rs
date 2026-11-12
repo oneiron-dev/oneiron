@@ -121,10 +121,14 @@ pub(crate) fn put_receipt_once_in_txn(
         }
         return Ok(());
     }
+    // A receipt's subject is a claim, a session or a queue row, none of which
+    // has a FACET of its own.
+    let mut body = body.clone();
+    body.scope_facet = vault.claim_put_facet_in_txn(txn, &id)?;
     vault.put_reserved_claim_in_txn(
         txn,
         &id,
-        body,
+        &body,
         crate::temporal::TimeRange { start: at, end: at },
         at,
     )

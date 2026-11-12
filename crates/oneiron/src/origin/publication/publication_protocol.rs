@@ -141,7 +141,7 @@ impl Vault {
         request: &OriginPublicationRequest,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<(), R>> {
-        let body = super::origin_publication_intent_claim(request)?;
+        let mut body = super::origin_publication_intent_claim(request)?;
         self.with_write_txn_grouped(|wtxn| {
             if let Err(refused) = check(wtxn)? {
                 return Ok(Err(refused));
@@ -149,6 +149,9 @@ impl Vault {
             // An erased intent is never named again (FIX 3877).
             let id = &request.provenance_claim_id;
             crate::origin::actor_erase::refuse_renaming_in_txn(self, wtxn, id, &body)?;
+            // The edge source is the publishing actor, which need not be a
+            // PERSON with a substrate FACET.
+            body.scope_facet = self.claim_put_facet_in_txn(wtxn, id)?;
             self.put_reserved_claim_in_txn(
                 wtxn,
                 &request.provenance_claim_id,
