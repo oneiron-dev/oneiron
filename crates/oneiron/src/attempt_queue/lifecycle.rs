@@ -20,9 +20,11 @@
 //! - the engine holds, budget, fan-out and hook, through
 //!   [`AttemptQueue::hold_in_txn`]. The annotation hold pauses through the
 //!   pause intervention under its reserved actor;
-//! - the parks: lease reclaim (`cleanup_leases_except`, whose held set is the
-//!   parked rows; boot recovery calls it too) and the lease release a parked
-//!   run resumes by (`release_lease_in_txn`);
+//! - the parks: lease reclaim (`cleanup_leases_except`; boot recovery calls
+//!   it too) and the lease release a parked run resumes by
+//!   (`release_lease_in_txn`). Lease reclaim and the lease warning both ask
+//!   [`AttemptQueue::parked_in_txn`] whether a live lease is a run parked on
+//!   its signal: such a run keeps its lease and gets no warning;
 //! - the retry source, `retry_storage_in_txn`, through `Retry`; its fresh
 //!   successor is built by [`RunLifecycle::successor_row`];
 //! - landing acceptance, `accept_landing_in_txn`, through `AcceptLanding`;
@@ -39,13 +41,11 @@
 //! - retry acceleration, `advance_waiting_retry_in_txn`, through `AdvanceRetry`;
 //! - checkpoint lease reset, `unlease_attempt`, through `Unlease`.
 //!
-//! The table encodes today's transitions; no stored byte changes. Two of
-//! today's cells are known gaps, kept here as they are:
-//! - `Resume` on an engine hold clears the pause and leaves the hold's own
-//!   record (the plan hold, the launch, the verb ask, the annotation
-//!   attachment) as it was (FIX RUN-HOLD changes that cell).
-//! - `Reclaim` keeps a parked lease only when its caller names it held, and
-//!   a lease warning reads no park (FIX RUN-LEASE).
+//! The table encodes today's transitions; no stored byte changes. One of
+//! today's cells is a known gap, kept here as it is: `Resume` on an engine
+//! hold clears the pause and leaves the hold's own record (the plan hold,
+//! the launch, the verb ask, the annotation attachment) as it was (FIX
+//! RUN-HOLD changes that cell).
 
 use super::AttemptQueue;
 use super::AttemptResumePoint;
@@ -245,7 +245,8 @@ pub(crate) enum RunEvent {
     /// A lease holder holds its own running row.
     Hold(EngineHold),
     /// Lease cleanup: `expired` when the lease outlived its timeout, `held`
-    /// when the caller keeps the lease (a parked row).
+    /// when the lease stays: the run is parked on its signal
+    /// ([`AttemptQueue::parked_in_txn`]) or the caller keeps it.
     Reclaim { expired: bool, held: bool },
     /// The lease holder returns its row to the queue as the same try (a
     /// parked run's resume). `lease_holder` when the caller holds the lease.
@@ -1145,6 +1146,21 @@ pub(in crate::attempt_queue) struct HoldWrite {
 }
 
 impl AttemptQueue<'_> {
+    /// Whether the run of the live lease `id` is parked on its signal at
+    /// `txn`'s revision: its Dreamer park row stands. A leased row reads
+    /// [`RunState::Parked`] then. Such a run keeps its lease until the signal
+    /// it waits on resumes it, so the lease reclaim requeues it under no
+    /// caller and the lease warning asks it to land under none (FIX
+    /// RUN-LEASE). The row is read by its key alone, so a park row this
+    /// build cannot decode still holds the lease.
+    pub(in crate::attempt_queue) fn parked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<bool> {
+        crate::dreamer_runner::PARKED.contains(self.store, txn, &id)
+    }
+
     /// The engine holds' one write. Lease-fenced like complete and fail, it
     /// moves the holder's running row to `Paused` under the hold with the
     /// checkpoint it resumes from, and releases the lease. Idempotent for a

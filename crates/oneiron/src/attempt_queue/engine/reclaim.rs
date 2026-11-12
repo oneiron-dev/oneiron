@@ -35,14 +35,16 @@ fn waiting_reason(record: &AttemptRecord, now: u64) -> AttemptQueueRetryReason {
 impl AttemptQueue<'_> {
     /// Returns expired leases to the ready index under LMDB's single-writer
     /// invariant. Cleanup never assigns a replacement owner; reclaim still
-    /// happens through [`Self::claim`]'s atomic admission step.
+    /// happens through [`Self::claim`]'s atomic admission step. A run parked
+    /// on its signal (its park row stands) keeps its lease however old, as a
+    /// host's restart keeps it: only that signal resumes it (FIX RUN-LEASE).
     pub fn cleanup_leases(&self, input: CleanupAttemptLeases) -> Result<AttemptQueueCleanupReport> {
         self.cleanup_leases_except(input, &std::collections::HashSet::new())
     }
 
-    /// [`Self::cleanup_leases`], leaving the leases in `held` as they are: a
-    /// host's restart keeps an attempt parked on a signal (a budget or consent
-    /// trap) leased until that signal resumes it.
+    /// [`Self::cleanup_leases`], also leaving the leases in `held` as they
+    /// are: another kind's rows for the kind cleanup, and a row whose park
+    /// boot recovery could not read. Parked runs are held without being named.
     pub fn cleanup_leases_except(
         &self,
         input: CleanupAttemptLeases,
@@ -69,7 +71,7 @@ impl AttemptQueue<'_> {
                     report.running += 1;
                     let reclaim = RunEvent::Reclaim {
                         expired: lease_expired(&record, input.now, input.lease_timeout_secs),
-                        held: held.contains(&id),
+                        held: held.contains(&id) || self.parked_in_txn(&rtxn, id)?,
                     };
                     if matches!(
                         RunLifecycle::step(RunRow::of(&record), reclaim),
@@ -109,13 +111,14 @@ impl AttemptQueue<'_> {
                 };
                 let mut record = decode_record(&raw_record, id)?;
                 // Rechecked under the writer: a candidate was not held when
-                // the scan read it.
+                // the scan read it, and its run may have parked since.
                 let expired = lease_expired(&record, input.now, input.lease_timeout_secs);
+                let parked = self.parked_in_txn(&wtxn, id)?;
                 let reclaim = RunLifecycle::step(
                     RunRow::of(&record),
                     RunEvent::Reclaim {
                         expired,
-                        held: false,
+                        held: parked,
                     },
                 );
                 match (record.state, reclaim) {
@@ -140,7 +143,7 @@ impl AttemptQueue<'_> {
                             observed_at: input.now,
                             lease_timeout_secs: input.lease_timeout_secs,
                         });
-                        let _ = RunLifecycle::reclaim(&mut record, expired, false);
+                        let _ = RunLifecycle::reclaim(&mut record, expired, parked);
                         record.backoff_until = None;
                         record.last_error = Some(RETRY_REASON_LEASE_TIMEOUT.to_owned());
                         record.updated_at = input.now;
@@ -260,8 +263,8 @@ impl AttemptQueue<'_> {
     /// of `kind` goes back to the ready index through the same transition,
     /// while every unsettled row of any other kind is held as it is, however
     /// old its lease, so a worker reclaiming its own expired claims never
-    /// takes another worker's. `None` when no lease of `kind` had expired:
-    /// nothing was written.
+    /// takes another worker's. `None` when no lease of `kind` had expired
+    /// outside a parked run: nothing was written.
     pub fn cleanup_kind_leases(
         &self,
         kind: &str,
@@ -285,6 +288,7 @@ impl AttemptQueue<'_> {
                     others.insert(id);
                 } else if record.state.is_running()
                     && lease_expired(&record, input.now, input.lease_timeout_secs)
+                    && !self.parked_in_txn(&rtxn, id)?
                 {
                     expired = true;
                 }
