@@ -35,9 +35,14 @@ pub fn host_init(args: HostInitArgs) -> anyhow::Result<()> {
         let status = oneiron_spawn::command(hook).arg(&args.path).status()?;
         anyhow::ensure!(status.success(), "encryption hook failed");
     }
+    // The template directories this call made: two templates share
+    // `systemd/`, and only a directory made here takes a second one.
+    let mut made = std::collections::BTreeSet::new();
     for (name, bytes) in TEMPLATES {
         let path = args.path.join(name);
-        if let Some(parent) = path.parent().filter(|p| *p != args.path) {
+        if let Some(parent) = path.parent().filter(|p| *p != args.path)
+            && made.insert(parent.to_path_buf())
+        {
             // A hook-created directory is not trusted for file traversal.
             fs::create_dir(parent)?;
         }
