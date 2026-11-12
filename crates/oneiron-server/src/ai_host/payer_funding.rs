@@ -27,7 +27,7 @@ use std::fmt;
 use oneiron::agent_dispatch::{
     AgentDispatcher, GrantSpendBinding, SpendScopeId, decode_agent_dispatch_input,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptState};
+use oneiron::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use oneiron::dreamer_runner::{
     DreamerParkCause, ParkDreamerAttempt, decode_dreamer_attempt_payload,
 };
@@ -241,6 +241,25 @@ pub(crate) fn requires_payer(
     Ok(room || AgentDispatcher::new(vault).workflow_payer_required(attempt)?)
 }
 
+/// [`requires_payer`] for the leased try `leased`, its room read from the
+/// dispatch input its payload carries: the predicate a live run's doors share
+/// with its steps (OF-531, LIVE-RUN-PAYER-REQUIRED). A room-bound or
+/// member-bound run whose root no longer names a payer, its payer erased
+/// while it holds its lease included, is a typed fault at its next model
+/// call, never the vault owner's default.
+///
+/// # Errors
+///
+/// A payload or dispatch input that does not decode; storage errors.
+pub(crate) fn leased_requires_payer(
+    vault: &Vault,
+    leased: &AttemptRecord,
+) -> oneiron::Result<bool> {
+    let input = decode_dreamer_attempt_payload(&leased.payload)
+        .and_then(|payload| decode_agent_dispatch_input(&payload.input))?;
+    requires_payer(vault, leased.id, input.room.is_some())
+}
+
 /// How a launch that `agent` answers in `room`, or its thread `branch`, for
 /// `requester` is funded (FIX 805): a chat or voice turn, or a queued
 /// Continue or Retry. This is the one place that says which launch is
@@ -448,9 +467,7 @@ pub(crate) fn resume_payer_parks(
         {
             continue;
         }
-        let strict = decode_dreamer_attempt_payload(&row.payload)
-            .and_then(|payload| decode_agent_dispatch_input(&payload.input))
-            .and_then(|input| requires_payer(vault, row.id, input.room.is_some()));
+        let strict = leased_requires_payer(vault, row);
         let waits = match (dispatcher.spend_scope_for_attempt(row.id), strict) {
             (Ok(scope), Ok(strict)) => matches!(
                 scope_run_funding(vault, scope.as_ref(), strict),
