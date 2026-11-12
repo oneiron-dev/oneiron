@@ -214,6 +214,43 @@ pub(crate) fn sighted_bytes_in_txn(
     )
 }
 
+/// `bytes`, read from the store, as a door serves them to a reader with
+/// `sight`, or `None` when it serves that reader none. A reader that sees
+/// stored keys (`Owner`, `Granted`) is served the bytes as stored. A masked
+/// reader reads them as [`sighted_bytes_in_txn`] does; a file no masked copy
+/// is served of ([`SecretError::MaskedCopyWithheld`],
+/// [`SecretError::SealedFileWithheld`]) answers `None`, as a withheld row
+/// does. The release scan then reads what the masked reader would be served,
+/// and bytes it still reads a credential in answer `None` too: plain bytes
+/// stored while the write door's scan was off carry no mark to mask by, and
+/// serve still redacts (`SecretScanMode::Off`; #7149 review round 1, FIX
+/// NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS). Every door that hands
+/// a masked reader a stored file's bytes as its answer reads them here.
+///
+/// `digest` is as [`sighted_bytes_in_txn`] takes it.
+pub(crate) fn served_bytes_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    bytes: Vec<u8>,
+    digest: Option<&[u8; 32]>,
+    sight: SecretSight,
+) -> Result<Option<Vec<u8>>> {
+    if sight != SecretSight::Masked {
+        return Ok(Some(bytes));
+    }
+    let served = match sighted_bytes_in_txn(store, txn, bytes, digest, sight) {
+        Ok(served) => served,
+        Err(Error::Secret(
+            SecretError::MaskedCopyWithheld { .. } | SecretError::SealedFileWithheld,
+        )) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if crate::batch::secret_scan::scan_file_content("", &served).is_some() {
+        return Ok(None);
+    }
+    Ok(Some(served))
+}
+
 pub(crate) fn sighted_bytes_in_txn_with_reader(
     store: &Store,
     txn: &RoTxn<'_>,
