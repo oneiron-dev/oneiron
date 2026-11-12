@@ -1522,6 +1522,9 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
 const retrieval09FillerCount = 56;
 
 /* RETRIEVAL-09: authored TURN self-reports, optional priors, real read ceiling. */
+/* RETRIEVAL-09 is a budget case: the 56 fillers take about 10 s (E2E job 20, nelly) and three
+ * axes read, configure and restore in turn, so the flow passed the 30 s cap. Its stated bound
+ * is 60 s; it belongs to the nightly tier. */
 suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should work", async () => {
   const fixture = await scenario<{
     rows: { label: string; vad?: Facade.QueryAffect; confidence: number }[];
@@ -1679,8 +1682,17 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       const receipt = await retrieval09Diagnose(`weights.configure ${setting}`, () => engine.client.call("vault.retrieval.weights.configure", {
         expected_body_hash: current.body_hash, weights,
       }));
-      await retrieval09Diagnose(`weights.configure receipt ${setting}`, () => engine.awaitReceipt(receipt.receipt_ref));
-      const configured = (await retrieval09Diagnose(`weights.get after ${setting}`, () => engine.client.call("vault.retrieval.weights.get", {}))).weights;
+      expect(receipt.receipt_ref).toBeTruthy();
+      // The setting is read back through weights.get, not a receipt wait:
+      // awaitReceipt reads the whole vault.receipts page, which took 5.1 s
+      // after the fillers (E2E job 20), and this case configures six times.
+      const keys = Object.keys(weights) as (keyof Facade.RetrievalWeights)[];
+      const configured = (await retrieval09Diagnose(`weights.get after ${setting}`, () => awaitPublic(
+        () => engine.client.call("vault.retrieval.weights.get", {}),
+        read => Object.keys(read.weights).length === keys.length
+          && keys.every(key => Math.abs(read.weights[key] - weights[key]) < 5e-8),
+        { label: `RETRIEVAL-09 weights ${setting} read back` },
+      ))).weights;
       expect(Object.keys(configured).sort()).toEqual(Object.keys(weights).sort());
       // Every coordinate is f32-backed; preserve the numeric setting across
       // the wire round trip without requiring the original decimal spelling.
@@ -1718,9 +1730,10 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       expect(rowOrder(off)).toEqual(rowOrder(baseline));
       expect(await claimSet(engine)).toEqual(before);
     }
+    const storedClaims = (await engine.client.call("vault.claims.list", { subject_ref: engine.pairedActor.principalRef, limit: 1000 })).value;
     for (const row of fixture.rows) {
-      const stored = (await engine.client.call("vault.claims.list", { subject_ref: engine.pairedActor.principalRef, limit: 1000 }))
-        .value.find(claim => claim.short_ref === records.get(row.label)!.ref || claim.claim_ref === records.get(row.label)!.id)!;
+      const stored = storedClaims
+        .find(claim => claim.short_ref === records.get(row.label)!.ref || claim.claim_ref === records.get(row.label)!.id)!;
       expect(stored.confidence).toBe(row.confidence);
       expect(stored.approval).toBe(records.get(row.label)!.receipt.approval);
     }
@@ -1742,7 +1755,7 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     }
     if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
-});
+}, 60_000);
 
 type ClusterVerb = "vault.cluster" | "vault.cluster.propose" | "vault.cluster.proposal" | "vault.cluster.resolve_proposal";
 // One tools/list per initialized MCP session: the server advertises
