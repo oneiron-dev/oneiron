@@ -38,10 +38,11 @@ pub enum RoleRefusal {
     },
     /// An exact replay of a call that ran wider than the role's route, which
     /// only an owner's standing quota fallback (`use_fallback`) for the
-    /// route's offers sends a call to: no such fallback names its model
-    /// there now. The owner has turned it off or named another since, or the
-    /// role's route has narrowed (FIX-LIST
-    /// REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG).
+    /// route's offers sends a call to: no such fallback the role may take
+    /// names its model there now. The owner has turned it off or named
+    /// another since, the role's route has narrowed, or the role's work now
+    /// stays on the device (`leave_device = "never"`) and the call ran at a
+    /// third party (FIX-LIST REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG).
     FallbackNoLongerAllowed {
         model: ModelId,
         /// Where the replayed call ran.
@@ -75,7 +76,7 @@ impl std::fmt::Display for RoleRefusal {
             } => write!(
                 f,
                 "fallback no longer allowed: the replayed call ran on {model} at {}, wider than \
-                 this role's route ({}), and no owner's fallback for the role's offers names it \
+                 this role's route ({}), and no owner's fallback this role may take names it \
                  there now",
                 locality_name(*locality),
                 locality_name(*route)
@@ -464,11 +465,12 @@ impl ModelRuntime {
     /// out on an owner's standing quota fallback for one of the route's
     /// offers; its replay is admitted while that fallback, read now, still
     /// names its model there, and refused as
-    /// [`RoleRefusal::FallbackNoLongerAllowed`] once it does not (FIX-LIST
-    /// REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG). The admission keeps both
-    /// routes that can hold the rung that answered: the role's own route,
-    /// whose rung has its configured prompt, and the model's raw route,
-    /// whose rung has none. A model that neither route serves at the
+    /// [`RoleRefusal::FallbackNoLongerAllowed`] once it does not, or once
+    /// the call ran at a third party and the role's work stays on the device
+    /// (FIX-LIST REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG). The admission keeps
+    /// both routes that can hold the rung that answered: the role's own
+    /// route, whose rung has its configured prompt, and the model's raw
+    /// route, whose rung has none. A model that neither route serves at the
     /// captured route is refused.
     pub(crate) fn admit_replay(
         &self,
@@ -488,8 +490,16 @@ impl ModelRuntime {
         // route's offers sends a call of the role wider than the route. The
         // replay keeps to that choice as it stands now, read here, so it
         // widens nothing; a choice the owner has since turned off or
-        // narrowed refuses it for its own reason (Engine ruling 13 Nov).
-        if locality > route.locality && !route.ladder.owner_fallback_serves(&model, locality) {
+        // narrowed refuses it for its own reason (Engine ruling 13 Nov). A
+        // role whose work never leaves the device takes no third party's
+        // fallback, read from the role itself: a manifest's pin off the
+        // role's seat routes on the model's bare ladder, whose scope does not
+        // carry the role's rule (review of #7309).
+        let kept_on_device =
+            self.stays_on_device.contains(&role) && locality == ModelLocality::ThirdParty;
+        if locality > route.locality
+            && (kept_on_device || !route.ladder.owner_fallback_serves(&model, locality))
+        {
             return Err(RoleRefusal::FallbackNoLongerAllowed {
                 model: model.clone(),
                 locality,
