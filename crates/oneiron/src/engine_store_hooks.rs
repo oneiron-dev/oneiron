@@ -327,6 +327,16 @@ impl StoreProjectWrites for EngineProjectWrites {
         crate::workspace_roster::validate_room_body(store, txn, id, data)
     }
 
+    fn index_extra_room(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        data: &[u8],
+    ) -> Result<()> {
+        crate::workspace_roster::index_extra_room(store, txn, id, data)
+    }
+
     fn root_project_in(&self, store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>> {
         crate::workspace_roster::root_project_in(store, txn)
     }
@@ -549,6 +559,15 @@ impl StoreActorScrubs for EngineActorScrubs {
         actor: &EntityId,
     ) -> Result<()> {
         crate::workspace_roster::erase_member_actor_in_txn(vault, wtxn, actor)
+    }
+
+    fn erase_house_link_actor_in_txn(
+        &self,
+        vault: &crate::Vault,
+        wtxn: &mut RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        crate::workspace_roster::erase_house_link_actor_in_txn(vault, wtxn, actor)
     }
 
     fn erase_member_intent_actor_in_txn(

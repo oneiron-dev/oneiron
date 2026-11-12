@@ -201,6 +201,7 @@ fn step_under(
     backend: &NeverBackend,
 ) -> Result<llm::DurableStepResult<llm::StepOutcome>, Box<dyn std::error::Error>> {
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let spend = llm::StepSpendScope::read_before_guards(vault, scope.clone())?;
     let guard = AgentDispatcher::new(vault).guard_for_scope(scope)?;
     let ctx = llm::DurableStepContext {
         vault,
@@ -210,7 +211,7 @@ fn step_under(
         subject: owner,
         deadline: None,
         now_ms: 43_000,
-        spend_scope: Some(scope.clone()),
+        spend_scope: Some(spend),
     };
     Ok(block_on_ready(llm::call_as_step(
         &ctx,
