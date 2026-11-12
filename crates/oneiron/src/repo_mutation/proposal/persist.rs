@@ -156,33 +156,25 @@ impl PreparedRepoProposal {
             &row.request()?,
         )?;
         validate_conflict_in_txn(vault, txn, row)?;
-        // Both journal claims are about the SESSION, which has no substrate
-        // facet (only a PERSON's put mints one), and a CLAIM's birth needs a
-        // live FACET (#4389): they are born in the vault default facet.
-        let facet = vault.default_facet_in_txn(&*txn)?;
         if !crate::ports::EntityStoreRead::port_entity_present(
             &vault.store,
             txn,
             &self.session_claim_id,
         )? {
-            let mut session_claim = self.session_claim.clone();
-            session_claim.scope_facet = facet;
             put_journal_claim(
                 vault,
                 txn,
                 self.session_claim_id,
                 Some(actor),
-                &session_claim,
+                &self.session_claim,
                 row.created_at,
             )?;
         }
         if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &actor)? {
             return Err(Error::EntityNotFound);
         }
-        let mut body = self.body.clone();
-        body.scope_facet = facet;
-        put_journal_claim(vault, txn, row.id, Some(actor), &body, row.created_at)?;
-        let admission = super::receipts::record_admission_in_txn(vault, txn, row, &body)?;
+        put_journal_claim(vault, txn, row.id, Some(actor), &self.body, row.created_at)?;
+        let admission = super::receipts::record_admission_in_txn(vault, txn, row, &self.body)?;
         let snapshot_row = SNAPSHOT.decode_value(&self.snapshot)?;
         SNAPSHOT.put(
             &vault.store,
