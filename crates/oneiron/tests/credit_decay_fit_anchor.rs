@@ -13,16 +13,39 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::learning::Anchor;
+use oneiron::learning_setting::{CREDIT_DECAY, global_setting_subject};
 use oneiron::test_doors::credit_decay_fit::{
     credit_and_check_adjacent_edge, credit_decay_fit_runs,
 };
-use oneiron::{Vault, VaultConfig};
+use oneiron::{TimeRange, Vault, VaultConfig};
+use serde_json::json;
 
 const NOW: u64 = 10;
 
 fn vault(dir: &std::path::Path) -> Vault {
     let vault = Vault::open(dir, VaultConfig::default()).expect("open vault");
     vault.ensure_embedded_owner_actor().expect("embedded owner");
+    // The fit's projected `learning.setting` head is a claim about the
+    // knob's vault-wide ASSET (learning/project.rs). On main that head is
+    // born in the ASSET's substrate facet, which no put stores, so the birth
+    // gate refuses it InvalidFacet (#4389; #7205 gives it the vault default
+    // facet), and the fit's capture drops the check with a WARN. The fixture
+    // stores that facet, so the head lands on main and on #7205 alike; the
+    // check's anchor is this file's subject, not the facet gate.
+    let subject = global_setting_subject(CREDIT_DECAY.key).expect("the knob's subject");
+    vault
+        .put_entity(
+            &oneiron::claim::substrate_facet_id(subject).expect("the subject's facet id"),
+            oneiron::registry::ENTITY_TYPE_FACET,
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+            &rmp_serde::to_vec_named(&json!({"name": "credit_decay fit facet"}))
+                .expect("facet body"),
+        )
+        .expect("store the subject's facet");
     vault
 }
 
