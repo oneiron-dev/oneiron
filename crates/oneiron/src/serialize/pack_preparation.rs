@@ -11,7 +11,7 @@ use super::pack_entry::{
 use super::token_budget::{
     allocate_section_budgets, budget_groups_with_depth_limit,
     enforce_token_budget_with_depth_limit, estimate_groups_tokens_with_depth_limit,
-    finalize_pack_token_stats, group_entities, token_budget_droppable_count,
+    finalize_pack_token_stats, group_entities, token_budget_droppable_count, world_section_label,
 };
 use super::types::{TOON_MAX_DEPTH, ValueDepthLimit};
 use crate::context_pack::PackStats;
@@ -335,6 +335,7 @@ fn prepare_entities(
                 source_id: *entity.id.as_bytes(),
                 id: format_short_id(entity),
                 fields,
+                world_section: world_section_label(entity.fields.as_ref()).map(str::to_owned),
             };
             if prepared.critical {
                 stats.critical_count += 1;
