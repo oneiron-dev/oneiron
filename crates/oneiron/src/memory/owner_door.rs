@@ -17,12 +17,16 @@ impl Memory<'_> {
     /// grants it.
     ///
     /// A handle a host bound to a credential ([`Memory::with_read_proof`])
-    /// has it only while that credential is the owner's own live,
-    /// unattenuated human slip, and the proof then carries it
-    /// ([`crate::Vault::bind_owner_credential`]): every door that revalidates
-    /// the proof refuses once it is revoked or expires. A narrower
-    /// credential, the owner's too, takes no owner door, as it reads only
-    /// what it grants (FIX EMBEDDED-OWNER-IGNORES-BOUND-PROOF).
+    /// has it only while that credential is the owner's own live human slip
+    /// that reaches `verb` and cuts nothing else: the owner's full slip, or
+    /// one the owner minted to a verb subset that names `verb` or the core
+    /// scope its row needs (`oneiron token read`, `token agent`, `token pair
+    /// --scope`). The proof then carries it, so every door that revalidates
+    /// the proof refuses once it is revoked or expires. A revoked
+    /// credential, one handed to another key, one cut on its records,
+    /// channels or any scope axis but its verbs, one whose verbs do not reach
+    /// `verb`, or another person's takes no owner door, as it reads only what
+    /// it grants (FIX EMBEDDED-OWNER-IGNORES-BOUND-PROOF).
     pub fn embedded_owner(&self, verb: &str) -> MemoryResult<AuthenticatedOwner> {
         let owner = self.embedded_owner_actor(verb)?;
         let proof =
@@ -32,13 +36,13 @@ impl Memory<'_> {
             return Ok(proof);
         };
         self.vault
-            .bind_owner_credential(proof, credential.clone())
+            .bind_owner_credential_for_verb(proof, credential.clone(), verb)
             .map_err(|error| match error {
                 crate::Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason)) => {
                     MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
                         format!("{verb} is the vault owner's: {reason}"),
-                        &["Call it with the owner's own live, full credential."],
+                        &["Call it with the owner's own live credential that reaches this verb."],
                     )
                 }
                 other => MemoryError::from(other),
@@ -50,16 +54,18 @@ impl Memory<'_> {
     /// holds the vault's writer lease and binds that owner as a human. No
     /// owner proof is minted here: the repair's writer judges the owner
     /// against the floor it stages. A handle bound to a credential calls
-    /// with that credential, which the writer judges as it judges a
-    /// transport's verified slip: only the owner's own live, unattenuated
-    /// human slip acts as the owner.
+    /// with that credential and `verb`, which the writer judges as
+    /// [`Self::embedded_owner`] judges them: only the owner's own live human
+    /// slip that reaches `verb` and cuts nothing else acts as the owner.
     pub fn embedded_clock_repair_caller(
         &self,
         verb: &str,
     ) -> MemoryResult<crate::authority::ClockRepairCaller> {
         self.embedded_owner_actor(verb)?;
         Ok(match &self.read_proof {
-            Some(credential) => crate::authority::ClockRepairCaller::verified(credential.clone()),
+            Some(credential) => {
+                crate::authority::ClockRepairCaller::bound_for_verb(credential.clone(), verb)
+            }
             None => crate::authority::ClockRepairCaller::embedded(),
         })
     }
