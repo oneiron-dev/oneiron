@@ -71,7 +71,7 @@ pub(super) fn demotion_body(
         }
         _ => return Err(binding_error()),
     };
-    stamp_rung(&mut expected, rung)?;
+    stamp_rung(&mut expected, rung);
     Ok(expected)
 }
 
@@ -102,7 +102,7 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
             }
             // A weakened number reads in its own house band (FIX 7761).
             next.set_confidence(confidence, None);
-            stamp_rung(&mut next, "weakened")?;
+            stamp_rung(&mut next, "weakened");
         }
         ClaimSuccession::Fork { facet, .. } => {
             if facet == prior.scope_facet {
@@ -114,19 +114,16 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
     Ok(next)
 }
 
-fn stamp_rung(body: &mut ClaimBody, rung: &'static str) -> Result<()> {
-    use crate::write_envelope::claim_body::CLAIM_SCOPE_DEMOTION_RUNG_KEY;
+fn stamp_rung(body: &mut ClaimBody, rung: &'static str) {
+    use crate::write_envelope::claim_body::{CLAIM_SCOPE_DEMOTION_RUNG_KEY, scope_map_entries};
 
-    let mut scope = match body.scope.take() {
-        None => Vec::new(),
-        Some(Value::Map(entries)) => entries,
-        Some(_) => return Err(binding_error()),
-    };
+    // A scope that is not a map carries no recognized entry: the rung starts
+    // a map of its own, as the demotion door writes it.
+    let mut scope = scope_map_entries(body.scope.take());
     scope.retain(|(key, _)| key.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
     scope.push((
         Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
         Value::from(rung),
     ));
     body.scope = Some(Value::Map(scope));
-    Ok(())
 }

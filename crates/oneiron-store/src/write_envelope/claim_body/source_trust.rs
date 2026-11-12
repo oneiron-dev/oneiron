@@ -91,14 +91,13 @@ pub fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapV
 }
 
 /// Reads the demotion rung recorded in a claim's scope map. `None` means the
-/// claim carries no rung (no scope map, or no rung key); a duplicate or
-/// malformed rung is a fail-closed [`Error::InvalidClaimBody`].
+/// claim carries no rung (no scope map, or no rung key): a `scope` that is not
+/// a map carries no recognized entry (`scope.rs`), such as a critic outcome's
+/// finding key. A duplicate or malformed rung is a fail-closed
+/// [`Error::InvalidClaimBody`].
 pub fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemotionRung>> {
-    let Some(scope) = &body.scope else {
+    let Some(Value::Map(entries)) = &body.scope else {
         return Ok(None);
-    };
-    let Value::Map(entries) = scope else {
-        return Err(Error::InvalidClaimBody("scope must be a map"));
     };
     let value = match single_map_value(entries, CLAIM_SCOPE_DEMOTION_RUNG_KEY) {
         MapValue::Missing => return Ok(None),
@@ -110,6 +109,18 @@ pub fn claim_demotion_rung(body: &ClaimBody) -> Result<Option<ClaimDemotionRung>
         Some("weakened") => Ok(Some(ClaimDemotionRung::Weakened)),
         Some("stale") => Ok(Some(ClaimDemotionRung::Stale)),
         _ => Err(Error::InvalidClaimBody("malformed demotion rung")),
+    }
+}
+
+/// The entries of a claim's `scope` map, for a writer that stamps an
+/// engine-recognized entry into it. A `scope` that is not a map carries no
+/// recognized entry (`scope.rs`), so the stamp starts from an empty map: the
+/// opaque value names nothing the engine reads, and the new map holds the
+/// stamp alone.
+pub fn scope_map_entries(scope: Option<Value>) -> Vec<(Value, Value)> {
+    match scope {
+        Some(Value::Map(entries)) => entries,
+        _ => Vec::new(),
     }
 }
 
