@@ -664,6 +664,8 @@ interface Retrieval04Pack extends ContextPackReply {
     readonly neighbors_hydrated: number; readonly claims_suppressed: number;
   };
   readonly l2_base?: { readonly content_hash: string; readonly body: string } | null;
+  readonly disclosure?: { readonly mode: string } | null;
+  readonly interlocutors?: readonly { readonly speaker: string; readonly class: string }[] | null;
 }
 interface Retrieval04L2Row {
   readonly id: string; readonly subj: string; readonly pred: string | null;
@@ -910,7 +912,8 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       results: reply.results.map(row => row.id), neighbors: reply.neighbors.map(row => row.id),
       l2_rows: rows.map(row => ({ id: row.id, pred: row.pred, world: row.world,
         matches_query: typeof row.val === "string" && row.val.includes(graphToken) })),
-      stats: reply.stats,
+      stats: reply.stats, disclosure: reply.disclosure?.mode ?? null,
+      interlocutors: reply.interlocutors?.map(stamp => stamp.class) ?? null,
     });
     async function retrieval04CheckPacks() {
       const ownerPack = await engine.client.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
@@ -918,6 +921,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       const ownerL2 = retrieval04L2Rows(ownerPack.body);
       try {
         // Control: the owner's pack reaches the TASK anchor and both claims.
+        expect(ownerPack.body.disclosure?.mode ?? null).not.toBe("absence_clamp");
         expect(ownerPack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
         expect(ownerL2.map(row => row.val)).toContain(readableText);
         expect(ownerL2.some(row => row.val === hiddenText)
@@ -930,7 +934,18 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       expect(pack.status).toBe(200);
       const readerL2 = retrieval04L2Rows(pack.body);
       try {
-        expect(pack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
+        // P7 (ILDF2, one-1592 :34 "Unknown contact -> empty clearance -> public-only"):
+        // the reader is a principal-scoped core:read token with no interlocutors
+        // block, an Unknown party, so its pack assembles under the absence clamp
+        // and only positively Public rows take a candidate slot
+        // (pipeline/filters.rs, disclosure/disclosable_set.rs admits). The TASK is
+        // born Sensitive (federation/record_scope.rs default_stamp), so the pack
+        // withholds it although the reader's point read above admits it; the
+        // Public readable claim is served as an l2_base row.
+        expect(pack.body.disclosure?.mode).toBe("absence_clamp");
+        expect(pack.body.interlocutors?.some(stamp => stamp.class === "unknown")).toBe(true);
+        expect(pack.body.results.map(row => row.id)).not.toContain(graphAnchor.id_hex);
+        expect(pack.body.neighbors.map(row => row.id)).not.toContain(graphAnchor.id_hex);
         expect(readerL2.map(row => row.val)).toContain(readableText);
         expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
         retrieval04Receipt(pack.body.narrowing);
