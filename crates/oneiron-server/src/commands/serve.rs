@@ -88,7 +88,11 @@ pub(super) async fn serve_anchored(
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
-    crate::owner::house::bind_house_leader_at_start(&vault, server_config.auth_secret.as_deref());
+    crate::owner::house::bind_house_leader_at_start(
+        &vault,
+        server_config.auth_secret.as_deref(),
+        server_config.house_role,
+    );
     match server_config.auth_secret.as_deref() {
         None if !server_config.allow_unauthenticated => {
             tracing::warn!(
@@ -120,6 +124,10 @@ pub(super) async fn serve_anchored(
     // spaces. The local provider downloads nothing here — that is the worker's.
     let (sync_server, gpu_poller) =
         build_server(vault, &config, server_config, owner_host, startup_args).await?;
+    // Built: this install's profile is enrolled, and the listener has not
+    // bound. The agents a self-hosted vault paired before Grants get their
+    // default read Grant now, once (FIX AGENT-GRANTLESS-VISIBLE).
+    crate::owner::agent_grants::backfill_default_grants_at_start(sync_server.vault());
     // The host's socket: adopted from the service manager, or host:port
     // bound here. Bound before any worker starts, so a refused bind leaves
     // nothing running. An adopted socket is judged by where it listens.

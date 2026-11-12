@@ -298,6 +298,50 @@ pub(super) fn load_step_response_in(
     }
 }
 
+/// [`load_step_response_in_txn`] as `sight` reads the response (review of
+/// #6968): the pin is checked on the stored bytes first, then a masked reader
+/// reads each lifted key of the response, artifact-backed or inline, as its
+/// handle, as a masked blob read serves it. A response that no longer decodes
+/// once masked refuses; the owner and a granted reader read it as stored.
+pub(super) fn load_step_response_sighted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    decoded: &DecodedStepClaim,
+    sight: crate::secret_custody::SecretSight,
+) -> DurableStepResult<LlmResponse> {
+    let stored = load_step_response_in_txn(vault, txn, decoded)?;
+    if sight != crate::secret_custody::SecretSight::Masked {
+        return Ok(stored);
+    }
+    match (&decoded.response, &decoded.response_ref) {
+        (Some(inline), None) => {
+            let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
+                &vault.store,
+                txn,
+                [inline.as_str()],
+            )?;
+            match keys.masked(inline) {
+                Some(masked) => Ok(serde_json::from_str(&masked)?),
+                None => Ok(stored),
+            }
+        }
+        (None, Some(response_ref)) => {
+            let bytes = vault
+                .read_blob_artifact_version_sighted_in_txn(
+                    txn,
+                    &response_ref.artifact_id,
+                    response_ref.version,
+                    sight,
+                )?
+                .ok_or(Error::InvalidClaimBody(
+                    "dreamer step response_ref version missing",
+                ))?;
+            Ok(serde_json::from_slice(&bytes)?)
+        }
+        _ => Ok(stored),
+    }
+}
+
 /// The WITH-WHAT params identity: BLAKE3 of the request's canonical params
 /// JSON, lowercase hex. The terminal claim writer and the memo-hit provenance
 /// check MUST agree byte-for-byte, so both go through this one helper.

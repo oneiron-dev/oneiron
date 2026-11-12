@@ -624,6 +624,8 @@ fn after_edges(ctx: &RematCtx<'_>) {
     // FIX 1794: the room side rows it carries, after the turn rows their
     // responses name.
     crate::sync::room_facts::apply_room_fact_map(vault, doc, window_key);
+    // FIX 5266: the turn-program armings and riding wakes it carries.
+    crate::sync::turn_programs::apply_turn_program_maps(vault, doc, window_key);
     // FIX 853: the MESSAGE documents and document quote pins it carries,
     // after the MESSAGE rows and before the tombstones, so an erased message
     // takes them. A document lands before the pins that quote it.

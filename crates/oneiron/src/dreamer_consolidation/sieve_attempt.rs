@@ -109,6 +109,7 @@ impl ConsolidationExecutor<'_> {
             subject: input.span.turn,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         // Every rung's call names the span's turn, source and entities by
         // its own labels (FIX 7506), built before any renders.

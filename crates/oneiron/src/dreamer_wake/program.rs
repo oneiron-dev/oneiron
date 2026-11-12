@@ -714,6 +714,7 @@ impl ProgramModelSeam<'_> {
                         subject: self.code_run,
                         deadline: Some(self.deadline),
                         now_ms: now.saturating_mul(1_000),
+                        spend_scope: None,
                     };
                     let mut slot = None;
                     self.reactor.block_on(Box::pin(async {

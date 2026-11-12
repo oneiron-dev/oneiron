@@ -55,6 +55,16 @@ pub(crate) fn deindex_project_room(
             }
         }
     }
+    // The deleted project's extra-room links go with it: every index row naming it is removed.
+    // The rooms stay, their bodies untouched; a stale body key reads as unlinked.
+    let linked: Vec<EntityId> = EXTRA_ROOM_PROJECT
+        .scan(store, txn)?
+        .into_iter()
+        .filter_map(|(room, project)| (project == *id).then_some(room))
+        .collect();
+    for room in linked {
+        EXTRA_ROOM_PROJECT.delete(store, txn, &room)?;
+    }
     origin::deindex_origin(store, txn, *id)?;
     let room_id = home_room_id(*id)?;
     super::super::rooms::delete_room_metadata(store, txn, room_id)?;
