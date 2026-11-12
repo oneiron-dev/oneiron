@@ -1084,7 +1084,9 @@ fn enter_on(
     seat: Option<&ModelSeat>,
     brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let runtime_started = std::time::Instant::now();
     let mut runtime = provider.runtime();
+    tracing::debug!(target: "oneiron::run_start", stage = "runtime_compiled", elapsed_us = u64::try_from(runtime_started.elapsed().as_micros()).unwrap_or(u64::MAX), "run start");
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let mut routed_config = config.clone();
     let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound);

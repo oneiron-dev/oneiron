@@ -67,9 +67,11 @@ pub(super) fn run_bound(
     // Its self brief lives longer, with its live run (FIX 17594 D3).
     let door =
         Arc::new(RunHostDoor::new(server, actor, runtime, run_id).with_live_run_brief_lifetime());
+    tracing::debug!(target: "oneiron::run_start", stage = "run_bound_entered", run = %run_id.to_hex(), "run start");
     let template = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
+    tracing::debug!(target: "oneiron::run_start", stage = "executor_config_done", run = %run_id.to_hex(), "run start");
     // FIX 3694: a successor that carries the owner's approved prompt
     // continuation goes on as the fork of its failed predecessor's run, from
     // its cut, on the task, model and effort that run had. It is born on a
@@ -215,6 +217,7 @@ pub(super) fn run_bound(
     } else {
         hold_seatless_to_list(vault, actor, definition, &config.model)?;
     }
+    tracing::debug!(target: "oneiron::run_start", stage = "seat_bound", run = %run_id.to_hex(), "run start");
     // Held to its list, the binding is frozen on the row and noted in the
     // agent's diary before any pack loads (FIX 7720, 7726).
     let planned = pin.map(|pin| pin.bind(vault, &status.attempt, actor, run_id, &mut config));
@@ -336,6 +339,7 @@ pub(super) fn run_bound(
     // managed issuer, else this install's own self-host root (FIX-LIST 3018).
     let issuer = server.host_issuer();
     let mut full = 0;
+    tracing::debug!(target: "oneiron::run_start", stage = "before_enter_run", run = %run_id.to_hex(), "run start");
     loop {
         let outcome = enter_run(
             vault,
@@ -674,6 +678,7 @@ fn enter_run(
     // call RESUME C).
     // A brief that does not install leaves the run as it ran before it had
     // one: it enters with no brief, and the miss is logged.
+    let brief_started = std::time::Instant::now();
     let brief = door
         .install_self_brief(live.self_brief_owner())
         .unwrap_or_else(|error| {
@@ -684,6 +689,7 @@ fn enter_run(
             );
             None
         });
+    tracing::debug!(target: "oneiron::run_start", stage = "self_brief_installed", elapsed_us = u64::try_from(brief_started.elapsed().as_micros()).unwrap_or(u64::MAX), "run start");
     if let Some(brief) = &brief {
         live.hold_self_brief(brief.installation());
     }
