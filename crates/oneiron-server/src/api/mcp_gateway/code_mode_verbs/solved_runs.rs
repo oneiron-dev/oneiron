@@ -100,14 +100,15 @@ impl BrowserCapture<'_, '_> {
         session: &mut BrowserSession,
         span: CheckedSpan,
     ) -> Result<String, String> {
+        // A span its goal reached before a granted press ends there
+        // (FIX 10511), not on the press; a draft's span ends no later than
+        // the entry it drafted through.
+        let through_seq = span.capture_through(session.pre_press_through(span.after_seq));
         let input = DraftInput {
             subgoal: span.subgoal.clone(),
             postcondition: span.checks,
             after_seq: span.after_seq,
-            // A span its goal reached before a granted press ends there
-            // (FIX 10511), not on the press; a draft's span ends no later
-            // than the entry it drafted through.
-            through_seq: span.capture_through(session.pre_press_through(span.after_seq)),
+            through_seq,
             past_press: SOLVED_PAST_PRESS,
             type_ref: None,
         };
