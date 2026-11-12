@@ -3,13 +3,22 @@
 //! directory, in `imports/<id>/`, landed by the vault's own process as a
 //! durable job.
 //!
-//! The stager ([`stage`]; `oneiron import <chatgpt|claude> <file> --hosted`,
-//! the operator's seam) copies the export into `<id>/export.part`, counting
-//! and hashing the bytes it writes. It syncs the copy and renames it to
+//! One writer stages every export, in three steps: it makes the folder with
+//! an empty `export.part`, appends the export's bytes to the part, syncing
+//! each append, and finishes the folder. Finishing names the part
 //! `export.zip` or `export.json` by its first bytes, then writes
 //! `request.json` (the source, the count and the hash) last, in one rename:
 //! a folder holding `request.json` is whole. Only the vault's owner may
-//! write `imports/`, as for the session-log queue's folder.
+//! write `imports/`, as for the session-log queue's folder. Two callers use
+//! the writer:
+//! - the stager ([`stage`]; `oneiron import <chatgpt|claude> <file>
+//!   --hosted`, the operator's seam) copies the export in one append;
+//! - an upload to the vault's own hostname (`/v1/owner/imports/hosted`)
+//!   first declares the export's source and size ([`declare_upload`]), kept
+//!   in `declared.json` beside the part, then sends the export in parts,
+//!   each at the offset the part has reached ([`upload_part`]). The upload's
+//!   state between two parts is the folder alone, so a restart resumes it
+//!   there. The part that reaches the declared size finishes the folder.
 //!
 //! Each pass of the worker ([`HostedImports::pass`]) first makes the job row
 //! ([`oneiron::Vault::hosted_import_create`]) of each whole folder that has
@@ -37,7 +46,7 @@
 //! between conversations.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,22 +67,26 @@ const TICK: Duration = Duration::from_secs(5);
 
 /// The staging folder's name inside the vault's data directory.
 const IMPORTS_DIR: &str = "imports";
-/// A folder's files: the export while it is copied, the export once whole
-/// (by its first bytes), and the request that marks the folder whole.
+/// A folder's files: the export while it is written, the export once whole
+/// (by its first bytes), the request that marks the folder whole, and an
+/// upload's declared source and size.
 const PART_FILE: &str = "export.part";
 const ZIP_FILE: &str = "export.zip";
 const JSON_FILE: &str = "export.json";
 const REQUEST_FILE: &str = "request.json";
 const REQUEST_PART_FILE: &str = "request.part";
+const DECLARED_FILE: &str = "declared.json";
+const DECLARED_PART_FILE: &str = "declared.part";
 
 /// A zip's first bytes (a local file header).
 const ZIP_MAGIC: [u8; 4] = *b"PK\x03\x04";
-/// The largest `request.json` read: a source id, a count and a hash.
+/// The largest `request.json` or `declared.json` read: a source id, a count
+/// and a hash.
 const MAX_REQUEST_BYTES: u64 = 4 * 1024;
-/// The stager's copy buffer.
+/// The stager's copy buffer, and the finish's hash buffer.
 const COPY_BUFFER_BYTES: usize = 1 << 20;
 
-/// What a whole folder asks for, as the stager wrote it.
+/// What a whole folder asks for, as the writer wrote it.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -83,9 +96,24 @@ struct Request {
     blake3: String,
 }
 
+/// What an upload declared before its first byte: the export's source and
+/// its size. A folder holding it is an upload.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Declared {
+    source: String,
+    bytes: u64,
+}
+
 /// The vault's staging folder for the vault at `vault_path`.
 fn imports_root(vault_path: &Path) -> PathBuf {
     vault_path.join(IMPORTS_DIR)
+}
+
+/// Whether `source` is an export a hosted import takes: ChatGPT's or
+/// Claude.ai's (HI-SCOPE = A, 13 Nov 07:14).
+pub(crate) fn takes_source(source: HistorySource) -> bool {
+    matches!(source, HistorySource::Chatgpt | HistorySource::Claude)
 }
 
 /// Stages `file` as a hosted import of `source` in the vault at
@@ -104,28 +132,11 @@ pub(crate) fn stage(
     file: &Path,
 ) -> anyhow::Result<(HostedImportId, HostedImportStaged)> {
     anyhow::ensure!(
-        matches!(source, HistorySource::Chatgpt | HistorySource::Claude),
+        takes_source(source),
         "a hosted import takes a ChatGPT or Claude export; {} is not one",
         source.source_id()
     );
-    anyhow::ensure!(
-        vault_path.join("data.mdb").is_file(),
-        "vault {} does not exist; `oneiron init` creates one",
-        vault_path.display()
-    );
-    let root = imports_root(vault_path);
-    match fs::DirBuilder::new().mode(0o700).create(&root) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => anyhow::bail!("create {}: {error}", root.display()),
-    }
-    check_root(vault_path, &root)?;
-    let id = HostedImportId::generate();
-    let folder = root.join(id.to_hex());
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&folder)
-        .map_err(|error| anyhow::anyhow!("create {}: {error}", folder.display()))?;
+    let (id, folder) = create_folder(vault_path)?;
     match stage_into(&folder, source, file) {
         Ok(staged) => Ok((id, staged)),
         Err(error) => {
@@ -135,14 +146,15 @@ pub(crate) fn stage(
     }
 }
 
-/// Copies `file` into `folder` and writes its request last.
+/// Copies `file` into `folder`'s part in one append and finishes the
+/// folder.
 fn stage_into(
     folder: &Path,
     source: HistorySource,
     file: &Path,
 ) -> anyhow::Result<HostedImportStaged> {
     let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let mut input = File::from(
+    let input = File::from(
         openat(CWD, file, flags, Mode::empty())
             .map_err(|error| anyhow::anyhow!("open {}: {error}", file.display()))?,
     );
@@ -151,57 +163,208 @@ fn stage_into(
         "{} is not a regular file",
         file.display()
     );
+    let mut part = open_part(folder)?;
+    let mut input = BufReader::with_capacity(COPY_BUFFER_BYTES, input);
+    match append_part(&mut part, 0, &mut input, u64::MAX) {
+        Ok(_) => {}
+        Err(AppendFailed::Read(error)) => anyhow::bail!("read {}: {error}", file.display()),
+        Err(AppendFailed::Write(error)) => return Err(error.into()),
+        Err(AppendFailed::PastLimit) => anyhow::bail!("{} has no end", file.display()),
+    }
+    drop(part);
+    finish_folder(folder, source)
+}
+
+/// Makes a new import's folder in the vault at `vault_path`, holding an
+/// empty `export.part`: the writer's first step.
+fn create_folder(vault_path: &Path) -> anyhow::Result<(HostedImportId, PathBuf)> {
+    anyhow::ensure!(
+        vault_path.join("data.mdb").is_file(),
+        "vault {} does not exist; `oneiron init` creates one",
+        vault_path.display()
+    );
+    let root = imports_root(vault_path);
+    match fs::DirBuilder::new().mode(0o700).create(&root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => anyhow::bail!("create {}: {error}", root.display()),
+    }
+    check_root(vault_path, &root)?;
+    let id = HostedImportId::generate();
+    let folder = root.join(id.to_hex());
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&folder)
+        .map_err(|error| anyhow::anyhow!("create {}: {error}", folder.display()))?;
     let part = folder.join(PART_FILE);
-    let mut output = OpenOptions::new()
+    if let Err(error) = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&part)
-        .map_err(|error| anyhow::anyhow!("create {}: {error}", part.display()))?;
-    let mut hasher = blake3::Hasher::new();
-    let mut head = Vec::with_capacity(ZIP_MAGIC.len());
-    let mut bytes = 0_u64;
-    let mut buffer = vec![0_u8; COPY_BUFFER_BYTES];
+    {
+        let _ = fs::remove_dir_all(&folder);
+        anyhow::bail!("create {}: {error}", part.display());
+    }
+    Ok((id, folder))
+}
+
+/// The folder's `export.part`, open to write, never through a link.
+fn open_part(folder: &Path) -> anyhow::Result<File> {
+    let part = folder.join(PART_FILE);
+    let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    Ok(File::from(
+        openat(CWD, &part, flags, Mode::empty())
+            .map_err(|error| anyhow::anyhow!("open {}: {error}", part.display()))?,
+    ))
+}
+
+/// Why a part was not appended. The part keeps the length it had.
+enum AppendFailed {
+    /// The input holds more bytes than the append may take.
+    PastLimit,
+    /// The input could not be read.
+    Read(io::Error),
+    /// The part could not be written or synced.
+    Write(io::Error),
+}
+
+/// Appends what `input` holds to `part`, which is `start` bytes long, and
+/// syncs it: the writer's second step. An input of more than `limit` bytes
+/// appends nothing, nor does one whose copy fails: the part is cut back to
+/// `start`. Answers the bytes appended.
+fn append_part(
+    part: &mut File,
+    start: u64,
+    input: &mut dyn BufRead,
+    limit: u64,
+) -> Result<u64, AppendFailed> {
+    let copied = copy_at(part, start, input, limit);
+    if copied.is_err() {
+        // What was written past `start` is not the export: the part keeps
+        // only whole appends.
+        let _ = part.set_len(start).and_then(|()| part.sync_all());
+    }
+    copied
+}
+
+/// The copy of [`append_part`], then the sync.
+fn copy_at(
+    part: &mut File,
+    start: u64,
+    input: &mut dyn BufRead,
+    limit: u64,
+) -> Result<u64, AppendFailed> {
+    part.seek(SeekFrom::Start(start))
+        .map_err(AppendFailed::Write)?;
+    let mut appended = 0_u64;
     loop {
-        let read = input
-            .read(&mut buffer)
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", file.display()))?;
-        if read == 0 {
+        let chunk = match input.fill_buf() {
+            Ok(chunk) => chunk,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(AppendFailed::Read(error)),
+        };
+        if chunk.is_empty() {
             break;
         }
-        let chunk = &buffer[..read];
-        let wanted = ZIP_MAGIC.len().saturating_sub(head.len());
-        head.extend_from_slice(&chunk[..wanted.min(read)]);
-        hasher.update(chunk);
-        output.write_all(chunk)?;
-        bytes += u64::try_from(read)?;
+        let read = chunk.len();
+        appended = appended.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
+        if appended > limit {
+            return Err(AppendFailed::PastLimit);
+        }
+        part.write_all(chunk).map_err(AppendFailed::Write)?;
+        input.consume(read);
     }
-    output.sync_all()?;
-    drop(output);
-    let name = if head == ZIP_MAGIC {
-        ZIP_FILE
-    } else {
-        JSON_FILE
+    part.sync_all().map_err(AppendFailed::Write)?;
+    Ok(appended)
+}
+
+/// Finishes `folder`: names its part by its first bytes, then writes
+/// `request.json` (the source, the count and the hash of the export as it
+/// is on the disk) last, in one rename: the writer's third step. A folder
+/// whose part was named but whose request was not written, as a process
+/// that stopped between the two leaves it, is finished from there.
+fn finish_folder(folder: &Path, source: HistorySource) -> anyhow::Result<HostedImportStaged> {
+    let part = folder.join(PART_FILE);
+    let export = match fs::symlink_metadata(&part) {
+        Ok(_) => {
+            let mut head = Vec::with_capacity(ZIP_MAGIC.len());
+            open_regular(&part)?
+                .take(u64::try_from(ZIP_MAGIC.len())?)
+                .read_to_end(&mut head)?;
+            let name = if head == ZIP_MAGIC {
+                ZIP_FILE
+            } else {
+                JSON_FILE
+            };
+            let export = folder.join(name);
+            fs::rename(&part, &export)?;
+            export
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => named_export(folder)?
+            .ok_or_else(|| anyhow::anyhow!("{} holds no export", folder.display()))?,
+        Err(error) => anyhow::bail!("read {}: {error}", part.display()),
     };
-    fs::rename(&part, folder.join(name))?;
+    let mut hasher = blake3::Hasher::new();
+    let mut read = BufReader::with_capacity(COPY_BUFFER_BYTES, open_regular(&export)?);
+    let bytes = io::copy(&mut read, &mut hasher)?;
     let blake3 = *hasher.finalize().as_bytes();
     let request = serde_json::to_vec(&Request {
         source: source.source_id().to_owned(),
         bytes,
         blake3: blake3::Hash::from_bytes(blake3).to_hex().to_string(),
     })?;
-    let request_part = folder.join(REQUEST_PART_FILE);
+    write_last(folder, REQUEST_PART_FILE, REQUEST_FILE, &request)?;
+    Ok(HostedImportStaged { bytes, blake3 })
+}
+
+/// Writes `bytes` to `part_name` in `folder`, syncs it, renames it to
+/// `name` and syncs the folder: `name` appears whole or not at all. A
+/// `part_name` a stopped process left is written over.
+fn write_last(folder: &Path, part_name: &str, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let part = folder.join(part_name);
     let mut written = OpenOptions::new()
         .write(true)
-        .create_new(true)
+        .create(true)
+        .truncate(true)
         .mode(0o600)
-        .open(&request_part)?;
-    written.write_all(&request)?;
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&part)?;
+    written.write_all(bytes)?;
     written.sync_all()?;
     drop(written);
-    fs::rename(&request_part, folder.join(REQUEST_FILE))?;
+    fs::rename(&part, folder.join(name))?;
     File::open(folder)?.sync_all()?;
-    Ok(HostedImportStaged { bytes, blake3 })
+    Ok(())
+}
+
+/// `path` open to read, when it is a regular file, never through a link.
+fn open_regular(path: &Path) -> anyhow::Result<File> {
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let file = File::from(
+        openat(CWD, path, flags, Mode::empty())
+            .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?,
+    );
+    anyhow::ensure!(
+        file.metadata()?.is_file(),
+        "{} is not a regular file",
+        path.display()
+    );
+    Ok(file)
+}
+
+/// The folder's named export, `export.zip` or `export.json`, when one is
+/// there.
+fn named_export(folder: &Path) -> anyhow::Result<Option<PathBuf>> {
+    for name in [ZIP_FILE, JSON_FILE] {
+        let path = folder.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Ok(Some(path)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => anyhow::bail!("read {}: {error}", path.display()),
+        }
+    }
+    Ok(None)
 }
 
 /// `imports/` must be a folder, not a link, that only the vault's owner can
@@ -237,6 +400,274 @@ pub(super) fn stage_command(
     )?;
     writeln!(stdout)?;
     Ok(())
+}
+
+/// An upload's state, as the upload routes answer it.
+#[derive(Debug, Serialize)]
+pub(crate) struct HostedUpload {
+    /// The import's id: its job's, once the export is staged
+    /// (`vault.imports.get`).
+    pub(crate) import_id: String,
+    /// The export's source: `chatgpt` or `claude`.
+    pub(crate) source: String,
+    /// The export's size, as declared.
+    pub(crate) declared_bytes: u64,
+    /// The bytes written so far: where the next part starts.
+    pub(crate) offset: u64,
+    /// Whether the export is whole and staged: the vault's worker lands it
+    /// from here, and the upload takes no more bytes.
+    pub(crate) staged: bool,
+}
+
+/// Why an upload's state was not read or its part not appended. Nothing was
+/// written.
+#[derive(Debug)]
+pub(crate) enum UploadRefusal {
+    /// No upload of that id is in this vault: it was never declared, or its
+    /// job has ended and its folder is gone.
+    NotFound,
+    /// The export is staged: the upload takes no more bytes.
+    Staged,
+    /// The part does not start where the upload stands: the bytes written so
+    /// far.
+    Offset(u64),
+    /// Another part of this upload is being written.
+    Busy,
+    /// The part runs past the declared size: the bytes still to come.
+    PastDeclared(u64),
+    /// The vault's disk had no room for the part.
+    NoRoom,
+    /// The folder's files failed.
+    Failed(anyhow::Error),
+}
+
+impl From<anyhow::Error> for UploadRefusal {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<io::Error> for UploadRefusal {
+    fn from(error: io::Error) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+/// Declares an upload of a `source` export of `bytes` bytes in the vault at
+/// `vault_path`: its folder, with its empty part, and `declared.json` last.
+/// The upload's parts come after.
+///
+/// # Errors
+///
+/// A source that is not an export, a size of nothing, a staging folder that
+/// someone other than the vault's owner may write, or a failed write; a
+/// folder left half-made is removed.
+pub(crate) fn declare_upload(
+    vault_path: &Path,
+    source: HistorySource,
+    bytes: u64,
+) -> anyhow::Result<HostedUpload> {
+    anyhow::ensure!(
+        takes_source(source),
+        "a hosted import takes a ChatGPT or Claude export; {} is not one",
+        source.source_id()
+    );
+    anyhow::ensure!(bytes > 0, "an export of no bytes is not an export");
+    let (id, folder) = create_folder(vault_path)?;
+    let declared = serde_json::to_vec(&Declared {
+        source: source.source_id().to_owned(),
+        bytes,
+    })?;
+    if let Err(error) = write_last(&folder, DECLARED_PART_FILE, DECLARED_FILE, &declared) {
+        let _ = fs::remove_dir_all(&folder);
+        return Err(error);
+    }
+    Ok(HostedUpload {
+        import_id: id.to_hex(),
+        source: source.source_id().to_owned(),
+        declared_bytes: bytes,
+        offset: 0,
+        staged: false,
+    })
+}
+
+/// Upload `id`'s state in the vault at `vault_path`.
+///
+/// # Errors
+///
+/// [`UploadRefusal::NotFound`] for an id that is no upload in this vault;
+/// a failure of its folder's files.
+pub(crate) fn upload_state(
+    vault_path: &Path,
+    id: HostedImportId,
+) -> Result<HostedUpload, UploadRefusal> {
+    let upload = Upload::open(vault_path, id)?;
+    let (offset, staged) = upload.written()?;
+    Ok(upload.state(offset, staged))
+}
+
+/// Appends `part` to upload `id` in the vault at `vault_path` at `offset`,
+/// the bytes it has written so far, and syncs it. The part that brings the
+/// export to its declared size finishes the folder: the export is staged.
+/// Once staged, the upload answers a part of no bytes at its declared size
+/// with its state, as a client whose last reply was lost sends it again, and
+/// refuses any other. One part is written at a time.
+///
+/// # Errors
+///
+/// An [`UploadRefusal`]: the part appended nothing.
+pub(crate) fn upload_part(
+    vault_path: &Path,
+    id: HostedImportId,
+    offset: u64,
+    part: &mut dyn BufRead,
+) -> Result<HostedUpload, UploadRefusal> {
+    let upload = Upload::open(vault_path, id)?;
+    // The upload's lock is on `declared.json`, which stays in the folder
+    // through the finish: a second part sent meanwhile is refused at once,
+    // never left waiting.
+    match upload.declared_file.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => return Err(UploadRefusal::Busy),
+        Err(fs::TryLockError::Error(error)) => return Err(error.into()),
+    }
+    let (written, staged) = upload.written()?;
+    let declared = upload.declared;
+    if staged {
+        return if offset == declared && is_empty(part)? {
+            Ok(upload.state(declared, true))
+        } else {
+            Err(UploadRefusal::Staged)
+        };
+    }
+    if offset != written {
+        return Err(UploadRefusal::Offset(written));
+    }
+    let room = declared
+        .checked_sub(written)
+        .ok_or_else(|| anyhow::anyhow!("the upload holds more than it declared"))?;
+    let appended = if fs::symlink_metadata(upload.folder.join(PART_FILE)).is_ok() {
+        let mut file = open_part(&upload.folder)?;
+        match append_part(&mut file, written, part, room) {
+            Ok(appended) => appended,
+            Err(AppendFailed::PastLimit) => return Err(UploadRefusal::PastDeclared(room)),
+            Err(AppendFailed::Read(error)) => return Err(error.into()),
+            Err(AppendFailed::Write(error)) if error.kind() == io::ErrorKind::StorageFull => {
+                return Err(UploadRefusal::NoRoom);
+            }
+            Err(AppendFailed::Write(error)) => return Err(error.into()),
+        }
+    } else if is_empty(part)? {
+        // The part was named, the request not written: the finish below
+        // goes on from there.
+        0
+    } else {
+        return Err(UploadRefusal::PastDeclared(room));
+    };
+    let reached = written + appended;
+    if reached < declared {
+        return Ok(upload.state(reached, false));
+    }
+    finish_folder(&upload.folder, upload.source)?;
+    Ok(upload.state(reached, true))
+}
+
+/// Whether `part` holds no byte.
+fn is_empty(part: &mut dyn BufRead) -> io::Result<bool> {
+    loop {
+        match part.fill_buf() {
+            Ok(chunk) => return Ok(chunk.is_empty()),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// One declared upload's folder, as read.
+struct Upload {
+    id: HostedImportId,
+    folder: PathBuf,
+    source: HistorySource,
+    /// The declared size.
+    declared: u64,
+    /// `declared.json`, open: the lock each part takes.
+    declared_file: File,
+}
+
+impl Upload {
+    /// Upload `id` in the vault at `vault_path`: a folder of `imports/`
+    /// holding `declared.json`. A folder the stager writes holds none.
+    fn open(vault_path: &Path, id: HostedImportId) -> Result<Self, UploadRefusal> {
+        let root = imports_root(vault_path);
+        match fs::symlink_metadata(&root) {
+            Ok(_) => check_root(vault_path, &root)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(UploadRefusal::NotFound);
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let folder = root.join(id.to_hex());
+        match fs::symlink_metadata(&folder) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err(UploadRefusal::NotFound),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(UploadRefusal::NotFound);
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let path = folder.join(DECLARED_FILE);
+        let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let declared_file = match openat(CWD, &path, flags, Mode::empty()) {
+            Ok(file) => File::from(file),
+            Err(rustix::io::Errno::NOENT) => return Err(UploadRefusal::NotFound),
+            Err(error) => {
+                return Err(anyhow::anyhow!("open {}: {error}", path.display()).into());
+            }
+        };
+        let mut bytes = Vec::new();
+        (&declared_file)
+            .take(MAX_REQUEST_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        let declared: Declared = serde_json::from_slice(&bytes)
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+        let source = HistorySource::parse(&declared.source)
+            .filter(|source| takes_source(*source))
+            .ok_or_else(|| anyhow::anyhow!("{} names no export source", path.display()))?;
+        Ok(Self {
+            id,
+            folder,
+            source,
+            declared: declared.bytes,
+            declared_file,
+        })
+    }
+
+    /// The bytes written so far, and whether the export is staged: the
+    /// request's count once it is, else the part's length, or the named
+    /// export's when the finish stopped between its two steps.
+    fn written(&self) -> anyhow::Result<(u64, bool)> {
+        if fs::symlink_metadata(self.folder.join(REQUEST_FILE)).is_ok() {
+            return Ok((self.declared, true));
+        }
+        let part = self.folder.join(PART_FILE);
+        let path = if fs::symlink_metadata(&part).is_ok() {
+            part
+        } else {
+            named_export(&self.folder)?
+                .ok_or_else(|| anyhow::anyhow!("{} holds no export", self.folder.display()))?
+        };
+        Ok((open_regular(&path)?.metadata()?.len(), false))
+    }
+
+    fn state(&self, offset: u64, staged: bool) -> HostedUpload {
+        HostedUpload {
+            import_id: self.id.to_hex(),
+            source: self.source.source_id().to_owned(),
+            declared_bytes: self.declared,
+            offset,
+            staged,
+        }
+    }
 }
 
 /// What a running server drains: the staged imports of its vault.
@@ -520,17 +951,12 @@ fn read_request(folder: &Path) -> anyhow::Result<Option<Request>> {
 
 /// The folder's export, when it is a regular file of the staged length.
 fn staged_export(folder: &Path, bytes: u64) -> anyhow::Result<Option<PathBuf>> {
-    for name in [ZIP_FILE, JSON_FILE] {
-        let path = folder.join(name);
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) => {
-                return Ok((metadata.is_file() && metadata.len() == bytes).then_some(path));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => anyhow::bail!("read {}: {error}", path.display()),
-        }
-    }
-    Ok(None)
+    let Some(path) = named_export(folder)? else {
+        return Ok(None);
+    };
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    Ok((metadata.is_file() && metadata.len() == bytes).then_some(path))
 }
 
 /// Ends a job Failed with `reason` and removes its folder.
