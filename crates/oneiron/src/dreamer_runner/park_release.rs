@@ -23,8 +23,9 @@
 //! successor is queued. A stopped try sends nothing more: its Pending sends are abandoned as a held program's Stop
 //! abandons them (FIX 7188), which matters for a turn program's try parked at a checkpoint under the server's pass.
 //!
-//! The same door frees a try parked at its budget trap on a spent budget, a `Budget` or `PassBudget` wait
-//! (BUDGET-TRAP-UNTYPED-NO-SENDER, D2): such a park has its own sender (a top-up, a later pass with room), and
+//! The same door frees a try parked at its budget trap on a spent budget, a `Budget`, `PassBudget` or
+//! `ResidentShare` wait (BUDGET-TRAP-UNTYPED-NO-SENDER, D2 and D3): such a park has its own sender (a top-up, a
+//! later pass with room, the owner's share write), and
 //! the owner may free it as well. Resume wakes the park's trap in the release write, so the try runs again
 //! as the same try; Stop wakes the trap the same way and ends the try through the owner force-cancel, so the trap
 //! is consumed and nothing waits on it. Such a park raises no notice: it does not wait on the owner.
@@ -104,12 +105,17 @@ impl ParkReleaseAction {
     }
 }
 
-/// Whether `park` waits at its budget trap on a spent budget: a `Budget` or `PassBudget` wait under a trap owner.
+/// Whether `park` waits at its budget trap on a spent budget: a `Budget`, `PassBudget` or
+/// `ResidentShare` wait under a trap owner.
 fn waits_on_budget_trap(park: &DreamerParkedAttemptRecord) -> bool {
     ParkOwnerClass::of(&park.park_owner) == ParkOwnerClass::Trap
         && matches!(
             park.wait.as_ref().map(|wait| wait.wait.class()),
-            Some(DreamerParkWaitClass::Budget | DreamerParkWaitClass::PassBudget)
+            Some(
+                DreamerParkWaitClass::Budget
+                    | DreamerParkWaitClass::PassBudget
+                    | DreamerParkWaitClass::ResidentShare
+            )
         )
 }
 
