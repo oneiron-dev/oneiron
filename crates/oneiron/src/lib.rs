@@ -14,6 +14,8 @@
 pub mod batch;
 pub use oneiron_store::config;
 pub mod deletion;
+/// The derivation transaction (untangle 6.7, primitive C).
+pub mod derive;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
@@ -145,6 +147,8 @@ pub mod psych_profile;
 // ===== Gates, consent & authority ===== every write passes the Gate; consent, policy, grants
 pub mod access_grant;
 pub mod authority;
+// ARCH-0082 check-in: three modes, the act table, role presets and one ask ladder.
+pub mod check_in;
 // DEC-0006 unified consent-mode: the pinned import path is `oneiron::consent::ActorBound`.
 pub mod consent;
 pub mod consent_graduation;

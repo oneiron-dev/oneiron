@@ -6,29 +6,29 @@
   "sourcePins": {
     "canon": [
       {
-        "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1.md",
+        "path": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0060-event-ics-meetings-v1.md",
         "sha256": "df9af271b497618aa219679d0bb949682ad04067e326bffcce9e5a8fd80fdc3d"
       },
       {
-        "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0062-booking-loop-v1.md",
+        "path": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0062-booking-loop-v1.md",
         "sha256": "bec12d11a5cf05efaf7476ae9820d24fb6a89544d3ba2a9736bb0ba4c2a87144"
       },
       {
-        "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1.md",
+        "path": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0063-agent-inbox-email-identity-v1.md",
         "sha256": "e713deabcb3a46144bf3bbd082e177662e6e422703a028ef4f1e7a420f39d409"
       },
       {
-        "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/extraction/oneiron-arch-0036-model-families-v1.md",
+        "path": "<workspace>/oneiron-docs/generated/oneiron/extraction/oneiron-arch-0036-model-families-v1.md",
         "sha256": "f1d847a24975aa46e00bc43f8ec6ce52d53f806045b587772e71380a3670372c"
       },
       {
-        "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0002-structural-entities.md",
+        "path": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0002-structural-entities.md",
         "sha256": "13e02238b5844f7ff37b6f37e17f3e57b1f998856277491664f7a6bb7bb1ce54",
         "section": "ent-event"
       }
     ],
     "registry": {
-      "path": "<workspace>/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "path": "<workspace>/oneiron-docs/registry/oneiron.json",
       "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
       "rows": [
         "OF-004",
@@ -174,7 +174,7 @@
       }
     ],
     "rulings": {
-      "path": "<workspace>/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "path": "<workspace>/vibe-build-20261017/e2e-rulings.md",
       "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
     }
   },

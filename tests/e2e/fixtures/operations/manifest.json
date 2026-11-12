@@ -10,7 +10,7 @@
         "revision": "1"
       },
       "licence": "Apache-2.0",
-      "sha256": "db7d4d0850e2a026938d2249187e863d79f5e6fc25500cd23dba60c9577a81db",
+      "sha256": "9b2409aae335c9c779c7af7249e1aaf02c77103bdbeb7de1a317ef4c6c09440c",
       "expectedFacts": {
         "consecutiveProviderFailures": 3,
         "diagnosticUntrustedDetail": null,
