@@ -87,6 +87,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::persona_snapshot::erase_in_txn,
     // FIX 9598: an erased claim's owed VAD consolidation.
     |write, txn, id| crate::store::settle_claim_vad_in_txn(write.store, txn, id),
+    // INQUIRE-1: an opened statement's member-local link, by either claim it joins.
+    |write, txn, id| crate::inquiry::drop_inquiry_scope_links_in_txn(write.store, txn, id),
     // FIX 12093: an erased skill's frozen callable cases, and every case naming the erased row.
     crate::skill::erase_callable_cases_in_txn,
     // FIX 10921: an acknowledged triage handoff's work graph and erase stamp.
