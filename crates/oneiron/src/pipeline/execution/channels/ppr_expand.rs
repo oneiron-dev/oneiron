@@ -95,8 +95,55 @@ impl PipelineBuilder<'_> {
 
             // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
             // specificity weighting is search_ppr-only. A narrowed walk is
-            // compute-only and takes no shared cache or community prior.
+            // compute-only and takes no shared cache; its community prior,
+            // when configured, comes from the admitted scope alone.
             let ppr = match pipeline_ppr_visibility(self, inputs.filter_config, &*claim_gate) {
+                Some(visibility) if self.ppr_community.beta != 0.0 && !self.read.is_union() => {
+                    // A hidden seed takes no place in the evidence order:
+                    // drop it before dominance and top-five are read.
+                    let mut readable_seeds = Vec::with_capacity(seeds.len());
+                    for seed in &seeds {
+                        if crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, rtxn, seed)?
+                        {
+                            readable_seeds.push(*seed);
+                        }
+                    }
+                    let ordered_seeds =
+                        crate::ppr_community::ordered_seed_evidence(&readable_seeds, scores)
+                            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+                    let empty_usage = HashMap::new();
+                    let context = crate::ppr_community::CommunityBoostContext {
+                        ordered_seeds: &ordered_seeds,
+                        result_limit: self.result_limit,
+                        session_usage: self.community_session_usage.unwrap_or(&empty_usage),
+                    };
+                    let mut config = self.vault.config.clone();
+                    config.ppr_vad_alpha = self.ppr_vad_alpha;
+                    config.ppr_community = self.ppr_community.clone();
+                    let (result, diversity) =
+                        crate::ppr::ppr_expand_scoped_in_txn_with_community_diagnostics(
+                            self.read.base(),
+                            rtxn,
+                            crate::ppr::CommunityPprRequest {
+                                seeds: &readable_seeds,
+                                depth: *depth,
+                                teleport_alpha: PPR_DAMPING,
+                                weighting: crate::ppr::SeedWeighting::Uniform,
+                                config: &config,
+                                context: &context,
+                            },
+                            &visibility,
+                            self.deadline,
+                        )?;
+                    community_diversity = diversity;
+                    if state.acc.capture {
+                        // No vault-wide graph version: that counter also
+                        // moves on rows this caller cannot read.
+                        community_trace_identity =
+                            Some(self.community_trace_identity(&ordered_seeds, 0));
+                    }
+                    result
+                }
                 Some(visibility) => {
                     crate::ppr::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
                         &self.read,
