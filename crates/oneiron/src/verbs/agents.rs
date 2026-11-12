@@ -1,13 +1,14 @@
 //! Typed custom AGENT_DEF authoring. Authorship is the caller's, never input.
 use serde::{Deserialize, Serialize};
 
-use crate::agent_def::AgentDefinition;
+use crate::agent_def::{AgentDefinition, switches_off_or_narrows};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, TimeRange, Vault};
 
 pub use crate::agent_def::ProposedAgentDefinitionChangeDecision;
+pub use crate::agent_def::{AgentMadeBy, AgentMadeByRequest};
 pub use crate::code_run::workflow_operations::{
     AgentCeilingInput, AgentDefinitionSpec, AgentMcpInput, AgentScopeInput, AgentSkillInput,
 };
@@ -59,6 +60,12 @@ pub struct AgentDefinitionView {
     pub definition: AgentDefinitionSpec,
     pub approval_status: ClaimApprovalStatus,
     pub lifecycle_status: AgentDefinitionLifecycle,
+    /// What the agent made, transitively, on the answer to the owner's edit
+    /// that switched it off or narrowed it: switching off does not cascade,
+    /// so these keep running (ARCH-0053 #author-off-no-cascade). Absent on
+    /// every other answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<AgentMadeBy>,
 }
 
 fn view(agent_def_ref: EntityId, definition: &AgentDefinition) -> AgentDefinitionView {
@@ -67,6 +74,7 @@ fn view(agent_def_ref: EntityId, definition: &AgentDefinition) -> AgentDefinitio
         definition: definition.into(),
         approval_status: definition.approval_status,
         lifecycle_status: definition.lifecycle_status.into(),
+        made_by: None,
     }
 }
 
@@ -106,7 +114,8 @@ pub fn update_agent_definition_as(
     input: AgentDefinitionUpdateRequest,
 ) -> MemoryResult<AgentDefinitionView> {
     owner.revalidate(vault)?;
-    let mut definition = load(vault, input.agent_def_ref)?;
+    let prior = load(vault, input.agent_def_ref)?;
+    let mut definition = prior.clone();
     input.definition.apply(&mut definition);
     let now = crate::unix_seconds_now();
     vault.update_agent_definition_at_version_as(
@@ -120,7 +129,23 @@ pub fn update_agent_definition_as(
         },
         now,
     )?;
-    Ok(view(input.agent_def_ref, &definition))
+    let mut answer = view(input.agent_def_ref, &definition);
+    if switches_off_or_narrows(&prior, &definition) {
+        answer.made_by = Some(vault.agent_made_by_as(owner, &input.agent_def_ref)?);
+    }
+    Ok(answer)
+}
+
+/// `vault.agents.made_by.get`: what one agent made, transitively, and what
+/// each is doing now (ARCH-0053 #author-off-no-cascade).
+pub fn read_agent_made_by_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: AgentMadeByRequest,
+) -> MemoryResult<AgentMadeBy> {
+    vault
+        .agent_made_by_as(owner, &input.agent_def_ref)
+        .map_err(MemoryError::from)
 }
 
 pub fn read_agent_definition_as(

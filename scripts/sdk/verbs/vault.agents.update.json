@@ -1,6 +1,6 @@
 {
   "name": "vault.agents.update",
-  "description": "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial.",
+  "description": "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. An edit that switches the agent off or narrows it also answers what the agent made (made_by), which keeps running: switching off does not cascade.",
   "input": "crate::task_verb::sdk::AgentDefinitionUpdateRequest",
   "output": "crate::task_verb::sdk::AgentDefinitionView",
   "call": "crate::task_verb::sdk::update_agent_definition_as(memory.vault(), &memory.embedded_owner(\"vault.agents.update\")?, input)?",
