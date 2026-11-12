@@ -10,7 +10,8 @@ use crate::attempt_queue::fanout_hold::{ERR_FANOUT_HOLD_ACTOR_RESERVED, FANOUT_H
 use crate::attempt_queue::hold_override::override_note;
 use crate::attempt_queue::hold_override_receipt::record_hold_override_receipt_in_txn;
 use crate::attempt_queue::lifecycle::{
-    HoldSignal, NewAttempt, RunEvent, RunLifecycle, RunRow, RunStep,
+    HoldSignal, NewAttempt, PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep,
+    TerminalCommit,
 };
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
@@ -154,15 +155,6 @@ impl AttemptQueue<'_> {
 
         // The Retry table cell was read above, before the lease guards.
         let _ = RunLifecycle::retry(&mut source, input.now);
-        // A `Failed` row must carry a reason, so an omitted retry cause
-        // normalizes to a stable non-empty token rather than failing the call.
-        source.backoff_until = None;
-        source.last_error = Some(
-            input
-                .last_error
-                .unwrap_or_else(|| RETRY_REASON_UNSPECIFIED.to_owned()),
-        );
-        source.updated_at = input.now;
 
         crate::attempt_queue::check_owner_retained_range(&next.kind, &next.id)?;
         if self
@@ -173,17 +165,25 @@ impl AttemptQueue<'_> {
         {
             return Err(Error::InvariantViolation("attempt id collision"));
         }
-        let encoded_source = self.encode_in_txn(wtxn, &mut source)?;
-        self.store
-            .attempt_records
-            .put(wtxn, source.id.as_bytes(), &encoded_source)?;
         // A retry finalizes the source attempt. Its manifest and resident
-        // binding have the same terminal receipt promise as fail/complete.
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-            self.store,
+        // binding have the same terminal receipt promise as fail/complete,
+        // and only the newest pending member of a dedupe chain owns the
+        // advisory index, so the commit retires the source's entry.
+        self.commit_terminal_in_txn(
             wtxn,
-            &source,
-            &input.lease_owner,
+            &mut source,
+            TerminalCommit {
+                // A `Failed` row must carry a reason, so an omitted retry
+                // cause normalizes to a stable non-empty token rather than
+                // failing the call.
+                last_error: Some(
+                    input
+                        .last_error
+                        .unwrap_or_else(|| RETRY_REASON_UNSPECIFIED.to_owned()),
+                ),
+                now: input.now,
+                receipt_actor: PackReceiptActor::Caller(&input.lease_owner),
+            },
         )?;
         let encoded_next = self.encode_in_txn(wtxn, &mut next)?;
         self.store
@@ -203,11 +203,10 @@ impl AttemptQueue<'_> {
         )?;
         crate::attempt_queue::index::put_created_in_txn(self.store, wtxn, &next)?;
 
-        // Only the newest pending member of a dedupe chain owns the advisory
-        // index, so the entry moves off the now-terminal source. The chain
-        // stays in ONE key family: an actor-scoped chain keeps its v2 entry, a
-        // pre-1876 actorless chain keeps its v1 entry until it drains.
-        self.delete_dedupe_entry_for_record(wtxn, &source)?;
+        // The entry the commit took off the now-terminal source moves to the
+        // new try. The chain stays in ONE key family: an actor-scoped chain
+        // keeps its v2 entry, a pre-1876 actorless chain keeps its v1 entry
+        // until it drains.
         if let Some(dedupe_key) = next.dedupe_key.as_deref() {
             let keys =
                 DedupeIndexKeys::new(&next.kind, next.dedupe_actor_ref.as_deref(), dedupe_key);
@@ -381,6 +380,9 @@ impl AttemptQueue<'_> {
         // RunLifecycle (slice 5.0c) answers what the intervention does in the
         // row's state; this writer keeps the guards and the side writes.
         let row = RunRow::of(&record);
+        // The actor of a cancel that settles the row here; its pack receipt
+        // names it.
+        let mut cancelled_by: Option<String> = None;
         let effect = match input.kind {
             AttemptInterventionKind::Redirect => {
                 return Err(invalid_transition("redirect", "missing placement"));
@@ -500,7 +502,7 @@ impl AttemptQueue<'_> {
                 RunStep::Replay => AttemptInterventionEffect::AlreadyCancelled,
                 RunStep::Move { .. } => {
                     self.delete_ready_entry_for_record(wtxn, &record)?;
-                    let actor = input.actor.clone();
+                    cancelled_by = Some(input.actor.clone());
                     append_attempt_event(
                         &mut record,
                         input.kind,
@@ -510,17 +512,8 @@ impl AttemptQueue<'_> {
                     )?;
                     // The Cancel table cell was read just above.
                     let _ = RunLifecycle::cancel(&mut record, input.now);
-                    record.backoff_until = None;
-                    record.last_error = None;
-                    record.updated_at = input.now;
                     crate::attempt_queue::index::delete_annotation_hold_in_txn(
                         self.store, wtxn, record.id,
-                    )?;
-                    self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                    // A queued/paused cancel can follow a pack load or resident
-                    // binding; stamp while the cancellation is still atomic.
-                    crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                        self.store, wtxn, &record, &actor,
                     )?;
                     AttemptInterventionEffect::Cancelled
                 }
@@ -530,14 +523,26 @@ impl AttemptQueue<'_> {
             },
         };
 
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
-        // A cancelled row is settled: its owner hears it as any other
-        // terminal one does.
-        if matches!(effect, AttemptInterventionEffect::Cancelled) {
+        if let Some(actor) = cancelled_by.as_deref() {
+            // A queued/paused cancel can follow a pack load or resident
+            // binding; the commit stamps it while the cancellation is still
+            // atomic. A cancelled row is settled: its owner hears it as any
+            // other terminal one does.
+            self.commit_terminal_in_txn(
+                wtxn,
+                &mut record,
+                TerminalCommit {
+                    last_error: None,
+                    now: input.now,
+                    receipt_actor: PackReceiptActor::Caller(actor),
+                },
+            )?;
             self.notify_settled_in_txn(wtxn, &record)?;
+        } else {
+            let encoded = self.encode_in_txn(wtxn, &mut record)?;
+            self.store
+                .attempt_records
+                .put(wtxn, record.id.as_bytes(), &encoded)?;
         }
 
         Ok(InterveneOutcome { effect, record })

@@ -8,7 +8,9 @@ use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key,
 };
 use crate::attempt_queue::engine::AttemptQueue;
-use crate::attempt_queue::lifecycle::{NewAttempt, RunEvent, RunLifecycle, RunRow, RunStep};
+use crate::attempt_queue::lifecycle::{
+    NewAttempt, PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit,
+};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState};
 use crate::attempt_queue::validate::{
@@ -101,9 +103,6 @@ impl AttemptQueue<'_> {
             reserve_spent_units: record.cancel_state.reserve.spent_units,
         };
         let _ = RunLifecycle::finish_landing(&mut record, input.now, cancellation);
-        record.backoff_until = None;
-        record.last_error = None;
-        record.updated_at = input.now;
         let landed_resume_point = record.cancel_state.resume_point.clone();
         let landed_reserve_spent = record.cancel_state.reserve.spent_units;
         RunLifecycle::append_cancel_receipt(
@@ -120,25 +119,17 @@ impl AttemptQueue<'_> {
             input.now,
         )?;
 
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
         // Landing is a terminal attempt door too: preserve the existing PACK
         // receipt invariant when the live attempt accumulated a manifest.
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-            self.store,
+        self.commit_terminal_in_txn(
             wtxn,
-            &record,
-            record
-                .cancel_state
-                .cancellation
-                .as_ref()
-                .map_or(ATTEMPT_RUNTIME_ACTOR, |cancellation| {
-                    cancellation.actor.as_str()
-                }),
+            &mut record,
+            TerminalCommit {
+                last_error: None,
+                now: input.now,
+                receipt_actor: PackReceiptActor::StoredCancellation,
+            },
         )?;
-        self.delete_dedupe_entry_for_record(wtxn, &record)?;
 
         // A landing that hands off is not the end of the work: its successor
         // surfaces when it settles.
@@ -269,22 +260,20 @@ impl AttemptQueue<'_> {
             input.reason,
             input.now,
         )?;
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
         // The cleared pause takes its annotation-hold mark with it, as the
         // operator's Cancel does.
         crate::attempt_queue::index::delete_annotation_hold_in_txn(self.store, wtxn, record.id)?;
         // A hard cancellation is a terminal queue door, so a PACK loaded by
         // the attempt still receives the same atomic receipt as complete/fail.
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-            self.store,
+        self.commit_terminal_in_txn(
             wtxn,
-            &record,
-            input.authority.actor(),
+            &mut record,
+            TerminalCommit {
+                last_error: None,
+                now: input.now,
+                receipt_actor: PackReceiptActor::Caller(input.authority.actor()),
+            },
         )?;
-        self.delete_dedupe_entry_for_record(wtxn, &record)?;
         self.notify_settled_in_txn(wtxn, &record)?;
         // FIX 900: a force-cancelled child settles its spend lease in the
         // same write (OF-532); idempotent, a no-op when unmetered.
@@ -543,7 +532,9 @@ pub(in crate::attempt_queue) fn validate_force_authority(
 /// `actor` comes from the [`ForceCancelAuthority`], never from request text,
 /// and the reason rides the cancellation receipt rather than `last_error` — a
 /// cancelled row is not a failed one. `watch` is the store's, which the
-/// receipt append measures against its `[limits]` row.
+/// receipt append measures against its `[limits]` row. Each caller then ends
+/// through [`AttemptQueue::commit_terminal_in_txn`] with no error text, which
+/// writes the row's backoff, error and settle instant.
 pub(in crate::attempt_queue) fn force_cancel_record(
     watch: &LimitWatch,
     record: &mut AttemptRecord,
@@ -569,9 +560,6 @@ pub(in crate::attempt_queue) fn force_cancel_record(
     ) {
         return Err(invalid_transition("cancel_force", record.state.as_str()));
     }
-    record.backoff_until = None;
-    record.last_error = None;
-    record.updated_at = now;
     let resume_point = record.cancel_state.resume_point.clone();
     let reserve_spent_units = record.cancel_state.reserve.spent_units;
     RunLifecycle::append_cancel_receipt(
