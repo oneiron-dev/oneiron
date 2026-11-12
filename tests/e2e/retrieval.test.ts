@@ -1566,6 +1566,9 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     // follows ClaimOf both ways), so the walk admits them as singletons: the
     // admitted graph passes 60 rows and the six-row task clique stays one
     // community. They are written before `before`, and none is hidden.
+    // One read-back of the owner's claim list proves every filler landed. A
+    // receipt wait per filler reads the whole vault.receipts page, which grows
+    // with the vault: 1.2-1.7 s per filler, so 56 of them passed the 30 s cap.
     const fillerRefs: string[] = [];
     for (let start = 0; start < retrieval09FillerCount; start += 8) {
       const receipts = await Promise.all(Array.from(
@@ -1578,10 +1581,14 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       ));
       for (const receipt of receipts) {
         expect(["auto", "approved"]).toContain(receipt.approval);
-        await engine.awaitReceipt(receipt.receipt_ref);
         fillerRefs.push(receipt.claim_short_id);
       }
     }
+    await awaitPublic(
+      () => engine.client.call("vault.claims.list", { subject_ref: engine.pairedActor.principalRef, limit: 1000 }),
+      page => page.value.filter(row => row.predicate.startsWith("profile.retrieval_filler_")).length === retrieval09FillerCount,
+      { label: "RETRIEVAL-09 filler claims landed" },
+    );
     const fillers = await engine.client.call("vault.hydrate", { refs: fillerRefs });
     expect(fillers.value).toHaveLength(retrieval09FillerCount);
     allowed.push(...fillers.value.map(entity => entity.id_hex));
