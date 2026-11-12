@@ -15,6 +15,7 @@ doctest = false
 
 [dependencies]
 oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore", features = ["test-keystore"] }
 oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
 blake3 = { workspace = true }
 futures-core = { workspace = true }
