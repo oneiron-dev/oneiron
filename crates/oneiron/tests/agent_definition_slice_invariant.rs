@@ -10,7 +10,9 @@
 //! `vault.packs.put` of the same folder. Each wider draft must be a proposal
 //! or a refusal; an in-slice draft through the self.* door and an in-slice
 //! local pack through the agent door land Active at the author's ceiling.
-//! The owner's put of the same in-slice folder stays inert.
+//! The owner's put of the same in-slice folder stays inert. An agent's
+//! in-slice local pack held for its World lands Active, authored by the
+//! agent, once the owner places it in a world.
 //!
 //! `revoked_author_and_its_active_definition` is an observation for NOTE
 //! AGENTDEF-REVOKE: it prints whether an author's Active definition keeps its
@@ -32,7 +34,7 @@ use oneiron::code_run::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::share_travel::{AgentPackTravelProjection, BornWith};
 use oneiron::skill_hub::HubFile;
-use oneiron::skill_hub::pack_catalog::PackInstallDisposition;
+use oneiron::skill_hub::pack_catalog::{PackCandidateReason, PackInstallDisposition};
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -507,6 +509,82 @@ fn owner_local_agent_pack_stays_inert() -> TestResult {
         brief(Some(def))
     );
     assert_ne!(dispatch, "dispatched");
+    Ok(())
+}
+
+/// Review P1 of #6951: an agent at All and ceiling Proposed puts its local
+/// pack, whose travelling agent asks for a World that has no local world of
+/// its name. The install waits as a NeedsWorld Candidate. The owner creates
+/// the world and places the pack in it: the agent still goes through the
+/// author writer under the writer agent and lands Active, as an in-slice put
+/// into an existing world would.
+#[test]
+fn agent_local_agent_pack_placed_in_world_lands_active() -> TestResult {
+    const WORLD: &str = "Pack placement world";
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing()?;
+    let owner_id = vault.ensure_embedded_owner_actor()?;
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    let writer_id = EntityId::from_bytes([0x84; 16])?;
+    vault.create_agent_definition_as(
+        &owner,
+        &writer_id,
+        &definition(
+            "fixture.local-pack-writer",
+            AgentScope::All,
+            AgentCeiling::Proposed,
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let agent = vault.observed_write_actor(WriteActor::new(writer_id, EdgeActorClass::Agent))?;
+    // Only the world's name travels; the sharer's world id stays home.
+    let files: Vec<HubFile> = AgentPackTravelProjection::from_definition(
+        &definition(
+            "local",
+            AgentScope::World(EntityId::from_bytes([0x85; 16])?),
+            AgentCeiling::Proposed,
+        ),
+        Some(WORLD),
+        Vec::new(),
+        Vec::new(),
+        BornWith::new(),
+    )?
+    .files()?;
+    let held = match vault.put_local_pack_as_agent(&agent, files)? {
+        PackInstallDisposition::Candidate(held) => held,
+        other => panic!("no local world carries the name, so the put waits: {other:?}"),
+    };
+    assert_eq!(held.candidate_reason, Some(PackCandidateReason::NeedsWorld));
+    let world = vault.create_world(&owner, WORLD, 1)?;
+    let receipt = match vault.place_pack_agent_world(
+        &owner,
+        EntityId::from_hex(&held.source_id)?,
+        Some(world),
+    )? {
+        PackInstallDisposition::Installed(receipt) => receipt,
+        other => panic!("the placed pack installs: {other:?}"),
+    };
+    let target = EntityId::from_hex(receipt.agent.as_deref().expect("the placed pack's agent"))?;
+    let def = vault
+        .get_agent_definition(&target)?
+        .expect("the placed definition");
+    println!(
+        "SLICE door=U5-local-agent-pack-placed case=world-in-slice target={} stored=[{}] dispatch={}",
+        target.to_hex(),
+        brief(Some(&def)),
+        dispatch_kind(&vault, target, 2)
+    );
+    assert!(lands_active(&def), "placed in-slice {}", brief(Some(&def)));
+    assert_eq!(def.scope, AgentScope::World(world));
+    let writer_hex = writer_id.to_hex();
+    let author = provenance_entry(&def, "author");
+    assert_eq!(author.as_deref(), Some(writer_hex.as_str()));
+    let defined_via = provenance_entry(&def, "definedVia");
+    assert_eq!(defined_via.as_deref(), Some("vault.packs.put"));
     Ok(())
 }
 
