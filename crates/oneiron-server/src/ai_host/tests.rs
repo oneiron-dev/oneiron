@@ -525,7 +525,8 @@ async fn a_failing_steps_retries_share_the_policy_rows_cap() {
 }
 
 /// Astra #1304 P1: boot lease recovery requeued an attempt parked on its
-/// budget trap, so a restart spent without the trap's resume signal.
+/// budget trap, so a restart spent without the trap's resume signal. Since
+/// row B2 a pass budget trap's signal is a later pass with room for it.
 #[tokio::test]
 async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
@@ -580,16 +581,16 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     assert!(fake.seen().is_empty());
     let parked = trapped();
 
-    // A restart with room to spend is not the trap's resume signal. Other
-    // passes may spend then: one still queued at the shutdown, or one the
-    // restarted Dreamer schedules for the same turns. A pass parked on its
-    // trap stays as it was: leased, on the same trap, never claimed again.
-    fake.push(extraction_reply(subject, "Owen"));
-    let roomy = metered_models(models(
+    // A restart is not the trap's resume signal: under a pass budget that
+    // still has no room for the trapped call, other passes may trap then (one
+    // still queued at the shutdown, or one the restarted Dreamer schedules for
+    // the same turns), but a pass parked on its trap stays as it was: leased,
+    // on the same trap, never claimed again, and nothing is sent.
+    let still_tight = metered_models(models(
         &fake.base_url,
-        "[dreamer]\nidle_floor_secs = 600\n[workflows]\nenabled = false",
+        "[dreamer]\nidle_floor_secs = 600\npass_budget_units = 1000\n[workflows]\nenabled = false",
     ));
-    let host = AiHost::start(vault.clone(), Some(&roomy), true).await;
+    let host = AiHost::start(vault.clone(), Some(&still_tight), true).await;
     tokio::time::sleep(Duration::from_secs(3)).await;
     let rows = AttemptQueue::new(&vault).list().unwrap();
     for (before, park) in &parked {
@@ -598,6 +599,30 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
         assert_eq!(on_trap(before).as_ref(), Some(park));
         assert_eq!(before.state, AttemptState::Leased);
     }
+    host.shutdown().await;
+    assert!(fake.seen().is_empty(), "a restart with no room sent a call");
+
+    // A pass budget trap's signal is a later pass whose budget has room for
+    // its call (BUDGET-TRAP-UNTYPED-NO-SENDER row B2): a restart with room
+    // wakes the trap, and its pass sends the extraction call.
+    fake.push(extraction_reply(subject, "Owen"));
+    let roomy = metered_models(models(
+        &fake.base_url,
+        "[dreamer]\nidle_floor_secs = 600\n[workflows]\nenabled = false",
+    ));
+    let host = AiHost::start(vault.clone(), Some(&roomy), true).await;
+    assert!(
+        eventually(Duration::from_secs(30), || parked
+            .iter()
+            .all(|(before, _)| on_trap(before).is_none()))
+        .await,
+        "a restart with room left the pass budget trap parked"
+    );
+    assert!(
+        eventually(Duration::from_secs(30), || !fake.seen().is_empty()).await,
+        "the woken pass sent no extraction call; status {:?}",
+        host.handle().status().dreamer
+    );
     host.shutdown().await;
 }
 
