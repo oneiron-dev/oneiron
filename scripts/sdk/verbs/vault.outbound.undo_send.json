@@ -1,6 +1,6 @@
 {
   "name": "vault.outbound.undo_send",
-  "description": "The owner takes back an agent send while its undo-send window is open: its attempt is cancelled and its TASK settles undo_send. A window that has closed is refused, and nothing is written.",
+  "description": "The owner, or the person who made the send, takes a send back while its undo-send window is open: its attempt is cancelled and its TASK settles undo_send. A closed window is refused, and nothing is written.",
   "input": "crate::outbound::UndoSendRequest",
   "output": "crate::outbound::UndoSendUndone",
   "call": "crate::outbound::undo_send_embedded(memory, input)?",
@@ -13,5 +13,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "owner"
+  "host_door_proof": "shared_person"
 }

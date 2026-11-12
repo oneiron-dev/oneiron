@@ -2,18 +2,21 @@
 //! great idea, yeah. like email has it right. i think it can be off by
 //! default and we surface that they can set delay", and "maybe you can also
 //! set for all channels at once in the ui or something, only per channel for
-//! power users/detailed settings".
+//! power users/detailed settings". Engine RULING 02:57 (13 Nov): every send
+//! is held, whoever sends it; the owner, or the person who made the send,
+//! takes it back; no limit on the length.
 //!
 //! The owner sets one length for every outbound channel through
 //! `vault.consent.undo_send.set`, and a length of its own for a single
-//! channel. Off by default, an agent's send goes at once. With a length set,
-//! the agent's send waits Scheduled until its window closes, and the owner
-//! takes it back through `vault.outbound.undo_send` while the window is open:
-//! the attempt is cancelled and its TASK settles `undo_send`. Once the window
-//! has closed the undo is refused and the send goes. A person's own send is
-//! never held. The first agent send through a channel carries the one-line
-//! hint. The setting and a held send survive a reopen. Only the owner sets,
-//! lists or undoes.
+//! channel. Off by default, a send goes at once. With a length set, a send
+//! waits Scheduled until its window closes, and the owner takes it back
+//! through `vault.outbound.undo_send` while the window is open: the attempt
+//! is cancelled and its TASK settles `undo_send`. Once the window has closed
+//! the undo is refused and the send goes. A person's own send is held too,
+//! and that person takes it back; another person neither lists it nor takes
+//! it back. The first agent send through a channel carries the one-line
+//! hint. The setting and a held send survive a reopen. Only the owner sets
+//! the window, and an agent never lists or undoes.
 //!
 //! Every new door is reached by its verb name, and every other read goes
 //! through a public door main already has, so this file builds on a tree
@@ -403,25 +406,68 @@ fn a_channel_length_replaces_the_all_channel_length() {
     assert_eq!(held.scheduled_at, Some(NOW + 60));
 }
 
-/// A person's own send never waits in a window.
+/// A person's own send waits out the window too, and that person takes it
+/// back; another person neither lists it nor takes it back.
 #[test]
-fn a_persons_send_is_never_held() {
+fn a_persons_own_send_is_held_and_they_can_undo_it() {
     let fx = fixture();
     fx.set(json!({"all_channels_secs": 60}));
+    let human = EdgeActorClass::Human;
     let person = put_actor(&fx.vault, 0xC5);
-    let send = fx.send(person, EdgeActorClass::Human, "email", "person:1");
+    let other = put_actor(&fx.vault, 0xC6);
+    let send = fx.send(person, human, "email", "person:1");
+    let attempt = fx.attempt(send);
     assert_eq!(
-        fx.attempt(send).state,
-        AttemptState::Queued,
-        "a person's send goes at once"
+        attempt.state,
+        AttemptState::Scheduled,
+        "a person's send waits in its window"
     );
-    assert!(fx.held().is_empty());
+    assert_eq!(attempt.scheduled_at, Some(NOW + 60));
     let read = fx.owner_call(READ, json!({})).expect("the owner reads");
     assert_eq!(
         read["first_agent_sends"],
         json!([]),
-        "a person's send is no agent send"
+        "a person's send carries no agent hint"
     );
+
+    let held = fx.held();
+    assert_eq!(held.len(), 1, "the owner sees every held send");
+    assert_eq!(held[0]["actor_ref"], person.to_hex());
+    assert_eq!(held[0]["first_send_hint"], false);
+    let task = task_ref(&held[0]["task_ref"]);
+    let own = fx
+        .call(person, human, HELD, json!({}))
+        .expect("the person lists their own sends");
+    assert_eq!(own["sends"].as_array().map(Vec::len), Some(1), "{own}");
+    let others = fx
+        .call(other, human, HELD, json!({}))
+        .expect("another person lists their own sends");
+    assert_eq!(
+        others["sends"],
+        json!([]),
+        "another person's send is not listed"
+    );
+    let refused = fx
+        .call(other, human, UNDO, json!({"task_ref": task.to_hex()}))
+        .expect_err("another person cannot take it back");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    assert_eq!(
+        fx.attempt(send).state,
+        AttemptState::Scheduled,
+        "the refusal wrote nothing"
+    );
+
+    fx.clock.set(NOW + 5);
+    let undone = fx
+        .call(person, human, UNDO, json!({"task_ref": task.to_hex()}))
+        .expect("the person takes their own send back");
+    assert_eq!(undone["undone_at"], NOW + 5);
+    assert_eq!(
+        fx.attempt(send).state,
+        AttemptState::Cancelled,
+        "the attempt is cancelled"
+    );
+    assert_eq!(fx.claim(NOW + 61), None, "it never goes");
 }
 
 /// The setting and a held send survive a reopen, and the undo still works.
@@ -470,10 +516,11 @@ fn the_hold_and_the_setting_survive_a_reopen() {
     assert_eq!(fx.attempt(send).state, AttemptState::Cancelled);
 }
 
-/// Only the owner sets, reads, lists or undoes; a setting out of bounds is
-/// refused and writes nothing.
+/// Only the owner sets or reads the window, and an agent never lists or
+/// undoes; a setting that names no channel rightly is refused and writes
+/// nothing, and no length is too long.
 #[test]
-fn only_the_owner_sets_the_window_lists_or_undoes() {
+fn only_the_owner_sets_the_window_and_an_agent_never_undoes() {
     let fx = fixture();
     let agent = EdgeActorClass::Agent;
     for (verb, input) in [
@@ -489,8 +536,6 @@ fn only_the_owner_sets_the_window_lists_or_undoes() {
     }
 
     for setting in [
-        json!({"all_channels_secs": 3601}),
-        json!({"all_channels_secs": 0, "channels": [{"channel": "email", "secs": 3601}]}),
         json!({"all_channels_secs": 0, "channels": [{"channel": "carrier_pigeon", "secs": 5}]}),
         json!({"all_channels_secs": 0, "channels": [{"channel": "esign", "secs": 5}]}),
         json!({"all_channels_secs": 0, "channels": [
@@ -511,4 +556,10 @@ fn only_the_owner_sets_the_window_lists_or_undoes() {
         read["all_channels_secs"], 0,
         "no refused set changed the window"
     );
+
+    // No length is refused: thirty days stands as the owner set it.
+    let long =
+        json!({"all_channels_secs": 2_592_000, "channels": [{"channel": "slack", "secs": 86_400}]});
+    assert_eq!(fx.set(long.clone()), long, "the owner's length stands");
+    assert_eq!(fx.setting_acts(), 1);
 }

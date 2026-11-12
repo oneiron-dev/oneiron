@@ -1,6 +1,7 @@
 //! The owner's undo-send window (DEC-0006 #undo-send; owner ruling REV-8 = B,
-//! 2026-10-09): how long an agent's send waits on each outbound channel
-//! before it goes, while a person can still take it back. One row holds it.
+//! 2026-10-09): how long a send waits on each outbound channel before it
+//! goes, while a person can still take it back (Engine RULING 02:57, 13 Nov:
+//! every send through the channel's enqueue, whoever sends it). One row holds it.
 //! An absent row is off: every send goes out at once until a person sets a
 //! length ("it can be off by default and we surface that they can set
 //! delay").
@@ -30,11 +31,6 @@ use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_tx
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
-/// The longest window one channel may hold a send, in seconds: an hour. A
-/// typo should not park an agent's sends for days. Engine call (OPUS-UNBUILT-CENSUS
-/// NOTE PLAN-UNDO-SEND, 13 Nov).
-pub const UNDO_SEND_MAX_SECS: u32 = 3_600;
-
 /// The connector whose sends never take a window: a legal send (prepare and
 /// send for signature) has no delay proof in the act table (ARCH-0082
 /// #act-table, "Legal: prepare and send for signature ... D: no").
@@ -55,8 +51,8 @@ const UNDO_SEND: SideTable<(), UndoSendSetting, Named> =
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UndoSendSetting {
-    /// Seconds an agent's send waits on every channel before it goes, from 0
-    /// (off: it goes at once) to 3600.
+    /// Seconds a send waits on every channel before it goes; 0 is off: it
+    /// goes at once.
     pub all_channels_secs: u32,
     /// Lengths for single channels, each replacing `all_channels_secs` on its
     /// channel. Each names a registered outbound connector once (`email`,
@@ -71,7 +67,7 @@ pub struct UndoSendSetting {
 pub struct UndoSendChannelLength {
     /// The outbound connector, as its capability manifest names it.
     pub channel: String,
-    /// Seconds an agent's send on this channel waits, from 0 to 3600.
+    /// Seconds a send on this channel waits; 0 is off.
     pub secs: u32,
 }
 
@@ -97,11 +93,11 @@ impl UndoSendSetting {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidConfig`] for a length above [`UNDO_SEND_MAX_SECS`], a
-    /// channel no outbound connector registers, [`UNDO_SEND_EXCLUDED_CHANNEL`],
-    /// or a channel named twice.
+    /// [`Error::InvalidConfig`] for a channel no outbound connector
+    /// registers, [`UNDO_SEND_EXCLUDED_CHANNEL`], or a channel named twice.
+    /// No length is refused: the owner sets the window he wants (Engine
+    /// RULING 02:57, 13 Nov: "Never add limits to the owner's rulings").
     pub fn normalized(&self) -> Result<Self> {
-        check_length("every channel", self.all_channels_secs)?;
         let mut channels = Vec::with_capacity(self.channels.len());
         for length in &self.channels {
             let Some(manifest) = outbound_capability_manifest(&length.channel) else {
@@ -116,7 +112,6 @@ impl UndoSendSetting {
                     "a legal send for signature takes no undo-send window".to_owned(),
                 ));
             }
-            check_length(&channel, length.secs)?;
             channels.push(UndoSendChannelLength {
                 channel,
                 secs: length.secs,
@@ -138,24 +133,14 @@ impl UndoSendSetting {
         })
     }
 
-    /// The seconds an agent's send on `channel` (its manifest spelling)
-    /// waits: its own length, else the all-channel length.
+    /// The seconds a send on `channel` (its manifest spelling) waits: its
+    /// own length, else the all-channel length.
     #[must_use]
     pub fn secs_for(&self, channel: &str) -> u32 {
         self.channels
             .iter()
             .find(|length| length.channel == channel)
             .map_or(self.all_channels_secs, |length| length.secs)
-    }
-}
-
-fn check_length(channel: &str, secs: u32) -> Result<()> {
-    if secs <= UNDO_SEND_MAX_SECS {
-        Ok(())
-    } else {
-        Err(Error::InvalidConfig(format!(
-            "the undo-send window on {channel} must be from 0 to {UNDO_SEND_MAX_SECS} seconds, not {secs}"
-        )))
     }
 }
 
@@ -188,7 +173,7 @@ impl Vault {
         })
     }
 
-    /// The owner sets the undo-send window; the next agent send reads it. A
+    /// The owner sets the undo-send window; the next send reads it. A
     /// send already in a window keeps the release instant it was given. The
     /// owner is revalidated in the writer. A change records the owner's act,
     /// with the setting it replaces, in the same commit when `surface` names
