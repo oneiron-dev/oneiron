@@ -95,7 +95,7 @@ pub(in crate::workspace_roster) fn thread_turns_in(
     room: EntityId,
     thread: EntityId,
 ) -> Result<Vec<RoomTurn>> {
-    room_in(vault, txn, room)?;
+    room_access_in(vault, txn, room)?;
     let turns = HISTORY
         .iter_from(&vault.store, txn, room.as_bytes())?
         .map(|row| turn_in(vault, txn, row?.1))
@@ -439,14 +439,15 @@ impl Memory<'_> {
     /// their TASK result headers. Thread replies never consume trunk slots.
     pub fn room_trunk(&self, room: EntityId) -> MemoryResult<Vec<RoomTrunkItem>> {
         let worlds = self.room_read_worlds(room)?;
-        let project_room = {
+        // Only a home room carries an origin card.
+        let access = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             require_reader(self.vault(), &txn, room, self.actor())?
         };
         if !turns_readable(&worlds) {
             return Ok(Vec::new());
         }
-        let origin = match project_room.origin {
+        let origin = match access.home.and_then(|home| home.origin) {
             Some(origin) if self.admitted_room_origin(room, &origin)? => Some(origin),
             _ => None,
         };
