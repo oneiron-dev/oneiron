@@ -60,27 +60,16 @@ pub use crate::workspace_roster::rooms::thread_join::ThreadJoinRequestView;
 pub use crate::workspace_roster::rooms::upkeep_voice::RoomUpkeepNudge;
 pub use crate::workspace_roster::rooms::upkeep_voice::RoomUpkeepPendingRequest;
 pub use crate::workspace_roster::rooms::upkeep_voice::RoomUpkeepVoiceRequest;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_PACK;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_REVISION_SHORT_ID_PREFIX;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_SHORT_ID_PREFIX;
 pub use oneiron_contracts::room_join::ConsentNeed;
 pub use oneiron_contracts::room_join::ConsentPart;
 pub use oneiron_contracts::room_join::JoinSubject;
 pub use oneiron_contracts::room_join::RequiredParty;
 pub use oneiron_contracts::room_join::RoomJoinHold;
-pub(crate) use oneiron_policy_vocabulary::policy_model::goal_limits::GoalLimits;
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use oneiron_store::batch::export::home_room_project::project_room_dependency;
-pub(crate) use oneiron_store::conversation_body::AUDIENCE_EDIT_BOUND;
 pub use oneiron_store::conversation_body::ProjectRoom;
-pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
-pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_KEY;
 pub use oneiron_store::conversation_body::RoomOriginCard;
-pub(crate) use oneiron_store::conversation_body::THREAD_NOTICE_PRODUCER;
-pub(crate) use oneiron_store::conversation_body::ThreadBinding;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
-use rmpv::Value;
-use std::io::Cursor;
 
 pub mod join_receipt;
 pub mod project;

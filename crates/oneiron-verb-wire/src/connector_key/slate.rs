@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// The four DEC-0006 capability settings. Declaration order is strictness,

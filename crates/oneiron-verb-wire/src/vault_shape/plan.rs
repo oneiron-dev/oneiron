@@ -4,9 +4,6 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::borrow::Borrow;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// What an item does to the named structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

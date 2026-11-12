@@ -1,13 +1,11 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/pins.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::rooms::*;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::conversation_body::RoomPin;
 use oneiron_store::conversation_body::RoomPinPolicy;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.rooms.pins.pin` and `vault.rooms.pins.unpin`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

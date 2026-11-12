@@ -4,8 +4,6 @@ pub use crate::origin::document_candidate_types::ReceivedRefSource;
 pub use crate::origin::document_ingress::ReceivedFileOperation;
 pub use crate::origin::repo_manifest::REPO_MANIFEST_VERSION;
 pub use crate::origin::repo_manifest::RepoManifestWriter;
-pub(crate) use oneiron_store::origin::git_ref_change;
-pub(crate) use oneiron_store::origin::receive_scan_verdict;
 
 pub mod document_candidate_types;
 pub mod document_ingress;

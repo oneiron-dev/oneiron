@@ -41,7 +41,6 @@ pub use oneiron_store::vault_cleanup::review_types::CleanupReviewEvidence;
 pub use oneiron_store::vault_cleanup::review_types::CleanupReviewRequest;
 pub use oneiron_store::vault_cleanup::run_snapshot::CleanupRunSnapshot;
 pub use oneiron_store::vault_cleanup::run_snapshot::CleanupSnapshotEntry;
-use rmpv::Value;
 
 pub mod attempt_delete_wire;
 pub mod surface;

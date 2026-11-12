@@ -5,7 +5,6 @@ use crate::share_travel::copy::CopyTravelChoice;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Replaces only one accepted row's text. Its sources and attribution stay intact.

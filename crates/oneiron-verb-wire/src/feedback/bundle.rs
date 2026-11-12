@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// Maximum accepted length of any single reference token in bytes.
 pub const FEEDBACK_REF_MAX_BYTES: usize = 256;

@@ -1,13 +1,10 @@
 //! Moved from `crates/oneiron/src/workspace_roster/join_receipt.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 /// Whose act a roster row records: an actor, or no one once that actor was
 /// erased (FIX 3520). It reads and writes as the actor's hex id, or as

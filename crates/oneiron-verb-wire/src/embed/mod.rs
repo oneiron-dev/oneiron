@@ -11,7 +11,6 @@ pub use crate::embed::space_move::SpaceMoveState;
 pub use crate::embed::space_move::SpaceRef;
 pub use crate::embed::space_probe::SPACE_PROBE_QUERY_MAX_LEN;
 pub use crate::embed::space_probe::SpaceProbe;
-pub(crate) use oneiron_store::embedding::COLD_ATTACH_PENDING_KEY;
 #[cfg(feature = "sync")]
 pub use oneiron_store::embedding::DEFAULT_PENDING_EMBEDDING_LEASE_MS;
 #[cfg(feature = "sync")]
@@ -38,8 +37,6 @@ pub use oneiron_store::embedding::PendingEmbeddingPayload;
 pub use oneiron_store::embedding_vocabulary::EmbeddingDevice;
 pub use oneiron_store::embedding_vocabulary::EmbeddingProvenance;
 pub use oneiron_store::embedding_vocabulary::InputKind;
-pub(crate) use oneiron_store::embedding_vocabulary::TEXT_HASH_LEN;
-use std::borrow::Cow;
 
 pub mod binding_move;
 pub mod space_move;

@@ -28,12 +28,6 @@ pub use crate::drafter::report::DigestDrafter;
 pub use crate::drafter::report::DigestDrafterItem;
 pub use crate::drafter::serving::DrafterUnservedReason;
 pub use crate::drafter::types::*;
-use heed::RoTxn;
-use heed::RwTxn;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 pub mod doors;
 pub mod evaluation;

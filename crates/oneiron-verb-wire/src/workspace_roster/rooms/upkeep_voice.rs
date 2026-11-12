@@ -1,12 +1,9 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/upkeep_voice.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::rooms::*;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// `vault.rooms.upkeep.pending`: the caller's unvoiced room nudges, only
 /// `room`'s when it names one.

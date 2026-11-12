@@ -19,7 +19,6 @@ pub use crate::connector_key::slate::SlateRow;
 pub use crate::connector_key::slate::SlateToolManifest;
 pub use crate::connector_key::slate_revision::ConnectorRevisionDeferral;
 pub use crate::connector_key::slate_scope_signal::ConnectorScopeExceed;
-pub(crate) use oneiron_consent_state::connector_key::tool_remember::ConnectorToolRememberContext;
 pub use oneiron_store::connector_key_status::ConnectorKeyStatus;
 
 pub mod channel_subscription;

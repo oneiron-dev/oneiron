@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A rung of the cold-start ladder, in the order it seeds a new posterior.
 #[derive(

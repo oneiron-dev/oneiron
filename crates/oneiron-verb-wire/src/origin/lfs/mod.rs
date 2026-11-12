@@ -6,7 +6,6 @@ pub use oneiron_store::origin::lfs::chunks::LFS_CHUNK_MAX;
 pub use oneiron_store::origin::lfs::chunks::LFS_CHUNK_MIN;
 pub use oneiron_store::origin::lfs::chunks::LfsChunkParameters;
 pub use oneiron_store::origin::lfs::chunks::LfsChunkRef;
-pub(crate) use oneiron_store::origin::lfs::chunks::random_lfs_chunk_seed;
 pub use oneiron_store::origin::lfs::oid::LfsOid;
 pub use oneiron_store::origin::lfs::oid::VAULT_LFS_OID_HEX_LEN;
 pub use oneiron_store::origin::lfs::oid::VAULT_LFS_OID_LEN;

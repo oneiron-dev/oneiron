@@ -23,11 +23,9 @@ pub use crate::note::reads::NoteEditorClosed;
 pub use crate::note::reads::NoteIndexedReadRequest;
 pub use crate::note::reads::NoteReadSource;
 pub use crate::note::reads::NoteReadSpan;
-pub(crate) use oneiron_store::note_kind::COMPACTION_INTENT_NOTE_KIND;
 pub use oneiron_store::note_kind::ContextDefault;
 pub use oneiron_store::note_kind::DISSENT_NOTE_KIND;
 pub use oneiron_store::note_kind::ExtractionDefault;
-pub(crate) use oneiron_store::note_kind::LENS_INTENT_NOTE_KIND;
 pub use oneiron_store::note_kind::NoteKindDescriptor;
 pub use oneiron_store::note_kind::RetentionDefault;
 

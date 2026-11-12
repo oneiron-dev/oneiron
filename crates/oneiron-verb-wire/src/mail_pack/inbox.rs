@@ -6,8 +6,6 @@ use crate::mail_pack::state::MailStage;
 use crate::mail_pack::wire::MailAttachmentRef;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// `vault.mail.inbox`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]

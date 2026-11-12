@@ -3,9 +3,7 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::Serializer;
 #[cfg(feature = "sync")]
 use std::cmp::Ordering;
 

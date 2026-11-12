@@ -4,12 +4,6 @@
 use oneiron_authority::federation::codec::invalid_grant;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_FULL;
-pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_MINIMAL;
-pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_STANDARD;
-use rmpv::Value;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// Scope addressed by a federation grant.
 #[derive(

@@ -1,11 +1,8 @@
 //! Moved from `crates/oneiron/src/store/row_birth.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// Most hex characters a birth's input hash may carry.
 pub const MAX_CONTENT_HASH_HEX: usize = 128;

@@ -69,7 +69,6 @@ pub use crate::skill_optimize::offer::snapshot::SeatWorkload;
 pub use crate::skill_optimize::offer_switch::SwitchOwner;
 pub use crate::skill_optimize::response_pair::ResponsePairPick;
 pub use oneiron_store::attempt_record_codec::field_validators::SKILL_EDIT_CYCLE_MAX_BYTES;
-pub(crate) use oneiron_store::attempt_record_codec::field_validators::SKILL_EDIT_CYCLE_RUN_PREFIX;
 
 pub mod eval_set;
 pub mod gate;

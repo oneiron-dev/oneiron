@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// One connector's open issuer transition, as the steady-state views
 /// surface it: the issuers, when it was detected, and the catalog slate

@@ -7,7 +7,6 @@ pub use crate::linear_sync::facade_types::LinearMappingView;
 pub use crate::linear_sync::facade_types::LinearProvenanceEntry;
 pub use crate::linear_sync::facade_types::LinearProvenancePage;
 pub use crate::linear_sync::facade_types::LinearProvenanceRequest;
-pub(crate) use crate::linear_sync::mirror_event::EventDirection;
 pub use crate::linear_sync::mirror_event::LinearMirrorEvent;
 pub use crate::linear_sync::model::LinearFieldConflict;
 pub use crate::linear_sync::model::LinearIssueRef;

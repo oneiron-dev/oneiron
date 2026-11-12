@@ -2,11 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::join_receipt::RosterActor;
-use crate::workspace_roster::rooms::*;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// How a member speaks in a room. Engine upkeep holds neither role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

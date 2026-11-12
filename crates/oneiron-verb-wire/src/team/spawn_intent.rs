@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Where the owner's spawn stands: a planned intent before or at its
 /// launch, or a spawned agent the queue holds, which the spawn observation

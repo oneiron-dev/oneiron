@@ -4,7 +4,6 @@
 use oneiron_base::error::Error;
 use oneiron_base::error::RecordError;
 use oneiron_base::error::Result;
-use std::marker::PhantomData;
 
 pub const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
 

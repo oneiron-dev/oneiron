@@ -2,15 +2,10 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::workspace_roster::project::*;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_REVISION_SHORT_ID_PREFIX;
 use oneiron_store::side_table::key::FixedSideKey;
 use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
 /// exactly 32 bytes, or the array of exactly 32 numbers serde_json writes for

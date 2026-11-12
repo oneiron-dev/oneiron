@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 
 /// Trust class a relationship label resolves to.
 ///

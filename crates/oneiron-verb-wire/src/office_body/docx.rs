@@ -1,22 +1,8 @@
 //! Moved from `crates/oneiron/src/office_body/docx.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use loro::Container;
-use loro::ExpandType;
-use loro::LoroDoc;
-use loro::LoroMap;
-use loro::LoroMovableList;
-use loro::LoroText;
-use loro::LoroValue;
-use loro::StyleConfig;
-use loro::TextDelta;
-use loro::UpdateOptions;
-use loro::ValueOrContainer;
 use oneiron_docedit::docx_body::DocxMark;
 use oneiron_docedit::docx_body::DocxStoryScope;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
 
 /// One typed operation on a DOCX body. Offsets and lengths count Unicode
 /// scalar values.

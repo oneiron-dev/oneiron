@@ -9,7 +9,7 @@ use serde::Serialize;
 /// An [`AnswerActor`](oneiron_store::model_decision::AnswerActor): the actor's canonical hex, or
 /// [`ERASED_CALL_IDENTITY`](oneiron_store::receipt_identity::ERASED_CALL_IDENTITY) once that
 /// actor was erased (FIX 3520).
-pub(crate) mod answer_actor {
+pub mod answer_actor {
     use oneiron_store::model_decision::AnswerActor;
     use oneiron_store::model_decision::codec::parse;
     use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;

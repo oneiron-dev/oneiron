@@ -2,10 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::context_board::layout::BoardLayout;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// One actor's board layout: what renders now, and the batch the next turn
 /// applies.

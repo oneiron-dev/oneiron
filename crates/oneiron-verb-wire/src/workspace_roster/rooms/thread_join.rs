@@ -1,11 +1,9 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/thread_join.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::rooms::*;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.rooms.thread_join.request`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

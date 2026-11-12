@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Most changes one reach line names before it counts the rest.
 pub const REACH_LINE_MAX_CHANGES: usize = 3;

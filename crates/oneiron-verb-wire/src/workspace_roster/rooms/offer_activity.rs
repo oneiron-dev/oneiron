@@ -4,7 +4,6 @@
 use crate::workspace_roster::rooms::offer_settle::OfferAnswer;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// An advisory ballot on a room-wide card, from someone in its room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

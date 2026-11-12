@@ -1,11 +1,6 @@
 //! Moved from `crates/oneiron/src/origin/document_ingress.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::VecDeque;
-
 /// One push operation, including non-text blobs and mode-only changes.
 /// Git objects remain pinned by the hash-keyed origin change claim.
 #[derive(

@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/secret_custody/reveal/file/repo.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-pub(crate) use oneiron_store::secret_record::write_records::RepoFileKeys;
-pub(crate) use oneiron_store::secret_record::write_records::RepoFileOriginal;
 use serde::Deserialize;
 use serde::Serialize;
 

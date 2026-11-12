@@ -2,11 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 pub type BuildCacheResult<T> = Result<T, BuildCacheError>;
 

@@ -3,13 +3,9 @@
 
 use crate::drafter::types::DrafterRollbackReason;
 use crate::drafter::types::DrafterServing;
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::path::Path;
 
 /// The key under a recipe's settings that holds its qualification rule.
 pub const DRAFTER_QUALIFICATION_KEY: &str = "qualification";

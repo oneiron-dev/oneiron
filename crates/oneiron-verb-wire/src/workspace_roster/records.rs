@@ -1,10 +1,7 @@
 //! Moved from `crates/oneiron/src/workspace_roster/records.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::*;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
-use std::io::Cursor;
 
 /// Stable refs a completed onboarding produced.
 #[derive(

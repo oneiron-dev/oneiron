@@ -1,6 +1,5 @@
 pub use oneiron_store::claim_refinement_control::SharedSkillDelta;
 pub use oneiron_store::claim_refinement_control::SharedSkillLane;
-pub(crate) use oneiron_store::refinement_carrier::refinement_carrier_payload;
 pub use oneiron_store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use oneiron_store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT;
 pub use oneiron_store::write_envelope::skill_source::HubFile;

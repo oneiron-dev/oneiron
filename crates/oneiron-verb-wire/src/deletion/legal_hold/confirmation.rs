@@ -9,7 +9,6 @@ use crate::deletion::legal_hold::types::LegalHoldTarget;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// One standing customer hold as the confirm showed it, whole: a hold

@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// The next observation page, bounded by the effective snapshot page settings.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

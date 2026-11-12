@@ -21,18 +21,12 @@ pub use crate::workspace_roster::project::revision::ProjectRevisionHash;
 pub use crate::workspace_roster::project::revision::ProjectRevisionProof;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_PACK;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_REVISION_SHORT_ID_PREFIX;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_SHORT_ID_PREFIX;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::entity_id::derived_domains::PROJECT_HOME_ROOM;
-pub(crate) use oneiron_policy_vocabulary::policy_model::goal_limits::GoalLimits;
-pub(crate) use oneiron_store::batch::export::home_room_project::project_room_dependency;
 pub use oneiron_store::conversation_body::ProjectRoom;
 pub use oneiron_store::conversation_body::RoomOriginCard;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

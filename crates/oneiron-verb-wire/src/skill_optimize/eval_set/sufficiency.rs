@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::BTreeMap;
 
 /// The measurements a card is read from. Every number is supplied by the

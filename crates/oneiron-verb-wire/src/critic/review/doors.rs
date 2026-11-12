@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// `vault.critic.outcome`'s input: one critique of a persisted review, and the
 /// anchor that settles it. Who records it and when come from the engine.

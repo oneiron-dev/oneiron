@@ -10,7 +10,6 @@ pub use oneiron_store::dreamer_wake_policy::CadencePrecedence;
 pub use oneiron_store::dreamer_wake_policy::WeaveRecipePriority;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 
 pub fn invalid() -> Error {
     Error::InvalidConfig("invalid dreamer wake policy row".into())

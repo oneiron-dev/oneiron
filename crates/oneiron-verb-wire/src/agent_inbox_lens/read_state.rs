@@ -1,11 +1,8 @@
 //! Moved from `crates/oneiron/src/agent_inbox_lens/read_state.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::agent_inbox_lens::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 
 /// One INBOX row's read state as its agent reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

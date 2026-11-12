@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// A kept original: the version of its file's blob artifact that holds the
 /// bytes.

@@ -7,7 +7,6 @@ pub use crate::store::retrieval_policy::RetrievalPolicyEnvelope;
 pub use crate::store::retrieval_policy::RetrievalPolicyIdentity;
 pub use crate::store::retrieval_policy::RetrievalPolicyTier;
 pub use crate::store::retrieval_policy::RetrievalPolicyTrace;
-use rand::Rng;
 use serde::Deserialize;
 use serde::Serialize;
 

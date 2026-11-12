@@ -6,10 +6,8 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_store::key_custody::protocol::DeletionEvidence;
 pub use oneiron_store::key_custody::protocol::drain::*;
-use oneiron_store::key_custody::protocol::hex;
 use serde::Deserialize;
 use serde::Serialize;
-use zeroize::Zeroizing;
 
 /// A member's acknowledgement of its drain: named MessagePack at rest, JSON
 /// on a wire. Ids, positions and digests only; never a key, a head or a

@@ -7,12 +7,6 @@ pub use crate::skill_optimize::gate::project_goal::TradeoffRole;
 pub use crate::skill_optimize::gate::tradeoff::TradeoffRule;
 pub use crate::skill_optimize::gate::verdict::TradeoffChoice;
 pub use oneiron_store::attempt_record_codec::field_validators::SKILL_EDIT_CYCLE_MAX_BYTES;
-use rmpv::Value;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
 
 pub mod goal_axis;
 pub mod measurement;

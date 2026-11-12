@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/share_travel/agent_pack.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_store::write_envelope::skill_record::identity::canonical_skill_tree_hash;
 use oneiron_store::write_envelope::skill_record::record::SkillDependency;
 use oneiron_store::write_envelope::skill_record::role::SkillCallContract;
 use oneiron_store::write_envelope::skill_record::role::SkillRole;
@@ -9,7 +8,6 @@ use oneiron_store::write_envelope::skill_source::SkillPackageFormat;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 
 /// The run scope, with a world named rather than referenced. The destination

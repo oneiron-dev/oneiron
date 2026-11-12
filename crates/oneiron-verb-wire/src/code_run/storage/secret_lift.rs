@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::code_run::storage::secret_lift::room::CodeRunRoomSecretLiftRequest;
-use heed::RoTxn;
 use serde::Deserialize;
 use serde::Serialize;
 

@@ -3,13 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::fs::File;
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::path::Path;
 
 /// The most refusal reasons one report lists.
 pub const MAX_REASONS: usize = 20;

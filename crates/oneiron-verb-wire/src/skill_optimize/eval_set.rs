@@ -38,7 +38,6 @@ pub use crate::skill_optimize::eval_set::sufficiency::UnknownReason;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub const MAX_NAME_BYTES: usize = 64;
 

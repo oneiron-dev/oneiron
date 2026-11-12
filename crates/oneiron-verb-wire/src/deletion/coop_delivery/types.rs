@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/deletion/coop_delivery/types.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::deletion::legal_hold::types::LegalHold;
 pub use oneiron_store::deletion::coop_delivery::types::*;
 use oneiron_store::deletion::coop_reply::CooperativeDeletionReplyOutcome;
 use serde::Deserialize;

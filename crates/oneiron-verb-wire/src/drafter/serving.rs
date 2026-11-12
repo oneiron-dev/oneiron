@@ -1,15 +1,8 @@
 //! Moved from `crates/oneiron/src/drafter/serving.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::PoisonError;
 
 /// Why a target's binding is not what serves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

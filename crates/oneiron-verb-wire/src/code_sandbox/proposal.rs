@@ -7,7 +7,6 @@ pub use oneiron_store::proposal_spool::ProposalSpoolClaim;
 pub use oneiron_store::proposal_spool::ProposalSpoolFloor;
 pub use oneiron_store::proposal_spool::SpoolAtFloor;
 pub use oneiron_store::proposal_spool::SpoolFloorRefusal;
-use std::io::Read;
 
 /// One comparison buffer while a write is lowered; never a size bound.
 pub const LOWER_FRAME: usize = 1024 * 1024;

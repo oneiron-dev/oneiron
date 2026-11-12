@@ -30,7 +30,6 @@ use oneiron_base::error::Error;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Longest name, id or reference a row may carry, in bytes.
 pub const SHAPE_NAME_MAX_BYTES: usize = 256;

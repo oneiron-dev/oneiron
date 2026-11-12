@@ -5,7 +5,6 @@ use oneiron_authority::share_travel::BornWithField;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Advisory metadata beside the signed export. The digest names the final
 /// released update, and row keys are its transport keys after projection.

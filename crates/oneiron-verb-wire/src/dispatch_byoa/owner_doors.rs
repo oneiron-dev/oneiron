@@ -5,7 +5,6 @@ use crate::dispatch_byoa::seat::SkippedRunnerSeat;
 use crate::dispatch_byoa::seat_quota::RunnerSeatQuota;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// The named seats' quotas.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

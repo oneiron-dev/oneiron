@@ -4,7 +4,6 @@
 use crate::context_board::layout::BoardLayout;
 use crate::context_board::layout::BoardLayoutError;
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;

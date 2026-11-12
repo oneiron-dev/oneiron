@@ -24,14 +24,7 @@ pub use oneiron_store::bundle_generations::retired_bundle_generations;
 pub use oneiron_store::bundle_generations::sealed_bundle_slot;
 pub use oneiron_store::key_material::WorldKeyDestroyCause;
 pub use oneiron_store::key_material::WorldKeyDestruction;
-pub(crate) use oneiron_store::key_material::derive_guarded;
-pub(crate) use oneiron_store::key_material::os_fill;
-pub(crate) use oneiron_store::key_material::page_seal_open_error;
-pub(crate) use oneiron_store::key_material::refused;
 pub use oneiron_store::vault_page_seal::VaultPageSeal;
-pub(crate) use oneiron_store::world_pad_codec::pad_row_of_item;
-pub(crate) use oneiron_store::world_pad_codec::pad_world_in_body;
-use zeroize::Zeroizing;
 
 pub mod owner_work;
 pub mod vault_key;

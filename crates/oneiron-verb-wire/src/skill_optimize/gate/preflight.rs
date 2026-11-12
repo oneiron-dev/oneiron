@@ -1,16 +1,9 @@
 //! Moved from `crates/oneiron/src/skill_optimize/gate/preflight.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_optimize::gate::*;
 use crate::skill_optimize::goal_axes::AxisScores;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
 
 /// A proposal's offline preflight on its current basis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

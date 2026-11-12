@@ -5,7 +5,6 @@ pub use crate::code_document::verbs::CodeDiffRequest;
 pub use crate::code_document::verbs::CodeStateRequest;
 pub use crate::store::code_document_receipt::CodeOpProvenance;
 pub use oneiron_store::code_document_values::CodeDocumentFrontier;
-pub(crate) use oneiron_store::code_document_values::CodeDocumentRows;
 pub use oneiron_store::code_document_values::CodeFileEdit;
 pub use oneiron_store::code_document_values::CodeFileMetadataEdit;
 pub use oneiron_store::code_document_values::CodeFilePresence;

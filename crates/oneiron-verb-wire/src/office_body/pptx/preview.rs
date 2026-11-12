@@ -4,14 +4,6 @@
 use base64::Engine as _;
 use serde::Deserialize;
 use serde::Serialize;
-use std::cell::Cell;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::Mutex;
-use std::sync::PoisonError;
-use std::time::Duration;
-use std::time::Instant;
 
 /// `vault.artifacts.body.deck.preview`: the slides to draw, each named once,
 /// 1-based in the deck's order (hidden slides count).

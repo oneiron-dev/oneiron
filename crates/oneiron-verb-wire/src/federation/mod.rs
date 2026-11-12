@@ -30,8 +30,6 @@ pub use oneiron_authority::federation::Sensitivity;
 pub use oneiron_authority::federation::SensitivityCeiling;
 pub use oneiron_authority::federation::WalletRef;
 pub use oneiron_authority::federation::WorkingViewEditBounds;
-pub(crate) use oneiron_authority::federation::codec;
-pub(crate) use oneiron_authority::federation::pact_scope;
 pub use oneiron_authority::federation::pact_scope::Ceiling;
 pub use oneiron_authority::federation::pact_scope::FEDERATION_PACT_SCOPE_SCHEMA_VERSION;
 pub use oneiron_authority::federation::pact_scope::FederationDirectionScope;
@@ -40,19 +38,13 @@ pub use oneiron_authority::federation::pact_scope::Position;
 pub use oneiron_authority::federation::pact_scope::SelectorRange;
 #[cfg(any(feature = "sync", test))]
 pub(crate) use oneiron_authority::federation::pact_scope::base_world_axis;
-pub(crate) use oneiron_authority::federation::pact_scope::decode_federation_direction_scope_value;
 pub use oneiron_authority::federation::pact_scope::decode_federation_pact_scope;
 pub use oneiron_authority::federation::pact_scope::encode_federation_pact_scope;
-pub(crate) use oneiron_authority::federation::pact_scope::federation_direction_scope_value;
 pub use oneiron_authority::federation::pact_scope::selector_range_of;
-pub(crate) use oneiron_authority::federation::scope_codec;
 pub use oneiron_store::batch::shared_vault_write::OrgAdminPower;
 pub use oneiron_store::batch::shared_vault_write::SharedVaultWrite;
 #[allow(unused_imports)]
 pub(crate) use oneiron_store::deletion::archive_role::ArchiveDeleteRole;
-pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_FULL;
-pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_MINIMAL;
-pub(crate) use oneiron_store::serialize::grant_fields::FEDERATION_GRANT_FIELDS_STANDARD;
 pub use oneiron_store::world_registration_keys::FEDERATION_STALE_KEY_PREFIX;
 pub use oneiron_store::world_registration_keys::FEDERATION_WORLD_KEY_PREFIX;
 

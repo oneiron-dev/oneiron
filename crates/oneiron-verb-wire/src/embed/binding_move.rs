@@ -4,11 +4,8 @@
 use crate::embed::space_move::NotWorse;
 use crate::embed::space_move::SpaceRef;
 use crate::skill_optimize::offer_switch::SwitchOwner;
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The space move that re-embeds for a binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

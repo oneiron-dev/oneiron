@@ -8,9 +8,6 @@ use oneiron_docedit::live::ApproveScope;
 use oneiron_docedit::live::DeckOp;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeSet;
 
 /// `vault.artifacts.body.head`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -3,7 +3,6 @@
 
 use crate::federation::grant::FederationGrantScope;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 
 /// Canonical, pre-sign guest-share envelope body.
 ///

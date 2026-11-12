@@ -3,15 +3,10 @@
 
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::code_import_manifest::CodeImportAnchor;
-pub(crate) use oneiron_store::code_import_manifest::CodeImportManifest;
-pub(crate) use oneiron_store::code_import_manifest::IMPORT_MANIFEST_PREDICATE;
-pub(crate) use oneiron_store::code_import_manifest::manifest_digest;
-pub(crate) use oneiron_store::code_import_manifest::manifest_id;
 pub use oneiron_store::code_revision_record::CodePathRetirement;
 use oneiron_store::critic_lens::LensCatalog;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The owner's explicit promotion request over one exact manifest: its
 /// digest, the exact checked Baseline revision, the review catalog the

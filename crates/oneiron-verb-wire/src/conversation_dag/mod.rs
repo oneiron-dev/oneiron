@@ -1,7 +1,5 @@
 pub use crate::conversation_dag::quote_strips::ReplyStripsRequest;
-pub(crate) use oneiron_store::conversation_record::APPEND_ROW;
 pub use oneiron_store::conversation_record::AddressMode;
-pub(crate) use oneiron_store::conversation_record::AppendFailure;
 pub use oneiron_store::conversation_record::AppendRecord;
 pub use oneiron_store::conversation_record::AppendedRecord;
 pub use oneiron_store::conversation_record::DagPage;

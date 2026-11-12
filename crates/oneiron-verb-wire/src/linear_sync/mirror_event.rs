@@ -8,7 +8,6 @@ use oneiron_base::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 /// The first byte of an event key: what made the row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,14 +1,9 @@
 //! Moved from `crates/oneiron/src/skill_optimize/eval_set/cohort.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeSet;
 
 /// The decision to retire one cohort: its bounded reason, who made it, and
 /// the exposure the retiring writer read.

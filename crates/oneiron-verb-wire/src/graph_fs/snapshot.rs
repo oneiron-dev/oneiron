@@ -2,10 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-pub(crate) use oneiron_store::graph_fs::snapshot::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// A reference selects content, never authority. Historical references name
 /// retained imported snapshots, not a local folder on the serving host.

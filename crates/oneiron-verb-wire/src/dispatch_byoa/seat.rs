@@ -1,16 +1,11 @@
 //! Moved from `crates/oneiron/src/dispatch_byoa/seat.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
 use oneiron_model::llm::RetryableLlmError;
 use oneiron_model::llm::SpentKind;
-use oneiron_model::llm::limit;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use serde_json::json;
-use std::collections::BTreeMap;
-use std::io::Read;
 
 /// Why a login may not run on a hosted node. Each bound names whose it is,
 /// and the same act works self-hosted.

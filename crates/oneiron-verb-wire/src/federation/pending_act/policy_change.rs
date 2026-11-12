@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/federation/pending_act/policy_change.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-
 /// Where a proposed change stands. Only `pending` takes an answer.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,

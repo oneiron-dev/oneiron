@@ -10,7 +10,6 @@ use crate::mail_pack::source::MailSourceStatus;
 use crate::mail_pack::source::MailSourceView;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// `vault.mail.sources.connect`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

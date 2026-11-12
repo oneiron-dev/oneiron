@@ -5,7 +5,6 @@ pub use crate::store::decision_rule_rows::HostRule;
 use oneiron_store::model_decision::DecisionAnswer;
 pub use oneiron_store::model_decision::HostRuleRef;
 use oneiron_store::model_decision::ProviderDecision;
-use std::sync::Arc;
 
 /// What the Rule rung reports for the answer a standing row gives: certain of the answer
 /// the owner gave (P(yes) 1 or 0 for yes/no, 1 for any other answer).

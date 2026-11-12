@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::scope_summary::purpose::SummaryPurpose;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

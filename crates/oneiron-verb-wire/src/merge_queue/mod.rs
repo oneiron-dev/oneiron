@@ -1,5 +1,3 @@
-pub(crate) use crate::merge_queue::review_policy::DEFAULT_QUEUE_REVIEW_CRITICS;
-pub(crate) use crate::merge_queue::review_policy::DEFAULT_QUEUE_REVIEW_VOTES;
 pub use crate::merge_queue::review_policy::QueueReviewPolicy;
 pub use crate::merge_queue::review_policy::QueueReviewThresholds;
 pub use oneiron_store::merge_queue::driver_types::QueueBatchDrive;

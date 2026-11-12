@@ -6,8 +6,6 @@ pub use crate::autoreason_campaign::archive::records::CampaignArchiveAdmission;
 pub use crate::autoreason_campaign::archive::records::CampaignArchiveRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Coordinates use the axis order in the pinned definition. Cluster cells are
 /// deliberately unnamed and cannot mix with categorical cells.

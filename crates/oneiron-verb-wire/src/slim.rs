@@ -2,11 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use oneiron_store::heap_drop::HeapDropReport;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
-use std::sync::atomic::AtomicU64;
-use std::time::Instant;
 
 /// Why the host asked for a shed. Observability only — the engine never
 /// compares it, or `waited_secs`, against a policy constant.

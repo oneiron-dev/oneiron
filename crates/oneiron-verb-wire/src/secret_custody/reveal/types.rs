@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt;
-use zeroize::Zeroizing;
 
 /// The reach of the owner's standing answer to one reveal (FIX 2354): the
 /// grant "approve and stop asking" writes covers this connection × this

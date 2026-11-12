@@ -4,7 +4,6 @@
 use oneiron_consent_state::consent::tool_scope::DataClass;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The grant axis one call exceeded and what the call asked for on it: never
 /// the payload, a header's value or a credential.

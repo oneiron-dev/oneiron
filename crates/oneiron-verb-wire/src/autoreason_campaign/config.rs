@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/autoreason_campaign/config.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::autoreason_campaign::report::CampaignEvaluationSplit;
 use oneiron_base::extraction_eval::Of360DerivationEnvelope;
 use serde::Deserialize;
 use serde::Serialize;

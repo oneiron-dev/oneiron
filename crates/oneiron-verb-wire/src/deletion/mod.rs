@@ -12,7 +12,6 @@ pub use crate::deletion::legal_hold::types::LegalHoldEventKind;
 pub use crate::deletion::legal_hold::types::LegalHoldKind;
 pub use crate::deletion::legal_hold::types::LegalHoldReason;
 pub use crate::deletion::legal_hold::types::LegalHoldTarget;
-pub(crate) use oneiron_store::deletion::archive_role;
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeClaimValueRedaction;
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeDeleteOperation;
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeDeleteRecord;
@@ -48,24 +47,10 @@ pub use oneiron_store::deletion::delete::outcome::DeleteEntityOptions;
 pub use oneiron_store::deletion::delete::outcome::DeleteEntityOutcome;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::deletion::delete_bearing_update;
-pub(crate) use oneiron_store::deletion::sweep_queue::HARD_ERASE_SWEEP_PREFIX;
-pub(crate) use oneiron_store::deletion::sweep_queue::HardEraseRetryState;
-pub(crate) use oneiron_store::deletion::sweep_queue::HardEraseSweepJob;
 pub use oneiron_store::deletion::sweep_queue::REDIRECT_CARRIER_CLASS;
-pub(crate) use oneiron_store::deletion::sweep_queue::WITHDRAWN_GENERATION_SWEEP_PREFIX;
-pub(crate) use oneiron_store::deletion::sweep_queue::WithdrawnCutoff;
-pub(crate) use oneiron_store::deletion::sweep_queue::WithdrawnGenerationSweepJob;
-pub(crate) use oneiron_store::deletion::sweep_queue::WithdrawnReplacement;
 pub use oneiron_store::deletion::sweep_queue::arch0038_carrier_classes;
-pub(crate) use oneiron_store::deletion::sweep_queue::decode_hard_erase_sweep_job;
-pub(crate) use oneiron_store::deletion::sweep_queue::decode_hard_erase_sweep_seq;
-pub(crate) use oneiron_store::deletion::sweep_queue::decode_withdrawn_generation_row;
-pub(crate) use oneiron_store::deletion::sweep_queue::encode_hard_erase_sweep_job_value;
-pub(crate) use oneiron_store::deletion::sweep_queue::encode_withdrawn_generation_job_value;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::deletion::window_document_format;
-pub(crate) use oneiron_store::window_key::parse_window_label;
-pub(crate) use oneiron_store::window_key::window_label_from_timestamp;
 
 pub mod coop_delivery;
 pub mod legal_hold;

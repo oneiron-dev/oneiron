@@ -5,8 +5,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::model_decision::DecisionRung;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One rung of the planner ladder. Cheap rungs handle the easy cases; the
 /// strong rung is reserved for xhigh/max care or big plans.

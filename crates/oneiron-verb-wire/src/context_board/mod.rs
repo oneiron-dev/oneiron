@@ -28,10 +28,8 @@ pub use crate::context_board::stream::frames::DeltaRow;
 pub use crate::context_board::stream::frames::FrameKind;
 pub use crate::context_board::stream::wake::WakeEnvelope;
 pub use crate::context_board::tasks::projection::ConsultWidening;
-pub(crate) use oneiron_store::inbox::notification_recipient::NotificationRecipientScope;
 pub use oneiron_store::inbox::notification_recipient::caller_marker_contains;
 pub use oneiron_store::inbox::notification_recipient::notification_body_json;
-pub(crate) use oneiron_store::inbox::notification_recipient::notification_recipient_scope;
 pub use oneiron_store::inbox::notification_recipient::notification_scoped_to_caller;
 pub use oneiron_store::plugin_section_predicate::PREDICATE_PLUGIN_SECTION_INSTALL;
 

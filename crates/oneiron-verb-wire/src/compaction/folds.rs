@@ -6,8 +6,6 @@ use crate::compaction::fold_kinds::FoldKind;
 use crate::compaction::fold_kinds::FoldedOutput;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use serde_json::json;
 
 /// `self.fold`: marks steps `from..=through` of this run's log. The mark
 /// waits as pending; the log does not change until `self.compact`, or the
