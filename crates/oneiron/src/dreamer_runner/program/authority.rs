@@ -46,6 +46,24 @@ pub(crate) struct TurnProgramAuthority {
     proof: Proof,
 }
 
+impl TurnProgramAuthority {
+    /// Whether this authority verifies on any machine of the vault, so its
+    /// wake rides to the elected home (FIX 5266): a verified capability slip
+    /// whose signed instrument it still carries. A host action, an attested
+    /// owner and the in-process host's own caller stand on the machine that
+    /// sealed them, so their wakes are admitted there, as before.
+    #[cfg(feature = "sync")]
+    pub(crate) fn rides_to_home(&self) -> bool {
+        matches!(
+            self.proof,
+            Proof::Slip {
+                instrument: Some(_),
+                ..
+            }
+        )
+    }
+}
+
 /// How the waking actor proved itself on the turn: a reference and its
 /// witness, never a secret and no authority on its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

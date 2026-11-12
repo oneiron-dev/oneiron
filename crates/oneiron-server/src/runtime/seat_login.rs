@@ -26,8 +26,8 @@ use oneiron::dispatch_byoa::{
     OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatRegistry, OfficialSeatRoute,
     OfficialSeatSpec, OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry, RunnerSeat,
     RunnerSeatPolicy, SeatAuth, SeatIdentity, SeatPlacementApproval, SeatRoute, SeatSpent,
-    check_seat_placement, hosted_seat_bound, register_official_dreamer_providers,
-    skipped_seats_note,
+    check_seat_placement, hosted_seat_bound, official_seat_id, register_official_dreamer_providers,
+    runner_capture_seat_quota_id, skipped_seats_note,
 };
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
@@ -232,6 +232,16 @@ fn attempt_hex(bytes: &[u8; 16]) -> String {
     out
 }
 
+/// The core error a seat-id read becomes: the store error it carries. Every
+/// refusal these reads return is raised beneath the store (a digest, a
+/// decode, a read), so any other is a typed invariant.
+fn seat_id_error(error: ByoaError) -> oneiron::Error {
+    match error {
+        ByoaError::Store(error) => error,
+        _ => oneiron::Error::InvariantViolation("a seat id read refused outside the store"),
+    }
+}
+
 /// The Dreamer executor for an official seat: admitted work is dispatched
 /// onto the seat, and the seat's answer becomes the Dreamer outcome.
 ///
@@ -292,9 +302,11 @@ where
                 })
             }
             Ok(OfficialSeatDispatchOutcome::Parked { resets_at }) => {
-                Ok(DreamerAttemptExecution::Park {
+                let seat = official_seat_id(&self.seat).map_err(seat_id_error)?;
+                Ok(DreamerAttemptExecution::ParkOnSeat {
                     reason: format!("official seat dry; plan window resets at {resets_at}"),
-                    cause: DreamerParkCause::Signal,
+                    seat: *seat.as_bytes(),
+                    reset_at_s: Some(resets_at),
                 })
             }
             Ok(OfficialSeatDispatchOutcome::DryFallback(_)) => {
@@ -676,7 +688,9 @@ where
     /// Captures a runner attempt's terminal exhaust and routes its work
     /// under the policy: a settled capture completes the Dreamer attempt, a
     /// parked or next-seat route parks it (the child attempt carries the
-    /// work on), and an internal-models route runs the inner ladder.
+    /// work on), and an internal-models route runs the inner ladder. A park
+    /// on a spent window names the seat and its reset, so the seat's own
+    /// available write wakes it; a park with no reset waits for the owner.
     ///
     /// # Errors
     ///
@@ -689,30 +703,45 @@ where
         capture: CaptureByoaExhaust,
         spent: Option<SeatSpent>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
+        let bound = runner_work::bound_seat(ctx.vault, attempt.status.attempt.id, self.seat);
         let routed = {
             let mut dispatcher = ByoaDispatcher::new(
                 ctx.vault,
                 self.endpoint_factory.clone(),
                 self.egress.clone(),
             );
-            dispatcher.route_runner_terminal(
-                &self.registry,
-                &self.policy,
-                runner_work::bound_seat(ctx.vault, attempt.status.attempt.id, self.seat),
-                capture,
-                spent,
-            )
+            dispatcher.route_runner_terminal(&self.registry, &self.policy, bound, capture, spent)
         };
         match routed {
             Ok(SeatRoute::Settled(_)) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: 0,
                 step_bindings: Vec::new(),
             }),
-            Ok(SeatRoute::Park { receipt, until, .. }) => Ok(DreamerAttemptExecution::Park {
-                reason: match until {
-                    Some(until) => format!("runner seat spent; work parked until {until}"),
-                    None => "runner seat spent; work parked for the owner".to_owned(),
-                } + &skipped_seats_note(&receipt.skipped_seats),
+            Ok(SeatRoute::Park {
+                receipt,
+                until: Some(until),
+                ..
+            }) => {
+                // The seat the capture's routing recorded its quota under:
+                // the bound seat, or its frozen identity when the policy no
+                // longer orders it.
+                let seat =
+                    runner_capture_seat_quota_id(ctx.vault, &self.policy, &receipt.attempt, bound)
+                        .map_err(seat_id_error)?;
+                Ok(DreamerAttemptExecution::ParkOnSeat {
+                    reason: format!("runner seat spent; work parked until {until}")
+                        + &skipped_seats_note(&receipt.skipped_seats),
+                    seat: *seat.as_bytes(),
+                    reset_at_s: Some(until),
+                })
+            }
+            Ok(SeatRoute::Park {
+                receipt,
+                until: None,
+                ..
+            }) => Ok(DreamerAttemptExecution::Park {
+                reason: "runner seat spent; work parked for the owner".to_owned()
+                    + &skipped_seats_note(&receipt.skipped_seats),
                 cause: DreamerParkCause::Signal,
             }),
             Ok(SeatRoute::NextSeat { receipt, seat, .. }) => Ok(DreamerAttemptExecution::Park {

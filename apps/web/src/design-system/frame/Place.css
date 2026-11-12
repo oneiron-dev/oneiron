@@ -1,0 +1,44 @@
+/* One place in the work area: the head line, the body that scrolls and
+   ends at the bottom, the foot with the write box. Side paddings of 28 px
+   are part of the room the messages column needs (see pane-width.ts). */
+.sl-place {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 22px 28px 14px;
+}
+
+.sl-place-head-slot {
+  flex: none;
+  min-height: 40px;
+}
+
+/* 8 px of inline room, so a row's tone (hung 8 px out) is not clipped. */
+.sl-place-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-inline: -8px;
+  padding-inline: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* Short content sits at the bottom, over the foot. */
+.sl-place-content {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  margin-top: auto;
+  padding-bottom: 4px;
+}
+
+.sl-place-foot {
+  flex: none;
+  margin-top: 12px;
+}

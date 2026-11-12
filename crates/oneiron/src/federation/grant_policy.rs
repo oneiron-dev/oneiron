@@ -96,7 +96,7 @@ fn parse_map(value: &Value) -> Option<BTreeMap<&str, &Value>> {
 fn role(value: &Value) -> Option<Role> {
     let raw = value.as_str()?;
     let role = Role::parse(raw)?;
-    (role.as_str() == raw && !matches!(role, Role::Guest | Role::Auditor)).then_some(role)
+    (role.as_str() == raw && !role.is_guest()).then_some(role)
 }
 fn scope(value: &Value) -> Option<Scope> {
     super::scope_codec::decode_scope_value(value).ok()

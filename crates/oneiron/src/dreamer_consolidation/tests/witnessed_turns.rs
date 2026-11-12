@@ -10,7 +10,7 @@ use crate::llm::ScopeResource;
 use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::vault_cleanup::{CleanupKind, zero_live_members};
 
-const SAID: &str = "call me Oleksii";
+const SAID: &str = "call me Owen";
 
 pub(super) struct RecordingBackend {
     pub(super) inner: ScriptedBackend,
@@ -117,7 +117,7 @@ pub(super) fn grant_messages(vault: &Vault, space: EntityId, expires_at: u64) ->
     Ok(grant)
 }
 
-/// An owner-approved `profile.name = Oleksii` head on `subject`.
+/// An owner-approved `profile.name = Owen` head on `subject`.
 fn put_head(vault: &Vault, subject: EntityId) -> Result<EntityId> {
     let (owner, head) = (EntityId::now(), EntityId::now());
     vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
@@ -134,7 +134,7 @@ fn put_head(vault: &Vault, subject: EntityId) -> Result<EntityId> {
             ClaimCandidate::new(
                 "profile.name",
                 ClaimSubject::Entity(subject),
-                "Oleksii".into(),
+                "Owen".into(),
                 0.9,
             ),
             &envelope,
@@ -368,8 +368,8 @@ fn execute_by_driver(
 }
 
 fn name_range() -> (usize, usize) {
-    let start = SAID.find("Oleksii").expect("name span");
-    (start, start + "Oleksii".len())
+    let start = SAID.find("Owen").expect("name span");
+    (start, start + "Owen".len())
 }
 
 fn cite(turn: EntityId, (start, end): (usize, usize)) -> serde_json::Value {
@@ -421,7 +421,7 @@ fn witnessed_user_turn_reaches_extraction_and_lands_its_message_evidence() -> Re
         let attempt = queue_micro(&vault)?;
         let backend = RecordingBackend::new(vec![Ok(text_response(
             serde_json::json!({"candidates": [{
-                "subject": subject.to_hex(), "predicate": "profile.name", "value": "Oleksii",
+                "subject": subject.to_hex(), "predicate": "profile.name", "value": "Owen",
                 "confidence": 0.8, "evidence_refs": [cite(turn, name_range())],
             }]})
             .to_string(),
@@ -462,7 +462,7 @@ fn witnessed_user_turn_reaches_extraction_and_lands_its_message_evidence() -> Re
                     claim_id: None,
                     byte_range: Some(name_range()),
                 },
-                swarm_evidence_content_hash(b"Oleksii"),
+                swarm_evidence_content_hash(b"Owen"),
             )]
         );
     }
@@ -637,7 +637,7 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
         assert_eq!(turns, vec![turn]);
         let row = |predicate: &str| {
             serde_json::json!({
-                "subject": subject.to_hex(), "predicate": predicate, "value": "Oleksii",
+                "subject": subject.to_hex(), "predicate": predicate, "value": "Owen",
                 "confidence": 0.8, "evidence_refs": [cite(turn, name_range())],
             })
         };
@@ -734,10 +734,10 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
         let backend = RecordingBackend::new(vec![Ok(text_response(
             serde_json::json!({
                 "candidates": [{
-                    "subject": subject.to_hex(), "predicate": "profile.name", "value": "Oleksii",
+                    "subject": subject.to_hex(), "predicate": "profile.name", "value": "Owen",
                     "confidence": 0.8, "evidence_refs": [cite(turn, name_range())],
                 }],
-                "persons": [{"id": named.to_hex(), "name": "Oleksii", "evidence_turn_refs": [turn.to_hex()]}],
+                "persons": [{"id": named.to_hex(), "name": "Owen", "evidence_turn_refs": [turn.to_hex()]}],
             })
             .to_string(),
         ))]);
@@ -783,7 +783,7 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
             admitted.status.attempt.id,
             Some(&scope),
         )?;
-        let mut whole = candidate(subject, "profile.name", "Oleksii", None);
+        let mut whole = candidate(subject, "profile.name", "Owen", None);
         whole.evidence_turn_refs = vec![turn];
         let facts = super::super::conflict::candidate_facts(&whole.candidate)?;
         whole.claim_id = super::super::conflict::deterministic_claim_id(
@@ -1019,7 +1019,7 @@ fn land(
 
 fn nickname(subject: EntityId, turn: EntityId, range: (usize, usize)) -> serde_json::Value {
     serde_json::json!({
-        "subject": subject.to_hex(), "predicate": "profile.nickname", "value": "Oleksii",
+        "subject": subject.to_hex(), "predicate": "profile.nickname", "value": "Owen",
         "confidence": 0.8, "evidence_refs": [cite(turn, range)],
     })
 }
@@ -1067,7 +1067,7 @@ fn stored_citation_names_its_message_through_a_prefix_deletion() -> Result<()> {
         assert_eq!(named_messages(&stored_evidence(&vault, &citing)?), named);
     }
     delete_message(&vault, prefix_id)?;
-    assert_eq!(&content(&vault, &cited)?[start..end], "Oleksii");
+    assert_eq!(&content(&vault, &cited)?[start..end], "Owen");
     assert!(current(&vault, &claim)? && current(&vault, &wrapper)?);
     delete_message(&vault, cited)?;
     assert!(
@@ -1197,10 +1197,7 @@ fn only_finalized_stream_text_reaches_the_branch() -> Result<()> {
         }]);
         if ending == "finalize" {
             assert_eq!(transcript, format!("[{} user] {SAID}\n", turn.to_hex()));
-            assert_eq!(
-                cited?[0].content_hash,
-                swarm_evidence_content_hash(b"Oleksii")
-            );
+            assert_eq!(cited?[0].content_hash, swarm_evidence_content_hash(b"Owen"));
         } else {
             assert_eq!(
                 transcript,
@@ -1324,7 +1321,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
     let handle = memory
         .begin_message_stream(&input, Some(crate::memory::MessageWriteMode::Atomic))
         .expect("continuation begins");
-    memory.append_to_stream(handle, " Oleksii").expect("append");
+    memory.append_to_stream(handle, " Owen").expect("append");
     assert!(dirty(&vault)?.is_empty(), "words in flight are not final");
     memory.finalize_stream(handle).expect("finalize");
     let again: Vec<_> = dirty(&vault)?.into_iter().map(|t| t.turn_id).collect();
@@ -1341,7 +1338,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
     )?;
     assert_eq!(
         branch.transcript(branch.scope(), &[turn])?,
-        format!("[{} user] call me Oleksii\n", turn.to_hex())
+        format!("[{} user] call me Owen\n", turn.to_hex())
     );
     Ok(())
 }
@@ -1361,10 +1358,10 @@ fn a_continuation_in_a_dag_conversation_still_finalizes() -> Result<()> {
         &vault,
         EntityId::from_bytes([0x81; 16])?,
         &input,
-        " Oleksii",
+        " Owen",
         "finalize",
     );
-    assert_eq!(content(&vault, &message)?, "call me Oleksii");
+    assert_eq!(content(&vault, &message)?, "call me Owen");
     Ok(())
 }
 

@@ -7,39 +7,52 @@ import {
   ActivityMark,
   ActivityRow,
   AppFrame,
+  Composer,
   CrewStack,
+  DayDivider,
   Glyph,
   Icon,
   IconAction,
   Island,
   Menu,
+  MessageRow,
   MicroSidebar,
   NeedsYou,
   PeopleTable,
+  Place,
   PlaceHead,
+  SafelightRoot,
   Sidebar,
   RolePicker,
   RoleWord,
   SortCycle,
+  SplitPane,
   StatusDot,
   VaultSwitch,
   Verb,
+  WindowGround,
   Figure,
   type ActivityAge,
   type ActivityKind,
+  type NeedsYouAnswerRecord,
   type IconName,
   type RoleAct,
   type RoleOption,
   type SortCycleOption,
+  type Theme as LibraryTheme,
   type VaultSwitchVault,
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
 import { ANTEVON, EIRI, METRYON, TORY, type Resident } from './-identity'
+import { formatAnswerTime } from '~/design-system'
+import { GALLERY_THEMES } from './-themes'
+import { RoomHeadSection } from './-room'
+import { Face } from './-faces'
 
 /* Frame sections of the /library gallery: the sidebar, the microsidebar,
-   the app frame, the vault switch, the activity list, the sort cycle, the
-   people table and its roles. Every demo works on fixture data from the
-   app's cast. */
+   the app frame on each theme, the vault switch, the activity list, the
+   sort cycle, the people table and its roles. Every demo works on fixture
+   data from the app's cast. */
 
 const line = (r: Resident, size: 18 | 24 = 18) => (
   <Glyph glyph={r.glyph} label={r.name} form="line" ink={r.ink} size={size} />
@@ -233,7 +246,7 @@ function ActivityDemo({ specimen, head = true }: { specimen: string; head?: bool
                 <NeedsYou.Pick value="allow" word="allowed once">
                   allow once
                 </NeedsYou.Pick>
-                <NeedsYou.Pick value="decline" word="declined" tone="consent">
+                <NeedsYou.Pick value="decline" word="declined">
                   decline
                 </NeedsYou.Pick>
               </>
@@ -458,20 +471,18 @@ const HOKUEI_ROOMS = [
   { id: 'weekly', label: 'weekly sync' },
 ]
 
-/* A whole sidebar on fixture data: the head (the vault switch, or the
-   caller's), the top rows, pinned, rooms, projects with their rooms one
-   level under them, and the vault. Rows and groups reorder; pinning moves
-   a room between rooms and pinned. A thread shows only while it is
-   pinned. */
+/* A whole sidebar on fixture data, every row state in it: the head (the
+   vault switch, or the caller's), the top rows with a caption and a count,
+   pinned, rooms, projects with their rooms one level under them, and the
+   vault. Rows and groups reorder; pinning moves a room between rooms and
+   pinned. A thread shows only while it is pinned. */
 function SidebarDemo({
-  ground,
   specimen,
   head,
   childIndent,
   collapsed: collapsedProp,
   onCollapsedChange,
 }: {
-  ground: 'field' | 'paper'
   specimen: string
   head?: React.ReactNode
   childIndent?: 'icon' | 'none'
@@ -575,22 +586,24 @@ function SidebarDemo({
   }
   return (
     <div className="lib-sidebar-demo" data-specimen={specimen}>
-      <Sidebar ground={ground} collapsed={collapsed} childIndent={childIndent} onGroupReorder={setGroups} aria-label={`places, ${ground}`}>
-        {head ?? (
-          <Sidebar.Head>
-            <VaultSwitch vaults={VAULTS} currentId={vault} onSwitch={setVault} onCreate={() => {}}>
-              <AccountParts />
-            </VaultSwitch>
-            <IconAction label="Search" caption="press ⌘K">
-              <Icon name="search" />
-            </IconAction>
-            <IconAction label={collapsed ? 'Expand the sidebar' : 'Collapse to icons'} onClick={() => setCollapsed(!collapsed)}>
-              <Icon name="sidebar" />
-            </IconAction>
-          </Sidebar.Head>
-        )}
-        {groups.map((g) => part[g])}
-      </Sidebar>
+      <div className="lib-sheet-stage">
+        <Sidebar collapsed={collapsed} childIndent={childIndent} onGroupReorder={setGroups} aria-label="places">
+          {head ?? (
+            <Sidebar.Head>
+              <VaultSwitch vaults={VAULTS} currentId={vault} onSwitch={setVault} onCreate={() => {}}>
+                <AccountParts />
+              </VaultSwitch>
+              <IconAction label="Search" caption="press ⌘K">
+                <Icon name="search" />
+              </IconAction>
+              <IconAction label={collapsed ? 'Expand the sidebar' : 'Collapse to icons'} onClick={() => setCollapsed(!collapsed)}>
+                <Icon name="sidebar" />
+              </IconAction>
+            </Sidebar.Head>
+          )}
+          {groups.map((g) => part[g])}
+        </Sidebar>
+      </div>
       <p className="lib-field-readout" data-specimen={`${specimen}-order`}>
         {groups.join(' ')} | {pinned.join(' ')} | {rooms.join(' ')}
         {pinned.includes('q4') ? null : (
@@ -600,6 +613,68 @@ function SidebarDemo({
         )}
       </p>
     </div>
+  )
+}
+
+/* ── Home's sidebar in the frame ──────────────────────────────────────── */
+
+/* The first line of Home's sidebar (inside Sidebar.Head): the vault's
+   name opens the vault switch; search and the fold action at the right. */
+function HomeHeadParts() {
+  const [vault, setVault] = React.useState('antevon')
+  return (
+    <>
+      <VaultSwitch vaults={VAULTS} currentId={vault} onSwitch={setVault} onCreate={() => {}}>
+        <AccountParts />
+      </VaultSwitch>
+      <IconAction label="Search" caption="press ⌘K">
+        <Icon name="search" />
+      </IconAction>
+      <AppFrame.Fold />
+    </>
+  )
+}
+
+/* Home's sidebar: the person's companion and the vault's lead, then
+   pinned, rooms and projects. The person is Owen. `faces` shows the
+   companion and the lead by their pictures. */
+export function HomeSidebar({ specimen, defaultCurrent = 'eiri', faces = false }: { specimen: string; defaultCurrent?: string; faces?: boolean }) {
+  const [current, setCurrent] = React.useState(defaultCurrent)
+  const row = (id: string, label: string, icon: IconName, extra: { shared?: boolean; childRows?: React.ReactNode } = {}) => (
+    <Sidebar.Row key={id} id={id} icon={<Icon name={icon} />} label={label} current={current === id} onClick={() => setCurrent(id)} {...extra} />
+  )
+  return (
+    <Sidebar aria-label="Home" data-specimen={specimen}>
+      <Sidebar.Head>
+        <HomeHeadParts />
+      </Sidebar.Head>
+      <Sidebar.Group id="top">
+        <Sidebar.Row id="eiri" glyph={faces ? <Face who={EIRI} size={20} /> : line(EIRI)} label="eiri" current={current === 'eiri'} onClick={() => setCurrent('eiri')} />
+        <Sidebar.Row
+          id="antevon"
+          glyph={faces ? <Face who={ANTEVON} size={20} /> : line(ANTEVON)}
+          label="Antevon"
+          current={current === 'antevon'}
+          onClick={() => setCurrent('antevon')}
+        />
+      </Sidebar.Group>
+      <Sidebar.Group id="pinned" label="pinned">
+        {row('acme-forecast', 'acme-forecast', 'hash', { shared: true })}
+        {row('supplier-outlook-file', 'Q4 supplier outlook', 'note')}
+      </Sidebar.Group>
+      <Sidebar.Group id="rooms" label="rooms">
+        {row('fun', 'fun', 'hash')}
+        {row('the-house', 'the house', 'hash')}
+        {row('supplier-talks', 'supplier talks', 'hash')}
+      </Sidebar.Group>
+      <Sidebar.Group id="projects" label="projects">
+        {row('hokuei', 'hokuei pilot', 'project', {
+          childRows: [row('supplier-outlook', 'supplier outlook', 'hash'), row('kobe-deliveries', 'kobe deliveries', 'hash')],
+        })}
+        {row('personal', 'Personal', 'project')}
+        {row('q4-planning', 'q4 planning', 'project')}
+      </Sidebar.Group>
+    </Sidebar>
   )
 }
 
@@ -626,11 +701,12 @@ const PINNED_AT_START = ['pipeline', 'today', 'notes']
 
 const placeOf = (id: string) => MORE_PLACES.find((l) => l.id === id)!
 
-/* The head of a sidebar inside the frame: the place's name, search, a
-   menu of what can be made here, and the fold control. */
-function FrameSidebarHead({ title }: { title: string }) {
+/* The first line of a sidebar inside the frame (inside Sidebar.Head):
+   the place's name, search, a menu of what can be made here, and the fold
+   control. */
+function FrameHeadParts({ title }: { title: string }) {
   return (
-    <Sidebar.Head>
+    <>
       <span className="lib-sidebar-title">{title}</span>
       <IconAction label="Search" caption="press ⌘K">
         <Icon name="search" />
@@ -647,24 +723,24 @@ function FrameSidebarHead({ title }: { title: string }) {
         </Menu.Content>
       </Menu>
       <AppFrame.Fold />
-    </Sidebar.Head>
+    </>
   )
 }
 
 /* A short sidebar of rows, for the places that have one. */
 function ListSidebar({
   title,
-  ground,
   rows,
 }: {
   title: string
-  ground: 'field' | 'paper'
   rows: Array<{ id: string; label: string; icon?: IconName; glyph?: Resident; count?: number; caption?: string }>
 }) {
   const [current, setCurrent] = React.useState(rows[0]?.id)
   return (
-    <Sidebar ground={ground} aria-label={title}>
-      <FrameSidebarHead title={title} />
+    <Sidebar aria-label={title}>
+      <Sidebar.Head>
+        <FrameHeadParts title={title} />
+      </Sidebar.Head>
       <Sidebar.Group id="rows">
         {rows.map((r) => (
           <Sidebar.Row
@@ -684,28 +760,18 @@ function ListSidebar({
   )
 }
 
-/* Each place's sidebar; null for the places that have none (the vault
-   switch is a menu, `more` is a menu, a lens is a page of its own). */
-function sidebarFor(id: string, ground: 'field' | 'paper', specimen: string): React.ReactNode | null {
+/* Each place's sidebar; null for the places that have none (`more` is a
+   menu, a lens is a page of its own). */
+function sidebarFor(id: string, specimen: string): React.ReactNode | null {
   switch (id) {
     case 'home':
-      return <SidebarDemo ground={ground} specimen={`${specimen}-home`} head={<FrameSidebarHead title="Home" />} />
-    case 'companion':
-      return (
-        <ListSidebar
-          title="Eiri"
-          ground={ground}
-          rows={[
-            { id: 'eiri-today', label: 'today', icon: 'thread' },
-            { id: 'eiri-passport', label: 'passport photos', icon: 'thread' },
-            { id: 'eiri-q4', label: 'notes on the Q4 view', icon: 'thread', caption: 'with Metryon' },
-          ]}
-        />
-      )
+      return <HomeSidebar specimen={`${specimen}-home`} />
     case 'activity':
       return (
-        <Sidebar ground={ground} aria-label="Activity">
-          <FrameSidebarHead title="Activity" />
+        <Sidebar aria-label="Activity">
+          <Sidebar.Head>
+            <FrameHeadParts title="Activity" />
+          </Sidebar.Head>
           <ActivityCompactDemo specimen={`${specimen}-activity-compact`} readout={false} />
         </Sidebar>
       )
@@ -713,7 +779,6 @@ function sidebarFor(id: string, ground: 'field' | 'paper', specimen: string): Re
       return (
         <ListSidebar
           title="Vault"
-          ground={ground}
           rows={[
             { id: 'ledger', label: 'ledger', icon: 'sheet' },
             { id: 'canvas', label: 'canvas', icon: 'canvas' },
@@ -727,85 +792,87 @@ function sidebarFor(id: string, ground: 'field' | 'paper', specimen: string): Re
   }
 }
 
-/* A whole microsidebar on fixture data: the vault switch, the fixed
-   places, the pinned lenses (they reorder and unpin), the person at the
-   foot. Inside a frame it also holds the fold control. */
-function MicroSidebarDemo({
+/* A whole microsidebar on fixture data: the vault's mark (home), activity
+   with its count, the vault, more; the divider; the pinned lenses (they
+   reorder and unpin); the person at the foot. Alone, it stands on a
+   window ground of its own with the readout under it. */
+export function MicroSidebarDemo({
   labels,
-  ground,
   current,
   onCurrent,
-  inFrame = false,
+  alone = false,
+  waiting = false,
   specimen,
 }: {
   labels?: 'none' | 'word'
-  ground: 'field' | 'paper'
   current: string
   onCurrent: (id: string) => void
-  inFrame?: boolean
+  alone?: boolean
+  /* Activity waits on the person: the waiting ring under its count. */
+  waiting?: boolean
   specimen?: string
 }) {
-  const [vault, setVault] = React.useState('antevon')
   const [pinned, setPinned] = React.useState(PINNED_AT_START)
   const item = (id: string, label: string, icon: React.ReactNode, extra: { count?: number; needsYou?: boolean } = {}) => (
     <MicroSidebar.Item id={id} icon={icon} label={label} current={current === id} onClick={() => onCurrent(id)} {...extra} />
   )
+  const strip = (
+    <MicroSidebar labels={labels} aria-label={`places, ${labels ?? 'symbols'}`} data-specimen={specimen}>
+      <MicroSidebar.VaultMark name="antevon" current={current === 'home'} onClick={() => onCurrent('home')} />
+      {item('activity', 'activity', <Icon name="activity" />, { count: 3, needsYou: waiting })}
+      {item('vault', 'vault', <Icon name="vault" />)}
+      <MicroSidebar.More current={MORE_PLACES.some((m) => m.id === current) && !pinned.includes(current)}>
+        {MORE_PLACES.map((m) => (
+          <MicroSidebar.MoreItem
+            key={m.id}
+            icon={<Icon name={m.icon} />}
+            label={m.label}
+            pinned={pinned.includes(m.id)}
+            onPinChange={(on) => setPinned((l) => (on ? [...l, m.id] : l.filter((x) => x !== m.id)))}
+            onOpen={() => onCurrent(m.id)}
+            data-place-id={m.id}
+          />
+        ))}
+      </MicroSidebar.More>
+      <MicroSidebar.Divider />
+      <MicroSidebar.Pinned onReorder={setPinned}>
+        {pinned.map((id) => {
+          const place = placeOf(id)
+          return (
+            <MicroSidebar.Item
+              key={id}
+              id={id}
+              icon={<Icon name={place.icon} />}
+              label={place.label}
+              current={current === id}
+              onClick={() => onCurrent(id)}
+              onUnpin={() => setPinned((l) => l.filter((x) => x !== id))}
+            />
+          )
+        })}
+      </MicroSidebar.Pinned>
+      <MicroSidebar.Foot>
+        <Menu>
+          <Menu.Trigger asChild>
+            <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" />
+          </Menu.Trigger>
+          <Menu.Content side="right" align="end" width="wide" aria-label="account">
+            <AccountParts />
+          </Menu.Content>
+        </Menu>
+      </MicroSidebar.Foot>
+    </MicroSidebar>
+  )
   return (
     <>
-      <MicroSidebar labels={labels} ground={ground} aria-label={`places, ${labels ?? 'symbols'}, ${ground}`} data-specimen={specimen}>
-        {inFrame ? <AppFrame.Fold tooltipSide="right" /> : null}
-        <VaultSwitch
-          vaults={VAULTS}
-          currentId={vault}
-          onSwitch={setVault}
-          onCreate={() => {}}
-          trigger={<MicroSidebar.Item id="vault-switch" icon={<span className="lib-vault-initial">{vault[0].toUpperCase()}</span>} label={vault} />}
-        />
-        {item('companion', 'eiri', line(EIRI), { needsYou: true })}
-        {item('home', 'home', <Icon name="house" />)}
-        {item('activity', 'activity', <Icon name="activity" />, { count: 3 })}
-        {item('vault', 'vault', <Icon name="vault" />)}
-        <MicroSidebar.More current={MORE_PLACES.some((m) => m.id === current) && !pinned.includes(current)}>
-          {MORE_PLACES.map((m) => (
-            <MicroSidebar.MoreItem
-              key={m.id}
-              icon={<Icon name={m.icon} />}
-              label={m.label}
-              pinned={pinned.includes(m.id)}
-              onPinChange={(on) => setPinned((l) => (on ? [...l, m.id] : l.filter((x) => x !== m.id)))}
-              onOpen={() => onCurrent(m.id)}
-              data-place-id={m.id}
-            />
-          ))}
-        </MicroSidebar.More>
-        <MicroSidebar.Divider />
-        <MicroSidebar.Pinned onReorder={setPinned}>
-          {pinned.map((id) => {
-            const place = placeOf(id)
-            return (
-              <MicroSidebar.Item
-                key={id}
-                id={id}
-                icon={<Icon name={place.icon} />}
-                label={place.label}
-                current={current === id}
-                onClick={() => onCurrent(id)}
-                onUnpin={() => setPinned((l) => l.filter((x) => x !== id))}
-              />
-            )
-          })}
-        </MicroSidebar.Pinned>
-        <MicroSidebar.Foot>
-          <Menu>
-            <Menu.Trigger asChild>
-              <MicroSidebar.Item id="you" icon={<Glyph initial="o" label="Owen" size={24} />} label="Owen" />
-            </Menu.Trigger>
-            <Menu.Content side="right" align="end" width="wide" aria-label="account">
-              <AccountParts />
-            </Menu.Content>
-          </Menu>
-        </MicroSidebar.Foot>
-      </MicroSidebar>
+      {alone ? (
+        <div className="lib-micro-stage">
+          <WindowGround />
+          {strip}
+        </div>
+      ) : (
+        strip
+      )}
       {specimen ? (
         <p className="lib-field-readout" data-specimen={`${specimen}-pinned`}>
           pinned {pinned.join(' ') || 'none'}, current {current}
@@ -820,54 +887,341 @@ function MicroSidebarDemo({
   )
 }
 
-/* A microsidebar alone on the field, outside a frame. */
-function MicroSidebarAlone({ labels, ground, specimen }: { labels?: 'none' | 'word'; ground: 'field' | 'paper'; specimen: string }) {
+/* A microsidebar alone on the window ground of the page's theme. */
+function MicroSidebarAlone({ labels, waiting, specimen }: { labels?: 'none' | 'word'; waiting?: boolean; specimen: string }) {
   const [current, setCurrent] = React.useState('home')
   return (
     <div className="lib-micro-demo">
-      <MicroSidebarDemo labels={labels} ground={ground} current={current} onCurrent={setCurrent} specimen={specimen} />
+      <MicroSidebarDemo labels={labels} waiting={waiting} current={current} onCurrent={setCurrent} specimen={specimen} alone />
     </div>
   )
 }
 
-/* The frame: microsidebar, sidebar and an island as the work area holding
-   the activity list. The current place sets the sidebar (none for a lens);
-   folded, each place's sidebar peeks over the work area. */
-function FrameDemo({
-  labels,
-  ground,
-  defaultOpen,
-  specimen,
-}: {
-  labels?: 'none' | 'word'
-  ground: 'field' | 'paper'
-  defaultOpen: boolean
-  specimen: string
-}) {
-  const [current, setCurrent] = React.useState('home')
-  const [open, setOpen] = React.useState(defaultOpen)
-  const sidebar = sidebarFor(current, ground, specimen)
+/* The person's companion in the work area, laid out with Place: the head
+   (a PlaceHead), the day's messages ending at the bottom, two asks in a
+   needs-you card, and the write box at the foot. */
+function RoomConversation({ specimen }: { specimen: string }) {
+  const [sent, setSent] = React.useState<string[]>([])
   return (
-    <div className="lib-frame-demo">
-      <AppFrame
-        className="lib-frame"
-        data-specimen={specimen}
-        microSidebar={<MicroSidebarDemo labels={labels} ground={ground} current={current} onCurrent={setCurrent} inFrame />}
-        sidebar={sidebar}
-        peek={(id) => sidebarFor(id, ground, `${specimen}-peek`)}
-        sidebarOpen={open}
-        onSidebarOpenChange={setOpen}
-      >
-        <Island className="lib-frame-island">
-          <div className="lib-frame-column">
-            <ActivityDemo specimen={`${specimen}-activity`} />
-          </div>
-        </Island>
-      </AppFrame>
+    <Place data-specimen={specimen}>
+      <Place.Head>
+        <PlaceHead icon={<Glyph glyph="wing" label="Eiri" size={24} />} title="eiri" />
+      </Place.Head>
+      <Place.Body>
+        <DayDivider>Today</DayDivider>
+        <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:02">
+          <MessageRow.Text>Morning. Two things wait on you. Metryon finished the store pull overnight.</MessageRow.Text>
+          <NeedsYou aria-label="needs you" className="lib-room-asks">
+            <NeedsYou.Group room="acme-forecast">
+              <NeedsYou.Ask
+                id="promo"
+                asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+                question="Should the fit treat weeks 44 to 46 as promo weeks?"
+                note="Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline."
+              >
+                <NeedsYou.Picks>
+                  <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+                  <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+                  <NeedsYou.OwnAnswer />
+                </NeedsYou.Picks>
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+            <NeedsYou.Group room="the house">
+              <NeedsYou.Ask
+                id="extracts"
+                asker={<Glyph glyph="owl" label="Tory" size={20} />}
+                question="Pull three paid registry extracts?"
+                note="Buys one extract for each of the three Kobe suppliers at ¥800. Paid from the house card. The files land in # the house."
+              >
+                <NeedsYou.YesNo figure="¥2,400" />
+              </NeedsYou.Ask>
+            </NeedsYou.Group>
+          </NeedsYou>
+        </MessageRow>
+        <MessageRow author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="09:10">
+          <MessageRow.Text>Check the supplier notes against the filings.</MessageRow.Text>
+        </MessageRow>
+        <MessageRow author={<Glyph glyph="wing" label="Eiri" size={24} />} name="Eiri" time="09:10">
+          <MessageRow.Text>I gave this to Tory.</MessageRow.Text>
+        </MessageRow>
+        {sent.map((text, i) => (
+          <MessageRow key={i} author={<Glyph initial="o" label="Owen" size={24} />} name="Owen" time="just now">
+            <MessageRow.Text>{text}</MessageRow.Text>
+          </MessageRow>
+        ))}
+      </Place.Body>
+      <Place.Foot>
+        <Composer
+          placeholder="Write to eiri"
+          persona={<Composer.Persona initial="o" note="You write as Owen. Saved in your own vault." aria-label="Owen" />}
+          onVoice={() => {}}
+          onDictate={() => {}}
+          onSend={(text) => setSent((s) => [...s.slice(-2), text])}
+        >
+          <Composer.Add label="Add to the message">
+            <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+            <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+          </Composer.Add>
+        </Composer>
+      </Place.Foot>
+    </Place>
+  )
+}
+
+const PLACE_TITLE: Record<string, string> = { vault: 'vault', ...Object.fromEntries(MORE_PLACES.map((m) => [m.id, m.label])) }
+
+/* The work area for the place on screen. */
+function FrameWork({ place, specimen }: { place: string; specimen: string }) {
+  if (place === 'home') return <RoomConversation specimen={`${specimen}-room`} />
+  if (place === 'activity') {
+    return (
+      <div className="lib-frame-scroll">
+        <div className="lib-frame-column">
+          <ActivityDemo specimen={`${specimen}-activity`} />
+        </div>
+      </div>
+    )
+  }
+  const lens = MORE_PLACES.find((m) => m.id === place)
+  return (
+    <div className="lib-frame-scroll">
+      <div className="lib-frame-column">
+        <PlaceHead icon={<Icon name={lens?.icon ?? 'vault'} />} title={PLACE_TITLE[place] ?? place} />
+        <p className="lib-frame-line">Acme store sales by week, from the ledger.</p>
+      </div>
+    </div>
+  )
+}
+
+/* The frame at 1100 x 620 in a bordered stage, inside a root of its own
+   theme: the window ground, the microsidebar, the sheet. The current
+   place sets the sidebar (none for a lens); folded, each place's sidebar
+   peeks over the sheet. */
+function FrameDemo({
+  theme,
+  defaultOpen = true,
+  startAt = 'home',
+  labels,
+  specimen,
+  caption,
+}: {
+  theme: LibraryTheme
+  defaultOpen?: boolean
+  startAt?: string
+  labels?: 'none' | 'word'
+  specimen: string
+  caption: string
+}) {
+  const [current, setCurrent] = React.useState(startAt)
+  const [open, setOpen] = React.useState(defaultOpen)
+  const sidebar = sidebarFor(current, specimen)
+  return (
+    <figure className="lib-frame-specimen">
+      <div className="lib-frame-scroller">
+        <SafelightRoot theme={theme} className="lib-frame-root">
+          <AppFrame
+            className="lib-frame"
+            data-specimen={specimen}
+            microSidebar={<MicroSidebarDemo labels={labels} current={current} onCurrent={setCurrent} />}
+            sidebar={sidebar}
+            peek={(id) => sidebarFor(id, `${specimen}-peek`)}
+            sidebarOpen={open}
+            onSidebarOpenChange={setOpen}
+          >
+            <FrameWork place={current} specimen={specimen} />
+          </AppFrame>
+        </SafelightRoot>
+      </div>
+      <figcaption className="lib-field-caption">{caption}</figcaption>
       <p className="lib-field-readout" data-specimen={`${specimen}-state`}>
         sidebar {sidebar === null ? 'none' : open ? 'open' : 'folded'}, current {current}
       </p>
+    </figure>
+  )
+}
+
+/* ── a thing opened beside the room ──────────────────────────────────── */
+
+const PROMO_QUESTION = 'Should the fit treat weeks 44 to 46 as promo weeks?'
+const PROMO_NOTE =
+  'Sales dip in weeks 44 to 46 every year. As promo weeks, the fit leaves the dip out of the baseline; as normal weeks, it keeps the dip in.'
+
+interface ThreadLine {
+  who: 'Owen' | 'Metryon'
+  text: string
+  time: string
+}
+
+const THREAD_AT_START: ThreadLine[] = [
+  { who: 'Owen', text: 'Keep the promo weeks. Show week 44 on its own too.', time: '14:16' },
+  { who: 'Metryon', text: 'Noted. I will add week 44 as its own reading.', time: '14:16' },
+]
+
+const threadAuthor = (who: ThreadLine['who']) =>
+  who === 'Owen' ? <Glyph initial="o" label="Owen" size={24} /> : <Glyph glyph="ruler" label="Metryon" size={24} />
+
+/* The ask, as the room and the pane both show it: the same answer in both. */
+function PromoAsk({ id, answer, onAnswerChange, onOpen }: { id: string; answer: NeedsYouAnswerRecord | null; onAnswerChange: (a: NeedsYouAnswerRecord | null) => void; onOpen?: () => void }) {
+  return (
+    <NeedsYou.Ask
+      id={id}
+      asker={<Glyph glyph="ruler" label="Metryon" size={20} />}
+      question={PROMO_QUESTION}
+      note={onOpen ? PROMO_NOTE : undefined}
+      onOpen={onOpen}
+      answer={answer}
+      onAnswerChange={onAnswerChange}
+    >
+      <NeedsYou.Picks>
+        <NeedsYou.Pick value="promo">promo weeks</NeedsYou.Pick>
+        <NeedsYou.Pick value="normal">normal weeks</NeedsYou.Pick>
+        <NeedsYou.Pick value="week-44">only week 44</NeedsYou.Pick>
+        <NeedsYou.OwnAnswer />
+      </NeedsYou.Picks>
+    </NeedsYou.Ask>
+  )
+}
+
+/* A room with an ask in the talk; its information mark opens the ask
+   beside the room as one thing (SplitPane.Thing), with its note and its
+   thread. Writing in the pane starts the thread, and the ask in the talk
+   then carries a thread line. */
+function BesideDemo({
+  width,
+  height,
+  withThread,
+  writeTools = false,
+  specimen,
+  caption,
+}: {
+  width: number
+  height: number
+  withThread: boolean
+  /* The write box carries add and dictation (SplitPane.Thing writeBox). */
+  writeTools?: boolean
+  specimen: string
+  caption: string
+}) {
+  const [current, setCurrent] = React.useState('home')
+  const [sidebarOpen, setSidebarOpen] = React.useState(true)
+  const [open, setOpen] = React.useState(true)
+  const [answer, setAnswer] = React.useState<NeedsYouAnswerRecord | null>(null)
+  const [thread, setThread] = React.useState<ThreadLine[]>(withThread ? THREAD_AT_START : [])
+  const send = (text: string) => {
+    const first = thread.length === 0
+    setThread((t) => [...t, { who: 'Owen', text, time: formatAnswerTime(new Date()) }])
+    /* The fixture's agent answers the first message after a moment. */
+    if (first) {
+      setTimeout(() => setThread((t) => [...t, { who: 'Metryon', text: 'Noted. I will add week 44 as its own reading.', time: formatAnswerTime(new Date()) }]), 1300)
+    }
+  }
+  const room = (
+    <div className="lib-room" data-specimen={`${specimen}-room`}>
+      <PlaceHead icon={<Icon name="hash" />} title="acme-forecast" />
+      <div className="lib-room-trunk">
+        <div className="lib-room-messages">
+          <DayDivider>Today</DayDivider>
+          <MessageRow author={<Glyph initial="y" label="Yuki" size={24} guest />} name="Yuki" time="13:50">
+            <MessageRow.Text>Can we have the Q4 view by Friday?</MessageRow.Text>
+          </MessageRow>
+          <MessageRow author={<Glyph glyph="ruler" label="Metryon" size={24} />} name="Metryon" time="14:02">
+            <MessageRow.Text>Before I fit the quarter, one answer from you.</MessageRow.Text>
+            <NeedsYou aria-label="needs you" className="lib-room-asks">
+              <PromoAsk id={`${specimen}-promo`} answer={answer} onAnswerChange={setAnswer} onOpen={() => setOpen(true)} />
+            </NeedsYou>
+            {thread.length ? (
+              <MessageRow.ThreadLine
+                replies={thread.length}
+                lastReply={thread[thread.length - 1].time}
+                participants={
+                  <>
+                    <Glyph initial="o" label="Owen" size={18} />
+                    <Glyph glyph="ruler" label="Metryon" size={18} />
+                  </>
+                }
+                onClick={() => setOpen(true)}
+              />
+            ) : null}
+          </MessageRow>
+        </div>
+      </div>
+      <Composer
+        placeholder="Write to acme-forecast"
+        persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
+        onVoice={() => {}}
+        onDictate={() => {}}
+      >
+        <Composer.Add label="Add to the message">
+          <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+          <Menu.Item icon={<Icon name="tool" />}>model and effort</Menu.Item>
+        </Composer.Add>
+      </Composer>
     </div>
+  )
+  return (
+    <figure className="lib-frame-specimen">
+      <div className="lib-frame-scroller">
+        <SafelightRoot theme={GALLERY_THEMES[0]} className="lib-beside-root" style={{ width, height }}>
+          <AppFrame
+            className="lib-frame"
+            data-specimen={specimen}
+            microSidebar={<MicroSidebarDemo current={current} onCurrent={setCurrent} />}
+            sidebar={<HomeSidebar specimen={`${specimen}-home`} />}
+            sidebarOpen={sidebarOpen}
+            onSidebarOpenChange={setSidebarOpen}
+          >
+            {open ? (
+              <SplitPane pane="thing" className="lib-beside-split" data-specimen={`${specimen}-split`}>
+                <SplitPane.Pane className="lib-beside-room">{room}</SplitPane.Pane>
+                <SplitPane.Handle aria-label="resize the pane" />
+                <SplitPane.Thing
+                  title={PROMO_QUESTION}
+                  onClose={() => setOpen(false)}
+                  note={PROMO_NOTE}
+                  onSend={send}
+                  writeBox={
+                    writeTools
+                      ? {
+                          tools: 'always',
+                          onDictate: () => {},
+                          add: (
+                            <Composer.Add label="Add to the message">
+                              <Menu.Item icon={<Icon name="clip" />}>a file</Menu.Item>
+                              <Menu.Item icon={<Icon name="images" />}>a picture</Menu.Item>
+                            </Composer.Add>
+                          ),
+                        }
+                      : undefined
+                  }
+                  data-specimen={`${specimen}-thing`}
+                  thread={thread.map((m, i) => (
+                    <MessageRow key={i} author={threadAuthor(m.who)} name={m.who} time={m.time}>
+                      <MessageRow.Text>{m.text}</MessageRow.Text>
+                    </MessageRow>
+                  ))}
+                >
+                  <NeedsYou ground="bare" aria-label="the ask">
+                    <PromoAsk id={`${specimen}-promo-beside`} answer={answer} onAnswerChange={setAnswer} />
+                  </NeedsYou>
+                </SplitPane.Thing>
+              </SplitPane>
+            ) : (
+              room
+            )}
+          </AppFrame>
+        </SafelightRoot>
+      </div>
+      <figcaption className="lib-field-caption">{caption}</figcaption>
+      <p className="lib-field-readout" data-specimen={`${specimen}-state`}>
+        pane {open ? 'open' : 'closed'}, thread {thread.length}, answer {answer ? answer.word : 'none'}
+        {open ? null : (
+          <button type="button" className="lib-pick lib-field-pick" onClick={() => setOpen(true)}>
+            open it beside again
+          </button>
+        )}
+      </p>
+    </figure>
   )
 }
 
@@ -953,8 +1307,8 @@ function SortCycleSpecimen() {
 }
 
 /* On the field: the sidebar alone, the microsidebar alone, then the app
-   frame open and folded, with both label forms, on both grounds. */
-export function FieldSections() {
+   frame on each theme, open, folded with a peek, and with no sidebar. */
+export function FieldSections({ children }: { children?: React.ReactNode }) {
   const [collapsed, setCollapsed] = React.useState(true)
   return (
     <div className="lib-field-region">
@@ -964,21 +1318,17 @@ export function FieldSections() {
         </h2>
         <div className="lib-field-specimens">
           <figure className="lib-field-specimen">
-            <SidebarDemo ground="field" specimen="sidebar-reorder" />
+            <SidebarDemo specimen="sidebar-reorder" />
             <figcaption className="lib-field-caption">
               drag a row or a group’s label, or press Alt with an arrow on it; pin a room on hover
             </figcaption>
           </figure>
           <figure className="lib-field-specimen">
-            <SidebarDemo ground="field" specimen="sidebar-collapsed" collapsed={collapsed} onCollapsedChange={setCollapsed} />
+            <SidebarDemo specimen="sidebar-collapsed" collapsed={collapsed} onCollapsedChange={setCollapsed} />
             <figcaption className="lib-field-caption">collapsed: symbols only, names in a tooltip</figcaption>
           </figure>
           <figure className="lib-field-specimen">
-            <SidebarDemo ground="paper" specimen="sidebar-paper" />
-            <figcaption className="lib-field-caption">on paper</figcaption>
-          </figure>
-          <figure className="lib-field-specimen">
-            <SidebarDemo ground="field" specimen="sidebar-flat" childIndent="none" />
+            <SidebarDemo specimen="sidebar-flat" childIndent="none" />
             <figcaption className="lib-field-caption">childIndent none: child rooms flush with their project, for comparison</figcaption>
           </figure>
         </div>
@@ -990,45 +1340,71 @@ export function FieldSections() {
         </h2>
         <div className="lib-field-specimens">
           <figure className="lib-field-specimen">
-            <MicroSidebarAlone ground="field" specimen="micro-none" />
+            <MicroSidebarAlone specimen="micro-none" />
             <figcaption className="lib-field-caption">
-              the default: symbols, names in a tooltip; more lists the places off the strip, each with a pin toggle; drag a pinned place, or right-click it to unpin
+              the vault’s mark first (home), then symbols, names in a tooltip; more lists the places off the strip, each with a pin toggle; drag a pinned place, or right-click it to unpin
             </figcaption>
           </figure>
           <figure className="lib-field-specimen">
-            <MicroSidebarAlone labels="word" ground="field" specimen="micro-word" />
-            <figcaption className="lib-field-caption">labels word: a word of at most eight letters under each symbol</figcaption>
-          </figure>
-          <figure className="lib-field-specimen">
-            <MicroSidebarAlone ground="paper" specimen="micro-paper" />
-            <figcaption className="lib-field-caption">on paper</figcaption>
+            <MicroSidebarAlone labels="word" waiting specimen="micro-word" />
+            <figcaption className="lib-field-caption">labels word: a word of at most eight letters under each symbol; activity waits on you</figcaption>
           </figure>
         </div>
       </section>
 
-      <section className="lib-field-section" aria-labelledby="lib-app-frame">
-        <h2 id="lib-app-frame" className="lib-field-head">
-          AppFrame
+      <section className="lib-field-section" aria-labelledby="lib-frame-themes">
+        <h2 id="lib-frame-themes" className="lib-field-head">
+          frame, themes
         </h2>
-        {(
-          [
-            { ground: 'field', open: true, labels: undefined, caption: 'open, symbols; fold it with the control in its head or the [ key' },
-            { ground: 'field', open: false, labels: undefined, caption: 'folded, symbols; rest the pointer on a place to see its sidebar, move to the next place to switch' },
-            { ground: 'paper', open: true, labels: 'word', caption: 'open, words, on paper' },
-            { ground: 'paper', open: false, labels: undefined, caption: 'folded, symbols, on paper' },
-          ] as const
-        ).map((f) => (
-          <figure key={`${f.ground}-${f.open}`} className="lib-frame-specimen">
-            <FrameDemo
-              labels={f.labels}
-              ground={f.ground}
-              defaultOpen={f.open}
-              specimen={`frame-${f.open ? 'open' : 'folded'}-${f.ground}`}
-            />
-            <figcaption className="lib-field-caption">{f.caption}</figcaption>
-          </figure>
+        {GALLERY_THEMES.map((theme) => (
+          <FrameDemo
+            key={theme.id}
+            theme={theme}
+            specimen={`frame-${theme.id}`}
+            caption={`${theme.label}${theme.kind === 'scene' ? ', a scene' : ''}: open; fold it with the control in the sidebar’s head or the [ key`}
+          />
         ))}
+        <FrameDemo
+          theme={GALLERY_THEMES[0]}
+          defaultOpen={false}
+          specimen="frame-folded"
+          caption="folded: rest the pointer on a place to see its sidebar raised over the sheet; move to the next place to switch"
+        />
+        <FrameDemo theme={GALLERY_THEMES[0]} startAt="notes" specimen="frame-no-sidebar" caption="a lens: no sidebar, the sheet is the work area alone" />
       </section>
+
+      <RoomHeadSection />
+
+      <section className="lib-field-section" aria-labelledby="lib-beside">
+        <h2 id="lib-beside" className="lib-field-head">
+          SplitPane.Thing: one thing opened beside the room
+        </h2>
+        <BesideDemo
+          width={1440}
+          height={760}
+          withThread={false}
+          specimen="beside-1440"
+          caption="1440 wide: the pane takes what the messages column leaves; write in it to start the thread"
+        />
+        <BesideDemo
+          width={1440}
+          height={760}
+          withThread
+          writeTools
+          specimen="beside-1440-thread"
+          caption="1440 wide, with a thread: the write box now says reply and carries add and dictation (writeBox); the ask in the talk carries the thread line"
+        />
+        <BesideDemo
+          width={1100}
+          height={680}
+          withThread={false}
+          specimen="beside-1100"
+          caption="1100 wide: the work area cannot hold the column and the pane’s 380 px floor, so the pane lies over the room from the right edge; the room keeps its column; close or Escape returns to it"
+        />
+        <BesideDemo width={1100} height={680} withThread specimen="beside-1100-thread" caption="1100 wide, with a thread: over the room" />
+      </section>
+
+      {children}
     </div>
   )
 }
