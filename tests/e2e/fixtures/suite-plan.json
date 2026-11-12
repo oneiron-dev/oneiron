@@ -38,6 +38,28 @@
         "file": "retrieval.test.ts",
         "ruling": "Engine RULING 2026-11-11 05:37 JST E2E4-RECALL-CONTRACT 1 = A (ledger engine-20261111-e2e4-recall-contract)",
         "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (P-RECALL-007 changed 2026-11-11, PC-20261111-1)"
+      },
+      {
+        "ids": [
+          "MUSE-LOOP-01",
+          "MUSE-LOOP-02",
+          "MUSE-LOOP-03",
+          "MUSE-LOOP-04",
+          "MUSE-LOOP-05",
+          "MUSE-LOOP-06",
+          "MUSE-LOOP-08"
+        ],
+        "file": "coordination.test.ts",
+        "ruling": "Engine ANSWER 2026-11-10 11:52 JST (MUSE-LOOP-REGISTRATION; Muse Wonder loop cases)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "MUSE-LOOP-07"
+        ],
+        "file": "artifacts.test.ts",
+        "ruling": "Engine ANSWER 2026-11-10 11:52 JST (MUSE-LOOP-REGISTRATION; Muse Wonder loop cases)",
+        "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
       }
     ]
   },
@@ -51,6 +73,7 @@
         {
           "id": "BOOT-01",
           "name": "Model-free serve and restart should work",
+          "estimatedSeconds": 9,
           "rows": [
             "OF-001",
             "OF-018",
@@ -71,6 +94,7 @@
         {
           "id": "BOOT-02",
           "name": "TypeScript remote memory journey should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-237",
             "OF-364",
@@ -86,6 +110,7 @@
         {
           "id": "BOOT-03",
           "name": "Python remote memory journey should work",
+          "estimatedSeconds": 11,
           "rows": [
             "OF-237",
             "OF-324"
@@ -100,6 +125,7 @@
         {
           "id": "BOOT-04",
           "name": "Native addon memory persistence should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-012",
             "OF-021"
@@ -114,6 +140,7 @@
         {
           "id": "BOOT-05",
           "name": "CLI memory access should work",
+          "estimatedSeconds": 8,
           "rows": [
             "OF-181",
             "OF-237"
@@ -143,6 +170,7 @@
         {
           "id": "BOOT-07",
           "name": "MCP tool-first operator registration should work",
+          "estimatedSeconds": 19,
           "rows": [
             "OF-246",
             "OF-199"
@@ -156,6 +184,7 @@
         {
           "id": "BOOT-08",
           "name": "Vault and client isolation should work",
+          "estimatedSeconds": 12,
           "rows": [
             "OF-034",
             "OF-302",
@@ -437,6 +466,7 @@
         {
           "id": "PRIVACY-01",
           "name": "Archive restoration without erasure should work",
+          "estimatedSeconds": 13,
           "rows": [
             "OF-449",
             "OF-045"
@@ -451,6 +481,7 @@
         {
           "id": "PRIVACY-02",
           "name": "Hard erase across public reads should work",
+          "estimatedSeconds": 12,
           "rows": [
             "OF-013",
             "OF-044",
@@ -482,6 +513,7 @@
         {
           "id": "PRIVACY-04",
           "name": "Shared blobs survive one record erasure should work",
+          "estimatedSeconds": 9,
           "rows": [
             "OF-468",
             "OF-270"
@@ -496,6 +528,7 @@
         {
           "id": "PRIVACY-05",
           "name": "Legal hold narrows delete should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-470"
           ],
@@ -536,6 +569,7 @@
         {
           "id": "PRIVACY-08",
           "name": "Anonymous chat has no memory should work",
+          "estimatedSeconds": 14,
           "rows": [
             "OF-500"
           ],
@@ -675,6 +709,7 @@
         {
           "id": "GATE-01",
           "name": "Three-axis write decisions should work",
+          "estimatedSeconds": 11,
           "rows": [
             "OF-038",
             "OF-054",
@@ -716,6 +751,7 @@
         {
           "id": "GATE-03",
           "name": "Policy manifest defaults and owner control should work",
+          "estimatedSeconds": 13,
           "rows": [
             "OF-051",
             "OF-070",
@@ -732,6 +768,7 @@
         {
           "id": "GATE-04",
           "name": "Standing consent lifecycle should work",
+          "estimatedSeconds": 10,
           "rows": [
             "OF-050",
             "OF-367",
@@ -767,6 +804,7 @@
         {
           "id": "GATE-06",
           "name": "Catastrophe floor scoped bypass should work",
+          "estimatedSeconds": 10,
           "rows": [
             "OF-465"
           ],
@@ -780,6 +818,7 @@
         {
           "id": "GATE-07",
           "name": "Review bundle accept and undo should work",
+          "estimatedSeconds": 11,
           "rows": [
             "OF-062",
             "OF-211",
@@ -800,6 +839,7 @@
         {
           "id": "GATE-08",
           "name": "Critical confirmation and read floors should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-011",
             "OF-279"
@@ -815,6 +855,7 @@
         {
           "id": "GATE-09",
           "name": "No fixed burst refusal should work",
+          "estimatedSeconds": 25,
           "rows": [
             "OF-294",
             "OF-487",
@@ -2197,7 +2238,7 @@
       "file": "coordination.test.ts",
       "area": "Projects and coordination",
       "slots": 1,
-      "estimatedSeconds": 55,
+      "estimatedSeconds": 160,
       "tests": [
         {
           "id": "COORDINATION-01",
@@ -2335,6 +2376,99 @@
             "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks",
             "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
             "/registry/oneiron/#OF-427"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-01",
+          "name": "An agent's proposed claims are found in the pending-write queue with receipts, and the owner approves one and rejects another with both actors named in receipts after restart",
+          "rows": [],
+          "source": [
+            "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#s4-title"
+          ],
+          "promises": [
+            "P-LOOP-001",
+            "P-LOOP-002"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-02",
+          "name": "A graduation offer gives go auto, not now and always manual, and always manual stops offers until settings unpin",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0056-edit-distance-feedback-loop-v1/#graduation-h",
+            "/oneiron/core/oneiron-arch-0055-entity-merge-split-consent-ramp-v1/#ramp-h"
+          ],
+          "promises": [
+            "P-LOOP-006",
+            "P-LOOP-007"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-03",
+          "name": "An unsure agent asks the owner up through ask, the counted ruling is recorded, and the ask authorizes no effect",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0056-edit-distance-feedback-loop-v1/#escalation-h",
+            "/oneiron/agents/oneiron-arch-0076-typed-judgments-v1/#ask-a-person",
+            "/cross/orchestration/cross-arch-0009b-signals-and-notifications/#needs-input",
+            "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks-who"
+          ],
+          "promises": [
+            "P-LOOP-008",
+            "P-LOOP-010"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-04",
+          "name": "An answerer switch is never automatic by default or on an unknown result, and an approved switch changes only future answers",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0076-typed-judgments-v1/#loop-h",
+            "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/#training-offer"
+          ],
+          "promises": [
+            "P-LOOP-013",
+            "P-LOOP-014",
+            "P-LOOP-015"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-05",
+          "name": "A human-time ask survives restart and resumes on the owner's answer while unanswered asks take their own deadline defaults",
+          "rows": [],
+          "source": [
+            "/cross/orchestration/cross-arch-0009a-orchestration-primitives/#api-h2",
+            "/cross/orchestration/cross-arch-0009b-signals-and-notifications/#needs-input",
+            "/cross/orchestration/cross-arch-0009b-signals-and-notifications/#answer",
+            "/oneiron/agents/oneiron-arch-0067-context-board-v1/#tasks-who"
+          ],
+          "promises": [
+            "P-LOOP-016",
+            "P-LOOP-017",
+            "P-LOOP-019"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-06",
+          "name": "A feedback proposal that quotes vault text asks the owner before sending",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0056-edit-distance-feedback-loop-v1/#proposals"
+          ],
+          "promises": [
+            "P-LOOP-009"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-08",
+          "name": "Owner settles agent-proposed claims, undoes a chosen subset then the rest where unblocked, and reports the blocked change (P-LOOP-030 subset)",
+          "rows": [],
+          "source": [
+            "/oneiron/planning/reversibility-review-v1/#rev-2",
+            "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#revert-run"
+          ],
+          "promises": [
+            "P-LOOP-030"
           ]
         }
       ]
@@ -3149,7 +3283,7 @@
       "file": "artifacts.test.ts",
       "area": "Artifacts and document organs",
       "slots": 2,
-      "estimatedSeconds": 70,
+      "estimatedSeconds": 85,
       "tests": [
         {
           "id": "ARTIFACTS-01",
@@ -3268,6 +3402,21 @@
             "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/#tested-pointer",
             "/registry/oneiron/#OF-356",
             "/registry/oneiron/#OF-555"
+          ]
+        },
+        {
+          "id": "MUSE-LOOP-07",
+          "name": "Agent artifact work waits beside the live version until the owner Keeps it once or Discards it, and each version keeps its maker's actor stamp",
+          "rows": [],
+          "source": [
+            "/oneiron/agents/oneiron-arch-0056-edit-distance-feedback-loop-v1/#substrate-h",
+            "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract-h"
+          ],
+          "promises": [
+            "P-LOOP-005",
+            "P-LOOP-024",
+            "P-LOOP-025",
+            "P-LOOP-026"
           ]
         }
       ]

@@ -63,7 +63,7 @@ where
                 BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
                 _ => BUDGET_PARK_REASON,
             };
-            match budget_trap(ctx, step_hash, reason)? {
+            match budget_trap(ctx, step_hash, reason, None)? {
                 StepOutcome::Trapped {
                     trap,
                     failure_policy,

@@ -4,6 +4,7 @@ use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
     LlmResponse, LlmUsage,
 };
+use super::budget_wait::wake_budget_trap_in_txn;
 use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step, step_index_lookup_in_txn,
@@ -258,8 +259,13 @@ async fn durable_step(
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
-            return budget_trap(ctx, step_hash, BUDGET_PARK_REASON)
-                .inspect(|_| step_budget_hit(ctx, guard, &request));
+            return budget_trap(
+                ctx,
+                step_hash,
+                BUDGET_PARK_REASON,
+                Some(guard.reserve_units()),
+            )
+            .inspect(|_| step_budget_hit(ctx, guard, &request));
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -398,7 +404,11 @@ async fn durable_step(
                 BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
                 _ => BUDGET_PARK_REASON,
             };
-            return budget_trap(ctx, step_hash, reason).inspect(|_| {
+            let asked_units = match denied {
+                BudgetDenied::Exhausted => Some(guard.reserve_units()),
+                _ => None,
+            };
+            return budget_trap(ctx, step_hash, reason, asked_units).inspect(|_| {
                 if denied == BudgetDenied::Exhausted {
                     step_budget_hit(ctx, guard, &request);
                 }
@@ -657,11 +667,12 @@ pub(super) fn budget_trap(
     ctx: &DurableStepContext<'_>,
     step_hash: [u8; 32],
     reason: &str,
+    asked_units: Option<u64>,
 ) -> DurableStepResult<StepOutcome> {
     let failure_policy =
         resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-    let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
+    let (trap, resumed) = ctx.vault.with_write_txn_grouped(|wtxn| {
         let trap = open_trap_in_txn(
             ctx.vault,
             wtxn,
@@ -671,7 +682,18 @@ pub(super) fn budget_trap(
             reason,
             TrapBindingScope::Attempt,
         )?;
-        store.park_attempt_in_txn(
+        let wait = match (&ctx.spend_scope, asked_units) {
+            (Some(spend), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .hard_cap_refusal_in_txn(wtxn, &spend.scope, units)?
+                .map(
+                    |(scope, asked_units)| crate::dreamer_runner::DreamerParkWait::Budget {
+                        scope,
+                        asked_units,
+                    },
+                ),
+            _ => None,
+        };
+        store.park_attempt_with_wait_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
                 attempt_id: ctx.attempt_id,
@@ -681,9 +703,32 @@ pub(super) fn budget_trap(
                 carried_spend: None,
                 now: ctx.now_s(),
             },
+            wait,
         )?;
-        Ok(trap)
+        // A top-up that moved the cap after the step's guards read their room
+        // found no park to wake: a spent budget's park wakes itself in its own
+        // write (FIX PARK-BUDGET-SIGNAL-BEFORE-PARK). The retry reads the cap
+        // again, so only a later top-up wakes it again.
+        let generation = match (&ctx.spend_scope, asked_units) {
+            (Some(spend), Some(_)) => spend.cap_generation.as_ref(),
+            _ => None,
+        };
+        let cap_moved = match generation {
+            Some(generation) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .spend_cap_moved_in_txn(wtxn, generation)?,
+            None => false,
+        };
+        let resumed = if cap_moved {
+            wake_budget_trap_in_txn(ctx.vault, wtxn, &trap, ctx.now_ms)?
+        } else {
+            None
+        };
+        Ok((trap, resumed))
     })?;
+    if resumed.is_some() {
+        ctx.vault.store.notify_attempt_observers();
+        ctx.vault.store.notify_proactivity_changes();
+    }
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
     Ok(StepOutcome::Trapped {
         trap,

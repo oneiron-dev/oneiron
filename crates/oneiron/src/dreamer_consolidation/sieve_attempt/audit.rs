@@ -205,6 +205,7 @@ impl ConsolidationExecutor<'_> {
             subject: window.turn,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         let check_labels = labels.clone();
         let check_text = evidence.text.clone();

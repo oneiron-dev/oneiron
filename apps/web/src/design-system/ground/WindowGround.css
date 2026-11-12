@@ -1,0 +1,25 @@
+/* Behind everything in its parent: one colour, or the scene's print over
+   that colour once it is drawn. */
+.sl-window-ground {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: var(--sl-ground-a);
+  pointer-events: none;
+}
+
+/* One canvas pixel per 2 px cell, scaled up with hard edges. */
+.sl-window-ground-print {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* A print of another picture (the scheme just flipped) stays hidden until
+   it is drawn again. */
+.sl-window-ground:not([data-printed]) > .sl-window-ground-print {
+  visibility: hidden;
+}

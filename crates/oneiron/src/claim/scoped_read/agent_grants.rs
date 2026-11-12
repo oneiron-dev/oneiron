@@ -30,6 +30,11 @@ use oneiron_authority::federation::Scope;
 /// One reader's live Grants, each id with its Scope.
 type ReaderGrants = Rc<[(EntityId, Scope)]>;
 
+/// What each agent Grant that names one credential's holder and stands for
+/// `read` lets a read reach; `None` when no Grant has ever named the holder
+/// (`Vault::agent_grant_read_bounds_in_txn`).
+pub(super) type HolderGrantBounds = Rc<Option<Vec<Scope>>>;
+
 /// What one read asked of its rows beyond its key's own floor, so A resolves
 /// its filter under a Grant as the read resolved its own.
 #[derive(Clone, Default)]
@@ -44,12 +49,15 @@ pub(super) enum AskedFilter {
 }
 
 /// The Grants one serving txn's row checks hold: each reader's own, loaded at
-/// the first row that reader's B refuses and dropped with the txn's
+/// the first row that reader's B refuses, and each credential holder's
+/// standing read bounds, loaded at the first row its key judges
+/// ([`ScopedReadActorKey::agent_grant_holder`]); both dropped with the txn's
 /// [`HeldAuthority`]. A peer's and a named read's row checks share them, each
 /// reading its own actor's entry, never another's.
 #[derive(Clone, Default)]
 pub(super) struct HeldGrants {
     by_reader: Rc<RefCell<BTreeMap<EntityId, ReaderGrants>>>,
+    by_holder: Rc<RefCell<BTreeMap<EntityId, HolderGrantBounds>>>,
     asked: AskedFilter,
 }
 
@@ -58,6 +66,7 @@ impl HeldGrants {
     pub(super) fn fresh(asked: AskedFilter) -> Self {
         Self {
             by_reader: Rc::default(),
+            by_holder: Rc::default(),
             asked,
         }
     }
@@ -66,6 +75,7 @@ impl HeldGrants {
     pub(super) fn shared_asking(&self, asked: AskedFilter) -> Self {
         Self {
             by_reader: Rc::clone(&self.by_reader),
+            by_holder: Rc::clone(&self.by_holder),
             asked,
         }
     }
@@ -85,6 +95,27 @@ impl HeldGrants {
             .borrow_mut()
             .insert(reader, Rc::clone(&grants));
         grants
+    }
+
+    /// `holder`'s standing read bounds in this txn: `load`ed at the first
+    /// ask, then held. A failed load holds nothing, so the next row asks
+    /// again.
+    ///
+    /// # Errors
+    /// `load`'s.
+    pub(super) fn bounds_of(
+        &self,
+        holder: EntityId,
+        load: impl FnOnce() -> Result<Option<Vec<Scope>>>,
+    ) -> Result<HolderGrantBounds> {
+        if let Some(bounds) = self.by_holder.borrow().get(&holder) {
+            return Ok(Rc::clone(bounds));
+        }
+        let bounds: HolderGrantBounds = Rc::new(load()?);
+        self.by_holder
+            .borrow_mut()
+            .insert(holder, Rc::clone(&bounds));
+        Ok(bounds)
     }
 }
 

@@ -1,13 +1,16 @@
 //! Full witnessed goal intake and explicit optimizer proposal/admission doors.
 use crate::consent::AuthenticatedOwner;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{self as optimize, GoalAxisBandit, GoalAxisReport, HeldOutReplayNotes};
 use crate::workspace_roster::{GoalInterviewTurns, GoalRecord};
 use crate::{EntityId, Error, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 
-use super::{SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner};
+use super::{
+    ProjectGoalDismissReceipt, ProjectGoalDismissRequest, ProjectGoalDismissTarget,
+    SkillOptimizeResultRequest, SkillOptimizeResultView, skill_optimize_result_as_owner,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +36,41 @@ pub struct ProjectGoalView {
     pub record: Option<GoalRecord>,
 }
 
+/// `vault.projects.goal.dismiss` on the caller's handle: a vault owner sets
+/// aside a preference proposal or a full goal proposal; `false` when an
+/// identical retry wrote nothing.
+///
+/// # Errors
+///
+/// FORBIDDEN for a caller that is not a recorded vault owner; a malformed
+/// reference, a moved goal, a missing proposal, a blank or unbounded reason;
+/// storage errors.
+pub fn project_goal_dismiss(
+    memory: &Memory<'_>,
+    input: ProjectGoalDismissRequest,
+) -> MemoryResult<ProjectGoalDismissReceipt> {
+    let project = EntityId::from_hex(&input.project_ref)?;
+    let dismissed = match input.target {
+        ProjectGoalDismissTarget::Preference {
+            expected_goal_ref,
+            question_digest,
+        } => memory.projects_goal_dismiss(
+            project,
+            EntityId::from_hex(&expected_goal_ref)?,
+            &question_digest,
+        )?,
+        ProjectGoalDismissTarget::Proposal {
+            proposal_ref,
+            reason,
+        } => memory.projects_goal_proposal_dismiss(
+            project,
+            EntityId::from_hex(&proposal_ref)?,
+            &reason,
+        )?,
+    };
+    Ok(ProjectGoalDismissReceipt { dismissed })
+}
+
 pub fn project_goal_intake_complete_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -53,6 +91,7 @@ pub fn project_goal_intake_complete_as_owner(
     })
 }
 
+/// `vault.projects.goal.get` for the owner, under his proof.
 pub fn project_goal_get_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -60,15 +99,64 @@ pub fn project_goal_get_as_owner(
 ) -> MemoryResult<ProjectGoalView> {
     owner.revalidate(vault)?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let (goal_claim, record) = match vault.project_intake_goal_in_txn(&txn, project)? {
+    Ok(goal_view(
+        project,
+        vault.project_intake_goal_in_txn(&txn, project)?,
+    ))
+}
+
+/// `vault.projects.goal.get` for the caller `memory` binds when it holds a
+/// live Steward grant naming `read` (untangle 6.6d, F4), checked at this
+/// read; a base agent reads through its own grant and scoped read.
+///
+/// # Errors
+///
+/// A caller who holds no such grant; storage errors.
+pub fn project_goal_get_as_reader(
+    memory: &crate::memory::Memory<'_>,
+    project: EntityId,
+) -> MemoryResult<ProjectGoalView> {
+    let vault = memory.vault();
+    let reader = crate::WriteActor::new(memory.actor(), memory.actor_class());
+    crate::federation::admit_substrate_read_by(
+        vault,
+        reader,
+        "vault.projects.goal.get",
+        crate::federation::SubstrateRead::Goal,
+    )?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    Ok(goal_view(
+        project,
+        vault.project_intake_goal_as_in_txn(&txn, reader, project)?,
+    ))
+}
+
+/// `vault.projects.goal.get` on a bound handle: the embedded owner reads
+/// under its own proof, any other caller as a reader.
+///
+/// # Errors
+///
+/// As [`project_goal_get_as_owner`] and [`project_goal_get_as_reader`].
+pub fn project_goal_get_embedded(
+    memory: &crate::memory::Memory<'_>,
+    project: EntityId,
+) -> MemoryResult<ProjectGoalView> {
+    match memory.embedded_owner("vault.projects.goal.get") {
+        Ok(owner) => project_goal_get_as_owner(memory.vault(), &owner, project),
+        Err(_) => project_goal_get_as_reader(memory, project),
+    }
+}
+
+fn goal_view(project: EntityId, goal: Option<(EntityId, GoalRecord)>) -> ProjectGoalView {
+    let (goal_claim, record) = match goal {
         Some((claim, record)) => (Some(claim), Some(record)),
         None => (None, None),
     };
-    Ok(ProjectGoalView {
+    ProjectGoalView {
         project_ref: project,
         goal_claim,
         record,
-    })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

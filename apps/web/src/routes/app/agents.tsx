@@ -88,10 +88,10 @@ const AGENTS: Agent[] = [
     last: '14:09',
     lastTip: 'the last run settled at 14:09',
     verbs: [
-      { v: 'read', tip: 'clients, base · standing · never the internal world', by: 'o', byTip: 'granted by Owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'propose', tip: 'claims from what she sends and hears · they wait for you', by: 'o', byTip: 'granted by Owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'draft', tip: 'any world she can read · drafts land in the inbox', by: 'o', byTip: 'granted by Owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'send', tip: 'LINE, email · one click per send · 20 a month', by: 'y', byTip: 'granted by Yuki', when: '08-07', whenTip: 'granted 2026-08-07 · expires 2026-10-07 · 20 sends a month' },
+      { v: 'read', tip: 'clients, base · standing · never the internal world', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'propose', tip: 'claims from what she sends and hears · they wait for you', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'draft', tip: 'any world she can read · drafts land in the inbox', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'send', tip: 'LINE, email · one click per send · 20 a month', by: 'y', byTip: 'granted by yuki', when: '08-07', whenTip: 'granted 2026-08-07 · expires 2026-10-07 · 20 sends a month' },
     ],
     tail: [
       { when: '14:02', what: 'Drafted the quote reply for Mika Tanaka. It waits on you.', door: { label: 'open', tip: 'the draft, in the inbox', to: '/app/inbox' } },
@@ -120,8 +120,8 @@ const AGENTS: Agent[] = [
     last: '14:09',
     lastTip: 'the last run settled at 14:09',
     verbs: [
-      { v: 'read', tip: 'clients, base, the open web · standing', by: 'o', byTip: 'granted by Owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'propose', tip: 'claims only · every one carries its source and its floor', by: 'o', byTip: 'granted by Owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'read', tip: 'clients, base, the open web · standing', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'propose', tip: 'claims only · every one carries its source and its floor', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
     ],
     tail: [
       { when: '12:48', what: 'Read the Kansai freight filings for anything on Hokuei.', door: { label: 'receipt', tip: 'run rx_9033 · four writes, none waited', href: '#' } },
@@ -150,9 +150,9 @@ const AGENTS: Agent[] = [
     last: '03:12',
     lastTip: 'run rx_7b12 · finished 03:12 · 42 writes · every write receipted',
     verbs: [
-      { v: 'read', tip: 'every world, including internal · standing', by: 'o', byTip: 'granted by Owen', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
-      { v: 'consolidate', tip: 'the nightly pass · claims in, receipts out', by: 'o', byTip: 'granted by Owen', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
-      { v: 'answer', tip: 'Slack, email · answers cite the vault', by: 'o', byTip: 'granted by Owen', when: '07-28', whenTip: 'granted 2026-07-28 · Slack, email' },
+      { v: 'read', tip: 'every world, including internal · standing', by: 'o', byTip: 'granted by owen', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
+      { v: 'consolidate', tip: 'the nightly pass · claims in, receipts out', by: 'o', byTip: 'granted by owen', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
+      { v: 'answer', tip: 'Slack, email · answers cite the vault', by: 'o', byTip: 'granted by owen', when: '07-28', whenTip: 'granted 2026-07-28 · Slack, email' },
     ],
     tail: [
       { when: '14:05', what: 'Answered #ops on the pilot timeline and cited the scope note.', door: { label: 'receipt', tip: 'slack · #ops · the answer and its citation', to: '/app/threads' } },
@@ -846,7 +846,7 @@ function Agents() {
     } else if (step === 'grants') {
       patch(c.id, 'scopes', (x) => ({
         ...x,
-        grants: prop.verbs.map((v) => ({ v, tip: VERB_TIPS[v] ?? v, by: 'o' as const, byTip: 'granted by Owen · confirmed in the room', when: day, whenTip: `granted ${day} · in the room · under your seal` })),
+        grants: prop.verbs.map((v) => ({ v, tip: VERB_TIPS[v] ?? v, by: 'o' as const, byTip: 'granted by owen · confirmed in the room', when: day, whenTip: `granted ${day} · in the room · under your seal` })),
       }))
     } else {
       patch(c.id, 'schedule', (x) => ({ ...x, schedule: prop.schedule, cap: x.cap ?? '¥300' }))

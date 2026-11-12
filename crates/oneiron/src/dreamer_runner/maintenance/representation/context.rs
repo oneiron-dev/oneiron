@@ -60,11 +60,12 @@ impl Vault {
         }
         crate::outbound::outbound_verb_contract(&request.channel, &request.verb)
             .map_err(|_| invalid())?;
-        let actor = self.dreamer_authority()?.entity_ref();
+        let dreamer = self.dreamer_authority()?;
+        let actor = dreamer.entity_ref();
         // Relationship and private rows pass only on the Dreamer's own live
         // grants, as consolidation's message reader reads them.
         let reader = self.scoped_read(
-            ScopedReadActorKey::with_actor_class(actor.to_hex(), "system")
+            ScopedReadActorKey::for_engine_actor(dreamer)
                 .ok_or_else(invalid)?
                 .require_relationship_grants(Some(actor)),
         );
@@ -109,9 +110,10 @@ impl Vault {
         destination: &ReadDestination,
     ) -> Result<DestinationContext> {
         let local = self.representation_context(request)?;
-        let actor = self.dreamer_authority()?.entity_ref();
+        let dreamer = self.dreamer_authority()?;
+        let actor = dreamer.entity_ref();
         let reader = self.scoped_read(
-            ScopedReadActorKey::with_actor_class(actor.to_hex(), "system")
+            ScopedReadActorKey::for_engine_actor(dreamer)
                 .ok_or_else(invalid)?
                 .require_relationship_grants(Some(actor))
                 .for_destination(destination),

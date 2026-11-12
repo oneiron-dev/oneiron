@@ -4,6 +4,9 @@ mod conversion;
 pub use conversion::MessageHangs;
 mod deletion;
 mod edges;
+mod extra_room_index;
+pub(crate) mod extra_room_redaction;
+mod extra_rooms;
 mod goal;
 mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
@@ -18,8 +21,9 @@ pub use proposal::{
 pub(crate) use proposal::{
     ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
     ProjectDetectionVerdict, claim_project_detection, erase_card_actor_in_txn,
-    erase_pending_actor_in_txn, fail_project_detection, project_house_agent, seeded_house_agent,
-    settle_project_detection, stage_project_detection_in_txn,
+    erase_pending_actor_in_txn, fail_project_detection, project_house_agent,
+    project_house_agent_in_txn, seeded_house_agent, settle_project_detection,
+    stage_project_detection_in_txn,
 };
 mod asks;
 mod branch;
@@ -56,6 +60,10 @@ pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
 };
+pub(crate) use extra_room_index::index_extra_room;
+pub use extra_rooms::{
+    ProjectRoomLink, ProjectRoomLinkRequest, ProjectRoomRow, ProjectRoomsPage, ProjectRoomsRequest,
+};
 pub use fold::{
     ProjectDisposition, ProjectEffective, ProjectForkConflict, ProjectFrontier, ProjectRank,
     ProjectWitness,
@@ -64,12 +72,19 @@ pub(crate) use fork_evidence::ProjectForks;
 pub use fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
 pub(crate) use goal::GoalLimits;
 pub use goal::{
-    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
-    ProjectGoalInterviewContext,
+    GoalAxis, GoalAxisChange, GoalAxisChanges, GoalBudgetChange, GoalExplorationBudget,
+    GoalInterviewTurns, GoalPreference, GoalPreferenceChange, GoalPreferenceChanges, GoalRecord,
+    GoalRecordDiff, GoalTextChange, ProjectGoalBase, ProjectGoalInterviewContext,
+    ProjectGoalProposal, ProjectGoalProposalDismissal, ProjectGoalProposalEvidence,
+    ProjectGoalProposalImprovement, ProjectGoalProposalRate, ProjectGoalProposalReasons,
+    ProjectGoalProposalStatus, ProjectGoalProposalView, ProjectGoalProposeRequest,
+    ProjectGoalProposer, ProjectGoalRevisionsView, project_goal_propose,
 };
 pub(crate) use goal::{
-    admitted_claim_of_project, guard_claim_put as guard_goal_claim_put, guard_goal_delete,
-    guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,
+    admitted_claim_of_project, dismiss_project_goal_proposal,
+    guard_claim_put as guard_goal_claim_put, guard_goal_delete,
+    guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, project_goal_base_in_txn,
+    project_goal_proposals_in_txn, reads_goal_proposals_in_txn, retire_goal_for_delete,
 };
 pub use history_policy::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
@@ -139,6 +154,11 @@ const ROOT_SEED_LEADER: &str = "sys.team_lead";
 /// home-room id).
 pub(super) const ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::PROJECT_ROOM_OWNER);
+
+/// Index from an extra room to the project that groups it, rebuilt from the room body's
+/// `project_group` key at every CONVERSATION put. Key: id16 (room).
+pub(super) const EXTRA_ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::PROJECT_EXTRA_ROOM);
 
 /// A signed project row that replay replaced with an unsigned one. Key: id16.
 const STRIPPED_PROOF: SideTable<EntityId, [u8; 1], Raw> =
@@ -521,6 +541,24 @@ pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
 }
 fn home_room_id(project: EntityId) -> Result<EntityId> {
     EntityId::derive(PROJECT_HOME_ROOM, &[project.as_bytes()])
+}
+/// The root project's home room id and body exactly as root seeding
+/// projects them ([`seed_root_project`]): the seeded house agent alone on
+/// the roster, claims scoped to the root, no origin card. `None` when the
+/// agent manifest names no seeded house agent.
+pub(crate) fn seeded_root_home_room(root: EntityId) -> Result<Option<(EntityId, Vec<u8>)>> {
+    let Some(leader) = crate::agent_def::legacy_logical_id_row(ROOT_SEED_LEADER)? else {
+        return Ok(None);
+    };
+    let room = ProjectRoom {
+        schema_version: 1,
+        kind: "channel".into(),
+        project_id: root.to_hex(),
+        member_ids: vec![leader.to_hex()],
+        claims_scope_ref: root.to_hex(),
+        origin: None,
+    };
+    Ok(Some((home_room_id(root)?, encode(&room)?)))
 }
 pub(super) fn record<T: for<'a> Deserialize<'a>>(
     store: &crate::store::Store,

@@ -4,32 +4,32 @@
   "oracle": "Author-authored content and canon invariants. Symbolic labels bind to public write receipts, never fabricated engine ids. Unavailable public wire DTOs are not invented.",
   "sourcePins": [
     {
-      "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md",
       "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
     },
     {
-      "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md",
       "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
     },
     {
-      "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0019-oneiron-db-v1.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0019-oneiron-db-v1.md",
       "sha256": "99a775e2b95d0e7fcf1c5f7bd138882a4c0b7920239ce020e26382e718544483"
     },
     {
-      "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
       "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
     },
     {
-      "path": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/sync/oneiron-arch-0043-federation-membership-v1.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/sync/oneiron-arch-0043-federation-membership-v1.md",
       "sha256": "9a9f83242578b5e90c6faf5cec009ef1c9e6d0b1633e3e4c92476a2f170433e7"
     },
     {
-      "path": "<workspace>/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "path": "<workspace>/vibe-build-20261017/e2e-rulings.md",
       "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
     }
   ],
   "registryPin": {
-    "path": "<workspace>/Desktop/code/oneiron-docs/registry/oneiron.json",
+    "path": "<workspace>/oneiron-docs/registry/oneiron.json",
     "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
     "rows": [
       "OF-029",

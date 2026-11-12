@@ -26,8 +26,8 @@ fn linkedin_kill_switch_suppresses_before_mcp_transport()
         1_090,
         "consent:owner-disabled-linkedin",
     )?;
-    assert_eq!(harness.destroyed, vec!["sandbox:tokyo:Yuki"]);
-    assert_eq!(harness.revoked, vec!["linkedin:seat:Yuki"]);
+    assert_eq!(harness.destroyed, vec!["sandbox:tokyo:yuki"]);
+    assert_eq!(harness.revoked, vec!["linkedin:seat:yuki"]);
     assert!(killed.verb_catalog().is_empty());
 
     let mut sink = LinkedInMcpVerifiedSendSink::new(
@@ -461,7 +461,7 @@ fn an_attributed_new_message_from_this_seat_is_delivered()
         &[
             ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
             ("m2", "linkedin:member:jane-doe", message),
-            ("m3", "linkedin:member:Yuki", message),
+            ("m3", "linkedin:member:yuki", message),
         ],
     );
     let delivered = send_attributed(
@@ -496,7 +496,7 @@ fn an_attributed_new_message_from_this_seat_is_delivered()
 
 /// A transcript whose own message carries `id` as given: a blank id, or none.
 fn own_message_with_id(id: Option<&str>, text: &str) -> serde_json::Value {
-    let mut message = serde_json::json!({"sender": "linkedin:member:Yuki", "text": text});
+    let mut message = serde_json::json!({"sender": "linkedin:member:yuki", "text": text});
     if let Some(id) = id {
         message["id"] = serde_json::Value::from(id);
     }
@@ -566,9 +566,9 @@ fn only_an_id_absent_before_the_send_is_the_new_message()
         vec![
             attributed_conversation(
                 "2-jane-doe-abc",
-                &[("m1", "linkedin:member:Yuki", "An earlier draft.")],
+                &[("m1", "linkedin:member:yuki", "An earlier draft.")],
             ),
-            attributed_conversation("2-jane-doe-abc", &[("m1", "linkedin:member:Yuki", message)]),
+            attributed_conversation("2-jane-doe-abc", &[("m1", "linkedin:member:yuki", message)]),
         ],
         "intent:linkedin-edited",
     )?;
@@ -584,7 +584,7 @@ fn only_an_id_absent_before_the_send_is_the_new_message()
                 "2-jane-doe-abc",
                 "Jane Doe\n10:01 AM\nThanks for reaching out.",
             ),
-            attributed_conversation("2-jane-doe-abc", &[("m9", "linkedin:member:Yuki", message)]),
+            attributed_conversation("2-jane-doe-abc", &[("m9", "linkedin:member:yuki", message)]),
         ],
         "intent:linkedin-text-precheck",
     )?;
@@ -602,13 +602,13 @@ fn only_an_id_absent_before_the_send_is_the_new_message()
         vec![
             attributed_conversation(
                 "2-jane-doe-abc",
-                &[("m1", "linkedin:member:Yuki", "An earlier draft.")],
+                &[("m1", "linkedin:member:yuki", "An earlier draft.")],
             ),
             attributed_conversation(
                 "2-jane-doe-abc",
                 &[
-                    ("m1", "linkedin:member:Yuki", "An earlier draft."),
-                    ("m2", "linkedin:member:Yuki", message),
+                    ("m1", "linkedin:member:yuki", "An earlier draft."),
+                    ("m2", "linkedin:member:yuki", message),
                 ],
             ),
         ],
@@ -630,13 +630,13 @@ fn an_incomplete_precheck_is_never_a_delivery_baseline()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let message = "Happy to share more details.";
     let jane = "linkedin:member:jane-doe";
-    let Yuki = "linkedin:member:Yuki";
+    let yuki = "linkedin:member:yuki";
     let thread = "2-jane-doe-abc";
     let idless_precheck = serde_json::json!({
         "url": format!("https://www.linkedin.com/messaging/thread/{thread}/"),
         "messages": [
             {"id": "m1", "sender": jane, "text": "Thanks for reaching out."},
-            {"sender": Yuki, "text": message},
+            {"sender": yuki, "text": message},
         ],
     });
     let cases = [
@@ -647,14 +647,14 @@ fn an_incomplete_precheck_is_never_a_delivery_baseline()
                 thread,
                 &[
                     ("m1", jane, "Thanks for reaching out."),
-                    ("m9", Yuki, message),
+                    ("m9", yuki, message),
                 ],
             ),
         ),
         // The precheck read one page; the next read is an older page.
         (
             attributed_conversation(thread, &[("m2", jane, "Thanks for reaching out.")]),
-            attributed_conversation(thread, &[("m1", Yuki, message)]),
+            attributed_conversation(thread, &[("m1", yuki, message)]),
         ),
         // An older own message the precheck's page missed, not the last one.
         (
@@ -662,7 +662,7 @@ fn an_incomplete_precheck_is_never_a_delivery_baseline()
             attributed_conversation(
                 thread,
                 &[
-                    ("m1", Yuki, message),
+                    ("m1", yuki, message),
                     ("m2", jane, "Thanks for reaching out."),
                 ],
             ),
@@ -704,7 +704,7 @@ fn a_retry_guard_never_claims_an_older_own_message_as_this_send()
             "2-jane-doe-abc",
             &[
                 ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
-                ("m2", "linkedin:member:Yuki", message),
+                ("m2", "linkedin:member:yuki", message),
             ],
         )]),
     )
@@ -742,7 +742,7 @@ fn only_the_message_the_send_names_proves_delivery()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let message = "Happy to share more details.";
     let jane = "linkedin:member:jane-doe";
-    let Yuki = "linkedin:member:Yuki";
+    let yuki = "linkedin:member:yuki";
     let thread = "2-jane-doe-abc";
     let older_page = attributed_conversation(
         thread,
@@ -752,7 +752,7 @@ fn only_the_message_the_send_names_proves_delivery()
         ],
     );
     let slid_page =
-        attributed_conversation(thread, &[("m2", jane, "Any news?"), ("m3", Yuki, message)]);
+        attributed_conversation(thread, &[("m2", jane, "Any news?"), ("m3", yuki, message)]);
     let cases = [
         (None, older_page.clone(), slid_page.clone()),
         (
@@ -760,7 +760,7 @@ fn only_the_message_the_send_names_proves_delivery()
             attributed_conversation(thread, &[("m20", jane, "Any news?")]),
             attributed_conversation(
                 thread,
-                &[("m20", jane, "Any news?"), ("m21", Yuki, message)],
+                &[("m20", jane, "Any news?"), ("m21", yuki, message)],
             ),
         ),
         (Some("m4"), older_page.clone(), slid_page),
@@ -791,7 +791,7 @@ fn only_the_message_the_send_names_proves_delivery()
             thread,
             &[
                 ("m2", jane, "Any news?"),
-                ("m3", Yuki, message),
+                ("m3", yuki, message),
                 ("m4", jane, "Thanks!"),
             ],
         ),
@@ -822,7 +822,7 @@ fn a_named_id_beside_mcp_content_still_proves_delivery()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let message = "Happy to share more details.";
     let jane = "linkedin:member:jane-doe";
-    let Yuki = "linkedin:member:Yuki";
+    let yuki = "linkedin:member:yuki";
     let thread = "2-jane-doe-abc";
     let shapes = [
         serde_json::json!({"message_id": "m3", "structuredContent": {"status": "sent"}}),
@@ -835,7 +835,7 @@ fn a_named_id_beside_mcp_content_still_proves_delivery()
             .with_max_observation_attempts(1)?;
         let transport = ScriptedLinkedInTransport::new(vec![
             attributed_conversation(thread, &[("m2", jane, "Any news?")]),
-            attributed_conversation(thread, &[("m2", jane, "Any news?"), ("m3", Yuki, message)]),
+            attributed_conversation(thread, &[("m2", jane, "Any news?"), ("m3", yuki, message)]),
         ])
         .sending(sent);
         let intent = format!("intent:linkedin-mcp-{seed}");
