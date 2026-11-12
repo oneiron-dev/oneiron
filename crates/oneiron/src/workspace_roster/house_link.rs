@@ -137,11 +137,10 @@ fn require_undeleted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> 
 const ROLE_ASSIGNER_REFUSAL: &str = "a house's role is set or cleared only by whoever may assign that role: org:assign-role, or an Owner for the owner role";
 
 /// What the role table asks of whoever assigns `role` (ARCH-0043), as the
-/// membership acts ask it: a non-root role is the `org:assign-role` power's
-/// (`change_shared_member_role`), the owner role the org root's, an Owner's.
-/// An assigner never grants a power it lacks, so an Admin assigns up to
-/// Admin; a role above Admin (the `deputy` preset, once it lands) needs an
-/// Owner too.
+/// membership acts ask it: a non-root role, Deputy included, is the
+/// `org:assign-role` power's (`change_shared_member_role`), and the owner
+/// role is the org root's, an Owner's. A house never runs its org as a
+/// Deputy (`require_house_role`).
 fn assignment_write(role: FederationGrantRole) -> SharedVaultWrite {
     if role == FederationGrantRole::Owner {
         SharedVaultWrite::OrgRoot
