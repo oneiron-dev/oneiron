@@ -136,7 +136,7 @@ impl Memory<'_> {
             let value = ScopedReadResult {
                 value: LedgerRowAtom {
                     cells: vec![
-                        cell("kind", self.vault.entity_kind_name(row.entity_type))?,
+                        cell("kind", self.vault().entity_kind_name(row.entity_type))?,
                         cell("ref", row.id.to_hex())?,
                         cell(
                             "value",
