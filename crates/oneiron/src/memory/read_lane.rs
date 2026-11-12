@@ -5,7 +5,6 @@ mod connector_source_rows;
 mod masked_asset_read;
 mod skill_package_read;
 
-use super::structural::kind_string_for_type;
 use super::support::*;
 use super::*;
 
@@ -840,7 +839,7 @@ impl Memory<'_> {
         let view = EntityView {
             id_hex: row.id.to_hex(),
             short_ref,
-            kind: kind_string_for_type(row.entity_type),
+            kind: self.vault.entity_kind_name(row.entity_type),
             occurred_start: row.occurred.start,
             occurred_end: row.occurred.end,
             learned_at: row.learned_at,
