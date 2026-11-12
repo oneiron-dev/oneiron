@@ -377,7 +377,15 @@ impl AgentDispatcher<'_> {
                     woken.insert(format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{}", signal.key));
                 }
             }
-            if !ended && row.state != AttemptState::Paused {
+            // A wake parked on a durable wait (or on an outage or its payer)
+            // keeps its lease, so its row still reads Leased, but it runs no
+            // step: like a paused wake, it is not busy (#7327 review round 1).
+            if !ended
+                && row.state != AttemptState::Paused
+                && crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                    .parked_attempt(row.id)?
+                    .is_none()
+            {
                 view.busy = true;
                 if row.state.is_running() && view.running.is_none() {
                     view.running = Some(row.id);
