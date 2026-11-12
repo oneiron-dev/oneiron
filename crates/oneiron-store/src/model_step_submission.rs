@@ -20,6 +20,41 @@ pub enum ModelStepFailureClass {
     FinalizeRefused,
     DeadlineHardCut,
     Engine,
+    /// A spend scope refused the step's reservation and no write frees it:
+    /// the failure's `budget_refusal` says which scope and why.
+    BudgetRefused,
+}
+
+/// Why a step's spend scope refused its reservation with no park
+/// (BUDGET-TRAP-UNTYPED-NO-SENDER): no write the step could wait for gives
+/// that scope room again, so the step fails at once, typed, and nothing parks.
+/// `scope` is the refusing spend scope's id, `available_units` its room for
+/// the reservation, `asked_units` what the reservation asked of it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, thiserror::Error,
+)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum StepBudgetRefusal {
+    /// A closed boundary on the way to the open scope that books the step has
+    /// less room than asked. Nothing reopens a closed scope.
+    #[error(
+        "spend scope {scope} is closed with {available_units} of the {asked_units} units the step asks"
+    )]
+    BoundaryClosed {
+        scope: String,
+        available_units: u64,
+        asked_units: u64,
+    },
+    /// A scope's ceiling, set at its launch, has less room than asked. A
+    /// top-up of its cap does not raise it.
+    #[error(
+        "spend scope {scope} is at its ceiling with {available_units} of the {asked_units} units the step asks"
+    )]
+    CeilingReached {
+        scope: String,
+        available_units: u64,
+        asked_units: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -30,6 +65,10 @@ pub struct ModelStepFailure {
     pub validation_attempts: Option<u8>,
     pub validation_errors: Vec<String>,
     pub spent_usage: Option<LlmUsage>,
+    /// The typed refusal of a `BudgetRefused` failure; `None` for every
+    /// other class, and on a row written before the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

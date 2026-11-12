@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ConnectorCallStatus",
   "call": "crate::task_verb::sdk::connector_call_status_read(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "section": false,
   "host_door": true,
   "host_door_precheck": false,

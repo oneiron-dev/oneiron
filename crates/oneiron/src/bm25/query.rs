@@ -338,10 +338,10 @@ fn term_posting_decisions(
 
 fn posting_has_enabled_channel(config: &Bm25Config, entry: &PostingEntry) -> Result<bool> {
     for (fid, _) in &entry.fields {
-        let Some(channel) = AnalyzerChannel::from_field_id(*fid) else {
+        let Some(field) = config.field_for_id(*fid) else {
             return Err(corrupted("posting field_id not in current schema"));
         };
-        if config.field(channel).weight != 0.0 {
+        if field.weight != 0.0 {
             return Ok(true);
         }
     }

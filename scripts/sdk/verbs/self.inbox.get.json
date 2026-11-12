@@ -5,6 +5,7 @@
   "output": "crate::agent_inbox_lens::InboxItemView",
   "call": "memory.inbox_item_get(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -5,6 +5,7 @@
   "output": "Vec<crate::mail_pack::SourceAudienceEventView>",
   "call": "memory.mail_sources_audience_events(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

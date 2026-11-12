@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailReplyDraftPage",
   "call": "memory.mail_reply_drafts(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

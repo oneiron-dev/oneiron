@@ -5,6 +5,7 @@
   "output": "()",
   "call": "memory.messages_flush_stream(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

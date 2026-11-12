@@ -6,6 +6,7 @@
   "mcp_served": "[input.handle.group_ref]",
   "call": "crate::task_verb::sdk::TaskAnswerForwardChallenge::from_bytes(&memory.tasks_answer_forward_challenge(&input.handle, &input.intent_key, &input.act)?)",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

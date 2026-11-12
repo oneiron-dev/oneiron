@@ -120,6 +120,12 @@ impl<'e> RoTxn<'e> {
         self.env.env_mut_ptr()
     }
 
+    /// ONEIRON FORK (PAGE-FULL trace): the environment held alive by this
+    /// transaction, so a failed write can report the map size and last page.
+    pub fn environment(&self) -> &Env {
+        self.env.as_ref()
+    }
+
     /// ONEIRON FORK (LC backup shipper rows): this transaction's id, LMDB's
     /// `mdb_txn_id`. A read transaction's is the id of the last write
     /// transaction it sees; a write transaction's is the id it commits as.
