@@ -33,8 +33,7 @@ pub(super) fn record_room_turn_in_txn(
 ) -> Result<()> {
     let room = EntityId::from_hex(&turn.room_id)?;
     let turn_id = EntityId::from_hex(&turn.turn_id)?;
-    TURNS.put(&vault.store, txn, &turn_id, turn)?;
-    super::history::index_turn(&vault.store, txn, turn)?;
+    put_room_turn_projection_in_txn(vault, txn, turn)?;
     if let Some(admitted) = admitted {
         admitted.record_in_txn(vault, txn, now)?;
     }
@@ -56,6 +55,19 @@ pub(super) fn record_room_turn_in_txn(
     Ok(())
 }
 
+/// Puts `turn`'s room row and indexes it, and nothing else: no writer, no
+/// address and no wake is recorded. Every room row is written here; the
+/// open's backfill (`super::backfill`) writes nothing beside it.
+pub(super) fn put_room_turn_projection_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &RoomTurn,
+) -> Result<()> {
+    let turn_id = EntityId::from_hex(&turn.turn_id)?;
+    TURNS.put(&vault.store, txn, &turn_id, turn)?;
+    super::history::index_turn(&vault.store, txn, turn)
+}
+
 /// Every TURN the conversation DAG appends keeps its room row and stages
 /// its wakes in the append's own write, as a witness turn does, in any room
 /// (THREAD-TASK-ONE-SURFACE, THREAD-TASK-EVERY-ROOM). `appended` is the
@@ -66,9 +78,13 @@ pub(super) fn record_room_turn_in_txn(
 /// that parent and its `thread_of` the thread's anchor. The row names each
 /// recipient the witness lets a turn name there: one with a seat, or an
 /// agent that speaks as a persona; any other recipient keeps its DAG
-/// address and is named on no row. A thread TURN whose parent is neither
-/// the anchor nor a turn of this thread that keeps a row keeps no row and
-/// wakes no one, so a room walk never meets a gap; the append stands.
+/// address and is named on no row. A thread TURN whose binding names no
+/// anchor, or that has no parent, keeps no row. Nor does one whose parent
+/// is neither the anchor nor a turn of this thread that keeps a row, such
+/// as a reply under an imported or erased reply the open's backfill left
+/// with none: every reader of a room's threads walks `reply_to` through
+/// rows, so such a row would break the whole thread. It wakes no one, and
+/// the append stands.
 pub(crate) fn record_native_room_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
