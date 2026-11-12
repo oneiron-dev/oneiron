@@ -12,12 +12,24 @@ fn a_refused_agent_world_edit_leaves_the_install_cap_on_its_world() {
 
 #[test]
 fn the_capped_fixture_reads_the_widening_uncapped_and_the_narrowing_capped() {
-    assert_eq!(capped_agent_world_edit_read(true, false, false), "Everywhere");
-    assert_eq!(capped_agent_world_edit_read(true, true, false), "MyMachines");
+    assert_eq!(
+        capped_agent_world_edit_read(true, false, false),
+        "Everywhere"
+    );
+    assert_eq!(
+        capped_agent_world_edit_read(true, true, false),
+        "MyMachines"
+    );
 }
 
 #[test]
 fn a_refused_agent_world_edit_beside_only_fresh_edits_leaves_its_world_uncapped() {
-    assert_eq!(capped_agent_world_edit_read(false, true, false), "MyMachines");
-    assert_eq!(capped_agent_world_edit_read(false, true, true), "Everywhere");
+    assert_eq!(
+        capped_agent_world_edit_read(false, true, false),
+        "MyMachines"
+    );
+    assert_eq!(
+        capped_agent_world_edit_read(false, true, true),
+        "Everywhere"
+    );
 }
