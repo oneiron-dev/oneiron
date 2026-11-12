@@ -653,11 +653,22 @@ mod tests {
                     b"person",
                 )
                 .expect("put the member");
-            // Bound before the shipped manifest is installed below: under it
-            // the binding's predicate is critical and the write pends.
+            // Bound before the shipped manifest is installed below; the
+            // owner's binding lands under it too (its proof lifts the floor).
             let binding = match world {
-                None => crate::federation::bind_member_person(vault, space, member, when, 1)
-                    .expect("bind the member"),
+                None => {
+                    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+                    let owner = vault
+                        .authenticate_owner(
+                            owner,
+                            &owner.to_hex(),
+                            true,
+                            crate::store::GateDecisionId::now(),
+                        )
+                        .expect("owner proof");
+                    crate::federation::bind_member_person(vault, &owner, space, member, when, 1)
+                        .expect("bind the member")
+                }
                 Some(world) => {
                     let binding = EntityId::now();
                     let mut body = ClaimBody::new(
