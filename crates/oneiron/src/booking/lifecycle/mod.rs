@@ -383,7 +383,27 @@ struct BookingFacts {
     event_type: EventTypeKey,
     slot: TimeRange,
     /// The LIVE status head, so a transition rules on what the booking is now
-    /// rather than on what its token was issued for.
+    /// rather than on what its token was issued for. The booking's own word
+    /// only: a cancel reads it, so a cancel still lands on a booking whose
+    /// calendar was cancelled.
     status: BookingStatus,
+    /// Whether a `calendar.status` head on the EVENT says cancelled: the
+    /// booking's own cancel, or a calendar provider's that need not change
+    /// `booking.status` (FIX 22385).
+    calendar_cancelled: bool,
     context: Option<BookingConfirmationContext>,
+}
+
+impl BookingFacts {
+    /// What the booking is now for a transition that keeps it live (a move,
+    /// a reminder): Cancelled when its own status head or a calendar
+    /// cancellation says so. The cap reads the same two heads
+    /// (`claim::is_confirmed_booking_in`).
+    fn effective_status(&self) -> BookingStatus {
+        if self.calendar_cancelled {
+            BookingStatus::Cancelled
+        } else {
+            self.status
+        }
+    }
 }
