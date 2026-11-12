@@ -150,6 +150,7 @@ impl FederationGrant {
             verb_classes: std::collections::BTreeSet::new(),
             wallet_ref: None,
             inquiry_terms,
+            working_view_bounds: None,
         };
         grant.validate()?;
         Ok(grant)
