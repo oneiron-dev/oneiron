@@ -1,0 +1,20 @@
+{
+  "name": "connector.call_source_rows",
+  "description": "Reads one held connector call's source rows the caller's lane admits, by the call_ref its held reply named, for its caller or the vault's owner.",
+  "input": "crate::task_verb::sdk::ConnectorCallStatusRequest",
+  "output": "crate::task_verb::sdk::ConnectorCallSourceRows",
+  "call": "crate::task_verb::sdk::connector_call_source_rows_embedded(memory, input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "grant_class": "connector.call_source_rows grant + caller read lane",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}
