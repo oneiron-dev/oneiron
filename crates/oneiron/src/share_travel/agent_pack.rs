@@ -813,10 +813,12 @@ impl AgentPackTravelProjection {
         Ok(())
     }
 
-    /// The definition a destination admits: inert like any imported agent
-    /// (disabled, proposed, ceiling at Proposed until its owner raises it),
-    /// with no fork parent, provenance of its own or logical id. `world` is
-    /// the local world the destination bound the scope's name to.
+    /// The definition an owner or hub install admits: inert (disabled,
+    /// proposed, ceiling at Proposed until its owner raises it), with no
+    /// fork parent, provenance of its own or logical id. An agent's own local
+    /// pack instead uses [`Self::to_author_request`] and the author writer
+    /// (ARCH-0053:20). `world` is the local world the destination bound the
+    /// scope's name to.
     pub fn to_definition(&self, world: Option<EntityId>) -> Result<AgentDefinition> {
         let scope = match (&self.policy.scope, world) {
             (AgentPackScope::All, _) => AgentScope::All,
@@ -829,6 +831,18 @@ impl AgentPackTravelProjection {
         let def = self.native(scope);
         encode_agent_definition(&def)?;
         Ok(def)
+    }
+
+    /// The request an agent's own local pack sends to the author writer
+    /// (ARCH-0053:20): the same local scope, enabled, at the pack's requested
+    /// ceiling. The writer sets approval, source, lifecycle and provenance;
+    /// this request alone grants nothing. Owner and hub installs keep using
+    /// [`Self::to_definition`].
+    pub fn to_author_request(&self, world: Option<EntityId>) -> Result<AgentDefinition> {
+        let mut definition = self.to_definition(world)?;
+        definition.ceiling = self.policy.ceiling.into();
+        definition.enabled = true;
+        Ok(definition)
     }
 
     fn native(&self, scope: AgentScope) -> AgentDefinition {

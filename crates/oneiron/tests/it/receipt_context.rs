@@ -48,7 +48,7 @@ fn assembled_board(vault: &Vault) -> Result<MemoriesSection> {
     let pack = vault.context_pack().search_text("matcha", 8).run()?;
     Ok(project_memories_section(
         &pack,
-        MemoriesBudget::new(8, 2, 8, 8, 8, 8),
+        MemoriesBudget::new(8, 2, 8, 8, 8),
         None,
         None,
     ))
@@ -72,6 +72,7 @@ fn host_section_edits_change_receipt_prompt_identity_without_changing_file_prove
                 activated_memory: vec!["same activated memory".to_owned()],
                 history: Vec::new(),
                 host_sections: vec![format!("# Policy\nUse policy {policy}")],
+                layout: None,
             },
         )
     };

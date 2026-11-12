@@ -58,6 +58,7 @@ mod dev_backend {
         sync::{Arc, Mutex},
     };
 
+    use oneiron::engine_executor::JsCodeModeStream;
     use oneiron::{
         ErrorKind, Result,
         code_sandbox::SandboxBoundaryAdapter,
@@ -117,6 +118,12 @@ mod dev_backend {
         adapter: MicroVmSandboxAdapter,
         resolver: Arc<RecordingResolver>,
         base: std::path::PathBuf,
+    }
+
+    /// The guest's output frames: these tests read the overlay and the
+    /// credential boundary, not what the guest printed.
+    fn discard_output(_stream: JsCodeModeStream<'_>, _frame: Vec<u8>) -> Result<()> {
+        Ok(())
     }
 
     fn handle() -> SandboxCredentialHandle {
@@ -231,7 +238,11 @@ mod dev_backend {
 
         let exit = fixture
             .adapter
-            .run(&image, ExecutionBudget::new(5, 128, 32))
+            .run(
+                &image,
+                ExecutionBudget::new(5, 128, 32),
+                &mut discard_output,
+            )
             .expect("run");
         assert_eq!(exit.status, 0);
         assert!(exit.overlay_dirty, "the guest touched the overlay");
@@ -247,7 +258,9 @@ mod dev_backend {
                 assert_eq!(delta.kind(), SandboxProposalKind::FileWrite);
                 match delta.write() {
                     SandboxProposalWrite::FileWrite(write) => {
-                        (write.path.as_str().to_owned(), write.bytes.clone())
+                        let len = usize::try_from(write.body.len()).expect("body length");
+                        let bytes = write.body.read_range(0, len).expect("proposal body");
+                        (write.path.as_str().to_owned(), bytes)
                     }
                     _ => unreachable!("file writes only"),
                 }
@@ -296,7 +309,11 @@ mod dev_backend {
         assert_eq!(
             fixture
                 .adapter
-                .run(&image, ExecutionBudget::new(5, 128, 32))
+                .run(
+                    &image,
+                    ExecutionBudget::new(5, 128, 32),
+                    &mut discard_output
+                )
                 .expect("run")
                 .status,
             0
@@ -311,7 +328,7 @@ mod dev_backend {
         assert!(proposals.iter().any(|delta| {
             delta.kind() == SandboxProposalKind::FileWrite
                 && matches!(delta.write(), SandboxProposalWrite::FileWrite(write)
-                    if write.path.as_str() == "/mnt/workspace/renamed.txt" && write.bytes == b"base bytes")
+                    if write.path.as_str() == "/mnt/workspace/renamed.txt" && write.body.is(b"base bytes"))
         }));
         assert_eq!(tree_hash(&fixture.base), before);
         assert!(!fixture.base.join("renamed.txt").exists());
@@ -329,7 +346,11 @@ mod dev_backend {
 
         fixture
             .adapter
-            .run(&image, ExecutionBudget::new(5, 128, 32))
+            .run(
+                &image,
+                ExecutionBudget::new(5, 128, 32),
+                &mut discard_output,
+            )
             .expect("initial run");
         fixture
             .adapter
@@ -342,7 +363,11 @@ mod dev_backend {
         fs::remove_file(&image.kernel).expect("invalidate image after sealing");
         let error = fixture
             .adapter
-            .run(&image, ExecutionBudget::new(5, 128, 32))
+            .run(
+                &image,
+                ExecutionBudget::new(5, 128, 32),
+                &mut discard_output,
+            )
             .expect_err("execution after sealed overlay export must fail closed");
         assert_eq!(error.kind(), ErrorKind::MicroVmOverlayError);
         assert_eq!(fixture.adapter.proposal_deltas(), deltas_before);

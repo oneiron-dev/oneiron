@@ -153,5 +153,11 @@ fn core_step_budget_refusal(refusal: StepBudgetRefusal) -> CoreStepBudgetRefusal
             available_units,
             asked_units,
         },
+        StepBudgetRefusal::Unbound { asked_units } => {
+            CoreStepBudgetRefusal::Unbound { asked_units }
+        }
+        StepBudgetRefusal::Unfunded { asked_units } => {
+            CoreStepBudgetRefusal::Unfunded { asked_units }
+        }
     }
 }

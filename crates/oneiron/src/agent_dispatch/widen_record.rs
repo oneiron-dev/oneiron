@@ -116,6 +116,10 @@ pub(super) struct WidenIntent {
     /// like the rest of the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<super::CommReach>,
+    /// The powers the spawn asked for its child (SPAWN-KNOB), checked
+    /// against the parent's again when the approved spawn dispatches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
     /// The TASK an agent's bound workflow run realizes, and its binding
     /// (FIX 5350): the gate runs again and the run takes the TASK only once
     /// the board approves.
@@ -150,6 +154,7 @@ impl WidenIntent {
             plan: spawn.plan.clone(),
             objectives: spawn.objectives.clone(),
             comm: spawn.comm,
+            powers: spawn.powers,
             task: None,
         })
     }
@@ -209,6 +214,7 @@ impl WidenIntent {
                 // A widened spawn is a child: it keeps its parent's requester.
                 requester: None,
                 caller_origin: None,
+                powers: self.powers,
             },
         ))
     }

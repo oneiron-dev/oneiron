@@ -17,6 +17,7 @@ mod id_pin;
 mod manifest;
 mod models;
 mod optional_memory;
+mod powers;
 mod proposed_change;
 mod refusal;
 mod types;
@@ -34,6 +35,15 @@ pub use self::models::{
 pub use self::optional_memory::{
     OPTIONAL_MEMORY_BUDGET_KEYS, OPTIONAL_MEMORY_PROFILE_KEYS, OptionalMemory,
     OptionalMemoryProfile,
+};
+pub use self::powers::{
+    AgentPowerHolderKind, AgentPowerSetRequest, AgentPowerTarget, AgentPowers, ChildPowerRequest,
+    child_agent_powers, set_agent_powers_from_request_as,
+};
+pub(crate) use self::powers::{
+    POWER_GRANTS, SAVE_AGENT_OFF, SPAWN_OFF, actor_instance, agent_powers_in_txn,
+    decode_power_grant_row, effective_agent_powers_in_txn, ensure_save_agent_in_txn,
+    power_grant_row, power_refusal, stage_agent_powers_in_txn,
 };
 pub use self::proposed_change::ProposedAgentDefinitionChangeDecision;
 pub(crate) use self::proposed_change::{

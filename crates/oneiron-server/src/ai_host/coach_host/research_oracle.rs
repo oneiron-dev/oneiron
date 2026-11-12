@@ -69,7 +69,9 @@ impl ResearchGoalOracle for JudgeOracle<'_> {
 
 /// Every axis the campaign's pinned goal states, as the judge's criterion:
 /// each primary, floor and cost axis of the joined project's goal record,
-/// with its measure and bound, as the live slice joins them. `None` when the
+/// by its name and kind and the goal's revision, as the live slice joins
+/// them. The goal's text, why, measure and bound stay in the project (FIX
+/// 22437). `None` when the
 /// campaign has no target: the skill's goal is no longer the pinned one, no
 /// project goal is joined, the record states no axis, or a task axis of the
 /// skill's goal has no stated bound. The honesty floor is the engine's own
@@ -116,10 +118,7 @@ fn stated_axes(vault: &Vault, basis: &ResearchGoalBasis) -> oneiron::Result<Opti
         stated
             .into_iter()
             .map(|(kind, axis)| {
-                json!({
-                    "name": axis.name, "kind": kind, "measure": axis.measure, "bound": axis.bound,
-                    "goal": record.goal, "why": record.why, "goal_revision": goal.revision,
-                })
+                json!({"name": axis.name, "kind": kind, "goal_revision": goal.revision})
             })
             .collect(),
     ))

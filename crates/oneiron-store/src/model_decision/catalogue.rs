@@ -464,6 +464,28 @@ pub const COMPACTION_SUPPORT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Do a claim's supports, as they stand now, still carry it, after a mail message it was drawn
+/// from was deleted at the provider and kept (FIX 15414, DECIDE-BYPASS-1)? The fixed choices are
+/// supported, weakened and unsupported; an abstain is no verdict and waits for the owner's
+/// review. Keyed by the host rubric's digest.
+pub const CLAIM_SOURCE_SUPPORT: QuestionFamily = QuestionFamily {
+    name: "dreamer.claim_source.support",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does a flaw keep one objective of a sealed attempt from being met, as a judge that did
+/// not produce the attempt's result reads that result (ARCH-0079
+/// #stuck-confession-and-the-seal, OF-544, DECIDE-BYPASS-2)? Yes is a flaw present, no is
+/// none found. One question per objective of a confession recheck or a random audit, keyed
+/// by the checker protocol's digest, the check's kind and the objective's digest; an
+/// abstain leaves the whole check undecided.
+pub const SEAL_OBJECTIVE_FLAW: QuestionFamily = QuestionFamily {
+    name: "dreamer.seal.objective_flaw",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// What the owner does about an offer parked on a spent window or spent credit: wait, top
 /// up, add an account, pay as you go, or use the usage left on another provider (OF-305,
 /// FIX 562). Asked of a person only; keyed by the parked offer's row and what was spent.
@@ -524,5 +546,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     ARC_OPEN_TURN,
     URGENT_DIGEST_HARM,
     COMPACTION_SUPPORT,
+    CLAIM_SOURCE_SUPPORT,
+    SEAL_OBJECTIVE_FLAW,
     QUOTA_SPENT,
 ];
