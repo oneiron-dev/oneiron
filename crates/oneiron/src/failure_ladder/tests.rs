@@ -595,6 +595,7 @@ fn runner_untyped_failure_cannot_bypass_agent_dispatch_ladder() -> Result<()> {
             lease_owner: LEASE_OWNER.into(),
             attempt_count: leased.attempt_count,
             reason: "opaque prose".into(),
+            budget_refusal: None,
             now: 20,
         })
         .expect_err("agent failure requires typed evidence");

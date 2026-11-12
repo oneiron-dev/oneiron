@@ -1,14 +1,18 @@
 //! The claim item (kind 1): a derived claim through the shared claim gate as
 //! the committing actor, held to the derivation floors and to that actor's
 //! own read. Its source is the trust of the rows it cites, folded from the
-//! `Generated` floor: its caller never chooses it.
+//! `Generated` floor, or Observed for a preference supported by three user
+//! TURNs across two sessions. Its caller never chooses the source.
 
 use rmpv::Value;
 
 use super::batch::DerivedClaim;
 use super::commit::{ItemContext, ItemOutcome, refusal_receipt_in_txn};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimSource, ClaimSubject, is_preference_predicate,
+    observed_preference_support_in_txn, stated_preference_peers_in_txn, write_coaching,
+};
 use crate::dreamer_consolidation::{
     ConsolidationEvidenceEnvelope, encode_consolidation_evidence, evidence_source_from_row_in_txn,
     source_meet,
@@ -25,10 +29,11 @@ use crate::{ClaimCandidate, EntityId, TimeRange, Vault};
 /// reference check judges the subject and every cited row under that read:
 /// a claim about, or citing, a row its actor does not read is refused.
 ///
-/// The claim's source is the meet of its cited rows' trust
-/// ([`evidence_meet_in_txn`]): a claim citing imported words is `Imported`,
-/// and the gate holds it for review whatever the actor's `Generated` permit
-/// grants.
+/// The engine computes the source, never taking one from its caller. It
+/// stamps Observed on a `preference.*` claim with a Generated evidence meet
+/// and three live, nonimported user TURNs across two live sessions. Otherwise
+/// the source stays the cited rows' meet ([`evidence_meet_in_txn`]): imported
+/// words remain Imported, held for review whatever the Generated permit grants.
 ///
 /// # Errors
 ///
@@ -47,6 +52,14 @@ pub(super) fn stage_in_txn(
         .map(|named| context.resolve(named))
         .collect::<Result<Vec<_>>>()?;
     let meet = evidence_meet_in_txn(vault, txn, &evidence)?;
+    let beside_stated = meet == ClaimSource::Generated
+        && is_preference_predicate(&claim.predicate)
+        && observed_preference_support_in_txn(vault, txn, &evidence)?;
+    let source = if beside_stated {
+        ClaimSource::Observed
+    } else {
+        meet
+    };
     let value = rmpv::ext::to_value(&claim.value)
         .map_err(|_| Error::InvalidClaimBody("a derived claim's value does not encode"))?;
     let candidate = ClaimCandidate::new(
@@ -59,7 +72,7 @@ pub(super) fn stage_in_txn(
         &ConsolidationEvidenceEnvelope {
             refs: evidence,
             chain: Vec::new(),
-            source_meet: meet,
+            source_meet: source,
         },
     ));
     // The lane an ordinary core write is held to (`Memory::core_write_lane`):
@@ -75,7 +88,8 @@ pub(super) fn stage_in_txn(
             local: &claim.local,
             id: EntityId::now(),
             candidate: &candidate,
-            source: meet,
+            source,
+            beside_stated,
         },
         crate::core_write::CoreWriteLaneRef::Read(&read),
     )
@@ -89,9 +103,11 @@ pub(super) struct StagedClaim<'a> {
     pub(super) id: EntityId,
     /// The claim's words and evidence.
     pub(super) candidate: &'a ClaimCandidate,
-    /// The source the engine stamps on it: for a claim item, the meet of the
-    /// trust of the rows it cites.
+    /// The engine-computed source, never caller-supplied: for a claim item,
+    /// the cited rows' meet, or Observed when user TURNs meet the preference bar.
     pub(super) source: ClaimSource,
+    /// Whether this claim item was stamped Observed beside stated preferences.
+    pub(super) beside_stated: bool,
 }
 
 /// Stages `claim` in a savepoint of `txn`: first at Auto, then,
@@ -116,6 +132,7 @@ pub(super) fn stage_candidate_in_txn(
         id,
         candidate,
         source,
+        beside_stated,
     } = *claim;
     for approval in [ClaimApprovalStatus::Auto, ClaimApprovalStatus::Proposed] {
         let mut envelope = envelope(context, local, approval, source)?;
@@ -134,6 +151,24 @@ pub(super) fn stage_candidate_in_txn(
                 context.now,
             )
             .apply_recording_gate_decisions_in_lane(&mut savepoint, lane);
+        if approval == ClaimApprovalStatus::Auto
+            && matches!(
+                &staged,
+                Err(Error::Gate(GateError::GateWriteRejected {
+                    outcome: "pending",
+                    ..
+                }))
+            )
+        {
+            savepoint.abort();
+            continue;
+        }
+        let staged = match staged {
+            Ok(()) if beside_stated => {
+                open_stated_conflicts_in_txn(vault, &mut savepoint, &id, &envelope, context.now)
+            }
+            staged => staged,
+        };
         match staged {
             Ok(()) => {
                 savepoint.commit()?;
@@ -143,9 +178,6 @@ pub(super) fn stage_candidate_in_txn(
                     receipt: None,
                 });
             }
-            Err(Error::Gate(GateError::GateWriteRejected {
-                outcome: "pending", ..
-            })) if approval == ClaimApprovalStatus::Auto => savepoint.abort(),
             Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
                 savepoint.abort();
                 let reasons: Vec<String> =
@@ -153,12 +185,38 @@ pub(super) fn stage_candidate_in_txn(
                 let receipt = refusal_receipt_in_txn(vault, txn, context, Some(id), &reasons)?;
                 return Ok(ItemOutcome::Refused { reasons, receipt });
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                savepoint.abort();
+                return Err(error);
+            }
         }
     }
     Err(Error::InvariantViolation(
         "a derived claim's proposal was neither landed nor refused",
     ))
+}
+
+/// OF-023: one `core.conflict.open` marker for each standing stated
+/// preference whose answer differs from the Observed claim `id` staged in
+/// `txn`, written with that claim's `envelope`, as the Memory door opens them.
+///
+/// # Errors
+///
+/// A read failure, or the gate's refusal of a marker.
+fn open_stated_conflicts_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    envelope: &WriteEnvelope,
+    now: u64,
+) -> Result<()> {
+    let body = vault
+        .get_claim_in_txn(txn, id)?
+        .ok_or(Error::EntityNotFound)?;
+    for peer in stated_preference_peers_in_txn(vault, txn, &body)? {
+        write_coaching(vault, txn, id, &peer, &body, envelope, now)?;
+    }
+    Ok(())
 }
 
 /// The trust the rows `evidence` carry, folded from the `Generated` floor a
@@ -204,7 +262,7 @@ fn evidence_meet_in_txn(
 }
 
 /// The envelope the engine stamps on a derived claim: the committing actor,
-/// the source `source` (the meet its cited rows fold to), the run's recorded
+/// the engine-computed `source`, the run's recorded
 /// lineage with that source, and provenance naming the derivation surface,
 /// the batch, the item and the run.
 fn envelope(

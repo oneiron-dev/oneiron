@@ -127,6 +127,7 @@ pub(super) fn apply_old_record(
                 &fixed.id,
                 &old_record[ENTITY_METADATA_HEADER_LEN..],
                 updated,
+                data,
                 fixed.hub_sync_imported,
                 fixed.replicated,
                 fixed.hub_admission,

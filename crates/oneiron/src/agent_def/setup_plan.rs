@@ -188,7 +188,7 @@ pub(crate) fn prepare_agent_setup_in_txn(
     )];
     let mut owners = Vec::new();
     // The genuine AGENT_DEF create writes its optional source ASSET before
-    // ensure_agent_person, so this owner birth must be visible to that read.
+    // ensure_agent_person_in_txn, so this owner birth must be visible to that read.
     if let Some((asset_id, asset_body)) = birth.entity_put() {
         if let Some(owner) = prepare_owner_before_put(
             vault,

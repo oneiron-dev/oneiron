@@ -1,19 +1,34 @@
-//! Deterministic duplicate consolidation; calibration never counts repeated critic output twice.
+//! Findings merge on a checkable flaw identity (LEARN-CRITIC Q1 = B): one
+//! target, one flaw kind, one location. A critique that names no flaw is a
+//! finding of its own. Calibration never counts repeated critic output twice.
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MergedFinding {
+    /// Its critiques' [`finding_key`].
     pub key: String,
+    /// The most cautious verdict its critiques give: discard, then revise,
+    /// then accept.
     pub verdict: CritiqueVerdict,
     pub severity: CritiqueSeverity,
+    /// The posterior mean of the critics that give [`Self::verdict`].
     pub confidence: f64,
     pub artifact_ids: Vec<String>,
     pub evidence_refs: Vec<String>,
+    /// The first edit, by artifact id, of a critique that gives
+    /// [`Self::verdict`]; each critique keeps its own.
     pub suggested_edit: Option<String>,
     pub auto_resolved: bool,
+    /// Its critiques give more than one verdict: it shows the most cautious
+    /// one and never resolves without a person. A finding stored before
+    /// findings merged on flaw identity held one verdict, and reads `false`.
+    #[serde(default)]
+    pub conflict: bool,
 }
 
-pub(super) fn finding_key(critique: &CritiqueArtifact) -> String {
+/// One critique's opinion, for votes: its verdict, evidence and edit. A
+/// critic's repeated opinion in one cell counts once.
+pub(super) fn opinion_key(critique: &CritiqueArtifact) -> String {
     let mut evidence = critique.evidence_refs.clone();
     evidence.sort();
     evidence.dedup();
@@ -29,12 +44,41 @@ pub(super) fn finding_key(critique: &CritiqueArtifact) -> String {
         serde_json::to_vec(&(critique.verdict, evidence, edit)).expect("string serialization");
     blake3::hash(&bytes).to_hex().to_string()
 }
+
+/// A finding's key: [`flaw_key`] of the critique's target and flaw when it
+/// names one, else the critique's own artifact id, so a critique that names
+/// no flaw merges with no other. An artifact id holds no colon, so the two
+/// kinds of key never meet.
+pub(crate) fn finding_key(critique: &CritiqueArtifact) -> String {
+    match &critique.flaw {
+        Some(flaw) => flaw_key(&critique.candidate_ref, flaw),
+        None => critique.artifact_id.clone(),
+    }
+}
+
+/// The key of `flaw` in target `candidate_ref`: `flaw:` and the hash of both.
+pub(crate) fn flaw_key(candidate_ref: &str, flaw: &FlawIdentity) -> String {
+    let bytes = serde_json::to_vec(&("critic_flaw_v1", candidate_ref, &flaw.kind, &flaw.location))
+        .expect("flaw identity serialization");
+    format!("flaw:{}", blake3::hash(&bytes).to_hex())
+}
+
+/// How cautious a verdict is: discard, then revise, then accept.
+const fn caution(verdict: CritiqueVerdict) -> u8 {
+    match verdict {
+        CritiqueVerdict::Accept => 0,
+        CritiqueVerdict::Revise => 1,
+        CritiqueVerdict::Discard => 2,
+    }
+}
+
 fn posterior<'a>(
     critique: &CritiqueArtifact,
     rows: &'a [CriticReliability],
 ) -> Option<&'a CriticReliability> {
     rows.iter().find(|row| row.cell == critique.calibration)
 }
+
 pub(super) fn merge_findings(
     critiques: &[CritiqueArtifact],
     rows: &[CriticReliability],
@@ -50,10 +94,20 @@ pub(super) fn merge_findings(
     let mut findings = Vec::new();
     for (key, mut group) in groups {
         group.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
-        let first = group[0];
+        let verdict = group
+            .iter()
+            .map(|row| row.verdict)
+            .max_by_key(|verdict| caution(*verdict))
+            .unwrap_or(CritiqueVerdict::Accept);
+        let conflict = group.iter().any(|row| row.verdict != verdict);
+        let supporting = group
+            .iter()
+            .copied()
+            .filter(|row| row.verdict == verdict)
+            .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
         let (mut alpha, mut beta) = (0.0, 0.0);
-        for critique in &group {
+        for critique in &supporting {
             if !seen.insert((
                 &critique.provenance.critic_ref,
                 critique.calibration.digest(),
@@ -68,7 +122,7 @@ pub(super) fn merge_findings(
         let confidence = alpha / (alpha + beta);
         findings.push(MergedFinding {
             key,
-            verdict: first.verdict,
+            verdict,
             severity: group
                 .iter()
                 .map(|row| row.severity)
@@ -87,8 +141,9 @@ pub(super) fn merge_findings(
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
-            suggested_edit: first.suggested_edit.clone(),
-            auto_resolved: confidence >= threshold,
+            suggested_edit: supporting.iter().find_map(|row| row.suggested_edit.clone()),
+            auto_resolved: !conflict && confidence >= threshold,
+            conflict,
         });
     }
     findings.sort_by(|a, b| {
@@ -110,7 +165,7 @@ pub(super) fn verdict_confidence(
         if !seen.insert((
             &row.provenance.critic_ref,
             row.calibration.digest(),
-            finding_key(row),
+            opinion_key(row),
         )) {
             continue;
         }
