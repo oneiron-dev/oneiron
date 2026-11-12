@@ -24,10 +24,11 @@
 //!   turn (`Vault::record_board_turn`) writes `world_access.*` and
 //!   `activated.*` claims; they stay archive data
 //!   (`LocalHistoryNotRestored`) and the rest of the vault restores.
-//! * `dreamer::a_dreamer_landed_claim_restores_without_its_machine_history`
+//! * `dreamer::a_dreamer_landed_claim_stays_archive_data_and_the_restore_succeeds`
 //!   (needs `--cfg oneiron_test_support`): a claim the Dreamer landed, signed
-//!   as a MACHINE, restores without its `machine.*` birth carriers, which
-//!   stay archive data (`LocalHistoryNotRestored`).
+//!   as a MACHINE, stays archive data (`MachineSignedClaimNotRestored`: its
+//!   proof binds the source vault), as do its `machine.*` birth carriers
+//!   (`LocalHistoryNotRestored`), and the rest of the vault restores.
 //!
 //! Public doors only, plus `test_doors::consolidation` for the Dreamer;
 //! neutral fixtures (`owen`); vaults in tempdirs. Each destination opens at
@@ -342,7 +343,7 @@ mod dreamer {
     }
 
     #[test]
-    fn a_dreamer_landed_claim_restores_without_its_machine_history() {
+    fn a_dreamer_landed_claim_stays_archive_data_and_the_restore_succeeds() {
         let source_dir = tempfile::tempdir().expect("tempdir");
         let source = open_dreamer_vault(source_dir.path(), "reader").expect("the Dreamer's vault");
         let pass = consolidate_unbound_turn(&source, "call me Owen", None, None, &reply())
@@ -359,13 +360,21 @@ mod dreamer {
                 "the owner's whole archive holding a Dreamer-landed claim must restore: {error:?}"
             );
         }
-        let restored_claim = dest
-            .get_claim(claim)
-            .expect("read the landed claim")
-            .expect("the landed claim restores without its machine history");
-        assert_eq!(restored_claim.predicate, "profile.name");
-        let machine_omissions: Vec<(String, String)> = import_omissions(&dest, &archive)
-            .into_iter()
+        let omissions = import_omissions(&dest, &archive);
+        assert!(
+            omissions
+                .iter()
+                .any(|(id, reason)| *id == claim.to_hex()
+                    && reason == "MachineSignedClaimNotRestored"),
+            "the manifest names the MACHINE-signed claim {claim:?}: {omissions:?}"
+        );
+        assert_eq!(
+            dest.get_entity_type(claim).expect("read the landed claim"),
+            None,
+            "a MACHINE-signed claim stays archive data"
+        );
+        let machine_omissions: Vec<&(String, String)> = omissions
+            .iter()
             .filter(|(id, _)| {
                 EntityId::from_hex(id)
                     .ok()

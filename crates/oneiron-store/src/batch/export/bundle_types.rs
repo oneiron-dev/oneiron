@@ -66,6 +66,10 @@ pub enum ImportOmissionReason {
     /// The archive's `vault.default_facet` stays archive data: only the owner's
     /// restore into a fresh vault sets this vault's default facet from it.
     TargetDefaultFacetKept,
+    /// A claim a MACHINE signed (a Dreamer landing, say): its proof binds the
+    /// source vault, and the import never passes a signed write off as an
+    /// unsigned one (FIX 3497).
+    MachineSignedClaimNotRestored,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

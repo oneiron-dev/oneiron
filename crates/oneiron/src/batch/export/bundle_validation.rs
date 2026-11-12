@@ -598,7 +598,12 @@ impl OmissionLedger {
 /// This is a closed list of archive-only families, not a reserved-claim import
 /// bypass: a reserved claim is archive-only where [`reserved_claim_import`]
 /// names its reason, and is never stored. A reserved family that list does
-/// not cover still fails its ordinary import door.
+/// not cover still fails its ordinary import door. A claim of any other
+/// predicate whose evidence carries a MACHINE signature is archive-only too
+/// (`MachineSignedClaimNotRestored`): the signature binds the source vault's
+/// id, this vault holds neither that MACHINE nor its omitted history, and
+/// dropping the proof would pass a signed write off as an unsigned one, as
+/// the guest-claim rule (FIX 3497) holds.
 pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
     match row.entity_type {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR => Some(ImportOmissionReason::SkillAnchorRecomputed),
@@ -625,25 +630,40 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
         }
         ENTITY_TYPE_CLAIM => {
             // Decode a reserved claim only for classification; NEVER store it.
-            let predicate = match &row.body {
+            let field = |name: &str| match &row.body {
                 ExportBody::MessagePack(crate::serialize::ExportValue::Map(entries)) => {
-                    entries.iter().find_map(|(k, v)| match (k, v) {
-                        (
-                            crate::serialize::ExportValue::String(k),
-                            crate::serialize::ExportValue::String(v),
-                        ) if k == "pred" => Some(v.as_str()),
+                    entries.iter().find_map(|(k, v)| match k {
+                        crate::serialize::ExportValue::String(k) if k == name => Some(v),
                         _ => None,
                     })
                 }
                 _ => None,
             };
+            let predicate = field("pred").and_then(|value| match value {
+                crate::serialize::ExportValue::String(value) => Some(value.as_str()),
+                _ => None,
+            });
             match predicate.and_then(reserved_claim_import) {
                 Some(ReservedClaimImport::ArchiveOnly(reason)) => Some(reason),
-                Some(ReservedClaimImport::Restore(_)) | None => None,
+                Some(ReservedClaimImport::Restore(_)) => None,
+                None if field("evid").is_some_and(carries_machine_signature) => {
+                    Some(ImportOmissionReason::MachineSignedClaimNotRestored)
+                }
+                None => None,
             }
         }
         _ => None,
     }
+}
+
+/// Whether an archived claim's evidence names a MACHINE signature, whatever
+/// the archive kept of its bytes (an archive without secrets nulls raw
+/// binary).
+fn carries_machine_signature(evidence: &crate::serialize::ExportValue) -> bool {
+    matches!(evidence, crate::serialize::ExportValue::Map(entries)
+        if entries.iter().any(|(key, _)| matches!(key,
+            crate::serialize::ExportValue::String(key)
+                if key == crate::authority::MACHINE_SIGNATURE_KEY)))
 }
 
 /// The door the whole-vault import restores a reserved claim through.
