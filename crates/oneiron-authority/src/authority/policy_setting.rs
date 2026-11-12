@@ -81,6 +81,9 @@ pub enum PolicySetting {
     /// The most of a context pack's claims worlds other than base may hold
     /// (ARCH-0004 #world-scope; WORLD-SHARE-FRACTION-NO-OWNER-DOOR).
     NonBaseWorldClaimFraction,
+    /// The undo-send window an agent's send waits in on each outbound
+    /// channel (DEC-0006 #undo-send; REV-8 = B).
+    UndoSend,
 }
 
 impl PolicySetting {
@@ -95,6 +98,7 @@ impl PolicySetting {
             Self::FreeTimePolicy => "settings.free_time_policy",
             Self::BoardLayout => "settings.board_layout",
             Self::NonBaseWorldClaimFraction => "settings.non_base_world_claim_fraction",
+            Self::UndoSend => "settings.undo_send",
         }
     }
 
@@ -108,6 +112,7 @@ impl PolicySetting {
             Self::FreeTimePolicy => "free_time_policy",
             Self::BoardLayout => "board_layout",
             Self::NonBaseWorldClaimFraction => "non_base_world_claim_fraction",
+            Self::UndoSend => "undo_send",
         }
     }
 
@@ -121,6 +126,7 @@ impl PolicySetting {
             "free_time_policy" => Self::FreeTimePolicy,
             "board_layout" => Self::BoardLayout,
             "non_base_world_claim_fraction" => Self::NonBaseWorldClaimFraction,
+            "undo_send" => Self::UndoSend,
             _ => return None,
         })
     }
@@ -133,7 +139,8 @@ impl PolicySetting {
             | Self::InferenceDefaults
             | Self::RoomThreadAdmin
             | Self::BoardLayout
-            | Self::NonBaseWorldClaimFraction => OwnerActKind::PolicySetting,
+            | Self::NonBaseWorldClaimFraction
+            | Self::UndoSend => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }
