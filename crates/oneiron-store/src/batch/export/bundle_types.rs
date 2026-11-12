@@ -57,6 +57,15 @@ pub enum ImportOmissionReason {
     /// Learning cells are projector-only views, rebuilt from their receipts
     /// after import; the archive row stays archive data.
     LearningCellsRebuiltFromReceipts,
+    /// What the engine attested when it inspected something (a signature
+    /// event, a section fit receipt): no archive row can attest it again here.
+    EngineAttestationNotRestored,
+    /// The origin's record of what a repo published, admitted, proposed or
+    /// marked: importing the repository again records its own.
+    RepoClaimsNotRestored,
+    /// The archive's `vault.default_facet` stays archive data: only the owner's
+    /// restore into a fresh vault sets this vault's default facet from it.
+    TargetDefaultFacetKept,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.
