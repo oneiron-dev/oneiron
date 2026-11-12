@@ -139,8 +139,9 @@ pub enum DreamerAttemptExecution {
     },
     /// The try ends Failed with `reason`, terminal and resumed by nothing:
     /// a turn program whose attested owner is no longer the vault's live
-    /// owner (FIX 11090). The driver settles its spend, fails it on the
-    /// queue and counts it failed; the pass goes on.
+    /// owner (FIX 11090), or a step a spend scope refused for good. The
+    /// driver settles its spend, fails it on the queue and counts it
+    /// failed; the pass goes on.
     Failed {
         reason: String,
         completed_units: u64,
@@ -148,6 +149,10 @@ pub enum DreamerAttemptExecution {
         /// good (BUDGET-TRAP-UNTYPED-NO-SENDER); `None` for every other
         /// failure. The driver carries it to the failed row beside `reason`.
         budget_refusal: Option<StepBudgetRefusal>,
+        /// Terminal step identities the try's paid steps charge for the
+        /// first time, pinned in the settlement of its spend, so a failed
+        /// try keeps the receipts of the steps it paid for.
+        step_bindings: Vec<StepEffectBinding>,
     },
     Park {
         reason: String,

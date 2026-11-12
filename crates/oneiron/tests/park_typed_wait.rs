@@ -709,6 +709,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         Some(DreamerParkedWait {
             wait: DreamerParkWait::PassBudget {
                 asked_units: guard_c.reserve_units(),
+                scope: None,
             },
             lease_generation: row_c.attempt_count,
         }),
@@ -725,9 +726,11 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         park_b.resumable_by(ParkResumer::BudgetTopUp),
         "a top-up may resume try B's budget wait"
     );
+    // A pass budget wait's class admits a top-up, which wakes only a wait that names the
+    // topped scope: try C's names none, so the top-ups below leave it parked.
     assert!(
-        !park_c.resumable_by(ParkResumer::BudgetTopUp),
-        "no top-up resumes the pass budget park"
+        park_c.resumable_by(ParkResumer::BudgetTopUp),
+        "a top-up's scan may match a pass budget wait that names its scope"
     );
     assert!(
         !park_a.resumable_by(ParkResumer::LaterPass),

@@ -779,9 +779,10 @@ pub(super) fn budget_trap(
 /// - no scope refused it, but a top-up moved the scope's cap after the step's
 ///   guards read their room: no wait, as the park wakes in its own write;
 /// - otherwise the step's own guard is spent. A step bound to its wake pass
-///   parks a `PassBudget` wait, which a later pass whose guard has room wakes;
-///   a step bound to neither a pass nor a spend scope has no write to wait
-///   for and refuses `Unbound`.
+///   parks a `PassBudget` wait, which a later pass whose guard has room wakes,
+///   and, when the step has a spend scope (a free-time item's), a top-up of
+///   that scope's nearest open hard scope wakes too; a step bound to neither a
+///   pass nor a spend scope has no write to wait for and refuses `Unbound`.
 ///
 /// A host check is no spent budget: its park has no wait (FIX 11227).
 fn budget_wait(
@@ -800,8 +801,16 @@ fn budget_wait(
             }
             match (ctx.wake_pass_bound, asked_units) {
                 (true, Some(asked_units)) => {
+                    // A pass step bound to a spend scope too names the scope's nearest open hard
+                    // scope, whose top-up also wakes it.
+                    let scope = ctx
+                        .spend_scope
+                        .as_ref()
+                        .and_then(|spend| spend.cap_generation.as_ref())
+                        .map(|generation| generation.scope.clone());
                     return Ok(Some(crate::dreamer_runner::DreamerParkWait::PassBudget {
                         asked_units,
+                        scope,
                     }));
                 }
                 _ => StepBudgetRefusal::Unbound { asked_units },

@@ -162,6 +162,15 @@ impl Spend {
     /// How the attempt waits after a durable step failed, this spend kept;
     /// an engine error stays one.
     pub(super) fn parked_on(mut self, error: DurableStepError) -> Result<DreamerAttemptExecution> {
+        // A spend scope refused the step for good: the try ends Failed,
+        // typed, this spend settled with its paid steps.
+        if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(
+            &error,
+            self.units,
+            &self.step_bindings,
+        ) {
+            return Ok(failed);
+        }
         Ok(match error {
             DurableStepError::SpentFinalizeRefused { usage } => {
                 self.units = self.units.saturating_add(units(&usage));
