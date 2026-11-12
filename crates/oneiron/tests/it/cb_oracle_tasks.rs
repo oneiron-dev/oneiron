@@ -1003,7 +1003,7 @@ mod cb_a {
             .set_consult_fanout_policy(
                 &owner,
                 &oneiron::task_verb::ConsultFanOutPolicy {
-                    mode: oneiron::task_verb::ConsultFanOutMode::FullAccess,
+                    mode: oneiron::check_in::CheckInMode::NeverAsk,
                     ..Default::default()
                 },
             )
