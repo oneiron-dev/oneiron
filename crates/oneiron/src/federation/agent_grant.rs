@@ -67,8 +67,13 @@ use super::{
     encode_federation_grant_body, own_device_residence_scope,
 };
 
+mod backfill;
+pub use backfill::DefaultAgentGrantBackfill;
 mod funding;
 pub(crate) use funding::SelectedOwnerAgentFundingGrant;
+mod grantless;
+pub use grantless::AgentGrantFromSlipUnchangedReason;
+pub(crate) use grantless::GrantlessAgentConversion;
 mod member_index;
 pub(crate) use member_index::{backfill_agent_grant_member_index, index_agent_grant_member_in_txn};
 mod withdrawal;
@@ -88,6 +93,15 @@ const BAD_WALLET: &str = "an agent grant's wallet_ref names a nonempty issuer an
 /// The one verb of the read Grant pairing a named agent mints (Engine RULING
 /// PAIR-GRANT-DESIGN Q4): the Grant spelling, not the slip's `core:read`.
 const DEFAULT_GRANT_VERB: &str = "read";
+
+/// The authority Scope of a named agent's default read Grant for a slip of
+/// Scope `slip` (Engine RULING PAIR-GRANT-DESIGN Q4): verbs `read` and the
+/// slip's other axes.
+fn default_agent_grant_scope(slip: &Scope) -> Scope {
+    let mut authority_scope = slip.clone();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([DEFAULT_GRANT_VERB.to_owned()]));
+    authority_scope
+}
 
 /// One owner's agent grant as its live row holds it.
 #[derive(Debug, Clone)]
@@ -343,14 +357,7 @@ impl Vault {
         holder: EntityId,
         scope: &Scope,
     ) -> Result<Option<EntityId>> {
-        let named_agent = match live_entity_row_in_txn(&self.store, txn, &holder)? {
-            LiveEntityRow::Live {
-                entity_type: crate::registry::ENTITY_TYPE_PERSON,
-                body,
-            } => crate::vault::is_named_agent_principal_body(&holder, &body),
-            _ => false,
-        };
-        if !named_agent
+        if !self.is_live_named_agent_in_txn(txn, holder)?
             || self
                 .agent_grants_reporting_in_txn(txn)?
                 .0
@@ -359,20 +366,39 @@ impl Vault {
         {
             return Ok(None);
         }
-        let mut authority_scope = scope.clone();
-        authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([DEFAULT_GRANT_VERB.to_owned()]));
         let minted = self.mint_agent_grant_in_txn(
             txn,
             owner,
             surface,
             holder,
-            authority_scope,
+            default_agent_grant_scope(scope),
             None,
             None,
             BTreeSet::new(),
             None,
         )?;
         Ok(Some(minted.standing.id))
+    }
+
+    /// Whether `holder` is a live named agent's PERSON in `txn`: the PERSON
+    /// [`Vault::ensure_agent_principal`] derives for the name its row
+    /// records. An agent definition, a base agent's MACHINE and any other
+    /// person are not.
+    ///
+    /// # Errors
+    /// A store failure reading the row.
+    pub(crate) fn is_live_named_agent_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        Ok(match live_entity_row_in_txn(&self.store, txn, &holder)? {
+            LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                body,
+            } => crate::vault::is_named_agent_principal_body(&holder, &body),
+            _ => false,
+        })
     }
 
     /// The owner revokes the agent grant `grant_ref`: his signed act, then

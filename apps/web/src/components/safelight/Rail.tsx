@@ -196,11 +196,11 @@ export function Rail() {
           className="vrow"
           href="/settings/account"
           role="menuitem"
-          title="o · Owen · owner · account"
+          title="o · owen · owner · account"
           onClick={closeVmenu}
         >
           <span className="seal seal-human">o</span>
-          <span className="vname">Owen</span>
+          <span className="vname">owen</span>
         </a>
       </div>
 

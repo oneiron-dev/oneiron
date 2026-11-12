@@ -216,6 +216,8 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
     super::participation::delete_room_facts(store, txn, room)?;
     crate::workspace_roster::join_receipt::delete_room_joins(store, txn, room)?;
     super::offers::delete_room_offers(store, txn, room)?;
+    // The extra-room link rides the room body; its index row goes with the room.
+    super::super::project::EXTRA_ROOM_PROJECT.delete(store, txn, &room)?;
     Ok(())
 }
 

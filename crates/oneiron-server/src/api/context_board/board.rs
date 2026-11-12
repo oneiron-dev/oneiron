@@ -801,9 +801,11 @@ fn project_row(
     else {
         return Ok(None);
     };
+    // The goal and why show only when the caller's read admits the goal
+    // claim itself, not only the project (untangle 6.6d, F4).
     let (goal, why) = match server
         .vault
-        .project_intake_goal(project)
+        .project_intake_goal_through(read, project)
         .map_err(|error| core_engine_error("board project failed", error))?
     {
         Some(intake) => (Some(intake.goal), Some(intake.why)),

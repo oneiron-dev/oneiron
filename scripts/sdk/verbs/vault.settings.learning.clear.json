@@ -1,9 +1,9 @@
 {
   "name": "vault.settings.learning.clear",
-  "description": "The owner clears one learned-setting row of a key, mode and scope.",
+  "description": "The owner, or a holder of the engine.controls class of the key's knob on a dial it may tune, clears one learned-setting row of a key, mode and scope; the owner's pins and work-budget rows stand.",
   "input": "crate::learning_setting_doors::LearningSettingClear",
   "output": "crate::learning_setting_doors::LearningSettingsView",
-  "call": "crate::learning_setting_doors::clear_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "call": "crate::learning_setting_doors::clear_learning_setting_embedded(memory, input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Write",
@@ -11,5 +11,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "owner"
+  "host_door_proof": "engine_controller"
 }
