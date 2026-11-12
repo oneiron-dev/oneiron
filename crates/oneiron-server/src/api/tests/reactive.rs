@@ -566,6 +566,9 @@ fn seed_reactive_merge(
     use oneiron::identity_topology::{
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
+    // The merge applies under an engine seal: a host loads this install's
+    // signing keys first, as every signing door does.
+    vault.prepare_install_signing().expect("install signing");
     match vault
         .apply_identity_topology_op(
             &IdentityTopologyOp::Merge(MergeOp {
