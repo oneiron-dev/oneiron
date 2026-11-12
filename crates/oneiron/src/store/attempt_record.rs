@@ -16,6 +16,7 @@ use crate::store::attempt_manifest::ManifestEntry;
 use crate::store::attempt_result::AttemptResultRef;
 use crate::store::attempt_run_signal::{RunAsk, RunBranchSignal, SignalIntent};
 use crate::store::attempt_state::AttemptState;
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`crate::store::STORAGE_ABI_VERSION`] bump.
@@ -149,6 +150,13 @@ pub struct AttemptRecord {
     /// masked, by its key, so an identical retry still matches.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) signal_intents: Vec<SignalIntent>,
+    /// BUDGET-TRAP-UNTYPED-NO-SENDER: the typed refusal a spend scope gave
+    /// this try's step when it refused it for good, kept beside `last_error`
+    /// on the `Failed` row that settles it. `None` on every other row and on
+    /// a row written before it; additive under the named-map rule, so the
+    /// header version stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
 }
 
 /// The runtime's observation of one expired lease, captured in the writer

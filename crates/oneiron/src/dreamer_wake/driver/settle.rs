@@ -60,6 +60,7 @@ impl DreamerWakeDriver<'_> {
             DreamerAttemptExecution::Failed {
                 reason,
                 completed_units,
+                budget_refusal,
             } => {
                 // Terminal for this try alone: its spend settles, the queue
                 // records why, and the pass goes on (FIX 11090).
@@ -79,6 +80,7 @@ impl DreamerWakeDriver<'_> {
                         .unwrap_or_default(),
                     attempt_count: admitted.status.attempt.attempt_count,
                     reason,
+                    budget_refusal,
                     now: input.now,
                 })?;
                 let stage = stage.unwrap_or("failed");
