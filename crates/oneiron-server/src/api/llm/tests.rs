@@ -192,14 +192,14 @@ async fn raw_remote_transport_refuses_issuer_secret_without_a_holder_proof() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
-    use oneiron::authority::{HostSlipIssuer, PairingPrincipal, format_pairing_link};
+    use oneiron::authority::{PairingPrincipal, format_pairing_link};
     use oneiron::federation::Scope;
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     seed_models(&vault);
     let person = vault.ensure_embedded_owner_actor().unwrap().to_hex();
     let budget = BudgetGuard::with_reserve_units("host", 100, 10, BudgetExhaustionPolicy::Suspend);
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault.clone(),
         crate::config::SyncServerConfig {
             auth_secret: Some("fixture-owner".into()),
@@ -216,7 +216,7 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
             .unwrap();
     });
     // Scope::top() for a PERSON is owner-grade: the LLM route's floor.
-    let issuer = HostSlipIssuer::from_secret(b"fixture-owner").unwrap();
+    let issuer = crate::test_credentials::rooting_host_issuer(&vault, b"fixture-owner").0;
     let link = vault
         .issue_pairing_link_for_principal(
             &issuer,
@@ -310,7 +310,7 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
         seed_models(&vault);
-        let mut server = SyncServer::new(
+        let mut server = crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("owner".into()),
@@ -395,7 +395,7 @@ async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_
         seed_models(&vault);
         let budget =
             BudgetGuard::with_reserve_units("partial", 100, 10, BudgetExhaustionPolicy::Suspend);
-        let server = SyncServer::new(
+        let server = crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("owner".into()),
@@ -478,7 +478,7 @@ async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
     seed_models(&vault);
     let budget =
         BudgetGuard::with_reserve_units("missing-usage", 20, 10, BudgetExhaustionPolicy::Suspend);
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),
@@ -557,7 +557,7 @@ async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() 
     let budget = BudgetGuard::with_reserve_units("raw", 100, 10, BudgetExhaustionPolicy::Suspend);
     let backend = Arc::new(Counting(AtomicUsize::new(0)));
     let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),
@@ -648,7 +648,7 @@ async fn a_raw_call_that_picks_its_own_route_has_its_row_with_no_backend_attache
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),
