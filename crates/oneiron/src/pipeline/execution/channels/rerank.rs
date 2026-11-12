@@ -306,7 +306,8 @@ impl PipelineBuilder<'_> {
             Err(Error::EntityNotFound) => None,
             Err(error) => return Err(error),
         };
-        // A streamed or edited MESSAGE holds its words in its entity
+        // A MESSAGE edited after its birth (a continuation of its stream,
+        // the owner moving its text; FIX 4840) holds its words in its entity
         // document. The revision the ledger indexes it at is a state of that
         // document, and the read below serves the words it held there, so the
         // message is scored at them (L9-11). One whose head was written
