@@ -5,6 +5,7 @@
   "output": "Option<crate::receipt::admission::AdmissionReceipt>",
   "call": "memory.admission_status(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

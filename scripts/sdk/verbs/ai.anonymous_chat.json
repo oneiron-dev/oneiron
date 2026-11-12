@@ -8,6 +8,7 @@
   "host_door_precheck": false,
   "no_record": true,
   "scope": "Read",
+  "act_class": "reversible_work",
   "section": false,
   "openapi": true
 }

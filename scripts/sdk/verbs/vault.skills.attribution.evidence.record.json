@@ -6,6 +6,7 @@
   "call": "crate::task_verb::sdk::skill_attribution_evidence_record_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.evidence.record\")?, &input)?",
   "host_door": true,
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

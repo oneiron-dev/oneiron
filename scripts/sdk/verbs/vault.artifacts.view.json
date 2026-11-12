@@ -5,6 +5,7 @@
   "output": "Option<crate::blob_artifact::ArtifactView>",
   "call": "memory.artifacts_view(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

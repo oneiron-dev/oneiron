@@ -8,6 +8,7 @@
   "output": "crate::blob_artifact::esign::EsignNoticesDispatchView",
   "call": "memory.esign_notices_dispatch(&input)?",
   "scope": "Write",
+  "act_class": "outbound_send",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

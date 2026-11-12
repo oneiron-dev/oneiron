@@ -5,6 +5,7 @@
   "output": "Vec<crate::workspace_roster::PrivateThreadMetadata>",
   "call": "memory.rooms_private_threads(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

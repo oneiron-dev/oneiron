@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ProjectGoalDismissReceipt",
   "call": "crate::task_verb::sdk::project_goal_dismiss(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },
