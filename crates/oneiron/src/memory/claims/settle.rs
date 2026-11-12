@@ -6,13 +6,20 @@
 //! owner's handle calls them with its own proof.
 //!
 //! The handle binds the claim's stored row, its pending-consent row when it
-//! waits in the tray, and the live policy frontier. A settlement whose handle
-//! no longer matches is refused and changes nothing. The handle is no
-//! authority: the settlement revalidates the owner's proof or the holder's
-//! explicit owner-issued Grant in its own writer. The actor that opened a
-//! proposal never settles it (DEC-0006). Each
-//! settlement appends one gate ledger row, its durable receipt, and the claim's
-//! tray row, when it has one, closes with its own resolution receipt.
+//! waits in the tray, the head its approval supersedes (or that it supersedes
+//! none), and the live policy frontier. A settlement whose handle no longer
+//! matches is refused and changes nothing. The handle is no authority: the
+//! settlement revalidates the owner's proof or the holder's explicit
+//! owner-issued Grant in its own writer. The actor that opened a proposal
+//! never settles it (DEC-0006).
+//!
+//! An approval closes the supersession its proposal proposed (e2e
+//! MEMORY-01, ARCH-0040 `mcp:5`): the approved claim supersedes the standing
+//! head on its conflict set (`conflict_head`). A proposal whose deferred
+//! action names its replaced claim closes that one, through the deferred
+//! completion. A rejection closes none. Each settlement appends one gate
+//! ledger row, its durable receipt, and the claim's tray row, when it has
+//! one, closes with its own resolution receipt.
 
 use super::commit::claim_envelope_actor;
 use super::*;
@@ -23,6 +30,8 @@ use crate::consent::bundle_projection::GateConsentBundleAction;
 
 mod authority;
 use authority::ClaimSettler;
+mod conflict_head;
+use conflict_head::{ConflictHead, conflict_head_in_txn};
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";
@@ -231,6 +240,8 @@ struct ReviewedProposal {
     frontier: [u8; 32],
     body: ClaimBody,
     pending: Option<crate::store::PendingGateConsentRecord>,
+    /// The head an approval of it supersedes, read in the same snapshot.
+    prior: Option<ConflictHead>,
     /// Whether it changes only through MACHINE signed history, whose
     /// rejection needs its tray row.
     machine: bool,
@@ -274,6 +285,31 @@ impl ReviewedProposal {
             }
         }
         hasher.update(&frontier);
+        // The head an approval closes, bound by its stored bytes or bound as
+        // none: a head that lands, changes or closes after the review makes
+        // the review stale. A deferred action names its own target and
+        // closes it, so no head is read beside it.
+        let prior = if body.approval == ClaimApprovalStatus::Proposed
+            && !vault.has_deferred_claim_in_txn(txn, id)?
+        {
+            conflict_head_in_txn(vault, txn, id, &body)?
+        } else {
+            None
+        };
+        match &prior {
+            Some(prior) => {
+                let raw =
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &prior.id)?
+                        .ok_or(Error::EntityNotFound)?;
+                hasher.update(&[1u8]);
+                hasher.update(prior.id.as_bytes());
+                hasher.update(&length_prefix(raw.len()));
+                hasher.update(&raw);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
         let mut openers = Vec::new();
         if let Some(author) =
             crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, id, &body)?
@@ -290,6 +326,7 @@ impl ReviewedProposal {
             frontier,
             body,
             pending,
+            prior,
             machine,
             openers,
         })
@@ -369,7 +406,7 @@ fn not_open() -> MemoryError {
 fn stale_review() -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
-        "the proposed claim changed since its review",
+        "the proposed claim, or the head its approval supersedes, changed since its review",
         &["Review the claim again with vault.claims.review and settle the review_id it returns."],
     )
 }
@@ -472,7 +509,9 @@ impl Memory<'_> {
     /// Settles one reviewed proposed claim as the vault's owner, in one
     /// writer: the owner's proof is revalidated there, the claim is read
     /// again and must still be what `review_id` names, and the decision
-    /// lands through the ordinary gate with its Settlement receipt.
+    /// lands through the ordinary gate with its Settlement receipt. An
+    /// approval supersedes the head on the proposal's conflict set that the
+    /// review read, in the same writer.
     ///
     /// # Errors
     ///
@@ -480,7 +519,8 @@ impl Memory<'_> {
     /// not this handle's own live owner proof, when the owner opened the
     /// proposal, or when the gate refuses or holds the decision; `NOT_FOUND`
     /// when the claim does not resolve for this handle; `INVALID_STATE` when
-    /// it is no active proposal, when it changed since its review, or when a
+    /// it is no active proposal, when it or the head its approval supersedes
+    /// changed since its review, or when a
     /// rejection names a MACHINE claim with no pending-consent row. An
     /// ordinary proposal with no row is rejected and retracted.
     pub fn claim_settle_as_owner(
@@ -612,6 +652,32 @@ impl Memory<'_> {
                         now,
                     )?
                 };
+                // MEMORY-01: the approval closes the supersession its proposal
+                // proposed, on the head its review bound; a refused close rolls
+                // the approval back. The head's read is taken before it closes.
+                let closed = match &reviewed.prior {
+                    Some(prior) if action == GateConsentBundleAction::Approve && !vetting => {
+                        let read =
+                            crate::store::GateDecisionReadContext::claim(&prior.id, &prior.body)
+                                .map(|read| {
+                                    read.with_anchors(crate::conversation::gate_claim_anchors_in(
+                                        self.vault,
+                                        &*wtxn,
+                                        &prior.id,
+                                        &prior.body,
+                                    ))
+                                });
+                        self.vault.supersede_claim_in_txn_as(
+                            wtxn,
+                            &id,
+                            &prior.id,
+                            now,
+                            Some(actor),
+                        )?;
+                        read
+                    }
+                    _ => None,
+                };
                 // The approval's commit carries its consolidation debt (FIX 11858).
                 if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
                     self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
@@ -651,6 +717,7 @@ impl Memory<'_> {
                             read.with_anchors(anchors)
                         })
                         .into_iter()
+                        .chain(closed)
                         .collect(),
                     ..pending
                         .as_ref()

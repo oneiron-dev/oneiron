@@ -384,6 +384,17 @@ pub(crate) fn reconcile_project_rooms(
             }
         }
         let room_id = EntityId::from_hex(&body.home_room)?;
+        let previous: Option<ProjectRoom> =
+            match record(store, txn, room_id, ENTITY_TYPE_CONVERSATION) {
+                Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
+                other => other?,
+            };
+        // The room owns its shared pins and their policy; a project touch
+        // derives everything else and carries those forward unchanged.
+        let (pins, pin_policy) = previous
+            .as_ref()
+            .map(|old| (old.pins.clone(), old.pin_policy))
+            .unwrap_or_default();
         let room = ProjectRoom {
             schema_version: 1,
             kind: "channel".into(),
@@ -391,12 +402,9 @@ pub(crate) fn reconcile_project_rooms(
             member_ids: body.roster.clone(),
             claims_scope_ref: body.claims_scope_ref.clone(),
             origin: body.origin_card(),
+            pins,
+            pin_policy,
         };
-        let previous: Option<ProjectRoom> =
-            match record(store, txn, room_id, ENTITY_TYPE_CONVERSATION) {
-                Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
-                other => other?,
-            };
         if previous.is_none() && !crate::conversation::fresh_id_in_txn(store, txn, room_id)? {
             return Err(invalid_room());
         }

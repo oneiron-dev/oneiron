@@ -40,13 +40,16 @@ impl<'a> HostSelfDispatcher<'a> {
     /// Mints a proposal's ordinary gated provenance from a request this
     /// host actually served under the same live-run attachment. `stamp` and
     /// the change come from the admitted native proposal door, not a wire
-    /// provenance assertion.
+    /// provenance assertion; `effect` is the proposal row the host serves
+    /// (`RepoProposalSubmit` or `RepoProposalResolve`), which names the
+    /// provenance's derivation version, as on a native run.
     pub fn repo_sources_from_host(
         &self,
         stamp: &crate::memory::repo_doors::RepoRunStamp,
         path: String,
         content_hash: [u8; 32],
         witness: &super::RepoRequestWitness,
+        effect: crate::code_run::SelfEffect,
     ) -> MemoryResult<crate::memory::repo_doors::RepoRunSources> {
         self.live_parent()?;
         let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
@@ -59,7 +62,7 @@ impl<'a> HostSelfDispatcher<'a> {
             stamp,
             &super::repo_sources::RepoChange { path, content_hash },
             witness,
-            crate::code_run::SelfEffect::RepoProposalSubmit,
+            effect,
         )
         .map_err(crate::memory::MemoryError::from)?
     }

@@ -1,4 +1,4 @@
-//! The authority-internal half of the FIX 22381 integration-test door.
+//! The authority-internal half of the FIX 22381 and FIX 23218 integration-test doors.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use std::collections::BTreeSet;
@@ -176,6 +176,137 @@ pub(crate) fn sequential_agent_world_edits_read(refused: &[usize]) -> String {
         return "fixture error: refused index is outside the two edits".to_owned();
     };
     super::carried_act::hold_back_agent_acts(&mut fold, &refused_hashes);
+    format!("{:?}", fold.world_privacy(world).read)
+}
+
+/// Folds one world that three machines marked "yours" edit on the same parents: an owner
+/// narrowing to `MyMachines` on the first, which a later owner widening to `Everywhere` on the
+/// same machine replaced; an agent edit that keeps the world (`Everywhere`) on the third; and, with
+/// `owner_edit_beside`, an owner edit to `Everywhere` on the second. With `no_vouch_cap`, caps the
+/// fold as an install whose fold with no vouch lacks the widening, a row after a settled handoff
+/// (FIX 23218). Then, with `agent_edit_refused`, projects the agent edit's Grant refused.
+pub(crate) fn capped_agent_world_edit_read(
+    owner_edit_beside: bool,
+    no_vouch_cap: bool,
+    agent_edit_refused: bool,
+) -> String {
+    let owner_key = ed_key(114);
+    let genesis = genesis_entry(114, 1);
+    let vault_id = genesis_vault_id(&genesis).expect("the signed fixture genesis has a vault id");
+    let machines = [1, 2, 3].map(|byte| {
+        EntityId::from_bytes([byte; 16]).expect("fixture machine ids are not reserved sentinels")
+    });
+    let keys = [ed_key(116), ed_key(117), ed_key(118)];
+    let first_mark = mark(&genesis, &owner_key, 1, machines[0], &keys[0], vault_id);
+    let second_mark = mark(&first_mark, &owner_key, 2, machines[1], &keys[1], vault_id);
+    let last_mark = mark(&second_mark, &owner_key, 3, machines[2], &keys[2], vault_id);
+    let marked = entry_hash(&last_mark);
+    let owner = EntityId::now();
+    let world = EntityId::now();
+    let edit = |seq, parents, index: usize, act: OwnerAct, read| {
+        sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                seq,
+                parents,
+                AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    act,
+                    machine: machines[index],
+                    settings: settings(read),
+                }),
+                authority_key_from_ed(&keys[index]),
+                2,
+            ),
+            &keys[index],
+        )
+    };
+    let by_agent = OwnerAct {
+        by: ActBy::Agent {
+            agent: EntityId::now(),
+            grant: EntityId::now(),
+        },
+        ..owner_act(owner, world)
+    };
+    let narrowing = edit(
+        1,
+        vec![marked],
+        0,
+        owner_act(owner, world),
+        ReadLocation::MyMachines,
+    );
+    let widening = edit(
+        2,
+        vec![entry_hash(&narrowing)],
+        0,
+        owner_act(owner, world),
+        ReadLocation::Everywhere,
+    );
+    let agent = edit(1, vec![marked], 2, by_agent, ReadLocation::Everywhere);
+    let beside = edit(
+        1,
+        vec![marked],
+        1,
+        owner_act(owner, world),
+        ReadLocation::Everywhere,
+    );
+    let [narrowing_hash, widening_hash, agent_hash, beside_hash] =
+        [&narrowing, &widening, &agent, &beside].map(entry_hash);
+    let mut entries = vec![
+        genesis,
+        first_mark,
+        second_mark,
+        last_mark,
+        narrowing,
+        agent,
+    ];
+    let mut beside_live = BTreeSet::new();
+    if owner_edit_beside {
+        entries.push(beside);
+        beside_live.insert(beside_hash);
+    }
+    let no_vouch = fold_authority_log(&entries);
+    entries.push(widening);
+    let mut fold = fold_authority_log(&entries);
+    let live = |fold: &super::AuthorityFold| {
+        fold.worlds
+            .get(&world)
+            .map(|folded| folded.live.keys().copied().collect::<BTreeSet<_>>())
+    };
+    let expected = |first| {
+        let mut expected = BTreeSet::from([first, agent_hash]);
+        expected.extend(&beside_live);
+        Some(expected)
+    };
+    if live(&fold) != expected(widening_hash) || live(&no_vouch) != expected(narrowing_hash) {
+        return "fixture error: the world must fold its widening, or its narrowing with no vouch, \
+                beside the agent edit"
+            .to_owned();
+    }
+    if !fold.agent_carried_acts.contains_key(&agent_hash)
+        || [narrowing_hash, widening_hash, agent_hash]
+            .iter()
+            .chain(&beside_live)
+            .any(|hash| {
+                !fold.valid_entries.contains(hash)
+                    || fold.install.held_back.contains(hash)
+                    || fold.refused_world_edits.contains(hash)
+            })
+    {
+        return "fixture error: every edit must be valid and counted, the agent edit carried"
+            .to_owned();
+    }
+    if no_vouch_cap {
+        super::install_fold::cap_by_no_vouch_fold(
+            &mut fold,
+            no_vouch,
+            BTreeSet::from([marked]),
+            BTreeSet::from([widening_hash]),
+        );
+    }
+    if agent_edit_refused {
+        super::carried_act::hold_back_agent_acts(&mut fold, &[agent_hash]);
+    }
     format!("{:?}", fold.world_privacy(world).read)
 }
 

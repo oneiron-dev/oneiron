@@ -170,7 +170,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract_oracle/graph.rs` | src | s | 2 struct · 3 fn | AffectedTests, WorkspaceGraph | Workspace dependency closure from resolved `cargo metadata --format-version 1` JSON |
 | `src/contract_oracle/mod.rs` | src | s | 3 fn · 2 mod · 2 re-export | — | Persisted, deterministic Rust API, schema and command-output contracts |
 | `src/contract_oracle/types.rs` | src | s | 5 struct · 1 enum · 1 fn | CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict | Contract input, snapshot and persisted verdict types |
-| `src/conversation_body.rs` | src | s | 5 struct · 2 enum · 8 fn · 5 const | ConversationBody, ConversationKind, ProjectRoom, RoomOriginCard, RoomRole, ThreadBinding, ThreadJoinRequestsRequest | Conversation body vocabulary and strict body codecs |
+| `src/conversation_body.rs` | src | s | 6 struct · 3 enum · 10 fn · 5 const | ConversationBody, ConversationKind, ProjectRoom, RoomOriginCard, RoomPin, RoomPinPolicy, RoomRole, ThreadBinding +1 | Conversation body vocabulary and strict body codecs |
 | `src/conversation_record.rs` | src | s | 7 struct · 4 enum · 3 fn · 1 const | AddressMode, AppendFailure, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan +3 | Door inputs and snapshot results |
 | `src/conversation_residency.rs` | src | s | 2 fn · 1 const | — | The exact refusal of a turn whose witnessed message is not resident |
 | `src/conversation_span.rs` | src | s | 1 enum | ConversationSpanRead | Result vocabulary for a fingerprint-pinned conversation span read |
@@ -335,7 +335,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_score_diff.rs` | src | s | 1 struct | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/model_step_record.rs` | src | s | 4 struct · 4 enum · 8 fn · 9 const | CallerSettledStep, DreamerTrapKind, DreamerTrapState, ModelStepCheckpoint, SettledStepRequest, SettledStepView, StepProgression, TrapRef | Durable model-step claim vocabulary and progression values |
 | `src/model_step_response_carriage.rs` | src | s | 1 fn · 1 const | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
-| `src/model_step_submission.rs` | src | s | 1 struct · 2 enum | ModelStepFailure, ModelStepFailureClass, ModelStepResult | A public model-step submission row (`MODEL_STEP_SUBMISSION`, FIX 9929) and the public step types it keeps… |
+| `src/model_step_submission.rs` | src | s | 1 struct · 3 enum | ModelStepFailure, ModelStepFailureClass, ModelStepResult, StepBudgetRefusal | A public model-step submission row (`MODEL_STEP_SUBMISSION`, FIX 9929) and the public step types it keeps… |
 | `src/model_stream_row.rs` | src | s | 1 struct | StreamRow | The durable row of one shared model stream (`MODEL_STREAM`): its owner, stable key, frozen request and… |
 | `src/note_kind.rs` | src | s | 1 struct · 3 enum · 3 fn · 4 const | ContextDefault, ExtractionDefault, NoteKindDescriptor, RetentionDefault | Shipped NOTE kind defaults and syntactic kind-name rules |
 | `src/open_gates.rs` | src | s | 2 mod | — | Store-layer modules of core `store::open_gates`; core re-exports each one at its old path |
