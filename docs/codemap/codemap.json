@@ -366,7 +366,7 @@
      "path": "src/actor_claims/mod.rs",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 8
      }
     },
@@ -14962,7 +14962,7 @@
      "purpose": "The native mailbox record: the claim the native mail pack writes once its MTA holds an identity's mailbox",
      "surface": {
       "const": 1,
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -15147,7 +15147,7 @@
      "purpose": "Stalwart 0.16 JMAP driver for the native mail pack",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 10,
       "re-export": 3,
       "struct": 2,
@@ -16223,7 +16223,7 @@
      "path": "src/claim/scope_stamp.rs",
      "purpose": "Required record-position Scope stamps and the versioned CLAIM wire upgrade",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 3,
       "re-export": 1,
       "trait": 1
@@ -53679,7 +53679,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CodeRepoSecretMark",
@@ -69706,7 +69706,7 @@
      "path": "src/repo_mutation/conflict.rs",
      "purpose": "Repository conflict claims and checked resolution writes",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -69920,7 +69920,7 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 5,
       "mod": 1,
       "re-export": 5,
@@ -69983,6 +69983,16 @@
      "purpose": "The owner proposer: an authenticated owner's ordinary file proposal and its fresh re-review of a resolved…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/proposal/owner_request.rs",
+     "purpose": "An owner's direct code proposal, attributed by the engine (NO-DOOR CODE-PROPOSAL-ATTRIBUTION; Engine…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -70201,9 +70211,9 @@
      "path": "src/repo_mutation/secret_remediation.rs",
      "purpose": "Current-code remediation of marked secrets (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: \"Proposal…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
-      "fn": 3,
+      "fn": 2,
       "re-export": 2,
       "struct": 3
      }
@@ -70388,7 +70398,7 @@
      "purpose": "Repository commit provenance trailers and Git notes",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 5,
       "re-export": 2
      }
@@ -91996,6 +92006,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/claim_facet_birth.rs",
+     "purpose": "Doors for `tests/claim_facet_birth.rs` to CLAIM birth sites whose writers are crate-private: the native…",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -92301,7 +92321,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 55,
+      "mod": 56,
       "re-export": 1
      }
     },
@@ -101303,6 +101323,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_facet_birth.rs",
+     "purpose": "Engine doors whose CLAIM subject has no FACET of its own put that claim in a stored FACET…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -101407,6 +101435,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/code_proposal_owner_attribution.rs",
+     "purpose": "NO-DOOR CODE-PROPOSAL-ATTRIBUTION (tests/e2e/code-custody.test.ts CODE-CUSTODY-04, -05, -08; Engine…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -101428,6 +101464,14 @@
      "notable": [],
      "path": "tests/code_run_restricted_actor_answer.rs",
      "purpose": "OPUS-E2E-1: a code run whose actor may not witness a companion MESSAGE completes anyway, and `execute_code`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/code_secret_remediation_owner_attribution.rs",
+     "purpose": "NO-DOOR CODE-PROPOSAL-ATTRIBUTION, the fifth owner door (Engine CODECUSTODY-ATTRIB Q1 = A, Q2 = A): the…",
      "surface": {}
     },
     {
@@ -104946,7 +104990,7 @@
      "purpose": "—"
     },
     "repo_mutation": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105282,7 +105326,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105459,8 +105503,8 @@
    },
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7449,
-   "test_files": 1140
+   "source_files": 7451,
+   "test_files": 1143
   },
   "oneiron-agent-runtime": {
    "files": [
