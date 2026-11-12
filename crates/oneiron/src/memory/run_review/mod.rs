@@ -4,6 +4,7 @@
 //! exact members and policy frontier; settlement keeps their inverse handles.
 
 mod actor_erase;
+mod changes;
 mod receipts;
 mod revert;
 mod settle;
@@ -11,6 +12,8 @@ mod snapshot;
 mod topology;
 
 pub(crate) use actor_erase::erase_run_review_actor_in_txn;
+pub(crate) use changes::record_run_claim_in_txn;
+pub use changes::{RunChanges, RunChangesRequest};
 pub(crate) use receipts::run_settlement_receipts;
 
 use crate::consent::AuthenticatedOwner;
