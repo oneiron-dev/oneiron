@@ -70,11 +70,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/birth_dependencies.rs` | src | s | 4 crate-vis | — | Retirement of copied agent source when a captured input is erased |
 | `src/agent_def/byte_observation.rs` | src | s | 2 crate-vis | — | The bytes one definition's put reads (FIX 10542) |
 | `src/agent_def/codec.rs` | src | s | 1 re-export · 2 crate-vis | — | The AGENT_DEF body codec's old paths: the codec lives in `store::agent_definition_codec`, the legacy `sys.*`… |
-| `src/agent_def/doors.rs` | src | L | 1 enum · 10 fn · 12 crate-vis | AgentDefinitionPutDisposition | Vault CRUD doors over the generic entity/batch machinery |
+| `src/agent_def/doors.rs` | src | L | 1 enum · 10 fn · 16 crate-vis | AgentDefinitionPutDisposition | Vault CRUD doors over the generic entity/batch machinery |
 | `src/agent_def/id_pin.rs` | src | m | 16 crate-vis | — | The pin an agent id keeps (H215): the widest ceiling a row at the id may hold, and the fork lineage it was… |
 | `src/agent_def/id_pin/scan.rs` | src | s | 1 crate-vis | — | The composition lists one definition's put reads (FIX 9555) |
 | `src/agent_def/manifest.rs` | src | m | 10 crate-vis | — | Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation |
-| `src/agent_def/mod.rs` | src | s | 1 mod · 6 re-export · 19 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
+| `src/agent_def/mod.rs` | src | s | 1 mod · 8 re-export · 20 crate-vis | — | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
 | `src/agent_def/models.rs` | src | m | 7 fn · 1 const · 1 re-export · 3 crate-vis | — | The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words… |
 | `src/agent_def/optional_memory.rs` | src | s | 4 fn · 2 re-export | — | How much optional recall a reader takes, per task family (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget) |
 | `src/agent_def/portable.rs` | src | s | 10 crate-vis | — | Canonical, inert AGENT_PACK facets derived from real definitions and selected rows |
@@ -82,6 +82,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/portable_knowledge.rs` | src | s | 3 crate-vis | — | The selected-knowledge facet's bytes (`knowledge/selected.json`) |
 | `src/agent_def/portable_source.rs` | src | m | 13 crate-vis | — | Immutable captured agent source |
 | `src/agent_def/portable_source/tests.rs` | test | m | — | — | Actual birth capture and replay retain bytes without granting authority |
+| `src/agent_def/proposed_change.rs` | src | m | 1 enum · 5 crate-vis | ProposedAgentDefinitionChangeDecision | The owner's answer to an agent's proposed change to a stored agent definition (ARCH-0053:20, r6: "a skill… |
 | `src/agent_def/refusal.rs` | src | s | 2 enum · 5 fn · 1 re-export · 1 crate-vis | RefusalOutcome, VaultKind | The refusal dial (OF-533): an agent's own disposition to object to, or decline, what she is asked to do, set… |
 | `src/agent_def/setup_plan.rs` | src | m | 12 crate-vis | — | Ordered native entity effects for the private agent-definition setup adapter |
 | `src/agent_def/tables.rs` | src | s | — | — | The side tables `agent_def` keeps (core split slice 1): each row declares one, and the crate's build script… |
@@ -90,6 +91,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/widening.rs` | src | s | 2 crate-vis | — | Which puts hand an agent definition back authority it gave up |
 | `src/agent_def/workflow.rs` | src | s | 6 fn · 1 re-export · 1 crate-vis | — | Saved ordered agent compositions |
 | `src/agent_def/workflow/tests.rs` | test | s | — | — | — |
+| `src/agent_def/write_receipt.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | AgentDefinitionWriteReceipts | What the author writer made of each AGENT_DEF put an agent's batch staged (ARCH-0053:20), for the write… |
 | `src/agent_dispatch/agent_run.rs` | src | m | 1 struct · 5 fn · 1 crate-vis | AgentRun | The agent run pump's view (OF-533): every agent-def dispatch no other host runs |
 | `src/agent_dispatch/agent_wait.rs` | src | m | 2 struct · 6 crate-vis | AgentWaitChild, AgentWaitSetResult | A run's wait over the AGENT children it spawned (slice 6.5b, primitive D): `tasks.wait({agents, all?, n_of?… |
 | `src/agent_dispatch/attenuation.rs` | src | m | 4 crate-vis | — | Live-ceiling attenuation and deterministic attenuated-fork registration |
@@ -653,7 +655,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/builder/comm_projection.rs` | src | s | 4 crate-vis | — | Existing batch admission, carried to actual communication head writes |
 | `src/batch/builder/commit.rs` | src | L | 3 fn · 7 crate-vis | — | Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight… |
 | `src/batch/builder/edges.rs` | src | m | 14 fn · 1 crate-vis | — | Edge/vector/text/phonetic/delete doors plus edge-kind gate helpers |
-| `src/batch/builder/mod.rs` | src | s | 1 struct · 1 fn · 10 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
+| `src/batch/builder/mod.rs` | src | s | 1 struct · 2 fn · 10 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/preflight.rs` | src | s | 2 crate-vis | — | Claim-gate preflight loop including CommitmentGapDecay arms |
 | `src/batch/builder/puts.rs` | src | m | 2 fn · 18 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
 | `src/batch/builder/reference_read.rs` | src | m | 9 crate-vis | — | A bound writer's read through the committing terminal (OF-063, FIX 1223, 6068) |
@@ -2110,7 +2112,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/observations_tests.rs` | test | s | — | — | Real ledger lifecycle and skill-body observations for the session board |
 | `src/context_board/own_changes.rs` | src | m | 1 fn | — | Read-time own-proposal outcomes and connector changes for one session |
 | `src/context_board/paging.rs` | src | s | 4 crate-vis | — | Opaque continuation cursors for Context Board pages |
-| `src/context_board/people.rs` | src | m | 4 struct · 1 enum · 17 fn · 1 const · 7 crate-vis | People, PeoplePrefix, PeopleView, PersonKind, PersonRow | PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike |
+| `src/context_board/people.rs` | src | m | 4 struct · 1 enum · 17 fn · 1 const · 6 crate-vis | People, PeoplePrefix, PeopleView, PersonKind, PersonRow | PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike |
 | `src/context_board/people/prepared.rs` | src | s | 7 crate-vis | — | Exact native PERSON and subject-fact tuples prepared before setup Gate |
 | `src/context_board/plugin/admission.rs` | src | m | 3 struct · 1 enum · 11 fn · 2 crate-vis | AdmittedPluginSection, PackSectionRegistration, PluginSectionAdmission, PluginSectionRegistry | Post-consent execution and the live registry projection |
 | `src/context_board/plugin/claim.rs` | src | m | 2 struct · 4 fn · 1 const · 1 re-export · 3 crate-vis | PluginInstallClaimPayload, PluginSectionInstallProposal | Install claim payload and the pre-consent proposal path |
@@ -2268,7 +2270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/types.rs` | src | s | 1 re-export | — | Door inputs and snapshot results, defined with the storage vocabulary |
 | `src/conversation_dag/writes.rs` | src | m | 6 fn · 7 crate-vis | — | Atomic append, explicit HEAD moves and canonical-index repair |
 | `src/conversation_dag/writes/messages.rs` | src | m | 1 crate-vis | — | A MESSAGE the append door adds to its TURN (FIX 9771): `PartOf` the TURN its append names, a DAG TURN its… |
-| `src/core_write/batch.rs` | src | s | 1 enum · 4 fn · 5 crate-vis | CoreWriteLane | `vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes |
+| `src/core_write/batch.rs` | src | m | 1 enum · 4 fn · 5 crate-vis | CoreWriteLane | `vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes |
 | `src/core_write/conversations.rs` | src | m | 3 fn | — | `vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN… |
 | `src/core_write/mod.rs` | src | s | 1 mod · 3 re-export · 1 crate-vis | — | Core entity writes as typed rows (OF-181): the conversation container, a TURN under it, a DAG record and the… |
 | `src/core_write/shape.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | The shape every core entity write shares: its id, its interval, its announcement-normalized body and its… |
@@ -2953,7 +2955,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/sieve/words.rs` | src | m | 8 crate-vis | — | The prose under the sieve's rules: code, sentences, words, and runs of capitalized words and of katakana… |
 | `src/dreamer_wake/sieve_doors.rs` | src | s | 13 struct · 9 fn | SieveLeaseCounter, SieveLeaseRefillRequest, SieveLeaseRequest, SieveLeaseView, SievePageRequest, SievePolicyRequest, SievePolicySetRequest, SieveQueuePage +5 | Typed owner doors over the sieve interest queue, its retained spans, its consumed-span receipts, the sieve… |
 | `src/dreamer_wake/statement_material.rs` | src | s | 1 crate-vis | — | A text's statement material (ARCH-0026 RD-26): one BLAKE3 digest per sentence with words in it, read the… |
-| `src/dreamer_wake/surprise_wake.rs` | src | s | 2 crate-vis | — | The wake at a surprising save (FIX 11317, the Engine's ruling (b)): a re-tag whose surprise reaches the wake… |
+| `src/dreamer_wake/surprise_wake.rs` | src | s | 3 crate-vis | — | The wake at a surprising save (FIX 11317, the Engine's ruling (b)): a re-tag whose surprise reaches the wake… |
 | `src/dreamer_wake/tables.rs` | src | s | — | — | The side tables `dreamer_wake` keeps (core split slice 1): each row declares one, and the crate's build… |
 | `src/dreamer_wake/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/dreamer_wake/tests/cleanup_lane.rs` | test | s | — | — | — |
@@ -5124,7 +5126,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/tests/space_posting.rs` | test | s | — | — | Owner presentation must ride the ordinary gate, frozen payload and recovery |
 | `src/outbound/tests/step_failure.rs` | test | m | — | — | A stored durable failure must be eligible before its outbound effect is prepared |
 | `src/outbound/uncertain_send.rs` | src | s | 1 fn · 4 crate-vis | — | The owner's ask on a send that may have gone out (FIX 4747; canon ARCH-0023b, pending outbound send: "Still… |
-| `src/outbound/weave_digest_send.rs` | src | m | 1 struct · 1 enum · 2 fn · 2 crate-vis | WeaveDigestChannelOverride, WeaveDigestChannelSetting | A reader's weave digest also goes to the reader (FIX 1262): the vault's companion agent sends it to the… |
+| `src/outbound/weave_digest_send.rs` | src | m | 1 struct · 1 enum · 2 fn · 3 crate-vis | WeaveDigestChannelOverride, WeaveDigestChannelSetting | A reader's weave digest also goes to the reader (FIX 1262): the vault's companion agent sends it to the… |
 | `src/outbound/window_door.rs` | src | m | 7 crate-vis | — | Delivery-window resolution at the outbound dispatch door |
 | `src/outbound_chokepoint/admission.rs` | src | L | 7 crate-vis | — | New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert |
 | `src/outbound_chokepoint/authority_standing.rs` | src | s | 2 crate-vis | — | Whether the authority that admitted a send still stands at its send (FIX 11591, ruled FIX 4624(a)) |
@@ -7548,6 +7550,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/task_exposure.rs` | src | s | 1 struct · 1 fn | TaskExposure | — |
 | `src/team/team_shape.rs` | src | s | 1 struct · 1 enum · 8 fn · 2 const | CoordinationPattern, TeamShape | — |
 | `src/temporal.rs` | src | s | 1 enum · 1 re-export | TemporalAnchorMode | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
+| `src/test_doors/agent_definition_scans.rs` | src | s | 2 fn | — | The two scans that walk every agent definition by its wake cadence, for the proposed-change tests: the… |
 | `src/test_doors/authority_view_grant.rs` | src | s | 2 fn | — | Agent-binding fixture for the warm authority-view Grant regression |
 | `src/test_doors/authority_world_undo.rs` | src | s | 3 fn | — | The agent world-edit fixtures for FIX 22381 and FIX 23218 |
 | `src/test_doors/callable_skill.rs` | src | s | 7 fn | — | Doors for the callable-skill integration tests |
@@ -7573,7 +7576,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/lifted_text.rs` | src | s | 1 fn | — | Doors for `tests/primitive_a_evidence_spans.rs` (FIX-LIST EVIDENCE-SPANS-MASKED-COORDINATES): a lifted key… |
 | `src/test_doors/live_run_claim_put.rs` | src | s | 4 fn | — | Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate fixtures… |
 | `src/test_doors/membership.rs` | src | s | 1 fn | — | A shared vault's member grants, for integration tests (primitive A, slice 6.4f: the Steward arm of the run… |
-| `src/test_doors/mod.rs` | src | s | 1 fn · 44 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 1 fn · 45 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
 | `src/test_doors/park_typed_wait.rs` | src | s | 2 fn | — | Doors for `tests/park_typed_wait.rs` (6.5d-1): the head state of a trap chain, and a soft child spend… |
@@ -7785,7 +7788,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/act_answer.rs` | src | s | 3 struct · 1 enum · 1 fn | ActAnswer, DetailsOnDevice, NarrowedQuestion, NarrowedQuestions | What an act answers its caller (FIX 3414) |
 | `src/verbs/agent_grant.rs` | src | m | 11 struct · 2 enum · 7 fn | AgentGrantFromSlipOutcome, AgentGrantFromSlipRequest, AgentGrantMintRequest, AgentGrantMinted, AgentGrantRevokeRequest, AgentGrantRevoked, AgentGrantView, BaseAgentList +5 | The inputs and answers of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`… |
 | `src/verbs/agent_run_effect.rs` | src | s | 2 struct · 1 fn | AgentRunEffectAnswer, AgentRunEffectAnswered | The input and answer of `vault.agent.run_effect.answer` (FIX 4747 slice 7), a host door: the vault owner's… |
-| `src/verbs/agents.rs` | src | s | 4 struct · 1 enum · 3 fn · 1 re-export | AgentDefinitionCreateRequest, AgentDefinitionLifecycle, AgentDefinitionRequest, AgentDefinitionUpdateRequest, AgentDefinitionView | Typed custom AGENT_DEF authoring |
+| `src/verbs/agents.rs` | src | s | 10 struct · 1 enum · 6 fn · 2 re-export | AgentDefinitionCreateRequest, AgentDefinitionLifecycle, AgentDefinitionRequest, AgentDefinitionUpdateRequest, AgentDefinitionView, ProposedAgentDefinitionChangeApproveRequest, ProposedAgentDefinitionChangeRejectRequest, ProposedAgentDefinitionChangeSettlementView +3 | Typed custom AGENT_DEF authoring |
 | `src/verbs/anonymous_chat.rs` | src | s | 2 struct · 3 enum | AnonymousChatBlockReasonView, AnonymousChatRequest, AnonymousChatRequestTarget, AnonymousChatResponse, AnonymousChatSkippedCheckView | The anonymous-chat wire contract (OF-500, PRIVACY-08), shared by the standalone HTTP handler, OpenAPI and… |
 | `src/verbs/answer_forward.rs` | src | s | 4 struct · 1 fn | TaskAnswerForwardChallenge, TaskAnswerForwardChallengeRequest, TaskAnswerForwardRequest, TaskAnswerForwardStatusRequest | The served rows of a person's word on an ask this node did not admit (FIX 20468)… |
 | `src/verbs/asr.rs` | src | s | 7 struct · 2 enum · 2 fn | AsrCloseRequest, AsrClosed, AsrFinalDecision, AsrFinalReceipt, AsrFireDecision, AsrHypothesisReceipt, AsrHypothesisRequest, AsrOpenRequest +1 | Host-enriched ASR observations over one owner-bound speculative recall session |
@@ -8210,6 +8213,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/admin_reads_no_steward_read.rs` | test | s | — | — | Steward is a named grant preset, never a rank, and never reachable through Admin (lead 10 Nov 06:5x… |
 | `tests/agent_append_provenance.rs` | test | s | — | — | Blob append provenance follows the bound writer class |
 | `tests/agent_definition_generic_writers.rs` | test | L | — | — | An agent's generic row writers follow ARCH-0053:20 for AGENT_DEF rows |
+| `tests/agent_definition_named_server_grant.rs` | test | m | — | — | Named-server grants are part of a generic AGENT_DEF writer's usable slice |
+| `tests/agent_definition_person_in_txn.rs` | test | s | — | — | An agent definition and its person land in one write transaction |
+| `tests/agent_definition_proposed_change.rs` | test | m | — | — | The owner answers an agent's proposed change to a stored agent definition |
+| `tests/agent_definition_write_receipt.rs` | test | m | — | — | The write receipt of an agent's AGENT_DEF put names what the author writer made of it (ARCH-0053:20; FIX… |
 | `tests/agent_grant_backfill.rs` | test | m | — | — | The serve start mints the default read Grant of each named agent paired before Grants, once per self-hosted… |
 | `tests/agent_grant_read_ceiling.rs` | test | m | — | — | A paired agent's broad credential must not read beyond its owner's live Grant |
 | `tests/agent_grantless_registry.rs` | test | m | — | — | The owner's registry lists each live slip of a named agent that no Grant has ever named, and… |

@@ -655,7 +655,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 10
      }
@@ -697,9 +697,9 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 1,
-      "re-export": 6
+      "re-export": 8
      }
     },
     {
@@ -773,6 +773,19 @@
      "path": "src/agent_def/portable_source/tests.rs",
      "purpose": "Actual birth capture and replay retain bytes without granting authority",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProposedAgentDefinitionChangeDecision"
+     ],
+     "path": "src/agent_def/proposed_change.rs",
+     "purpose": "The owner's answer to an agent's proposed change to a stored agent definition (ARCH-0053:20, r6: \"a skill…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1
+     }
     },
     {
      "bucket": "s",
@@ -857,6 +870,20 @@
      "path": "src/agent_def/workflow/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentDefinitionWriteReceipts"
+     ],
+     "path": "src/agent_def/write_receipt.rs",
+     "purpose": "What the author writer made of each AGENT_DEF put an agent's batch staged (ARCH-0053:20), for the write…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -7582,7 +7609,7 @@
      "purpose": "The atomic multi-database write-batch builder and its two terminals",
      "surface": {
       "crate-vis": 10,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -25508,7 +25535,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 17,
       "struct": 4
@@ -27484,7 +27511,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CoreWriteLane"
@@ -36018,7 +36045,7 @@
      "path": "src/dreamer_wake/surprise_wake.rs",
      "purpose": "The wake at a surprising save (FIX 11317, the Engine's ruling (b)): a re-tag whose surprise reaches the wake…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -62903,7 +62930,7 @@
      "path": "src/outbound/weave_digest_send.rs",
      "purpose": "A reader's weave digest also goes to the reader (FIX 1262): the vault's companion agent sends it to the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -91557,6 +91584,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/agent_definition_scans.rs",
+     "purpose": "The two scans that walk every agent definition by its wake cadence, for the proposed-change tests: the…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/authority_view_grant.rs",
      "purpose": "Agent-binding fixture for the warm authority-view Grant regression",
      "surface": {
@@ -91849,7 +91886,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 44
+      "mod": 45
      }
     },
     {
@@ -94249,15 +94286,21 @@
       "AgentDefinitionLifecycle",
       "AgentDefinitionRequest",
       "AgentDefinitionUpdateRequest",
-      "AgentDefinitionView"
+      "AgentDefinitionView",
+      "ProposedAgentDefinitionChangeApproveRequest",
+      "ProposedAgentDefinitionChangeRejectRequest",
+      "ProposedAgentDefinitionChangeSettlementView",
+      "ProposedAgentDefinitionChangeView",
+      "ProposedAgentDefinitionChanges",
+      "ProposedAgentDefinitionChangesRequest"
      ],
      "path": "src/verbs/agents.rs",
      "purpose": "Typed custom AGENT_DEF authoring",
      "surface": {
       "enum": 1,
-      "fn": 3,
-      "re-export": 1,
-      "struct": 4
+      "fn": 6,
+      "re-export": 2,
+      "struct": 10
      }
     },
     {
@@ -100402,6 +100445,38 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_definition_named_server_grant.rs",
+     "purpose": "Named-server grants are part of a generic AGENT_DEF writer's usable slice",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_person_in_txn.rs",
+     "purpose": "An agent definition and its person land in one write transaction",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_proposed_change.rs",
+     "purpose": "The owner answers an agent's proposed change to a stored agent definition",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_write_receipt.rs",
+     "purpose": "The write receipt of an agent's AGENT_DEF put names what the author writer made of it (ARCH-0053:20; FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_grant_backfill.rs",
      "purpose": "The serve start mints the default read Grant of each named agent paired before Grants, once per self-hosted…",
      "surface": {}
@@ -102666,7 +102741,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 24,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104136,7 +104211,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104313,8 +104388,8 @@
    },
    "over_bar": 256,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7406,
-   "test_files": 1071
+   "source_files": 7409,
+   "test_files": 1075
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -127685,7 +127760,7 @@
      "path": "src/api/facade/agent_definition_doors.rs",
      "purpose": "Custom definitions, saved workflows and workspace onboarding, with the caller's own proof",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -148701,6 +148776,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AgentDefinitionWriteDisposition",
+      "AgentDefinitionWriteReceipt",
       "CoreBatchCommit",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
@@ -148710,8 +148787,9 @@
      "path": "src/core_write/batch.rs",
      "purpose": "The `vault.batch` row's input and receipt types (OF-181)",
      "surface": {
-      "enum": 1,
-      "struct": 4
+      "enum": 2,
+      "fn": 1,
+      "struct": 5
      }
     },
     {
