@@ -12,6 +12,11 @@
 //! model is named, because no model call is witnessed here; a run's model
 //! form stays the run host's. The claim attributes the candidate; it
 //! approves, queues and lands nothing.
+//!
+//! A native bundle (`vault.code.secrets.propose`'s remediation) has no one
+//! path: its lineage lists every path in byte order, each with its new
+//! bytes' BLAKE3 or null for a removal, and the envelope's content hash is
+//! the BLAKE3 of that list's canonical JSON.
 
 use rmpv::Value;
 use serde::Serialize;
@@ -22,6 +27,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::repo_mutation::RepoBundleFile;
 use crate::repo_mutation::trailer::{
     OWNER_REQUEST_VERSION, REPO_PROVENANCE_OWNER_REQUEST, REPO_PROVENANCE_PREDICATE,
     REPO_PROVENANCE_SOURCE_KIND_KEY,
@@ -50,20 +56,111 @@ impl OwnerRequestAttribution {
     }
 }
 
+/// The change an owner request stages, as its claim binds it.
+enum StagedChange {
+    /// One file's path and its staged bytes' BLAKE3.
+    File { path: String, content_hash: String },
+    /// A native bundle's paths in byte order, each with its new bytes'
+    /// BLAKE3 or `None` for a removal, and the BLAKE3 of that list's
+    /// canonical JSON.
+    Bundle {
+        files: Vec<(String, Option<String>)>,
+        content_hash: String,
+    },
+}
+
+impl StagedChange {
+    fn of(operation: &RepoMutationOperation) -> Result<Self> {
+        match operation {
+            RepoMutationOperation::CommitFile { path, content, .. }
+            | RepoMutationOperation::ResolveConflictFile { path, content, .. } => Ok(Self::File {
+                path: path.clone(),
+                content_hash: blake3::hash(content).to_hex().to_string(),
+            }),
+            RepoMutationOperation::CommitFiles { files, .. } => Self::bundle(files),
+            _ => Err(invalid(
+                "an owner request's provenance binds a file change or a native bundle",
+            )),
+        }
+    }
+
+    fn bundle(files: &[RepoBundleFile]) -> Result<Self> {
+        let mut ordered = std::collections::BTreeMap::new();
+        for file in files {
+            let hash = file
+                .content
+                .as_ref()
+                .map(|content| blake3::hash(content).to_hex().to_string());
+            if ordered.insert(file.path.clone(), hash).is_some() {
+                return Err(invalid("an owner request's bundle names each path once"));
+            }
+        }
+        if ordered.is_empty() {
+            return Err(invalid("an owner request's bundle names at least one path"));
+        }
+        let files: Vec<(String, Option<String>)> = ordered.into_iter().collect();
+        let listed = serde_json::Value::Array(
+            files
+                .iter()
+                .map(|(path, hash)| serde_json::json!({ "path": path, "content_hash": hash }))
+                .collect(),
+        );
+        let listed = crate::llm::canonical_json_bytes(&listed)
+            .map_err(|_| invalid("an owner request's bundle does not serialize"))?;
+        let content_hash = blake3::hash(&listed).to_hex().to_string();
+        Ok(Self::Bundle {
+            files,
+            content_hash,
+        })
+    }
+
+    fn content_hash(&self) -> &str {
+        match self {
+            Self::File { content_hash, .. } | Self::Bundle { content_hash, .. } => content_hash,
+        }
+    }
+
+    /// The lineage entry that names what changed: the path, or the bundle's
+    /// files.
+    fn lineage_entry(&self) -> (Value, Value) {
+        match self {
+            Self::File { path, .. } => (Value::from("path"), Value::from(path.as_str())),
+            Self::Bundle { files, .. } => (
+                Value::from("files"),
+                Value::Array(
+                    files
+                        .iter()
+                        .map(|(path, hash)| {
+                            Value::Map(vec![
+                                (Value::from("path"), Value::from(path.as_str())),
+                                (
+                                    Value::from("content_hash"),
+                                    hash.as_deref().map_or(Value::Nil, Value::from),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        }
+    }
+}
+
 impl Vault {
     /// Binds the session and provenance claim of the owner's proposal
     /// `request` on `repository`: the owner's canonical sitting on this
     /// install, and a reserved `owner_request` claim on it naming the owner,
     /// the request hash, the staged bytes' BLAKE3, the repository, the path
-    /// and the commit the stored pointer pins. The owner proof is judged
-    /// again in the claim's writer. A request that already names either
-    /// source is refused: an owner proposal's sources are the engine's.
+    /// (or a bundle's files) and the commit the stored pointer pins. The
+    /// owner proof is judged again in the claim's writer. A request that
+    /// already names either source is refused: an owner proposal's sources
+    /// are the engine's.
     ///
     /// # Errors
     /// A request with sources, no owner, an operation that is not one file
-    /// change or a pointer with no commit; a stale owner proof; or a store
-    /// failure.
-    pub(super) fn attribute_owner_request(
+    /// change or a native bundle, or a pointer with no commit; a stale owner
+    /// proof; or a store failure.
+    pub(in crate::repo_mutation) fn attribute_owner_request(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         attribution: &OwnerRequestAttribution,
@@ -78,17 +175,7 @@ impl Vault {
         let actor = request
             .actor_id
             .ok_or_else(|| invalid("an owner proposal names its owner"))?;
-        let (path, content_hash) = match &request.operation {
-            RepoMutationOperation::CommitFile { path, content, .. }
-            | RepoMutationOperation::ResolveConflictFile { path, content, .. } => {
-                (path.clone(), blake3::hash(content).to_hex().to_string())
-            }
-            _ => {
-                return Err(invalid(
-                    "an owner request's provenance binds one file change",
-                ));
-            }
-        };
+        let staged = StagedChange::of(&request.operation)?;
         let base_commit = request
             .repo_ref
             .commit_hash()
@@ -108,7 +195,7 @@ impl Vault {
             "input": attribution.input,
             "repo_ref": request.repo_ref.canonical(),
             "base_commit": base_commit,
-            "effective_content_hash": content_hash,
+            "effective_content_hash": staged.content_hash(),
         });
         let preimage = crate::llm::canonical_json_bytes(&preimage)
             .map_err(|_| invalid("an owner request's hash input does not serialize"))?;
@@ -127,7 +214,10 @@ impl Vault {
                 (
                     Value::from("derivation_envelope"),
                     Value::Map(vec![
-                        (Value::from("content_hash"), Value::from(content_hash)),
+                        (
+                            Value::from("content_hash"),
+                            Value::from(staged.content_hash()),
+                        ),
                         (Value::from("version"), Value::from(OWNER_REQUEST_VERSION)),
                     ]),
                 ),
@@ -135,7 +225,7 @@ impl Vault {
                     Value::from("diff_lineage_receipt"),
                     Value::Map(vec![
                         (Value::from("repo"), Value::from(repository.to_hex())),
-                        (Value::from("path"), Value::from(path)),
+                        staged.lineage_entry(),
                         (Value::from("base_commit"), Value::from(base_commit)),
                     ]),
                 ),
