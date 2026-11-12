@@ -5,6 +5,7 @@
   "output": "crate::memory::repo_doors::RepoWorkOpenOutput",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.work.open\", &input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

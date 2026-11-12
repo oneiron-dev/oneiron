@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserFindOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.find(input)?)",
   "scope": "Read",
+  "act_class": "read",
   "context": "browser",
   "mcp": "none",
   "section": false,

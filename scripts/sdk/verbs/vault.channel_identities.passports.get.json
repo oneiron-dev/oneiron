@@ -5,6 +5,7 @@
   "output": "crate::memory::channel_doors::ThreadPassportLookup",
   "call": "memory.channel_thread_passport(input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

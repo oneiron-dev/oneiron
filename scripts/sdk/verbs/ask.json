@@ -12,6 +12,7 @@
   "output": "crate::task_verb::TaskAskReceipt",
   "call": "memory.tasks_ask(&input.into_spec()?)?",
   "scope": "Write",
+  "act_class": "unstated",
   "task_work": true,
   "mcp_fields": {
     "spec": "$"

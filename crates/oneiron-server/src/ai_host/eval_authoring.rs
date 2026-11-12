@@ -8,12 +8,20 @@
 //! applies it through the eval-set doors. No skill, no model, or no plan
 //! that parses changes nothing.
 use oneiron::attempt_queue::ReadSetProducer;
-use oneiron::dreamer_runner::DreamerAdmittedAttempt;
+use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerAdmittedAttempt, DreamerRunnerStore};
+use oneiron::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use oneiron::skill_optimize::{
-    EvalAuthoringPlan, eval_authoring_inventory_sourced, eval_authoring_skill_id, union_source_rows,
+    EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringExecuteAnswer,
+    EvalAuthoringExecuteRequest, EvalAuthoringExecution, EvalAuthoringInventory,
+    EvalAuthoringOutcome, EvalAuthoringPlan, admit_eval_authoring_execution,
+    eval_authoring_inventory_sourced, eval_authoring_skill_id, union_source_rows,
 };
 use oneiron::{EntityId, Error, LlmMessageRole};
 
+use super::coach_heal::{LEASE_OWNER, settle};
+use super::coach_host::{
+    BUDGET_ID as COACH_HOST_BUDGET_ID, BUDGET_UNITS as COACH_HOST_BUDGET_UNITS,
+};
 use super::code_fix::{HostModels, message};
 use crate::server::SyncServer;
 
@@ -26,18 +34,221 @@ const SKILL_FILE: &str = "SKILL.md";
 /// The pass's key in its attempt's read set (FIX 7019, 7073).
 const EVAL_AUTHORING: ReadSetProducer = ReadSetProducer::COACH_EVAL_AUTHORING;
 
-/// Runs one eval-authoring pass.
+/// How a pass's model step ended: with a plan to apply, or before one.
+enum PassEnd {
+    /// The inventory held nothing new to decide: no model call.
+    NoWork,
+    /// No Coach seat, no loadable approved skill or no seat took the call.
+    Unavailable {
+        skill: Option<(EntityId, String)>,
+        digest: String,
+    },
+    /// The answer held no plan.
+    NoPlan {
+        skill: (EntityId, String),
+        digest: String,
+    },
+    /// The Coach's plan for `inventory`, made running `skill`.
+    Plan {
+        plan: EvalAuthoringPlan,
+        inventory: Box<EvalAuthoringInventory>,
+        skill: (EntityId, String),
+    },
+}
+
+impl PassEnd {
+    fn unavailable(skill: Option<(EntityId, String)>, digest: String) -> Self {
+        Self::Unavailable { skill, digest }
+    }
+}
+
+/// Runs one eval-authoring pass. A requested pass's attempt, leased here
+/// after its lease lapsed, keeps its request's record: it runs to that
+/// record's end while it is running, and runs no second pass once it ended.
 pub(super) fn run(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     now: u64,
 ) -> oneiron::Result<()> {
+    if let Some(kept) = server
+        .vault()
+        .recover_requested_eval_authoring(admitted, now)?
+    {
+        return match kept.outcome {
+            EvalAuthoringOutcome::Running => finish(server, admitted, now).map(drop),
+            outcome => settled_by(outcome),
+        };
+    }
+    let PassEnd::Plan {
+        plan,
+        inventory,
+        skill,
+    } = pass(server, admitted, now)?
+    else {
+        return Ok(());
+    };
+    match server
+        .vault()
+        .run_coach_eval_authoring(admitted, plan, &inventory, skill, now)
+    {
+        Ok(report) => {
+            tracing::debug!(
+                cases = report.cases_recorded,
+                cuts = report.cohorts_cut.len(),
+                retired = report.cohorts_retired.len(),
+                skipped = report.skipped.len(),
+                "the Coach kept the eval sets"
+            );
+            Ok(())
+        }
+        // A plan the engine refuses changes nothing; the next night asks again.
+        Err(Error::Artifact(_)) => {
+            tracing::debug!("the Coach's eval-authoring plan was refused");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// `vault.evals.authoring.execute` on this host: admits `memory`'s caller
+/// and the request's own Coach attempt in one writer, runs the pass on it as
+/// the nightly worker would, keeps the pass's record and settles the
+/// attempt on the Coach queue's lease and budget line. The effects are the
+/// Coach's; the record names the caller.
+pub(crate) fn execute(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    input: EvalAuthoringExecuteRequest,
+) -> MemoryResult<EvalAuthoringExecuteAnswer> {
+    let vault = server.vault();
+    let store = DreamerRunnerStore::new(vault);
+    let now = vault.now_recorded_at();
+    let admitted = match admit_eval_authoring_execution(
+        memory,
+        input,
+        AdmitDreamerAttempt {
+            lease_owner: LEASE_OWNER.to_owned(),
+            now,
+            budget_id: COACH_HOST_BUDGET_ID.to_owned(),
+            budget_total_units: COACH_HOST_BUDGET_UNITS,
+            reserve_units: 1,
+            started_milestone: None,
+        },
+    )? {
+        EvalAuthoringAdmission::Admitted { attempt, .. } => attempt,
+        // An earlier request's pass ended before its host settled the lease:
+        // its end stands, and no pass runs again.
+        EvalAuthoringAdmission::Ended { attempt, execution } => {
+            settle(
+                vault,
+                &store,
+                &attempt,
+                settled_by(execution.outcome),
+                COACH_HOST_BUDGET_ID,
+            )?;
+            return Ok(EvalAuthoringExecuteAnswer::Ran { execution });
+        }
+        EvalAuthoringAdmission::Waiting { attempt } => {
+            return Ok(EvalAuthoringExecuteAnswer::Waiting { attempt });
+        }
+    };
+    match finish(server, &admitted, now) {
+        Ok(execution) => {
+            settle(vault, &store, &admitted, Ok(()), COACH_HOST_BUDGET_ID)?;
+            Ok(EvalAuthoringExecuteAnswer::Ran {
+                execution: Box::new(execution),
+            })
+        }
+        Err(error) => {
+            let kind = error.kind();
+            settle(vault, &store, &admitted, Err(error), COACH_HOST_BUDGET_ID)?;
+            Err(MemoryError::new(
+                MEMORY_CODE_INTERNAL,
+                format!("{EVAL_AUTHORING_EXECUTE_VERB} failed on this host: {kind:?}"),
+                &["Read vault.evals.authoring.result for the attempt's state."],
+            ))
+        }
+    }
+}
+
+/// Runs a requested pass on `admitted` and ends its record by what the pass
+/// came to. A pass that errs ends its record `Failed` before the error
+/// returns, its apply's claim too when that end did not record, and the
+/// attempt fails with the error's kind; a record that already ended keeps
+/// its end.
+fn finish(
+    server: &SyncServer,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<EvalAuthoringExecution> {
+    let vault = server.vault();
+    let ended = pass(server, admitted, now).and_then(|end| match end {
+        PassEnd::Plan {
+            plan,
+            inventory,
+            skill,
+        } => vault.apply_requested_eval_authoring(admitted, plan, &inventory, skill, now),
+        PassEnd::NoWork => vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::NoWork,
+            None,
+            None,
+            now,
+        ),
+        PassEnd::Unavailable { skill, digest } => vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::Unavailable,
+            skill,
+            Some(digest),
+            now,
+        ),
+        PassEnd::NoPlan { skill, digest } => vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::NoPlan,
+            Some(skill),
+            Some(digest),
+            now,
+        ),
+    });
+    if ended.is_err()
+        && let Err(record) = vault.end_requested_eval_authoring(
+            admitted,
+            EvalAuthoringOutcome::Failed,
+            None,
+            None,
+            vault.now_recorded_at(),
+        )
+    {
+        tracing::warn!(%record, "a requested eval-authoring pass could not record its failure");
+    }
+    ended
+}
+
+/// How the lease of a requested pass that ended before its host settled it
+/// settles now: failed for a `Failed` pass, else completed.
+fn settled_by(outcome: EvalAuthoringOutcome) -> oneiron::Result<()> {
+    if outcome == EvalAuthoringOutcome::Failed {
+        return Err(Error::InvariantViolation(
+            "a requested eval-authoring pass failed before its host settled its lease",
+        ));
+    }
+    Ok(())
+}
+
+/// One pass up to its plan: the inventory, the Coach's seat, the skill it
+/// loads on `admitted` and the model's answer.
+fn pass(
+    server: &SyncServer,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<PassEnd> {
     let vault = server.vault();
     let (inventory, inventory_rows) = eval_authoring_inventory_sourced(vault, now)?;
     // No new candidate, label, cut or exposure: no model call.
     if !inventory.has_work() {
-        return Ok(());
+        return Ok(PassEnd::NoWork);
     }
+    let digest = inventory.inventory_digest.clone();
     let runtime = server.ai.model_runtime();
     let models = HostModels::open(
         server,
@@ -52,7 +263,7 @@ pub(super) fn run(
         .seat(models.coach())
         .map(|seat| seat.model.as_str().to_owned())
     else {
-        return Ok(());
+        return Ok(PassEnd::unavailable(None, digest));
     };
     // The skill's body is the Coach's instruction. The load stamps its
     // revision and the Coach's model on the attempt, and each cut and
@@ -83,9 +294,12 @@ pub(super) fn run(
     ) {
         Ok(loaded) => loaded,
         // A retired, unapproved or deleted skill authors nothing.
-        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(()),
+        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => {
+            return Ok(PassEnd::unavailable(None, digest));
+        }
         Err(error) => return Err(error),
     };
+    let skill = (loaded.entity, loaded.record.version.clone());
     let Some(instruction) = loaded
         .source_files
         .as_ref()
@@ -93,9 +307,8 @@ pub(super) fn run(
         .and_then(|file| std::str::from_utf8(&file.content).ok())
         .map(str::to_owned)
     else {
-        return Ok(());
+        return Ok(PassEnd::unavailable(Some(skill), digest));
     };
-    let skill = (loaded.entity, loaded.record.version);
     let data = serde_json::to_string(&inventory)
         .map_err(|_| Error::InvalidConfig("the eval inventory could not be encoded".into()))?;
     // The call reads the inventory's rows and the skill it loaded (FIX 6997).
@@ -125,30 +338,17 @@ pub(super) fn run(
     )?
     else {
         // No seat took the call: the next night asks again.
-        return Ok(());
+        return Ok(PassEnd::unavailable(Some(skill), digest));
     };
     let Some(plan) = parse_plan(&text) else {
         tracing::debug!("the Coach's eval-authoring answer held no plan");
-        return Ok(());
+        return Ok(PassEnd::NoPlan { skill, digest });
     };
-    match vault.run_coach_eval_authoring(admitted, plan, &inventory, skill, now) {
-        Ok(report) => {
-            tracing::debug!(
-                cases = report.cases_recorded,
-                cuts = report.cohorts_cut.len(),
-                retired = report.cohorts_retired.len(),
-                skipped = report.skipped.len(),
-                "the Coach kept the eval sets"
-            );
-            Ok(())
-        }
-        // A plan the engine refuses changes nothing; the next night asks again.
-        Err(Error::Artifact(_)) => {
-            tracing::debug!("the Coach's eval-authoring plan was refused");
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
+    Ok(PassEnd::Plan {
+        plan,
+        inventory: Box::new(inventory),
+        skill,
+    })
 }
 
 /// The one JSON object in the answer; `None` when there is none or it is

@@ -544,6 +544,14 @@ impl JobQueue for Memory {
         Ok(CompleteOutcome::Completed(record.clone()))
     }
     fn port_job_fail(&self, txn: &mut MemoryWrite, input: FailAttempt) -> Result<FailOutcome> {
+        self.port_job_fail_with_refusal(txn, input, None)
+    }
+    fn port_job_fail_with_refusal(
+        &self,
+        txn: &mut MemoryWrite,
+        input: FailAttempt,
+        budget_refusal: Option<crate::store::model_step_submission::StepBudgetRefusal>,
+    ) -> Result<FailOutcome> {
         let record = txn
             .jobs
             .get_mut(input.id.as_bytes())
@@ -562,6 +570,7 @@ impl JobQueue for Memory {
         record.updated_at = self.clock.now_recorded_at();
         record.settled_at = Some(record.updated_at);
         record.last_error = Some(input.reason);
+        record.budget_refusal = budget_refusal;
         record.backoff_until = None;
         Ok(FailOutcome::Failed(record.clone()))
     }

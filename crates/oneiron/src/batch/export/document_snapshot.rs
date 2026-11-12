@@ -21,7 +21,7 @@ use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use crate::serialize::{DocumentTail, DocumentWriter};
+use crate::serialize::{DocumentTail, DocumentWriter, ExportSecrets};
 use crate::settings::CallerLocality;
 use crate::settings::ReadDestination;
 use crate::write_envelope::WriteActor;
@@ -264,7 +264,10 @@ impl Vault {
     /// `owner_export`: the owner's own whole-vault or OKF export (owner
     /// ruling 1-EXPORT = B), whose rows his recipient choice keeps none of;
     /// false for a removal's records archive and for an export a code run
-    /// calls, which the world settings judge as before.
+    /// calls, which the world settings judge as before. The writer keeps
+    /// credentials only when `include_secrets`, `owner_export`, an unscoped
+    /// whole vault (`only` none) and the archive cut all hold; every other
+    /// combination nulls them.
     #[allow(clippy::too_many_arguments)]
     fn export_archive_snapshot<W: Write + Seek, E: From<Error>>(
         &self,
@@ -315,8 +318,22 @@ impl Vault {
             None,
         )?
         .collect::<Result<BTreeSet<_>>>()?;
-        let mut writer =
-            DocumentWriter::new(self, cut, cut == ExportCut::Archive, adapters, agent_ids)?;
+        // Only the Owner's whole-vault archive with secrets included keeps
+        // credentials; every other cut, scope or secrets opt-out nulls them.
+        let secrets =
+            if include_secrets && owner_export && only.is_none() && cut == ExportCut::Archive {
+                ExportSecrets::Included
+            } else {
+                ExportSecrets::Nulled
+            };
+        let mut writer = DocumentWriter::new(
+            self,
+            cut,
+            cut == ExportCut::Archive,
+            adapters,
+            agent_ids,
+            secrets,
+        )?;
         // Every row read past the locality filter below: a row the archive
         // carries, a custody record it carries as a value or a handle, a
         // diary it carries or counts as held, and a receipt source, pack

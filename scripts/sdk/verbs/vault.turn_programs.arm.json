@@ -5,6 +5,7 @@
   "output": "crate::dreamer_runner::TurnProgramRegistration",
   "call": "memory.arm_turn_program(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "openapi": true,
   "section": false
 }

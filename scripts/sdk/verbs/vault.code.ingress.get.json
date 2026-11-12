@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::origin_doors::CodePushIngressView>",
   "call": "memory.code_push_ingress_get_as(&memory.embedded_owner(\"vault.code.ingress.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

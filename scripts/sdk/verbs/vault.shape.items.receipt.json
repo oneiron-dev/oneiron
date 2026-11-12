@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::ShapeItemReceipt>",
   "call": "memory.shape_item_receipt(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

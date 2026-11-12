@@ -5,6 +5,7 @@
   "output": "oneiron_browser::DesktopAnswer<oneiron_browser::BatchOutput>",
   "call": "oneiron_browser::DesktopAnswer::of(driver.batch(input)?)",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "browser",
   "mcp": "none",
   "section": false

@@ -9,6 +9,7 @@
   "host_door_lists": true,
   "openapi": true,
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

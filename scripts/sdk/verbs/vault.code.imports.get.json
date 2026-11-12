@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::origin_doors::ExternalImportStatus>",
   "call": "memory.code_external_import_get_as(&memory.external_import_proof(\"vault.code.imports.get\"), input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
