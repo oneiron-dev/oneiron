@@ -488,6 +488,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "NOTE_PIN_REQUEST_CITING",
         "NOTE_PIN_REQUEST_CLAIM",
         "NOTE_PIN_REQUEST_SOURCE",
+        "NOTE_PLAN_DOC_REVIEW",
         "NOTE_TITLE_BY_NOTE",
         "NOTE_TITLE_RESERVATION",
         "OFF_RECORD_COPY_RECEIPT",
