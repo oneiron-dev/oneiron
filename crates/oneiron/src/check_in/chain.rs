@@ -22,8 +22,13 @@
 //! A holder may answer while its standing admits the act: a live person, or
 //! an enabled, active agent definition, that is not the asker, and is a live
 //! owner or holds a live grant on the asker's vault (conferring now, its
-//! pact not inactive) whose verbs admit the exact verb,
-//! and whose own check-in for the act would not wait (Q9). A person's answer
+//! pact not inactive) whose verbs admit the exact verb and whose bounds cover
+//! where the effect sits, and whose own check-in for the act would not wait
+//! (Q9). A grant covers the effect when its worlds hold the effect's world
+//! (every world, when the effect names none) and it is narrowed on no axis
+//! the pending row cannot place the effect on: facets, bands, audience,
+//! sensitivity. A grant has no project axis; a project's act is placed by
+//! its world (review round 1 of #7112). A person's answer
 //! is their own judgment (Q4), so the unsure test and the model check, which
 //! bound a model, do not apply to it; an agent's verdict is its model's
 //! judgment, so its own check-in must go. Standing rows are not read for a
@@ -34,6 +39,7 @@ use super::mode::CheckInMode;
 use super::pending::{
     HolderAnswer, HolderKind, PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver,
 };
+use super::policy::CheckInScope;
 use super::resolve::{
     CheckInAnswer, CheckInRequest, ResolvedMode, UnsureTest, check_in, resolve_mode,
 };
@@ -43,7 +49,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{
-    AgentVerbClasses, FederationGrant, FederationGrantScope, decode_federation_grant_body,
+    AgentVerbClasses, FederationGrant, FederationGrantScope, ScopeAxis, ScopeId,
+    SensitivityCeiling, decode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -322,9 +329,10 @@ fn owner_members(
 }
 
 /// The roles `holder` holds at `now` for the act, each with whether it holds
-/// the power for the exact verb: Owner when it is a live owner; else each
+/// the power for the exact effect: Owner when it is a live owner; else each
 /// live grant naming it on the asker's vault, whose verbs (or verb classes)
-/// admit the verb or not.
+/// admit the verb and whose bounds cover where the effect sits
+/// ([`covers_effect`]), or not.
 fn holder_standing_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -367,9 +375,30 @@ fn holder_standing_in_txn(
         .iter()
         .filter(|grant| grant.confers_with_classes_at(now, &classes))
         .map(|grant| {
-            let holds_power = grant.authority_scope.verbs.contains(&pending.verb)
-                || grant.class_admits_verb(&pending.verb, &classes);
+            let holds_power = covers_effect(grant, &pending.scope)
+                && (grant.authority_scope.verbs.contains(&pending.verb)
+                    || grant.class_admits_verb(&pending.verb, &classes));
             (RolePreset::of_grant_role(grant.role), holds_power)
         })
         .collect())
+}
+
+/// Whether `grant`'s bounds cover where an effect at `scope` sits: its worlds
+/// hold the effect's world, or are every world when the effect names none
+/// (or names one that is no world id), and it is narrowed on no axis the
+/// pending row cannot place the effect on. A grant has no project axis; a
+/// project's act is placed by its world.
+fn covers_effect(grant: &FederationGrant, scope: &CheckInScope) -> bool {
+    let bounds = &grant.authority_scope;
+    let world = matches!(bounds.worlds, ScopeAxis::All)
+        || scope
+            .world_ref
+            .as_deref()
+            .and_then(|world| EntityId::from_hex(world).ok())
+            .is_some_and(|world| bounds.worlds.contains(&ScopeId(world)));
+    world
+        && matches!(bounds.facets, ScopeAxis::All)
+        && matches!(bounds.bands, ScopeAxis::All)
+        && matches!(bounds.audience, ScopeAxis::All)
+        && bounds.sensitivity == SensitivityCeiling::TOP
 }
