@@ -96,6 +96,11 @@ pub struct HistoryImportReport {
     pub refusal_reasons: BTreeSet<String>,
     /// What the reader did not keep.
     pub not_kept: HistorySkips,
+    /// The TURNs that took the messages landed new or as a revision, each
+    /// once, in landing order: what a hosted import's progress counts for
+    /// embeddings. Not part of the report's wire form.
+    #[serde(skip)]
+    pub turns: Vec<EntityId>,
 }
 
 impl HistoryImportReport {
@@ -111,6 +116,7 @@ impl HistoryImportReport {
             pending: 0,
             refusal_reasons: BTreeSet::new(),
             not_kept: conversation.skipped,
+            turns: Vec::new(),
         }
     }
 }
@@ -654,6 +660,9 @@ impl Import<'_> {
                     } else {
                         report.new += 1;
                     }
+                }
+                if !report.turns.contains(&turn_id) {
+                    report.turns.push(turn_id);
                 }
             }
             Err(error) => {

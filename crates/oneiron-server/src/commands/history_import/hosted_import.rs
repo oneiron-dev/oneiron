@@ -25,6 +25,13 @@
 //! every later pass. A failure of the vault leaves the job where it is for
 //! the next pass.
 //!
+//! A job asked to cancel (`vault.imports.cancel`) is Cancelling. Its worker
+//! reads the row again before each conversation, so a cancel that comes
+//! during a pass stops the job at the next conversation. What landed is
+//! surfaced in the import's review as a finished job's is, the job ends
+//! Cancelled and its folder is removed. A pass also removes the folder of an
+//! ended job that outlived its end.
+//!
 //! Each conversation lands under the host's admission, as a served write
 //! does: a managed vault frozen for reap lands nothing, and the pass stops
 //! between conversations.
@@ -312,7 +319,9 @@ impl HostedImports {
     }
 
     /// Lands one job from its place on. `false` when the pass must stop:
-    /// its budget is spent or the host admits no more.
+    /// its budget is spent or the host admits no more. A job asked to cancel
+    /// lands nothing more: the row is read again before each conversation,
+    /// so a cancel that comes during a pass stops it at the next one.
     fn run(
         &self,
         vault: &oneiron::Vault,
@@ -331,6 +340,17 @@ impl HostedImports {
             )?;
             return Ok(true);
         };
+        if job.state == HostedImportState::Cancelling {
+            finish(
+                vault,
+                &folder,
+                id,
+                source,
+                job,
+                HostedImportState::Cancelled,
+            )?;
+            return Ok(true);
+        }
         let Some(export) = staged_export(&folder, job.staged_bytes)? else {
             fail(vault, &folder, id, "the staged export is gone or changed")?;
             return Ok(true);
@@ -360,6 +380,20 @@ impl HostedImports {
             let Some(_admitted) = (self.admission)() else {
                 return Ok(false);
             };
+            if vault
+                .hosted_import(id)?
+                .is_some_and(|row| row.state == HostedImportState::Cancelling)
+            {
+                finish(
+                    vault,
+                    &folder,
+                    id,
+                    source,
+                    job,
+                    HostedImportState::Cancelled,
+                )?;
+                return Ok(true);
+            }
             let report = vault
                 .import_history(&owner, source, conversation, job.imported_at)
                 .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
@@ -369,24 +403,51 @@ impl HostedImports {
                 *left -= 1;
             }
         }
-        let landed = vault.hosted_import(id)?;
-        if landed
-            .as_ref()
-            .is_some_and(|landed| landed.new + landed.changed > 0)
-        {
-            // One inbox row for the import, never one per conversation.
-            vault.record_history_import_finished(source, job.imported_at)?;
-        }
-        queue_dreamer(vault, job.imported_at)?;
-        vault.hosted_import_end(id, HostedImportState::Landed)?;
-        remove_folder(&folder);
-        tracing::info!(
-            import = %id.to_hex(),
-            review = %oneiron::ingest::history::history_import_review_id(source, job.imported_at),
-            "hosted import landed; its claims wait for the owner in this review"
-        );
+        // A cancel asked while the last conversation landed finds nothing
+        // left to stop: the job ends Landed.
+        finish(vault, &folder, id, source, job, HostedImportState::Landed)?;
         Ok(true)
     }
+}
+
+/// Ends a job that lands nothing more as `state`, Landed or Cancelled. What
+/// landed is surfaced in the import's one review: one inbox row for the
+/// import, never one per conversation, when anything landed new or changed,
+/// and the Dreamer queued. Then the job ends and its folder is removed.
+fn finish(
+    vault: &oneiron::Vault,
+    folder: &Path,
+    id: HostedImportId,
+    source: HistorySource,
+    job: &HostedImportJob,
+    state: HostedImportState,
+) -> anyhow::Result<()> {
+    let landed = vault.hosted_import(id)?;
+    if landed
+        .as_ref()
+        .is_some_and(|landed| landed.new + landed.changed > 0)
+    {
+        vault.record_history_import_finished(source, job.imported_at)?;
+    }
+    let queued = queue_dreamer(vault, job.imported_at)?;
+    let cancelled = state == HostedImportState::Cancelled;
+    vault.hosted_import_end(id, state, u64::try_from(queued)?)?;
+    remove_folder(folder);
+    let review = oneiron::ingest::history::history_import_review_id(source, job.imported_at);
+    if cancelled {
+        tracing::info!(
+            import = %id.to_hex(),
+            review = %review,
+            "hosted import cancelled; what landed waits for the owner in this review"
+        );
+    } else {
+        tracing::info!(
+            import = %id.to_hex(),
+            review = %review,
+            "hosted import landed; its claims wait for the owner in this review"
+        );
+    }
+    Ok(())
 }
 
 /// Makes the row of each whole folder under `root` that has none, each at a
@@ -398,7 +459,15 @@ fn adopt(vault: &oneiron::Vault, root: &Path) -> anyhow::Result<()> {
         let Some(id) = entry.file_name().to_str().and_then(HostedImportId::parse) else {
             continue;
         };
-        if !entry.file_type()?.is_dir() || vault.hosted_import(id)?.is_some() {
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        if let Some(job) = vault.hosted_import(id)? {
+            // An ended job's folder that outlived its end, as a process that
+            // stopped between the two leaves it.
+            if job.ended() {
+                remove_folder(&entry.path());
+            }
             continue;
         }
         let Some(request) = read_request(&entry.path())? else {
@@ -471,7 +540,7 @@ fn fail(
     id: HostedImportId,
     reason: &str,
 ) -> anyhow::Result<()> {
-    vault.hosted_import_end(id, HostedImportState::Failed(reason.to_owned()))?;
+    vault.hosted_import_end(id, HostedImportState::Failed(reason.to_owned()), 0)?;
     remove_folder(folder);
     tracing::warn!(import = %id.to_hex(), reason, "hosted import failed");
     Ok(())
