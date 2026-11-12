@@ -1,6 +1,6 @@
 {
   "name": "vault.plans.propose",
-  "description": "Proposes a plan for the owner's review: a plan-doc NOTE (kind plugin/plan) written from a typed body of title, steps, scope asked and budget, in review until the owner answers its revision.",
+  "description": "Proposes a plan for the owner's review: a plan-doc NOTE written from a typed body of title, steps, scope asked and budget, in review until the owner answers its revision. A named agent definition runs it on approval.",
   "input": "crate::note::PlanDocProposeRequest",
   "output": "crate::note::PlanDocView",
   "call": "memory.propose_plan_doc(&input)?",
