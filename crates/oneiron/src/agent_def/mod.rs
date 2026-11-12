@@ -22,6 +22,7 @@ mod refusal;
 mod types;
 mod widening;
 pub mod workflow;
+mod write_receipt;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
 pub use self::doors::AgentDefinitionPutDisposition;
@@ -49,6 +50,7 @@ pub use self::types::{
     CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, DreamingMode, MCP_REF_KEYS,
     MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
 };
+pub use self::write_receipt::AgentDefinitionWriteReceipts;
 
 pub(crate) use self::codec::{
     legacy_logical_id_row, validate_agent_definition_bytes, validate_agent_definition_update,

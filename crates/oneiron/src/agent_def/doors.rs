@@ -73,6 +73,9 @@ pub(crate) struct AgentAuthoring {
     /// of its own takes its slice from. `None` for an unbound lane, which
     /// grants nothing by itself.
     read_key: Option<crate::claim::ScopedReadActorKey>,
+    /// What the author writer made of each definition the batch staged, for
+    /// the committing door's receipt.
+    receipts: super::AgentDefinitionWriteReceipts,
 }
 
 impl AgentAuthoring {
@@ -87,7 +90,13 @@ impl AgentAuthoring {
             author: actor.entity_ref(),
             door,
             read_key: read_key.cloned(),
+            receipts: super::AgentDefinitionWriteReceipts::default(),
         })
+    }
+
+    /// The receipts the author writer fills as the batch applies.
+    pub(crate) fn receipts(&self) -> super::AgentDefinitionWriteReceipts {
+        self.receipts.clone()
     }
 }
 
@@ -1223,6 +1232,7 @@ impl Vault {
         let Some(authoring) = authoring else {
             return Ok(());
         };
+        let mut receipts = Vec::new();
         for op in ops {
             if let BatchOp::Put {
                 id,
@@ -1232,17 +1242,28 @@ impl Vault {
             } = op
                 && *entity_type == ENTITY_TYPE_AGENT_DEF
             {
-                match self.agent_authored_put_in_txn(txn, authoring, id, data)? {
-                    AuthoredPut::AsStaged => {}
-                    AuthoredPut::Bounded(body) => *data = body,
+                let staged = *id;
+                let receipt = match self.agent_authored_put_in_txn(txn, authoring, id, data)? {
+                    AuthoredPut::AsStaged => super::write_receipt::stored_at_its_id(
+                        decode_agent_definition(data)?.approval_status,
+                    ),
+                    AuthoredPut::Bounded(body) => {
+                        let receipt = super::write_receipt::stored_at_its_id(
+                            decode_agent_definition(&body)?.approval_status,
+                        );
+                        *data = body;
+                        receipt
+                    }
                     AuthoredPut::ProposedChange { id: proposal, body } => {
                         *id = proposal;
                         *data = body;
+                        super::write_receipt::stored_as_proposed_change(&proposal)
                     }
-                }
+                };
+                receipts.push((staged, receipt));
             }
         }
-        Ok(())
+        authoring.receipts.replace(receipts)
     }
 
     /// Prepares the same author-bounded definition for a door that owns its

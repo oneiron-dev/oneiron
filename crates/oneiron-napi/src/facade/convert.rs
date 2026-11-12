@@ -321,6 +321,9 @@ pub(super) fn entity_ref_receipt_from_engine(
         entity_ref: receipt.entity_ref,
         id_hex: receipt.id_hex,
         receipt_ref: receipt.receipt_ref,
+        agent_definition_disposition: receipt
+            .agent_definition
+            .map(|written| written.disposition.as_str().to_owned()),
     }
 }
 
