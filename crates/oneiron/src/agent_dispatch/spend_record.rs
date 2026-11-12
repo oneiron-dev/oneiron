@@ -1,6 +1,7 @@
 //! Durable spend scopes and their typed reads (OF-532). Records confer no
 //! authority; they bound spend.
 
+use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -169,6 +170,17 @@ impl SpendScope {
     }
 }
 
+/// The cap of a spend scope's nearest open hard scope, as one read saw it.
+/// The owner's top-up is the only writer of an open hard scope's cap, and it
+/// always raises it, so the cap is that scope's generation: a different cap
+/// means a top-up landed since the read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpendCapGeneration {
+    /// The nearest hard scope: the scope a hard-cap refusal names.
+    pub scope: SpendScopeId,
+    pub cap_units: u64,
+}
+
 pub use crate::workspace_roster::spend_scope::ChildSpend;
 
 /// The one refusal of the lease tree: spend or a reservation beyond the cap.
@@ -247,4 +259,55 @@ pub struct SpendSettlement {
     pub released_units: u64,
     /// The child was already settled; nothing moved.
     pub already_settled: bool,
+}
+
+/// Forgets `actor` in every local spend scope, in its erase's transaction
+/// (FIX 11777): an erased agent or payer party leaves `None`, and an erased
+/// grantor leaves `granted_by` as `None` with the party kept, its spend still
+/// on the party's standing. A row that does not read is passed over with a
+/// WARN and never fails the erase.
+pub(crate) fn erase_spend_scope_actor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::error::Result<()> {
+    let mut scrubbed = Vec::new();
+    for row in SCOPE.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, value) = row?;
+        let scope = <String as crate::side_table::SideKey>::decode_key(&key)
+            .ok_or_else(|| crate::error::Error::InvalidConfig("unreadable key".to_owned()))
+            .and_then(|id| SCOPE.decode_value(&value).map(|scope| (id, scope)));
+        let (id, mut scope) = match scope {
+            Ok(row) => row,
+            Err(error) => {
+                tracing::warn!(%error, "an actor erase passed over a spend scope that does not read");
+                continue;
+            }
+        };
+        let mut hit = false;
+        if scope.agent == Some(*actor) {
+            scope.agent = None;
+            hit = true;
+        }
+        if scope
+            .payer
+            .as_ref()
+            .is_some_and(|payer| payer.party == *actor)
+        {
+            scope.payer = None;
+            hit = true;
+        } else if let Some(payer) = &mut scope.payer
+            && payer.granted_by == Some(*actor)
+        {
+            payer.granted_by = None;
+            hit = true;
+        }
+        if hit {
+            scrubbed.push((id, scope));
+        }
+    }
+    for (id, scope) in &scrubbed {
+        SCOPE.put(&vault.store, txn, id, scope)?;
+    }
+    Ok(())
 }

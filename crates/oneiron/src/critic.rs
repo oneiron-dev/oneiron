@@ -6,8 +6,11 @@
 //! `learning.reliability` projector, keyed by lens, executor, task type and axis.
 
 mod findings;
+mod flaw;
 pub mod review;
 pub use findings::MergedFinding;
+pub(crate) use findings::flaw_key;
+pub use flaw::{FlawIdentity, FlawLocation, MAX_FLAW_KIND_BYTES};
 mod reliability;
 pub use reliability::{CriticReliability, ReliabilityOutcomeSource};
 pub use review::CriticPrediction;
@@ -201,6 +204,12 @@ pub struct CritiqueArtifact {
     #[serde(default)]
     pub out_of_scope: bool,
     pub created_at: u64,
+    /// The flaw it names in its target (LEARN-CRITIC Q1 = B), checked by the
+    /// review that wrote it against the target as that review read it.
+    /// Critiques of one target that name one flaw are one finding; one that
+    /// names none is a finding of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flaw: Option<FlawIdentity>,
 }
 
 impl CritiqueArtifact {
@@ -238,6 +247,7 @@ impl CritiqueArtifact {
             suggested_edit,
             out_of_scope: false,
             created_at,
+            flaw: None,
         };
         validate_critique_artifact(&artifact)?;
         Ok(artifact)
@@ -333,7 +343,7 @@ pub fn triage_critiques_with_exploration(
         if !votes.insert((
             critique.provenance.critic_ref.clone(),
             critique.calibration.digest(),
-            findings::finding_key(critique),
+            findings::opinion_key(critique),
         )) {
             continue;
         }
@@ -369,14 +379,18 @@ pub fn triage_critiques_with_exploration(
     hard_vetoes.dedup();
     out_of_scope.sort();
     out_of_scope.dedup();
+    let findings = findings::merge_findings(critiques, reliabilities, 0.9);
+    // A finding its critics disagree on waits for a person.
+    let auto_resolved = !findings.iter().any(|finding| finding.conflict)
+        && findings::verdict_confidence(critiques, reliabilities, verdict) >= 0.9;
     Ok(CritiqueTriage {
         verdict,
         scores,
         acted_on_artifact_ids: acted_on,
         hard_veto_artifact_ids: hard_vetoes,
         out_of_scope_artifact_ids: out_of_scope,
-        findings: findings::merge_findings(critiques, reliabilities, 0.9),
-        auto_resolved: findings::verdict_confidence(critiques, reliabilities, verdict) >= 0.9,
+        findings,
+        auto_resolved,
     })
 }
 
@@ -495,6 +509,7 @@ fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
 pub(crate) mod tables;
 mod validation;
 use self::validation::{
-    invalid_critic_config, validate_catalog, validate_critique_artifact, validate_identifier,
-    validate_lens, validate_provenance, validate_reliability, validate_reliability_table,
+    invalid_critic_config, validate_catalog, validate_critique_artifact, validate_flaw,
+    validate_identifier, validate_lens, validate_provenance, validate_reliability,
+    validate_reliability_table,
 };

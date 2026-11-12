@@ -30,7 +30,7 @@ use crate::ai_serve::{
 };
 use crate::fake_llm::{FakeLlm, Reply};
 
-/// The id the model gives the person it meets in the first pass.
+/// An unclaimed subject for the off-contract arms that land no claim.
 const PERSON: &str = "0c0ffee0000000000000000000000001";
 
 /// One user turn in `conversation`, queued for the Dreamer while the server
@@ -88,51 +88,132 @@ struct Case {
     granted: bool,
 }
 
+/// The labels this call assigns Owen and his claim with this value.
+fn listed_claim(input: &str, predicate: &str, value: &str) -> Option<(String, String)> {
+    let mut person = None;
+    for line in input.lines() {
+        if let Some(rest) = line.strip_prefix("entity ") {
+            let (label, name) = rest.split_once(' ').unwrap_or((rest, "null"));
+            person = (serde_json::from_str::<Value>(name).ok() == Some(json!("Owen")))
+                .then(|| label.to_owned());
+        } else if let Some(rest) = line.strip_prefix("  claim ") {
+            let (label, rest) = rest.split_once(' ')?;
+            let (named, shown) = rest.split_once(" = ")?;
+            let shown = serde_json::Deserializer::from_str(shown)
+                .into_iter::<Value>()
+                .next()?
+                .ok()?;
+            if named == predicate && shown == json!(value) {
+                if let Some(person) = &person {
+                    return Some((person.clone(), label.to_owned()));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// A model that does what the extraction prompt asks. It names a listed
 /// claim on the case's predicate when one is shown, and otherwise meets the
 /// person. Asked for a verdict, it takes the newer value.
 fn follows_the_prompt(case: &Case) -> Reply {
-    let (predicate, second) = (case.predicate, case.second.1);
+    let (predicate, prior, second) = (case.predicate, case.first.1, case.second.1);
     let (met, first) = if case.owner_states_first {
-        ("profile.name", "Oleksii")
+        ("profile.name", "Owen")
     } else {
         (predicate, case.first.1)
     };
     Reply::Computed(Arc::new(move |request: &Value| {
         let messages = request["messages"].as_array().unwrap();
-        if !text(&messages[0]).starts_with("Extract durable memory claims") {
-            return json!({"resolution": "supersede", "value": second}).to_string();
-        }
         let input = text(messages.last().unwrap());
-        let turn = input
-            .lines()
-            .rev()
-            .find_map(|line| line.strip_prefix('['))
-            .and_then(|line| line.split_whitespace().next())
-            .unwrap()
-            .to_owned();
-        let mut subject = None;
-        let mut listed = None;
-        for line in input.lines() {
-            let mut words = line.split_whitespace();
-            match (words.next(), words.next(), words.next()) {
-                (Some("entity"), Some(id), _) => subject = Some(id.to_owned()),
-                (Some("claim"), Some(id), Some(named)) if named == predicate => {
-                    listed = subject.clone().map(|subject| (subject, id.to_owned()));
+        if !text(&messages[0]).starts_with("Extract durable memory claims") {
+            if let Ok(pack) = serde_json::from_str::<Value>(input)
+                && let Some(questions) = pack["questions"].as_array()
+            {
+                // Correction and conflict packs each bring their own Q/C labels.
+                let corrected = pack["state"]["listed"].as_array().and_then(|rows| {
+                    rows.iter()
+                        .find(|row| {
+                            row["predicate"] == predicate
+                                && row["value"] == json!(prior).to_string()
+                        })
+                        .and_then(|row| row["claim"].as_str())
+                });
+                let candidate = pack["state"]["candidates"].as_array().and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row["predicate"] == predicate && row["value"] == second)
+                        .and_then(|row| row["claim"].as_str())
+                });
+                let mut reply = serde_json::Map::new();
+                for question in questions {
+                    let labels = question["labels"].as_array().unwrap();
+                    let chosen = [
+                        Some("supersede"),
+                        corrected,
+                        candidate,
+                        Some("no"),
+                        Some("none"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .find(|label| labels.iter().any(|shown| shown.as_str() == Some(*label)))
+                    .expect("the pack lists the correction, resolution or identity choice");
+                    let weights: serde_json::Map<String, Value> = labels
+                        .iter()
+                        .map(|label| {
+                            let label = label.as_str().unwrap();
+                            (
+                                label.to_owned(),
+                                json!(if label == chosen { 1.0 } else { 0.0 }),
+                            )
+                        })
+                        .collect();
+                    reply.insert(question["id"].as_str().unwrap().to_owned(), json!(weights));
                 }
-                _ => {}
+                if let Some(paired) = pack["paired"]["id"].as_str() {
+                    let probabilities: serde_json::Map<String, Value> = questions
+                        .iter()
+                        .map(|question| (question["id"].as_str().unwrap().to_owned(), json!(0.0)))
+                        .collect();
+                    reply.insert(paired.to_owned(), json!(probabilities));
+                }
+                return Value::Object(reply).to_string();
+            }
+            return json!({"value": second}).to_string();
+        }
+        // The call-local labels (FIX 7506 P1): turns read `[T<n> speaker]
+        // text`, entities `entity P<n> ...`, claims `claim C<n> <predicate>
+        // = ...`. The quote is the shown turn text whole, so it binds the
+        // one occurrence that text holds.
+        let mut turn = None;
+        for line in input.lines() {
+            let Some(rest) = line.strip_prefix('[') else {
+                continue;
+            };
+            let Some((head, words)) = rest.split_once("] ") else {
+                continue;
+            };
+            let label = head.split_whitespace().next().unwrap_or_default();
+            if label.len() > 1
+                && label.starts_with('T')
+                && label[1..].bytes().all(|byte| byte.is_ascii_digit())
+            {
+                turn = Some((label.to_owned(), words.to_owned()));
             }
         }
-        let evidence = json!([{"source_id": turn, "byte_range": [0, 4]}]);
+        let (turn_label, quote) = turn.unwrap();
+        let listed = listed_claim(input, predicate, prior);
+        let evidence = json!([{"source": turn_label.clone(), "quote": quote}]);
         match listed {
             Some((subject, claim)) => json!({"candidates": [{
                 "subject": subject, "predicate": predicate, "value": second,
                 "corrects": claim, "confidence": 0.9, "evidence_refs": evidence,
             }]}),
             None => json!({
-                "persons": [{"id": PERSON, "name": "Oleksii", "evidence_turn_refs": [turn]}],
+                "persons": [{"id": "new:P1", "name": "Owen",
+                    "evidence_turn_refs": [turn_label]}],
                 "candidates": [{
-                    "subject": PERSON, "predicate": met, "value": first,
+                    "subject": "new:P1", "predicate": met, "value": first,
                     "confidence": 0.9, "evidence_refs": evidence,
                 }],
             }),
@@ -246,13 +327,31 @@ async fn binds_once(case: Case) {
     );
 
     serve_until(&config, &fake, 1).await;
-    let person = EntityId::from_hex(PERSON).unwrap();
+    let person = {
+        let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
+        let predicate = if case.owner_states_first {
+            "profile.name"
+        } else {
+            case.predicate
+        };
+        vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .iter()
+            .filter_map(|id| vault.get_claim(id).ok().flatten())
+            .find(|claim| claim.predicate == predicate)
+            .and_then(|claim| match claim.subject {
+                oneiron::ClaimSubject::Entity(id) => Some(id),
+                _ => None,
+            })
+            .expect("the first pass's claim names its engine-minted subject")
+    };
     let first = {
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         if case.owner_states_first {
             let owner = vault.ensure_embedded_owner_actor().unwrap();
             let input = serde_json::from_value(json!({
-                "predicate": case.predicate, "subject_ref": PERSON, "value": case.first.1,
+                "predicate": case.predicate, "subject_ref": person.to_hex(), "value": case.first.1,
                 "confidence": 1.0, "source": "observed",
             }))
             .unwrap();
@@ -283,16 +382,28 @@ async fn binds_once(case: Case) {
     let before = fake.seen().len();
     serve_until(&config, &fake, before + 1).await;
     let seen = fake.seen();
-    let listing = text(
-        seen[before].body["messages"]
-            .as_array()
-            .unwrap()
-            .last()
-            .unwrap(),
-    );
+    let listing = seen[before..]
+        .iter()
+        .filter(|call| text(&call.body["messages"][0]).starts_with("Extract durable memory claims"))
+        .filter_map(|call| call.body["messages"].as_array()?.last())
+        .map(text)
+        .find(|input| {
+            input.lines().any(|line| {
+                line.strip_prefix('[')
+                    .and_then(|rest| rest.split_once("] "))
+                    .is_some_and(|(_, words)| words == case.second.0)
+            })
+        })
+        .expect("the second turn has an extraction call");
+    let (person_label, claim_label) = listed_claim(listing, case.predicate, case.first.1)
+        .expect("the call lists Owen and the first claim's predicate and value");
     assert!(
-        listing.contains(&format!("entity {PERSON}"))
-            && listing.contains(&format!("claim {}", first.to_hex())),
+        listing.contains(&format!("entity {person_label} \"Owen\""))
+            && listing.contains(&format!(
+                "  claim {claim_label} {} = {}",
+                case.predicate,
+                json!(case.first.1)
+            )),
         "the second pass's input lists the person and the first pass's claim: {listing}"
     );
 
@@ -327,10 +438,10 @@ async fn binds_once(case: Case) {
 async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
     binds_once(Case {
         predicate: "profile.city",
-        first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
+        first: ("I'm Owen and I live in Lisbon.", "Lisbon"),
         owner_states_first: false,
         second: (
-            "Oleksii again: I moved, I live in Porto now, not Lisbon.",
+            "Owen again: I moved, I live in Porto now, not Lisbon.",
             "Porto",
         ),
         seeded_before_critical_classes: false,
@@ -344,10 +455,10 @@ async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
 async fn a_correction_on_a_critical_class_is_held_for_the_owner() {
     binds_once(Case {
         predicate: "health.allergy",
-        first: ("I'm Oleksii and I am allergic to peanuts.", "peanuts"),
+        first: ("I'm Owen and I am allergic to peanuts.", "peanuts"),
         owner_states_first: true,
         second: (
-            "Oleksii again: not peanuts after all, I am allergic to shellfish.",
+            "Owen again: not peanuts after all, I am allergic to shellfish.",
             "shellfish",
         ),
         seeded_before_critical_classes: false,
@@ -363,10 +474,10 @@ async fn a_correction_on_a_critical_class_is_held_for_the_owner() {
 async fn a_vault_seeded_before_the_critical_classes_holds_that_correction_too() {
     binds_once(Case {
         predicate: "health.allergy",
-        first: ("I'm Oleksii and I am allergic to peanuts.", "peanuts"),
+        first: ("I'm Owen and I am allergic to peanuts.", "peanuts"),
         owner_states_first: true,
         second: (
-            "Oleksii again: not peanuts after all, I am allergic to shellfish.",
+            "Owen again: not peanuts after all, I am allergic to shellfish.",
             "shellfish",
         ),
         seeded_before_critical_classes: true,
@@ -397,13 +508,13 @@ async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
         witness(
             &vault_path,
             EntityId::now(),
-            "I'm Oleksii and I live in Lisbon.",
+            "I'm Owen and I live in Lisbon.",
             true,
             "schema-1",
         );
         let Reply::Computed(answer) = follows_the_prompt(&Case {
             predicate: "residence.city",
-            first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
+            first: ("I'm Owen and I live in Lisbon.", "Lisbon"),
             owner_states_first: false,
             second: ("", ""),
             seeded_before_critical_classes: false,
@@ -458,7 +569,20 @@ async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
             assert_eq!(body["reasoning_budget_tokens"], 4_096, "{body}");
         }
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
-        let person = EntityId::from_hex(PERSON).unwrap();
+        // The engine mints the person the pass met (FIX 7506 P1): its id is
+        // the landed claim's subject. With no claim (the refused arms) any
+        // id without claims reads the same empty set.
+        let person = vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .unwrap()
+            .iter()
+            .filter_map(|id| vault.get_claim(id).ok().flatten())
+            .find(|claim| claim.predicate == "residence.city")
+            .and_then(|claim| match claim.subject {
+                oneiron::ClaimSubject::Entity(id) => Some(id),
+                _ => None,
+            })
+            .unwrap_or(EntityId::from_hex(PERSON).unwrap());
         assert_eq!(
             claims_on(&vault, person, "residence.city").len(),
             usize::from(!stray),

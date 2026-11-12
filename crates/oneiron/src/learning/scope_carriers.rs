@@ -10,7 +10,9 @@
 use std::collections::BTreeMap;
 
 use crate::Vault;
-use crate::critic::{CRITIQUE_ARTIFACT, CritiqueArtifact, CritiqueArtifactKey};
+use crate::critic::{
+    CRITIQUE_ARTIFACT, CritiqueArtifact, CritiqueArtifactKey, FlawIdentity, flaw_key,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ReceiptRecord;
@@ -201,6 +203,13 @@ pub(crate) fn erase_review_scope_in_txn(
                 }
                 if artifact.candidate_ref == named {
                     artifact.candidate_ref = scope.to_hex();
+                    // A flaw's finding key hashes its target (LEARN-CRITIC Q1 = B):
+                    // the reviews and claims that hold it take the new one.
+                    if let Some(flaw) = &artifact.flaw {
+                        renamed
+                            .entry(flaw_key(&named, flaw))
+                            .or_insert_with(|| flaw_key(&artifact.candidate_ref, flaw));
+                    }
                 }
                 artifact.artifact_id = rename(&mut renamed, &artifact.artifact_id, salt);
                 let moved = CritiqueArtifactKey {
@@ -342,6 +351,15 @@ pub(crate) fn erase_review_scope_in_txn(
                         .and_then(|id| id.as_str().map(str::to_owned))
                     {
                         rename(&mut renamed, &id, salt);
+                    }
+                    // A flaw's finding key hashes its target (LEARN-CRITIC Q1 = B):
+                    // the review's findings and claims take the new one.
+                    if let Some(flaw) = field_mut(artifact, "flaw")
+                        .and_then(|flaw| rmpv::ext::from_value::<FlawIdentity>(flaw.clone()).ok())
+                    {
+                        renamed
+                            .entry(flaw_key(&named, &flaw))
+                            .or_insert_with(|| flaw_key(&scope.to_hex(), &flaw));
                     }
                     artifact_named = true;
                 }

@@ -12,7 +12,7 @@ use crate::agent_dispatch::{
     decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
-use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
     AgentVerbAnswer, RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDeniedResult,
@@ -552,16 +552,7 @@ impl<'a> HostSelfDispatcher<'a> {
             ));
         };
         let (task, input, reads) = call.into_engine()?;
-        let points: Vec<_> = reads.iter().copied().map(PointRead::id).collect();
-        let checked = vault
-            .scoped_read(reader)
-            .with_claim_status(ClaimReadStatus::Recorded)
-            .read(&points, None)?;
-        if checked
-            .value
-            .iter()
-            .any(|row| row.as_ref().is_none_or(|row| row.body.is_none()))
-        {
+        if !crate::task_verb::run_rows::consult_result::refs_readable(vault, &reader, &reads)? {
             return Ok(refused(
                 "a TASK, result, evidence or reason ref is not readable on this run's read lane",
                 "Cite only refs your read lane reads, then land again.",

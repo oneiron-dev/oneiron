@@ -36,17 +36,60 @@ crate::side_table::side_tables! {
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Marker that this self-hosted vault's serve-start backfill of default agent Grants has run
+    /// (FIX AGENT-GRANTLESS-VISIBLE; Engine RULING GRANTLESS-SHAPE Q5 = A): written in the
+    /// writer that mints them, also when no agent was eligible; never written by a refused run.
+    /// Key: (). Value: the byte 1.
+    FEDERATION_AGENT_DEFAULT_GRANT_BACKFILL: VaultMeta b"federation:agent-default-grant-backfill:v1" Raw
+        // Restore class: the marker records the owner's mints, which stand as the live vault
+        // holds them: a restore never runs the backfill again over them.
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// Every agent a signed owner-agent Grant mint of the authority log has ever named, revoked
+    /// Grants included (Engine RULING PAIR-GRANT-DESIGN Q2 = A): written as each authority-log
+    /// row is staged, never removed, rebuilt from the log at open and after a restore. One posting
+    /// per signed mint, so a reader counts a posting only while the authority fold counts its mint.
+    /// Key: id16 (member) + id16 (grant) + hash32 (the mint's entry hash). Value: empty.
+    FEDERATION_AGENT_GRANT_MEMBER: VaultMeta b"federation:agent-grant-member:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Schema-version byte gating the agent Grant member index's rebuild from the authority log.
+    /// Key: ().
+    FEDERATION_AGENT_GRANT_MEMBER_SCHEMA_VERSION: VaultMeta b"federation:agent-grant-member-schema-version" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// A Connect guest's proposal in its pact's review inbox (FIX 3684): the proposer, the world
     /// and record it names, the text update as sent until the owner decides, then the decision.
     /// Never a vault write. Key: id16(grant) + id16(proposal).
     FEDERATION_CONNECT_PROPOSAL: VaultMeta b"federation:connect_proposal:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::federation::erase_connect_proposer_in_txn;
+    /// One engine-control change (untangle 6.6, S66-3): who changed which knob, of which class,
+    /// to what, and when; the receipt that names a holder of an `engine.controls` class. Key:
+    /// id16 (the change). A hard erase of an actor takes out the receipts that name it.
+    FEDERATION_ENGINE_CONTROL_CHANGE: VaultMeta b"federation:engine_control_change:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::federation::erase_engine_control_actor_in_txn;
+    /// One grant the engine stood by default (lead 10 Nov 06:5x): a base agent's Steward grant
+    /// stood when a host first opened the vault, the engine's act and never the owner's. The
+    /// receipt the owner reads on first open: the agent, the verbs, the origin ("engine default
+    /// at vault creation") and when. Key: id16 (the grant).
+    FEDERATION_ENGINE_DEFAULT_GRANT: VaultMeta b"federation:engine_default_grant:v1:" Named
+        // Restore class: a receipt names a Steward grant row the engine stood, and those rows
+        // stay as the live vault holds them: the receipts stay with them.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// An administrative ruling's admission, kept before the grant row that admitted it was
     /// rewritten or deleted (FIX 8740): the grant and the hash of that row. Immutable. Key: id16
     /// (the ruling).
     FEDERATION_RULING_WITNESS: VaultMeta b"federation:ruling_witness:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Each narrowing the owner applied to a base agent's Steward grant (untangle 6.3c): the
+    /// owner, the grant revoked, the narrower grant minted (none for a whole revoke), the verbs
+    /// before and after, and the breaks he confirmed. The record that he chose it. Key: id16 (the
+    /// agent) + u64 (recording time) + id16 (the grant revoked). A hard erase of the owner takes
+    /// his records out.
+    FEDERATION_SYSTEM_AGENT_NARROWING: VaultMeta b"federation:system_agent_narrowing:v1:" Named
+        // Restore class: the record of the narrowings the owner applied stays as the live vault
+        // holds it, with the live grant rows: a restore never brings a narrowing back undone.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::federation::erase_narrowing_actor_in_txn;
     /// The facet a verified Connect origin position names for an imported ASSET or ASSET_TEXT. This
     /// vault holds no edge to the sender's FACET, so the facet is kept here, written beside the
     /// record-scope stamp and retired with it (FIX 22223). Key: id16 (record). Value: id16 (facet).
@@ -67,6 +110,14 @@ crate::side_table::side_tables! {
     SCOPE_SOURCE_FREE_TEXT: VaultMeta b"scope:source_free_text:v1:" Named
         // Restore class: A source-free text's birth record stands with its stamp (FIX 8741).
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One Steward's ask to add, remove or re-role a member of a shared vault (untangle 6.3d): it
+    /// changes nothing until a live Admin or Owner applies it through the membership door, whose
+    /// receipt names the Steward as its proposer, or declines it. Key: id16 (ask id). A hard erase
+    /// of a person deletes each ask that names them: its Steward, the member it is about, or the
+    /// Admin or Owner who closed it.
+    SHARED_ACT_MEMBER_ASK: VaultMeta b"shared-act:member-ask:v1:" Named
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_member_ask_actor_in_txn;
     /// A membership change this install executed with no host issuer to sign it, whose
     /// carrier-signed record it still owes (FIX 12335): the vault, the cause, the person who
     /// executed it, the member it moved, the act, the second it was executed at, the signed-mint

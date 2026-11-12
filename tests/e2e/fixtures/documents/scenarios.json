@@ -4,27 +4,27 @@
   "oracle": "Independently authored content and canon invariants, never recorded engine output. Labels identify public setup results; they are not wire ids or cursor bytes. Unavailable DTOs are intentionally not fabricated.",
   "sourcePins": [
     {
-      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0032-agentic-notes-v1.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0032-agentic-notes-v1.md",
       "sha256": "50407d6e7537ef40f38f4642d19ecb06eb89f1fe80b53fba24e8d73e95f2e92b"
     },
     {
-      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
       "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
     },
     {
-      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md",
       "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
     },
     {
-      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0002-structural-entities.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0002-structural-entities.md",
       "sha256": "13e02238b5844f7ff37b6f37e17f3e57b1f998856277491664f7a6bb7bb1ce54"
     },
     {
-      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "path": "<workspace>/vibe-build-20261017/e2e-rulings.md",
       "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
     },
     {
-      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/backend/oneiron-arch-0006a-conversations-api-core.md",
+      "path": "<workspace>/oneiron-docs/generated/oneiron/backend/oneiron-arch-0006a-conversations-api-core.md",
       "sha256": "bfddf7ec0234e2b327f2dc73ad2189215cc8ecf4ba367de3856d4af8ed128593"
     }
   ],

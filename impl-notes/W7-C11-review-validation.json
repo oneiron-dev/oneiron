@@ -214,7 +214,7 @@
     "targets": [
       {
         "package": "oneiron",
-        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron-6874c7ccf9d8a062)",
+        "target": "Running unittests src/lib.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron-6874c7ccf9d8a062)",
         "passed": 7107,
         "failed": 0,
         "ignored": 4,
@@ -222,7 +222,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/build_cache.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/build_cache-9bdecb88148dd755)",
+        "target": "Running tests/build_cache.rs (<host-home>/w7-build/target/W7-C11/debug/deps/build_cache-9bdecb88148dd755)",
         "passed": 6,
         "failed": 0,
         "ignored": 0,
@@ -230,7 +230,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/code_memory.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/code_memory-17be3c63722f0f8f)",
+        "target": "Running tests/code_memory.rs (<host-home>/w7-build/target/W7-C11/debug/deps/code_memory-17be3c63722f0f8f)",
         "passed": 36,
         "failed": 0,
         "ignored": 0,
@@ -238,7 +238,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/git_smart_http.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/git_smart_http-d69de023177afcd7)",
+        "target": "Running tests/git_smart_http.rs (<host-home>/w7-build/target/W7-C11/debug/deps/git_smart_http-d69de023177afcd7)",
         "passed": 13,
         "failed": 0,
         "ignored": 0,
@@ -246,7 +246,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/it/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/it-0242943368d1fa9d)",
+        "target": "Running tests/it/main.rs (<host-home>/w7-build/target/W7-C11/debug/deps/it-0242943368d1fa9d)",
         "passed": 482,
         "failed": 0,
         "ignored": 11,
@@ -254,7 +254,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/it_sync/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/it_sync-db50a34cb7cd2be3)",
+        "target": "Running tests/it_sync/main.rs (<host-home>/w7-build/target/W7-C11/debug/deps/it_sync-db50a34cb7cd2be3)",
         "passed": 184,
         "failed": 0,
         "ignored": 1,
@@ -262,7 +262,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/lens_regen.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/lens_regen-5d613f0c1f759ed7)",
+        "target": "Running tests/lens_regen.rs (<host-home>/w7-build/target/W7-C11/debug/deps/lens_regen-5d613f0c1f759ed7)",
         "passed": 17,
         "failed": 0,
         "ignored": 0,
@@ -270,7 +270,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/type_boundaries_compilefail.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/type_boundaries_compilefail-467082573462f970)",
+        "target": "Running tests/type_boundaries_compilefail.rs (<host-home>/w7-build/target/W7-C11/debug/deps/type_boundaries_compilefail-467082573462f970)",
         "passed": 1,
         "failed": 0,
         "ignored": 0,
@@ -278,7 +278,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/vault_read_parity.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/vault_read_parity-be3598ed08d46a69)",
+        "target": "Running tests/vault_read_parity.rs (<host-home>/w7-build/target/W7-C11/debug/deps/vault_read_parity-be3598ed08d46a69)",
         "passed": 9,
         "failed": 0,
         "ignored": 0,
@@ -286,7 +286,7 @@
       },
       {
         "package": "oneiron",
-        "target": "Running tests/voice_segment_sync.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/voice_segment_sync-735808bba1fb0399)",
+        "target": "Running tests/voice_segment_sync.rs (<host-home>/w7-build/target/W7-C11/debug/deps/voice_segment_sync-735808bba1fb0399)",
         "passed": 6,
         "failed": 0,
         "ignored": 0,
@@ -294,7 +294,7 @@
       },
       {
         "package": "oneiron-android",
-        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_android-74c1aea89620944d)",
+        "target": "Running unittests src/lib.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron_android-74c1aea89620944d)",
         "passed": 1,
         "failed": 0,
         "ignored": 0,
@@ -302,7 +302,7 @@
       },
       {
         "package": "oneiron-bench",
-        "target": "Running unittests src/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_bench-e4467123f0505bd1)",
+        "target": "Running unittests src/main.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron_bench-e4467123f0505bd1)",
         "passed": 285,
         "failed": 0,
         "ignored": 0,
@@ -310,7 +310,7 @@
       },
       {
         "package": "oneiron-bench",
-        "target": "Running benches/materializer_mutex.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/materializer_mutex_contracts-c4a5227da68a4e0e)",
+        "target": "Running benches/materializer_mutex.rs (<host-home>/w7-build/target/W7-C11/debug/deps/materializer_mutex_contracts-c4a5227da68a4e0e)",
         "passed": 10,
         "failed": 0,
         "ignored": 0,
@@ -318,7 +318,7 @@
       },
       {
         "package": "oneiron-driver",
-        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_driver-1436fe335d0abab6)",
+        "target": "Running unittests src/lib.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron_driver-1436fe335d0abab6)",
         "passed": 85,
         "failed": 0,
         "ignored": 0,
@@ -326,7 +326,7 @@
       },
       {
         "package": "oneiron-napi",
-        "target": "Running unittests src/lib/mod.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_napi-bff9a0671a1427ec)",
+        "target": "Running unittests src/lib/mod.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron_napi-bff9a0671a1427ec)",
         "passed": 22,
         "failed": 0,
         "ignored": 0,
@@ -334,7 +334,7 @@
       },
       {
         "package": "oneiron-server",
-        "target": "Running unittests src/lib.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_server-7596021d0ff74f1e)",
+        "target": "Running unittests src/lib.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron_server-7596021d0ff74f1e)",
         "passed": 750,
         "failed": 0,
         "ignored": 5,
@@ -342,7 +342,7 @@
       },
       {
         "package": "oneiron-server",
-        "target": "Running unittests src/bin/oneiron.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron-616ba67019e6872f)",
+        "target": "Running unittests src/bin/oneiron.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron-616ba67019e6872f)",
         "passed": 0,
         "failed": 0,
         "ignored": 0,
@@ -350,7 +350,7 @@
       },
       {
         "package": "oneiron-server",
-        "target": "Running unittests src/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/oneiron_server-c60d08935d945a50)",
+        "target": "Running unittests src/main.rs (<host-home>/w7-build/target/W7-C11/debug/deps/oneiron_server-c60d08935d945a50)",
         "passed": 0,
         "failed": 0,
         "ignored": 0,
@@ -358,7 +358,7 @@
       },
       {
         "package": "oneiron-server",
-        "target": "Running tests/it/main.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/it-ea33e870494a2040)",
+        "target": "Running tests/it/main.rs (<host-home>/w7-build/target/W7-C11/debug/deps/it-ea33e870494a2040)",
         "passed": 91,
         "failed": 0,
         "ignored": 0,
@@ -366,7 +366,7 @@
       },
       {
         "package": "oneiron-server",
-        "target": "Running tests/managed_mode.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/managed_mode-5583a77609ed5743)",
+        "target": "Running tests/managed_mode.rs (<host-home>/w7-build/target/W7-C11/debug/deps/managed_mode-5583a77609ed5743)",
         "passed": 36,
         "failed": 0,
         "ignored": 0,
@@ -374,7 +374,7 @@
       },
       {
         "package": "oneiron-server",
-        "target": "Running tests/managed_privacy.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/managed_privacy-477b09ee36ed4f8c)",
+        "target": "Running tests/managed_privacy.rs (<host-home>/w7-build/target/W7-C11/debug/deps/managed_privacy-477b09ee36ed4f8c)",
         "passed": 3,
         "failed": 0,
         "ignored": 0,
@@ -382,7 +382,7 @@
       },
       {
         "package": "oneiron-server",
-        "target": "Running tests/ws_app_tier.rs (/home/lexi/w7-build/target/W7-C11/debug/deps/ws_app_tier-a62f5262667790b5)",
+        "target": "Running tests/ws_app_tier.rs (<host-home>/w7-build/target/W7-C11/debug/deps/ws_app_tier-a62f5262667790b5)",
         "passed": 4,
         "failed": 0,
         "ignored": 0,

@@ -5,6 +5,7 @@ use crate::store::Rows;
 
 use super::AttemptQueue;
 use super::encoding::decode_record;
+use super::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use super::telemetry::invalid_transition;
 use super::types::{AttemptState, CompleteAttempt, CompleteOutcome, FailAttempt, FailOutcome};
 use super::validate::{validate_failure_reason, validate_lease_owner, validate_transition_lease};
@@ -103,9 +104,9 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("fail", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
-            AttemptState::Leased => {
+        match RunLifecycle::step(RunRow::of(&record), RunEvent::Fail) {
+            RunStep::Replay => Ok(FailOutcome::AlreadyFailed(record)),
+            RunStep::Move { .. } => {
                 validate_lease_owner(&input.lease_owner)?;
                 validate_transition_lease(
                     &record,
@@ -114,12 +115,10 @@ impl AttemptQueue<'_> {
                     "fail",
                 )?;
                 validate_failure_reason(&input.reason)?;
-                record.state = AttemptState::Failed;
-                record.lease_owner = None;
+                let _ = RunLifecycle::fail(&mut record, input.now);
                 record.backoff_until = None;
                 record.last_error = Some(input.reason);
                 record.updated_at = input.now;
-                record.settled_at = Some(input.now);
                 self.delete_dedupe_entry_for_record(wtxn, &record)?;
                 let encoded = self.encode_in_txn(wtxn, &mut record)?;
                 self.store
@@ -134,7 +133,9 @@ impl AttemptQueue<'_> {
                 self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(FailOutcome::Failed(record))
             }
-            state => Err(invalid_transition("fail", state.as_str())),
+            RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                Err(invalid_transition("fail", record.state.as_str()))
+            }
         }
     }
 }

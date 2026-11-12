@@ -87,11 +87,8 @@ fn dreamer_read_key() -> Result<ScopedReadActorKey> {
         crate::dreamer_runner::authority::dreamer_actor_id()?,
         crate::EdgeActorClass::System,
     );
-    ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or(Error::InvalidConfig("sieve read actor".into()))
+    ScopedReadActorKey::for_engine_actor(actor)
+        .ok_or(Error::InvalidConfig("sieve read actor".into()))
 }
 
 /// The version a scope pins a document at: its live content's hash.
