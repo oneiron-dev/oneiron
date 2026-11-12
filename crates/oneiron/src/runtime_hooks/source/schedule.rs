@@ -49,6 +49,11 @@ const TASK_DUE_REVERSE: SideTable<EntityId, DueEntry, Named> =
 const TICKS: SideTable<u64, TickRow, Named> = SideTable::new(&side_table::HOOKS_TICK);
 /// The last tick sequence handed out.
 const TICKS_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::HOOKS_TICK_NEXT);
+/// Each waiting TASK whose tick an owner's tree pause holds, by the pause
+/// that holds it (AUTHOR-OFF, `agent_def::tree_pause`): no release ticks it
+/// while the row stands, and its due row waits in the index.
+const TICK_HOLD: SideTable<EntityId, EntityId, Named> =
+    SideTable::new(&side_table::HOOKS_TASK_TICK_HOLD);
 
 /// Due rows one release moves into the tick feed (CALLS, FIX 4749): an
 /// engine call that bounds one write. A longer backlog moves on the next
@@ -124,6 +129,8 @@ pub(crate) fn index_task_due_in_txn(
     }
     let Some(due_at) = due_at else {
         TASK_DUE_REVERSE.delete(store, txn, &task)?;
+        // A TASK that no longer ticks has no tick to hold.
+        TICK_HOLD.delete(store, txn, &task)?;
         return Ok(());
     };
     TASK_DUE.put(store, txn, &(due_at, task), &())?;
@@ -186,6 +193,10 @@ pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
             if due_at > now {
                 break;
             }
+            // A held tick waits in the index until its pause is resumed.
+            if TICK_HOLD.get(&vault.store, &rtxn, &task)?.is_some() {
+                continue;
+            }
             if due.len() == HOOK_TICK_RELEASE_ROWS {
                 more = true;
                 break;
@@ -201,6 +212,10 @@ pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
         let mut sequence = TICKS_NEXT.get(&vault.store, txn, &())?.unwrap_or(0);
         for (due_at, task) in &due {
+            // A pause that committed after the snapshot above holds it.
+            if TICK_HOLD.get(&vault.store, txn, task)?.is_some() {
+                continue;
+            }
             // A row another release already moved is ticked already.
             if !TASK_DUE.delete(&vault.store, txn, &(*due_at, *task))? {
                 continue;
@@ -231,6 +246,72 @@ pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     Ok(more)
 }
 
+/// When `task` ticks, Unix seconds, while it still waits for that tick: its
+/// due row is not yet released and the TASK is open at that due time.
+/// `None` for a TASK with no due time, one already ticked, and one closed
+/// before its tick, whose release drops the row with no tick. A waiting
+/// TASK is a watcher (ARCH-0080 §4); `agent_def::made_by` lists its
+/// creator's.
+pub(crate) fn task_tick_waiting_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Option<u64>> {
+    let Some(entry) = TASK_DUE_REVERSE.get(&vault.store, txn, &task)? else {
+        return Ok(None);
+    };
+    if entry.tick.is_some() {
+        return Ok(None);
+    }
+    Ok(crate::task_verb::open_task_due_at_in_txn(vault, txn, task)?
+        .filter(|due_at| *due_at == entry.due_at))
+}
+
+/// Holds `task`'s waiting tick for the tree pause `pause`, in the caller's
+/// write: no release ticks it until [`release_task_tick_hold_in_txn`]. False
+/// when its tick no longer waits ([`task_tick_waiting_in_txn`]) or a pause
+/// holds it already, and nothing is written.
+pub(crate) fn hold_task_tick_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    pause: EntityId,
+) -> Result<bool> {
+    if task_tick_waiting_in_txn(vault, txn, task)?.is_none()
+        || TICK_HOLD.get(&vault.store, txn, &task)?.is_some()
+    {
+        return Ok(false);
+    }
+    TICK_HOLD.put(&vault.store, txn, &task, &pause)?;
+    Ok(true)
+}
+
+/// Releases the hold the tree pause `pause` keeps on `task`'s tick, in the
+/// caller's write: the next release ticks it, late when its due time has
+/// passed. False when `pause` holds no tick of `task`, and nothing is
+/// written.
+pub(crate) fn release_task_tick_hold_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    pause: EntityId,
+) -> Result<bool> {
+    if TICK_HOLD.get(&vault.store, txn, &task)? != Some(pause) {
+        return Ok(false);
+    }
+    TICK_HOLD.delete(&vault.store, txn, &task)?;
+    Ok(true)
+}
+
+/// Whether a tree pause holds `task`'s tick.
+pub(crate) fn task_tick_held_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<bool> {
+    Ok(TICK_HOLD.get(&vault.store, txn, &task)?.is_some())
+}
+
 /// When this node next releases a tick: the due time of the earliest row in
 /// the due index, Unix seconds, on the node that releases ([`releases_here`]),
 /// the elected home or, before an election, the vault's one machine; `None`
@@ -243,11 +324,14 @@ pub(crate) fn next_tick_release_at(vault: &Vault) -> Result<Option<u64>> {
     if !releases_here(vault, &rtxn)? {
         return Ok(None);
     }
-    let earliest = TASK_DUE
-        .iter_from(&vault.store, &rtxn, &[])?
-        .next()
-        .transpose()?;
-    Ok(earliest.map(|((due_at, _), ())| due_at))
+    // A held tick wakes nothing: it waits until its pause is resumed.
+    for row in TASK_DUE.iter_from(&vault.store, &rtxn, &[])? {
+        let ((due_at, task), ()) = row?;
+        if TICK_HOLD.get(&vault.store, &rtxn, &task)?.is_none() {
+            return Ok(Some(due_at));
+        }
+    }
+    Ok(None)
 }
 
 /// Where a binding new to the tick feed starts: just before the earliest

@@ -96,6 +96,10 @@ crate::side_table::side_tables! {
     /// its release committed, if it has ticked. Key: id16 (TASK).
     HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Each waiting TASK whose tick an owner's tree pause holds (AUTHOR-OFF): the pause that
+    /// holds it. No release ticks it while the row stands. Key: id16 (TASK).
+    HOOKS_TASK_TICK_HOLD: VaultMeta b"hooks:task_tick_hold:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The tick feed fact hooks follow (FIX 4749): one row per due TASK released; an erase
     /// leaves an erased TASK's row as an empty erased row, and the runner prunes the rows every
     /// binding passed, but an open TASK's own tick. Key: u64be (sequence).
