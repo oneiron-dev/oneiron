@@ -45,9 +45,38 @@ const NO_GRANT: &str = "no live Grant from a live owner names this agent and lis
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::{
-    EvalAuthoringCaller, EvalAuthoringExecuteAnswer, EvalAuthoringExecuteRequest,
-    EvalAuthoringExecution, EvalAuthoringOutcome, EvalAuthoringSkillRun,
+    EvalAuthoringCaller, EvalAuthoringExecuteRequest, EvalAuthoringOutcome, EvalAuthoringSkillRun,
 };
+
+/// One requested pass's kept record, by its Coach attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvalAuthoringExecution {
+    pub attempt: EntityId,
+    pub caller: EvalAuthoringCaller,
+    pub requested_at: u64,
+    pub outcome: EvalAuthoringOutcome,
+    pub ended_at: Option<u64>,
+    pub skill: Option<EvalAuthoringSkillRun>,
+    /// The inventory the plan was made from, once the pass read one.
+    pub inventory_digest: Option<String>,
+    /// What the plan did; only an applied pass has one.
+    pub report: Option<EvalAuthoringReport>,
+}
+
+/// `vault.evals.authoring.execute`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EvalAuthoringExecuteAnswer {
+    /// The request's own pass ran on this host; its kept record.
+    Ran {
+        execution: Box<EvalAuthoringExecution>,
+    },
+    /// The queue's eval-authoring job was not ready for this host, so no
+    /// pass ran for this request; `vault.evals.authoring.result` reads the
+    /// job's state.
+    Waiting { attempt: EntityId },
+}
 
 /// What a request admitted.
 #[derive(Debug)]

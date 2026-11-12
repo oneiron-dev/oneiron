@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/drafter/evaluation.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::drafter::types::DrafterRollbackReason;
 use crate::drafter::types::DrafterServing;
 use serde::Deserialize;
 use serde::Serialize;
@@ -305,45 +304,6 @@ pub struct DrafterEvaluationCorpus {
     pub opened: u64,
     /// Lines that did not read as a case.
     pub unreadable: u64,
-}
-
-/// How an observation after an activation ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DrafterObservationVerdict {
-    /// No slowdown, every output as qualified, no error.
-    Clean,
-    Slowdown,
-    OutputMismatch,
-    WorkerError,
-}
-
-impl DrafterObservationVerdict {
-    fn rollback(self) -> Option<DrafterRollbackReason> {
-        match self {
-            Self::Clean => None,
-            Self::Slowdown => Some(DrafterRollbackReason::Slowdown),
-            Self::OutputMismatch => Some(DrafterRollbackReason::OutputMismatch),
-            Self::WorkerError => Some(DrafterRollbackReason::WorkerError),
-        }
-    }
-}
-
-/// Identity-pinned reference measurements on the incarnation that serves an
-/// activated version, against the incumbent's runs of its evaluation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DrafterObservation {
-    /// The binding generation the activation set.
-    pub generation: u64,
-    /// The draft identity and epoch the serving incarnation's answers named.
-    pub draft_digest: Option<String>,
-    pub epoch: Option<String>,
-    pub runs: Vec<DrafterCaseMeasure>,
-    pub comparisons: Vec<DrafterSpeedComparison>,
-    pub errors: BTreeMap<String, u64>,
-    pub verdict: DrafterObservationVerdict,
-    pub observed_at: u64,
 }
 
 /// `values`' median; `None` when there are none.

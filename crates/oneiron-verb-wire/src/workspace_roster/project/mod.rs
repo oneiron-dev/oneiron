@@ -18,7 +18,6 @@ pub use crate::workspace_roster::project::mint::ProjectGoalRecord;
 pub use crate::workspace_roster::project::proposal::ProjectCardConfirmRequest;
 pub use crate::workspace_roster::project::proposal::ProjectProposalRequest;
 pub use crate::workspace_roster::project::revision::ProjectRevisionHash;
-pub use crate::workspace_roster::project::revision::ProjectRevisionProof;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
@@ -47,22 +46,6 @@ pub struct ProjectParentWitness {
     pub project: EntityId,
     pub head: ProjectRevisionHash,
     pub leader: EntityId,
-}
-
-/// The challenge a project proof signs. A proof from before v3 carries no
-/// tag, and its challenge leaves the roster out.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectProofVersion {
-    #[default]
-    V2,
-    V3,
-}
-
-impl ProjectProofVersion {
-    fn is_v2(&self) -> bool {
-        *self == Self::V2
-    }
 }
 
 pub fn invalid() -> Error {

@@ -58,8 +58,43 @@ pub(crate) use crate::secret_record::RepoFileOriginal;
 
 pub(crate) use crate::secret_record::RepoFileKeys;
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::secret_custody::reveal::file::repo::RepoFileRevealScope;
+/// The reach of the owner's grant on a repo file read: the scope the
+/// owner's standing answer to one repo file reveal picks (FIX 9236).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoFileRevealScope {
+    /// This file, until revoked.
+    File,
+    /// This file, for this task (run) only.
+    FileTask,
+    /// Every marked file of this repo, until revoked.
+    Repo,
+    /// Every marked file of this repo, for this task (run) only.
+    RepoTask,
+}
+
+impl RepoFileRevealScope {
+    /// Every scope, the narrowest first: the order a read's bound is tried.
+    pub(crate) const ALL: [Self; 4] = [Self::FileTask, Self::File, Self::RepoTask, Self::Repo];
+
+    /// The pinned scope word.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::FileTask => "file_task",
+            Self::Repo => "repo",
+            Self::RepoTask => "repo_task",
+        }
+    }
+
+    const fn names_file(self) -> bool {
+        matches!(self, Self::File | Self::FileTask)
+    }
+
+    const fn names_task(self) -> bool {
+        matches!(self, Self::FileTask | Self::RepoTask)
+    }
+}
 
 /// What a repo file read names beside its keys, as its reveal rows keep it:
 /// digests of the ORIGINAL file's identity and of its actual recipient, the

@@ -12,13 +12,71 @@ use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::offer::snapshot::{
-    ComputeDestination, OfferAnswer, OfferCandidate, OfferCheck, OfferCheckOutcome, OfferCost,
-    OfferEvidence, OfferModelPin, OfferOption, SeatWorkload,
+    ComputeDestination, OfferAnswer, OfferCheck, OfferCheckOutcome, OfferCost, SeatWorkload,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::skill_optimize::offer::snapshot::{MAX_REF_BYTES, bounded};
 #[doc(hidden)]
 pub(super) use oneiron_verb_wire::skill_optimize::offer::snapshot::{amount, invalid, named, refs};
+
+/// A model asset as offered: identity, revision and, for a download, the
+/// content hash it must load at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfferModelPin {
+    pub model: String,
+    pub revision: String,
+    pub content_hash: Option<String>,
+}
+
+/// What the offer proposes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OfferCandidate {
+    /// Switch the seat to a stock model that scores as well for less, or
+    /// better for no more.
+    Stock {
+        model: OfferModelPin,
+        licence: String,
+        source: String,
+    },
+    /// Train a custom model from a base with a recipe.
+    TrainRecipe {
+        base: OfferModelPin,
+        recipe_ref: String,
+        licence: String,
+    },
+}
+
+/// A comparison row: the baseline, the cheapest local option or an outside
+/// one, in the same columns as the candidate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfferOption {
+    pub label: String,
+    pub model: OfferModelPin,
+    pub cost: OfferCost,
+    pub score: Option<f64>,
+    pub evidence_refs: Vec<String>,
+}
+
+/// The measured evidence behind the offer, read from OF-578's ledgers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfferEvidence {
+    pub cohort: Option<EntityId>,
+    pub exposures: Vec<EntityId>,
+    pub rubric_revision: Option<String>,
+    /// `None` reads as unknown: nothing was measured yet.
+    pub card: Option<SufficiencyCard>,
+    /// The native Final paired measurement that supplied this card, when its
+    /// model/revision arms, exposures and card were verified in the offer's writer.
+    /// This is historical provenance, not current auto-approval authority.
+    pub paired_measurement: Option<[u8; 32]>,
+    /// Losses shown beside the gains (a general skill, a language, calibration).
+    pub losses: Vec<String>,
+    pub risk: Option<String>,
+}
 
 /// What the Coach's offer skill drafted.
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +187,27 @@ pub struct OfferCheckInput {
     /// The rows the check was read from (FIX 5482), ids only: `None` when
     /// they are not all known.
     pub source_rows: Option<Vec<EntityId>>,
+}
+
+impl OfferModelPin {
+    fn validate(&self) -> Result<()> {
+        named(&self.model, "an offered model names its id")?;
+        named(&self.revision, "an offered model names its revision")?;
+        if let Some(hash) = &self.content_hash {
+            named(hash, "an offered model hash is not blank")?;
+        }
+        Ok(())
+    }
+}
+
+impl OfferOption {
+    fn validate(&self) -> Result<()> {
+        named(&self.label, "an offer option names its label")?;
+        self.model.validate()?;
+        self.cost.validate()?;
+        amount(self.score)?;
+        refs(&self.evidence_refs, false)
+    }
 }
 
 impl TrainingOfferDraft {

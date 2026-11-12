@@ -20,9 +20,18 @@ pub(crate) use crate::store::project_kind::{
 const REVISION_HASH_DOMAIN: &[u8] = b"oneiron/project-revision/v1/";
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::workspace_roster::project::revision::{
-    ProjectRevisionHash, ProjectRevisionProof,
-};
+pub use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
+
+/// The signed fields of a v2/v3 proof, without its anchor: what a held
+/// signed revision and an anchor link carry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRevisionProof {
+    pub slip_wire: String,
+    pub holder_signature: Vec<u8>,
+    pub signed_at: u64,
+    pub version: ProjectProofVersion,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]

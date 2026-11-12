@@ -38,10 +38,45 @@ const REPLAY_BATCH: usize = 256;
 /// Source reads one replay page makes per source.
 const MAX_REPLAY_BATCHES: usize = 64;
 
+/// One past entry the hook takes, and what its body returns for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct HookReplayEntry {
+    pub case: HookReplayCase,
+    pub result: HookReplayResult,
+}
+
+/// What a replayed entry is: a fact the hook took, or a verb run it saved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "on", rename_all = "snake_case")]
+pub enum HookReplayCase {
+    /// A fact the hook took, at its source position.
+    Fact {
+        source: FactSource,
+        position: FactPositionHex,
+        kind: FactKind,
+        #[serde(with = "crate::serialize::entity_ref")]
+        #[schemars(with = "String")]
+        entity: EntityId,
+    },
+    /// A verb run the hook saved, by its run key.
+    Verb {
+        /// The run's key, as 64 hex.
+        run_key: String,
+        /// The call's invocation, as 32 hex.
+        invocation: String,
+        verb: String,
+        phase: HookPhase,
+    },
+    /// A run the run index names whose saved row is gone: only its run key
+    /// remains, so this entry carries nothing else (FIX 2394).
+    UnknownRun {
+        /// The run's key, as 64 hex.
+        run_key: String,
+    },
+}
+
 #[doc(hidden)]
-pub use oneiron_verb_wire::runtime_hooks::replay::{
-    HookReplayCase, HookReplayCompare, HookReplayEntry, HookReplayResult,
-};
+pub use oneiron_verb_wire::runtime_hooks::replay::{HookReplayCompare, HookReplayResult};
 
 /// A run the run index names, with its saved row when it still has one.
 pub(super) enum SavedRun {

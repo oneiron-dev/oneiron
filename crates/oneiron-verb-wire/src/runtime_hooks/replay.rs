@@ -1,50 +1,8 @@
 //! Moved from `crates/oneiron/src/runtime_hooks/replay.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::runtime_hooks::source::FactKind;
-use crate::runtime_hooks::source::FactPositionHex;
-use crate::runtime_hooks::source::FactSource;
-use crate::store::pack_hook_proposal::HookPhase;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// One past entry the hook takes, and what its body returns for it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub struct HookReplayEntry {
-    pub case: HookReplayCase,
-    pub result: HookReplayResult,
-}
-
-/// What a replayed entry is: a fact the hook took, or a verb run it saved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "on", rename_all = "snake_case")]
-pub enum HookReplayCase {
-    /// A fact the hook took, at its source position.
-    Fact {
-        source: FactSource,
-        position: FactPositionHex,
-        kind: FactKind,
-        #[serde(with = "oneiron_contracts::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        entity: EntityId,
-    },
-    /// A verb run the hook saved, by its run key.
-    Verb {
-        /// The run's key, as 64 hex.
-        run_key: String,
-        /// The call's invocation, as 32 hex.
-        invocation: String,
-        verb: String,
-        phase: HookPhase,
-    },
-    /// A run the run index names whose saved row is gone: only its run key
-    /// remains, so this entry carries nothing else (FIX 2394).
-    UnknownRun {
-        /// The run's key, as 64 hex.
-        run_key: String,
-    },
-}
 
 /// How a replayed outcome stands to the one its run recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

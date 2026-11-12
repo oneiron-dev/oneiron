@@ -97,11 +97,60 @@ impl ResidentCraftCandidate {
     }
 }
 
+/// The owner's verdict on one craft candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CraftVerdict {
+    /// The note becomes the resident's learned craft.
+    Approved,
+    /// The note is set aside; a later dreaming may propose it again.
+    Rejected,
+}
+
+impl CraftVerdict {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    const fn approval(self) -> ClaimApprovalStatus {
+        match self {
+            Self::Approved => ClaimApprovalStatus::Approved,
+            Self::Rejected => ClaimApprovalStatus::Rejected,
+        }
+    }
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::actor_claims::candidate::{
-    CraftCandidateAnswer, CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView,
-    CraftVerdict, CraftVerdictView,
+    CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView,
 };
+
+/// `vault.craft_candidates.answer`'s input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CraftCandidateAnswer {
+    /// The candidate's claim id (32 hex), as its card names it.
+    pub candidate_id: String,
+    /// The content hash its card showed (64 hex); another refuses.
+    pub content_hash: String,
+    pub verdict: CraftVerdict,
+}
+
+/// The owner's verdict as it landed.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CraftVerdictView {
+    pub candidate_id: String,
+    pub verdict: CraftVerdict,
+    /// The verdict row (32 hex), which superseded the candidate.
+    pub verdict_id: String,
+    /// The decision's receipt (`gate:<hex>`).
+    pub receipt_ref: String,
+    /// When the owner decided, on the vault clock.
+    pub decided_at: u64,
+}
 
 /// Lands `candidates` that `resident`'s dreaming `attempt` proposed, as
 /// Proposed `actor.*` rows on the resident, in the caller's write. A note is

@@ -9,8 +9,6 @@ pub use crate::drafter::evaluation::DrafterEvaluationCorpus;
 pub use crate::drafter::evaluation::DrafterEvaluationDecision;
 pub use crate::drafter::evaluation::DrafterFailReason;
 pub use crate::drafter::evaluation::DrafterMeasurementSchedule;
-pub use crate::drafter::evaluation::DrafterObservation;
-pub use crate::drafter::evaluation::DrafterObservationVerdict;
 pub use crate::drafter::evaluation::DrafterSampleRule;
 pub use crate::drafter::evaluation::DrafterSlowdownRule;
 pub use crate::drafter::evaluation::DrafterSpeedComparison;

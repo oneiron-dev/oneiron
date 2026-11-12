@@ -175,9 +175,7 @@ const HUB_MEMBERSHIP_WEIGHT: f32 = 0.05;
 #[doc(hidden)]
 pub(super) use oneiron_verb_wire::workspace_roster::project::invalid;
 #[doc(hidden)]
-pub use oneiron_verb_wire::workspace_roster::project::{
-    ProjectParentWitness, ProjectProofVersion, ProjectRole,
-};
+pub use oneiron_verb_wire::workspace_roster::project::{ProjectParentWitness, ProjectRole};
 #[doc(hidden)]
 use oneiron_verb_wire::workspace_roster::project::{default_depth_limit, home_room_id};
 
@@ -278,6 +276,22 @@ pub enum ProjectWriteOutcome {
     /// The revision is held beside the frozen frontier, and the project's
     /// history question is open for the owner.
     Held(ProjectHistoryOverBudget),
+}
+
+/// The challenge a project proof signs. A proof from before v3 carries no
+/// tag, and its challenge leaves the roster out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectProofVersion {
+    #[default]
+    V2,
+    V3,
+}
+
+impl ProjectProofVersion {
+    fn is_v2(&self) -> bool {
+        *self == Self::V2
+    }
 }
 
 /// The holder signs the authority fields, its signing time and the anchor

@@ -9,8 +9,44 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::artifact_hosting::vocabulary::ArtifactPointerChannel;
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ArtifactPointerChannel {
+    #[default]
+    Published,
+    Preview,
+}
+
+impl ArtifactPointerChannel {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Published => ARTIFACT_POINTER_CHANNELS[0],
+            Self::Preview => ARTIFACT_POINTER_CHANNELS[1],
+        }
+    }
+
+    #[must_use]
+    pub const fn key_byte(self) -> u8 {
+        match self {
+            Self::Published => ARTIFACT_CHANNEL_PUBLISHED,
+            Self::Preview => ARTIFACT_CHANNEL_PREVIEW,
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "published" => Ok(Self::Published),
+            "preview" => Ok(Self::Preview),
+            _ => Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
+                "artifact pointer channel must be published or preview",
+            ))),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

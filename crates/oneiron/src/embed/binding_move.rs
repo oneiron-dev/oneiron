@@ -69,10 +69,18 @@ impl BindingSource {
     }
 }
 
+/// The space move that re-embeds for a binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BindingMoveLink {
+    pub candidate: String,
+    pub incumbent: SpaceRef,
+    /// The move's `started_at`: which move to that candidate it is.
+    pub started_at: u64,
+}
+
 #[doc(hidden)]
-pub use oneiron_verb_wire::embed::binding_move::{
-    BindingMoveLink, BindingMoveState, BindingNotApplied,
-};
+pub use oneiron_verb_wire::embed::binding_move::{BindingMoveState, BindingNotApplied};
 
 /// One owner-approved retrieval embedder binding, staged until its space move swaps in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

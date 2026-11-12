@@ -79,7 +79,6 @@ pub mod secret_snapshot;
 pub mod settings;
 pub mod share_travel;
 pub mod skill;
-pub mod skill_hub;
 pub mod skill_optimize;
 pub mod slim;
 pub mod snapshot_read;

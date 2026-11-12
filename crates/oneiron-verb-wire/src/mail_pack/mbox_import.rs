@@ -20,35 +20,3 @@ pub struct MailMboxImportRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messages: Option<u32>,
 }
-
-/// What one import call did.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailMboxImportReport {
-    pub source_ref: String,
-    /// Messages that landed.
-    pub landed: u64,
-    /// Messages the vault held whole already, or forgot.
-    pub same: u64,
-    /// Messages refused (no Gmail id, or refused by the write door), with
-    /// why.
-    pub refused: u64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub refusal_reasons: Vec<String>,
-    /// Messages left out: trash, spam, drafts, chats, older than the copy
-    /// setting keeps, or larger than this host reads.
-    pub skipped: u64,
-    /// Messages read from this file over every call so far.
-    pub read_total: u64,
-    /// Whether the whole file has been read.
-    pub done: bool,
-}
-
-impl MailMboxImportReport {
-    fn refuse(&mut self, reason: String) {
-        self.refused += 1;
-        if self.refusal_reasons.len() < MAX_REASONS {
-            self.refusal_reasons.push(reason);
-        }
-    }
-}

@@ -26,9 +26,25 @@ pub use label_ask::{EvalLabelAskRequest, ask_label, training_offer_decision};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::eval_set::doors::{
-    EvalAuthorNowRequest, EvalAuthoringRef, EvalAuthoringResult, EvalCaseLineage,
-    EvalCohortOpenRequest, EvalCohortRef, EvalExposureLedger, EvalLabelPickRequest,
+    EvalAuthorNowRequest, EvalAuthoringRef, EvalCaseLineage, EvalCohortOpenRequest, EvalCohortRef,
+    EvalExposureLedger, EvalLabelPickRequest,
 };
+
+/// Completion is the host queue's state. A completed pass may author nothing:
+/// no available skill, model or valid plan is never a fabricated report.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EvalAuthoringResult {
+    pub attempt: EntityId,
+    pub state: AttemptState,
+    pub terminal: bool,
+    pub last_error: Option<String>,
+    /// The kept record of a pass `vault.evals.authoring.execute` requested:
+    /// its caller, outcome and report. A nightly or queued-only pass has
+    /// none.
+    #[serde(default)]
+    pub execution: Option<super::EvalAuthoringExecution>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -20,9 +20,53 @@ const PATH_POLICY: SideTable<EntityId, OriginLfsPathPolicy, Named> =
     SideTable::new(&side_table::ORIGIN_LFS_PATH_POLICY);
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::origin::lfs::path_policy::{
-    OriginLfsPathMatch, OriginLfsPathPolicy, OriginLfsPathRule,
-};
+pub use oneiron_verb_wire::origin::lfs::path_policy::OriginLfsPathMatch;
+
+/// One ordered rule: the paths it matches and their class.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OriginLfsPathRule {
+    #[serde(rename = "match")]
+    pub path_match: OriginLfsPathMatch,
+    pub class: LfsAssetClass,
+}
+
+/// One served origin's LFS path policy: its ordered rules and the revision
+/// of the owner's last set. Revision 0 with no rules is an origin whose
+/// owner never set one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OriginLfsPathPolicy {
+    pub revision: u64,
+    pub rules: Vec<OriginLfsPathRule>,
+}
+
+impl OriginLfsPathRule {
+    /// The rule's path text.
+    fn text(&self) -> &str {
+        match &self.path_match {
+            OriginLfsPathMatch::Exact(text) | OriginLfsPathMatch::Prefix(text) => text,
+        }
+    }
+
+    /// Refuses a path that is not a normalized repository-relative path in
+    /// the canonical text of its bytes.
+    fn validate(&self) -> Result<()> {
+        validate_manifest_path(self.text())?;
+        git_path_bytes(self.text())?;
+        Ok(())
+    }
+
+    fn matches(&self, path: &[u8]) -> Result<bool> {
+        let rule = git_path_bytes(self.text())?;
+        Ok(match self.path_match {
+            OriginLfsPathMatch::Exact(_) => path == rule.as_ref(),
+            OriginLfsPathMatch::Prefix(_) => path
+                .strip_prefix(rule.as_ref())
+                .is_some_and(|rest| rest.first() == Some(&b'/')),
+        })
+    }
+}
 
 /// Refuses a rule list with a path that is not a normalized
 /// repository-relative path in the canonical text of its bytes.
@@ -31,6 +75,17 @@ pub use oneiron_verb_wire::origin::lfs::path_policy::{
 /// The first such path's refusal.
 pub(crate) fn validate_origin_lfs_path_rules(rules: &[OriginLfsPathRule]) -> Result<()> {
     rules.iter().try_for_each(OriginLfsPathRule::validate)
+}
+
+impl LfsPathPolicy for OriginLfsPathPolicy {
+    fn classify(&self, _repo_id: EntityId, path: &[u8]) -> Result<LfsAssetClass> {
+        for rule in &self.rules {
+            if rule.matches(path)? {
+                return Ok(rule.class);
+            }
+        }
+        Ok(LfsAssetClass::RepositoryLarge)
+    }
 }
 
 impl Vault {

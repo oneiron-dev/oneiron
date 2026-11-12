@@ -65,11 +65,113 @@ pub const SPACE_MOVE_FILL_DEADLINE_SECS: u64 = 14 * 24 * 60 * 60;
 const EMBEDDING_MOVE: SideTable<String, SpaceMove, Named> =
     SideTable::new(&side_table::EMBEDDING_MOVE);
 
+/// Where a kind slot's vectors are searched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpaceRef {
+    /// The vault's own text vector index: the unbound text slot.
+    TextIndex,
+    /// A declared space.
+    Declared(String),
+}
+
+impl SpaceRef {
+    /// Whether `kind`'s slot reads here under `bindings`.
+    fn serves(&self, bindings: &KindSlotBindings, kind: InputKind) -> bool {
+        match self {
+            Self::TextIndex => kind == InputKind::Text && bindings.text.is_none(),
+            Self::Declared(id) => bindings.space_for(kind) == Some(id.as_str()),
+        }
+    }
+
+    fn declared(&self) -> Option<&str> {
+        match self {
+            Self::TextIndex => None,
+            Self::Declared(id) => Some(id),
+        }
+    }
+}
+
+impl std::fmt::Display for SpaceRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TextIndex => f.write_str("the vault's text index"),
+            Self::Declared(id) => write!(f, "embedding space {id}"),
+        }
+    }
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::embed::space_move::{
-    CohortProbe, KindProbeCheck, NotWorse, PairedInterval, SpaceMove, SpaceMoveCheck,
-    SpaceMoveState, SpaceRef,
+    CohortProbe, NotWorse, PairedInterval, SpaceMoveState,
 };
+
+/// One kind's paired probe run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct KindProbeCheck {
+    pub kind: InputKind,
+    /// Probes that ran: those of this kind with a live target.
+    pub probes: usize,
+    /// The independent source families those probes come from.
+    pub families: usize,
+    /// Candidate minus incumbent, of each probe's reciprocal rank at [`SPACE_PROBE_DEPTH`],
+    /// averaged per family; `None` under [`SPACE_PROBE_MIN_FAMILIES`].
+    pub difference: Option<PairedInterval>,
+    /// The incumbent's second run minus its first, likewise: its same-probe retest.
+    pub retest: Option<PairedInterval>,
+    /// What the difference's low end is held to: the retest interval's widest bound, or the
+    /// owner's stricter margin.
+    pub tolerance: Option<f32>,
+    pub verdict: NotWorse,
+    /// The unrewarded canary: candidate minus incumbent of whether each probe finds a target
+    /// within [`SPACE_PROBE_DEPTH`] at all, grouped by family as the difference is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary: Option<PairedInterval>,
+    /// The canary's reading, by the same rule against its own retest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary_verdict: Option<NotWorse>,
+    /// The version of the kind's probe set the runs read, 32 hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_version: Option<String>,
+    /// The version of its answer key and scoring the runs read, 32 hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rubric: Option<String>,
+    /// The sufficiency card the reading was read on as the move concluded (FIX 1638).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<SufficiencyCard>,
+    /// The probes that ran from a cut cohort, as the check's cohort metadata held them (FIX
+    /// 6744): an owner's later yes counts its swap on their cohorts (FIX 7040).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cohort_members: Vec<CohortProbe>,
+}
+
+/// One paired probe run over every kind a move carries.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SpaceMoveCheck {
+    /// Vault seconds.
+    pub checked_at: u64,
+    pub kinds: Vec<KindProbeCheck>,
+    /// Not worse when every kind is; worse when any kind is; unknown otherwise.
+    pub verdict: NotWorse,
+    /// The token the check's probe cohorts counted it under (FIX 6744); `None` when it kept
+    /// no cohort metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cohort_check: Option<String>,
+}
+
+/// A kind slot version move: every kind slot the incumbent served, moving to the candidate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SpaceMove {
+    pub candidate: String,
+    pub incumbent: SpaceRef,
+    pub kinds: BTreeSet<InputKind>,
+    /// The owner's margin, held only where it is stricter than the measured retest noise.
+    pub margin: Option<f32>,
+    /// Vault seconds.
+    pub started_at: u64,
+    pub state: SpaceMoveState,
+    pub last_check: Option<SpaceMoveCheck>,
+}
 
 /// What [`Vault::check_space_move`] did.
 #[derive(Debug, Clone, PartialEq)]

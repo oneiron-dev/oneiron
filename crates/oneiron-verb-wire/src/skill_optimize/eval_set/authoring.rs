@@ -3,13 +3,10 @@
 
 use crate::skill_optimize::eval_set::EvalLabelKind;
 pub use crate::skill_optimize::eval_set::authoring::apply::CaseDecision;
-pub use crate::skill_optimize::eval_set::authoring::apply::EvalAuthoringReport;
 pub use crate::skill_optimize::eval_set::authoring::apply::EvalAuthoringSkip;
 pub use crate::skill_optimize::eval_set::authoring::apply::FamilyDecision;
 pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringCaller;
-pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringExecuteAnswer;
 pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringExecuteRequest;
-pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringExecution;
 pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringOutcome;
 pub use crate::skill_optimize::eval_set::authoring::executions::EvalAuthoringSkillRun;
 use crate::skill_optimize::eval_set::cohort::EvalExposureCounts;

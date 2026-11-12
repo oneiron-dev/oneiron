@@ -1,11 +1,8 @@
 pub use crate::settings::board_layout::AgentBoardLayoutOverride;
 pub use crate::settings::board_layout::BOARD_LAYOUT_AGENT_OVERRIDES_MAX;
-pub use crate::settings::board_layout::BoardLayoutSettings;
 pub use crate::settings::destination::CallerLocality;
 pub use crate::settings::destination::RecipientChoice;
-pub use crate::settings::destination::RecipientLimit;
 pub use crate::settings::destination::RecipientWhy;
-pub use crate::settings::destination::ReleaseHold;
 pub use oneiron_store::settings::model_pack;
 pub use oneiron_store::settings::model_versioning;
 pub use oneiron_store::settings::model_versioning::DEFAULT_MODEL_STACK_CURRENT_ID;
@@ -30,4 +27,3 @@ pub use oneiron_wake_contract::settings::destination::ReadDestination;
 pub mod board_layout;
 pub mod destination;
 pub mod non_base_world_claim_fraction;
-pub mod snapshot_read;

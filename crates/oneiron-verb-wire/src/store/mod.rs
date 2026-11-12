@@ -43,25 +43,17 @@ pub(crate) use oneiron_store::key_custody::head::pad_scope::PadRecipients;
     reason = "L03 02A's pad hydration (FIX 6706) calls these"
 )]
 pub(crate) use oneiron_store::key_custody::head::pad_scope::WorldPadScope;
-#[cfg(feature = "sync")]
-pub(crate) use oneiron_store::loro_document;
-#[cfg(feature = "sync")]
-pub(crate) use oneiron_store::loro_tombstones;
 pub use oneiron_store::note_kind;
 pub use oneiron_store::outbound_outcome;
 pub use oneiron_store::outbound_trigger;
 pub use oneiron_store::own_rate_record;
 pub use oneiron_store::pack_hook_actor_class;
-#[cfg(feature = "sync")]
-pub(crate) use oneiron_store::pad_object_membership;
 pub use oneiron_store::persona_snapshot_record;
 pub use oneiron_store::plugin_section_predicate;
 pub use oneiron_store::reaction_predicate;
 pub use oneiron_store::receipt_identity;
 pub use oneiron_store::recovery_kit;
 pub use oneiron_store::recovery_write_budget;
-#[cfg(feature = "sync")]
-pub(crate) use oneiron_store::replica_edge_key;
 pub use oneiron_store::repo_fork;
 pub use oneiron_store::repo_import_predicate;
 pub use oneiron_store::repo_mutation_record;
@@ -106,7 +98,6 @@ pub mod attempt_run_signal;
 pub mod body_envelope;
 pub mod code_document_receipt;
 pub mod decision_ask_role;
-pub mod decision_rule_rows;
 pub mod key_custody;
 pub mod model_step_submission;
 pub mod note_body;

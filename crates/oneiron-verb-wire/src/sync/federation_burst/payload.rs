@@ -4,11 +4,6 @@
 use oneiron_contracts::host_memory::MachineMemory;
 use oneiron_contracts::host_memory::MemoryLease;
 use oneiron_contracts::host_memory::MemoryRefusal;
-use serde::Deserialize;
-use serde::Serialize;
-use std::fmt;
-use std::ops::Deref;
-use std::sync::Arc;
 use std::time::Instant;
 
 pub fn reserve_memory(size: u64) -> oneiron_base::error::Result<MemoryLease> {

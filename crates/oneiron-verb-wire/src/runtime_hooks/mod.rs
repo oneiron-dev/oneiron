@@ -1,14 +1,9 @@
 pub use crate::runtime_hooks::lineage::HookCheckReason;
-pub use crate::runtime_hooks::regen::HookGoldenDiff;
-pub use crate::runtime_hooks::regen::HookGoldenFingerprint;
-pub use crate::runtime_hooks::regen::HookGoldenManifest;
 pub use crate::runtime_hooks::regen::HookRegenFailure;
 pub use crate::runtime_hooks::regen::HookRegenFailurePhase;
 pub use crate::runtime_hooks::regen::history::HookRegenActor;
 pub use crate::runtime_hooks::regen::history::HookRegenDecision;
-pub use crate::runtime_hooks::replay::HookReplayCase;
 pub use crate::runtime_hooks::replay::HookReplayCompare;
-pub use crate::runtime_hooks::replay::HookReplayEntry;
 pub use crate::runtime_hooks::replay::HookReplayResult;
 pub use crate::runtime_hooks::source::ClaimChangelogPosition;
 pub use crate::runtime_hooks::source::FactKind;

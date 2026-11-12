@@ -32,13 +32,52 @@ use super::widen_record::invalid;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::agent_dispatch::spend_calibration::{
-    AgentSpendCalibration, DollarBasis, LAUNCH_COST_PRIOR_UNITS, SpendBasis, UsdPriceTarget,
+    DollarBasis, LAUNCH_COST_PRIOR_UNITS, SpendBasis, UsdPriceTarget,
 };
 
 /// Per-agent, per-unit spend calibration. Key: `{agent_def hex}:{unit}`; a
 /// peer consult's is `consult:{peer hex}:{unit}`.
 pub(super) const CALIBRATION: SideTable<String, AgentSpendCalibration, LegacyJson> =
     SideTable::new(&side_table::AGENT_DISPATCH_SPEND_CALIBRATION);
+
+/// What one agent's settled launches spent, in one unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSpendCalibration {
+    pub samples: u64,
+    /// Saturating.
+    pub total_units: u64,
+    /// Exponentially weighted mean, alpha 1/4; the first sample sets it.
+    pub ewma_units: u64,
+    pub last_units: u64,
+    /// Unix seconds.
+    pub updated_at: u64,
+}
+
+impl AgentSpendCalibration {
+    fn fold(previous: Option<Self>, units: u64, now: u64) -> Self {
+        match previous {
+            None => Self {
+                samples: 1,
+                total_units: units,
+                ewma_units: units,
+                last_units: units,
+                updated_at: now,
+            },
+            Some(previous) => {
+                // (3 * mean + sample) / 4, rounded, in wide integer math.
+                let ewma = (u128::from(previous.ewma_units) * 3 + u128::from(units) + 2) / 4;
+                Self {
+                    samples: previous.samples.saturating_add(1),
+                    total_units: previous.total_units.saturating_add(units),
+                    ewma_units: u64::try_from(ewma).unwrap_or(u64::MAX),
+                    last_units: units,
+                    updated_at: now,
+                }
+            }
+        }
+    }
+}
 
 /// A USD rate: `usd_micros` millionths of a dollar per `per_units` native
 /// units. A zero `per_units` prices nothing.

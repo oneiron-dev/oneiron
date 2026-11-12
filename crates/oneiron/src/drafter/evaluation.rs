@@ -66,10 +66,9 @@ use crate::{LlmRequest, Vault};
 pub use oneiron_verb_wire::drafter::evaluation::{
     DRAFTER_QUALIFICATION_KEY, DrafterActivationRefusal, DrafterArmIdentity, DrafterCaseMeasure,
     DrafterEvaluationArm, DrafterEvaluationCorpus, DrafterEvaluationDecision, DrafterFailReason,
-    DrafterMeasurementSchedule, DrafterObservation, DrafterObservationVerdict, DrafterSampleRule,
-    DrafterSlowdownRule, DrafterSpeedComparison, DrafterSpeedMetric, DrafterSpeedOutcome,
-    DrafterSpeedStatistic, DrafterSpeedVerdict, DrafterTieEvidence, DrafterTokenIdentity,
-    DrafterUnknownReason, compare_speed,
+    DrafterMeasurementSchedule, DrafterSampleRule, DrafterSlowdownRule, DrafterSpeedComparison,
+    DrafterSpeedMetric, DrafterSpeedOutcome, DrafterSpeedStatistic, DrafterSpeedVerdict,
+    DrafterTieEvidence, DrafterTokenIdentity, DrafterUnknownReason, compare_speed,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::drafter::evaluation::{
@@ -164,6 +163,45 @@ pub struct DrafterEvaluationEvidence {
     /// Faults by code: a worker's refusal, an unreadable answer.
     pub errors: BTreeMap<String, u64>,
     pub decision: DrafterEvaluationDecision,
+}
+
+/// How an observation after an activation ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DrafterObservationVerdict {
+    /// No slowdown, every output as qualified, no error.
+    Clean,
+    Slowdown,
+    OutputMismatch,
+    WorkerError,
+}
+
+impl DrafterObservationVerdict {
+    fn rollback(self) -> Option<DrafterRollbackReason> {
+        match self {
+            Self::Clean => None,
+            Self::Slowdown => Some(DrafterRollbackReason::Slowdown),
+            Self::OutputMismatch => Some(DrafterRollbackReason::OutputMismatch),
+            Self::WorkerError => Some(DrafterRollbackReason::WorkerError),
+        }
+    }
+}
+
+/// Identity-pinned reference measurements on the incarnation that serves an
+/// activated version, against the incumbent's runs of its evaluation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DrafterObservation {
+    /// The binding generation the activation set.
+    pub generation: u64,
+    /// The draft identity and epoch the serving incarnation's answers named.
+    pub draft_digest: Option<String>,
+    pub epoch: Option<String>,
+    pub runs: Vec<DrafterCaseMeasure>,
+    pub comparisons: Vec<DrafterSpeedComparison>,
+    pub errors: BTreeMap<String, u64>,
+    pub verdict: DrafterObservationVerdict,
+    pub observed_at: u64,
 }
 
 /// One version's evaluation: the host's evidence, the engine's decision, and

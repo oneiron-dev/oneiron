@@ -40,7 +40,6 @@ schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror = { workspace = true }
-xxhash-rust = { workspace = true }
 
 [features]
 # Forwarded from `oneiron/sync` and `oneiron/test-support`: a moved item keeps the gate it had in the engine, and

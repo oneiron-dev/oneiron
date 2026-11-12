@@ -1,6 +1,4 @@
 pub use crate::origin::lfs::path_policy::OriginLfsPathMatch;
-pub use crate::origin::lfs::path_policy::OriginLfsPathPolicy;
-pub use crate::origin::lfs::path_policy::OriginLfsPathRule;
 pub use oneiron_store::origin::lfs::chunks::LFS_CHUNK_AVG;
 pub use oneiron_store::origin::lfs::chunks::LFS_CHUNK_MAX;
 pub use oneiron_store::origin::lfs::chunks::LFS_CHUNK_MIN;

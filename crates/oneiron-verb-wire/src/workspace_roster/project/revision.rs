@@ -81,14 +81,3 @@ impl SideKey for ProjectRevisionHash {
 impl FixedSideKey for ProjectRevisionHash {
     const WIDTH: usize = 32;
 }
-
-/// The signed fields of a v2/v3 proof, without its anchor: what a held
-/// signed revision and an anchor link carry.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectRevisionProof {
-    pub slip_wire: String,
-    pub holder_signature: Vec<u8>,
-    pub signed_at: u64,
-    pub version: ProjectProofVersion,
-}

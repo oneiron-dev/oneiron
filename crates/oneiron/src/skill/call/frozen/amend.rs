@@ -24,8 +24,25 @@ const CASE_KEY_RECEIPT_AT: usize = 32;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill::call::frozen::amend::{
-    CallableAmendOutcome, CallableAmendReceipt, CallableAmendRequest,
+    CallableAmendOutcome, CallableAmendRequest,
 };
+
+/// The answer of `vault.skills.callable.amend`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CallableAmendReceipt {
+    pub outcome: CallableAmendOutcome,
+    /// The skill entity whose case it is, hex; `None` with no case.
+    pub skill: Option<String>,
+}
+
+impl CallableAmendReceipt {
+    fn no_case() -> Self {
+        Self {
+            outcome: CallableAmendOutcome::NoCase,
+            skill: None,
+        }
+    }
+}
 
 /// Records `input.answer` in place of the answer of the call that the run
 /// under `input.receipt` made at step `input.seq`, as `by`, that call's

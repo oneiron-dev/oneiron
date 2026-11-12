@@ -16,29 +16,4 @@ pub enum CritiqueVerdict {
     Revise,
     Discard,
 }
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum CritiqueSeverity {
-    Info,
-    Low,
-    Medium,
-    High,
-    Blocking,
-}
-
-impl CritiqueSeverity {
-    const fn score_multiplier(self) -> f64 {
-        match self {
-            Self::Info => 0.25,
-            Self::Low => 0.5,
-            Self::Medium => 1.0,
-            Self::High => 1.5,
-            Self::Blocking => 2.0,
-        }
-    }
-}
 pub mod review;

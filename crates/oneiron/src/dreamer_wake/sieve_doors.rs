@@ -18,9 +18,16 @@ const MAX_PAGE: u32 = 1000;
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_wake::sieve_doors::{
     SieveLeaseCounter, SieveLeaseRefillRequest, SieveLeaseRequest, SieveLeaseView,
-    SievePageRequest, SievePolicyRequest, SievePolicySetRequest, SieveQueuePage, SieveReceiptView,
-    SieveReceiptsPage, SieveRecipePolicySetRequest, SieveRetainedPage, SieveSpanView,
+    SievePageRequest, SievePolicyRequest, SieveQueuePage, SieveReceiptView, SieveReceiptsPage,
+    SieveRecipePolicySetRequest, SieveRetainedPage, SieveSpanView,
 };
+
+/// The owner's replacement sieve policy row.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SievePolicySetRequest {
+    pub policy: SievePolicy,
+}
 
 fn page_limit(limit: Option<u32>) -> usize {
     usize::try_from(limit.unwrap_or(MAX_PAGE).min(MAX_PAGE)).unwrap_or(usize::MAX)

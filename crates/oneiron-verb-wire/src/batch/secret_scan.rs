@@ -4,15 +4,9 @@
 pub use crate::batch::secret_scan::lift_history::LiftCause;
 pub use crate::batch::secret_scan::lift_history::LiftCauseCount;
 pub use crate::batch::secret_scan::lift_history::LiftCloseReason;
-pub use crate::batch::secret_scan::lift_history::LiftCounts;
-pub use crate::batch::secret_scan::lift_history::LiftFamily;
 pub use crate::batch::secret_scan::lift_history::LiftTrigger;
 pub use crate::batch::secret_scan::lift_history::SecretLiftClose;
-pub use crate::batch::secret_scan::lift_history::SecretLiftHistoryProposal;
-pub use crate::batch::secret_scan::lift_history::SecretLiftProgress;
-pub use crate::batch::secret_scan::lift_history::SecretLiftReceipt;
 pub use crate::batch::secret_scan::lift_history::SecretLiftRequest;
-pub use crate::batch::secret_scan::lift_history::SecretLiftStatus;
 
 /// The vault's `secrets` setting: whether the write door scans what a host
 /// writes into this vault for credential shapes. On by default; only the

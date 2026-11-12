@@ -5,7 +5,6 @@ use crate::runtime_hooks::source::FactPosition;
 use base64::Engine as _;
 use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::ports::records::ChangeOp;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -37,51 +36,6 @@ pub enum FeedEntryKind {
     /// A TURN's words changed with no new version of its own: what was derived from them is
     /// due again.
     Redirty,
-}
-
-/// The write behind an entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedOp {
-    Create,
-    Update,
-    Supersede,
-    Merge,
-    TierTransition,
-    Delete,
-    Redact,
-    Forget,
-    Settle,
-    EdgeAdded,
-    EdgeRemoved,
-    Redirty,
-}
-
-impl FeedOp {
-    const fn of_change(op: ChangeOp) -> Self {
-        match op {
-            ChangeOp::Create => Self::Create,
-            ChangeOp::Update => Self::Update,
-            ChangeOp::Supersede => Self::Supersede,
-            ChangeOp::Merge => Self::Merge,
-            ChangeOp::TierTransition => Self::TierTransition,
-            ChangeOp::Delete => Self::Delete,
-            ChangeOp::Redact => Self::Redact,
-            ChangeOp::Forget => Self::Forget,
-        }
-    }
-
-    const fn kind(self) -> FeedEntryKind {
-        match self {
-            Self::Create | Self::Update | Self::Supersede | Self::Merge | Self::TierTransition => {
-                FeedEntryKind::Edit
-            }
-            Self::Delete | Self::Redact | Self::Forget => FeedEntryKind::Withdrawal,
-            Self::Settle => FeedEntryKind::Settlement,
-            Self::EdgeAdded | Self::EdgeRemoved => FeedEntryKind::Edge,
-            Self::Redirty => FeedEntryKind::Redirty,
-        }
-    }
 }
 
 /// Where a new subscription starts.

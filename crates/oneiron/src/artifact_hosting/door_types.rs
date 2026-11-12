@@ -24,8 +24,12 @@ pub struct ArtifactPublishRequest {
     pub occurred_at: u64,
 }
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::artifact_hosting::door_types::ArtifactPointerRequest;
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactPointerRequest {
+    pub artifact: String,
+    pub channel: ArtifactPointerChannel,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactPublishView {

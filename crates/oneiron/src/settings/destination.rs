@@ -22,9 +22,7 @@ use crate::Vault;
 use crate::authority::WorldPrivacyView;
 use oneiron_base::machine_destination::{Destination, EffectiveRead, PeerMachine};
 #[doc(hidden)]
-pub use oneiron_verb_wire::settings::destination::{
-    CallerLocality, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
-};
+pub use oneiron_verb_wire::settings::destination::{CallerLocality, RecipientChoice, RecipientWhy};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -82,6 +80,76 @@ pub(crate) fn withheld_worlds_in(
         withheld.extend(view.withheld_for_peer(peer)?);
     }
     Ok(withheld)
+}
+
+/// The owner's world recipient choice keeping a world from a destination
+/// (L11-B (B)): named as his choice, and content-free, so a refusal that
+/// carries it never names the world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecipientLimit {
+    pub choice: RecipientChoice,
+    pub why: RecipientWhy,
+}
+
+impl RecipientLimit {
+    /// The limit as a refusal states it.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        use RecipientChoice::{MyMachines, OneMachine};
+        use RecipientWhy::{Contended, NotMine, Unproved, WrongMachine};
+        match (self.choice, self.why) {
+            (OneMachine, Unproved) => {
+                "the owner chose one named machine; this destination has no live machine proof"
+            }
+            (OneMachine, NotMine) => {
+                "the owner chose one named machine; this destination is not marked mine"
+            }
+            (OneMachine, WrongMachine) => {
+                "the owner chose one named machine; this destination is not the named machine"
+            }
+            (OneMachine, Contended) => {
+                "the owner chose one named machine; his picks conflict until he picks again"
+            }
+            (MyMachines, Unproved) => {
+                "the owner chose machines marked mine; this destination has no live machine proof"
+            }
+            (MyMachines, NotMine | WrongMachine | Contended) => {
+                "the owner chose machines marked mine; this destination is not marked mine"
+            }
+        }
+    }
+
+    /// The limit `read` puts on `destination`, or `None` when the world may
+    /// be read there: the shared judge's rule, named.
+    fn of(
+        read: &EffectiveRead,
+        destination: Destination,
+        is_mine: impl Fn(EntityId) -> bool,
+    ) -> Option<Self> {
+        let choice = match read {
+            EffectiveRead::Everywhere => return None,
+            EffectiveRead::MyMachines => RecipientChoice::MyMachines,
+            EffectiveRead::OneMachine(_) | EffectiveRead::Conflicted { .. } => {
+                RecipientChoice::OneMachine
+            }
+        };
+        let why = match destination {
+            Destination::Unknown => RecipientWhy::Unproved,
+            Destination::Machine(machine) if !is_mine(machine) => RecipientWhy::NotMine,
+            Destination::Machine(machine) => match read {
+                EffectiveRead::OneMachine(only) if *only != machine => RecipientWhy::WrongMachine,
+                EffectiveRead::Conflicted { .. } => RecipientWhy::Contended,
+                _ => return None,
+            },
+        };
+        Some(Self { choice, why })
+    }
+}
+
+impl std::fmt::Display for RecipientLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.reason())
+    }
 }
 
 /// The first limit `world`'s settings put on one of `destination`'s
@@ -183,6 +251,52 @@ pub(crate) fn machine_recipient_hold_in(
         RecipientLimit::of(&view.world_read(world), machine, |id| view.marked_mine(id))
             .map(ReleaseHold::Recipient),
     )
+}
+
+/// Why rows a read served may not leave for its destination now (mesh
+/// PR2-reasons). Only [`Self::Recipient`] is the owner's choice; the rest
+/// are integrity holds, which fail closed and say so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseHold {
+    /// The owner's recipient choice for a world a row lies in.
+    Recipient(RecipientLimit),
+    /// A row's world placement cannot be verified.
+    Placement,
+    /// The rows a retained result was derived from are unknown.
+    ProducersUnknown,
+    /// The vault root is conflicted, so no world's recipient policy can be
+    /// judged.
+    ConflictedRoot,
+}
+
+impl ReleaseHold {
+    /// The hold as a refusal states it: content-free, with no world id.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Recipient(limit) => limit.reason(),
+            Self::Placement => "row/world placement cannot be verified",
+            Self::ProducersUnknown => "retained result's producing rows are unknown",
+            Self::ConflictedRoot => {
+                "world recipient policy cannot be judged under a conflicted vault root"
+            }
+        }
+    }
+
+    /// Whether the owner's own choice holds the rows, rather than integrity.
+    #[must_use]
+    pub fn is_owner_choice(self) -> bool {
+        matches!(self, Self::Recipient(_))
+    }
+
+    /// The typed refusal for a door that refuses rather than masks.
+    #[must_use]
+    pub fn into_error(self) -> Error {
+        Error::Record(match self {
+            Self::Recipient(_) => RecordError::WorldRecipientLimit(self.reason()),
+            _ => RecordError::WorldPlacementUnverifiable(self.reason()),
+        })
+    }
 }
 
 impl Vault {

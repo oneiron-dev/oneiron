@@ -24,11 +24,48 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid typed connector grant slate".to_owned())
 }
 
+/// The four DEC-0006 capability settings. Declaration order is strictness,
+/// so `Ord` reads "tighter": always allow < auto < always ask < never allow.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SlateDisposition {
+    /// Bypasses the per-call ask inside the bound; never the catastrophe floor.
+    AlwaysAllow,
+    /// The default: the per-call verdict, learning through standing grants.
+    Auto,
+    /// Asks for every call, even one a standing grant covers.
+    AlwaysAsk,
+    /// Removes the tool from the connector's callable catalog.
+    NeverAllow,
+}
+impl SlateDisposition {
+    pub const ALL: [Self; 4] = [
+        Self::AlwaysAllow,
+        Self::Auto,
+        Self::AlwaysAsk,
+        Self::NeverAllow,
+    ];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AlwaysAllow => "always_allow",
+            Self::Auto => "auto",
+            Self::AlwaysAsk => "always_ask",
+            Self::NeverAllow => "never_allow",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|setting| setting.as_str() == value)
+    }
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::connector_key::slate::{
-    ELICITATION_ROW_KEY, SlateCapability, SlateDataClass, SlateDisposition, SlateDraftRow,
-    SlateElicitationManifest, SlateHolderNarrow, SlateManifest, SlateOwnerOverride,
-    SlatePackSource, SlateRow, SlateToolManifest,
+    ELICITATION_ROW_KEY, SlateCapability, SlateDataClass, SlateElicitationManifest, SlateManifest,
+    SlatePackSource, SlateToolManifest,
 };
 
 /// The elicitation row's class. The row lets a foreign server ask; it is
@@ -36,6 +73,37 @@ pub use oneiron_verb_wire::connector_key::slate::{
 /// under the calling actor's scoped grant.
 pub(super) const ELICITATION_ROW_DATA_CLASS: SlateDataClass = SlateDataClass::Personal;
 
+/// The only model-output shape admitted. Owner overrides are deliberately not
+/// fields of this type; serde rejects them rather than trusting a model stamp.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlateDraftRow {
+    /// The row's key: a tool name, or [`ELICITATION_ROW_KEY`].
+    pub tool: String,
+    pub disposition: SlateDisposition,
+    pub data_class: SlateDataClass,
+    pub rationale: String,
+}
+impl SlateDraftRow {
+    /// The row's typed identity.
+    pub fn capability(&self) -> SlateCapability<'_> {
+        SlateCapability::parse(&self.tool)
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlateOwnerOverride {
+    pub disposition: SlateDisposition,
+}
+/// An autonomous tightening by the key's holder. It needs no stamp and is
+/// provenance-marked, so it never reads as an owner tap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlateHolderNarrow {
+    pub disposition: SlateDisposition,
+    pub actor: String,
+    pub at: u64,
+}
 /// The holder's own facet narrowing, kept beside the owner's limit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +112,36 @@ pub struct SlateFacetNarrow {
     pub actor: String,
     pub at: u64,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlateRow {
+    /// The latest explicit owner act on this row, or its fresh draft identity.
+    /// Unchanged rows carry it across slate revisions.
+    pub settings_act: EntityId,
+    pub draft: SlateDraftRow,
+    pub owner_override: Option<SlateOwnerOverride>,
+    pub holder_narrow: Option<SlateHolderNarrow>,
+}
+impl SlateRow {
+    /// What the owner accepted: the override, else the stamped draft.
+    pub fn stamped_disposition(&self) -> SlateDisposition {
+        self.owner_override
+            .as_ref()
+            .map_or(self.draft.disposition, |o| o.disposition)
+    }
+    /// What a call meets: the stamped setting, tightened by any holder narrow.
+    pub fn effective_disposition(&self) -> SlateDisposition {
+        self.holder_narrow
+            .as_ref()
+            .map_or(self.stamped_disposition(), |narrow| {
+                narrow.disposition.max(self.stamped_disposition())
+            })
+    }
+    pub fn enabled(&self) -> bool {
+        self.effective_disposition() != SlateDisposition::NeverAllow
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorGrantSlate {

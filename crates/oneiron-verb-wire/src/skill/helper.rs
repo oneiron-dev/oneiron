@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::skill::call::frozen::amend::CallableAmendOutcome;
-pub use crate::skill::call::frozen::amend::CallableAmendReceipt;
 pub use crate::skill::call::frozen::amend::CallableAmendRequest;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::write_envelope::skill_record::role::SkillCallContract;

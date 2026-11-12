@@ -10,45 +10,6 @@ use serde::Serialize;
 /// ([`oneiron_model::llm::DEFAULT_BUDGET_RESERVE_UNITS`]).
 pub const LAUNCH_COST_PRIOR_UNITS: u64 = oneiron_model::llm::DEFAULT_BUDGET_RESERVE_UNITS;
 
-/// What one agent's settled launches spent, in one unit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentSpendCalibration {
-    pub samples: u64,
-    /// Saturating.
-    pub total_units: u64,
-    /// Exponentially weighted mean, alpha 1/4; the first sample sets it.
-    pub ewma_units: u64,
-    pub last_units: u64,
-    /// Unix seconds.
-    pub updated_at: u64,
-}
-
-impl AgentSpendCalibration {
-    fn fold(previous: Option<Self>, units: u64, now: u64) -> Self {
-        match previous {
-            None => Self {
-                samples: 1,
-                total_units: units,
-                ewma_units: units,
-                last_units: units,
-                updated_at: now,
-            },
-            Some(previous) => {
-                // (3 * mean + sample) / 4, rounded, in wide integer math.
-                let ewma = (u128::from(previous.ewma_units) * 3 + u128::from(units) + 2) / 4;
-                Self {
-                    samples: previous.samples.saturating_add(1),
-                    total_units: previous.total_units.saturating_add(units),
-                    ewma_units: u64::try_from(ewma).unwrap_or(u64::MAX),
-                    last_units: units,
-                    updated_at: now,
-                }
-            }
-        }
-    }
-}
-
 /// Where an expected spend comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

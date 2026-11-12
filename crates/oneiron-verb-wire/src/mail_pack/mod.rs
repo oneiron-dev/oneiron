@@ -20,7 +20,6 @@ pub use crate::mail_pack::inbox::MailInboxRequest;
 pub use crate::mail_pack::inbox::MailThreadRequest;
 pub use crate::mail_pack::inbox::MailThreadView;
 pub use crate::mail_pack::local_sync::MailSourceSyncRequest;
-pub use crate::mail_pack::mbox_import::MailMboxImportReport;
 pub use crate::mail_pack::mbox_import::MailMboxImportRequest;
 pub use crate::mail_pack::reply::MailReplyApproveRequest;
 pub use crate::mail_pack::reply::MailReplyDraftPage;

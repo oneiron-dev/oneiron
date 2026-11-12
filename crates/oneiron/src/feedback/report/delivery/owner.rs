@@ -22,9 +22,25 @@ use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::feedback::report::delivery::owner::{
-    ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
+    ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatusRequest,
     ReportPublisherBinding, ReportPublisherBindingRequest,
 };
+
+/// One issue's delivery, as the owner reads it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReportDeliveryStatus {
+    /// The ISSUE.
+    pub issue_ref: String,
+    /// Whether it is routed to a publisher at all: a local, duplicate,
+    /// rejected or denied report sends nothing.
+    pub routed: bool,
+    /// The signature lane: its key, hold, frozen signature and send,
+    /// receipt and outcome. `None` until a run reaches it.
+    pub delivery: Option<ReportDeliveryRecord>,
+    /// The owner's binding for the issue's publisher, if any.
+    pub binding: Option<ReportPublisherEndpoint>,
+}
 
 impl Vault {
     /// Queues the Coach's delivery run on the host queue now, joining one

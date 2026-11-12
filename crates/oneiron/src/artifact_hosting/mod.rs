@@ -175,6 +175,17 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
 
+impl ArtifactPointerChannel {
+    #[must_use]
+    const fn from_key_byte(byte: u8) -> Option<Self> {
+        match byte {
+            ARTIFACT_CHANNEL_PUBLISHED => Some(Self::Published),
+            ARTIFACT_CHANNEL_PREVIEW => Some(Self::Preview),
+            _ => None,
+        }
+    }
+}
+
 /// Immutable admission for a publish. The pointer can be repointed or removed,
 /// but the receipt of the earlier public effect must survive both actions.
 #[derive(Debug, Clone, Serialize, Deserialize)]

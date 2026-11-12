@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use xxhash_rust::xxh3::xxh3_64;
 
 /// Which CRDT window-doc map the rejected op targeted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

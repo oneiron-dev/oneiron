@@ -52,7 +52,35 @@ const HOOK_INTENT: &str = "intent.md";
 const HOOK_BODY: &str = "body.js";
 const MAX_HOOK_BUDGET_MS: u32 = 60_000;
 
+impl HookPhase {
+    /// The time budget for one run when HOOK.md names none.
+    const fn default_budget_ms(self) -> u32 {
+        match self {
+            Self::Pre => 50,
+            Self::Post => 200,
+            Self::Fact => 1_000,
+        }
+    }
+}
+
 pub use crate::store::pack_hook_actor_class::HookActorClass;
+
+impl HookOutcomeKind {
+    pub(crate) fn applies_in(self, phase: HookPhase) -> bool {
+        use HookOutcomeKind::{
+            AddBlock, Annotate, Ask, Continue, Effect, Enqueue, Nothing, Propose, Redact, Rewrite,
+            Skip,
+        };
+        match phase {
+            HookPhase::Pre => matches!(self, Continue | Rewrite | Skip | Ask | AddBlock),
+            HookPhase::Post => matches!(
+                self,
+                Continue | Annotate | Redact | AddBlock | Propose | Enqueue | Effect
+            ),
+            HookPhase::Fact => matches!(self, Propose | Enqueue | Effect | AddBlock | Nothing),
+        }
+    }
+}
 
 /// One hook folder as the pack carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]

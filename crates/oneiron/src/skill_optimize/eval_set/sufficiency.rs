@@ -33,9 +33,59 @@ const ASK_DOMAIN: &[u8] = b"skill_optimize:eval_label_ask:v1\0";
 const MAX_TEXT_BYTES: usize = 512;
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::skill_optimize::eval_set::sufficiency::{
-    SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
-};
+pub use oneiron_verb_wire::skill_optimize::eval_set::sufficiency::SufficiencyInput;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnknownReason {
+    NoRetestNoise,
+    NoInterval,
+    IntervalSpansMargin,
+    TooFewFamilies {
+        slice: String,
+        families: u32,
+    },
+    SetChanged,
+    RubricChanged,
+    CanaryDiverged,
+    /// No canary was measured beside the axis.
+    NoCanary,
+}
+
+impl UnknownReason {
+    /// Whether more labelled cases could settle it.
+    const fn labels_help(&self) -> bool {
+        matches!(
+            self,
+            Self::NoInterval | Self::IntervalSpansMargin | Self::TooFewFamilies { .. }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SufficiencyVerdict {
+    NotWorse,
+    Worse,
+    Unknown(Vec<UnknownReason>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SufficiencyCard {
+    pub input: SufficiencyInput,
+    /// The margin in force: the noise, or the owner's stricter one.
+    pub margin: Option<f64>,
+    pub verdict: SufficiencyVerdict,
+}
+
+impl SufficiencyCard {
+    /// Only a not-worse card may let a decision proceed without a person.
+    #[must_use]
+    pub fn approves(&self) -> bool {
+        self.verdict == SufficiencyVerdict::NotWorse
+    }
+}
 
 fn nonnegative(value: Option<f64>) -> Result<()> {
     if value.is_some_and(|value| !value.is_finite() || value < 0.0) {

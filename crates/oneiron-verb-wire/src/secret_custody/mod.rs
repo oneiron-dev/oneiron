@@ -1,4 +1,3 @@
-pub use crate::secret_custody::reveal::file::repo::RepoFileRevealScope;
 pub use crate::secret_custody::reveal::types::RevealGrantScope;
 pub use oneiron_authority::authority::CustodyRegisterCheck;
 pub use oneiron_authority::authority::CustodyUncheckedReason;

@@ -1,16 +1,10 @@
-pub use crate::embed::binding_move::BindingMoveLink;
 pub use crate::embed::binding_move::BindingMoveState;
 pub use crate::embed::binding_move::BindingNotApplied;
 pub use crate::embed::space_move::CohortProbe;
-pub use crate::embed::space_move::KindProbeCheck;
 pub use crate::embed::space_move::NotWorse;
 pub use crate::embed::space_move::PairedInterval;
-pub use crate::embed::space_move::SpaceMove;
-pub use crate::embed::space_move::SpaceMoveCheck;
 pub use crate::embed::space_move::SpaceMoveState;
-pub use crate::embed::space_move::SpaceRef;
 pub use crate::embed::space_probe::SPACE_PROBE_QUERY_MAX_LEN;
-pub use crate::embed::space_probe::SpaceProbe;
 #[cfg(feature = "sync")]
 pub use oneiron_store::embedding::DEFAULT_PENDING_EMBEDDING_LEASE_MS;
 #[cfg(feature = "sync")]

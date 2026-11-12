@@ -19,9 +19,7 @@ pub(super) const SCOPE: SideTable<String, SpendScope, LegacyJson> =
 pub use crate::workspace_roster::spend_scope::{SpendScopeId, SpendState};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::agent_dispatch::spend_record::{
-    SpendCalibrationSample, SpendPayer, SpendSignal,
-};
+pub use oneiron_verb_wire::agent_dispatch::spend_record::{SpendPayer, SpendSignal};
 
 /// The owner's agent Grant a root's work is funded by (FIX 7766, Engine
 /// 19:59 W-B/W-E): chosen once when the root opens, validated in that
@@ -52,6 +50,21 @@ impl GrantSpendBinding {
             mint_act: crate::entity_id::bytes_to_hex_lower(proof.mint_act()),
             wallet_ref: proof.wallet_ref().clone(),
         }
+    }
+}
+
+/// The local calibration state before one scope's sample was folded.
+/// The wrapper distinguishes the first sample (`before: None`) from a scope
+/// that never contributed a sample on this vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpendCalibrationSample {
+    pub before: Option<AgentSpendCalibration>,
+}
+
+impl SpendCalibrationSample {
+    pub(super) fn ordinal(&self) -> u64 {
+        self.before.as_ref().map_or(0, |row| row.samples)
     }
 }
 

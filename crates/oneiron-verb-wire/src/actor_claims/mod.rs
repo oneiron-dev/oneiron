@@ -1,9 +1,6 @@
-pub use crate::actor_claims::candidate::CraftCandidateAnswer;
 pub use crate::actor_claims::candidate::CraftCandidateView;
 pub use crate::actor_claims::candidate::CraftCandidatesRequest;
 pub use crate::actor_claims::candidate::CraftCandidatesView;
-pub use crate::actor_claims::candidate::CraftVerdict;
-pub use crate::actor_claims::candidate::CraftVerdictView;
 pub use oneiron_store::write_envelope::actor_predicate::PREDICATE_ACTOR_FAILURE_MODE;
 pub use oneiron_store::write_envelope::actor_predicate::PREDICATE_ACTOR_LESSON;
 pub use oneiron_store::write_envelope::actor_predicate::PREDICATE_ACTOR_SCOPE_NOTE;

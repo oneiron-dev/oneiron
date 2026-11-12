@@ -1,7 +1,4 @@
 pub use crate::agent_def::powers::AgentPowerHolderKind;
-pub use crate::agent_def::powers::AgentPowerSetRequest;
-pub use crate::agent_def::powers::AgentPowers;
-pub use crate::agent_def::powers::ChildPowerRequest;
 pub use crate::agent_def::proposed_change::ProposedAgentDefinitionChangeDecision;
 pub use crate::agent_def::refusal::RefusalOutcome;
 pub use crate::store::agent_refusal::REFUSAL_DIAL_KEYS;

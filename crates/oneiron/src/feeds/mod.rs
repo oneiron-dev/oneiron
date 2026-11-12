@@ -189,11 +189,56 @@ impl FeedSource {
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::feeds::{
-    FeedEdge, FeedEntryKind, FeedGap, FeedOp, FeedReadRequest, FeedResyncFrom, FeedStart,
+    FeedEdge, FeedEntryKind, FeedGap, FeedReadRequest, FeedResyncFrom, FeedStart,
     FeedSubscriptionRequest,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::feeds::{Position, invalid};
+
+/// The write behind an entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedOp {
+    Create,
+    Update,
+    Supersede,
+    Merge,
+    TierTransition,
+    Delete,
+    Redact,
+    Forget,
+    Settle,
+    EdgeAdded,
+    EdgeRemoved,
+    Redirty,
+}
+
+impl FeedOp {
+    const fn of_change(op: ChangeOp) -> Self {
+        match op {
+            ChangeOp::Create => Self::Create,
+            ChangeOp::Update => Self::Update,
+            ChangeOp::Supersede => Self::Supersede,
+            ChangeOp::Merge => Self::Merge,
+            ChangeOp::TierTransition => Self::TierTransition,
+            ChangeOp::Delete => Self::Delete,
+            ChangeOp::Redact => Self::Redact,
+            ChangeOp::Forget => Self::Forget,
+        }
+    }
+
+    const fn kind(self) -> FeedEntryKind {
+        match self {
+            Self::Create | Self::Update | Self::Supersede | Self::Merge | Self::TierTransition => {
+                FeedEntryKind::Edit
+            }
+            Self::Delete | Self::Redact | Self::Forget => FeedEntryKind::Withdrawal,
+            Self::Settle => FeedEntryKind::Settlement,
+            Self::EdgeAdded | Self::EdgeRemoved => FeedEntryKind::Edge,
+            Self::Redirty => FeedEntryKind::Redirty,
+        }
+    }
+}
 
 /// A position in one source. A reader is given only opaque tokens its subscription sealed
 /// (`fp1.` and base64): they name no sequence and no time. Inside the engine a cursor keeps the

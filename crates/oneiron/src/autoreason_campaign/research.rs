@@ -116,9 +116,9 @@ const ROUND: SideTable<([u8; 16], u64), SelectionReceipt, Named> =
 pub(super) use oneiron_verb_wire::autoreason_campaign::research::invalid;
 #[doc(hidden)]
 pub use oneiron_verb_wire::autoreason_campaign::research::{
-    BranchSnapshot, CandidateRef, ExperimentKind, ExperimentNode, ForkKind, HeldOutEvidence,
-    InvalidReceipt, PruneReason, PruneReceipt, ResearchGoalPin, ResearchStep, ResearchTarget,
-    SearchEvidence, SelectionReceipt, WeaveReceipt,
+    BranchSnapshot, ExperimentKind, ForkKind, HeldOutEvidence, InvalidReceipt, PruneReason,
+    PruneReceipt, ResearchGoalPin, ResearchStep, ResearchTarget, SearchEvidence, SelectionReceipt,
+    WeaveReceipt,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::autoreason_campaign::research::{MAX_REF_BYTES, bounded};
@@ -135,6 +135,15 @@ const OUTCOME_DENY: &str = "deny";
 pub struct ResearchConfirmationSeat {
     pub seat: EvalSeat,
     pub cohort: EntityId,
+}
+
+/// A candidate configuration the sandbox wrote: a content reference and the
+/// digest of its bytes. The loop never reads or runs the config itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateRef {
+    pub config_ref: String,
+    pub config_sha256: String,
 }
 
 /// The agents the host runs a campaign's work with (FIX 886). Each is an
@@ -201,6 +210,23 @@ pub struct ResearchBindRequest {
 pub enum WeaveWriter {
     Owner,
     Controller { actor: EntityId },
+}
+
+/// One experiment: an existing attempt annotated with its campaign record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExperimentNode {
+    pub attempt: AttemptId,
+    pub kind: ExperimentKind,
+    /// One parent, every parent of a weave, none for the root.
+    pub parents: Vec<AttemptId>,
+    pub candidate: CandidateRef,
+    pub search: Option<SearchEvidence>,
+    pub held_out: Option<HeldOutEvidence>,
+    pub invalid: Option<InvalidReceipt>,
+    pub weave: Option<WeaveReceipt>,
+    pub pruned: Option<PruneReceipt>,
+    pub recorded_at: u64,
 }
 
 /// A child attempt the workflow already enqueued under `parent`.
@@ -270,6 +296,21 @@ pub(super) fn bounded_refs(vault: &Vault, refs: &[String], required: bool) -> Re
     }
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, refs.len() as u64);
     Ok(())
+}
+
+impl CandidateRef {
+    fn validate(&self) -> Result<()> {
+        bounded(&self.config_ref, "a candidate names a bounded config ref")?;
+        if self.config_sha256.len() != 64
+            || !self
+                .config_sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(invalid("a candidate config is pinned by its sha256"));
+        }
+        Ok(())
+    }
 }
 
 impl ResearchExecution {

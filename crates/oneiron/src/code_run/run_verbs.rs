@@ -20,9 +20,9 @@ use oneiron_verb_wire::code_run::run_verbs::{
 #[doc(hidden)]
 pub use oneiron_verb_wire::code_run::run_verbs::{
     JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput, MemoryClaimInput,
-    MemoryEdgeInput, MemorySearchInput, MemoryTimeRange, ReaderSpawnInput, ReportBlockedOutput,
-    SkillCallInput, SpawnCare, SummarizeInput, SummarizeInputEffort, TaskRefuseDomain,
-    TaskRefuseOutput, TaskWaitSetRequest, TaskWaitWorldRequest,
+    MemoryEdgeInput, MemorySearchInput, MemoryTimeRange, ReportBlockedOutput, SkillCallInput,
+    SpawnCare, SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseOutput,
+    TaskWaitSetRequest, TaskWaitWorldRequest,
 };
 
 use serde::{Deserialize, Serialize};
@@ -293,6 +293,26 @@ impl AgentSpawnInput {
             ask: Some(ask),
         })
     }
+}
+
+/// `self.spawn`: one reader child over a result of the run (ARCH-0079
+/// #reader-forks). The child is queued and answers through its task; it
+/// never runs inline.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReaderSpawnInput {
+    /// The result the child reads: a name, a handle or a range ref, or a
+    /// card by its `ref` or `handle`.
+    pub source: serde_json::Value,
+    /// What the child is asked about its source.
+    pub ask: String,
+    /// The spawn's key in the run: the same key spawns the same child.
+    pub intent_key: String,
+    /// The powers the child holds (SPAWN-KNOB): an absent power is the
+    /// parent's, `false` switches it off for the child. Asking `true` for a
+    /// power the parent does not hold is refused.
+    #[serde(default)]
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
 }
 
 /// `tasks.wait`'s input: one wait over reader children the run spawned, one

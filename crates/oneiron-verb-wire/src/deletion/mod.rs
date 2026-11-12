@@ -1,5 +1,4 @@
 pub use crate::deletion::coop_delivery::types::CooperativeDeletionDispositionKind;
-pub use crate::deletion::legal_hold::confirmation::LiftAndEraseShownState;
 pub use crate::deletion::legal_hold::confirmation::ShownCustomerHold;
 pub use crate::deletion::legal_hold::types::ErasePendingReason;
 pub use crate::deletion::legal_hold::types::EraseWithdrawal;
@@ -45,12 +44,8 @@ pub use oneiron_store::deletion::delete::impact::HeldBytes;
 pub use oneiron_store::deletion::delete::impact::LfsChunkImpact;
 pub use oneiron_store::deletion::delete::outcome::DeleteEntityOptions;
 pub use oneiron_store::deletion::delete::outcome::DeleteEntityOutcome;
-#[cfg(feature = "sync")]
-pub(crate) use oneiron_store::deletion::delete_bearing_update;
 pub use oneiron_store::deletion::sweep_queue::REDIRECT_CARRIER_CLASS;
 pub use oneiron_store::deletion::sweep_queue::arch0038_carrier_classes;
-#[cfg(feature = "sync")]
-pub(crate) use oneiron_store::deletion::window_document_format;
 
 pub mod coop_delivery;
 pub mod legal_hold;

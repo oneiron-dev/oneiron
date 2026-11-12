@@ -27,9 +27,9 @@ const OUTBOX: SideTable<[u8; 1], WakePolicyTrigger, LegacyJson> =
 const DEFAULT_POLICY: &str = include_str!("wake_policy_defaults.json");
 
 #[doc(hidden)]
-use oneiron_verb_wire::dreamer_wake::policy::invalid;
+pub use oneiron_verb_wire::dreamer_wake::policy::WakeIdleState;
 #[doc(hidden)]
-pub use oneiron_verb_wire::dreamer_wake::policy::{WakeIdleState, WakePolicyDecision, WakeRecipe};
+use oneiron_verb_wire::dreamer_wake::policy::invalid;
 
 impl AgentWakePolicy {
     /// The role `definition` wakes as under this row: its own cadence dial,
@@ -96,6 +96,32 @@ impl DreamerWakePolicy {
             return Err(invalid());
         }
         Ok(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum WakePolicyDecision {
+    Silent,
+    ArmIdle { due_at: u64 },
+    Enqueue { recipe: WakeRecipe },
+}
+
+/// Which workflow recipe receives the durable wake signal. This is not a
+/// consolidation scope: a policy trigger alone has no partition payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WakeRecipe {
+    Continuous,
+    Nightly,
+    Weave,
+}
+impl WakeRecipe {
+    const fn key(self) -> u8 {
+        match self {
+            Self::Continuous => 0,
+            Self::Nightly => 1,
+            Self::Weave => 2,
+        }
     }
 }
 

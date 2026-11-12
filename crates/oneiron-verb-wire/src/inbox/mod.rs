@@ -1,6 +1,4 @@
 pub use crate::inbox::list::NotificationMark;
-pub use crate::inbox::unified::InboxGroupKind;
-pub use crate::inbox::unified::InboxGroupResolveRequest;
 pub use crate::inbox::unified::InboxGroupResolveTarget;
 pub use oneiron_store::inbox::model::INBOX_GROUP_DOOR_PREFIX;
 pub use oneiron_store::inbox::model::INBOX_REASON_CHECKER_PREFIX;

@@ -8,7 +8,6 @@ use crate::skill_optimize::eval_set::cohort::EvalExposureKind;
 pub use crate::skill_optimize::eval_set::doors::cohort_retire::EvalCohortRetireRequest;
 pub use crate::skill_optimize::eval_set::doors::label_ask::EvalLabelAskRequest;
 use oneiron_contracts::entity_id::EntityId;
-use oneiron_store::attempt_state::AttemptState;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -20,22 +19,6 @@ pub struct EvalAuthorNowRequest {}
 #[serde(deny_unknown_fields)]
 pub struct EvalAuthoringRef {
     pub attempt: EntityId,
-}
-
-/// Completion is the host queue's state. A completed pass may author nothing:
-/// no available skill, model or valid plan is never a fabricated report.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthoringResult {
-    pub attempt: EntityId,
-    pub state: AttemptState,
-    pub terminal: bool,
-    pub last_error: Option<String>,
-    /// The kept record of a pass `vault.evals.authoring.execute` requested:
-    /// its caller, outcome and report. A nightly or queued-only pass has
-    /// none.
-    #[serde(default)]
-    pub execution: Option<super::EvalAuthoringExecution>,
 }
 
 /// The derivation ledger's ids, kinds and dates, without its label values.

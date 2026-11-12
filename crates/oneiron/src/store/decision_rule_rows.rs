@@ -13,8 +13,49 @@ use serde::{Deserialize, Serialize};
 pub(crate) const RULES: SideTable<(EntityId, u64), HostRule, Named> =
     SideTable::new(&side_table::DECISION_HOST_RULE);
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::store::decision_rule_rows::HostRule;
+/// One revision of a rule row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HostRule {
+    #[serde(with = "crate::model_decision::codec::entity")]
+    #[schemars(with = "String")]
+    pub id: EntityId,
+    /// From 1.
+    pub revision: u32,
+    /// The question it answers, pinned whole: a new wording, contract or version is a new
+    /// question, and this row does not answer it.
+    pub question: DecisionQuestion,
+    /// The evidence the ask was about, in the order it was asked.
+    #[serde(with = "crate::model_decision::codec::entities")]
+    #[schemars(with = "Vec<String>")]
+    pub evidence: Vec<EntityId>,
+    pub answer: DecisionAnswer,
+    /// The owner's reason, as typed.
+    pub reason: String,
+    /// The ask whose answer wrote this revision.
+    #[serde(with = "crate::model_decision::codec::entity")]
+    #[schemars(with = "String")]
+    pub ask: EntityId,
+    pub ask_seq: u64,
+    /// The owner who wrote it; erased once that owner was erased (FIX 3520).
+    #[serde(with = "crate::store::decision_ask_role::answer_actor")]
+    #[schemars(with = "String")]
+    pub by: AnswerActor,
+    /// Vault clock seconds when it was written.
+    pub written_at: u64,
+    /// Vault clock seconds when the owner revoked it; none while it stands.
+    pub revoked_at: Option<u64>,
+}
+
+impl HostRule {
+    #[must_use]
+    pub fn rule_ref(&self) -> HostRuleRef {
+        HostRuleRef {
+            id: self.id,
+            revision: self.revision,
+        }
+    }
+}
 
 /// Erasing `actor` from the rule rows (FIX 3520): every revision it wrote
 /// keeps its question, evidence, answer, reason and times, and names no one.

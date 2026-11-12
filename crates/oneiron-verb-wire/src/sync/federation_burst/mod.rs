@@ -3,8 +3,6 @@ pub use crate::sync::federation_burst::schedule::FEDERATION_BURST_WAIT_SECS;
 pub use crate::sync::federation_burst::schedule::MAINTENANCE_INGEST_WAIT_SECS;
 pub use crate::sync::federation_burst::schedule::RetainedWorkQueue;
 pub use crate::sync::federation_burst::types::*;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub mod payload;
 pub mod schedule;

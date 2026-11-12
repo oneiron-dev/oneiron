@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/skill_optimize/eval_set/authoring/executions.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_optimize::eval_set::authoring::apply::EvalAuthoringReport;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
@@ -54,34 +53,4 @@ pub enum EvalAuthoringOutcome {
 pub struct EvalAuthoringSkillRun {
     pub skill: EntityId,
     pub revision: String,
-}
-
-/// One requested pass's kept record, by its Coach attempt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvalAuthoringExecution {
-    pub attempt: EntityId,
-    pub caller: EvalAuthoringCaller,
-    pub requested_at: u64,
-    pub outcome: EvalAuthoringOutcome,
-    pub ended_at: Option<u64>,
-    pub skill: Option<EvalAuthoringSkillRun>,
-    /// The inventory the plan was made from, once the pass read one.
-    pub inventory_digest: Option<String>,
-    /// What the plan did; only an applied pass has one.
-    pub report: Option<EvalAuthoringReport>,
-}
-
-/// `vault.evals.authoring.execute`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
-pub enum EvalAuthoringExecuteAnswer {
-    /// The request's own pass ran on this host; its kept record.
-    Ran {
-        execution: Box<EvalAuthoringExecution>,
-    },
-    /// The queue's eval-authoring job was not ready for this host, so no
-    /// pass ran for this request; `vault.evals.authoring.result` reads the
-    /// job's state.
-    Waiting { attempt: EntityId },
 }

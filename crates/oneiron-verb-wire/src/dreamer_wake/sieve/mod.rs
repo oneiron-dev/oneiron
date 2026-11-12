@@ -1,4 +1,3 @@
-pub use crate::dreamer_wake::sieve::policy::SievePolicy;
 pub use oneiron_wake_contract::dreamer_wake::sieve::SieveRung;
 pub use oneiron_wake_contract::dreamer_wake::sieve::SieveSpan;
 pub use oneiron_wake_contract::dreamer_wake::sieve::SpanBand;

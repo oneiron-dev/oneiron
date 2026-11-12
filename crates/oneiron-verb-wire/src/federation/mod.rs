@@ -1,5 +1,4 @@
 pub use crate::federation::agent_grant::grantless::AgentGrantFromSlipUnchangedReason;
-pub use crate::federation::coreference::CoreferenceStatus;
 pub use crate::federation::grant::FederationGrantRole;
 pub use crate::federation::grant::FederationGrantScope;
 pub use crate::federation::guest::GuestShareEnvelope;
@@ -36,8 +35,6 @@ pub use oneiron_authority::federation::pact_scope::FederationDirectionScope;
 pub use oneiron_authority::federation::pact_scope::FederationPactScope;
 pub use oneiron_authority::federation::pact_scope::Position;
 pub use oneiron_authority::federation::pact_scope::SelectorRange;
-#[cfg(any(feature = "sync", test))]
-pub(crate) use oneiron_authority::federation::pact_scope::base_world_axis;
 pub use oneiron_authority::federation::pact_scope::decode_federation_pact_scope;
 pub use oneiron_authority::federation::pact_scope::encode_federation_pact_scope;
 pub use oneiron_authority::federation::pact_scope::selector_range_of;
@@ -49,7 +46,6 @@ pub use oneiron_store::world_registration_keys::FEDERATION_STALE_KEY_PREFIX;
 pub use oneiron_store::world_registration_keys::FEDERATION_WORLD_KEY_PREFIX;
 
 pub mod agent_grant;
-pub mod coreference;
 pub mod grant;
 pub mod guest;
 pub mod org_admin;

@@ -2,20 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::embed::space_move::NotWorse;
-use crate::embed::space_move::SpaceRef;
 use crate::skill_optimize::offer_switch::SwitchOwner;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// The space move that re-embeds for a binding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BindingMoveLink {
-    pub candidate: String,
-    pub incumbent: SpaceRef,
-    /// The move's `started_at`: which move to that candidate it is.
-    pub started_at: u64,
-}
 
 /// Where a staged binding stands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

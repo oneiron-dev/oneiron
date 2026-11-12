@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::skill_optimize::eval_set::FamilyPurpose;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -29,29 +28,4 @@ pub struct EvalAuthoringSkip {
     /// The group, candidate, cut or cohort it named.
     pub item: String,
     pub reason: String,
-}
-
-/// What one applied plan did.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct EvalAuthoringReport {
-    pub families_assigned: usize,
-    pub families_extended: usize,
-    pub cases_recorded: usize,
-    pub cases_reused: usize,
-    pub labels_added: usize,
-    pub cohorts_cut: Vec<EntityId>,
-    /// Cuts whose audit could not read every compared case's text.
-    pub cuts_with_coverage_gaps: usize,
-    pub cohorts_retired: Vec<EntityId>,
-    pub cohorts_kept: usize,
-    pub skipped: Vec<EvalAuthoringSkip>,
-}
-
-impl EvalAuthoringReport {
-    fn skip(&mut self, item: impl Into<String>, reason: impl Into<String>) {
-        self.skipped.push(EvalAuthoringSkip {
-            item: item.into(),
-            reason: reason.into(),
-        });
-    }
 }

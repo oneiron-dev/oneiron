@@ -26,31 +26,4 @@ pub struct WakeIdleState {
     pub compute_available: bool,
     pub last_inbound_at: u64,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum WakePolicyDecision {
-    Silent,
-    ArmIdle { due_at: u64 },
-    Enqueue { recipe: WakeRecipe },
-}
-
-/// Which workflow recipe receives the durable wake signal. This is not a
-/// consolidation scope: a policy trigger alone has no partition payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WakeRecipe {
-    Continuous,
-    Nightly,
-    Weave,
-}
-
-impl WakeRecipe {
-    const fn key(self) -> u8 {
-        match self {
-            Self::Continuous => 0,
-            Self::Nightly => 1,
-            Self::Weave => 2,
-        }
-    }
-}
 pub mod observation;

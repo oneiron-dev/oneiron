@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::autoreason_campaign::general::Measurement;
-pub use crate::autoreason_campaign::research::budget::ResearchBudgetRead;
 pub use crate::autoreason_campaign::research::budget::ResearchReservationLine;
 pub use crate::autoreason_campaign::research::estimator::BranchBelief;
 pub use crate::autoreason_campaign::research::estimator::PriorRung;
@@ -41,15 +40,6 @@ pub struct ResearchGoalPin {
     pub revision: String,
     /// The joined project and its goal claim, when the goal has one.
     pub project: Option<(EntityId, EntityId)>,
-}
-
-/// A candidate configuration the sandbox wrote: a content reference and the
-/// digest of its bytes. The loop never reads or runs the config itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateRef {
-    pub config_ref: String,
-    pub config_sha256: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -152,23 +142,6 @@ pub struct WeaveReceipt {
     pub at: u64,
 }
 
-/// One experiment: an existing attempt annotated with its campaign record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ExperimentNode {
-    pub attempt: AttemptId,
-    pub kind: ExperimentKind,
-    /// One parent, every parent of a weave, none for the root.
-    pub parents: Vec<AttemptId>,
-    pub candidate: CandidateRef,
-    pub search: Option<SearchEvidence>,
-    pub held_out: Option<HeldOutEvidence>,
-    pub invalid: Option<InvalidReceipt>,
-    pub weave: Option<WeaveReceipt>,
-    pub pruned: Option<PruneReceipt>,
-    pub recorded_at: u64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ForkKind {
@@ -227,21 +200,6 @@ pub fn bounded(value: &str, what: &str) -> Result<()> {
         return Err(invalid(what));
     }
     Ok(())
-}
-
-impl CandidateRef {
-    fn validate(&self) -> Result<()> {
-        bounded(&self.config_ref, "a candidate names a bounded config ref")?;
-        if self.config_sha256.len() != 64
-            || !self
-                .config_sha256
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(invalid("a candidate config is pinned by its sha256"));
-        }
-        Ok(())
-    }
 }
 pub mod budget;
 pub mod estimator;

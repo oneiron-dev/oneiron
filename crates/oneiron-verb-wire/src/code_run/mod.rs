@@ -20,7 +20,6 @@ pub use crate::code_run::run_verbs::MemoryClaimInput;
 pub use crate::code_run::run_verbs::MemoryEdgeInput;
 pub use crate::code_run::run_verbs::MemorySearchInput;
 pub use crate::code_run::run_verbs::MemoryTimeRange;
-pub use crate::code_run::run_verbs::ReaderSpawnInput;
 pub use crate::code_run::run_verbs::ReportBlockedOutput;
 pub use crate::code_run::run_verbs::SkillCallInput;
 pub use crate::code_run::run_verbs::SpawnCare;
@@ -39,10 +38,8 @@ pub use crate::code_run::storage::secret_lift::room::CodeRunRoomSecretLiftReques
 pub use crate::code_run::team_submit::TeamSubmitInput;
 pub use crate::code_run::type_diagnostics::DiagnosticCollection;
 pub use crate::code_run::type_diagnostics::DiagnosticMeasures;
-pub use crate::code_run::type_diagnostics::FeedbackWithheldReason;
 pub use crate::code_run::type_diagnostics::ProgramPreparationNote;
 pub use crate::code_run::type_diagnostics::ProgramStepFeedback;
-pub use crate::code_run::type_diagnostics::ProgramStepFeedbackRelease;
 pub use crate::code_run::type_diagnostics::ProgramStepIdentity;
 pub use crate::code_run::type_diagnostics::TypeCheckFacts;
 pub use crate::code_run::type_diagnostics::TypeCheckState;

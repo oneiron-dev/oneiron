@@ -32,20 +32,3 @@ pub enum CallableAmendOutcome {
     /// maintenance_text_bytes` row: the row asked, and nothing is stored.
     OverLimit,
 }
-
-/// The answer of `vault.skills.callable.amend`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CallableAmendReceipt {
-    pub outcome: CallableAmendOutcome,
-    /// The skill entity whose case it is, hex; `None` with no case.
-    pub skill: Option<String>,
-}
-
-impl CallableAmendReceipt {
-    fn no_case() -> Self {
-        Self {
-            outcome: CallableAmendOutcome::NoCase,
-            skill: None,
-        }
-    }
-}

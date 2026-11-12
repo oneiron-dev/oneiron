@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/dreamer_wake/sieve_doors.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::dreamer_wake::sieve::policy::SievePolicy;
 use oneiron_wake_contract::dreamer_wake::recipes::WakeRecipePolicy;
 use serde::Deserialize;
 use serde::Serialize;
@@ -77,13 +76,6 @@ pub struct SieveReceiptsPage {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SievePolicyRequest {}
-
-/// The owner's replacement sieve policy row.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SievePolicySetRequest {
-    pub policy: SievePolicy,
-}
 
 /// The owner's replacement wake recipe policy row.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

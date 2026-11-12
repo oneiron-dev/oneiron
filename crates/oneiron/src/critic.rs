@@ -92,7 +92,32 @@ const ERASED_CRITIC_REF_PREFIX: &str = "erased:";
 pub use crate::store::critic_lens::{CriticLens, LensCatalog, OF366_SEED_LENS_CATALOG_JSON};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::critic::{CritiqueSeverity, CritiqueVerdict};
+pub use oneiron_verb_wire::critic::CritiqueVerdict;
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CritiqueSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Blocking,
+}
+
+impl CritiqueSeverity {
+    const fn score_multiplier(self) -> f64 {
+        match self {
+            Self::Info => 0.25,
+            Self::Low => 0.5,
+            Self::Medium => 1.0,
+            Self::High => 1.5,
+            Self::Blocking => 2.0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CritiqueProvenance {
