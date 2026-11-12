@@ -1,0 +1,137 @@
+//! `self.skills.package`: one admitted skill's record and runtime package.
+
+use serde::{Deserialize, Serialize};
+
+use crate::EntityId;
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ScopedReadResult};
+use crate::memory::{Memory, MemoryResult};
+use crate::skill_hub::HubPackage;
+
+use super::{
+    HubSkillRequest, SkillCapabilityView, SkillLibraryCall, SkillLibraryDependency,
+    SkillLibraryFile, SkillLibraryLifecycle,
+};
+
+/// `self.skills.package`'s package format on the wire: how source fields relate
+/// to native metadata, as the stored package declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillPackageFormatView {
+    Folder,
+    Native,
+}
+
+impl From<crate::skill_hub::SkillPackageFormat> for SkillPackageFormatView {
+    fn from(format: crate::skill_hub::SkillPackageFormat) -> Self {
+        match format {
+            crate::skill_hub::SkillPackageFormat::Folder => Self::Folder,
+            crate::skill_hub::SkillPackageFormat::Native => Self::Native,
+        }
+    }
+}
+
+/// `self.skills.package`'s record on the wire: every `SkillRecord` field.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SkillPackageRecordView {
+    pub skill_id: String,
+    pub desc: String,
+    pub version: String,
+    pub approval_status: ClaimApprovalStatus,
+    pub lifecycle_status: SkillLibraryLifecycle,
+    pub source: ClaimSource,
+    pub confidence: f32,
+    pub generated: bool,
+    pub human_authored: bool,
+    pub dependencies: Vec<SkillLibraryDependency>,
+    pub provenance: serde_json::Value,
+    pub content_hash: Option<String>,
+    pub forked_from: Option<EntityId>,
+    pub governance_tier: Option<String>,
+    pub role: String,
+    pub call: Option<SkillLibraryCall>,
+}
+
+/// `self.skills.package`'s answer: the skill's record with its runtime package's
+/// files, capabilities and format. A missing, withheld, non-skill or unloadable
+/// skill answers none, never this.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SkillPackageView {
+    pub entity: EntityId,
+    pub record: SkillPackageRecordView,
+    pub files: Vec<SkillLibraryFile>,
+    pub capabilities: SkillCapabilityView,
+    pub format: SkillPackageFormatView,
+}
+
+/// The view of skill `entity` built from its runtime `package`: the package's
+/// stored record, files, capabilities and format. The native current record
+/// validated the load (admission) before this; where the two differ, the stored
+/// package record is what the output preserves.
+fn skill_package_view_from(entity: EntityId, package: HubPackage) -> SkillPackageView {
+    let HubPackage {
+        record: stored,
+        files,
+        capabilities,
+        format,
+    } = package;
+    let provenance = crate::msgpack_value_to_json(&stored.provenance);
+    SkillPackageView {
+        entity,
+        record: SkillPackageRecordView {
+            skill_id: stored.skill_id,
+            desc: stored.desc,
+            version: stored.version,
+            approval_status: stored.approval_status,
+            lifecycle_status: stored.lifecycle_status.into(),
+            source: stored.source,
+            confidence: stored.confidence,
+            generated: stored.generated,
+            human_authored: stored.human_authored,
+            dependencies: stored
+                .dependencies
+                .into_iter()
+                .map(|dependency| SkillLibraryDependency {
+                    skill_id: dependency.skill_id,
+                    min_version: dependency.min_version,
+                })
+                .collect(),
+            provenance,
+            content_hash: stored.content_hash.map(|hash| hash.to_hex()),
+            forked_from: stored.forked_from,
+            governance_tier: stored.governance_tier.map(|tier| tier.as_str().to_owned()),
+            role: stored.role.as_str().to_owned(),
+            call: stored.call.map(|call| SkillLibraryCall {
+                reference: call.reference,
+                arguments: call.arguments,
+                returns: call.returns,
+            }),
+        },
+        files: files
+            .into_iter()
+            .map(|file| SkillLibraryFile {
+                path: file.path,
+                content: file.content,
+            })
+            .collect(),
+        capabilities: SkillCapabilityView {
+            bins: capabilities.bins.into_iter().collect(),
+            env: capabilities.env.into_iter().collect(),
+            mcp: capabilities.mcp.into_iter().collect(),
+            allowed_tools: capabilities.allowed_tools.into_iter().collect(),
+        },
+        format: SkillPackageFormatView::from(format),
+    }
+}
+
+/// `self.skills.package` on a handle: `input.entity` as its record with its
+/// runtime package's files, capabilities and format, under the caller's lane.
+/// The lane read refuses a caller with no live owner Grant naming the verb, in
+/// the serving snapshot itself; a missing, withheld, non-skill or unloadable
+/// skill answers `None`, never an error.
+pub fn self_skills_package_embedded(
+    memory: &Memory<'_>,
+    input: HubSkillRequest,
+) -> MemoryResult<ScopedReadResult<Option<SkillPackageView>>> {
+    let read = memory.skill_package_read(&input.entity)?;
+    Ok(read.map(|slot| slot.map(|package| skill_package_view_from(input.entity, package))))
+}
