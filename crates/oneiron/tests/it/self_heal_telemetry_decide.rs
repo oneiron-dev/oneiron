@@ -5,10 +5,10 @@
 use std::sync::Mutex;
 
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionBandPolicy, DecisionLadder, DecisionProvider, DecisionQuestion,
-    DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
+    DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
+    DecisionQuestion, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
+    ProviderPin,
 };
-use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::self_heal::DiagnosticEventClass;
 use oneiron::self_heal::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedTier};
 use oneiron::store::RetrievalRunRecord;
@@ -37,21 +37,19 @@ impl DecisionProvider for HostHead {
             version: "3".into(),
         }
     }
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        evidence: &[EntityId],
-        _: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.asked
             .lock()
             .expect("the asked log is never poisoned")
-            .push((question.clone(), evidence.to_vec()));
+            .push((call.question.clone(), call.evidence.to_vec()));
         let probability = (self.answer != DecisionAnswer::Abstain).then_some(0.9);
         Ok(ProviderDecision {
             answer: self.answer.clone(),
             probability,
             paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
         })
     }
 }
@@ -63,7 +61,13 @@ impl HumanDecisionQueue for NoPerson {
     }
 }
 
-fn decisions(local: Option<&dyn DecisionProvider>, principal: EntityId) -> DetectorDecisions<'_> {
+/// The host's decision path: `local` on the Local rung, no person, and the
+/// state the host built from the window (here an empty object).
+fn decisions<'a>(
+    local: Option<&'a dyn DecisionProvider>,
+    principal: EntityId,
+    state: &'a serde_json::Value,
+) -> DetectorDecisions<'a> {
     DetectorDecisions {
         ladder: DecisionLadder {
             rule: None,
@@ -77,10 +81,16 @@ fn decisions(local: Option<&dyn DecisionProvider>, principal: EntityId) -> Detec
                 model: "host-queue".into(),
                 version: "1".into(),
             },
+            ask_to: None,
+            paired: None,
+            person: None,
+            presence: None,
+            correlation: None,
         },
         principal,
         dial: DETECTOR_DIAL,
         bands: DecisionBandPolicy::default(),
+        state,
         budget: std::time::Duration::from_secs(3600),
     }
 }
@@ -118,7 +128,8 @@ fn telemetry_detector_asks_the_ladder_and_keeps_the_receipt() -> Result<()> {
     let (_dir, vault, run) = vault_with_run()?;
     let principal = EntityId::now();
     let head = HostHead::new(DecisionAnswer::Noul(true));
-    let host = decisions(Some(&head), principal);
+    let state = serde_json::json!({});
+    let host = decisions(Some(&head), principal, &state);
     let policy = policy();
 
     let proposed = vault
@@ -157,12 +168,13 @@ fn an_unanswered_telemetry_question_fails_like_a_failed_judge() -> Result<()> {
     let principal = EntityId::now();
     let policy = policy();
 
+    let state = serde_json::json!({});
     let abstains = HostHead::new(DecisionAnswer::Abstain);
-    let host = decisions(Some(&abstains), principal);
+    let host = decisions(Some(&abstains), principal, &state);
     let abstained = vault.judge_retrieval_trace(&policy, &host, std::slice::from_ref(&run));
     assert!(matches!(abstained, Err(Error::InvalidConfig(_))));
 
-    let no_slot = vault.judge_retrieval_trace(&policy, &decisions(None, principal), &[run]);
+    let no_slot = vault.judge_retrieval_trace(&policy, &decisions(None, principal, &state), &[run]);
     assert!(matches!(no_slot, Err(Error::InvalidConfig(_))));
     Ok(())
 }

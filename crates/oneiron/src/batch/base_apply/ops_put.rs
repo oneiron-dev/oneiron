@@ -226,7 +226,13 @@ pub(super) fn apply_put_arm(
                 refinement_admission: state.refinement_admission.as_ref(),
                 transition: transition.as_ref(),
                 posture: config.privacy.posture,
-                owner_authored: None,
+                // A raw Put reads the owner's proof only as the one approval
+                // its door bound it to (`ApplyOpsGateMode::owner_approval`).
+                owner_authored: gate_mode
+                    .owner_approval
+                    .as_ref()
+                    .filter(|(claim, _)| *claim == id)
+                    .map(|(_, proof)| proof),
                 pending_prompt: pending_prompt.as_deref(),
                 prepared_person_substrate: prepared_person_substrate.as_ref(),
                 prepared_agent_birth: prepared_agent_birth.as_ref(),

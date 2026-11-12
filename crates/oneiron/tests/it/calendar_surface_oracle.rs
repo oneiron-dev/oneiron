@@ -52,6 +52,22 @@ use oneiron::{
 };
 use rmpv::Value;
 
+/// The vault's owner, authenticated: a standing outbound grant is the owner's
+/// standing consent row (FIX 11874, 282c8eb3d58), minted by the owner.
+fn owner_proof(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 const ACTOR_SEED: u8 = 0x81;
 const BUSY_SEED: u8 = 0x82;
 const FREE_SEED: u8 = 0x83;
@@ -64,6 +80,12 @@ const SECRET_MEETING_LINK: &str = "https://meet.example/one-1791-board";
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
     (dir, vault)
 }
 
@@ -667,6 +689,7 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
             sequence: 0,
             ics_blob_ref: blob_ref.clone(),
             recipient: INVITE_RECIPIENT.to_owned(),
+            mention: None,
         })
         .expect("a registered invite schedules through the ordinary gate");
 
@@ -704,6 +727,7 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
             sequence: 0,
             ics_blob_ref: blob_ref.clone(),
             recipient: INVITE_RECIPIENT.to_owned(),
+            mention: None,
         })
         .expect("a re-schedule of the same revision coalesces");
     assert!(again.deduped);
@@ -722,6 +746,7 @@ fn oneiron_calendar_invite_routes_only_through_schedule_outbound() {
             sequence: 1,
             ics_blob_ref: blob_ref,
             recipient: INVITE_RECIPIENT.to_owned(),
+            mention: None,
         })
         .expect_err("a blank uid is a typed rejection");
     assert_eq!(blank.code, MEMORY_CODE_BAD_REQUEST);
@@ -761,6 +786,7 @@ fn oneiron_calendar_invite_still_refuses_a_cold_invite() {
             sequence: 0,
             ics_blob_ref: blob_ref,
             recipient: INVITE_RECIPIENT.to_owned(),
+            mention: None,
         })
         .expect_err("cold outreach never attaches an .ics");
     assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
@@ -803,7 +829,8 @@ fn seed_invite_preconditions(vault: &Vault, actor: EntityId) {
     // the existing mint door here to prove the verification leg works.
     vault
         .mint_standing_outbound_grant(
-            &test_id(GRANT_SEED),
+            &owner_proof(vault),
+            test_id(GRANT_SEED),
             &oneiron::genui::GrantMintIntent {
                 principal_ref: actor.to_hex(),
                 origin_component_id: "one_1786_oracle".to_owned(),
@@ -813,7 +840,6 @@ fn seed_invite_preconditions(vault: &Vault, actor: EntityId) {
                     contact_ref: INVITE_RECIPIENT.to_owned(),
                 },
             },
-            100,
         )
         .expect("mint the booking-page standing grant");
 }

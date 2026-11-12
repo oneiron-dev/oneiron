@@ -83,6 +83,16 @@ struct FundingSelection<'a> {
     grant: EntityId,
 }
 
+/// A minted project's goal-intake interview (OF-501): the one root run a
+/// dispatch admits into a project other than the vault's. The dispatch
+/// writer proves it against the stored card before it admits it.
+struct GoalIntakeEntry {
+    card: String,
+    project: EntityId,
+    home_room: EntityId,
+    leader: EntityId,
+}
+
 pub struct AgentDispatcher<'a> {
     pub(super) vault: &'a Vault,
     pub(super) runner: DreamerRunnerStore<'a>,
@@ -92,6 +102,9 @@ pub struct AgentDispatcher<'a> {
     /// The owner's selected funding Grant for a root launch (FIX 7766),
     /// proved in the dispatch writer: [`Self::funded_by`].
     funding: Option<FundingSelection<'a>>,
+    /// The goal-intake interview this dispatcher launches, proved in the
+    /// dispatch writer: [`Self::admitting_goal_intake`].
+    goal_intake: Option<GoalIntakeEntry>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -103,7 +116,33 @@ impl<'a> AgentDispatcher<'a> {
             runner: DreamerRunnerStore::new(vault),
             seats: None,
             funding: None,
+            goal_intake: None,
         }
+    }
+
+    /// This dispatcher, for the goal-intake interview the host-held `card`
+    /// seeds in the `project` it minted (OF-501): `leader`'s root run, from
+    /// `home_room`. Any other spawn into a project other than the vault's
+    /// needs a real parent in its ancestor project. The dispatch writer
+    /// admits this root run only while the stored card minted `project` and
+    /// `leader` still leads it, only for that leader with no parent, and
+    /// spends every ancestor project's explicit depth on it, as the vault's
+    /// root run spawning down to `project` would.
+    #[must_use]
+    pub(crate) fn admitting_goal_intake(
+        mut self,
+        card: &str,
+        project: EntityId,
+        home_room: EntityId,
+        leader: EntityId,
+    ) -> Self {
+        self.goal_intake = Some(GoalIntakeEntry {
+            card: card.to_owned(),
+            project,
+            home_room,
+            leader,
+        });
+        self
     }
 
     /// This dispatcher, for ROOT agent launches the owner's agent Grant
@@ -528,6 +567,17 @@ impl<'a> AgentDispatcher<'a> {
             self.inherited_caller_origin_in_txn(wtxn, requested_parent, spawn.caller_origin)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
+        // A goal-intake entry admits one root run: its project's leader, in
+        // that project.
+        if let Some(entry) = &self.goal_intake
+            && (requested_parent.is_some()
+                || requested_target != entry.leader
+                || spawn.project_ref != Some(entry.project))
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a goal-intake entry dispatches only its project's leader, as a root run",
+            )));
+        }
         let funding =
             self.dispatch_funding_in_txn(wtxn, &spawn, requested_parent, requested_target)?;
 

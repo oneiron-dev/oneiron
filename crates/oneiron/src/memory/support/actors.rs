@@ -25,7 +25,7 @@ pub(crate) fn verify_actor_binding(
     actor_class: EdgeActorClass,
 ) -> MemoryResult<()> {
     let entity_type = vault.get_entity_type(&actor)?;
-    verify_actor_entity_type(actor, actor_class, entity_type)
+    verify_actor_entity_type(vault, actor, actor_class, entity_type)
 }
 
 pub(crate) fn verify_actor_binding_in_txn(
@@ -42,7 +42,7 @@ pub(crate) fn verify_actor_binding_in_txn(
                 .map(|header| header.entity_type)
         })
         .transpose()?;
-    verify_actor_entity_type(actor, actor_class, entity_type)
+    verify_actor_entity_type(vault, actor, actor_class, entity_type)
 }
 
 /// Owner-verb teeth (ONE-1604-D2 / ESB-C).
@@ -195,6 +195,7 @@ pub(crate) fn verify_deletion_authority_in_txn(
 }
 
 fn verify_actor_entity_type(
+    vault: &Vault,
     actor: EntityId,
     actor_class: EdgeActorClass,
     entity_type: Option<u8>,
@@ -218,7 +219,7 @@ fn verify_actor_entity_type(
             format!(
                 "bound actor {} is a {} entity and cannot act as class {}",
                 actor.to_hex(),
-                kind_string_for_type(entity_type),
+                vault.entity_kind_name(entity_type),
                 actor_class.gate_actor_class(),
             ),
             &["Bind an actor key whose entity type matches its asserted class."],

@@ -1,5 +1,5 @@
 //! Waking typed budget trap parks: in the spend scope top-up transaction, at a wake pass's start,
-//! and at the owner's release of the park.
+//! in the owner's resident share write, and at the owner's release of the park.
 
 use crate::Vault;
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId};
@@ -7,6 +7,8 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::dreamer_runner::{DreamerParkWait, PARKED, ParkResumer, TRAP_PARK_OWNER_PREFIX};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::llm::budget::resident_share_frees;
+use crate::llm::run_admission::ResidentShare;
 
 use super::codec::invalid_trap;
 use super::trap::{TrapConsumePrecheck, trap_consume_precheck_in_txn, wake_trap_in_txn};
@@ -145,6 +147,57 @@ fn wake_pass_budget_traps_in_txn(
             }
             None => {
                 tracing::info!(attempt = ?record.attempt_id, park_owner = %record.park_owner, "pass start found no trap to wake for a park");
+            }
+        }
+    }
+    Ok(woken)
+}
+
+/// Wakes, in the owner's share write for `resident`, the budget traps of the resident's steps
+/// parked on its spent pinned share that `share` frees (D3): an unpinned share, the default
+/// split, or a pinned share in units from the share the refused call needed. A share still
+/// short, another resident's park, and a stale or broken park stay parked; none fails the
+/// owner's write. Returns the tries woken.
+pub(crate) fn wake_resident_share_traps_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    resident: EntityId,
+    share: ResidentShare,
+    now_ms: u64,
+) -> Result<Vec<AttemptId>> {
+    let queue = AttemptQueue::new(vault);
+    let mut woken = Vec::new();
+    // Materialize the scan before waking: consuming a trap deletes its parked row.
+    for (_, record) in PARKED.scan(&vault.store, wtxn)? {
+        let Some(wait) = &record.wait else {
+            continue;
+        };
+        let DreamerParkWait::ResidentShare {
+            resident: waiting,
+            needed_units,
+        } = &wait.wait
+        else {
+            continue;
+        };
+        if *waiting != resident || !resident_share_frees(share, *needed_units) {
+            continue;
+        }
+        if !record.resumable_by(ParkResumer::ResidentShareRaise) {
+            tracing::info!(attempt = ?record.attempt_id, "resident share write skipped a park that does not admit it");
+            continue;
+        }
+        let Some(attempt) = queue.get_in_txn(wtxn, record.attempt_id)? else {
+            tracing::info!(attempt = ?record.attempt_id, "resident share write skipped an orphan park");
+            continue;
+        };
+        if !attempt.state.is_running() || attempt.attempt_count != wait.lease_generation {
+            tracing::info!(attempt = ?record.attempt_id, "resident share write skipped a stale park lease");
+            continue;
+        }
+        match wake_budget_trap_of_park_in_txn(vault, wtxn, &record.park_owner, now_ms)? {
+            Some(attempt) => woken.push(attempt),
+            None => {
+                tracing::info!(attempt = ?record.attempt_id, park_owner = %record.park_owner, "resident share write found no trap to wake for a park");
             }
         }
     }

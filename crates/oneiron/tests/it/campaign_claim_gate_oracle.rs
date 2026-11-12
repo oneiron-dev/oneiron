@@ -59,6 +59,11 @@ fn test_config() -> VaultConfig {
 fn oracle_vault() -> (tempfile::TempDir, Vault, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     let agent = test_id(0x73);
     vault
         .put_entity(
