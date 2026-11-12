@@ -1057,7 +1057,7 @@ async fn pending_access_requests_list_exposes_every_page_after_one_hundred() {
             .request_access(seeded_test_entity_id(0x0002_2300 + n), grant.clone())
             .unwrap();
     }
-    let path = "/v1/companion/personas/access-requests?limit=100";
+    let path = "/v1/companion/profiles/access-requests?limit=100";
     let (status, first) =
         route_json(server.clone(), core_request("GET", path, "core:auth", None)).await;
     assert_eq!(status, StatusCode::OK, "{first}");

@@ -2400,7 +2400,7 @@ async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
 /// The read RPC is synchronous, yet a stage that never yields cannot hold a
 /// call-mode recall past its deadline: the read runs on a thread of its own,
 /// and at the deadline the RPC answers with the pack recall published.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage() {
     use oneiron::retrieval_depth::SlowRetrievalStage;
     use oneiron::store::RetrievalSignal;

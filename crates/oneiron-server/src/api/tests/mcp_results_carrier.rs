@@ -209,10 +209,18 @@ fn mcp_setup_health_reads_every_board_omission_axis() {
 async fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
     let (_dir, server) = test_server();
     let flags = serde_json::to_value(feature_flags(&server)).expect("feature flags serialize");
-    let capabilities = flags["capabilities"]
-        .as_array()
-        .expect("capabilities is an array")
-        .iter()
+    // Discovery groups the capabilities by family (FIX 6692); the groups hold
+    // the whole set together.
+    let capabilities = flags["groups"]
+        .as_object()
+        .expect("groups is an object")
+        .values()
+        .flat_map(|group| {
+            group["capabilities"]
+                .as_array()
+                .expect("a group's capabilities is an array")
+                .iter()
+        })
         .map(|token| token.as_str().expect("a capability is a string").to_owned())
         .collect::<Vec<_>>();
 
