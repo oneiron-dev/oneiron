@@ -27785,11 +27785,11 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 11,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 5
      }
     },
@@ -27800,9 +27800,24 @@
       "MergedFinding"
      ],
      "path": "src/critic/findings.rs",
-     "purpose": "Deterministic duplicate consolidation; calibration never counts repeated critic output twice",
+     "purpose": "Findings merge on a checkable flaw identity (LEARN-CRITIC Q1 = B): one target, one flaw kind, one location",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FlawIdentity",
+      "FlawLocation"
+     ],
+     "path": "src/critic/flaw.rs",
+     "purpose": "A critique's checkable flaw identity (LEARN-CRITIC Q1 = B): what kind of flaw it names and where in the…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
       "struct": 1
      }
     },
@@ -27923,6 +27938,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
+      "fn": 2,
       "struct": 4,
       "trait": 1
      }
@@ -27977,7 +27993,7 @@
      "path": "src/critic/validation.rs",
      "purpose": "Bounds and shape checks for critic lenses, artifacts and learned reliability",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -32159,6 +32175,16 @@
      "surface": {
       "crate-vis": 7,
       "fn": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/admission/requested.rs",
+     "purpose": "Admission of one requested attempt (`vault.evals.authoring.execute`): a request that queued its own attempt…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76985,7 +77011,7 @@
       "enum": 4,
       "fn": 8,
       "mod": 1,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 4
      }
     },
@@ -77007,7 +77033,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 8
      }
     },
@@ -77029,6 +77055,27 @@
      "surface": {
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EvalAuthoringAdmission",
+      "EvalAuthoringCaller",
+      "EvalAuthoringExecuteAnswer",
+      "EvalAuthoringExecuteRequest",
+      "EvalAuthoringExecution",
+      "EvalAuthoringOutcome",
+      "EvalAuthoringSkillRun"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring/executions.rs",
+     "purpose": "`vault.evals.authoring.execute` (LEARNING-06, ND-130): one eval-authoring pass run now, on the host that was…",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -77057,6 +77104,7 @@
      "notable": [
       "CohortRetirement",
       "EvalCohort",
+      "EvalCohortRetirementAuthor",
       "EvalExposure",
       "EvalExposureCounts",
       "EvalExposureKind",
@@ -77065,8 +77113,8 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 13,
-      "enum": 1,
+      "crate-vis": 14,
+      "enum": 2,
       "fn": 8,
       "struct": 5
      }
@@ -77126,8 +77174,21 @@
      "purpose": "Owner-bound eval authoring and ledger doors",
      "surface": {
       "fn": 12,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EvalCohortRetireRequest"
+     ],
+     "path": "src/skill_optimize/eval_set/doors/cohort_retire.rs",
+     "purpose": "`vault.evals.cohorts.retire` (LEARNING-04, ND-130): the vault owner, or an agent whose live owner Grant…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -77760,7 +77821,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 3,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -90030,7 +90091,7 @@
      "purpose": "A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks)",
      "surface": {
       "crate-vis": 5,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -94671,7 +94732,7 @@
      "purpose": "Full witnessed goal intake and explicit optimizer proposal/admission doors",
      "surface": {
       "enum": 1,
-      "fn": 18,
+      "fn": 19,
       "struct": 16
      }
     },
@@ -95056,6 +95117,7 @@
       "ProjectConversationRequest",
       "ProjectGoalDismissReceipt",
       "ProjectGoalDismissRequest",
+      "ProjectGoalDismissTarget",
       "ProjectRefRequest",
       "ProjectTradeoffRouteRequest",
       "ReceiptsRequest",
@@ -95078,6 +95140,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "crate-vis": 1,
+      "enum": 1,
       "fn": 8,
       "mod": 1,
       "re-export": 125,
@@ -97505,9 +97568,9 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "mod": 1,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -97696,9 +97759,9 @@
      "path": "src/workspace_roster/project/goal.rs",
      "purpose": "Human-authenticated project goal intake; proposals never write this record",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 4
      }
     },
@@ -97721,6 +97784,7 @@
      "path": "src/workspace_roster/project/goal/context.rs",
      "purpose": "What the goal-intake interview reads first (OF-501): the goal claim in force, its generation, the card draft…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -97755,6 +97819,52 @@
      "purpose": "Goal thresholds and their portable codecs live with policy vocabulary",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectGoalBase",
+      "ProjectGoalProposal",
+      "ProjectGoalProposalDismissal",
+      "ProjectGoalProposalEvidence",
+      "ProjectGoalProposalImprovement",
+      "ProjectGoalProposalRate",
+      "ProjectGoalProposalReasons",
+      "ProjectGoalProposalStatus",
+      "ProjectGoalProposalView",
+      "ProjectGoalProposeRequest",
+      "ProjectGoalProposer",
+      "ProjectGoalRevisionsView"
+     ],
+     "path": "src/workspace_roster/project/goal/proposals.rs",
+     "purpose": "Full goal revision proposals (LEARNING-01; ARCH-0053, \"The ruler-change proposal\")",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GoalAxisChange",
+      "GoalAxisChanges",
+      "GoalBudgetChange",
+      "GoalPreferenceChange",
+      "GoalPreferenceChanges",
+      "GoalRecordDiff",
+      "GoalTextChange"
+     ],
+     "path": "src/workspace_roster/project/goal/proposals/diff.rs",
+     "purpose": "What a full goal proposal changes against the goal it revises, computed by the engine when the proposal is…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 7
      }
     },
     {
@@ -101838,6 +101948,30 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/verb_vault_critic_review.rs",
+     "purpose": "Row 4 CRITIC-ATTRIBUTION, PR 1 (ruling LEARN-CRITIC Q1 = B): a critic review merges findings on a checkable…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_evals_authoring_execute.rs",
+     "purpose": "`vault.evals.authoring.execute`'s engine half (LEARN-EXEC-PROOF = A, LEARN-EXEC-SHAPE = A): the caller's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_evals_cohorts_retire.rs",
+     "purpose": "`vault.evals.cohorts.retire` (LEARNING-04, ND-130; LEARN-RETIRE-SOURCE = B) through the verb dispatch…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/verb_vault_evals_labels_ask.rs",
      "purpose": "`vault.evals.labels.ask` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
      "surface": {}
@@ -101856,6 +101990,14 @@
      "notable": [],
      "path": "tests/verb_vault_gate_policy_resolve.rs",
      "purpose": "`vault.gate.policy.resolve` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_projects_goal_propose.rs",
+     "purpose": "`vault.projects.goal.propose` (LEARNING-01, row GOAL-REVISION-PROPOSAL; rulings LEARN-GOAL Q1-Q3 = A…",
      "surface": {}
     },
     {
@@ -102387,7 +102529,7 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -102464,7 +102606,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 221,
+     "files": 222,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -103276,7 +103418,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 77,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103570,7 +103712,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 135,
+     "files": 137,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103586,8 +103728,8 @@
    },
    "over_bar": 254,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7372,
-   "test_files": 1042
+   "source_files": 7378,
+   "test_files": 1046
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -123859,7 +124001,7 @@
      "path": "src/ai_host/coach_host.rs",
      "purpose": "The host Coach's nightly jobs (ARCH-0066 #coach, OF-420)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -124373,13 +124515,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/eval_authoring.rs",
      "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -124617,7 +124759,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 4,
       "re-export": 1,
       "struct": 2
@@ -127598,7 +127740,7 @@
      "path": "src/api/facade/eval_doors.rs",
      "purpose": "Typed eval doors under the caller's own verified owner credential",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -135911,7 +136053,7 @@
      "path": "src/decision_host/doors.rs",
      "purpose": "Decision host doors: the ladder, dials and the hooks built on them",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 14
      }
     },
@@ -135925,7 +136067,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 6,
       "re-export": 1,
       "struct": 1
@@ -135948,7 +136090,7 @@
      "path": "src/decision_host/notes.rs",
      "purpose": "The host's notes beside decided answers (FIX 3040, 654): a critic review's evidence refs and suggested…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -156204,6 +156346,29 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "Canary",
+      "CanaryActor",
+      "CanaryClass",
+      "CanaryScan",
+      "CanarySighting",
+      "CanaryVault",
+      "ClaimBand",
+      "PendingClass",
+      "SurfaceRead"
+     ],
+     "path": "src/canary.rs",
+     "purpose": "The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1)",
+     "surface": {
+      "const": 6,
+      "enum": 3,
+      "fn": 26,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -156225,6 +156390,28 @@
      "purpose": "The in-process verb door: a public verb, by name, with JSON in and JSON out, through…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "DreamerAttemptRun",
+      "DreamerPass",
+      "DreamerPassError",
+      "DreamerPassFailure",
+      "DreamerPassReport",
+      "PassBudget",
+      "QueueRow",
+      "WakeKind"
+     ],
+     "path": "src/dreamer.rs",
+     "purpose": "One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]…",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 15,
+      "struct": 6
      }
     },
     {
@@ -156277,8 +156464,8 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
      "surface": {
-      "mod": 11,
-      "re-export": 5
+      "mod": 13,
+      "re-export": 7
      }
     },
     {
@@ -156443,11 +156630,27 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/canary.rs",
+     "purpose": "The canary leak detector, step 1: each audience class seeded through public verbs reaches the readers in its…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/door.rs",
      "purpose": "A verb run through the in-process door leaves a receipt the receipt reader reads back through `vault.receipts`",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer.rs",
+     "purpose": "In-process Dreamer wake passes over a small seeded vault, every model call answered by the scripted backend",
      "surface": {}
     },
     {
@@ -156500,6 +156703,13 @@
     }
    ],
    "modules": {
+    "canary": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1)"
+    },
     "clock": {
      "files": 1,
      "impl_vault": false,
@@ -156513,6 +156723,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The in-process verb door: a public verb, by name, with JSON in and JSON out, through…"
+    },
+    "dreamer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]…"
     },
     "embedder": {
      "files": 1,
@@ -156578,10 +156795,10 @@
      "purpose": "A server process on a free port, started and stopped by the test"
     }
    },
-   "over_bar": 1,
+   "over_bar": 3,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
-   "source_files": 20,
-   "test_files": 7
+   "source_files": 22,
+   "test_files": 9
   },
   "oneiron-uniffi": {
    "files": [
