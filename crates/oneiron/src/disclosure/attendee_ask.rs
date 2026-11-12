@@ -312,7 +312,7 @@ impl Memory<'_> {
                 }
                 Some(_) => return Err(invalid_ask()),
                 None => {
-                    let claim = ClaimBody::new(
+                    let mut claim = ClaimBody::new(
                         PREDICATE_DISCLOSURE_ATTENDEE_ASK,
                         ClaimSubject::Entity(self.actor()),
                         record.to_value(),
@@ -321,6 +321,10 @@ impl Memory<'_> {
                         ClaimLifecycleStatus::Active,
                     )?;
                     let now = vault.store.clock.now_recorded_at();
+                    // Only a PERSON subject has a substrate FACET; any other subject takes
+                    // the vault default facet (a birth gate refusal otherwise, #4389).
+                    claim.scope_facet =
+                        vault.claim_put_facet_keeping_in_txn(txn, &ask_ref, claim.scope_facet)?;
                     vault.put_disclosure_claim_in_txn(txn, &ask_ref, &claim, now)?;
                 }
             }
@@ -393,7 +397,7 @@ impl Memory<'_> {
             }
             Some(_) => return Err(invalid_ask().into()),
             None => {
-                let claim = ClaimBody::new(
+                let mut claim = ClaimBody::new(
                     PREDICATE_DISCLOSURE_ATTENDEE_ASK,
                     ClaimSubject::Entity(self.actor()),
                     record.to_value(),
@@ -402,6 +406,10 @@ impl Memory<'_> {
                     ClaimLifecycleStatus::Active,
                 )?;
                 let now = vault.store.clock.now_recorded_at();
+                // Only a PERSON subject has a substrate FACET; any other subject takes
+                // the vault default facet (a birth gate refusal otherwise, #4389).
+                claim.scope_facet =
+                    vault.claim_put_facet_keeping_in_txn(txn, &ask_ref, claim.scope_facet)?;
                 vault.put_disclosure_claim_in_txn(txn, &ask_ref, &claim, now)?;
             }
         }
