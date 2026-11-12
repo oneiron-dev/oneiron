@@ -78,6 +78,19 @@
       "marker": "tamarind-mcp-seat"
     }
   },
+  "execute": {
+    "conversationId": "06101010101010101010101010101010",
+    "turnId": "06202020202020202020202020202020",
+    "messageId": "06303030303030303030303030303030",
+    "claimId": "06404040404040404040404040404040",
+    "marker": "cobalt-execute-preference",
+    "text": "cobalt-execute-preference: I prefer a window seat when I fly.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "cobalt-execute-proposal"
+    }
+  },
   "deniedMessageId": "dd303030303030303030303030303030",
   "deniedTurnId": "dd202020202020202020202020202020",
   "deniedText": "refused-boot-write-must-not-exist",

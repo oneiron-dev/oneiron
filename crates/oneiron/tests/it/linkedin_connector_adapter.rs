@@ -37,8 +37,8 @@ fn fixture(json: &str) -> Value {
 }
 
 fn adapter() -> Result<LinkedInMcpConnectorAdapter> {
-    LinkedInMcpConnectorAdapter::new("linkedin:member:yura")?
-        .with_session_ref("linkedin:session:yura:tokyo-sandbox")
+    LinkedInMcpConnectorAdapter::new("linkedin:member:yuki")?
+        .with_session_ref("linkedin:session:yuki:tokyo-sandbox")
 }
 
 #[derive(Default)]
@@ -61,10 +61,10 @@ impl LinkedInSandboxHostHarness for RecordingSandboxHarness {
 
 fn sandbox_host() -> Result<LinkedInSandboxHostConfig> {
     LinkedInSandboxHostConfig::new(
-        "linkedin:seat:yura",
-        "sandbox:tokyo:yura",
-        "browser-profile:linkedin:yura",
-        "vault-secret:linkedin:yura:session-cookie",
+        "linkedin:seat:yuki",
+        "sandbox:tokyo:yuki",
+        "browser-profile:linkedin:yuki",
+        "vault-secret:linkedin:yuki:session-cookie",
     )
 }
 
@@ -130,7 +130,7 @@ fn linkedin_sandbox_host_config_records_custody_and_login_handoff() -> Result<()
     assert!(config.mcp_server.persistent_browser_profile);
     assert_eq!(
         config.session_cookie_secret_ref,
-        "vault-secret:linkedin:yura:session-cookie"
+        "vault-secret:linkedin:yuki:session-cookie"
     );
     assert!(config.login_handoff.one_time_remote_browser);
     assert!(config.login_handoff.member_completes_2fa);
@@ -140,9 +140,9 @@ fn linkedin_sandbox_host_config_records_custody_and_login_handoff() -> Result<()
     );
 
     let bad_secret_ref = LinkedInSandboxHostConfig::new(
-        "linkedin:seat:yura",
-        "sandbox:tokyo:yura",
-        "browser-profile:linkedin:yura",
+        "linkedin:seat:yuki",
+        "sandbox:tokyo:yuki",
+        "browser-profile:linkedin:yuki",
         "raw-cookie",
     )
     .expect_err("session cookie custody must be a vault-scoped secret ref");
@@ -169,8 +169,8 @@ fn linkedin_kill_switch_harness_destroys_sandbox_and_revokes_catalog() -> Result
         1_800_000_100,
         "consent:owner-disabled-linkedin",
     )?;
-    assert_eq!(harness.destroyed, vec!["sandbox:tokyo:yura"]);
-    assert_eq!(harness.revoked, vec!["linkedin:seat:yura"]);
+    assert_eq!(harness.destroyed, vec!["sandbox:tokyo:yuki"]);
+    assert_eq!(harness.revoked, vec!["linkedin:seat:yuki"]);
     assert!(killed.verb_catalog().is_empty());
 
     let decision = killed.evaluate_outbound(LINKEDIN_CHANNEL, LINKEDIN_SEND_DM_VERB, 1_800_000_101);
@@ -329,11 +329,11 @@ fn linkedin_inbox_sync_double_poll_routes_no_duplicates_and_imported_external_pr
     assert!(rows.iter().all(|row| row.tier == "external"));
     assert!(
         rows.iter()
-            .all(|row| row.receiving_address_or_handle == "linkedin:member:yura")
+            .all(|row| row.receiving_address_or_handle == "linkedin:member:yuki")
     );
     assert!(
         rows.iter()
-            .all(|row| row.session_ref.as_deref() == Some("linkedin:session:yura:tokyo-sandbox"))
+            .all(|row| row.session_ref.as_deref() == Some("linkedin:session:yuki:tokyo-sandbox"))
     );
     assert!(
         rows.iter()
