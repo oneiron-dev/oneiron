@@ -14,14 +14,16 @@
 //! the row, as a free-time item's wake reservation is, FIX 4453). The lease
 //! drains at each look and at its try's end; a saved answer read again
 //! drains its scope before it answers; the server drains every row at its
-//! start, for a lease whose process died.
+//! start, for a lease whose process died. A row whose scope row is gone has
+//! no one left to charge: its drain deletes it and logs its units (the
+//! Engine, 12 Nov 19:40), so no dead row is retried forever.
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 
 use super::super::AgentDispatcher;
-use super::super::spend_record::SpendScopeId;
+use super::super::spend_record::{SCOPE, SpendScopeId};
 use super::super::widen_record::invalid;
 
 /// Staged spend rows. Key: the scope id, 0x00, then id16(lease). Value: the
@@ -111,7 +113,9 @@ impl AgentDispatcher<'_> {
     /// in one commit, and answers the units it booked. Each row's units land
     /// once: the commit that books them deletes the row, so a later drain,
     /// here or at the server's start, finds none and books nothing. A scope
-    /// with no staged row opens no write.
+    /// with no staged row opens no write. When `scope`'s row is gone (an
+    /// erase took it), nothing is booked: the rows are deleted in the same
+    /// commit and their units logged, and the answer is 0.
     pub fn drain_lease_spend(&self, scope: &SpendScopeId) -> Result<u64> {
         if !self.has_staged_rows(scope)? {
             return Ok(0);
@@ -125,14 +129,21 @@ impl AgentDispatcher<'_> {
             units = units.saturating_add(row_units(&value)?);
             keys.push(key);
         }
-        if units > 0 {
+        let gone = SCOPE.get(&self.vault.store, &txn, &scope.0)?.is_none();
+        if gone {
+            tracing::warn!(
+                scope = scope.as_str(),
+                units,
+                "a staged lease spend was dropped: its spend scope is gone"
+            );
+        } else if units > 0 {
             self.record_guard_spend_in_txn(&mut txn, scope, units)?;
         }
         for key in &keys {
             PENDING.delete(&self.vault.store, &mut txn, key)?;
         }
         txn.commit()?;
-        Ok(units)
+        Ok(if gone { 0 } else { units })
     }
 
     /// [`Self::drain_lease_spend`] for every scope a staged row names, as

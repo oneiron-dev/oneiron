@@ -162,6 +162,15 @@ impl<'a> LiveLease<'a> {
         }
     }
 
+    /// [`Self::book_and_revise`], answering the stage's error: asked after
+    /// a call answered and before its answer may be saved, so no saved
+    /// answer stands on spend that lives only in memory. A booking or read
+    /// that fails after the stage is logged, never an error: the staged
+    /// spend books at the scope's next drain.
+    pub(crate) fn stage_and_revise(&self) -> oneiron::Result<()> {
+        self.look()
+    }
+
     fn look(&self) -> oneiron::Result<()> {
         let Some(scope) = &self.scope else {
             return Ok(());

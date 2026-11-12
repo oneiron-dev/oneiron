@@ -508,6 +508,15 @@ impl RunStepBackend<'_> {
         }
     }
 
+    /// The look after a call answered: it stages the call's spend before
+    /// the engine may save the answer.
+    fn stage_answer(&self) -> oneiron::Result<()> {
+        match &self.lease {
+            Some(lease) => lease.stage_and_revise(),
+            None => Ok(()),
+        }
+    }
+
     /// Books on the scope what the step's calls spent and no look booked.
     fn book_rest(&self) -> oneiron::Result<()> {
         let Some(lease) = &self.lease else {
@@ -539,13 +548,27 @@ impl LlmBackend for RunStepBackend<'_> {
                 .ladder
                 .generate_step_attempt_while(&self.step.run, request, &may_send)
                 .await;
-            self.look();
+            let staged = self.stage_answer();
             // An attempt stopped for its attachment is an admission the
             // host denied, never a model failure: the step neither retries
             // it nor answers it with its deterministic fallback, and the
             // engine saves no result for a run its host no longer holds
             // attached. The key's next call asks the model again.
             if self.detached.load(Ordering::Relaxed) {
+                return Err(BudgetDenied::AdmissionDenied.into());
+            }
+            // An answer whose spend did not stage is refused the same way,
+            // so the engine never saves an answer on a charge that lives
+            // only in memory. The paid answer is lost: a failed local commit
+            // is rare, and a charge that is not durable is worse (the
+            // Engine, 12 Nov 19:40).
+            if let Err(error) = staged
+                && answer.is_ok()
+            {
+                tracing::error!(
+                    kind = ?error.kind(),
+                    "a run step's answer was refused: its spend did not stage"
+                );
                 return Err(BudgetDenied::AdmissionDenied.into());
             }
             answer
