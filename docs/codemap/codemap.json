@@ -9174,13 +9174,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/short_id.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -26811,7 +26811,7 @@
      "purpose": "Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 4,
       "struct": 2
      }
@@ -26834,7 +26834,7 @@
      "purpose": "Federated multi-world partitioning and staleness annotation (ARCH-0004 / ARCH-0022 / ONE-1411)",
      "surface": {
       "const": 1,
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -74587,7 +74587,7 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 13,
-      "mod": 2,
+      "mod": 3,
       "re-export": 7,
       "struct": 7
      }
@@ -74669,6 +74669,20 @@
      "surface": {
       "crate-vis": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NonBaseWorldClaimFraction"
+     ],
+     "path": "src/settings/non_base_world_claim_fraction.rs",
+     "purpose": "The owner's non-base world claim fraction (ARCH-0004 #world-scope: \"The non-base fraction is a budget knob…",
+     "surface": {
+      "const": 2,
+      "fn": 7,
+      "struct": 1
      }
     },
     {
@@ -93168,13 +93182,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 2,
       "re-export": 1
      }
@@ -97947,6 +97961,7 @@
      "path": "src/workspace_roster/house_link.rs",
      "purpose": "A house mind's link to the org it runs (HOUSE-BIND = A: the owner, 10 Nov 07:43; the Engine's link shapes…",
      "surface": {
+      "const": 1,
       "crate-vis": 10,
       "fn": 3
      }
@@ -100932,6 +100947,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/context_pack_world_set_partition.rs",
+     "purpose": "ARCH-0004 #world-scope: a context pack whose scope selects base reality beside a named world partitions its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dag_append_composed_source.rs",
      "purpose": "The DAG append's source label follows who composed the words (Engine ruling…",
      "surface": {}
@@ -101198,6 +101221,14 @@
      "notable": [],
      "path": "tests/graph_ask_centre_owner_read.rs",
      "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_bind_deputy.rs",
+     "purpose": "HOUSE-ROLE-DEPUTY-AFTER-7071 = A (the Engine, 12 Nov 09:36), on DEPUTY = A (the owner, 10 Nov 07:45) and…",
      "surface": {}
     },
     {
@@ -101985,6 +102016,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/non_base_world_claim_fraction_owner_door.rs",
+     "purpose": "ARCH-0004 #world-scope: \"The non-base fraction is a budget knob, and the vault owner sets it\" (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102434,6 +102473,14 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/short_ref_after_document_pointer.rs",
+     "purpose": "The short ref `vault.get` issues for a row whose body became a document resolves through…",
      "surface": {}
     },
     {
@@ -104237,7 +104284,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "settings": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -104601,10 +104648,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 257,
+   "over_bar": 258,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7418,
-   "test_files": 1084
+   "source_files": 7419,
+   "test_files": 1088
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -128905,7 +128952,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 189
+      "crate-vis": 190
      }
     },
     {
@@ -129286,6 +129333,16 @@
      "purpose": "Owner-proof shared model streams: subscriptions can attach before one admitted producer opens",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/non_base_world_claim_fraction_doors.rs",
+     "purpose": "Typed doors over the owner's non-base world claim fraction (ARCH-0004 #world-scope; FIX…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -145685,6 +145742,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_finish_role.rs",
+     "purpose": "The role a workspace's house runs its org in when the owner finishes the workspace…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -146050,7 +146115,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 770,
+     "files": 771,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -146598,8 +146663,8 @@
    },
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1833,
-   "test_files": 198
+   "source_files": 1834,
+   "test_files": 199
   },
   "oneiron-skill-attribution": {
    "files": [
