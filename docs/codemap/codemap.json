@@ -981,7 +981,7 @@
      "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter with its reservations",
      "surface": {
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 17
      }
     },
@@ -25680,7 +25680,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 3,
       "re-export": 28
      }
@@ -25852,10 +25852,20 @@
      "purpose": "The fitted section install (FIX 9752; owner law ARCH-0053 \"Everything installs; permissions ask\")",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/plugin/fit_install/install_writer.rs",
+     "purpose": "The engine writer a fitted section install lands under (Engine ruling FIT-INSTALL-DESIGN = A; owner law…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -25918,7 +25928,7 @@
      "path": "src/context_board/plugin/mod.rs",
      "purpose": "Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 12
      }
     },
@@ -74784,7 +74794,7 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 13,
-      "mod": 3,
+      "mod": 4,
       "re-export": 7,
       "struct": 7
      }
@@ -74814,6 +74824,19 @@
       "crate-vis": 2,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DefaultFacet"
+     ],
+     "path": "src/settings/default_facet.rs",
+     "purpose": "The owner's doors over the vault default facet (ARCH-0022 #facets: \"Every vault has one default facet…",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -101584,6 +101607,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/default_facet_owner_door.rs",
+     "purpose": "ARCH-0022 #facets (the owner, 2026-09-23): \"Every vault has one default facet ... the owner may set…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/derivation_floor.rs",
      "purpose": "The derivation floor (untangle 6.7a, decision C-3): GATE-12 holds every derivation-class claim, not only a…",
      "surface": {}
@@ -102818,6 +102849,14 @@
      "notable": [],
      "path": "tests/pass_budget_wait.rs",
      "purpose": "Row B2 of BUDGET-TRAP-UNTYPED-NO-SENDER: a step's spent budget waits on the write that refills it, or…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/plugin_section_fit_install.rs",
+     "purpose": "FIX-LIST [FIT-INSTALL-AUTO-CLAIM-PENDS-AT-GATE]: under ARCH-0053 (\"Everything installs; permissions ask\"), a…",
      "surface": {}
     },
     {
@@ -104227,7 +104266,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105137,7 +105176,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "settings": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105503,8 +105542,8 @@
    },
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7451,
-   "test_files": 1143
+   "source_files": 7453,
+   "test_files": 1145
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -113151,7 +113190,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 101,
+      "const": 102,
       "crate-vis": 1
      }
     },
@@ -129523,6 +129562,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/default_facet_doors.rs",
+     "purpose": "Typed doors over the vault default facet (ARCH-0022 #facets: \"Every vault has one default facet ... the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/device_succession_doors.rs",
      "purpose": "Credential-bound owner projection of the native device-succession door",
      "surface": {
@@ -129876,7 +129925,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 190
+      "crate-vis": 191
      }
     },
     {
@@ -147157,6 +147206,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_settlements_own_agent.rs",
+     "purpose": "RUN-SETTLEMENTS-OWN-AGENT-READ: `vault.budgets.settlements` over the facade",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/runtime_clock.rs",
      "purpose": "The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and…",
      "surface": {}
@@ -147237,7 +147294,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 771,
+     "files": 772,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -147785,8 +147842,8 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1843,
-   "test_files": 214
+   "source_files": 1844,
+   "test_files": 215
   },
   "oneiron-skill-attribution": {
    "files": [
