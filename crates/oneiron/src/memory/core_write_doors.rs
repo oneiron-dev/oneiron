@@ -37,6 +37,7 @@ impl Memory<'_> {
             announcement,
             &lane,
             Some(&self.write_actor()),
+            "vault.batch",
         )
     }
 

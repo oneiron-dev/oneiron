@@ -140,6 +140,21 @@ fn shared_members_with(
     Ok(members)
 }
 
+/// Whether `member` is an AGENT_DEF: a house mind's link to the org it runs
+/// (HOUSE-BIND = A), never a person's membership, even in a census that does
+/// not read PERSON liveness.
+fn member_is_agent_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    member: &EntityId,
+) -> Result<bool> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, member)?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+            == Some(crate::registry::ENTITY_TYPE_AGENT_DEF),
+    )
+}
+
 /// The census [`shared_members_with`] reads, before it fails closed on a
 /// shared vault with no live Owner: here such a vault reads with an empty
 /// owner set. A row that does not decode still faults.
@@ -187,6 +202,7 @@ fn shared_members_census_with(
                 .pact_for_grant(&id)
                 .is_none_or(|p| p.status == crate::authority::FederationPactStatus::Active)
             && (!live_persons || person_live(&grant.member_ref)?)
+            && (live_persons || !member_is_agent_in_txn(store, txn, &grant.member_ref)?)
             && crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
         {
             grants.push(grant);

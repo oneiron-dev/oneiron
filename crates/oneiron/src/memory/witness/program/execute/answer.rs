@@ -28,6 +28,11 @@ impl Memory<'_> {
                 // the live mirror to carry. No room row, no window: a no-op.
                 #[cfg(feature = "sync")]
                 self.vault.refresh_room_turn_in_live_window(&plan.turn_id);
+                // A program wake this turn owes rides to the elected home in
+                // the turn's window (FIX 5266). No riding wake: a no-op.
+                #[cfg(feature = "sync")]
+                self.vault
+                    .refresh_turn_program_wakes_in_live_windows(&plan.turn_id);
                 Ok(receipt)
             }
             Landed::Overlay { segment, aliases } => {
