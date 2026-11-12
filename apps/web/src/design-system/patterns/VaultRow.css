@@ -1,0 +1,77 @@
+/* A vault: the 72 x 48 picture, the name over where it runs, the waiting
+   ring at the right. The row's tone hangs 10 px out, so a list of rows
+   keeps its words on the sheet's edge (give the list margin-inline:
+   -10px). */
+.sl-vault-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  column-gap: 16px;
+  align-items: center;
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--sl-radius);
+  line-height: 1.4;
+  text-align: left;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-vault-row:hover,
+.sl-vault-row:focus-visible {
+  background: var(--sl-lit);
+  outline: none;
+}
+
+.sl-vault-row:active {
+  transform: scale(0.99);
+}
+
+.sl-vault-row-picture {
+  display: block;
+  width: 72px;
+  height: 48px;
+  border-radius: var(--sl-radius);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  outline: 1px solid var(--sl-image-line);
+  outline-offset: -1px;
+}
+
+.sl-vault-row-words {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sl-vault-row-name {
+  overflow: hidden;
+  font-size: var(--sl-t-section);
+  font-weight: 600;
+  color: var(--sl-ink-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-vault-row-runs {
+  overflow: hidden;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-vault-row-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-vault-row {
+    transition: none;
+  }
+  .sl-vault-row:active {
+    transform: none;
+  }
+}

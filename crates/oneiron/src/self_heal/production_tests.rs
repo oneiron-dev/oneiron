@@ -106,7 +106,8 @@ fn a_diagnostic_stored_before_the_ruling_reads_without_its_text() -> Result<()> 
             start: stored.valid_from,
             end: u64::MAX,
         };
-        let row = crate::test_support::entity_record(ENTITY_TYPE_DIAGNOSTIC, occurred, 1, &legacy);
+        let row =
+            crate::test_fixtures::entity_record(ENTITY_TYPE_DIAGNOSTIC, occurred, 1, 0, &legacy);
         vault.with_write_txn(|wtxn| {
             vault.store.entities.put(wtxn, id.as_bytes(), &row)?;
             let type_key = crate::store::Store::encode_type_key(ENTITY_TYPE_DIAGNOSTIC, &id);

@@ -1301,7 +1301,7 @@ fn facet_locality_zero_conflicts() -> Result<()> {
 
     // Root-granularity false-conflict guard: different LEAVES never clash.
     let disjoint = vec![
-        candidate(subject, "profile.name", "Oleksii", None),
+        candidate(subject, "profile.name", "Owen", None),
         candidate(subject, "profile.lives_in", "Tokyo", None),
     ];
     assert!(detect_conflicts(&disjoint, &[])?.is_empty());
@@ -1462,7 +1462,7 @@ fn predicate_root_never_bucket_key_conflict_key_confusion() {
     // predicate. Same root, different leaves must co-bucket.
     let subject = EntityId::from_bytes([0x36; 16]).expect("subject");
     let candidates = vec![
-        candidate(subject, "profile.name", "Oleksii", None),
+        candidate(subject, "profile.name", "Owen", None),
         candidate(subject, "profile.lives_in", "Tokyo", None),
     ];
     let buckets = plan_candidate_buckets(&candidates).expect("buckets");
@@ -1520,7 +1520,7 @@ impl LlmBackend for ScriptedBackend {
 fn extraction_response(subject: &EntityId, turn: &EntityId) -> crate::LlmResponse {
     let json = format!(
         "{{\"candidates\": [{{\"subject\": \"{}\", \"predicate\": \"profile.name\", \
-         \"value\": \"Oleksii\", \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{}\",\"byte_range\":[0,1]}}]}}]}}",
+         \"value\": \"Owen\", \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{}\",\"byte_range\":[0,1]}}]}}]}}",
         bytes_to_hex_lower(subject.as_bytes()),
         bytes_to_hex_lower(turn.as_bytes()),
     );
@@ -1632,7 +1632,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
     let scope = DreamerConsolidationScope::Micro;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x27, 1);
-    let turn = seed_turn(&vault, &conversation, "user", "my name is Oleksii", 10);
+    let turn = seed_turn(&vault, &conversation, "user", "my name is Owen", 10);
 
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
@@ -1866,7 +1866,7 @@ fn two_candidate_extraction(
 ) -> crate::LlmResponse {
     let json = format!(
         "{{\"candidates\": [\
-         {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Oleksii\", \
+         {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Owen\", \
           \"confidence\": 0.8, \"evidence_refs\": [{{\"source_id\":\"{a}\",\"byte_range\":[0,1]}}]}},\
          {{\"subject\": \"{s}\", \"predicate\": \"profile.name\", \"value\": \"Alex\", \
           \"confidence\": 0.6, \"evidence_refs\": [{{\"source_id\":\"{b}\",\"byte_range\":[0,1]}}]}}]}}",
@@ -1965,7 +1965,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             &vault,
             &store,
             0x79 + expire_on_call as u8,
-            &[("user", "call me Oleksii"), ("user", "or Alex")],
+            &[("user", "call me Owen"), ("user", "or Alex")],
         )?;
         let subject = EntityId::now();
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
@@ -2071,7 +2071,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         &vault,
         &store,
         0x2A,
-        &[("user", "call me Oleksii"), ("user", "or Alex")],
+        &[("user", "call me Owen"), ("user", "or Alex")],
     )?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
@@ -2079,7 +2079,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
     let backend = ScriptedBackend::new(vec![
         Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
         Ok(text_response(
-            "{\"resolution\": \"merge\", \"value\": \"Oleksii (Alex)\"}".to_owned(),
+            "{\"resolution\": \"merge\", \"value\": \"Owen (Alex)\"}".to_owned(),
         )),
     ]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2537,7 +2537,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         &vault,
         &store,
         0x2C,
-        &[("user", "call me Oleksii"), ("user", "or Alex")],
+        &[("user", "call me Owen"), ("user", "or Alex")],
     )?;
 
     // No script: admission is denied up-front, so generate is never called.
@@ -2680,7 +2680,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, _) =
-        admitted_attempt_fixture(&vault, &store, 0x2E, &[("user", "my name is Oleksii")])?;
+        admitted_attempt_fixture(&vault, &store, 0x2E, &[("user", "my name is Owen")])?;
     let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2747,14 +2747,14 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
         &vault,
         &store,
         0x2F,
-        &[("user", "call me Oleksii"), ("user", "or Alex")],
+        &[("user", "call me Owen"), ("user", "or Alex")],
     )?;
     let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let backend = ScriptedBackend::new(vec![
         Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
         Ok(text_response(
-            "{\"resolution\": \"merge\", \"value\": \"Oleksii (Alex)\"}".to_owned(),
+            "{\"resolution\": \"merge\", \"value\": \"Owen (Alex)\"}".to_owned(),
         )),
     ]);
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -2858,7 +2858,7 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
     let scope = DreamerConsolidationScope::Micro;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x27, 1);
-    let _turn = seed_turn(&vault, &conversation, "user", "my name is Oleksii", 10);
+    let _turn = seed_turn(&vault, &conversation, "user", "my name is Owen", 10);
 
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;

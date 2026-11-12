@@ -4,16 +4,17 @@ use std::collections::HashSet;
 
 use super::AttemptQueue;
 use crate::attempt_queue::encoding::{decode_record, ready_at, ready_key};
+use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{
     append_attempt_event, validate_intervention_actor, validate_lease_owner,
     validate_optional_intervention_note,
 };
 use crate::attempt_queue::{
-    AttemptInterventionEffect, AttemptInterventionKind, AttemptPlacement, AttemptState,
-    InterveneAttempt, InterveneOutcome,
+    AttemptInterventionEffect, AttemptInterventionKind, AttemptPlacement, InterveneAttempt,
+    InterveneOutcome,
 };
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 impl AttemptQueue<'_> {
     /// Redirects live work. A worker move revokes the old lease and queues the
@@ -40,10 +41,13 @@ impl AttemptQueue<'_> {
             .get(&txn, input.id.as_bytes())?
             .ok_or_else(|| invalid_transition("redirect", "missing"))?;
         let mut record = decode_record(&raw, input.id)?;
-        if !matches!(
-            record.state,
-            AttemptState::Queued | AttemptState::Scheduled | AttemptState::Leased
-        ) {
+        let worker_moved = placement.worker.as_deref()
+            != record
+                .placement
+                .as_ref()
+                .and_then(|old| old.worker.as_deref());
+        let step = RunLifecycle::step(RunRow::of(&record), RunEvent::Redirect { worker_moved });
+        if !matches!(step, RunStep::Move { .. } | RunStep::Note { .. }) {
             return Err(invalid_transition("redirect", record.state.as_str()));
         }
         if record.placement.as_ref() == Some(&placement) {
@@ -71,24 +75,11 @@ impl AttemptQueue<'_> {
             }
             parent = crate::run_tree::effective_parent(&ancestor);
         }
-        let worker_moved = placement.worker.as_deref()
-            != record
-                .placement
-                .as_ref()
-                .and_then(|old| old.worker.as_deref());
-        let fenced = worker_moved && record.state == AttemptState::Leased;
+        let fenced = matches!(step, RunStep::Move { .. });
         if fenced {
-            record.state = AttemptState::Queued;
-            record.lease_owner = None;
-            record.scheduled_at = None;
+            let _ = RunLifecycle::redirect(&mut record, worker_moved)?;
             record.backoff_until = None;
             record.updated_at = input.now;
-            // Fence the former worker immediately, even if a new worker uses
-            // the same owner string before claiming.
-            record.attempt_count = record
-                .attempt_count
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("redirect lease generation"))?;
             let key = ready_key(ready_at(&record), record.id);
             self.store
                 .attempt_ready

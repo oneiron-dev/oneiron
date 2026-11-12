@@ -100,6 +100,11 @@ pub struct SyncServerConfig {
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
     /// fail-closed: no cross-origin browser access is granted.
     pub allowed_origins: Vec<String>,
+    /// The role a workspace's house mind runs its org in when its binder
+    /// names none (HOUSE-BIND-ROLE-SOURCE): the owner's finish with no
+    /// `role`, and the host start, which binds nothing without it. No
+    /// default: unset, a finish must name the role.
+    pub house_role: Option<oneiron::federation::FederationGrantRole>,
     /// Domains whose subdomains name vaults on the artifact listener
     /// (`<vault>.<domain>/<artifact>/…`). Empty: local `/a/` serving only.
     pub artifact_domains: Vec<String>,
@@ -231,6 +236,7 @@ impl Default for SyncServerConfig {
             connectors: std::collections::BTreeMap::new(),
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
+            house_role: None,
             artifact_domains: Vec::new(),
             artifact_vault_name: None,
             artifact_internal_vault_id: None,
@@ -343,6 +349,8 @@ pub struct ServeConfig {
     pub cloud_registration_pins: Option<PathBuf>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
+    /// `house_role`, as on [`SyncServerConfig`].
+    pub house_role: Option<oneiron::federation::FederationGrantRole>,
     pub artifact_domains: Vec<String>,
     pub artifact_vault_name: Option<String>,
     /// Managed serve's alone, as on [`SyncServerConfig`].
@@ -525,6 +533,7 @@ impl Default for ServeConfig {
             cloud_registration_pins: server.cloud_registration_pins,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
+            house_role: server.house_role,
             artifact_domains: server.artifact_domains,
             artifact_vault_name: server.artifact_vault_name,
             artifact_internal_vault_id: server.artifact_internal_vault_id,
@@ -622,6 +631,7 @@ impl ServeConfig {
                 .collect(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
+            house_role: self.house_role,
             artifact_domains: self.artifact_domains.clone(),
             artifact_vault_name: self.artifact_vault_name.clone(),
             artifact_internal_vault_id: self.artifact_internal_vault_id.clone(),
@@ -679,6 +689,12 @@ impl ServeConfig {
     /// (FIX 2544, 2709).
     pub fn base_vault_config(&self) -> oneiron::VaultConfig {
         let mut config = oneiron::VaultConfig::server();
+        // `[runtime] clock`: the clock the vault reads. A manual clock stays
+        // manual even if its file has gone since validation; it never falls
+        // back to the host's clock.
+        if let Some(clock) = self.runtime.store_clock() {
+            config.store_clock = clock;
+        }
         config.dimensions = self.dimensions;
         config.fast_dims = self.fast_dims;
         config.map_size = self.map_size;

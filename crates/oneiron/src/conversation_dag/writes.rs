@@ -195,6 +195,9 @@ fn append_at_in_txn(
         return Err(invalid("retry TURN id is not fresh"));
     }
     actor_in_txn(&vault.store, txn, input.actor)?;
+    // The scope summary landing writer appends only the reply its landing
+    // admitted (SUMMARY-AS-RECORD-PERMIT-SHAPE = A).
+    crate::scope_summary::check_landing_append(&vault.store, input, summary)?;
     if !crate::conversation::room_person_write_allowed(
         &vault.store,
         txn,
@@ -642,7 +645,23 @@ impl Vault {
             policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
             Ok(append_in_txn(self, txn, input, None, false)?)
         });
-        policy::settle_append(writer, policy::APPEND_ROW, input, appended)
+        let appended = policy::settle_append(writer, policy::APPEND_ROW, input, appended)?;
+        // A MESSAGE its TURN's room row now lists reaches the room's live
+        // window after commit (THREAD-TASK-ONE-SURFACE): the commit mirrors
+        // the MESSAGE, not the row of the TURN it joined.
+        #[cfg(feature = "sync")]
+        if let Some(turn) = appended.containing_turn
+            && self
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)
+                .and_then(|rtxn| crate::workspace_roster::replicated_turn_in(self, &rtxn, turn))
+                .is_ok_and(|row| row.is_some())
+        {
+            self.refresh_room_turn_in_live_window(&turn);
+        }
+        Ok(appended)
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.

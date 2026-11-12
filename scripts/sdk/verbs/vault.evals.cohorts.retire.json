@@ -1,0 +1,14 @@
+{
+  "name": "vault.evals.cohorts.retire",
+  "description": "Retire a served, non-reference sealed eval cohort as the vault owner or an agent whose live owner Grant lists this verb; the receipt names the caller, and a repeat returns the first.",
+  "input": "crate::skill_optimize::eval_doors::EvalCohortRetireRequest",
+  "output": "crate::skill_optimize::EvalCohort",
+  "call": "crate::skill_optimize::eval_doors::retire_cohort(memory, input)?",
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "act_class": "unstated"
+}

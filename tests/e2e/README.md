@@ -24,13 +24,13 @@ Schema artifacts retain only SHA-256, byte length and path count, not the full b
 
 ## Files and ownership
 
-Under `/Users/olety/.claude/worktrees/solq-e2e-support/tests/e2e/`:
+Under `tests/e2e/`:
 
 - `support/engine.ts`: real init/bootstrap/pair/serve, fresh roots, peers, restarts.
 - `support/clients.ts`: signed HTTP, MCP JSON-RPC, WS app protocol, CLI, SDK processes.
 - `support/providers.ts`: scripted external HTTP protocols, streams and barriers.
 - `support/fixtures.ts`: fixture fragments, independent facts, checked archives and build pins.
-- `support/run.ts`: file declarations, resource ownership, deadlines, four-slot scheduler/report.
+- `support/run.ts`: file declarations, resource ownership, deadlines, six-slot scheduler/report.
 - `fixtures/manifest.json`: shared assets and binary requirements only.
 - `fixtures/suite-plan.json`: immutable planned IDs, source pins and registry coverage.
 - `fixtures/observatory.md` and `fixtures/notes-bundle.zip`: tiny owner-authored corpus.
@@ -82,12 +82,15 @@ to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
-relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
+relayed by the Engine at 10:35, instead defers MEMORY-04, MEMORY-06,
 PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
 RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
 the Observed producer (FIX 21842). These cases remain registered with their reasons
 and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
-passing feature coverage.
+passing feature coverage. A case whose door is still missing is a **pending door**
+(Engine CORE-FOUR-SKIPS = A): `suite.pendingDoor(test, ID, "waits on <door>", {fix: "FIX <line>",
+deadline: "YYYY-MM-DD"})` keeps it registered, reports it SKIPPED with its door, FIX row and deadline,
+and fails it from the deadline on: door or delete. GATE-02 and GATE-05 are pending doors.
 
 ## EngineFixture
 
@@ -111,10 +114,11 @@ const engine = await EngineFixture.start({
 | `pairedActor` | `{principalRef, actorClass, credential, pin, client, mcp, cli}`. Never print it. |
 | `sdk` | `SdkProcessDriver` using the prepared Node package or Python venv. |
 | `peers` | Additional fresh independent fixtures; no automatic sync or authority. |
-| `awaitReceipt(ref, timeoutMs?)` | Public call-receipt lookup or governance receipt observation; no job drain. |
+| `feedbackRequests` | In-memory snapshot of local feedback collector requests, with the same fields as `ScriptedProviders.seenFixtureCalls`; empty when not opted in. |
+| `awaitReceipt(ref, timeoutMs?)` | Resolves `call:` refs through `vault.receipts.get` and other refs only as rows of the `vault.receipts` page (gate-ledger receipts), never a job drain; `witness:` and `put:` refs are write markers, not receipt rows, so they never resolve here: read the written entity back through `vault.get` instead. |
 | `restart()` | Stop and re-serve only this fixture's vault, using the same credential. |
 | `kill()` | SIGKILL the owned server group. First observe a public receipt/ACK/provider barrier. |
-| `close({retainVault?})` | Close peers/server and remove the private root unless explicit local retention. |
+| `close({retainVault?})` | Close peers/server, then the feedback collector if opted in, and remove the private root unless explicit local retention. Unexpected collector requests fail cleanup. |
 | `serverOutputHas(values)` | After `close()`: `{found, truncated}` for the raw stdout/stderr of every server launch, restarts included. In memory only; never persisted or returned. A leak case asserts `{found:false,truncated:false}`. |
 | `artifacts` | Redacting JSON writer; never uploads anything. |
 
@@ -141,6 +145,19 @@ header). For example, configure `[models.providers.fixture]` with
 silently authorize inference or egress. Apply required owner policy separately.
 The fixture owns host, port, vault path, issuer secret and authentication.
 
+`feedbackDestination: "local-collector"` opts a preview-only case into a
+`[feedback]` table with `destination = "collector"` and an HTTP endpoint on an
+ephemeral `127.0.0.1` listener. No feedback table or listener is added by default.
+Do not also supply `[feedback]` in `serverConfig` when using this option.
+The collector needs no token or vault secret. It uses `ScriptedProviders` with
+an empty script: every request is unexpected, receives HTTP 500, and fails
+fixture/flow cleanup even if the engine hides the delivery error. Assert
+`expect(engine.feedbackRequests).toHaveLength(0)` after preview. The collector
+stays active across `restart()` and closes only after the engine stops; cleanup
+also catches requests arriving after that assertion. Its redacted provider
+artifact records requests and violations. This option does not authorize a send
+or change any disclosure checks.
+
 For the public embedding/tagger adapters, use typed options:
 
 - `embedder: {endpoint, modelKey, modelId, dimensions, egress}`. Egress is either
@@ -160,6 +177,30 @@ Readiness observations may repeat. Mutations and failed public calls are never
 silently retried. A bind collision is an explicit failure, not a hidden retry.
 Fresh ephemeral reservations reduce collisions; pairing proves the answering
 server owns this fixture's bootstrap link.
+
+### Device peers and the sync link
+
+`await engine.startDevicePeer({id, ownership?, homeOrigin?, serverConfig?, serverLog?})` runs a second
+server process of the **same logical vault** on this host, in its own root, port and keystore. It
+initialises an empty peer vault (no `token bootstrap`), waits until the home's authority checkpoint is
+attested (`GET /v1/owner/checkpoint-policy/roots`), has the owner issue one machine pairing link
+(`token pair --url <homeOrigin ?? engine.url> --principal-ref <owner> --actor-class human --machine
+<ownership ?? "yours">`), runs `device enrol <peer vault> --config <peer toml>` on the stopped peer with
+the link on stdin, and serves it. The returned `DevicePeer` has `url`, `root`, `enrolment` (the
+parsed `device enrol` output), `client` and `cli` (the **home owner's own paired credential**, pointed
+at the peer; the test mints nothing), `kill()`, `restart()` and `close()`. It is ready when the peer
+serves and admits the owner (`self.actor` answers 200), not when a first sync round has finished: a
+case waits on the public read it asserts. The server build needs the `mesh` feature (the shared
+artifact set builds it).
+
+`await SyncLinkProxy.start({target: engine.url})` (support/sync_link.ts) relays TCP between the device
+and its home; pass its `url` as `homeOrigin` so the link names it and the device dials it. Plain HTTP
+and every WebSocket handshake pass byte for byte. After an upgrade it acts on whole data messages per
+direction (`to_home`, `to_device`): `drop(direction, n)`, `duplicate(direction, n)`,
+`hold(direction)` with `release(direction, {order: "fifo" | "reverse"})`; `cut()` closes the relayed
+sockets and refuses new upgrades until `heal()`. `counts(direction)` gives seen, forwarded (a duplicate
+counts twice), dropped, duplicated and held; `awaitSeen(direction, n)` is a barrier. Counters report
+what the relay did, never convergence. Control frames always pass. The proxy is an owned resource.
 
 ## Request and startup diagnostics
 
@@ -186,6 +227,7 @@ text; they still fail the strict vector fixture until explicitly authored.
 - `client.call<V>(verb, input): Promise<FacadeResult<V>>` accepts only generated
   `FacadeVerb`/`FacadeInput<V>`. `202 PENDING_ASK` is not success. It throws with
   the original envelope. There is no automatic ask replay or credential renewal.
+- `client.callWithReceipt(verb, input)` keeps the same typed call and errors, returning `{value, receiptRef}` with the server's `x-oneiron-receipt-ref` header (`null` when absent).
 - Every protected HTTP request signs a new holder nonce over the canonical
   slip bytes. Only the holder proof is signed locally, never an engine record.
 - `mcp.initialize()`, `listTools()`, `rpc(method, params)`, `request(...)`, and
@@ -200,6 +242,7 @@ text; they still fail the strict vector fixture until explicitly authored.
   receipts. For subscription/multiplexing checks use `send(tag, envelope)` and
   `next(timeoutMs)`, assemble chunks before ACK, and retain binary cursors.
   The client does not interpret CRDT storage or negotiate private sync state.
+  The default `engine.websocket()` client opens the owner-grade full-replication `/ws`; a scoped agent's upgrade is refused by `replication_mode` in `crates/oneiron-server/src/handler/connection.rs` (FIX 23077), so scoped-agent RPC goes over HTTP.
 - `cli.run(args, stdin?, timeoutMs?, privateOutput?)` retains stdout, stderr,
   exit code and signal. `cli.json` and typed `cli.call` throw `CliError.result`
   on nonzero exit. Pass secret data through stdin, never argv.
@@ -331,10 +374,11 @@ placeholder executable digests that could accidentally pass.
   `sampling`, and explicit role-to-`real`/`stub` `bindings`. It must have a real
   binding; missing weights/config/tokenizer blocks rather than changing models.
 
-The immutable build inventory is verified once per suite-file process in a
-file-level hook, outside the flow timer. Cached verification is keyed by manifest
-path, digest and profile; every distinct key keeps the full asset/provenance checks.
-Assets must remain immutable for that frozen run.
+The runner hashes every pinned build asset once per run; its case processes verify
+the manifest digest and check each asset's identity (size, mtime, inode and device)
+against the runner's private record, and hash any asset that differs.
+The file-level hook stays outside the flow timer. Fixture files keep their full
+hash checks. Assets must remain immutable for that frozen run.
 
 The package pins Bun 1.3.4, Node 22.16.0 and Python 3.12.11 as reference runtime
 revisions in the inventory requirements. Other dependency pins are in
@@ -348,10 +392,17 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 4
 ```
 
 `E2E_REPORT_DIR` optionally selects a protected absolute output directory.
-Otherwise the runner allocates one. The scheduler uses longest-estimated-file
-first, ties by name, with up to four slots and two CPU credits/4 GiB per slot.
-The default reference total is 8 threads and 16 GiB. `--workers` accepts one
-through four slots and must fit the heaviest selected file.
+Otherwise the runner allocates one. The runner starts one child Bun process per
+selected case ID. Each case runs alone; there is no concurrency inside a process.
+The scheduler starts the longest per-case estimate first, then sorts by file name
+and case plan order. A case's estimate is its own `estimatedSeconds` in
+`fixtures/suite-plan.json` when the plan has one (the measured child wall, rounded
+up to whole seconds), else its file's estimate divided by its planned case count.
+The boot, gate and privacy cases carry the child walls of fleet job
+1111-175510-86ee (shared set bd95597c8afc, four workers).
+Each child uses its file's slots. Up to six slots fit 12 CPU credits and 24 GiB.
+The default remains four slots, 8 CPU credits and 16 GiB. `--workers` accepts one
+through six slots and must fit the heaviest selected file.
 
 For wave 1 on a four-thread fleet booking, select the four files explicitly and
 use two slots (four CPU credits):
@@ -379,13 +430,13 @@ coverage still requires passing evidence for all 251 IDs. Partial and optional-p
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 
-Bun 1.3.4 writes JUnit to a real per-file `.junit.xml` outfile under the protected
+Bun 1.3.4 writes JUnit to a real per-case `<file>.<id>.junit.xml` outfile under the protected
 report directory. The runner reads that file and checks it against registered IDs;
 subprocess stdout is not a JUnit outfile. A separate `.junit.json` artifact carries a
-redacted XML copy for export. The original XML stays local to the fleet job. Owned file
+redacted XML copy for export. The original XML stays local to the fleet job. Owned case
 process artifacts retain bounded, redacted stdout/stderr separately. `fileDiagnostics`
-in the aggregate records JUnit presence, case/match/unknown/duplicate counts, file
-exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
+in the aggregate has one entry per child with its file, `caseId`, JUnit presence,
+case/match/unknown/duplicate counts, exit/signal, and registration errors. A harness error remains a FAIL but does not replace an existing
 per-file reason; it is recorded separately as `harnessError`. Wrapper cleanup errors are
 recorded separately as `cleanupError`, preserving an earlier reason.
 
@@ -412,7 +463,7 @@ Providers, sockets and engines register end-of-flow cleanup automatically.
 `ownResource(close)` covers additional fixture services; `ManagedProcess` and
 `runProcess` own real subprocess groups and journal group IDs for the scheduler.
 On failure/deadline/interruption the runner kills owned groups, including groups
-left by an exited file process. Temp vaults are removed unless a test explicitly
+left by an exited case process. Temp vaults are removed unless a test explicitly
 calls `engine.close({retainVault:true})`; retained private roots stay local,
 are listed in a redacted retention artifact, and are never uploaded. For the
 MEMORY project-question diagnostic only, `E2E_MEMORY_RETAIN_VAULT=1` makes those
@@ -420,7 +471,7 @@ five cases retain their vaults, including a setup barrier failure.
 
 No engine constants changed. Harness constants are 10s health/readiness and
 normal request bounds, 30s normal flow budget, 2s stop grace, 25ms bounded
-public-observation cadence, four slots, two CPU credits and 4 GiB per slot,
+public-observation cadence, six slots, two CPU credits and 4 GiB per slot,
 and 600s whole-suite deadline. They are not new product laws. Zero automatic
 mutation retries, zero model downloads, no private clocks or queue ticks.
 

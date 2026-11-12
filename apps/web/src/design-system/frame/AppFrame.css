@@ -1,0 +1,109 @@
+/* The frame: the window ground behind everything; the microsidebar on it
+   at the left; then the sheet, one surface 10 px inside the window's top,
+   right and bottom, holding the sidebar and the work area with no gap.
+   Folding the sidebar hands its width to the work area at once (a width
+   change is layout, not a transform, so it is not animated); the sidebar
+   fades back in when the person opens it. */
+.sl-app-frame {
+  --sl-sheet-inset: 10px;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sl-app-frame-micro {
+  position: relative;
+  z-index: var(--sl-z-sheet);
+  display: flex;
+  flex: none;
+}
+
+.sl-app-frame-sheet {
+  position: relative;
+  z-index: var(--sl-z-work);
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  margin: var(--sl-sheet-inset) var(--sl-sheet-inset) var(--sl-sheet-inset) 0;
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  background: var(--sl-island);
+}
+
+/* The sidebar's column: the sheet's darker tone, a hairline at its right
+   edge where the work area begins. */
+.sl-app-frame-side {
+  display: flex;
+  flex: none;
+  min-height: 0;
+  background: var(--sl-bg);
+  box-shadow: inset -1px 0 0 var(--sl-rule);
+}
+
+.sl-app-frame[data-reopened] .sl-app-frame-side {
+  animation: sl-frame-side-in 160ms var(--sl-ease-out);
+}
+
+.sl-app-frame[data-sidebar="folded"] .sl-app-frame-side {
+  display: none;
+}
+
+.sl-app-frame-work {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--sl-island);
+}
+
+/* The peek: an item's sidebar raised over the sheet, 6 px inside the
+   sheet's left, top and bottom edges, on the popover tone with the popover
+   shadow (it floats; it is not a well). */
+.sl-app-frame-peek {
+  --sl-peek-inset: 6px;
+  position: absolute;
+  top: calc(var(--sl-sheet-inset) + var(--sl-peek-inset));
+  bottom: calc(var(--sl-sheet-inset) + var(--sl-peek-inset));
+  left: calc(100% + var(--sl-peek-inset));
+  display: flex;
+  border-radius: var(--sl-radius);
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+  animation: sl-frame-peek-in 160ms var(--sl-ease-out);
+}
+
+/* The strip of sheet between the microsidebar and the peek belongs to the
+   peek, so the pointer crosses from an item into it without leaving. */
+.sl-app-frame-peek::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: var(--sl-peek-inset);
+}
+
+@keyframes sl-frame-peek-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+
+@keyframes sl-frame-side-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-app-frame-peek,
+  .sl-app-frame[data-reopened] .sl-app-frame-side {
+    animation: none;
+  }
+}
