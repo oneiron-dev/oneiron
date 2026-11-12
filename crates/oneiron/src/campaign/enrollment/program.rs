@@ -209,8 +209,19 @@ pub(super) fn campaign_program_step_in_txn(
     program_ref: EntityId,
     step_ref: EntityId,
 ) -> Result<Option<CampaignProgramStep>> {
+    campaign_program_step_in_store_txn(&vault.store, txn, program_ref, step_ref)
+}
+
+/// [`campaign_program_step_in_txn`] read through `store`, as the Gate's
+/// copy-review stage reads it.
+pub(super) fn campaign_program_step_in_store_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    program_ref: EntityId,
+    step_ref: EntityId,
+) -> Result<Option<CampaignProgramStep>> {
     PROGRAM_STEP
-        .get(&vault.store, txn, &(program_ref, step_ref))?
+        .get(store, txn, &(program_ref, step_ref))?
         .map(|row| decode_program_step(program_ref, step_ref, row))
         .transpose()
 }

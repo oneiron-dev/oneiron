@@ -45,13 +45,14 @@ pub use self::actions::{
     CampaignUnsubscribeReceipt, CampaignUnsubscribeRequest,
 };
 pub use self::campaign::{
-    CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle, CampaignRecord,
+    CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle, CampaignRecord, CopyReviewMode,
     CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign,
     launch_campaign, read_campaign, update_campaign,
 };
 pub(crate) use self::campaign::{
     apply_campaign_complaint_answer_in_txn, campaign_type_byte, load_campaign_in_txn,
-    load_registered_campaign, owned_campaign_in_txn, project_campaign_complaint_pause_in_txn,
+    load_registered_campaign, load_registered_campaign_in_txn, owned_campaign_in_txn,
+    project_campaign_complaint_pause_in_txn,
 };
 pub use self::codec_json::{campaign_record_to_json, saved_query_record_to_json};
 pub use self::membership::{
