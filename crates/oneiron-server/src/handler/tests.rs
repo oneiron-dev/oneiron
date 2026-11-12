@@ -2880,7 +2880,7 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
     // build takes to verify the logged slips.
     let mut config = oneiron::VaultConfig::device();
     config.store_clock = oneiron::store::ports::ManualClock::new(1_772_000_000).bundle();
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         Arc::new(oneiron::Vault::open(dir.path(), config).unwrap()),
         SyncServerConfig {
             auth_secret: Some("federation-test-root".into()),

@@ -86,7 +86,7 @@ async fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             SyncServerConfig {
                 auth_secret: Some(SECRET.into()),

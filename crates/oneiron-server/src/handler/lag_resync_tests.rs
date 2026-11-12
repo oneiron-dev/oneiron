@@ -38,7 +38,7 @@ impl Home {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
         let server = Arc::new(
-            SyncServer::new(
+            crate::test_credentials::server_with_fixture_keystore(
                 vault,
                 SyncServerConfig {
                     auth_secret: Some(SECRET.into()),
