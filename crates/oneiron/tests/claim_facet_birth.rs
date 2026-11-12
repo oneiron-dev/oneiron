@@ -23,6 +23,13 @@ use oneiron::booking::anti_abuse::{
     BookingRequestFacts, booking_ip_hash, quarantine_borderline_submission,
 };
 use oneiron::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression};
+use oneiron::channel_identity::{ChannelIdentity, ChannelIdentityBinding, SelfHeldShape};
+use oneiron::channel_identity_provider::native_mail::{
+    NativeMailRunMode, PREDICATE_NATIVE_MAIL_MAILBOX,
+};
+use oneiron::channel_identity_provider::stalwart::{
+    NativeMailReputationReport, NativeMailSignalSource, StalwartConfig,
+};
 use oneiron::channel_identity_provider::{LineChat, LineChatKind};
 use oneiron::code_revision::CodeSessionRun;
 use oneiron::consent::AuthenticatedOwner;
@@ -37,6 +44,7 @@ use oneiron::registry::{
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::HostBinding;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::test_doors::claim_facet_birth as door;
 use oneiron::test_doors::derive::imported_turn;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
@@ -639,4 +647,121 @@ fn publication_intent_of_an_agent_definition_is_born_in_a_stored_facet() {
         .put_origin_publication_intent(&request)
         .expect("an AGENT_DEF's publication intent is put");
     claim_in_stored_facet(&vault, &request.provenance_claim_id);
+}
+
+/// S114: the native mailbox record is about the channel identity, which has
+/// no FACET of its own.
+#[test]
+fn native_mailbox_record_is_born_in_the_default_facet() {
+    let (_directory, vault) = fresh_vault();
+    let identity = stored_row(&vault, ENTITY_TYPE_ASSET, b"channel identity");
+    door::record_native_mailbox(&vault, identity, "assistant@mail.example.test", 15)
+        .expect("the mailbox is recorded");
+    let records = claims_on(&vault, identity, PREDICATE_NATIVE_MAIL_MAILBOX);
+    assert_eq!(records.len(), 1, "one mailbox record");
+    assert_eq!(records[0].scope_facet, default_facet(&vault));
+}
+
+/// S8 and S9: a native mail reputation report writes its heads and, for a
+/// degraded mailbox, a rotate proposal, each about the channel identity. The
+/// vault is unseeded, so the built-in native mail pack needs no checked
+/// connection.
+#[test]
+fn native_mail_reputation_claims_are_born_in_a_stored_facet() {
+    let directory = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open_unseeded_for_test(directory.path(), VaultConfig::device())
+        .expect("unseeded vault");
+    vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    let identity = EntityId::now();
+    vault
+        .create_channel_identity(
+            &identity,
+            &ChannelIdentity::requested(
+                "email",
+                format!("mail-{}@mail.example.test", identity.to_hex()),
+                SelfHeldShape::DedicatedAddress,
+                ChannelIdentityBinding::agent(EntityId::now()),
+                1,
+            ),
+        )
+        .expect("an email identity");
+    let evidence_ref = stored_row(&vault, ENTITY_TYPE_ASSET, b"postmaster report");
+    let config = StalwartConfig::new(
+        "http://127.0.0.1:1/jmap/session",
+        "instance-1",
+        "owner-1",
+        "mail.example.test",
+        "domain-1",
+        NativeMailRunMode::SelfRun,
+    )
+    .expect("stalwart config");
+    let report = NativeMailReputationReport {
+        observation_ref: "report-1".to_owned(),
+        evidence_ref,
+        source: NativeMailSignalSource::Postmaster,
+        delivered: 20,
+        bounces: 0,
+        complaints: 0,
+        spam_label_observations: 1,
+        replies: 2,
+        out_of_office: 0,
+        postmaster_healthy: Some(true),
+        observed_at: 50,
+    };
+    let claims = door::record_reputation(&vault, config, identity, &report)
+        .expect("the reputation report is recorded");
+    assert!(!claims.is_empty(), "the report writes its heads");
+    for claim in &claims {
+        claim_in_stored_facet(&vault, claim);
+    }
+}
+
+fn conflict_repo() -> RepoRef {
+    RepoRef::LocalFolder {
+        path: "/nonexistent/repo".to_owned(),
+        commit: "9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned(),
+    }
+}
+
+/// S96: the open repo conflict claim is a replicated put that skips the birth
+/// gate, so it stored the branch subject's derived substrate id, which no
+/// FACET row holds; it now stores the vault default facet.
+#[test]
+fn open_repo_conflict_is_stored_in_the_default_facet() {
+    let (_directory, vault) = fresh_vault();
+    let branch = stored_row(&vault, ENTITY_TYPE_ASSET, b"branch subject");
+    let open = door::record_open_repo_conflict(
+        &vault,
+        &conflict_repo(),
+        branch,
+        "feature",
+        [&"1".repeat(40), &"2".repeat(40), &"3".repeat(40)],
+        vec!["README.md".to_owned()],
+    )
+    .expect("the open conflict is recorded");
+    assert_eq!(
+        claim_in_stored_facet(&vault, &open).scope_facet,
+        default_facet(&vault)
+    );
+}
+
+/// S97: the conflict resolution claim takes the same replicated put as S96.
+#[test]
+fn repo_conflict_resolution_is_stored_in_the_default_facet() {
+    let (_directory, vault) = fresh_vault();
+    let branch = stored_row(&vault, ENTITY_TYPE_ASSET, b"branch subject");
+    let resolved = door::put_repo_conflict_resolution(
+        &vault,
+        &conflict_repo(),
+        branch,
+        "feature",
+        EntityId::now(),
+        &"4".repeat(40),
+        vec!["README.md".to_owned()],
+    )
+    .expect("the resolution is recorded");
+    assert_eq!(
+        claim_in_stored_facet(&vault, &resolved).scope_facet,
+        default_facet(&vault)
+    );
 }
