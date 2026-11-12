@@ -27,7 +27,9 @@ use oneiron::memory::{ClaimInput, HostWriteOrigin};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AgentVerb, invoke};
-use oneiron::test_support::{bind_host_owner, put_policy_manifest_bytes, test_host_issuer};
+use oneiron::test_support::{
+    bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
+};
 use oneiron::{
     ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault,
     VaultConfig, WriteActor,
@@ -46,9 +48,9 @@ const fn range(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-/// A vault with no manifest yet, its embedded owner bound under the host
-/// root (the run review doors act only for the root owner), and a manifest
-/// whose defaults let the owner's run land its claims.
+/// A vault with no manifest yet, a manifest whose defaults let the owner's
+/// run land its claims, and its embedded owner bound under the host root
+/// (the run review doors act only for the root owner).
 struct Fixture {
     vault: Arc<Vault>,
     owner: EntityId,
@@ -68,9 +70,11 @@ impl Fixture {
         let owner = vault
             .ensure_embedded_owner_actor()
             .map_err(at("embedded owner"))?;
-        bind_host_owner(&vault, &test_host_issuer(), owner).map_err(at("owner host binding"))?;
         put_policy_manifest_bytes(&vault, EntityId::now(), &run_policy(owner)?)
             .map_err(at("install the policy"))?;
+        // The host root's genesis, then the owner bound under it.
+        let issuer = provision_engine_machines(&vault);
+        bind_host_owner(&vault, &issuer, owner).map_err(at("owner host binding"))?;
         let subject = EntityId::now();
         vault
             .put_entity(&subject, ENTITY_TYPE_PERSON, range(1), 1, b"person")
