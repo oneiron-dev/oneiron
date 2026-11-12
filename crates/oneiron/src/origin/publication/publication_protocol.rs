@@ -149,9 +149,9 @@ impl Vault {
             // An erased intent is never named again (FIX 3877).
             let id = &request.provenance_claim_id;
             crate::origin::actor_erase::refuse_renaming_in_txn(self, wtxn, id, &body)?;
-            // The edge source is the publishing actor, which need not be a
-            // PERSON with a substrate FACET.
-            body.scope_facet = self.claim_put_facet_in_txn(wtxn, id)?;
+            // The edge source is the publishing actor: a PERSON keeps its
+            // substrate FACET, any other actor has none.
+            body.scope_facet = self.claim_put_facet_keeping_in_txn(wtxn, id, body.scope_facet)?;
             self.put_reserved_claim_in_txn(
                 wtxn,
                 &request.provenance_claim_id,
