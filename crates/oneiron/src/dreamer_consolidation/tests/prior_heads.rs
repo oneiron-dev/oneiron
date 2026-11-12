@@ -176,18 +176,18 @@ fn fixture_in_project(
         project,
         nested,
         b"person",
-        &[("user", "my name is Oleksii")],
+        &[("user", "my name is Owen")],
     )
 }
 
 /// The Dreamer's own unvetted head, `Generated` and `Auto`, about a person
-/// the turn names ("my name is Oleksii"). The scope grants the person too, so
+/// the turn names ("my name is Owen"). The scope grants the person too, so
 /// the wake lists both.
 fn provisional_fixture(vault: &Vault) -> Result<Fixture> {
     named_fixture(
         vault,
         (ClaimSource::Generated, ClaimApprovalStatus::Auto),
-        &[("user", "my name is Oleksii")],
+        &[("user", "my name is Owen")],
     )
 }
 
@@ -199,7 +199,7 @@ fn named_fixture(
     texts: &[(&str, &str)],
 ) -> Result<Fixture> {
     let named =
-        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Oleksii".into())]))?;
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
     let mut fx = fixture_with(
         vault,
         head,
@@ -240,7 +240,7 @@ fn fixture_with(
     let mut candidate = ClaimCandidate::new(
         "profile.name",
         ClaimSubject::Entity(subject),
-        "Oleksii".into(),
+        "Owen".into(),
         0.9,
     );
     if project != crate::claim::default_project_id() {
@@ -442,7 +442,7 @@ fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
 fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marker() -> Result<()> {
     let (_dir, vault) = open_vault();
     let mut fx = fixture(&vault)?;
-    let text = "my name is Oleksii ☕";
+    let text = "my name is Owen ☕";
     let body = turn_body("user", text, None);
     let old = document_version(fx.turn, &vault.get(&fx.turn)?.expect("old turn"));
     vault.put_entity(&fx.turn, ENTITY_TYPE_TURN, occurred(10), 10, &body)?;
@@ -637,7 +637,7 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     let (dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let before = vault.get_raw(&fx.head)?.expect("head");
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     assert!(matches!(
         execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
@@ -698,7 +698,7 @@ fn an_evidence_attachment_counts_on_the_agents_auto_write_rate() -> Result<()> {
     let kind = crate::own_rate::OwnRateKind::AutoWrite;
     assert!(vault.own_rate_check(actor, kind)?.is_none());
     crate::own_rate::set_auto_write_threshold_for_test(Some(0));
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     let executed = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
     crate::own_rate::set_auto_write_threshold_for_test(None);
@@ -737,7 +737,7 @@ fn project_bound_branch_never_relabels_default_project_evidence() -> Result<()> 
     scope
         .writable
         .insert(super::super::gap::branch_gap_projection(&partition, &scope));
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     assert!(matches!(
         execute(&vault, &fx, &backend, &mut sink, scope)?,
@@ -782,7 +782,7 @@ fn project_local_exact_head_attachment_keeps_its_provenance_in_the_project() -> 
         let project = EntityId::now();
         let fx = fixture_in_project(&vault, ClaimSource::UserStated, project, nested)?;
         let before = vault.get_raw(&fx.head)?.expect("head");
-        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
         assert!(matches!(
             execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
@@ -1440,7 +1440,7 @@ fn a_correction_that_shares_its_head_still_takes_the_verdict_call() -> Result<()
                     },
                     {
                         "subject": fx.subject.to_hex(), "predicate": "profile.name",
-                        "value": "Oleksii", "confidence": 0.9,
+                        "value": "Owen", "confidence": 0.9,
                         "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
                     },
                 ]})
@@ -1526,7 +1526,7 @@ fn a_bound_correction_of_a_user_stated_claim_is_judged_by_the_source_doors() -> 
     let fx = named_fixture(
         &vault,
         (ClaimSource::UserStated, ClaimApprovalStatus::Approved),
-        &[("user", "my name is Oleksii")],
+        &[("user", "my name is Owen")],
     )?;
     let pin = PreparedWake::capture_with_grants(
         &vault,
@@ -1583,7 +1583,7 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
     let fx = named_fixture(
         &vault,
         (ClaimSource::Generated, ClaimApprovalStatus::Auto),
-        &[("user", "my name is Oleksii"), ("user", "call me Alex")],
+        &[("user", "my name is Owen"), ("user", "call me Alex")],
     )?;
     let pin = PreparedWake::capture_with_grants(
         &vault,
@@ -1611,7 +1611,7 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
                 },
                 {
                     "subject": fx.subject.to_hex(), "predicate": "profile.name",
-                    "value": "Oleksii", "confidence": 0.9, "evidence_refs": refs(&fx.turns[..1]),
+                    "value": "Owen", "confidence": 0.9, "evidence_refs": refs(&fx.turns[..1]),
                 },
             ]})
             .to_string(),
@@ -1734,7 +1734,7 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
     policy(&vault, actor.entity_ref(), true)?;
     let store = DreamerRunnerStore::new(&vault);
     let named =
-        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Oleksii".into())]))?;
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
     let person = EntityId::now();
     let owner = EntityId::now();
     vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
@@ -1762,8 +1762,8 @@ fn a_head_an_earlier_branch_closed_is_counted_and_the_next_branch_still_runs() -
         )
         .commit()?;
     for (seed, text) in [
-        (0x5C, "my name is Oleksii and I live in Porto now"),
-        (0x5D, "my name is Oleksii and I play the viola now"),
+        (0x5C, "my name is Owen and I live in Porto now"),
+        (0x5D, "my name is Owen and I play the viola now"),
     ] {
         let conversation = seed_session(&vault, seed, 1);
         seed_turn(&vault, &conversation, "user", text, 10);
@@ -1935,7 +1935,7 @@ fn nothing_attaches_to_an_unvetted_claim_and_it_corroborates_nothing() -> Result
             })
         } else {
             serde_json::json!({
-                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Oleksii",
+                "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Owen",
                 "confidence": 0.9,
                 "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
             })
@@ -1994,12 +1994,12 @@ fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()
         &vault,
         &store,
         0x5A,
-        &[("user", "my name is Oleksii and I live in Lisbon")],
+        &[("user", "my name is Owen and I live in Lisbon")],
     )?;
     let person = EntityId::now();
     let owner = EntityId::now();
     let named =
-        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Oleksii".into())]))?;
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
     vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
     vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let head = EntityId::now();
@@ -2010,7 +2010,7 @@ fn a_replay_after_writing_about_a_listed_person_never_calls_again() -> Result<()
             ClaimCandidate::new(
                 "profile.name",
                 ClaimSubject::Entity(person),
-                "Oleksii".into(),
+                "Owen".into(),
                 0.9,
             ),
             &WriteEnvelope::new(
@@ -2370,9 +2370,9 @@ fn pinned_exact_head_attachment_retains_visible_range_and_original_head() -> Res
     let (dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let raw = vault.get_raw(&fx.head)?.expect("original head");
-    let text = "my name is Oleksii";
-    let start = text.find("Oleksii").expect("quote");
-    let end = start + "Oleksii".len();
+    let text = "my name is Owen";
+    let start = text.find("Owen").expect("quote");
+    let end = start + "Owen".len();
     let digest = swarm_evidence_content_hash(&text.as_bytes()[start..end]);
     let pin = PreparedWake::capture_with_grants(
         &vault,
@@ -2381,7 +2381,7 @@ fn pinned_exact_head_attachment_retains_visible_range_and_original_head() -> Res
     )?;
     let response = text_response(
         serde_json::json!({"candidates":[{
-            "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Oleksii",
+            "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Owen",
             "confidence":0.8,
             "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[start,end]}]
         }]})
@@ -2497,7 +2497,7 @@ fn attach_other_claim_with_restrictive_meet(source: ClaimSource) -> Result<()> {
         PreparedWake::capture_with_grants(&vault, DreamerConsolidationScope::Micro, Some(&scope))?;
     let response = text_response(
         serde_json::json!({"candidates":[{
-            "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Oleksii",
+            "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Owen",
             "confidence":0.8,
             "evidence_refs":[{"source_id":cited.to_hex(),"claim_id":cited.to_hex()}],
             "evidence_hashes":{cited.to_hex():"00".repeat(32)}
@@ -2759,7 +2759,7 @@ fn different_value_consults_one_prior_and_outage_leaves_original_and_open_confli
             })
             .collect();
         assert!(user_text.contains(&fx.head.to_hex()));
-        assert!(user_text.contains("Oleksii"));
+        assert!(user_text.contains("Owen"));
         assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
         if outage {
             // The fatal judge uses the durable escalation fallback. It completes
@@ -2848,7 +2848,7 @@ fn missing_head_rights_revoked_actor_and_write_time_source_drift_refuse() -> Res
             "gate" => policy(&vault, fx.run.agent_actor.entity_ref(), false)?,
             _ => {}
         }
-        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
         let sink = PromotionWriterSink::new(&vault, fx.run.clone());
         let result = if fault.ends_with("revision") || fault == "read_revocation" {
             if fault == "new_revision" {
@@ -3116,7 +3116,7 @@ fn owned_attempt_sink_promotes_under_the_executors_own_run() -> Result<()> {
     let (_dir, vault) = open_vault();
     let vault = std::sync::Arc::new(vault);
     let fx = fixture(&vault)?;
-    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
     // No run context is handed in: the sink reads it from the sealed write.
     let mut sink = crate::dreamer_promotion::AttemptPromotionSink::new(vault.clone());
     assert!(matches!(
@@ -3552,7 +3552,7 @@ fn every_consolidation_door_counts_its_auto_write_once() -> Result<()> {
             }
             AutoWriteDoor::Attachment => {
                 let fx = fixture(&vault)?;
-                let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+                let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Owen"))]);
                 let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
                 crate::own_rate::set_auto_write_threshold_for_test(Some(0));
                 let pass = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());

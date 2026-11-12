@@ -84,12 +84,18 @@ pub(super) fn classify_signature(
     archival: Option<&ArchivalCoverage>,
     dss_end: Option<u64>,
 ) -> Option<PadesProfile> {
+    // Validation material decides only LT and LTA (`dss_ok`): a failed or
+    // unresolved material check never takes away B-B or B-T. Anyone holding
+    // the signed PDF can append a DSS, so a broken one must not degrade the
+    // profile (Engine call Q-D = A, 10 Nov 07:23).
     if evidence.checks.iter().any(|c| {
         (c.status == VerifyCheckStatus::Fail && c.kind != VerifyCheckKind::ValidationMaterial)
             || (c.status == VerifyCheckStatus::NotRun
                 && !matches!(
                     c.kind,
-                    VerifyCheckKind::CertificatePath | VerifyCheckKind::TimestampCertificatePath
+                    VerifyCheckKind::CertificatePath
+                        | VerifyCheckKind::TimestampCertificatePath
+                        | VerifyCheckKind::ValidationMaterial
                 ))
     }) {
         return None;

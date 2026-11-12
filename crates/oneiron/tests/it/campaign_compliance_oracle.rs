@@ -11,8 +11,10 @@
 //! The vault is deliberately UNSEEDED, so the external-effect ladder is
 //! fail-closed and a compliant dispatch lands on
 //! `gate.pending.external_effect_authority`. That pending IS the control: the
-//! compliance stage must convert it to a hard `deny` when a row refuses, and
-//! must leave it untouched when the facts satisfy every governing row. Nothing
+//! compliance stage must replace it with its own owner-clearable hold,
+//! `gate.pending.campaign_compliance`, when a row refuses (FIX 12542,
+//! CAMPAIGN-SEND-SAFETY = B, 177035af710 #4499), and must leave it untouched
+//! when the facts satisfy every governing row. Nothing
 //! reaches the transport in either case, which is what makes the difference
 //! between the two arms attributable to compliance alone.
 //!
@@ -53,8 +55,9 @@ const EMAIL_VERB: &str = "send";
 const DM_VERB: &str = "send_dm";
 /// The gate stage a compliant dispatch falls through to on this fixture.
 const PENDING_AUTHORITY: &str = "gate.pending.external_effect_authority";
-/// The reason code the compliance stage raises.
-const DENY_COMPLIANCE: &str = "gate.deny.campaign_compliance";
+/// The reason code the compliance stage raises: an owner-clearable hold
+/// (FIX 12542, 177035af710 #4499), not a denial.
+const PENDING_COMPLIANCE: &str = "gate.pending.campaign_compliance";
 
 const ACTOR_SEED: u8 = 0xB1;
 const CAMPAIGN_SEED: u8 = 0xB2;
@@ -239,7 +242,7 @@ fn blocked_by_compliance(result: &OutboundDispatchResult) -> bool {
     result
         .gate_reason_codes
         .iter()
-        .any(|code| code == DENY_COMPLIANCE)
+        .any(|code| code == PENDING_COMPLIANCE)
 }
 
 /// The compliance stage let this dispatch through to the next existing gate
@@ -304,7 +307,7 @@ fn campaign_compliance_gate_oracle() -> Result<()> {
         no_jurisdiction
             .receipt
             .policy_trace
-            .contains(&DENY_COMPLIANCE.to_owned()),
+            .contains(&PENDING_COMPLIANCE.to_owned()),
         "the refusal must reach the receipt: {:?}",
         no_jurisdiction.receipt.policy_trace
     );
@@ -341,7 +344,7 @@ fn campaign_compliance_gate_oracle() -> Result<()> {
         !evidenced
             .receipt
             .policy_trace
-            .contains(&DENY_COMPLIANCE.to_owned())
+            .contains(&PENDING_COMPLIANCE.to_owned())
     );
     Ok(())
 }

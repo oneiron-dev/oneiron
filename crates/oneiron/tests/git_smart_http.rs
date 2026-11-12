@@ -254,9 +254,6 @@ fn serve_connection(
     match served {
         Ok(report) => reports.lock().expect("reports lock").push(report),
         Err(error) => {
-            // git prints no body of a 500, so the refusal goes to the test's
-            // own output as well.
-            eprintln!("smart_http::serve {} failed: {error:?}", head.repo);
             if !sink.began {
                 let message = error.to_string();
                 let _ = sink.stream.write_all(

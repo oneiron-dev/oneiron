@@ -59,6 +59,7 @@ mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
+pub(crate) use conflict_settle::conflict_review_held_in;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
@@ -103,6 +104,7 @@ pub mod erase_sweep;
 mod export;
 mod export_audit;
 mod export_kept;
+mod feeds;
 pub mod query_records;
 // FIX 11176: a kept export read and let go through verbs.
 mod export_transfer_read;

@@ -184,6 +184,11 @@ impl FederationGrantScope {
 pub enum FederationGrantRole {
     /// Full owner privileges for the shared vault.
     Owner,
+    /// Admin's powers plus a Grant for delegated Owner powers, each Owner act
+    /// carrying a check-in mode (ARCH-0082 #roles; DEPUTY = A, the lead
+    /// 11 Nov 11:38). It rides the Admin envelope and never holds the org
+    /// root. The delegated Owner Grant is ROLES-CHECKIN PR 2.
+    Deputy,
     /// Administrative privileges without owner transfer semantics.
     Admin,
     /// A Steward looks after the vault's memory for its owners: it can read
@@ -203,8 +208,6 @@ pub enum FederationGrantRole {
     Member,
     /// Read-only member privileges.
     Viewer,
-    /// Legacy audit spelling; normalized to Viewer when a grant is minted or decoded.
-    Auditor,
     /// One-hop, expiring read privileges attenuated from an admin parent.
     ///
     /// A delegate is never administrative and can never itself delegate, so
@@ -222,36 +225,39 @@ impl FederationGrantRole {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Owner => "owner",
+            Self::Deputy => "deputy",
             Self::Admin => "admin",
             Self::Steward => "steward",
             Self::Member => "member",
             Self::Viewer => "viewer",
-            Self::Auditor => "viewer",
             Self::Delegate => "delegate",
             Self::Guest => "guest",
         }
     }
 
-    /// Parses a pinned on-disk role string.
+    /// Parses a pinned on-disk role string. The retired `auditor` is refused,
+    /// with no alias (VS-OLD-NAMES = A, the lead 11 Nov 11:38).
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "owner" => Some(Self::Owner),
+            "deputy" => Some(Self::Deputy),
             "admin" => Some(Self::Admin),
             "steward" => Some(Self::Steward),
             "member" => Some(Self::Member),
             "viewer" => Some(Self::Viewer),
-            "auditor" => Some(Self::Viewer),
             "delegate" => Some(Self::Delegate),
             "guest" => Some(Self::Guest),
             _ => None,
         }
     }
 
-    /// Returns whether this role can administer membership or policy.
+    /// Returns whether this role can administer membership or policy. A
+    /// Deputy holds Admin's powers; the org root and the veto stay the
+    /// Owner's alone.
     #[must_use]
     pub const fn is_admin(self) -> bool {
-        matches!(self, Self::Owner | Self::Admin)
+        matches!(self, Self::Owner | Self::Deputy | Self::Admin)
     }
 
     /// Returns whether this role is the isolated ask-scoped guest role.
@@ -276,8 +282,6 @@ pub enum FederationGrantPreset {
     Member,
     /// Read-only capability envelope.
     ReadOnly,
-    /// Audit-only capability envelope.
-    Audit,
     /// Attenuated one-hop delegate envelope.
     Delegate,
     /// Ask-scoped read/propose-only guest envelope.
@@ -294,13 +298,13 @@ impl FederationGrantPreset {
             Self::Steward => "steward",
             Self::Member => "member",
             Self::ReadOnly => "read_only",
-            Self::Audit => "read_only",
             Self::Delegate => "delegate",
             Self::Guest => "guest",
         }
     }
 
-    /// Parses a pinned on-disk preset string.
+    /// Parses a pinned on-disk preset string. The retired `audit` is refused,
+    /// with no alias (VS-OLD-NAMES = A).
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -309,7 +313,6 @@ impl FederationGrantPreset {
             "steward" => Some(Self::Steward),
             "member" => Some(Self::Member),
             "read_only" => Some(Self::ReadOnly),
-            "audit" => Some(Self::ReadOnly),
             "delegate" => Some(Self::Delegate),
             "guest" => Some(Self::Guest),
             _ => None,
@@ -325,12 +328,15 @@ impl FederationGrantPreset {
     /// capability set while it still reads as attenuated. Steward is a 1:1
     /// pair for the same reason: an Owner or Admin envelope would hand a
     /// Steward admin-grade capability while it still reads as a Steward.
+    /// A Deputy rides only the Admin envelope: an Owner envelope would hand
+    /// it the org root while it still reads as a Deputy.
     #[must_use]
     pub const fn permits_role(self, role: FederationGrantRole) -> bool {
         match self {
             Self::Owner => !matches!(
                 role,
-                FederationGrantRole::Steward
+                FederationGrantRole::Deputy
+                    | FederationGrantRole::Steward
                     | FederationGrantRole::Delegate
                     | FederationGrantRole::Guest
             ),
@@ -344,15 +350,9 @@ impl FederationGrantPreset {
             Self::Steward => matches!(role, FederationGrantRole::Steward),
             Self::Member => matches!(
                 role,
-                FederationGrantRole::Member
-                    | FederationGrantRole::Viewer
-                    | FederationGrantRole::Auditor
+                FederationGrantRole::Member | FederationGrantRole::Viewer
             ),
-            Self::ReadOnly => matches!(
-                role,
-                FederationGrantRole::Viewer | FederationGrantRole::Auditor
-            ),
-            Self::Audit => matches!(role, FederationGrantRole::Auditor),
+            Self::ReadOnly => matches!(role, FederationGrantRole::Viewer),
             Self::Delegate => matches!(role, FederationGrantRole::Delegate),
             Self::Guest => matches!(role, FederationGrantRole::Guest),
         }
@@ -455,16 +455,8 @@ impl FederationGrant {
             authority_scope: super::grant_scope::membership_preset(role),
             scope,
             member_ref,
-            role: if role == FederationGrantRole::Auditor {
-                FederationGrantRole::Viewer
-            } else {
-                role
-            },
-            preset: if preset == FederationGrantPreset::Audit {
-                FederationGrantPreset::ReadOnly
-            } else {
-                preset
-            },
+            role,
+            preset,
             expires_at: None,
             delegated_by: None,
             guest: None,
@@ -579,12 +571,9 @@ impl FederationGrant {
     /// Validates scope, role/preset policy, and role-conditional field shape.
     pub fn validate(&self) -> Result<()> {
         self.scope.validate()?;
-        // Legacy Auditor is only a decoder input. Guest grants are checked
-        // below against their ask scope and guest payload.
-        if self.role == FederationGrantRole::Auditor
-            || self.preset == FederationGrantPreset::Audit
-            || !self.preset.permits_role(self.role)
-        {
+        // Guest grants are checked below against their ask scope and guest
+        // payload.
+        if !self.preset.permits_role(self.role) {
             return Err(invalid_grant());
         }
         let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);

@@ -1003,7 +1003,7 @@ mod cb_a {
             .set_consult_fanout_policy(
                 &owner,
                 &oneiron::task_verb::ConsultFanOutPolicy {
-                    mode: oneiron::task_verb::ConsultFanOutMode::FullAccess,
+                    mode: oneiron::check_in::CheckInMode::NeverAsk,
                     ..Default::default()
                 },
             )
@@ -1233,6 +1233,7 @@ mod cb_a {
                 subject: peer,
                 deadline: None,
                 now_ms: NOW,
+                spend_scope: None,
             };
             let trap = open_trap(
                 &vault,
@@ -1510,6 +1511,7 @@ mod cb_a {
             subject: fixture.person,
             deadline: None,
             now_ms: NOW,
+            spend_scope: None,
         };
         let trap = open_trap(
             &fixture.vault,

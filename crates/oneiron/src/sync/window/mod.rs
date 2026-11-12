@@ -82,6 +82,8 @@ pub use self::egress::{
 #[cfg(test)]
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::forward::replay_window_in_edge_order_for_test;
 pub(crate) use self::forward::{FORWARD_PASS_VERSION, ForwardRun, forward_rematerialize_mirror};
 pub(crate) use self::history_free::export_sealed_mirror_snapshot;
 pub use self::history_free::{
@@ -124,6 +126,50 @@ pub use self::tombstones::{
 pub(crate) use self::tombstones::{arm_fail_after_carrier_mark, disarm_fail_after_carrier_mark};
 pub(crate) use self::withdrawn::replace_withdrawn_carriers;
 
+/// Whether the stored TURN `turn` can ride its base month window, judged in
+/// the caller's snapshot with the same exclusion the reverse pass asks.
+/// The canonical base window withholds every world kept from an unknown
+/// destination, and checks source ancestry and live off-record membership.
+pub(crate) fn turn_packs_in_base_window_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &crate::EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, turn)?
+    else {
+        return Ok(false);
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+        return Ok(false);
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_TURN
+        || !types::entity_belongs_to_window(&raw, &WindowKey::from_timestamp(header.learned_at))
+    {
+        return Ok(false);
+    }
+    entity_packs_in_base_window_in_txn(vault, txn, turn)
+}
+
+/// Whether the packing exclusion permits `entity` in its base month window.
+pub(crate) fn entity_packs_in_base_window_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entity: &crate::EntityId,
+) -> Result<bool> {
+    let withheld = crate::settings::device_local_worlds_at(
+        vault,
+        txn,
+        crate::settings::CallerLocality::OffDevice,
+    )?;
+    let mut lineage = crate::source_audience::LineagePass::new(vault, txn)?;
+    Ok(!window_packing_excludes_entity_with(
+        vault,
+        &mut lineage,
+        &withheld,
+        entity,
+    )?)
+}
+
 /// Reserved prefix for Loro commit MESSAGES written by the edit-distance
 /// proposal-artifact substrate (ED-00, ONE-1756).
 ///
@@ -156,6 +202,9 @@ pub struct LoadedWindow {
     _observer_room_turns: Option<Subscription>,
     /// Observer B for the room fact map (FIX 1794), on a base window only.
     _observer_room_facts: Option<Subscription>,
+    /// Observer B for the turn-program arming and wake maps (FIX 5266), on a
+    /// base window only.
+    _observer_turn_programs: Option<(Subscription, Subscription)>,
     /// Observer B for the document pin map (FIX 853), on a base window only.
     _observer_document_pins: Option<Subscription>,
     /// Observer B for the MESSAGE document map (FIX 853), on a base window
@@ -245,6 +294,9 @@ impl LoadedWindow {
             .world()
             .is_none()
             .then(|| bridge::register_room_facts_observer(&doc, vault, materializer, key.as_str()));
+        let observer_turn_programs = key.world().is_none().then(|| {
+            bridge::register_turn_program_observers(&doc, vault, materializer, key.as_str())
+        });
         let observer_document_pins = key.world().is_none().then(|| {
             bridge::register_document_pins_observer(&doc, vault, materializer, key.as_str())
         });
@@ -274,6 +326,7 @@ impl LoadedWindow {
             _observer_custody: observer_custody,
             _observer_room_turns: observer_room_turns,
             _observer_room_facts: observer_room_facts,
+            _observer_turn_programs: observer_turn_programs,
             _observer_document_pins: observer_document_pins,
             _observer_message_docs: observer_message_docs,
             _observer_office_proposals: observer_office_proposals,

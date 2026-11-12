@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::super::cohort::{CohortRetirement, MAX_REASON_BYTES};
+use super::super::cohort::{EvalCohortRetirementAuthor, MAX_REASON_BYTES};
 use super::super::cut_audit::{
     AuditProvenance, EvalCutAuthor, prepare_cut_audit, prepare_cut_audit_listing,
 };
@@ -521,8 +521,8 @@ fn cut_cohorts(
     Ok(())
 }
 
-/// Step four: each retirement the skill decided, with its reason and the
-/// exposure read now.
+/// Step four: each retirement the skill decided, with its reason, on this
+/// attempt; the retiring writer reads the exposure.
 fn retire_cohorts(
     vault: &Vault,
     plan: &EvalAuthoringPlan,
@@ -540,20 +540,20 @@ fn retire_cohorts(
             report.cohorts_kept += 1;
             continue;
         }
-        let retirement = CohortRetirement {
-            reason: decision.reason.trim().to_owned(),
+        let author = EvalCohortRetirementAuthor::Skill {
+            attempt,
             skill: skill.0,
             revision: skill.1.clone(),
-            attempt,
-            exposure: vault.eval_cohort_exposure(&decision.cohort)?,
         };
         let item = decision.cohort.to_hex();
-        match vault.retire_eval_cohort(&decision.cohort, retirement, now) {
+        match vault.retire_eval_cohort(&decision.cohort, &decision.reason, author, now) {
             Ok(row)
-                if row
-                    .retirement
-                    .as_ref()
-                    .is_some_and(|retired| retired.attempt == attempt) =>
+                if row.retirement.as_ref().is_some_and(|retired| {
+                    matches!(
+                        retired.author,
+                        EvalCohortRetirementAuthor::Skill { attempt: by, .. } if by == attempt
+                    )
+                }) =>
             {
                 report.cohorts_retired.push(row.id);
             }

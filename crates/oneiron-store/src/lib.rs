@@ -220,7 +220,6 @@ pub mod vector_refinement;
 pub mod vector_row;
 pub mod verb_domain;
 pub mod verb_invocation;
-#[cfg(feature = "sync")]
 pub mod window_key;
 pub mod window_protocol;
 #[cfg(feature = "sync")]

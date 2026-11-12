@@ -54,7 +54,7 @@ type Item = {
 /* the vault's claims — the same six fixtures the ledger carries */
 const CLAIMS: { text: string; conf: 1 | 2 | 3 | 4; pred: string }[] = [
   { text: 'Sasha moved from Berlin to Lisbon', conf: 1, pred: 'person.location' },
-  { text: 'Yurii prefers async reviews over live calls', conf: 1, pred: 'person.preference' },
+  { text: 'Yuki prefers async reviews over live calls', conf: 1, pred: 'person.preference' },
   { text: 'Antevon pilot decision expected by July 18', conf: 2, pred: 'org.milestone' },
   { text: 'Prefers briefing digests merged, not one ping per item', conf: 2, pred: 'person.preference' },
   { text: 'May be allergic to shellfish', conf: 3, pred: 'person.health' },
@@ -89,7 +89,7 @@ type Answer = { prose: string; stands: Stand[]; stood: string }
 
 const HOKUEI: Answer = {
   prose:
-    'A six-week pilot, starting the first week of September. Yurii owes Mika the formal quote by Tuesday. The scope stands at the ¥380,000 desk floor agreed in May.',
+    'A six-week pilot, starting the first week of September. Yuki owes Mika the formal quote by Tuesday. The scope stands at the ¥380,000 desk floor agreed in May.',
   stood: 'what it stands on',
   stands: [
     {
@@ -102,7 +102,7 @@ const HOKUEI: Answer = {
     {
       id: 'cl_a04c',
       conf: 0.91,
-      claim: 'Yurii sends the formal quote by Tuesday',
+      claim: 'Yuki sends the formal quote by Tuesday',
       to: '/app/vault',
       title: 'cl_a04c · 0.91 · occurred 08-12 · the LINE thread',
     },

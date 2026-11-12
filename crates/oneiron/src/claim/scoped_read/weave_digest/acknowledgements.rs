@@ -152,8 +152,8 @@ impl ScopedRead<'_> {
 
     /// The one live Grant of `agent` (of `class`) that covers its
     /// acknowledgement of `owner`'s notice `notice` in `txn`, first in id
-    /// order; `None` when none does. A person is never an agent here, and
-    /// the Owner's own key is counted apart.
+    /// order; `None` when none does. A Human-class key is never an agent
+    /// here, and the Owner's own key is counted apart.
     fn owner_notice_ack_grant_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -235,7 +235,8 @@ impl Vault {
     /// acknowledged his live due notice `notice` (`body`, already validated
     /// as his period's), judged in `txn`. The Coach's fold asks this only
     /// after his own keys did not acknowledge it. An acknowledging key is
-    /// the actor the mark door stored; its class is its own row's.
+    /// the actor the mark door stored; its class is its own row's (a
+    /// PERSON row is typed Agent, and the standing check decides).
     pub(super) fn notice_acked_by_covering_agent_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -257,6 +258,9 @@ impl Vault {
             let class = match live_entity_row_in_txn(&self.store, txn, &agent) {
                 Ok(row) => match row.live_type() {
                     Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
+                    // A named agent's PERSON is typed Agent; the shared
+                    // standing check admits only a live named-agent body.
+                    Some(crate::registry::ENTITY_TYPE_PERSON) => EdgeActorClass::Agent,
                     Some(crate::registry::ENTITY_TYPE_MACHINE) => EdgeActorClass::System,
                     _ => continue,
                 },

@@ -580,12 +580,12 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
         &id,
         pending.text_hash,
         pending.compiled_hash,
-        "owner:olety",
+        "owner:owen",
         1_005,
     )?;
     let block = stamped.charter.as_ref().expect("stamped charter");
     assert!(stamped.pending_charter.is_none());
-    assert_eq!(block.stamped_by, "owner:olety");
+    assert_eq!(block.stamped_by, "owner:owen");
     assert_eq!(block.compiled_hash, pending.compiled_hash);
     assert_eq!(
         block.stamped_aggregate,

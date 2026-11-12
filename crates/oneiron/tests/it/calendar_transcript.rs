@@ -205,16 +205,21 @@ fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
         Some(oneiron::registry::ENTITY_TYPE_TURN)
     );
 }
-/// MIXED state (the case the deleted empty-only fallback could never serve): a
-/// pre-existing admissible dirty turn AND a named-speaker import in one ingest
-/// land in the SAME round — both planned, one attempt per partition, watermark
-/// settled at the max `learned_at` of the planned prefix.
+/// OF-536 sitting scope: ending the file-drop sitting plans ONLY the turns
+/// witnessed in that sitting. A pre-existing admissible dirty turn of NO
+/// current sitting (no SESSION_TURNS row) is never swept into the round.
 #[test]
-fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
+fn session_end_plans_only_its_sitting_imported_turns_excludes_sessionless_dirty_turn() {
     let (_dir, vault) = vault();
     let conversation = seed_conversation(&vault, 100);
     let pre_existing = seed_dirty_turn(&vault, &conversation, 100);
     let before = meso_partition_attempt_count(&vault);
+    let watermark_before = oneiron::dreamer_consolidation::read_watermark(
+        &vault,
+        oneiron::dreamer_runner::DreamerConsolidationScope::Meso,
+    )
+    .unwrap()
+    .last_learned_at;
 
     let TranscriptIngestOutcome::Session {
         turn_refs,
@@ -234,17 +239,19 @@ fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
         panic!()
     };
 
-    let mut expected = vec![pre_existing];
-    expected.extend(turn_refs.iter().copied());
     assert_eq!(
-        wake_turn_refs, expected,
-        "the round plans the pre-existing dirty turn AND the import, in temporal order"
+        wake_turn_refs, turn_refs,
+        "the round plans the sitting's imported turns, in temporal order"
+    );
+    assert!(
+        !wake_turn_refs.contains(&pre_existing),
+        "a pre-existing dirty turn of no current sitting is never swept into another sitting's close"
     );
     assert!(extraction_enqueued);
     assert_eq!(
         meso_partition_attempt_count(&vault),
-        before + 2,
-        "one attempt per partition: the pre-existing conversation and the import's own"
+        before + 1,
+        "one attempt: the import's own partition only, not the pre-existing conversation's"
     );
     assert!(
         vault
@@ -260,8 +267,8 @@ fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
         )
         .unwrap()
         .last_learned_at,
-        200,
-        "the watermark settles at the max learned_at of the planned prefix"
+        watermark_before,
+        "a sitting's close never advances the global Meso watermark, so the unplanned sessionless dirty turn stays in the next global sweep"
     );
 }
 #[test]
