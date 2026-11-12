@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::agent_def::AgentCeiling;
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
@@ -188,6 +189,11 @@ fn put_lens_skill(vault: &Vault, name: &str) -> EntityId {
 /// A critic agent the owner creates, approved and enabled, with the owner's live
 /// Grant naming full access (`read`, `propose`, `write`) and `verbs`; the agent and
 /// the Grant's row. Full access names no critic verb: only `verbs` lists one.
+///
+/// The owner also gives the agent the full-access tier's Auto approval ceiling in
+/// the policy (ARCH-0028, `Vault::grant_agent_principal`). Without that row an
+/// agent's ceiling is Proposed, and the gate refuses its review's Auto verdict
+/// claim (`gate.pending.actor_ceiling`), so no agent review persists.
 fn critic_agent(fixture: &Fixture, name: &str, verbs: &[&str]) -> (EntityId, EntityId) {
     let agent = fixture.vault.new_entity_id().expect("agent id");
     create_agent_definition_as(
@@ -229,6 +235,10 @@ fn critic_agent(fixture: &Fixture, name: &str, verbs: &[&str]) -> (EntityId, Ent
     )
     .expect("the owner grants the critic");
     assert!(minted.grant.confers, "the critic's Grant confers");
+    fixture
+        .vault
+        .grant_agent_principal(&owner_proof(fixture), &agent.to_hex(), AgentCeiling::Auto)
+        .expect("the owner gives the critic the full-access ceiling");
     (agent, minted.grant.grant_ref)
 }
 
