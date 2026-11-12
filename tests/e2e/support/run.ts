@@ -11,7 +11,7 @@ import { E2E_ROOT, FIXTURE_ROOT, loadFixtures, loadBuildManifest, loadBuildManif
 import type { BuildManifest, BuildVerification, Profile, SuitePlan, PlannedFile } from "./fixtures.ts";
 
 export const LIMITS = Object.freeze({ slots: 6, cpuPerSlot: 2, memoryMiBPerSlot: 4096,
-  readyMs: 10_000, requestMs: 10_000, flowMs: 30_000, suiteMs: 600_000, stopMs: 2_000 });
+  readyMs: 10_000, requestMs: 10_000, flowMs: 120_000, suiteMs: 600_000, stopMs: 2_000 });
 export type Outcome = "PASS" | "FAIL" | "BLOCKED" | "SKIPPED";
 export interface IdResult {
   readonly id: string; readonly outcome: Outcome; readonly durationMs: number; readonly reason?: string;

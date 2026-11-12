@@ -167,12 +167,13 @@ suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchor
   if (!northEdit || !southEdit || !northFact || !southFact) throw new Error("SYNC-01 inputs are incomplete");
   const predicates = [sync01Predicate(northFact.label), sync01Predicate(southFact.label)] as const;
 
-  const home = await EngineFixture.start({ id: "SYNC-01", profile });
+  const sync01DiagLog = "info,loro_internal=warn,oneiron::sync=debug,oneiron::authority=debug,oneiron_server::handler=debug,oneiron_server::livequery=debug,oneiron_server::device_sync=debug,oneiron_server::auth=debug";
+  const home = await EngineFixture.start({ id: "SYNC-01", profile, serverLog: sync01DiagLog });
   const owner = home.pairedActor.principalRef;
   const link = await SyncLinkProxy.start({ target: home.url });
   // Fixture kind "annotation" is not a shipped NOTE kind; "research" is (vault-readable, durable).
   const note = await home.client.call("vault.notes.create", { kind: "research", markdown: authored.base });
-  const device = await home.startDevicePeer({ id: "SYNC-01-device", homeOrigin: link.url });
+  const device = await home.startDevicePeer({ id: "SYNC-01-device", homeOrigin: link.url, serverLog: sync01DiagLog });
   const machine = sync01DeviceMachine(device);
   // The device's own residence act, on the device: hold every body, so its claims can name local rows.
   const mode = await device.client.call("vault.residence.mode", { machine, mode: "all" });

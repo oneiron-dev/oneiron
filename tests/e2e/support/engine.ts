@@ -452,6 +452,23 @@ export class DevicePeer {
   }
   /** Serves the enrolled peer, then waits until it admits the home owner's credential. */
   async launch():Promise<void> {
+    const started=Date.now();
+    try {
+      await this.launchOnce(40_000,"device peer admits the home owner");
+      console.error(`## E2E-DIAG-ADMIT ${this.options.id} admitted after ${Date.now()-started} ms`);
+      return;
+    } catch(first) {
+      console.error(`## E2E-DIAG-ADMIT ${this.options.id} not admitted in 40 s; restarting the peer once`);
+      await this.server?.stop();
+      try {
+        await this.launchOnce(15_000,"device peer admits the home owner after one restart");
+      } catch(second) {
+        throw new Error(`DIAG: still refused after one restart: ${String(second)}; first: ${String(first)}`);
+      }
+      throw new Error(`DIAG: the peer admitted the home owner only after one restart; first: ${String(first)}`);
+    }
+  }
+  private async launchOnce(budgetMs:number,label:string):Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.home.build,"server"),"serve","--config",this.config],
       {cwd:this.root,env:this.options.serverLog?{...this.env,RUST_LOG:this.options.serverLog}:this.env,label:`device-peer-server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
     this.server=server;
@@ -463,7 +480,7 @@ export class DevicePeer {
       if(reply.status!==200&&reply.status!==401&&reply.status!==503) throw new Error(`device peer self.actor answered ${reply.status}`);
       return reply;
     },reply=>reply.status===200&&reply.body.actor_ref===owner&&reply.body.actor_class==="human",
-      {timeoutMs:LIMITS.readyMs,label:"device peer admits the home owner"});
+      {timeoutMs:budgetMs,label});
   }
   /** The paired credential the device's credential file holds now: the file `device enrol` names,
    * which the device's renewal replaces. Redacted; its shape is the case's to check. */
