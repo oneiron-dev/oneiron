@@ -8,4 +8,5 @@ pub mod big_rung;
 pub mod coach_round;
 pub mod live_lease;
 pub mod native_board;
+pub mod replay_admission;
 pub mod resident_pump;

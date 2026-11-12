@@ -25,6 +25,8 @@ mod generation;
 mod live_fork;
 mod model_call;
 mod model_list;
+#[cfg(oneiron_test_support)]
+mod owner_fallback_door;
 mod replay_prompt;
 mod rung;
 mod sends;
