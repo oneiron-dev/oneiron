@@ -365,7 +365,8 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         auth_secret: Some(SECRET.into()),
         ..Default::default()
     };
-    let server = SyncServer::new(vault.clone(), config).unwrap();
+    let server =
+        crate::test_credentials::server_with_fixture_keystore(vault.clone(), config).unwrap();
     let mut state = ConnState::new(transport::PROTOCOL_VERSION);
     let (direct, mut responses) = tokio::sync::mpsc::unbounded_channel();
     let request =
@@ -740,7 +741,7 @@ async fn owner_document_lane_refuses_a_principal_that_is_not_the_owner() {
             b"agent",
         )
         .unwrap();
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         SyncServerConfig {
             auth_secret: Some(SECRET.into()),
@@ -818,7 +819,7 @@ async fn note_frames_gate(check_latency: bool) {
     );
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
     let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault.clone(),
         SyncServerConfig {
             auth_secret: Some(SECRET.into()),
