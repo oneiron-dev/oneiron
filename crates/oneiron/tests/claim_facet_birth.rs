@@ -22,6 +22,7 @@ use oneiron::booking::EventTypeKey;
 use oneiron::booking::anti_abuse::{
     BookingRequestFacts, booking_ip_hash, quarantine_borderline_submission,
 };
+use oneiron::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression};
 use oneiron::channel_identity::{ChannelIdentity, ChannelIdentityBinding, SelfHeldShape};
 use oneiron::channel_identity_provider::native_mail::{
@@ -30,7 +31,8 @@ use oneiron::channel_identity_provider::native_mail::{
 use oneiron::channel_identity_provider::stalwart::{
     NativeMailReputationReport, NativeMailSignalSource, StalwartConfig,
 };
-use oneiron::channel_identity_provider::{LineChat, LineChatKind};
+use oneiron::channel_identity_provider::{LINE_CHANNEL, LineChat, LineChatKind};
+use oneiron::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF;
 use oneiron::code_revision::CodeSessionRun;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::context_board::{BoardSelection, BoardTurn};
@@ -163,10 +165,10 @@ fn attendee_ask(vault: &Vault, session_key: &str) -> UnknownAttendeeAsk {
     }
 }
 
-/// Declares the `state.` predicates normal in the stored default policy, as
-/// an owner's rule would: a predicate no rule names takes the criticality
-/// floor, and the state index reads no signal that waits for the owner.
-fn declare_state_predicates_normal(vault: &Vault) {
+/// Declares each `(prefix, exact)` rule normal in the stored default policy,
+/// as an owner's rule would: a predicate no rule names takes the criticality
+/// floor, so its write pends for the owner instead of landing.
+fn declare_predicates_normal(vault: &Vault, declared: &[(&str, bool)]) {
     let axes = json!({ "criticality": "normal", "sensitivity": "normal" });
     for id in vault
         .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
@@ -187,9 +189,19 @@ fn declare_state_predicates_normal(vault: &Vault) {
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .expect("policy rules list");
-        match rules.iter_mut().find(|rule| rule["prefix"] == "state.") {
-            Some(rule) => rule["axes"] = axes,
-            None => rules.push(json!({ "prefix": "state.", "axes": axes })),
+        for &(prefix, exact) in declared {
+            let found = rules.iter().position(|rule| rule["prefix"] == prefix);
+            let index = match found {
+                Some(index) => index,
+                None => {
+                    rules.push(json!({ "prefix": prefix }));
+                    rules.len() - 1
+                }
+            };
+            rules[index]["axes"] = axes.clone();
+            if exact {
+                rules[index]["exact"] = json!(true);
+            }
         }
         oneiron::test_support::put_policy_manifest_bytes(
             vault,
@@ -280,6 +292,7 @@ fn turn_vad_annotation_is_born_in_a_stored_facet() {
 #[test]
 fn member_binding_on_a_non_person_member_is_born_in_the_default_facet() {
     let (_directory, vault) = fresh_vault();
+    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_PERSON_REF, true)]);
     let member = stored_row(&vault, ENTITY_TYPE_ASSET, b"member");
     let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"person");
     let claim = oneiron::federation::bind_member_person(
@@ -297,6 +310,7 @@ fn member_binding_on_a_non_person_member_is_born_in_the_default_facet() {
 #[test]
 fn member_binding_on_a_person_member_keeps_its_substrate() {
     let (_directory, vault) = fresh_vault();
+    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_PERSON_REF, true)]);
     let member = stored_row(&vault, ENTITY_TYPE_PERSON, b"member");
     let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"person");
     let claim = oneiron::federation::bind_member_person(
@@ -317,14 +331,24 @@ fn member_binding_on_a_person_member_keeps_its_substrate() {
 #[test]
 fn line_chat_observation_is_born_in_a_stored_facet() {
     let (_directory, vault) = fresh_vault();
+    let destination = format!("U{}", "2".repeat(32));
     let chat = LineChat::new(LineChatKind::Group, format!("C{}", "1".repeat(32)));
-    let claim = vault
-        .observe_line_chat(
-            &format!("U{}", "2".repeat(32)),
-            &chat,
-            "blob:line-event",
+    // As the LINE webhook does: the join event is archived first, which
+    // stores the provider-inbound MACHINE the observation is about.
+    let event = json!({
+        "destination": destination,
+        "event": { "type": "join", "webhookEventId": "line-join-1" },
+    });
+    let archive = vault
+        .archive_provider_event_with_receipt(
+            LINE_CHANNEL,
+            "line-join-1",
+            &serde_json::to_vec(&event).expect("LINE event encode"),
             14,
         )
+        .expect("the LINE join event is archived");
+    let claim = vault
+        .observe_line_chat_from_archive(&destination, &chat, &archive, true, 14)
         .expect("a LINE chat is observed");
     claim_in_stored_facet(&vault, &claim);
 }
@@ -542,6 +566,7 @@ fn board_turn_of_an_agent_definition_owner_is_born_in_a_stored_facet() {
 #[test]
 fn do_not_contact_on_an_agent_definition_is_born_in_a_stored_facet() {
     let (_directory, vault, _owner) = rooted_vault();
+    declare_predicates_normal(&vault, &[(PREDICATE_COMM_DO_NOT_CONTACT, true)]);
     let subject = define_agent(&vault, "claim-facet-suppressed").expect("agent definition");
     let evidence = stored_row(&vault, ENTITY_TYPE_TURN, b"unsubscribe");
     let receipt = apply_suppression(
@@ -566,7 +591,7 @@ fn do_not_contact_on_an_agent_definition_is_born_in_a_stored_facet() {
 #[test]
 fn state_index_of_an_agent_definition_is_born_in_the_default_facet() {
     let (_directory, vault, _owner) = rooted_vault();
-    declare_state_predicates_normal(&vault);
+    declare_predicates_normal(&vault, &[("state.", false)]);
     let subject = define_agent(&vault, "claim-facet-state-subject").expect("agent definition");
     let turn = stored_row(&vault, ENTITY_TYPE_TURN, b"turn");
     let annotation = VadAnnotation::new(
