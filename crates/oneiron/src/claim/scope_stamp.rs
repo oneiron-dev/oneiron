@@ -104,8 +104,7 @@ impl crate::Vault {
             crate::ports::EntityStoreRead::port_entity_raw_wiped(&self.store, txn, id)?
             && EntityMetadataHeader::parse(&raw)
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-            && let Ok(stored) =
-                super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+            && let Ok(stored) = super::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
         {
             return Ok(stored.scope_facet);
         }
@@ -141,7 +140,8 @@ impl crate::Vault {
         record: EntityId,
     ) -> Result<EntityId> {
         if self.get_raw_in(txn, id)?.is_none()
-            && let Some(facet) = crate::federation::record_scope::birth_facet(&self.store, txn, record)?
+            && let Some(facet) =
+                crate::federation::record_scope::birth_facet(&self.store, txn, record)?
             && self.get_entity_type_in_txn(txn, &facet)? == Some(ENTITY_TYPE_FACET)
         {
             return Ok(facet);
