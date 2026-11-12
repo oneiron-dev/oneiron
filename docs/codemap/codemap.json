@@ -1784,7 +1784,7 @@
      "path": "src/agent_dispatch/spend_lease/pending.rs",
      "purpose": "A live lease's staged spend ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH])",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -93980,7 +93980,7 @@
      "path": "src/vault/response_bodies.rs",
      "purpose": "The host's typed writes of its row-held responses (KS-2B2, FIX 5683 part B2): an HTTP idempotency entry and…",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -142554,7 +142554,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1,
       "struct": 3
      }
@@ -142638,7 +142638,7 @@
      "path": "src/models/media/job_lifecycle.rs",
      "purpose": "A kept job's end and its delete, in one order (FIX 9511, FIX 9513)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -142648,7 +142648,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 23
      }
     },
     {
@@ -142690,7 +142690,7 @@
      "path": "src/models/media/run_line.rs",
      "purpose": "A program's media jobs on its run's line (FIX 780, FIX 6083)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 22,
       "fn": 1
      }
     },
@@ -142702,6 +142702,16 @@
      "purpose": "One in-flight media run per replay key, without keeping another durable memo",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/scoped_job_door.rs",
+     "purpose": "Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a video job…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -142734,7 +142744,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 1,
       "re-export": 16,
       "struct": 2
@@ -146091,11 +146101,25 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ScopedJobSpend",
+      "ScopedMediaJob"
+     ],
+     "path": "src/test_doors/media_job_spend.rs",
+     "purpose": "Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped…",
+     "surface": {
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 7
+      "mod": 8
      }
     },
     {
@@ -147286,6 +147310,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/media_job_staged_spend.rs",
+     "purpose": "[MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1: a media job its run's spend scope funds books its own…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -147812,7 +147844,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 147,
+     "files": 148,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -147924,7 +147956,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -147989,8 +148021,8 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1844,
-   "test_files": 215
+   "source_files": 1846,
+   "test_files": 216
   },
   "oneiron-skill-attribution": {
    "files": [
