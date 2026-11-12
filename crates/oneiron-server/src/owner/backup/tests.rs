@@ -253,18 +253,21 @@ fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
         format!("{error:#}").contains("nothing was removed"),
         "{error:#}"
     );
-    let staging = std::fs::read_dir(root.path())
+    // 155685cb1f8 (#4518, FIX 2706): the staging claim lock is unlinked only
+    // once its staging directory is gone, so a kept directory keeps its lock.
+    let names: Vec<String> = std::fs::read_dir(root.path())
         .unwrap()
-        .filter(|entry| {
-            entry
-                .as_ref()
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".vault.restore-")
-        })
-        .count();
-    assert_eq!(staging, 1, "the staging directory is kept");
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".vault.restore-"))
+        .collect();
+    let (locks, dirs): (Vec<_>, Vec<_>) =
+        names.iter().partition(|name| name.ends_with(".claim-lock"));
+    assert_eq!(dirs.len(), 1, "the staging directory is kept: {names:?}");
+    assert_eq!(
+        locks,
+        [&format!("{}.claim-lock", dirs[0])],
+        "its claim lock stays with it: {names:?}"
+    );
     let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
     assert!(vault.get(&later).unwrap().is_some());
     person(&vault, b"the vault in place is live");
@@ -547,6 +550,22 @@ fn a_restore_where_another_user_could_move_entries_opens_nothing() {
     let set_mode = |mode| {
         std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).unwrap();
     };
+    let list = || {
+        let mut names: Vec<_> = std::fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    };
+    // 329936d263b (#3300, FIX 5682): the open made its key-custody container
+    // beside the vault.
+    let before = list();
+    assert_eq!(
+        before,
+        [".vault.key-custody", "vault"],
+        "the open made its custody sibling"
+    );
     set_mode(0o777);
     let error = restore_over(
         &backup,
@@ -560,11 +579,7 @@ fn a_restore_where_another_user_could_move_entries_opens_nothing() {
         "{error:#}"
     );
     assert!(!lock.exists(), "the vault is never opened");
-    let names: Vec<_> = std::fs::read_dir(&parent)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name())
-        .collect();
-    assert_eq!(names, ["vault"], "nothing is made beside it");
+    assert_eq!(list(), before, "the refused restore makes nothing beside it");
     // A rehearsal reads the vault there and goes ahead, naming the directory:
     // the vault opens and writes there as it is (Engine ruling on review r5).
     let source = disk_source(&vault_path, &keystore);
