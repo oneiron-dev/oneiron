@@ -96,7 +96,9 @@ fn two_leases(vault: &Vault, now: u64) -> (AttemptId, AttemptId, u64) {
         [first.id, second.id]
             .into_iter()
             .collect::<std::collections::HashSet<_>>(),
-        [parked, running].into_iter().collect(),
+        [parked, running]
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>(),
         "both attempts are leased"
     );
     park_on_signal(&runner, parked, now + 2);
