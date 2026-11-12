@@ -5,6 +5,7 @@
   "output": "crate::policy_manifest_doors::OwnerPolicyConfigurationView",
   "call": "crate::policy_manifest_doors::owner_policy_configuration(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.get\")?).map_err(crate::memory::MemoryError::from)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

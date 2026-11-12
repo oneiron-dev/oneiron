@@ -88,7 +88,7 @@ async fn public_batch_lineage_source_gate_is_consistent() {
         (rmpv::Value::from("life"), rmpv::Value::from("active")),
         (
             rmpv::Value::from("scope"),
-            oneiron::companion_value_from_json(&json!({ "sensitivity": 1 }))
+            oneiron::msgpack_value_from_json(&json!({ "sensitivity": 1 }))
                 .expect("above-cap scope"),
         ),
         (
@@ -128,7 +128,7 @@ async fn public_batch_lineage_source_gate_is_consistent() {
             0.8,
         )
         .with_scope(
-            oneiron::companion_value_from_json(&json!({ "sensitivity": "public" }))
+            oneiron::msgpack_value_from_json(&json!({ "sensitivity": "public" }))
                 .expect("public scope"),
         );
         let mut batch = server.vault.batch();
@@ -142,7 +142,7 @@ async fn public_batch_lineage_source_gate_is_consistent() {
                 0.8,
             )
             .with_scope(
-                oneiron::companion_value_from_json(&json!({ "sensitivity": 1 }))
+                oneiron::msgpack_value_from_json(&json!({ "sensitivity": 1 }))
                     .expect("above-cap scope"),
             );
             let unstamped_candidate = oneiron::ClaimCandidate::new(

@@ -53,6 +53,7 @@ fn put_claim(server: &SyncServer, world: EntityId) -> String {
             occurred_at: Some(AT),
             learned_at: Some(AT),
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     CLAIM.to_owned()
@@ -325,7 +326,7 @@ async fn a_queued_read_result_off_this_device_names_no_row_turned_device_local()
         .commit()
         .unwrap();
     let mut socket = production_socket_tests::connect(&f, "human").await;
-    let search = json!({"requestId":8,"method":"queryBm25",
+    let search = json!({"requestId":8,"method":"vault.search.bm25",
         "params":{"query":"orchid","limit":10}});
     let mut read = async || {
         production_socket_tests::send(&mut socket, TAG_RPC, search.clone()).await;

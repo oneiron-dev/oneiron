@@ -5,6 +5,7 @@
   "output": "crate::memory::CredentialCeiling",
   "call": "memory.credential_ceiling()?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "credential_record_scope": true
   },

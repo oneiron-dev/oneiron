@@ -5,8 +5,8 @@
   "output": "crate::task_verb::sdk::ConnectorCallSourceRows",
   "call": "crate::task_verb::sdk::connector_call_source_rows_embedded(memory, input)?",
   "scope": "Read",
-  "act_class": "read",
   "grant_class": "connector.call_source_rows grant + caller read lane",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

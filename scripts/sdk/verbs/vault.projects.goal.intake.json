@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::ProjectGoalInterviewContext",
   "call": "memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

@@ -69,7 +69,9 @@ fn parse_offer(offer: &Offer) -> OwnerResult<ConnectOffer> {
     })
 }
 
-/// The engine's refusal, unless the owner's standing lapsed first.
+/// The engine's refusal answers as a request error, except a host fault
+/// (storage, I/O, index damage), which keeps its engine kind and answers
+/// INTERNAL. An owner's lapsed standing still takes precedence.
 fn refused(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
@@ -78,7 +80,19 @@ fn refused(
     if let Err(refusal) = vault.recheck_owner(owner) {
         return OwnerError::from(refusal);
     }
-    OwnerError::Invalid(error.to_string())
+    // Keep this list in step with the shared MEMORY_CODE_INTERNAL arm in
+    // crates/oneiron-contracts/src/memory/error/engine.rs.
+    match error.kind() {
+        oneiron::ErrorKind::Storage
+        | oneiron::ErrorKind::Io
+        | oneiron::ErrorKind::CorruptedIndex
+        | oneiron::ErrorKind::SideTableRow
+        | oneiron::ErrorKind::InvariantViolation
+        | oneiron::ErrorKind::MapFull
+        | oneiron::ErrorKind::IndexOverflow
+        | oneiron::ErrorKind::MissingPostingEntry => OwnerError::Engine(Box::new(error)),
+        _ => OwnerError::Invalid(error.to_string()),
+    }
 }
 
 /// This vault's id and host key.

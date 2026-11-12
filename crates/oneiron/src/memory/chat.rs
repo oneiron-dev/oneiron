@@ -47,7 +47,7 @@ use crate::context_pack::{
     PackItemAccounting, PackStats, PackTokenStats, TokenAllocation,
 };
 use crate::entity_id::EntityId;
-use crate::registry::{ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN};
+use crate::registry::ENTITY_TYPE_TURN;
 use crate::serialize::{SerializeConfig, serialize_pack};
 use oneiron_model::llm::BudgetLease;
 
@@ -430,9 +430,12 @@ impl Memory<'_> {
         // Rendered from the documents this call already hydrated: the format
         // the caller asked for, over exactly the set they named.
         let rendered = pack_format
-            .map(|pack_format| render_document_pack(&views, pack_format, budget))
+            .map(|pack_format| render_document_pack(self.vault, &views, pack_format, budget))
             .transpose()?;
-        let items: Vec<MemoryItem> = views.iter().map(document_item).collect();
+        let items: Vec<MemoryItem> = views
+            .iter()
+            .map(|view| document_item(self.vault, view))
+            .collect();
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         let total_candidates = items.len() as u64;
         let narrowing = match narrowing {
@@ -478,7 +481,7 @@ impl Memory<'_> {
         let turns = views
             .iter()
             .enumerate()
-            .filter(|(_, view)| document_entity_type(&view.kind) == ENTITY_TYPE_TURN)
+            .filter(|(_, view)| document_entity_type(self.vault, &view.kind) == ENTITY_TYPE_TURN)
             .map(|(index, view)| -> MemoryResult<_> {
                 let pin = view
                     .short_ref
@@ -575,8 +578,8 @@ fn pack_short_ids(pack: &MemoryPack) -> Vec<String> {
 /// item: the entity's content text, `record` provenance, and the revision it
 /// was read at. The caller named this document, so nothing here is a ranked
 /// guess and no score is invented for it.
-fn document_item(view: &EntityView) -> MemoryItem {
-    let text_field = if document_entity_type(&view.kind) == ENTITY_TYPE_TURN {
+fn document_item(vault: &crate::Vault, view: &EntityView) -> MemoryItem {
+    let text_field = if document_entity_type(vault, &view.kind) == ENTITY_TYPE_TURN {
         "txt"
     } else {
         "content"
@@ -631,13 +634,14 @@ fn document_item(view: &EntityView) -> MemoryItem {
 /// same `short_id:content_hash` pair the pipeline reads, so a document
 /// rendered here carries the id and fields a recall would have given it.
 fn render_document_pack(
+    vault: &crate::Vault,
     views: &[EntityView],
     format: PackFormat,
     budget: usize,
 ) -> MemoryResult<String> {
     let mut results = Vec::with_capacity(views.len());
     for view in views {
-        results.push(document_entity(view)?);
+        results.push(document_entity(vault, view)?);
     }
     let resolved = results.len();
     let pack = ContextPack {
@@ -684,7 +688,7 @@ fn render_document_pack(
 /// under, the registry type its fields are profiled against, and the body
 /// exactly as it was read back. The score is `1.0` because the caller named
 /// this document — the same reason [`document_item`] invents no ranking.
-fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
+fn document_entity(vault: &crate::Vault, view: &EntityView) -> MemoryResult<ContextEntity> {
     let (short_id, content_hash) = view
         .short_ref
         .as_deref()
@@ -709,7 +713,7 @@ fn document_entity(view: &EntityView) -> MemoryResult<ContextEntity> {
         id: EntityId::from_hex(&view.id_hex)?,
         short_id,
         content_hash,
-        entity_type: document_entity_type(&view.kind),
+        entity_type: document_entity_type(vault, &view.kind),
         score: 1.0,
         fields,
         edges: None,
@@ -731,16 +735,15 @@ fn split_short_ref(short_ref: &str) -> Option<(String, u8)> {
 }
 
 /// The registry type byte a read-back kind names — the inverse of the kind a
-/// hydrated view carries, including the `TYPE_<n>` spelling an unregistered
-/// byte reads back as. A kind neither form accounts for renders under the
-/// reserved sentinel byte no stored entity may carry, so it is grouped as
-/// other and shows the fields it has instead of being profiled as a kind it
-/// is not.
-fn document_entity_type(kind: &str) -> u8 {
-    for entry in ENTITY_TYPE_REGISTRY {
-        if entry.kind == kind {
-            return entry.type_byte;
-        }
+/// hydrated view carries ([`crate::store::Store::entity_kind_name`]): a static
+/// kind, a compiled-in product kind this vault registered at run time
+/// (PROJECT), or the `TYPE_<n>` spelling an unregistered byte reads back as.
+/// A kind neither form accounts for renders under the reserved sentinel byte
+/// no stored entity may carry, so it is grouped as other and shows the fields
+/// it has instead of being profiled as a kind it is not.
+fn document_entity_type(vault: &crate::Vault, kind: &str) -> u8 {
+    if let Some(type_byte) = vault.store.entity_type_of_kind_name(kind) {
+        return type_byte;
     }
     kind.strip_prefix("TYPE_")
         .and_then(|type_byte| type_byte.parse().ok())

@@ -445,6 +445,22 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
             object.insert("run_ref".to_owned(), json!("census-run"));
             object.insert("task".to_owned(), json!("summarize the current board"));
         }
+        McpEndpointTool::ReadResult => {
+            object.remove("page");
+            object.remove("cache");
+            object.insert("run_ref".to_owned(), json!("census-run"));
+            object.insert("ref".to_owned(), json!("census-result"));
+            object.insert("facet".to_owned(), json!("describe"));
+            object.insert("input".to_owned(), json!({}));
+        }
+        McpEndpointTool::InvokeAction => {
+            object.remove("page");
+            object.remove("cache");
+            object.insert("verb".to_owned(), json!("census.action"));
+            object.insert("args".to_owned(), json!([]));
+            object.insert("idempotencyKey".to_owned(), json!("census-key"));
+            object.insert("liveRun".to_owned(), json!("census-live-run"));
+        }
         McpEndpointTool::Verb(verb) => {
             object.insert("arguments".to_owned(), endpoint_census_arguments(verb));
         }
@@ -459,14 +475,16 @@ fn endpoint_census_arguments(verb: McpGeneratedVerbTool) -> Value {
         "tasks.answer" => {
             json!({"spec":{"handle":{"group_ref":ACTOR_ID},"word":{"result_ref":ACTOR_ID,"option":null,"inform_for":null,"provenance_refs":[]}}})
         }
-        "tasks.ask" => {
+        "ask" => {
             json!({"spec":{"intent_key":"ask-test","who":{"responder":{"human":{"actor_ref":ACTOR_ID}}},"what":{"reference":{"turn":ACTOR_ID},"revision":1,"options":{},"context_refs":[],"label":null,"outcome_binding":null},"until":9999999999_u64,"decide":"first"}})
         }
         "tasks.wait" => {
             json!({"spec":{"handle":{"group_ref":ACTOR_ID},"step_key":"step-one"}})
         }
         "rooms.list" => json!({}),
-        "rooms.messages" | "rooms.find" | "rooms.render" => json!({"room_ref":ACTOR_ID}),
+        "vault.rooms.messages" | "vault.rooms.find" | "vault.rooms.render" => {
+            json!({"room_ref":ACTOR_ID})
+        }
         "rooms.claim" | "rooms.get" | "rooms.trunk" => {
             json!({"room_ref":ACTOR_ID,"turn_ref":ACTOR_ID})
         }
@@ -741,7 +759,7 @@ fn page_snapshot(row: &str) -> McpPageSnapshot {
         source: McpPageSource::complete(1),
         health: McpRetrievalHealth::Healthy,
         keyframe: None,
-        rows: Vec::new(),
+        rows: Some(Vec::new()),
     }
 }
 
@@ -1488,7 +1506,7 @@ fn tasks_create_label_is_bounded_by_the_board_row_ceiling() {
 #[test]
 fn nullable_integer_spec_field_accepts_an_integral_float() {
     let tool = registered_surface(McpSurfaceMode::ToolFirst)
-        .resolve("tasks.ask")
+        .resolve("ask")
         .expect("tasks.ask is registered");
     let args = endpoint_census_args(tool);
     let raw = raw_args_with_number(&args, "/arguments/spec/until", "1.0e9");
@@ -1519,7 +1537,7 @@ fn nullable_integer_spec_field_accepts_an_integral_float() {
 #[test]
 fn advertised_turn_ref_default_validates_against_its_own_schema() {
     let tool = registered_surface(McpSurfaceMode::ToolFirst)
-        .resolve("rooms.messages")
+        .resolve("vault.rooms.messages")
         .expect("rooms.messages is listed");
     let schema = tool.schema().input_schema;
     let turn_ref = &schema["properties"]["arguments"]["properties"]["turn_ref"];
@@ -1593,7 +1611,7 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             assert_eq!(input["additionalProperties"], false, "{name}");
             continue;
         }
-        if name == "tasks.ask" {
+        if name == "ask" {
             let branches = input["anyOf"]
                 .as_array()
                 .expect("rich and short ask branches");
@@ -1681,7 +1699,7 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             }
         }
     }
-    let ask = oneiron::task_verb::sdk::input_schema("tasks.ask").unwrap();
+    let ask = oneiron::task_verb::sdk::input_schema("ask").unwrap();
     let question =
         json!({"reference":{"turn": ACTOR_ID},"revision":1,"options":{},"context_refs":[]});
     let short = json!({"what":question,"who":{"people":[ACTOR_ID]}});

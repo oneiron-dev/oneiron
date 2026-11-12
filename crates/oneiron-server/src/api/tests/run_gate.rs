@@ -82,7 +82,7 @@ async fn send(server: &Arc<SyncServer>, request: Request<Body>) -> (StatusCode, 
 
 /// A raw call to the generative seat by its id.
 fn raw(verb: &str, config: &ModelsConfig) -> Request<Body> {
-    let runtime = ModelRuntime::build(Some(config));
+    let runtime = ModelRuntime::build(Some(config), oneiron::HostingPrivacyPosture::SelfHostLocal);
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let request = LlmRequest {
         model: seat.model.clone(),
@@ -97,10 +97,15 @@ fn raw(verb: &str, config: &ModelsConfig) -> Request<Body> {
             ),
             response_format: ResponseFormat::Text,
             locality: seat.locality,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: "hi".into() }],
+            content: vec![ContentPart::Text {
+                text: "hi".into(),
+                signature: None,
+            }],
         }],
         tools: Vec::new(),
         params: BTreeMap::new(),
@@ -139,6 +144,8 @@ fn events(rows: &[RunReceipt]) -> Vec<&'static str> {
             RunEvent::Dispatched { .. } => "dispatched",
             RunEvent::Settled { .. } => "settled",
             RunEvent::Revised { .. } => "revised",
+            RunEvent::ResidentOverdraft { .. } => "resident_overdraft",
+            RunEvent::PlanModelSubstituted { .. } => "plan_model_substituted",
         })
         .collect()
 }

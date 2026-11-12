@@ -9,7 +9,7 @@ const SECRET: &str = "app-tier-test-root";
 const PRINCIPAL: &str = "01010101010101010101010101010101";
 const JTI: &str = "02020202020202020202020202020202";
 
-fn server() -> (tempfile::TempDir, SyncServer) {
+fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     vault
@@ -21,14 +21,18 @@ fn server() -> (tempfile::TempDir, SyncServer) {
             b"app principal",
         )
         .unwrap();
-    let server = SyncServer::new(
-        vault,
-        SyncServerConfig {
-            auth_secret: Some(SECRET.to_owned()),
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some(SECRET.to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let _hub = crate::livequery::connection::Hub::for_server(&server);
     (dir, server)
 }
 
@@ -219,7 +223,7 @@ async fn bound_revocation_stops_app_requests_but_does_not_rebind_sync() {
     crate::test_credentials::revoke(&server, &token());
     let read = crate::livequery::test_wire::request(
         protocol::TAG_RPC,
-        json!({"requestId":8,"method":"hydrate","params":{"refs":[]}}),
+        json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[]}}),
     );
     let read = &read[1..];
     assert!(matches!(
@@ -245,7 +249,7 @@ async fn missing_actor_class_is_forbidden_and_not_a_human_fallback() {
     rx.try_recv().unwrap();
     let read = crate::livequery::test_wire::request(
         protocol::TAG_RPC,
-        json!({"requestId":8,"method":"hydrate","params":{"refs":[]}}),
+        json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[]}}),
     );
     let read = &read[1..];
     handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx).unwrap();
@@ -278,7 +282,7 @@ async fn verified_class_reaches_production_rpc_and_scope_refusal_stays_typed() {
         rx.try_recv().unwrap();
         let read = crate::livequery::test_wire::request(
             protocol::TAG_RPC,
-            json!({"requestId":8,"method":"hydrate","params":{"refs":[]}}),
+            json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[]}}),
         );
         let read = &read[1..];
         handle_app_message(&server, &mut state, protocol::TAG_RPC, read, &tx).unwrap();

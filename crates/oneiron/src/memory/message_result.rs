@@ -13,7 +13,6 @@
 
 use serde_json::Value;
 
-use super::structural::kind_string_for_type;
 use super::*;
 
 use crate::claim::{CallerLocality, ClaimReadStatus, ScopedRead, ScopedReadResult};
@@ -93,7 +92,7 @@ impl Memory<'_> {
             value: views,
             receipt,
         } = self.read_views(&lane, &[Some((*message, ReadMode::Live))])?;
-        let message_kind = kind_string_for_type(ENTITY_TYPE_MESSAGE);
+        let message_kind = self.vault.entity_kind_name(ENTITY_TYPE_MESSAGE);
         let Some(body) = views
             .into_iter()
             .flatten()

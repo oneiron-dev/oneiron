@@ -2,6 +2,7 @@
   "name": "summarize",
   "input": "crate::code_run::SummarizeInput",
   "scope": "Write",
+  "act_class": "spawn",
   "context": "run",
   "effect": "Summarize"
 }

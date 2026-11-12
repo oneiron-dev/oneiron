@@ -5,6 +5,7 @@
   "output": "bool",
   "call": "memory.feed_unsubscribe(input.subscription)?",
   "scope": "Write",
+  "act_class": "unstated",
   "openapi": true,
   "section": false
 }

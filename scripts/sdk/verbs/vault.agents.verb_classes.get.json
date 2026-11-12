@@ -5,6 +5,7 @@
   "output": "crate::policy_manifest_doors::AgentVerbClassesView",
   "call": "crate::policy_manifest_doors::agent_verb_classes_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.verb_classes.get\")?).map_err(crate::memory::MemoryError::from)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

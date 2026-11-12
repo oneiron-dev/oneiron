@@ -5,6 +5,7 @@
   "output": "crate::lens::LensListPage",
   "call": "memory.lenses_list(input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "projection_record_scope": true
   },

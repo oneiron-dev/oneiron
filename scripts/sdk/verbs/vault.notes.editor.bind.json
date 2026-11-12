@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>",
   "call": "memory.bind_note_editor(&input)?",
   "scope": "Read",
+  "act_class": "reversible_work",
   "admission": {
     "lane_record_scope": true
   },

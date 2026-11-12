@@ -286,6 +286,7 @@ pub(crate) fn mint_repo_grant(
             repo_bounds: bounds.cloned(),
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )?;
     Ok(minted.grant.grant_ref)

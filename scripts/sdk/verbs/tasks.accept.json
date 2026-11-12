@@ -9,6 +9,7 @@
   "mcp_served": "[input.task_ref]",
   "call": "memory.tasks_accept(input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "mcp_scope": "addressed",
   "mcp_fields": {
     "spec": "$",

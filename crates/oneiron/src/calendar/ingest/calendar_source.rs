@@ -84,6 +84,7 @@ pub(crate) fn apply_calendar_source_feed(
         source: Some(archived.source),
         verdict_fold: VerdictFold::default(),
         continuations: None,
+        owed_booking_moves: 0,
     };
     admission.apply_feed(&feed)?;
     admission.sweep_absent_sources(&feed)?;

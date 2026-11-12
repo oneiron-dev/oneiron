@@ -1,7 +1,8 @@
 //! A room turn's row, kept in the write that lands the turn (FIX 15647,
-//! THREAD-TASK-ONE-SURFACE): the witness's turn, and a plain thread reply in
-//! a project room. Both put and index the row, record the agents it
-//! addresses, and stage its wakes through the one producer, `super::wake`.
+//! THREAD-TASK-ONE-SURFACE, THREAD-TASK-EVERY-ROOM): the witness's turn,
+//! and every TURN the conversation DAG appends, in any room. Both put and
+//! index the row, record the agents it addresses, and stage its wakes
+//! through the one producer, `super::wake`.
 use super::audience::{thread_audience_now_in, thread_binding};
 use super::participation::{addressable_agent_in_txn, record_addressed_in_txn};
 use super::*;
@@ -18,7 +19,7 @@ use std::collections::BTreeMap;
 /// wakes no one again.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the witness and the thread reply door hand over the row and the facts their writes proved"
+    reason = "the witness and the native turn writer hand over the row and the facts their writes proved"
 )]
 pub(super) fn record_room_turn_in_txn(
     vault: &Vault,
@@ -32,8 +33,7 @@ pub(super) fn record_room_turn_in_txn(
 ) -> Result<()> {
     let room = EntityId::from_hex(&turn.room_id)?;
     let turn_id = EntityId::from_hex(&turn.turn_id)?;
-    TURNS.put(&vault.store, txn, &turn_id, turn)?;
-    super::history::index_turn(&vault.store, txn, turn)?;
+    put_room_turn_projection_in_txn(vault, txn, turn)?;
     if let Some(admitted) = admitted {
         admitted.record_in_txn(vault, txn, now)?;
     }
@@ -55,29 +55,44 @@ pub(super) fn record_room_turn_in_txn(
     Ok(())
 }
 
-/// A plain thread reply in a project room keeps its room row and stages its
-/// wakes in the reply's own write, as a witness turn does
-/// (THREAD-TASK-ONE-SURFACE). `appended` is the TURN the conversation DAG's
-/// thread door wrote for `input` in `txn`; its append admitted and recorded
-/// its writer. The row answers the reply's DAG `Parent` inside the thread
-/// its binding names, so its `reply_to` is that parent and its `thread_of`
-/// the thread's anchor. It names each recipient the witness lets a turn
-/// name there: one with a seat, or an agent that speaks as a persona; any
-/// other recipient keeps its DAG address and is named on no row. A reply
-/// whose parent is neither the anchor nor a turn of this thread that keeps a
-/// row keeps no row and wakes no one, so a room walk never meets a gap; the
-/// append stands. An ordinary room keeps no rows (THREAD-TASK-EVERY-ROOM).
-pub(crate) fn record_thread_reply_in_txn(
+/// Puts `turn`'s room row and indexes it, and nothing else: no writer, no
+/// address and no wake is recorded. Every room row is written here; the
+/// open's backfill (`super::backfill`) writes nothing beside it.
+pub(super) fn put_room_turn_projection_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &RoomTurn,
+) -> Result<()> {
+    let turn_id = EntityId::from_hex(&turn.turn_id)?;
+    TURNS.put(&vault.store, txn, &turn_id, turn)?;
+    super::history::index_turn(&vault.store, txn, turn)
+}
+
+/// Every TURN the conversation DAG appends keeps its room row and stages
+/// its wakes in the append's own write, as a witness turn does, in any room
+/// (THREAD-TASK-ONE-SURFACE, THREAD-TASK-EVERY-ROOM). `appended` is the
+/// TURN the DAG's append wrote for `input` in `txn`; that append admitted
+/// and recorded its writer. A TURN with no thread binding is a trunk turn:
+/// its row answers no turn and names no thread. A thread's TURN answers its
+/// DAG `Parent` inside the thread its binding names, so its `reply_to` is
+/// that parent and its `thread_of` the thread's anchor. The row names each
+/// recipient the witness lets a turn name there: one with a seat, or an
+/// agent that speaks as a persona; any other recipient keeps its DAG
+/// address and is named on no row. A thread TURN whose binding names no
+/// anchor, or that has no parent, keeps no row. Nor does one whose parent
+/// is neither the anchor nor a turn of this thread that keeps a row, such
+/// as a reply under an imported or erased reply the open's backfill left
+/// with none: every reader of a room's threads walks `reply_to` through
+/// rows, so such a row would break the whole thread. It wakes no one, and
+/// the append stands.
+pub(crate) fn record_native_room_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     input: &AppendRecord,
     appended: &AppendedRecord,
 ) -> Result<()> {
     let room = input.conversation;
-    if appended.kind != ENTITY_TYPE_TURN
-        || !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)?
-        || TURNS.contains(&vault.store, txn, &appended.id)?
-    {
+    if appended.kind != ENTITY_TYPE_TURN || TURNS.contains(&vault.store, txn, &appended.id)? {
         return Ok(());
     }
     let LiveEntityRow::Live {
@@ -87,24 +102,28 @@ pub(crate) fn record_thread_reply_in_txn(
     else {
         return Err(invalid());
     };
-    let (Some(binding), Some(parent)) = (thread_binding(&body)?, appended.parent) else {
-        return Ok(());
-    };
-    let Some(anchor) = binding.anchor else {
-        return Ok(());
-    };
-    if parent != anchor {
-        let linked = TURNS.get(&vault.store, txn, &parent)?.is_some_and(|row| {
-            row.room_id == room.to_hex() && row.thread_of == Some(anchor.to_hex())
-        });
-        if !linked {
-            return Ok(());
+    // `(thread root, reply_to, thread_of)`: none of them for a trunk turn.
+    let (branch, reply_to, thread_of) = match thread_binding(&body)? {
+        None => (None, None, None),
+        Some(binding) => {
+            let (Some(parent), Some(anchor)) = (appended.parent, binding.anchor) else {
+                return Ok(());
+            };
+            if parent != anchor {
+                let linked = TURNS.get(&vault.store, txn, &parent)?.is_some_and(|row| {
+                    row.room_id == room.to_hex() && row.thread_of == Some(anchor.to_hex())
+                });
+                if !linked {
+                    return Ok(());
+                }
+            }
+            (Some(binding.root), Some(parent), Some(anchor))
         }
-    }
+    };
     let now = vault.store.clock.now_recorded_at();
     let mut addressed = BTreeSet::new();
     if !input.recipients.is_empty() {
-        let seats = room_in(vault, txn, room)?.member_ids;
+        let seats = room_access_in(vault, txn, room)?.member_ids;
         for recipient in &input.recipients {
             if seats.contains(&recipient.to_hex())
                 || addressable_agent_in_txn(vault, txn, *recipient, now)?
@@ -119,18 +138,21 @@ pub(crate) fn record_thread_reply_in_txn(
         actor: input.actor.entity_ref().to_hex(),
         addressed_agents: addressed,
         message_ids: Vec::new(),
-        reply_to: Some(parent.to_hex()),
-        thread_of: Some(anchor.to_hex()),
+        reply_to: reply_to.map(|id| id.to_hex()),
+        thread_of: thread_of.map(|id| id.to_hex()),
         at: input.occurred.start,
         task_ids: Vec::new(),
         converted_project: None,
         quotes: BTreeMap::new(),
     };
-    let audience = thread_audience_now_in(vault, txn, room, binding.root)?;
+    let audience = match branch {
+        Some(root) => thread_audience_now_in(vault, txn, room, root)?,
+        None => None,
+    };
     record_room_turn_in_txn(
         vault,
         txn,
-        Some(binding.root),
+        branch,
         &turn,
         None,
         true,

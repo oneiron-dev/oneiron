@@ -626,7 +626,7 @@ impl Memory<'_> {
                         id,
                         action,
                         actor,
-                        owner_answer.as_ref(),
+                        owner_answer,
                         now,
                     )?
                 } else if authorized.grant_ref.is_some()
@@ -648,7 +648,7 @@ impl Memory<'_> {
                         id,
                         action,
                         actor,
-                        owner_answer.as_ref(),
+                        owner_answer,
                         now,
                     )?
                 };
