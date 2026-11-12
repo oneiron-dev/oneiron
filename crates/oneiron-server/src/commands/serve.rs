@@ -347,7 +347,9 @@ pub(crate) async fn build_server(
         gpu_pool,
         poller: gpu_poller,
     } = build_embedder(&vault, config, broker.as_ref()).await?;
+    tracing::debug!(target: "oneiron::run_start", stage = "boot_embedder_built", "boot");
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), None).await?;
+    tracing::debug!(target: "oneiron::run_start", stage = "boot_tagger_built", "boot");
 
     // The private feedback endpoint's bearer (FIX 5013): a named vault
     // secret wins, and reads as none when it does not resolve; without one
@@ -362,6 +364,7 @@ pub(crate) async fn build_server(
     };
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
+    tracing::debug!(target: "oneiron::run_start", stage = "boot_server_new_start", "boot");
     let sync_server = SyncServer::new(vault, server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
@@ -393,6 +396,7 @@ pub(crate) async fn build_server(
         // The `[policy]` section's owner-plane wording and settings (FIX
         // 5042); an embedding host may set its own after this.
         .with_owner_policy_config(config.policy.owner_policy_config());
+    tracing::debug!(target: "oneiron::run_start", stage = "boot_server_built", "boot");
     // Its browser readiness starts from the `[browser]` section and its
     // runtime binding, with no supervisor's runtime fact (FIX 7670).
     sync_server

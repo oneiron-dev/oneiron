@@ -30,11 +30,13 @@ impl SyncServer {
         vault: Arc<oneiron::Vault>,
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_server_new_entered", "boot");
         config.validate()?;
         // Authority work past its row waits this server's own queue wait
         // (FIX 8091, L14 s45 09:35); a crossing still only measures.
         oneiron::authority::set_authority_work_wait_ms(config.limits.queue_wait_timeout_ms);
         vault.recover_admission_intents()?;
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_admission_intents_recovered", "boot");
         // Hosted authority is automatic from the operator's explicit posture,
         // not a customer auth-secret step. Other postures retain their existing
         // secret-based rooting and rootless warning behavior.
@@ -76,7 +78,9 @@ impl SyncServer {
         // This install's own machine profile, before any request is admitted,
         // so it carries the owner's acts from its first start (FIX 4648):
         // self-hosted and embedded serving alike. A start goes on without it.
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_issuer_ready", "boot");
         vault.ensure_serving_install_profile_at_start(issuer.as_deref(), "serve");
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_install_profile_done", "boot");
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
@@ -125,6 +129,7 @@ impl SyncServer {
             server_state::persist_root_snapshot(&vault, &root_doc)?;
         }
 
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_root_loaded", "boot");
         let (broadcast_tx, _) = broadcast::channel(256);
         let mcp_registry = Mutex::new(McpConnectorActorRegistry::new(
             McpCredentialHashKey::from_bytes(mcp_registry_hash_key(&config)),
@@ -173,9 +178,11 @@ impl SyncServer {
         );
         // Reader children wake this server's runner, which also keeps their
         // cutoff.
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_before_reader_runner", "boot");
         let reader_runner = super::ReaderRunner::start(&vault, &config.limits);
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_reader_runner_started", "boot");
         crate::models::outbound_wait::install(&vault);
         // V2-R3: a lock of this vault waits for this process's snapshot
         // release before its key drops; an erase drops its sessions.
@@ -189,6 +196,7 @@ impl SyncServer {
         let _ = vault.install_sandbox_backends(Arc::new(
             oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends,
         ));
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_sandbox_backends_installed", "boot");
         // Provider media replies are booked on their own line (FIX 8615),
         // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
         let model_budgets = crate::models::ModelHostBudgets::new(
@@ -238,7 +246,9 @@ impl SyncServer {
             &retained,
             wire_telemetry.limit_questions(),
         );
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_before_decision_host", "boot");
         let decisions = crate::decision_host::DecisionHost::new(&vault);
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_decision_host_built", "boot");
         let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
@@ -267,6 +277,7 @@ impl SyncServer {
         // FIX 8335: no run-bound record outlives a restart, so a host that
         // stopped mid-run leaves none behind. A failure is logged; the
         // records stay as they were.
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_before_run_secret_erase", "boot");
         if let Err(error) = vault.erase_all_run_secrets() {
             tracing::warn!(%error, "run-bound secrets left by the last run of the host did not clear");
         }
@@ -278,6 +289,7 @@ impl SyncServer {
         }
         // One machine memory line for the server's work and its organs'
         // own buffers alike (FIX 7649, FIX 7654).
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_connector_inputs_marked", "boot");
         let memory = crate::machine::MachineMemory::process();
         // FIX 8569, 8574, 8596, 8598: office reads and edits reserve from
         // the same line, each reservation waiting the host's queue wait.
@@ -303,6 +315,7 @@ impl SyncServer {
             Arc::clone(&organs),
             memory.clone(),
         )));
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_organs_installed", "boot");
         let hyde_queue_wait = config.limits.queue_wait();
         let server = Self {
             note_editors: super::NoteEditors::default(),

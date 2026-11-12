@@ -79,12 +79,16 @@ pub(super) async fn bind(
         return server;
     }
     let step_wall = models.code_mode.step_wall;
+    let component_started = std::time::Instant::now();
     let component = match tokio::task::spawn_blocking(move || {
         crate::mcp::checked_in_quickjs_runtime_with_wall(step_wall)
     })
     .await
     {
-        Ok(Ok(component)) => component,
+        Ok(Ok(component)) => {
+            tracing::debug!(target: "oneiron::run_start", stage = "boot_code_mode_component_loaded", elapsed_us = u64::try_from(component_started.elapsed().as_micros()).unwrap_or(u64::MAX), "boot");
+            component
+        }
         Ok(Err(error)) => {
             tracing::error!(%error, "the checked-in QuickJS component did not load");
             return server;
@@ -392,8 +396,11 @@ fn type_feedback(settings: &CodeCheckSettings, vault: Arc<Vault>) -> TypeFeedbac
     let (loading, settings) = (feedback.clone(), settings.clone());
     tokio::spawn(async move {
         // Compiling the checker's module takes seconds.
+        let checker_started = std::time::Instant::now();
+        tracing::debug!(target: "oneiron::run_start", stage = "boot_checker_load_started", "boot");
         let loaded = match tokio::task::spawn_blocking(move || code_checker(&settings)).await {
             Ok(Ok(checker)) => {
+                tracing::debug!(target: "oneiron::run_start", stage = "boot_checker_loaded", elapsed_us = u64::try_from(checker_started.elapsed().as_micros()).unwrap_or(u64::MAX), "boot");
                 let backend = checker.backend();
                 tracing::info!(backend = backend.name, pin = %backend.pin, "code mode checks each program as feedback");
                 Ok(Arc::new(FeedbackCheck::new(checker)))
