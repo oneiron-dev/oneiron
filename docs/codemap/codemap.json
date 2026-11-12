@@ -102052,6 +102052,24 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_member_read.rs",
+     "purpose": "NO-DOOR REPO-MEMBER-SNAPSHOT-SYMBOL-READ (tests/e2e/code-custody.test.ts CODE-CUSTODY-01), ruled…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_run/fixture.rs",
+     "purpose": "The run repo door tests' shared fixture (`symbol_lease_observe.rs`, `repo_member_read.rs`): a fresh owned…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102454,7 +102472,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/symbol_lease_observe.rs",
@@ -104389,7 +104407,7 @@
    "over_bar": 256,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7409,
-   "test_files": 1075
+   "test_files": 1077
   },
   "oneiron-agent-runtime": {
    "files": [
