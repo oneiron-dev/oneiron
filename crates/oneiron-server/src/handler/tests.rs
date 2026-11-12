@@ -278,8 +278,17 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
     update_doc.commit();
     let update = update_doc.export(ExportMode::updates(&base_vv)).unwrap();
     let seq = 23_u64;
-    let mut payload = seq.to_be_bytes().to_vec();
-    payload.extend_from_slice(&update);
+    // A residence update travels in its pad envelope with its queue sequence (KS-5, FIX 7107).
+    let payload = oneiron::sync::transport::WindowPadEnvelope {
+        kind: oneiron::sync::transport::WindowPadKind::ResidenceUpdate,
+        form: oneiron::sync::transport::WindowPadForm::PadFree,
+        queue_seq: Some(seq),
+        payload: update.clone(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
     let selector = oneiron::sync::SyncSelector::new(
@@ -326,8 +335,22 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
     let (ack_key, tag, ack) = expect_window_sync(&rx.try_recv().unwrap());
     assert_eq!(ack_key, key);
     assert_eq!(tag, window_sub_tags::RESIDENCE_ACK);
-    assert_eq!(&ack[..8], &seq.to_be_bytes());
-    assert_eq!(&ack[8..], blake3::hash(&update).as_bytes());
+    // The acknowledgment is the envelope's receipt (466c8c1b7d4): it binds the
+    // queue sequence and the digest of exactly the imported update.
+    let ack = oneiron::sync::transport::WindowPadReceipt::decode(&ack).unwrap();
+    assert_eq!(
+        ack.binding.kind,
+        oneiron::sync::transport::WindowPadKind::ResidenceUpdate
+    );
+    assert_eq!(ack.binding.queue_seq, Some(seq));
+    assert_eq!(
+        &ack.binding.payload_digest,
+        blake3::hash(&update).as_bytes()
+    );
+    assert_eq!(
+        ack.readiness,
+        oneiron::sync::transport::WindowPadReadiness::PadFree
+    );
     assert!(
         rx.try_recv().is_err(),
         "no full-window vector or payload may be sent"
