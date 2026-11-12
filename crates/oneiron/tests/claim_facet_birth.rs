@@ -22,6 +22,7 @@ use oneiron::booking::EventTypeKey;
 use oneiron::booking::anti_abuse::{
     BookingRequestFacts, booking_ip_hash, quarantine_borderline_submission,
 };
+use oneiron::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression};
 use oneiron::channel_identity::{ChannelIdentity, ChannelIdentityBinding, SelfHeldShape};
 use oneiron::channel_identity_provider::native_mail::{
@@ -31,17 +32,24 @@ use oneiron::channel_identity_provider::stalwart::{
     NativeMailReputationReport, NativeMailSignalSource, StalwartConfig,
 };
 use oneiron::channel_identity_provider::{LineChat, LineChatKind};
+use oneiron::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF;
 use oneiron::code_revision::CodeSessionRun;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::context_board::{BoardSelection, BoardTurn};
-use oneiron::disclosure::{AttendeeIdentityChoice, UnknownAttendeeAsk, attendee_ask_ref};
+use oneiron::counterparty_contact::CounterpartyContactRecord;
+use oneiron::disclosure::{
+    AttendeeIdentityChoice, DisclosureScopeStatus, PREDICATE_DISCLOSURE_SCOPE,
+    PREDICATE_DISCLOSURE_TIER, UnknownAttendeeAsk, attendee_ask_ref,
+};
+use oneiron::federation::Scope;
 use oneiron::git_wire::{GitOid, GitRefName, GitWireRepo, GitWireRepoIdentity};
 use oneiron::origin::publication::OriginPublicationRequest;
 use oneiron::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::surface_event::PROVIDER_EVENT_REF_PREFIX;
 use oneiron::task_verb::HostBinding;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::claim_facet_birth as door;
@@ -61,6 +69,11 @@ use serde_json::json;
 
 /// The shipped default policy pack, whose rules a fixture extends.
 const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
+
+/// The provider-inbound MACHINE's derivation domain, the engine's
+/// `derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR`, spelled out as
+/// `tests/summary_as_record_permit.rs` spells its landing writer's.
+const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inbound-actor:v1";
 
 /// The rooted vault's fixed clock: no wall time, no sleeps.
 const ROOTED_T0: u64 = 1_780_000_000;
@@ -163,10 +176,10 @@ fn attendee_ask(vault: &Vault, session_key: &str) -> UnknownAttendeeAsk {
     }
 }
 
-/// Declares the `state.` predicates normal in the stored default policy, as
-/// an owner's rule would: a predicate no rule names takes the criticality
-/// floor, and the state index reads no signal that waits for the owner.
-fn declare_state_predicates_normal(vault: &Vault) {
+/// Declares each `(prefix, exact)` rule normal in the stored default policy,
+/// as an owner's rule would: a predicate no rule names takes the criticality
+/// floor, so its write pends for the owner instead of landing.
+fn declare_predicates_normal(vault: &Vault, declared: &[(&str, bool)]) {
     let axes = json!({ "criticality": "normal", "sensitivity": "normal" });
     for id in vault
         .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
@@ -187,9 +200,19 @@ fn declare_state_predicates_normal(vault: &Vault) {
             .or_insert_with(|| json!([]))
             .as_array_mut()
             .expect("policy rules list");
-        match rules.iter_mut().find(|rule| rule["prefix"] == "state.") {
-            Some(rule) => rule["axes"] = axes,
-            None => rules.push(json!({ "prefix": "state.", "axes": axes })),
+        for &(prefix, exact) in declared {
+            let found = rules.iter().position(|rule| rule["prefix"] == prefix);
+            let index = match found {
+                Some(index) => index,
+                None => {
+                    rules.push(json!({ "prefix": prefix }));
+                    rules.len() - 1
+                }
+            };
+            rules[index]["axes"] = axes.clone();
+            if exact {
+                rules[index]["exact"] = json!(true);
+            }
         }
         oneiron::test_support::put_policy_manifest_bytes(
             vault,
@@ -280,6 +303,7 @@ fn turn_vad_annotation_is_born_in_a_stored_facet() {
 #[test]
 fn member_binding_on_a_non_person_member_is_born_in_the_default_facet() {
     let (_directory, vault) = fresh_vault();
+    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_PERSON_REF, true)]);
     let member = stored_row(&vault, ENTITY_TYPE_ASSET, b"member");
     let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"person");
     let claim = oneiron::federation::bind_member_person(
@@ -297,6 +321,7 @@ fn member_binding_on_a_non_person_member_is_born_in_the_default_facet() {
 #[test]
 fn member_binding_on_a_person_member_keeps_its_substrate() {
     let (_directory, vault) = fresh_vault();
+    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_PERSON_REF, true)]);
     let member = stored_row(&vault, ENTITY_TYPE_PERSON, b"member");
     let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"person");
     let claim = oneiron::federation::bind_member_person(
@@ -317,14 +342,35 @@ fn member_binding_on_a_person_member_keeps_its_substrate() {
 #[test]
 fn line_chat_observation_is_born_in_a_stored_facet() {
     let (_directory, vault) = fresh_vault();
+    let destination = format!("U{}", "2".repeat(32));
     let chat = LineChat::new(LineChatKind::Group, format!("C{}", "1".repeat(32)));
-    let claim = vault
-        .observe_line_chat(
-            &format!("U{}", "2".repeat(32)),
-            &chat,
-            "blob:line-event",
+    // The provider-inbound MACHINE the observation is about, stored with the
+    // body `archive_provider_event` gives it. The archive call itself is
+    // refused on this rooted vault: its blob version write as that MACHINE
+    // carries no signature (FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED]).
+    let inbound =
+        EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[]).expect("provider-inbound id");
+    let mut machine_body = Vec::new();
+    rmpv::encode::write_value(
+        &mut machine_body,
+        &Value::Map(vec![(
+            Value::from("name"),
+            Value::from("provider event inbound"),
+        )]),
+    )
+    .expect("MACHINE body encode");
+    vault
+        .put_entity(
+            &inbound,
+            ENTITY_TYPE_MACHINE,
+            TimeRange { start: 14, end: 14 },
             14,
+            &machine_body,
         )
+        .expect("the provider-inbound MACHINE is stored");
+    let payload_ref = format!("{PROVIDER_EVENT_REF_PREFIX}{}@1", EntityId::now().to_hex());
+    let claim = vault
+        .observe_line_chat(&destination, &chat, &payload_ref, 14)
         .expect("a LINE chat is observed");
     claim_in_stored_facet(&vault, &claim);
 }
@@ -542,6 +588,7 @@ fn board_turn_of_an_agent_definition_owner_is_born_in_a_stored_facet() {
 #[test]
 fn do_not_contact_on_an_agent_definition_is_born_in_a_stored_facet() {
     let (_directory, vault, _owner) = rooted_vault();
+    declare_predicates_normal(&vault, &[(PREDICATE_COMM_DO_NOT_CONTACT, true)]);
     let subject = define_agent(&vault, "claim-facet-suppressed").expect("agent definition");
     let evidence = stored_row(&vault, ENTITY_TYPE_TURN, b"unsubscribe");
     let receipt = apply_suppression(
@@ -566,7 +613,7 @@ fn do_not_contact_on_an_agent_definition_is_born_in_a_stored_facet() {
 #[test]
 fn state_index_of_an_agent_definition_is_born_in_the_default_facet() {
     let (_directory, vault, _owner) = rooted_vault();
-    declare_state_predicates_normal(&vault);
+    declare_predicates_normal(&vault, &[("state.", false)]);
     let subject = define_agent(&vault, "claim-facet-state-subject").expect("agent definition");
     let turn = stored_row(&vault, ENTITY_TYPE_TURN, b"turn");
     let annotation = VadAnnotation::new(
@@ -763,5 +810,106 @@ fn repo_conflict_resolution_is_stored_in_the_default_facet() {
     assert_eq!(
         claim_in_stored_facet(&vault, &resolved).scope_facet,
         default_facet(&vault)
+    );
+}
+
+/// A vault with install signing and the embedded owner's proof, as the
+/// settlement tests hold it: the owner may create a FACET and make it the
+/// default. The clock is the wall clock.
+fn owner_signing_vault() -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwner) {
+    let directory = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(directory.path(), VaultConfig::device()).expect("signing vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let proof = owner_proof(&vault, owner);
+    (directory, vault, owner, proof)
+}
+
+/// Makes a new FACET the vault default and gives the default before it.
+fn change_default_facet(vault: &Vault, owner: EntityId, proof: &AuthenticatedOwner) -> EntityId {
+    let before = default_facet(vault);
+    let second = vault
+        .create_facet(
+            proof,
+            owner,
+            "claim-facet-birth-second",
+            vault.now_recorded_at(),
+        )
+        .expect("a second facet");
+    vault
+        .set_default_facet(second, WriteActor::new(owner, EdgeActorClass::Human))
+        .expect("the second facet is the default");
+    assert_eq!(default_facet(vault), second, "the default facet changed");
+    before
+}
+
+/// [DISCLOSURE-SCOPE-CLAIM-FACET] after #7167 (Engine ruling 12 Nov 11:19):
+/// a clearance rewrite keeps its `disclosure.scope` head's stored facet. On
+/// main the rewrite stamps the current default facet, and a stored facet
+/// never moves (`FacetStampImmutable`), so once the owner changes the
+/// default facet the revoke of a cleared contact is refused.
+#[test]
+fn contact_clearance_rewrite_keeps_its_head_facet_after_the_default_facet_changes() {
+    let (_directory, vault, owner, proof) = owner_signing_vault();
+    let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"owen");
+    let contact = EntityId::now();
+    vault
+        .create_counterparty_contact(
+            &contact,
+            &CounterpartyContactRecord::public(person, "owen@example.com", vault.now_recorded_at())
+                .expect("contact record"),
+        )
+        .expect("the contact is stored");
+    vault
+        .preclear_contact_disclosure(&proof, "owen", &[contact], Scope::top())
+        .expect("the owner clears the contact");
+    let born = claims_on(&vault, contact, PREDICATE_DISCLOSURE_SCOPE);
+    assert_eq!(born.len(), 1, "one disclosure.scope head");
+    let first = change_default_facet(&vault, owner, &proof);
+    assert_eq!(
+        born[0].scope_facet, first,
+        "the head was born in the default facet"
+    );
+
+    vault
+        .revoke_contact_disclosure(&proof, &contact)
+        .expect("the owner revokes the clearance after the default facet changed");
+
+    let clearance = vault
+        .counterparty_disclosure_scope(&contact)
+        .expect("clearance read")
+        .expect("the clearance row stays");
+    assert_eq!(clearance.status, DisclosureScopeStatus::Revoked);
+    let heads = claims_on(&vault, contact, PREDICATE_DISCLOSURE_SCOPE);
+    assert_eq!(heads.len(), 1, "the rewrite replaces the one head");
+    assert_eq!(
+        heads[0].scope_facet, first,
+        "the head keeps its stored facet"
+    );
+}
+
+/// [DISCLOSURE-TIER-CLAIM-FACET] after #7167: a second Tier-A mark of a row
+/// keeps its `disclosure.tier` head's stored facet. On main it stamps the
+/// current default facet and is refused once the default facet changed.
+#[test]
+fn tier_a_re_mark_keeps_its_head_facet_after_the_default_facet_changes() {
+    let (_directory, vault, owner, proof) = owner_signing_vault();
+    let row = stored_row(&vault, ENTITY_TYPE_EVENT, b"tier-a row");
+    vault
+        .set_disclosure_tier_a(&row, vault.now_recorded_at())
+        .expect("the first mark");
+    let first = change_default_facet(&vault, owner, &proof);
+
+    vault
+        .set_disclosure_tier_a(&row, vault.now_recorded_at())
+        .expect("the row is marked again after the default facet changed");
+
+    assert!(vault.disclosure_tier_a_marked(&row).expect("mark read"));
+    let heads = claims_on(&vault, row, PREDICATE_DISCLOSURE_TIER);
+    assert_eq!(heads.len(), 1, "one disclosure.tier head");
+    assert_eq!(
+        heads[0].scope_facet, first,
+        "the head keeps its stored facet"
     );
 }

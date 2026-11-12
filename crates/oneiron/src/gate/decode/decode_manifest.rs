@@ -109,6 +109,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
     pub(in crate::gate) owner_change_wait_secs: Option<u64>,
+    pub(in crate::gate) inquiry_policy: Option<crate::inquiry::InquiryPolicy>,
     pub(in crate::gate) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,

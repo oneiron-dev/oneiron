@@ -52,9 +52,10 @@ fn memory_board_rows(row: &MemoryRow, foreign: bool) -> Vec<String> {
         .collect()
 }
 
-/// A MEMORIES row's bare short handle, trust, tier, FICTION marker and hook
-/// tag, before its snippet. The content hash stays internal reference
-/// metadata, never an agent-facing suffix (FIX 7982, ARCH-0067).
+/// A MEMORIES row's bare short handle, trust, tier, FICTION marker, hook
+/// tag and room pin record, before its snippet. The content hash stays
+/// internal reference metadata, never an agent-facing suffix (FIX 7982,
+/// ARCH-0067).
 fn memory_row_head(row: &MemoryRow, foreign: bool) -> String {
     let label = row
         .claim_source
@@ -74,6 +75,17 @@ fn memory_row_head(row: &MemoryRow, foreign: bool) -> String {
     if let Some(hook) = &row.hook {
         text.push_str(" hook=");
         text.push_str(&super::quoted_leaf(hook));
+    }
+    // A room pin shows who pinned the row, for whom an agent acted, and when
+    // (ROOM-SCOPED-PINS P2), by engine ids: no display record is read here.
+    if let Some(pin) = &row.room_pin {
+        text.push_str(&format!(
+            " pinned_by={} acting_agent={} pinned_at={}",
+            pin.pinned_by.to_hex(),
+            pin.acting_agent
+                .map_or_else(|| "none".to_owned(), |agent| agent.to_hex()),
+            pin.pinned_at
+        ));
     }
     text
 }

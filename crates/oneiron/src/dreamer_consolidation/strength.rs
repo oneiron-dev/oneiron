@@ -1,6 +1,7 @@
 //! Consolidation strength observations and an archive-only lifecycle (OF-216).
 //! Evidence is counted at the gated promotion door, never from child agreement.
 //! The score orders selection; it never changes confidence or judges a belief.
+//! The bounded observation read is [`crate::snapshot_read::strength_observations_page`].
 
 use super::evidence::VerifiedEvidenceSet;
 use super::selection::{SelectionConfig, StrengthSignals, strength_score};
@@ -14,7 +15,7 @@ use crate::{EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-const OBSERVATIONS: SideTable<EntityId, StrengthObservations, Named> =
+pub(crate) const OBSERVATIONS: SideTable<EntityId, StrengthObservations, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_STRENGTH);
 const POLICY: SideTable<(), ConsolidationStrengthPolicy, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_STRENGTH_POLICY);
@@ -51,19 +52,19 @@ impl ConsolidationStrengthPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StrengthSource {
-    source: EntityId,
+pub(crate) struct StrengthSource {
+    pub(crate) source: EntityId,
     hash: [u8; 32],
-    revision: [u8; 32],
-    learned_at_ms: u64,
-    diversity: Option<String>,
+    pub(crate) revision: [u8; 32],
+    pub(crate) learned_at_ms: u64,
+    pub(crate) diversity: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StrengthObservations {
-    predicate: String,
-    last_activity_ms: u64,
-    sources: Vec<StrengthSource>,
+pub(crate) struct StrengthObservations {
+    pub(crate) predicate: String,
+    pub(crate) last_activity_ms: u64,
+    pub(crate) sources: Vec<StrengthSource>,
 }
 
 /// The pre-archive revision and policy, co-committed with the local marker.
@@ -153,6 +154,34 @@ pub(crate) fn policy_in_txn(
     let policy = POLICY.get(&vault.store, txn, &())?.unwrap_or_default();
     policy.validate()?;
     Ok(policy)
+}
+
+/// The effective strength policy's domain-separated pin in this transaction.
+pub(crate) fn strength_policy_pin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<String> {
+    let encoded = serde_json::to_vec(&policy_in_txn(vault, txn)?)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron:consolidation:strength-policy:v1\0");
+    hash.update(&encoded);
+    Ok(hash.finalize().to_hex().to_string())
+}
+
+/// The claim id and its stored observations, or no pin when no row stands.
+pub(crate) fn observation_pin_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+) -> Result<Option<String>> {
+    let Some(observations) = OBSERVATIONS.get(&vault.store, txn, claim)? else {
+        return Ok(None);
+    };
+    let encoded = serde_json::to_vec(&observations)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron:consolidation:strength-observation:v1\0");
+    hash.update(claim.as_bytes());
+    hash.update(&encoded);
+    Ok(Some(hash.finalize().to_hex().to_string()))
 }
 
 /// Called only after the promotion/attachment gate and its evidence fence.

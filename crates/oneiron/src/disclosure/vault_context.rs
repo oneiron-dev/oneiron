@@ -131,7 +131,7 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         DISCLOSURE_SCOPES.put(&self.store, wtxn, contact_id, scope)?;
         let claim_id = disclosure_scope_claim_id(contact_id)?;
-        let claim = ClaimBody::new(
+        let mut claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_SCOPE,
             ClaimSubject::Entity(*contact_id),
             disclosure_scope_body_value(scope)?,
@@ -139,6 +139,13 @@ impl Vault {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
+        // [DISCLOSURE-SCOPE-CLAIM-FACET]: the contact's own substrate is no
+        // FACET, so the CLAIM birth gate refused every first clearance with
+        // InvalidFacet. The head is born in the vault default facet, as the
+        // contact's own heads are ([COUNTERPARTY-CONTACT-CLAIM-FACET]); a
+        // rewrite keeps the stored head's facet, so a later change of the
+        // default facet does not refuse it (`FacetStampImmutable`).
+        claim.scope_facet = self.claim_put_facet_in_txn(wtxn, &claim_id)?;
         self.put_disclosure_claim_in_txn(wtxn, &claim_id, &claim, scope.updated_at)
     }
 
@@ -162,7 +169,7 @@ impl Vault {
         }
         DISCLOSURE_TIER_A_MARKS.put(&self.store, &mut wtxn, id, &marked_at.to_le_bytes())?;
         let claim_id = disclosure_tier_claim_id(id)?;
-        let claim = ClaimBody::new(
+        let mut claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_TIER,
             ClaimSubject::Entity(*id),
             Value::from(DISCLOSURE_TIER_VALUE_TIER_A),
@@ -170,6 +177,12 @@ impl Vault {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
+        // [DISCLOSURE-TIER-CLAIM-FACET]: a marked row's own substrate is no
+        // FACET (only a PERSON's is), so the CLAIM birth gate refused the
+        // first mark of any other row with InvalidFacet. The head is born in
+        // the vault default facet, as the disclosure.scope head is, and a
+        // re-mark keeps the stored head's facet.
+        claim.scope_facet = self.claim_put_facet_in_txn(&wtxn, &claim_id)?;
         self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, marked_at)?;
         wtxn.commit()?;
         Ok(())

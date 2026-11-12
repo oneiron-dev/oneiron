@@ -54,6 +54,11 @@ pub struct EntityRefReceipt {
     /// does not name the kind it wrote.
     #[serde(default)]
     pub record: Option<crate::lens::RecordRef>,
+    /// For an agent's AGENT_DEF put, what its author writer made of it
+    /// (ARCH-0053:20): active, or a proposal no dispatch runs; absent for
+    /// every other write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_definition: Option<crate::core_write::AgentDefinitionWriteReceipt>,
 }
 /// One habit check-in append (B2 migrator group).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

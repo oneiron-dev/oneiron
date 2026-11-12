@@ -403,6 +403,7 @@ fn dreamer_complete_fail_reject_non_dreamer_queue_rows_before_mutation() -> Resu
             lease_owner: "worker-a".to_owned(),
             attempt_count: claimed.attempt_count,
             reason: "should-not-commit".to_owned(),
+            budget_refusal: None,
             now: 13,
         })
         .expect_err("non-Dreamer queue row must be rejected before fail");

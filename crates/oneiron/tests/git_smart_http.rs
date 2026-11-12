@@ -1106,6 +1106,83 @@ fn git_smart_http_large_push_streams_without_buffering() {
 }
 
 /// Text that does not compress away, so the pushed pack is genuinely large.
+/// NO-DOOR REPO-LFS-PATH-POLICY (Engine CODECUSTODY-LFS Q2 = A): a pushed
+/// LFS pointer on a path the owner's policy names build-required keeps its
+/// object through the real landing. The ref references the object and its
+/// bytes read back, as a repository-large pointer's do.
+#[test]
+fn git_smart_http_build_required_lfs_pointer_keeps_its_object_through_landing() {
+    use oneiron::memory::origin_doors::OriginLfsPathPolicySetRequest;
+    use oneiron::origin::lfs::{LfsAssetClass, LfsOid, OriginLfsPathMatch, OriginLfsPathRule};
+
+    let source = tempfile::tempdir().expect("source tempdir");
+    seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
+    let vault = &origin.vault;
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            "principal:owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    let policy = vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .origin_lfs_path_policy_set_as(
+            &proof,
+            OriginLfsPathPolicySetRequest {
+                repo: "demo".to_owned(),
+                expected_revision: 0,
+                rules: vec![OriginLfsPathRule {
+                    path_match: OriginLfsPathMatch::Prefix("assets".to_owned()),
+                    class: LfsAssetClass::BuildRequired,
+                }],
+            },
+        )
+        .expect("the owner sets the origin's LFS path policy");
+
+    let bytes = b"bytes a build of this repository needs".to_vec();
+    let oid = LfsOid::digest(&bytes);
+    let size = u64::try_from(bytes.len()).expect("length fits u64");
+    vault
+        .put_lfs_object(oid, &bytes, oneiron::TimeRange { start: 1, end: 1 }, 1)
+        .expect("the object the pointer names is stored before the push");
+
+    let work = tempfile::tempdir().expect("work tempdir");
+    git(
+        work.path(),
+        &["clone", "--branch=main", "--", &origin.url(), "clone"],
+    );
+    let clone = work.path().join("clone");
+    std::fs::create_dir_all(clone.join("assets")).expect("assets directory");
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {size}\n",
+        oid.to_hex()
+    );
+    let head = commit_file(&clone, "assets/model.bin", &pointer, "a build asset");
+    git(&clone, &["push", "origin", "main"]);
+
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(head.as_str()),
+        "the push moved the origin ref"
+    );
+    assert_eq!(
+        vault
+            .lfs_git_ref_objects(policy.repo_id, "refs/heads/main")
+            .expect("read the ref's LFS objects"),
+        vec![oid],
+        "the build-required pointer's object is attached to the ref"
+    );
+    assert_eq!(
+        vault.get_lfs_object(oid).expect("read the object"),
+        Some(bytes),
+        "its bytes survive the landing"
+    );
+}
+
 fn incompressible_text() -> String {
     let mut state: u64 = 0x2545_F491_4F6C_DD1D;
     let mut out = String::with_capacity(3 * 1024 * 1024);
