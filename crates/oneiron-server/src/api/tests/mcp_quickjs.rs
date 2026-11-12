@@ -824,22 +824,24 @@ async fn code_admitted(mode: &CodeMode, path: &str, label: &str) -> Value {
 }
 
 /// Done means (ARCH-0028 propose-only, #1360): the verb-table rows a run
-/// answers itself (`self.memory.put_claim`, `supersede_claim`, `put_edge`)
-/// write from no propose-only slip. `execute_code` needs write, so a slip
-/// holding read and propose under a `proposed` ceiling starts no run on either
-/// endpoint: no model call, nothing stored. A full-access slip runs the same
-/// program and its claim lands.
+/// answers itself (`vault.claims.put`, `vault.claims.supersede`,
+/// `vault.edges.put`) write from no propose-only slip. A slip holding read and
+/// propose under a `proposed` ceiling may start a run on either endpoint, and
+/// each operation in it is judged by its own effect (f03118d6462, FIX 3972):
+/// its claim write is refused, so the run fails and nothing is stored. A
+/// full-access slip runs the same program and its claim lands.
 #[tokio::test]
-async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
+async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
     let subject = seeded_test_entity_id(0x0024_65a1);
     let claim = seeded_test_entity_id(0x0024_65a2);
     let script = format!(
-        "const receipt = await self.memory.put_claim({{id: '{}', predicate: \
+        "const receipt = await vault.claims.put({{id: '{}', predicate: \
          'profile.favorite_drink', subject: '{}', value: 'sencha'}}); finish(receipt.id);",
         claim.to_hex(),
         subject.to_hex()
     );
-    let mode = code_mode_server(vec![script]);
+    // One script per run: the two propose-only runs, then the writer's.
+    let mode = code_mode_server(vec![script.clone(), script.clone(), script]);
     mode.vault
         .put_entity(
             &subject,
@@ -929,18 +931,19 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         )
         .await;
         assert_eq!(
-            body["error"]["data"]["error_code"], "mcp_auth_required",
+            body["error"]["data"]["error_code"], "code_run_failed",
             "{path}: {body}"
         );
+        assert!(
+            body.to_string().contains("host_call_refused"),
+            "{path}: the run's claim write is refused: {body}"
+        );
     }
-    assert!(
-        mode.backend.requests.lock().unwrap().is_empty(),
-        "a refused run reaches no model"
-    );
     assert!(mode.vault.get_claim(&claim).unwrap().is_none());
-    // So `/mcp` tells it, and a read-only slip, that they may not run code,
-    // and the stdio bridge keeps them on the tool-first verbs (drift E4, Astra).
-    assert_eq!(code_admitted(&mode, "/mcp", label).await, json!(false));
+    // So `/mcp` tells it, and a read-only slip, that they may run code: the
+    // session admits a live credential that reads, and only a write inside
+    // the run needs write.
+    assert_eq!(code_admitted(&mode, "/mcp", label).await, json!(true));
     let reader = seeded_test_entity_id(0x0024_65a6);
     mode.vault
         .put_entity(
@@ -983,7 +986,7 @@ async fn quickjs_a_propose_only_slip_runs_no_code_whose_rows_write() {
         .unwrap();
     assert_eq!(
         code_admitted(&mode, "/mcp", "quickjs-read-only").await,
-        json!(false)
+        json!(true)
     );
 
     let writer = seeded_test_entity_id(0x0024_65a5);
