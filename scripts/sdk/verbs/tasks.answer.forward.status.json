@@ -6,6 +6,7 @@
   "mcp_served": "[input.intent_ref]",
   "call": "memory.tasks_answer_forward_status(input.intent_ref)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

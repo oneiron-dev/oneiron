@@ -5,6 +5,7 @@
   "output": "Vec<crate::skill_hub::HubImportReceipt>",
   "call": "crate::task_verb::sdk::skill_restore_defaults_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restoreDefaults\")?, &_input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

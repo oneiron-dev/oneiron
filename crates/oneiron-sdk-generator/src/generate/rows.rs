@@ -73,10 +73,18 @@ const RUN_OPTIONAL: &[&str] = &[
 ];
 /// The agent powers a run row may name as its requirement.
 const POWERS: &[&str] = &["spawn", "save_agent"];
-const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect"];
+const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect", "act_class"];
 /// A scoped-child row's keys, `description` aside.
 const SCOPED_CHILD_KEYS: &[&str] = &[
-    "name", "input", "output", "call", "scope", "context", "mcp", "section",
+    "name",
+    "input",
+    "output",
+    "call",
+    "scope",
+    "act_class",
+    "context",
+    "mcp",
+    "section",
 ];
 /// The record-scope admissions `require_granted_scope` excludes.
 const OTHER_RECORD_SCOPES: &[&str] = &[
@@ -182,6 +190,7 @@ fn host_synthetic(row: &Dict) -> Result<Dict, GenerateError> {
     );
     out.insert("description".into(), host.getitem("description")?.clone());
     out.insert("scope".into(), item(row, "scope")?.clone());
+    out.insert("act_class".into(), item(row, "act_class")?.clone());
     let call = format!(
         "crate::task_verb::sdk::host_only(memory, \"{}\", &input)?",
         name.str()
@@ -306,7 +315,7 @@ fn check_run_row(row: &Dict) -> Result<(), GenerateError> {
     if !keys_are(&keys, RUN_REQUIRED) || !item_in(row, "scope", &["Read", "Write"])? {
         return Err(refuse(
             row,
-            "a run row names its input, scope, effect, output, per-input outputs, run surface and grant class, and nothing \
+            "a run row names its input, scope, act class, effect, output, per-input outputs, run surface and grant class, and nothing \
              else",
         ));
     }
@@ -398,7 +407,7 @@ fn check_scoped_child(row: &Dict) -> Result<(), GenerateError> {
     if bad {
         return Err(refuse(
             row,
-            "a scoped-child row names its input, output, scope and description, calls the host-only refusal, and \
+            "a scoped-child row names its input, output, scope, act class and description, calls the host-only refusal, and \
              nothing else",
         ));
     }
@@ -1045,7 +1054,7 @@ mod tests {
         root
     }
 
-    const BASE: &str = r#""name": "zz_fixture", "input": "ZzInput", "output": "ZzOutput", "call": "zz_call(memory, &input)?", "scope": "Read", "section": false"#;
+    const BASE: &str = r#""name": "zz_fixture", "input": "ZzInput", "output": "ZzOutput", "call": "zz_call(memory, &input)?", "scope": "Read", "act_class": "unstated", "section": false"#;
 
     // Each expected line: the last stderr line of the Python generator's module level (Python 3.14.7 on nelly) over
     // a tree whose only verb file is the row.
@@ -1143,10 +1152,10 @@ mod tests {
     fn grant_class_refusals_match_python() {
         // The expected lines are the ones the Python generator printed for the same rows, through both halves of the
         // port harness on G5 with main 30deae1a20e merged, before this change removed it.
-        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "context": "run", "effect": "ZzEffect""#;
+        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
         let phrase = "ValueError: zz_run: a grant class is one printable ASCII phrase, with no backslash, double quote \
                       or `*/`";
-        let keys = "ValueError: zz_run: a run row names its input, scope, effect, output, per-input outputs, run surface \
+        let keys = "ValueError: zz_run: a run row names its input, scope, act class, effect, output, per-input outputs, run surface \
                     and grant class, and nothing else";
         let longest = format!(r#""grant_class": "{}""#, "x".repeat(120));
         let too_long = format!(r#""grant_class": "{}""#, "x".repeat(121));
@@ -1200,7 +1209,7 @@ mod tests {
 
     #[test]
     fn power_is_spawn_or_save_agent() {
-        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "context": "run", "effect": "ZzEffect""#;
+        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
         let refused = "ValueError: zz_run: a power is `spawn` or `save_agent`";
         let cases: &[(&str, &str)] = &[
             (r#""power": "spawn""#, ""),
@@ -1274,6 +1283,7 @@ mod tests {
         let board = &generator.rows[RowId(2)];
         let keys: Vec<&str> = board.keys().map(String::as_str).collect();
         assert_eq!(keys.last(), Some(&"board_input"));
+        assert!(board["act_class"].is_str("unstated"));
         assert!(board["call"].is_str("crate::task_verb::sdk::host_only(memory, \"a\", &input)?"));
         // The setdefault defaults land on the shared row; the binding moves to `handle_args`, which keeps its place.
         let b = &generator.rows[RowId(1)];
@@ -1287,6 +1297,7 @@ mod tests {
                 "output",
                 "call",
                 "scope",
+                "act_class",
                 "section",
                 "handle_args",
                 "mcp_fields",

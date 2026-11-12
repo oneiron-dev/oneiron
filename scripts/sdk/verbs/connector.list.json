@@ -5,6 +5,7 @@
   "output": "Vec<crate::task_verb::sdk::ConnectorEntry>",
   "call": "crate::task_verb::sdk::connector_catalog(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

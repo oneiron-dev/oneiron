@@ -312,6 +312,17 @@ impl<KC, DC, C> Database<KC, DC, C> {
         }
     }
 
+    /// ONEIRON FORK (PAGE-FULL trace): the persisted LMDB flags for this
+    /// database (`mdb_dbi_flags`), including the duplicate and integer-key flags.
+    pub fn raw_flags(&self, txn: &RoTxn<'_>) -> Result<u32> {
+        assert_eq_env_db_txn!(self, txn);
+        let mut flags = 0;
+        // SAFETY: the environment assertion above binds this live database
+        // handle to the live transaction; LMDB initializes `flags` on success.
+        unsafe { mdb_result(ffi::mdb_dbi_flags(txn.txn, self.dbi, &mut flags))? };
+        Ok(flags)
+    }
+
     /// Retrieves the value associated with a key.
     ///
     /// If the key does not exist, then `None` is returned.

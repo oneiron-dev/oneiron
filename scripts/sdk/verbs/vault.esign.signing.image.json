@@ -5,6 +5,7 @@
   "output": "crate::blob_artifact::esign::EsignSigningImageView",
   "call": "memory.esign_signing_image(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

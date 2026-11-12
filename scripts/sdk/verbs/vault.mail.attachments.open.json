@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailAttachmentView",
   "call": "memory.mail_attachments_open(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

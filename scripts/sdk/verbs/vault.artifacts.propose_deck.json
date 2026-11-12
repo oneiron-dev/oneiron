@@ -12,6 +12,7 @@
   "output": "crate::blob_artifact::DeckProposeOutcome",
   "call": "memory.artifacts_propose_deck(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {},
   "section": false,
   "binding": {

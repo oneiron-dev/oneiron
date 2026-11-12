@@ -5,6 +5,7 @@
   "output": "Vec<crate::edit_settle::OrganWaitView>",
   "call": "memory.artifacts_waits(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

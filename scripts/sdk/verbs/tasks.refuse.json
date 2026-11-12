@@ -3,6 +3,7 @@
   "input": "crate::code_run::TaskRefuseInput",
   "output": "crate::code_run::TaskRefuseOutput",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "run",
   "effect": "TasksRefuse",
   "host": {
