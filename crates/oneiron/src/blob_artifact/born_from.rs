@@ -164,7 +164,7 @@ impl Vault {
         let mut records = Vec::with_capacity(born.len());
         for id in born {
             if let Some(kind) = self.get_entity_type_in_txn(&rtxn, id)? {
-                records.push(RecordRef::from_id(kind, id, None));
+                records.push(RecordRef::from_id_in_vault(self, kind, id, None));
             }
         }
         Ok(records)
