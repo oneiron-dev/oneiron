@@ -103,10 +103,7 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(
-        nested(&sse_tree(&next))["roots"][0]["status"],
-        "paused"
-    );
+    assert_eq!(nested(&sse_tree(&next))["roots"][0]["status"], "paused");
 }
 
 #[tokio::test]
@@ -247,7 +244,8 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     assert_eq!(roots[0]["events"][1]["kind"], Value::from("paused"));
     // The intervene actor is the authenticated slip principal, not the legacy
     // bearer label. It is deterministic for this recipe, so pin it exactly.
-    let (write_slip, _) = crate::test_credentials::credential(&server, "scope=core:read,core:write");
+    let (write_slip, _) =
+        crate::test_credentials::credential(&server, "scope=core:read,core:write");
     let expected_actor = format!(
         "slip:{}",
         write_slip

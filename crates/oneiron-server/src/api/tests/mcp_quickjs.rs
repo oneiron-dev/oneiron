@@ -425,10 +425,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     let (discover, health) = (&bodies[0], &bodies[1]);
     for (token, family) in [
         ("mcp.tool.execute_code", "mcp.tool"),
-        (
-            "mcp.endpoint.primary.execute_code",
-            "mcp.endpoint.primary",
-        ),
+        ("mcp.endpoint.primary.execute_code", "mcp.endpoint.primary"),
         (
             "mcp.endpoint.tool_first.execute_code",
             "mcp.endpoint.tool_first",

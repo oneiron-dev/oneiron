@@ -1246,8 +1246,7 @@ async fn retired_task_routes_are_not_found() {
     assert_eq!(cancel, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "WRONG_ROOT", "{body}");
     assert_eq!(
-        body["error"]["message"],
-        "`tasks.cancel` is not an SDK verb; the verb is `cancel`",
+        body["error"]["message"], "`tasks.cancel` is not an SDK verb; the verb is `cancel`",
         "{body}"
     );
     assert_eq!(status("describe").await.0, StatusCode::OK);

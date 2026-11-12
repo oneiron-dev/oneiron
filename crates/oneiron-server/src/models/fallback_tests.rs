@@ -250,7 +250,9 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
         /// `strikes`-th refusal in a row rests the default rest doubled
         /// `strikes` times, plus a jitter of up to a quarter of that, keyed by
         /// the offer's origin (a random port here), so the end is a window.
-        Backoff { strikes: u32 },
+        Backoff {
+            strikes: u32,
+        },
     }
     // Each case runs at the end of the rest before it.
     let cases = [
@@ -328,7 +330,10 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
                 (now + backoff)..=(now + backoff + backoff / 4)
             }
         };
-        assert!(window.contains(&end), "case {number}: {end} not in {window:?}");
+        assert!(
+            window.contains(&end),
+            "case {number}: {end} not in {window:?}"
+        );
         assert_eq!(passed["reset"], json!(reset), "case {number}");
         now = end;
     }
@@ -436,10 +441,7 @@ async fn a_quota_error_as_the_first_stream_event_hands_the_stream_to_the_next_of
         assert_eq!(receipt["passed_over"][0]["passed"], json!(passed));
         // 520329287c0 (#1613, OF-305): `insufficient_quota` is spent credit,
         // parked with no end until the owner clears it.
-        assert_eq!(
-            receipt["passed_over"][0]["cooldown_until"],
-            json!(u64::MAX)
-        );
+        assert_eq!(receipt["passed_over"][0]["cooldown_until"], json!(u64::MAX));
         if passed == "refused" {
             assert_eq!(receipt["passed_over"][0]["reset"], json!("parked"));
         }

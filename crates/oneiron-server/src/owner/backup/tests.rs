@@ -579,7 +579,11 @@ fn a_restore_where_another_user_could_move_entries_opens_nothing() {
         "{error:#}"
     );
     assert!(!lock.exists(), "the vault is never opened");
-    assert_eq!(list(), before, "the refused restore makes nothing beside it");
+    assert_eq!(
+        list(),
+        before,
+        "the refused restore makes nothing beside it"
+    );
     // A rehearsal reads the vault there and goes ahead, naming the directory:
     // the vault opens and writes there as it is (Engine ruling on review r5).
     let source = disk_source(&vault_path, &keystore);

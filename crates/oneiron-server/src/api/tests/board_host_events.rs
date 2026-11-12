@@ -483,8 +483,9 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
     );
     // 6bef6393118 (#1787, ARCH-0067): the AGENTS section is gone; a found
     // agent definition rides the SKILLS found rows as `found agent`.
-    assert!(rows.iter().any(|row| row["key"] == "SKILLS"
-        && row["line"].as_str().unwrap().contains(" found agent ")));
+    assert!(rows.iter().any(
+        |row| row["key"] == "SKILLS" && row["line"].as_str().unwrap().contains(" found agent ")
+    ));
     let retained = "memory snippet ".repeat(2000);
     enqueue_board_frame(
         &server,
@@ -515,8 +516,9 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
             .any(|row| row["key"] == "SKILLS" && row["line"] == "loaded: ")
     );
     assert!(
-        !rows.iter().any(|row| row["key"] == "SKILLS"
-            && row["line"].as_str().unwrap().contains(" found ")),
+        !rows
+            .iter()
+            .any(|row| row["key"] == "SKILLS" && row["line"].as_str().unwrap().contains(" found ")),
         "the found rows, skill and agent alike, are shed: {rows:?}"
     );
     enqueue_board_frame(
@@ -533,8 +535,9 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
         .as_array()
         .unwrap();
     assert!(
-        !rows.iter().any(|row| row["key"] == "SKILLS"
-            && row["line"].as_str().unwrap().contains(" found ")),
+        !rows
+            .iter()
+            .any(|row| row["key"] == "SKILLS" && row["line"].as_str().unwrap().contains(" found ")),
         "the found rows, skill and agent alike, are shed: {rows:?}"
     );
     assert!(

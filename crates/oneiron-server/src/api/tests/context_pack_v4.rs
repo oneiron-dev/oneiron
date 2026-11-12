@@ -370,11 +370,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         ),
     )
     .await;
-    assert_eq!(
-        retired_status,
-        StatusCode::BAD_REQUEST,
-        "{retired_body}"
-    );
+    assert_eq!(retired_status, StatusCode::BAD_REQUEST, "{retired_body}");
     let (status, body) = route_json(
         server.clone(),
         core_request_with_principal_ref(
