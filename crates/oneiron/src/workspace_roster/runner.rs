@@ -287,7 +287,7 @@ impl Vault {
             return Ok(Vec::new());
         };
 
-        let mut entries = vec![house_mind_entry(self, &preset, at)?];
+        let mut entries = vec![house_mind_entry(self, &preset)?];
         let mut prefix = workspace_ref.as_bytes().to_vec();
         prefix.push(ROSTER_KEY_SEPARATOR);
 
