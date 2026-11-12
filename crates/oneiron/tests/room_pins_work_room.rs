@@ -291,6 +291,7 @@ fn room_wake_run_works_in_the_waking_room() -> TestResult {
             axes: vec![],
         },
         wake: ResidentWakeMode::AllAddressed,
+        wake_hold_secs: 0,
     };
     declare_resident_binding_normal(&vault, &proof)?;
     vault
@@ -325,8 +326,9 @@ fn room_wake_run_works_in_the_waking_room() -> TestResult {
         }),
         "the addressing turn stages the resident wake: {staged:?}"
     );
-    let outcomes =
-        AgentDispatcher::new(&vault).dispatch_resident_inbox(yuki, 16, vault.now_recorded_at())?;
+    let outcomes = AgentDispatcher::new(&vault)
+        .dispatch_resident_inbox(yuki, 16, vault.now_recorded_at())?
+        .outcomes;
     if outcomes.len() != 1 {
         return Err(format!("one room wake dispatches, got {outcomes:?}").into());
     }

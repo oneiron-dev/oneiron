@@ -247,8 +247,8 @@ use rmpv::Value;
 
 pub use agent_run::AgentRun;
 pub use resident::{
-    ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode, resident_attempt_reviews_diary,
-    resident_attempt_wakes_for_room,
+    RESIDENT_WAKE_HOLD_DEFAULT_SECS, ResidentAgentSpec, ResidentGoalRecord, ResidentInboxDispatch,
+    ResidentWakeMode, resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 
 #[cfg(test)]

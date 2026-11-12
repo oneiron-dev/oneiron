@@ -1969,6 +1969,7 @@ fn bind_resident(vault: &Vault) -> EntityId {
             axes: vec![],
         },
         wake: ResidentWakeMode::HumanMessages,
+        wake_hold_secs: 0,
     };
     vault
         .bind_resident_agent(&auth, &spec, 3)

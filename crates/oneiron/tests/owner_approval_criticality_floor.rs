@@ -295,6 +295,7 @@ fn owner_resident_binding_lands_on_its_undeclared_predicate() {
             axes: vec![],
         },
         wake: ResidentWakeMode::HumanMessages,
+        wake_hold_secs: 0,
     };
 
     let binding = f
