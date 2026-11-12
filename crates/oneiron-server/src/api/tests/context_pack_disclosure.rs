@@ -217,7 +217,10 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
     );
     assert!(
         body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
-        "candidate sweep counted removals: {body:?}"
+        "candidate sweep counted removals: clamped_out {} disclosure {} results {}",
+        body["disclosure"]["clamped_out"],
+        body["disclosure"],
+        body["results"]
     );
     let result_ids: Vec<&str> = body["results"]
         .as_array()
