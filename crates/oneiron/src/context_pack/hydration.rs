@@ -43,7 +43,8 @@ pub(crate) fn context_entity_matches_read_snapshot(
             decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..], false).unwrap_or_default()
         };
         for (key, value) in fields {
-            if key == super::WORLD_STALE_FIELD {
+            // Pack-time labels, not body fields: nothing stored to compare.
+            if key == super::WORLD_STALE_FIELD || key == super::WORLD_SECTION_FIELD {
                 continue;
             }
             let Some(now) = current.get(key) else {

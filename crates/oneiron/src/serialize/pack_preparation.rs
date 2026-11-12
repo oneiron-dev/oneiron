@@ -14,8 +14,8 @@ use super::token_budget::{
     finalize_pack_token_stats, group_entities, token_budget_droppable_count,
 };
 use super::types::{TOON_MAX_DEPTH, ValueDepthLimit};
-use crate::context_pack::ContextPack;
 use crate::context_pack::PackStats;
+use crate::context_pack::{ContextPack, WORLD_SECTION_FIELD};
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::serialize::context_entity::ContextEntity;
@@ -267,6 +267,23 @@ fn budget_split_sections_with_depth_limit(
     (results, neighbors)
 }
 
+/// A row's field keys in emit order. A row of a partitioned pack carries its
+/// world section label (`context_pack::WORLD_SECTION_FIELD`, ARCH-0004
+/// #world-scope): it comes first in every field profile, so a rendered row
+/// names its world before its text. The profile's keys follow as before.
+fn labeled_field_keys(
+    entity_type: u8,
+    profile: FieldProfile,
+    map: &HashMap<String, Value>,
+) -> Vec<String> {
+    let mut keys = field_keys(entity_type, profile, map);
+    if map.contains_key(WORLD_SECTION_FIELD) {
+        keys.retain(|key| key != WORLD_SECTION_FIELD);
+        keys.insert(0, WORLD_SECTION_FIELD.to_owned());
+    }
+    keys
+}
+
 fn prepare_entities(
     entities: &[ContextEntity],
     source: PreparedEntitySource,
@@ -285,7 +302,7 @@ fn prepare_entities(
             let mut fields = Vec::new();
 
             if let Some(map) = entity.fields.as_ref() {
-                let field_keys = field_keys(entity.entity_type, config.profile, map);
+                let field_keys = labeled_field_keys(entity.entity_type, config.profile, map);
                 for key in field_keys {
                     if crate::batch::secret_scan::scan_file_content("", key.as_bytes()).is_some() {
                         continue;
