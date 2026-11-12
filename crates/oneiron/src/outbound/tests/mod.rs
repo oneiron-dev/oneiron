@@ -279,16 +279,16 @@ impl LinkedInSandboxHostHarness for RecordingLinkedInSandboxHarness {
 }
 
 fn linkedin_adapter() -> crate::Result<LinkedInMcpConnectorAdapter> {
-    LinkedInMcpConnectorAdapter::new("linkedin:member:yura")?
-        .with_session_ref("linkedin:session:yura:tokyo-sandbox")
+    LinkedInMcpConnectorAdapter::new("linkedin:member:yuki")?
+        .with_session_ref("linkedin:session:yuki:tokyo-sandbox")
 }
 
 fn linkedin_sandbox_host() -> crate::Result<LinkedInSandboxHostConfig> {
     LinkedInSandboxHostConfig::new(
-        "linkedin:seat:yura",
-        "sandbox:tokyo:yura",
-        "browser-profile:linkedin:yura",
-        "vault-secret:linkedin:yura:session-cookie",
+        "linkedin:seat:yuki",
+        "sandbox:tokyo:yuki",
+        "browser-profile:linkedin:yuki",
+        "vault-secret:linkedin:yuki:session-cookie",
     )
 }
 

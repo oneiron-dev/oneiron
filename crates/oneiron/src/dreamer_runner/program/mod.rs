@@ -46,10 +46,14 @@ mod project;
 mod read;
 mod rebind;
 mod release;
+#[cfg(feature = "sync")]
+pub(crate) mod replica;
 mod resume;
 mod run;
 mod stop_recovery;
 mod stop_sends;
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_hooks;
 mod trigger;
 mod types;
 mod wake;
@@ -110,7 +114,8 @@ pub(crate) use self::wake::{
 pub(crate) use self::withdrawn::is_withdrawal_refusal;
 
 use self::types::{
-    TurnProgramAdmissionRecord, TurnProgramArming, TurnProgramAttemptStamp, TurnProgramWake,
+    TurnProgramAdmissionRecord, TurnProgramArming, TurnProgramAttemptStamp, TurnProgramDisarm,
+    TurnProgramWake,
 };
 
 /// One armed program, keyed by its actor, then its registration.
@@ -122,6 +127,14 @@ const ADMISSION: SideTable<[u8; 32], TurnProgramAdmissionRecord, Named> =
 /// The waking actor one program attempt runs as, keyed by attempt.
 const ATTEMPT: SideTable<AttemptId, TurnProgramAttemptStamp, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ATTEMPT);
+/// One wake the elected home decided on another machine, keyed by the turn,
+/// then the registration it woke: the admission's identity (FIX 5266).
+const DECIDED: SideTable<(EntityId, EntityId), [u8; 32], Named> =
+    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_DECIDED);
+/// One disarm this machine knows, keyed by its actor, then its registration
+/// (FIX 5266).
+const DISARMED: SideTable<(EntityId, EntityId), TurnProgramDisarm, Named> =
+    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_DISARMED);
 /// One owed wake, keyed by the turn, then the registration it woke.
 const WAKE: SideTable<(EntityId, EntityId), TurnProgramWake, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_WAKE);

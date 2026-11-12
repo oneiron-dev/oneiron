@@ -59,8 +59,8 @@ pub(super) fn with_workspace_authority<T>(
     })
 }
 
-/// Step 1: check every referenced entity kind, anchor the house mind to the
-/// workspace `ORG`, and settle the preset row.
+/// Step 1: check every referenced entity kind and settle the preset row. The
+/// house mind keeps its own anchor (HOUSE-BIND = A).
 pub(super) fn validate_workspace_references(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
@@ -203,18 +203,10 @@ pub(super) fn establish_workspace(
     writer: &WriteActor,
 ) -> Result<()> {
     validate_workspace_references(vault, intent)?;
-    let workspace = &intent.workspace;
-    // The house mind IS the org holding a pen: the seeded row's subject anchor
-    // is what makes that true, and it is the same generic anchor a member actor
-    // uses. Nothing about it is house-specific except which subject it names.
-    ensure_subject_anchor(
-        vault,
-        intent,
-        workspace.house_actor_ref,
-        workspace.org_ref,
-        writer,
-    )?;
-    ensure_preset_row(vault, workspace, writer)
+    // The house agent keeps its own model PERSON anchor (HOUSE-BIND = A): the
+    // stored preset is the statement that it runs the org, and its role in
+    // the org comes with its bind (`house_link`), never with an anchor.
+    ensure_preset_row(vault, &intent.workspace, writer)
 }
 
 /// Step 2: define the member's actor and anchor it to the member `PERSON`.

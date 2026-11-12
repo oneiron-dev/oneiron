@@ -43,6 +43,7 @@ impl RunMediaStep {
             subject: self.subject,
             deadline: None,
             now_ms: self.vault.now_recorded_at().saturating_mul(1_000),
+            spend_scope: None,
         }
     }
 

@@ -763,6 +763,9 @@ fn scrub_for_export(
     let rooms_scrubbed = crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
     // FIX 1794: and their side rows, with an erased thread's facts.
     let room_facts_scrubbed = crate::sync::room_facts::scrub_room_facts(vault, doc, Some(key))?;
+    // FIX 5266: and an erased actor's turn-program rows.
+    let turn_programs_scrubbed =
+        crate::sync::turn_programs::scrub_turn_programs(vault, doc, Some(key))?;
     // FIX 853: and the document quote pins of an erased message or reply,
     // and an erased message's document.
     let document_pins_scrubbed =
@@ -805,6 +808,7 @@ fn scrub_for_export(
         || generations_scrubbed
         || rooms_scrubbed
         || room_facts_scrubbed
+        || turn_programs_scrubbed
         || document_pins_scrubbed
         || message_docs_scrubbed
         || office_proposals_scrubbed

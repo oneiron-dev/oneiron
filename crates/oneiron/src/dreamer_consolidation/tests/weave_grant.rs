@@ -97,7 +97,7 @@ fn a_fresh_vaults_dreamer_is_warm_and_lands_with_no_grant_step() -> Result<()> {
 
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x6c, 1);
-    let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+    let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     enqueue_micro(&vault, "run-fresh", 20)?;
@@ -136,7 +136,7 @@ fn the_owner_grant_lets_a_vault_seeded_without_the_rows_land_its_consolidation()
 
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x6b, 1);
-    let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+    let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     enqueue_micro(&vault, "run-ungranted", 20)?;
@@ -165,7 +165,7 @@ fn the_owner_grant_lets_a_vault_seeded_without_the_rows_land_its_consolidation()
     assert!(vault.dreamer_weave_reach()?.ready());
 
     // A fresh turn after the grant dreams and lands.
-    let later = seed_turn(&vault, &conversation, "user", "call me Oleksii", 40);
+    let later = seed_turn(&vault, &conversation, "user", "call me Owen", 40);
     enqueue_micro(&vault, "run-granted", 41)?;
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &later))]);
     let report = pass(&vault, &backend, node_id, 42)?;
@@ -239,7 +239,7 @@ fn the_strength_archive_is_judged_by_the_dreamers_landing_rows() -> Result<()> {
         authorize_test_inference(&vault)?;
         let node_id = crate::identity::load_or_mint_client_id(&vault)?;
         let conversation = seed_session(&vault, 0x6e, 1);
-        let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+        let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
         let subject = EntityId::now();
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
         enqueue_micro(&vault, "run-strength", 20)?;
@@ -365,7 +365,7 @@ fn the_dreamers_read_key_is_held_to_its_live_grant() -> Result<()> {
     crate::test_util::provision_engine_machines(&vault);
     let dreamer = vault.dreamer_authority()?;
     let conversation = seed_session(&vault, 0x6f, 1);
-    let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+    let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
     let key = crate::claim::ScopedReadActorKey::for_engine_actor(dreamer).expect("dreamer key");
     assert_eq!(key.system_agent_guard(), Some(dreamer.entity_ref()));
     let reads = |vault: &Vault| -> Result<bool> {
@@ -406,7 +406,7 @@ fn the_strength_archive_is_judged_by_a_narrowed_steward_grant() -> Result<()> {
         let full = vault.stand_steward_grant_for_test(dreamer, &STEWARD_VERBS)?;
         let node_id = crate::identity::load_or_mint_client_id(&vault)?;
         let conversation = seed_session(&vault, 0x70, 1);
-        let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+        let turn = seed_turn(&vault, &conversation, "user", "call me Owen", 10);
         let subject = EntityId::now();
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
         enqueue_micro(&vault, "run-steward-strength", 20)?;

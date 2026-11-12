@@ -77,7 +77,7 @@ crate::side_table::side_tables! {
     /// The last site-skill candidate filed for one (site, scope), with its content fingerprint and
     /// source evidence (FIX 7606). Key: hash32 (site) + hash32 (scope).
     COACH_SITE_SKILL_SEEN: VaultMeta b"coach:site_skill_seen:v1:" Named
-        [restore: content] [family: unregistered] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A quick pick that later proved wrong: a case where a person changed an answer the
     /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
     /// (FIX 2437). Key: id16 of the source the host bound the answer to.
@@ -213,6 +213,16 @@ crate::side_table::side_tables! {
     /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
     DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
+    /// One model seat's durable availability row: whether the seat may take work, its
+    /// refusal generation, its latest reset, when it last moved and what moved it. Key: id16.
+    MODEL_SEAT_STATE: VaultMeta b"llm:model_seat_state:v1:" Named Engine
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
+    /// Seats with a reported reset, so the sweep releases what is due. Key: u64be(reset) + id16.
+    MODEL_SEAT_RESET_DUE: VaultMeta b"llm:model_seat_reset_due:v1:" Named Engine
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
+    /// Seat parks by seat, so one available write wakes every park of its seat. Key: id16 + id16.
+    MODEL_SEAT_WAITS: VaultMeta b"llm:model_seat_waits:v1:" Named Engine
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
     DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored [accepts: crate::dreamer_runner::dreamer_parked_accepts_masked]
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
@@ -285,6 +295,19 @@ crate::side_table::side_tables! {
     /// the admission that bound it. Key: id16(attempt).
     DREAMER_TURN_PROGRAM_ATTEMPT: VaultMeta b"dreamer:turn_program:attempt:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// FIX 5266: a turn program wake the elected home decided on another machine: the admission's
+    /// identity, kept so no later landing of the turn wakes the program here again.
+    /// Key: id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_DECIDED: VaultMeta b"dreamer:turn_program:decided:v1:" Named
+        // Restore class: FIX 5266: a wake the home decided elsewhere stays decided, as its
+        // admission does there.
+        [restore: live] [family: structure] [tier: canonical];
+    /// FIX 5266: a turn program this machine knows was disarmed, and when, so an older window's
+    /// arming of it never arms it here again; the ARM entry's scrub clears it.
+    /// Key: id16(actor) + id16(registration).
+    DREAMER_TURN_PROGRAM_DISARMED: VaultMeta b"dreamer:turn_program:disarmed:v1:" Named
+        // Restore class: FIX 5266: a disarm is the actor's standing intent as its arming is.
+        [restore: live] [family: structure] [tier: canonical];
     /// FIX 6062: each try the turn program runtime holds, by its hold's kind, written and deleted
     /// beside its DREAMER_PARKED row. Key: u8(hold) + id16(attempt).
     DREAMER_TURN_PROGRAM_HOLD: VaultMeta b"dreamer:turn_program:hold:v1:" Named Engine

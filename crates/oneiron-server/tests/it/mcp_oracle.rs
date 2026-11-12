@@ -32,8 +32,9 @@ mod cb_x {
         /// Generated tool names, sorted (F17: set-equality with the verb
         /// table — 7 duplicates of one verb must fail).
         generated_tool_names: Vec<String>,
-        /// Hand-written (non-generated) tools in the variant (must be none).
-        hand_written_tools: usize,
+        /// Hand-written (non-generated) tool names in the variant, in
+        /// listing order.
+        hand_written_tools: Vec<String>,
     }
 
     /// ONE-1704 fixture: the verb table is the engine's EXPORTED
@@ -48,21 +49,22 @@ mod cb_x {
 
         let surface =
             oneiron_server::mcp::registered_surface(oneiron_server::mcp::McpSurfaceMode::ToolFirst);
-        let mut generated_tool_names = surface
-            .tool_names()
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        generated_tool_names.sort();
-
-        // Every registered tool on this endpoint is a projection of one
-        // exported row; a hand-written one would be a tool whose name is not
-        // in the exported table.
-        let hand_written_tools = surface
+        // A Verb tool is a projection of one exported row; every other
+        // registered tool on this endpoint is hand-written.
+        let (generated, hand_written): (Vec<_>, Vec<_>) = surface
             .tools()
             .iter()
-            .filter(|tool| !matches!(tool, oneiron_server::mcp::McpEndpointTool::Verb(_)))
-            .count();
+            .copied()
+            .partition(|tool| matches!(tool, oneiron_server::mcp::McpEndpointTool::Verb(_)));
+        let mut generated_tool_names = generated
+            .into_iter()
+            .map(|tool| tool.name().to_owned())
+            .collect::<Vec<_>>();
+        generated_tool_names.sort();
+        let hand_written_tools = hand_written
+            .into_iter()
+            .map(|tool| tool.name().to_owned())
+            .collect::<Vec<_>>();
 
         GeneratedToolVariant {
             verb_table,
@@ -82,19 +84,19 @@ mod cb_x {
         // and `MEMORY_VERBS`, sorted.
         let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
             .iter()
+            .filter(|verb| verb.is_mcp())
             .map(|verb| verb.as_str())
             .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter().copied())
             .map(str::to_owned)
             .collect::<Vec<_>>();
         expected.sort();
-        // 24 since ARCH-0067's 2026-09-22 amendment folded `tasks.check` and
-        // `tasks.expand` into the one `describe` row; 28 since ONE-2563 added
-        // `rooms.render`, `rooms.find`, `rooms.get` and `rooms.trunk`; 40 since
-        // every callable row is a tool (the 12 former `mcp: none` rows).
-        assert_eq!(expected.len(), 40);
+        assert_eq!(expected.len(), variant.verb_table.len());
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
-        assert_eq!(variant.hand_written_tools, 0);
+        // FIX 2653/2896 (#2527): every endpoint, ToolFirst included, also
+        // registers the one hand-written `invoke_action` tool, the MCP door
+        // to `POST /v1/core/actions/{verb}`; nothing else is hand-written.
+        assert_eq!(variant.hand_written_tools, ["invoke_action"]);
     }
 }
 
@@ -181,10 +183,13 @@ impl LlmBackend for OracleCodeBackend {
                     role: LlmMessageRole::Assistant,
                     content: vec![ContentPart::Text {
                         text: "const found = await self.memory.search(\"board\");".to_owned(),
+                        signature: None,
                     }],
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
@@ -318,6 +323,7 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
     > {
         Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
         }))
     }
 
@@ -367,6 +373,9 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             task,
             run_id,
             verbs: Arc::new(OracleNoVerbs),
+            off_record_session: None,
+            consent_origin: None,
+            brief: None,
         })
         .await
         .expect("the durable run enters");
@@ -381,6 +390,9 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             task,
             run_id,
             verbs: Arc::new(OracleNoVerbs),
+            off_record_session: None,
+            consent_origin: None,
+            brief: None,
         })
         .await
         .expect("the persisted run re-enters");

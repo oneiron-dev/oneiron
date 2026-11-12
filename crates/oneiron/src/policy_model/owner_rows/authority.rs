@@ -140,6 +140,21 @@ fn shared_members_with(
     Ok(members)
 }
 
+/// Whether `member` is an AGENT_DEF: a house mind's link to the org it runs
+/// (HOUSE-BIND = A), never a person's membership, even in a census that does
+/// not read PERSON liveness.
+fn member_is_agent_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    member: &EntityId,
+) -> Result<bool> {
+    Ok(
+        crate::ports::EntityStoreRead::port_entity_raw(store, txn, member)?
+            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
+            == Some(crate::registry::ENTITY_TYPE_AGENT_DEF),
+    )
+}
+
 /// The census [`shared_members_with`] reads, before it fails closed on a
 /// shared vault with no live Owner: here such a vault reads with an empty
 /// owner set. A row that does not decode still faults.
@@ -187,6 +202,7 @@ fn shared_members_census_with(
                 .pact_for_grant(&id)
                 .is_none_or(|p| p.status == crate::authority::FederationPactStatus::Active)
             && (!live_persons || person_live(&grant.member_ref)?)
+            && (live_persons || !member_is_agent_in_txn(store, txn, &grant.member_ref)?)
             && crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
         {
             grants.push(grant);
@@ -376,7 +392,8 @@ pub(crate) fn owners_for_store_in_txn(
 }
 
 /// Whether `actor` is a live member of this shared vault whose grant writes
-/// content (an Owner, Admin or Member role; a Viewer, Delegate or Guest reads),
+/// content (an Owner, Deputy, Admin or Member role; a Viewer, Delegate or
+/// Guest reads),
 /// over the same census as [`owners_for_store_in_txn`], each PERSON's
 /// liveness read through the store (FIX 21272). `false` on a personal vault.
 pub(crate) fn is_live_writing_member_for_store_in_txn(
@@ -394,6 +411,7 @@ pub(crate) fn is_live_writing_member_for_store_in_txn(
                 && matches!(
                     grant.role,
                     FederationGrantRole::Owner
+                        | FederationGrantRole::Deputy
                         | FederationGrantRole::Admin
                         | FederationGrantRole::Member
                 )
@@ -440,7 +458,9 @@ pub(super) fn holders_for_in_txn(
     for grant in grants.iter().filter(|g| {
         matches!(
             g.role,
-            FederationGrantRole::Admin | FederationGrantRole::Delegate
+            FederationGrantRole::Deputy
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Delegate
         ) && scope_covers(&g.authority_scope, row_scope)
     }) {
         let Ok(envelope) = &envelope else {
