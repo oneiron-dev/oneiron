@@ -1,8 +1,9 @@
 //! Doors to an exact replay's admission (FIX-LIST
 //! REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG): a runtime whose offers' rests and
 //! the owner's standing quota fallbacks are kept in a vault, the owner's
-//! `use_fallback` choice for each offer of a role's seat, and the admission
-//! of an exact replay of a call of that role, as the replay callers (the
+//! `use_fallback` choice for each offer of a role's seat, an owner's model
+//! manifest pinning every role to one model, and the admission of an exact
+//! replay of a call of that role, as the replay callers (the
 //! code-fix exact replay, the contribution fork, the audit judge and the
 //! shadow arm) ask it.
 
@@ -69,6 +70,65 @@ pub fn keep_owner_fallback(
         .ok_or_else(|| oneiron::Error::InvalidConfig(format!("no seat serves {role:?}")))?;
     seat.ladder
         .keep_owner_fallback_for_each_offer(fallback.as_str())
+}
+
+/// Pins every role of `vault`'s model manifest to `model` on the LLM slot at
+/// `route`, its extraction teacher probe-approved, as an owner pins one. The
+/// extraction encoder binds the oneironer slot to `model`'s encoder id.
+///
+/// # Errors
+///
+/// A manifest the vault refuses; the vault's.
+pub fn pin_every_role(vault: &Vault, model: &ModelId, route: ModelLocality) -> oneiron::Result<()> {
+    use oneiron::llm::manifest::{
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot, TeacherProbeApproval,
+    };
+    let encoder = ModelId::new(format!(
+        "{}/{}-encoder@{}",
+        model.provider(),
+        model.name(),
+        model.revision()
+    ))
+    .map_err(|error| oneiron::Error::InvalidConfig(format!("encoder model id: {error:?}")))?;
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                let (model, slot) = if role == ModelRole::ExtractionEncoder {
+                    (encoder.clone(), ModelSlot::Oneironer)
+                } else {
+                    (model.clone(), ModelSlot::Llm)
+                };
+                (
+                    role,
+                    ModelBinding {
+                        model,
+                        slot,
+                        tier: ModelTierRef("pinned".into()),
+                        route_models: BTreeMap::new(),
+                        disposition: None,
+                        reads_audio: false,
+                    },
+                )
+            })
+            .collect(),
+        routes: [
+            (ModelSlot::Llm, route),
+            (ModelSlot::Embedder, ModelLocality::OnDevice),
+            (ModelSlot::Oneironer, ModelLocality::OnDevice),
+        ]
+        .into_iter()
+        .collect(),
+        verdict: None,
+        seat_policy: None,
+    };
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None)?,
+        1_000_000,
+    )?;
+    vault.set_model_manifest_with_teacher_approval(&manifest, &approval)
 }
 
 /// Admits an exact replay of a call of `role` that `model` answered at
