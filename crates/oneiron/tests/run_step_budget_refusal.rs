@@ -28,7 +28,7 @@ use oneiron::llm::model_step::{
     submit_as_run_actor_on_scope,
 };
 use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
-use oneiron::llm::{BudgetGuard, Scope};
+use oneiron::llm::{BudgetGuard, Scope, StepSpendScope};
 use oneiron::run_tree::{RunTreeAdapter, RunTreeNode};
 use oneiron::store::model_step_submission::StepBudgetRefusal;
 use oneiron::task_verb::HostBinding;
@@ -272,6 +272,7 @@ fn a_run_step_a_closed_carve_refuses_shows_its_typed_refusal_in_its_run_tree_and
             .ok_or("the closed carve")?;
         assert_eq!(closed.state, SpendState::Closed, "the carve is closed");
 
+        let spend = StepSpendScope::read_before_guards(&vault, held.scope.clone())?;
         let guard = dispatcher.guard_for_scope(&held.scope)?;
         let backend = NeverBackend {
             calls: AtomicUsize::new(0),
@@ -282,7 +283,7 @@ fn a_run_step_a_closed_carve_refuses_shows_its_typed_refusal_in_its_run_tree_and
             paid_step("refused"),
             &backend,
             &guard,
-            Some(&held.scope),
+            Some(&spend),
         )
         .await?;
         assert_eq!(
