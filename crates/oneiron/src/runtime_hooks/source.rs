@@ -11,8 +11,6 @@ mod schedule;
 mod settlement;
 mod surface_inbound;
 
-use serde::{Deserialize, Serialize};
-
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::ports::{ChangeLogStore, ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -26,7 +24,6 @@ pub(super) use schedule::TickDetails;
 pub(crate) use schedule::{
     index_task_due_in_txn, next_tick_release_at, release_due_ticks, releases_here,
 };
-pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
 pub(crate) use settlement::{record_settlement_in_txn, record_timeout_demotion_in_txn};
 pub(super) use surface_inbound::SurfaceInboundRow;
 pub(crate) use surface_inbound::record_surface_inbound_in_txn;
@@ -52,8 +49,6 @@ pub use oneiron_verb_wire::runtime_hooks::source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SchedulePosition,
     SettlementPosition, SurfaceInboundPosition,
 };
-#[doc(hidden)]
-use oneiron_verb_wire::runtime_hooks::source::{decode_hex, hex_digit, invalid};
 
 /// What the write that made a fact did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

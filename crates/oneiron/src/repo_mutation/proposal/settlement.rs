@@ -10,7 +10,6 @@ use crate::claim::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Result, Vault};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::repo_mutation::proposal::settlement::{

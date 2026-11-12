@@ -15,7 +15,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::learning::{PriorOrigin, TypeRef};
 use crate::learning_setting::{self, SETTING_CATALOG, SettingMode, SettingRow, SettingScope};
 use crate::learning_setting_choice::{self as choice, ChoiceRow, ChoiceValue, SpawnChoice};
-use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+use crate::{EdgeActorClass, EntityId, Result, Vault, WriteActor};
 
 #[doc(hidden)]
 use oneiron_verb_wire::learning_setting_doors::bad;

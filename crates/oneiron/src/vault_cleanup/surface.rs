@@ -1,8 +1,6 @@
 //! Typed owner trigger for the existing archive cron. No cleanup policy lives here.
 
-use serde::{Deserialize, Serialize};
-
-use super::{CleanupCandidate, CleanupKind, CleanupPosture, CleanupRunReport};
+use super::CleanupKind;
 use crate::consent::AuthenticatedOwner;
 use crate::store::attempt_id::AttemptId;
 use crate::{EntityId, Result, Vault};

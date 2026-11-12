@@ -7,8 +7,6 @@
 //! or on a served vault under the owner's proof; a server host runs it for
 //! every due source as the vault's local owner.
 
-use serde::{Deserialize, Serialize};
-
 use super::caldav_calendar::HttpCalDavCalendarWire;
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::google_calendar::HttpGoogleCalendarWire;
@@ -17,11 +15,10 @@ use super::imap::ImapMailWire;
 use super::importer::{MailSyncBudget, MailSyncReport};
 use super::microsoft365::HttpGraphMailWire;
 use super::microsoft365_calendar::HttpGraphCalendarWire;
-use super::pack::require_pack_active_in;
-use super::source::{MailProvider, MailSourceStatus, SOURCES};
+use super::source::MailProvider;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, Vault};
 
 #[doc(hidden)]
 use oneiron_verb_wire::mail_pack::local_sync::MAX_BODIES_PER_STEP;

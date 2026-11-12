@@ -161,21 +161,6 @@ impl From<&ProviderPin> for ProviderPinView {
     }
 }
 
-/// One attempt that launched: durably queued, not necessarily run. Its
-/// state, type stamp and team stamp are its own row's.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LaunchedMember {
-    pub attempt_ref: EntityId,
-    pub state: String,
-    pub type_ref: TypeStamp,
-    /// The team its dispatch froze, which a leader's may predate.
-    #[serde(default)]
-    pub team_ref: Option<String>,
-    /// The caller origin the dispatch froze (FIX 4973): provenance only,
-    /// read from the attempt's own input, never the reading host's.
-    pub caller_origin: crate::agent_dispatch::caller_origin::CallerOrigin,
-}
-
 /// One launched run's agent-run seat, as its choice receipt keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RouteObservation {

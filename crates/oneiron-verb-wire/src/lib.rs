@@ -87,7 +87,6 @@ pub mod store;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod team;
-pub mod temporal;
 pub mod training_pack;
 pub mod vault_cleanup;
 pub mod vault_shape;

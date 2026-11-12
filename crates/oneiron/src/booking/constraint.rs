@@ -12,7 +12,6 @@
 //! [`SolveRequest`] — there is no text field to carry it.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

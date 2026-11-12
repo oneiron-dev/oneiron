@@ -1,7 +1,6 @@
 pub use crate::agent_dispatch::budget_hold::BudgetHoldNotice;
 pub use crate::agent_dispatch::budget_hold::BudgetHoldState;
 pub use crate::agent_dispatch::budget_hold::HeldAttempt;
-pub use crate::agent_dispatch::caller_origin::CallerOrigin;
 pub use crate::agent_dispatch::continuation::ConcernPromptInjectOutcome;
 pub use crate::agent_dispatch::continuation::ConcernPromptInjectRequest;
 pub use crate::agent_dispatch::fanout_statement::ExceptionalWidthCheck;
@@ -23,7 +22,6 @@ pub use oneiron_store::dispatch_attempt_kind::AGENT_DISPATCH_ATTEMPT_TYPE;
 
 pub mod budget_doors;
 pub mod budget_hold;
-pub mod caller_origin;
 pub mod continuation;
 pub mod fanout_statement;
 pub mod launch;

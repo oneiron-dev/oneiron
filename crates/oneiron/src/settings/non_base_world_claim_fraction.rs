@@ -12,11 +12,9 @@
 //! the owner, or a holder of any `engine.controls` class, checked at the read,
 //! as every dial read is (untangle 6.6f; S66F-READ = C).
 
-use serde::{Deserialize, Serialize};
-
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::memory::{Memory, MemoryResult};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::side_table::{self, Named, SideTable};

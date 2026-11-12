@@ -1,8 +1,6 @@
 //! Core half of `store::retrieval_telemetry::types`: its store-layer items live in `oneiron_store::retrieval_telemetry::types` and are
 //! re-exported here; the items below stay in the engine.
 
-pub(crate) use oneiron_store::retrieval_telemetry::types::*;
-
 use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::bytes_to_hex_lower;
@@ -10,7 +8,6 @@ use crate::error::{Error, Result};
 use crate::retrieval_quality::{
     ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
 };
-use crate::store::retrieval_signal::Signal;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;

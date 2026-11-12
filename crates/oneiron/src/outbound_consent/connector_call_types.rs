@@ -13,7 +13,6 @@ use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call_input_resume::ConnectorResumeState;
 use super::result_scrub::OutboundResultSender;
-use super::tool_call::MutationIntent;
 
 #[doc(hidden)]
 use oneiron_verb_wire::outbound_consent::connector_call_types::empty_arguments;

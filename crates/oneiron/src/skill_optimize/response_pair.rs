@@ -9,8 +9,6 @@
 //! again returns it, another one fails. The responses are the receipts' own
 //! results, which never change, so the pick stays bound to what was shown.
 
-use serde::{Deserialize, Serialize};
-
 use super::PreferredResponse;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;

@@ -1,10 +1,5 @@
 //! Research-loop budget configuration, settlement, and refusal values.
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-#[doc(hidden)]
-use oneiron_verb_wire::research_budget::{OVERDRAFT_RECEIPT_DOMAIN, hex_bytes};
 #[doc(hidden)]
 pub use oneiron_verb_wire::research_budget::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,

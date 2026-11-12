@@ -1,6 +1,5 @@
 pub use crate::settings::board_layout::AgentBoardLayoutOverride;
 pub use crate::settings::board_layout::BOARD_LAYOUT_AGENT_OVERRIDES_MAX;
-pub use crate::settings::destination::CallerLocality;
 pub use crate::settings::destination::RecipientChoice;
 pub use crate::settings::destination::RecipientWhy;
 pub use oneiron_store::settings::model_pack;

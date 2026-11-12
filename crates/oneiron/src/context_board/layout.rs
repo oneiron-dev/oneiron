@@ -19,8 +19,6 @@
 //! parsed. Kept rows are matched by the typed ids their producer set.
 
 use super::frame::BoardSection;
-use crate::EntityId;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[doc(hidden)]

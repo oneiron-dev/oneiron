@@ -12,7 +12,6 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
-use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error};

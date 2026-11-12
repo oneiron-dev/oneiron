@@ -11,8 +11,6 @@
 //! still the vault's; once another change moved it, the item asks for a
 //! fresh preview instead, and every completed item keeps its receipt. A
 //! journal written before the pin existed keeps today's reading.
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
 use super::apply::{ShapeApplyItem, ShapeItemState, open};
 use super::live::LiveShape;

@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 
 use heed::RoTxn;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::{DrafterEventKind, DrafterRetrainOutcome, DrafterServing, EVENTS};
 use crate::entity_id::EntityId;

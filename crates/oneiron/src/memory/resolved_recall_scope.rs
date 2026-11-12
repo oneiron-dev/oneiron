@@ -5,8 +5,6 @@
 //! before its candidate cut, inside the caller's own reach. The scope
 //! narrows relevance only: it grants nothing.
 
-use serde::{Deserialize, Serialize};
-
 use crate::entity_id::EntityId;
 
 #[doc(hidden)]

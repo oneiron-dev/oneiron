@@ -1,16 +1,23 @@
 //! The caller origin a dispatch keeps (FIX 4973). This records how the root
 //! reached admission; it never changes authority or where execution reads.
 
-use serde::{Deserialize, Serialize};
-
 use crate::attempt_queue::AttemptId;
 use crate::error::Result;
-use crate::settings::CallerLocality;
 
 use super::AgentDispatcher;
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::agent_dispatch::caller_origin::CallerOrigin;
+/// Root-admission provenance, inherited unchanged by children. The host
+/// supplies connection locality from the actual transport, not guest input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum CallerOrigin {
+    Connection {
+        locality: CallerLocality,
+    },
+    NativeHost,
+    /// A new root for which no producer supplied an origin fact.
+    Unknown,
+}
 
 impl AgentDispatcher<'_> {
     /// A real parent wins even when its frozen value is Unknown. A missing

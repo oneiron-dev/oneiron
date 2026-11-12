@@ -13,5 +13,25 @@ pub use oneiron_contracts::temporal::{
     temporal_phrase_steps,
 };
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::temporal::TemporalAnchorMode;
+/// Temporal anchor intent for bitemporal scoring.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TemporalAnchorMode {
+    Occurred,
+    Learned,
+    Both,
+    #[default]
+    Auto,
+}

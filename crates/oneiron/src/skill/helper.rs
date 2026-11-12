@@ -36,7 +36,7 @@ use crate::write_envelope::WriteActor;
 use super::lifecycle::SkillLifecycle;
 use super::pack_load::skill_loadable;
 use super::record::SkillRecord;
-use super::role::{SkillCallContract, SkillRole};
+use super::role::SkillRole;
 
 pub use super::call::{
     CallableAmendOutcome, CallableAmendReceipt, CallableAmendRequest, amend_callable_case,

@@ -14,7 +14,6 @@
 //! the decision that waits, and the minutes it is shown to cost come from the
 //! judge-calibration policy row. A digest carries it once, paid from the same
 //! funded minutes as the judge asks.
-use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

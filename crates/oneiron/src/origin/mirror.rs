@@ -44,9 +44,6 @@
 //! A mirror whose audience is public or unstated never takes history that
 //! holds a marked live key (FIX 7608 slice 9, `secret_publication`).
 
-use serde::{Deserialize, Serialize};
-
-use super::mirror_auto::OriginMirrorAutomation;
 use super::mirror_census::LfsCensus;
 use super::mirror_run::{MirrorPass, MirrorTrigger};
 use super::mirror_strategy::{
@@ -54,15 +51,12 @@ use super::mirror_strategy::{
 };
 use super::publication::OriginPublicationStatus;
 use super::residence::OriginHostAuthority;
-use super::secret_publication::{
-    RepoDestinationAudience, RepoDestinationVisibility, configured_audience,
-};
+use super::secret_publication::{RepoDestinationVisibility, configured_audience};
 use super::smart_http::origin_repo_dir;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
-use crate::llm::BrokerIsolation;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::code_snapshot::RepoRef;
 

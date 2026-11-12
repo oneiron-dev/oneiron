@@ -2,8 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::{BornWithField, ExportTarget, ExportTravel, travelled_value};
 use crate::federation::FederationGrantScope;
 use crate::{EntityId, Vault};

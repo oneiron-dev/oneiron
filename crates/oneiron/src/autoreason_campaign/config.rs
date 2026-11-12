@@ -13,9 +13,7 @@ use crate::dreamer_tournament::{
     DREAMER_TOURNAMENT_MAX_FANOUT_M, DREAMER_TOURNAMENT_MAX_ROUNDS_K,
     DREAMER_TOURNAMENT_MIN_FANOUT_M,
 };
-use crate::extraction_eval::{
-    Of360DerivationEnvelope, Of360MetricDefinitionSet, of360_metric_definitions,
-};
+use crate::extraction_eval::{Of360MetricDefinitionSet, of360_metric_definitions};
 
 use super::{
     AUTOREASON_CAMPAIGN_ID, AUTOREASON_CAMPAIGN_SCHEMA_VERSION, CampaignError,

@@ -77,7 +77,6 @@ impl SideKey for CritiqueArtifactKey {
 use crate::store::critic_lens::MAX_CONTRACT_BYTES;
 use crate::store::critic_lens::MAX_DOMAIN_BYTES;
 use crate::store::critic_lens::MAX_ID_BYTES;
-use crate::store::critic_lens::MAX_OUTPUT_SCHEMA_BYTES;
 const MAX_ARTIFACT_ID_BYTES: usize = 128;
 const MAX_RUN_ID_BYTES: usize = 128;
 const MAX_CANDIDATE_REF_BYTES: usize = 256;
@@ -91,8 +90,14 @@ const ERASED_CRITIC_REF_PREFIX: &str = "erased:";
 
 pub use crate::store::critic_lens::{CriticLens, LensCatalog, OF366_SEED_LENS_CATALOG_JSON};
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::critic::CritiqueVerdict;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CritiqueVerdict {
+    Accept,
+    Revise,
+    Discard,
+}
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
@@ -504,6 +509,5 @@ pub(crate) mod tables;
 mod validation;
 use self::validation::{
     invalid_critic_config, validate_catalog, validate_critique_artifact, validate_flaw,
-    validate_identifier, validate_lens, validate_provenance, validate_reliability,
-    validate_reliability_table,
+    validate_identifier, validate_provenance, validate_reliability, validate_reliability_table,
 };

@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/dispatch_byoa/owner_doors.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::dispatch_byoa::seat::SkippedRunnerSeat;
 use crate::dispatch_byoa::seat_quota::RunnerSeatQuota;
 use serde::Deserialize;
 use serde::Serialize;
@@ -60,16 +59,4 @@ pub struct SkippedRunnerSeatView {
     pub runner: String,
     /// Why the resume passed it over.
     pub reason: String,
-}
-
-/// The wire views of the seats a resume passed over, in the policy's order.
-pub fn skipped_views(skipped: &[SkippedRunnerSeat]) -> Vec<SkippedRunnerSeatView> {
-    skipped
-        .iter()
-        .map(|skip| SkippedRunnerSeatView {
-            seat: skip.seat,
-            runner: skip.runner.clone(),
-            reason: skip.reason.to_string(),
-        })
-        .collect()
 }

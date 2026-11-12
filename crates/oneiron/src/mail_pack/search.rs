@@ -11,8 +11,6 @@
 //! a mailbox the owner reads; the query and the hits never leave the
 //! mailbox's audience.
 
-use serde::{Deserialize, Serialize};
-
 use super::gmail::{HttpGmailMailWire, reads_google_mail};
 use super::imap::ImapMailWire;
 use super::landing::{LandOutcome, Landing};

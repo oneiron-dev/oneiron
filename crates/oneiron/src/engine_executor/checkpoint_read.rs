@@ -5,8 +5,6 @@
 //! dispatched, and it shows what the existing injector would carry into the
 //! next model context, not that a provider call consumed it.
 
-use serde::{Deserialize, Serialize};
-
 use super::record::parked_wait_at;
 use super::store::{
     RESULT_REPLY_INLINE_BYTES, clean_for_context, load_utf8_output, resumed_output_wait,

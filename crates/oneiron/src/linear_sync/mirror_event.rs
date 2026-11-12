@@ -23,8 +23,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::task_verb::{TaskActor, TaskCallReceipt};
 
-use super::model::{LinearFieldConflict, LinearIssueRef, LinearMirrorReceipt, LinearWriteActor};
-use super::webhook::LinearExternalActor;
+use super::model::{LinearFieldConflict, LinearMirrorReceipt, LinearWriteActor};
 
 #[doc(hidden)]
 pub(crate) use oneiron_verb_wire::linear_sync::mirror_event::EventDirection;

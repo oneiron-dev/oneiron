@@ -27,7 +27,7 @@ use crate::code_sandbox::SandboxCredentialHandle;
 use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::llm::{RetryableLlmError, SpentKind, limit};
+use crate::llm::limit;
 
 use super::connector::{ByoaConnectorSpec, ByoaDispatchOutcome, CliSandboxSpec};
 use super::error::{
@@ -48,14 +48,87 @@ pub const RUNNER_SEAT_DEDUPE_PREFIX: &str = "byoa.seat:";
 /// is at least this, so a small number after a bar is never read as one.
 const MIN_EPOCH_RESET: u64 = 1_000_000_000;
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::dispatch_byoa::seat::{
-    HostedSeatBound, OnSeatSpent, SeatAuth, SeatPassedOver, SeatSpent, SkippedRunnerSeat,
-};
-#[doc(hidden)]
-use oneiron_verb_wire::dispatch_byoa::seat::{
-    OPENAI_CODEX_APP_SERVER, OPENAI_HOSTED_PLAN_APPROVAL, OPENAI_SIGN_IN_WITH_CHATGPT,
-};
+/// Why a login may not run on a hosted node. Each bound names whose it is,
+/// and the same act works self-hosted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HostedSeatBound {
+    /// A provider's terms keep the login off a hosted node until the
+    /// provider approves hosted use.
+    ProviderTerms {
+        vendor: &'static str,
+        terms_ref: &'static str,
+        approval_ref: &'static str,
+    },
+}
+
+impl<'de> Deserialize<'de> for HostedSeatBound {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Wire {
+            ProviderTerms {
+                vendor: String,
+                terms_ref: String,
+                approval_ref: String,
+            },
+        }
+        let Wire::ProviderTerms {
+            vendor,
+            terms_ref,
+            approval_ref,
+        } = Wire::deserialize(deserializer)?;
+        for bound in [OPENAI_CODEX_APP_SERVER, OPENAI_SIGN_IN_WITH_CHATGPT] {
+            let Self::ProviderTerms {
+                vendor: known_vendor,
+                terms_ref: known_terms,
+                approval_ref: known_approval,
+            } = bound;
+            if vendor == known_vendor && terms_ref == known_terms && approval_ref == known_approval
+            {
+                return Ok(bound);
+            }
+        }
+        Err(serde::de::Error::custom("unknown hosted seat bound"))
+    }
+}
+
+impl HostedSeatBound {
+    /// The bound's kind, as a surface projects it.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::ProviderTerms { .. } => "provider_terms",
+        }
+    }
+
+    /// Whether the same act works self-hosted: always, since the bound holds
+    /// only on a hosted node.
+    #[must_use]
+    pub const fn works_self_hosted(&self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Display for HostedSeatBound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProviderTerms {
+                vendor,
+                terms_ref,
+                approval_ref,
+            } => write!(
+                f,
+                "Hosted placement is refused by {vendor}'s provider terms ({terms_ref}); \
+                 required approval: {approval_ref}. The same act works self-hosted."
+            ),
+        }
+    }
+}
 
 /// The exact identity a hosted-login prohibition is keyed by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +161,25 @@ impl<'a> SeatIdentity<'a> {
         }
     }
 }
+
+#[doc(hidden)]
+pub use oneiron_verb_wire::dispatch_byoa::seat::{OnSeatSpent, SeatAuth, SeatSpent};
+
+/// OpenAI's Codex app-server docs: app-server authentication was never
+/// permitted for commercial or hosted services.
+const OPENAI_CODEX_APP_SERVER: HostedSeatBound = HostedSeatBound::ProviderTerms {
+    vendor: "OpenAI",
+    terms_ref: "Codex app-server docs, RESEARCH-0382 O21",
+    approval_ref: OPENAI_HOSTED_PLAN_APPROVAL,
+};
+
+/// OpenAI's Sign in with ChatGPT Terms, and its interest form for a remotely
+/// hosted app.
+const OPENAI_SIGN_IN_WITH_CHATGPT: HostedSeatBound = HostedSeatBound::ProviderTerms {
+    vendor: "OpenAI",
+    terms_ref: "Sign in with ChatGPT Terms and hosted-app interest form, RESEARCH-0382 O5/O9",
+    approval_ref: OPENAI_HOSTED_PLAN_APPROVAL,
+};
 
 /// One hosted-login prohibition: the exact identity it names, its bound,
 /// and the vendor approval that lifts it on a path that carries approvals.
@@ -149,6 +241,56 @@ pub fn hosted_seat_bound(
         .find(|row| row.identity == identity)
         .filter(|row| !approvals.is_some_and(row.lifted_by))
         .map(|row| row.bound)
+}
+
+/// Why a route passed over a seat in the owner's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SeatPassedOver {
+    /// A hosted-only bound keeps the seat's login off this runtime.
+    Hosted(HostedSeatBound),
+    /// The seat's quota view ([`super::runner_seat_quotas`]) shows it spent
+    /// and not back yet (FIX 7453): back at `back_at`, or `None` while it
+    /// waits for the owner.
+    Spent { back_at: Option<u64> },
+    /// A CLI seat, and the work's original request record is erased or
+    /// unreadable, or none was kept (FIX 7449): the seat has no task to run.
+    TaskUnreadable,
+    /// A CLI seat whose argv cannot carry the work's task: a control
+    /// character in it (FIX 7505). Only an ordered
+    /// search passes a seat over for this; an explicit seat keeps its
+    /// refusal.
+    CliArgvShape,
+}
+
+impl std::fmt::Display for SeatPassedOver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hosted(bound) => write!(f, "{bound}"),
+            Self::Spent { back_at: Some(at) } => write!(f, "its quota is spent until {at}"),
+            Self::Spent { back_at: None } => {
+                f.write_str("its quota is spent and waits for the owner")
+            }
+            Self::TaskUnreadable => f.write_str(
+                "the work's task record is erased or unreadable, so this CLI seat has no task",
+            ),
+            Self::CliArgvShape => f.write_str(
+                "this CLI seat's argv cannot carry the work's task (a control character)",
+            ),
+        }
+    }
+}
+
+/// A fallback seat a route passed over, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkippedRunnerSeat {
+    /// The seat's index in the owner's order.
+    pub seat: usize,
+    /// The runner the seat names.
+    pub runner: String,
+    /// Why the route passed it over.
+    pub reason: SeatPassedOver,
 }
 
 /// The passed-over seats in words, for a park reason: empty when none was,

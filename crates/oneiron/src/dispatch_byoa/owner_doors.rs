@@ -29,8 +29,8 @@ use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher};
 use super::error::{ByoaError, ByoaResult};
 use super::exhaust::{ByoaEgressLease, ByoaEgressPort};
 use super::provider::ProviderAdapterRegistry;
-use super::seat::{RunnerSeat, RunnerSeatPolicy, SkippedRunnerSeat};
-use super::seat_quota::{OwnerTopUp, RunnerSeatQuota, seat_quota_in_txn, top_up_seat_quota_in_txn};
+use super::seat::{RunnerSeat, RunnerSeatPolicy};
+use super::seat_quota::{OwnerTopUp, seat_quota_in_txn, top_up_seat_quota_in_txn};
 use super::work_binding::{RunnerSeatChoice, RunnerWorkBindingId};
 use super::work_resume::{ResumeRunnerWork, RunnerWorkResume};
 
@@ -43,8 +43,6 @@ pub struct RunnerSeatQuotasRequest {
     pub seats: Vec<RunnerSeat>,
 }
 
-#[doc(hidden)]
-use oneiron_verb_wire::dispatch_byoa::owner_doors::skipped_views;
 #[doc(hidden)]
 pub use oneiron_verb_wire::dispatch_byoa::owner_doors::{
     RunnerSeatQuotasView, RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt, RunnerWorkResumeChoice,
@@ -146,6 +144,18 @@ impl RunnerWorkResumeView {
             RunnerWorkResume::Gone => Self::Gone,
         }
     }
+}
+
+/// The wire views of the seats a resume passed over, in the policy's order.
+fn skipped_views(skipped: &[SkippedRunnerSeat]) -> Vec<SkippedRunnerSeatView> {
+    skipped
+        .iter()
+        .map(|skip| SkippedRunnerSeatView {
+            seat: skip.seat,
+            runner: skip.runner.clone(),
+            reason: skip.reason.to_string(),
+        })
+        .collect()
 }
 
 /// A resume reaches no endpoint: it only mints the successor attempt row,

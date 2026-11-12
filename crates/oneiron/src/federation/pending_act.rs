@@ -16,9 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 const ACT_PREFIX: &[u8] = b"shared-act:record:v1:";
 const EVENT_PREFIX: &[u8] = b"shared-act:event:v1:";
 #[doc(hidden)]
-pub use oneiron_verb_wire::federation::pending_act::{
-    ActExecution, PendingAuthorityAct, SharedActPrecedence,
-};
+pub use oneiron_verb_wire::federation::pending_act::{ActExecution, SharedActPrecedence};
 #[doc(hidden)]
 use oneiron_verb_wire::federation::pending_act::{DEFAULT_ROW, valid_name};
 #[doc(hidden)]
@@ -220,6 +218,33 @@ impl SharedActPolicy {
             && self.max_act_name_bytes <= parent.max_act_name_bytes
             && self.max_payload_bytes <= parent.max_payload_bytes
     }
+}
+/// The decision is returned as a typed act with its opaque host payload. The host
+/// must route irreversible effects through this door rather than bypassing it.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct PendingAuthorityAct {
+    pub id: String,
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    pub act: String,
+    pub payload: Vec<u8>,
+    pub starter: String,
+    pub started_at: u64,
+    pub deadline: u64,
+    pub objector_roles: Vec<Role>,
+    pub required_verb: String,
+    pub starter_may_object: bool,
+    pub objections: BTreeSet<String>,
+    pub completed: bool,
+    /// The one effect this completed act authorized, once its door claimed it.
+    /// Absent on every act no door has executed, so such a row keeps the bytes
+    /// earlier builds wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ActExecution>,
 }
 /// Durable, recipient-specific notification for a holder at the instant the act starts.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

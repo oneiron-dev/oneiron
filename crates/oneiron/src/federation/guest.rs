@@ -3,9 +3,8 @@
 use rmpv::Value;
 
 use super::codec::encode_msgpack_value;
-use super::grant::{FederationGrantScope, encode_scope};
+use super::grant::encode_scope;
 
-use crate::entity_id::EntityId;
 use crate::error::Result;
 
 /// Current guest-share envelope body schema version.
@@ -40,8 +39,57 @@ const KEY_GUEST_BODY: &str = GUEST_SHARE_ENVELOPE_KEYS[0];
 
 const KEY_GUEST_SIGNATURE: &str = GUEST_SHARE_ENVELOPE_KEYS[1];
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::federation::guest::{GuestShareEnvelope, GuestShareEnvelopeBody};
+/// Canonical, pre-sign guest-share envelope body.
+///
+/// Membership lists, authority rosters, topology summaries, and counts are not
+/// representable in this body. Callers must place only selector-filtered,
+/// redacted update bytes in `update`.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct GuestShareEnvelopeBody {
+    /// Shared-vault scope for the guest share.
+    pub scope: FederationGrantScope,
+    /// Recipient principal for this share.
+    pub member_ref: EntityId,
+    /// Canonical encoded [`crate::sync::SyncSelector`] bytes.
+    pub selector: Vec<u8>,
+    /// Window key addressed by `update`.
+    pub window_key: String,
+    /// Selector-filtered, metadata-stripped Loro update bytes.
+    pub update: Vec<u8>,
+}
+
+impl GuestShareEnvelopeBody {
+    /// Constructs a canonical guest-share envelope body.
+    #[must_use]
+    pub fn new(
+        scope: FederationGrantScope,
+        member_ref: EntityId,
+        selector: Vec<u8>,
+        window_key: impl Into<String>,
+        update: Vec<u8>,
+    ) -> Self {
+        Self {
+            scope,
+            member_ref,
+            selector,
+            window_key: window_key.into(),
+            update,
+        }
+    }
+}
+
+/// Signed guest-share envelope.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct GuestShareEnvelope {
+    /// Body that was signed.
+    pub body: GuestShareEnvelopeBody,
+    /// Caller-provided signature over `encode_guest_share_envelope_body(body)`.
+    pub signature: Vec<u8>,
+}
 
 /// Encodes a guest-share envelope body in canonical MessagePack field order.
 pub fn encode_guest_share_envelope_body(body: &GuestShareEnvelopeBody) -> Result<Vec<u8>> {

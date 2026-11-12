@@ -2,9 +2,7 @@
 //! CALL P1): the opaque placeholder's bytes, the reply descriptor beside a
 //! projected file, and the proof a real-byte file reveal would carry.
 
-use serde::{Deserialize, Serialize};
-
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::secret_custody::RepoFileRevealDelivery;

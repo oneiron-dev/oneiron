@@ -1,12 +1,10 @@
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
+use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteReason;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Vault};
 
 /// Low-disk cleanup targets this many free bytes. The host supplies a real
 /// filesystem observation. Selected text bytes are not filesystem-free bytes.

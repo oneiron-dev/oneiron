@@ -1,20 +1,13 @@
 //! Rule and rule-set types for channel-identity selection law.
 
-use std::cmp::Reverse;
-
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
-use super::selection_resolution::{
-    ChannelIdentitySelectionError, ChannelIdentitySelectionResult, SelectionRuleScope,
-};
-use super::selection_vocabulary::{
-    CHANNEL_IDENTITY_SELECTION_SCHEMA_VERSION, ChannelIdentityFace, RelationshipContext,
-    SelectionRuleWriterKind, is_valid_ref_token,
-};
+use super::selection_resolution::{ChannelIdentitySelectionError, ChannelIdentitySelectionResult};
+use super::selection_vocabulary::SelectionRuleWriterKind;
 
 /// Canonical field order of the persisted rule-set map.
 pub(super) const RULE_SET_KEYS: [&str; 3] = ["schema_version", "revision", "rows"];

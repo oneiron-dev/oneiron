@@ -68,15 +68,35 @@ pub use shared_setup::{ShapeLearningOutcome, ShapeLearningSetting};
 pub use skill::ShapeSkillSource;
 
 use crate::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 #[doc(hidden)]
-use oneiron_verb_wire::vault_shape::invalid;
+pub use oneiron_verb_wire::vault_shape::SHAPE_NAME_MAX_BYTES;
 #[doc(hidden)]
-pub use oneiron_verb_wire::vault_shape::{SHAPE_NAME_MAX_BYTES, ShapeCeiling};
+use oneiron_verb_wire::vault_shape::invalid;
+
+/// An actor's approval ceiling as a seed states it: `auto` lands its writes,
+/// `proposed` holds them for review.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeCeiling {
+    Auto,
+    Proposed,
+}
+
+impl From<crate::store::agent_record::AgentCeiling> for ShapeCeiling {
+    fn from(ceiling: crate::store::agent_record::AgentCeiling) -> Self {
+        match ceiling {
+            crate::store::agent_record::AgentCeiling::Auto => Self::Auto,
+            crate::store::agent_record::AgentCeiling::Proposed => Self::Proposed,
+        }
+    }
+}
 
 impl From<ShapeCeiling> for crate::store::agent_record::AgentCeiling {
     fn from(ceiling: ShapeCeiling) -> Self {

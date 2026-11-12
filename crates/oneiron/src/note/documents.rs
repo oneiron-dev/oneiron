@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::provenance::ActorStamp;
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault};

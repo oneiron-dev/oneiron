@@ -19,8 +19,8 @@ pub use delivery::{
 pub use disclosure::{ReportDisclosureBasis, ReportTextSendBinding};
 pub use routing::{ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature};
 
-use super::{FEEDBACK_REF_MAX_BYTES, FeedbackProposal};
-use crate::{Error, Result};
+use super::FeedbackProposal;
+use crate::Result;
 use serde::{Deserialize, Serialize};
 
 pub const REPORT_VERB: &str = "report";

@@ -9,14 +9,9 @@
 //! RD-18); how the card unfolds is the app's.
 
 use crate::error::Result;
-use crate::lens::{
-    CollectionAtom, GeneratedLens, GeneratedUiCard, LedgerCell, LedgerRowAtom, LensAtom,
-    LensAtomId, LensNode, LensRenderId, LensStatus, LensText, LensTextSpan, StatusDotAtom,
-    TextBlockAtom,
-};
+use crate::lens::{GeneratedLens, GeneratedUiCard, LedgerRowAtom, LensRenderId, StatusDotAtom};
 use crate::vault_shape::{
-    ShapeApplyReceipt, ShapeApplyRun, ShapeChange, ShapeItemClass, ShapeItemState,
-    ShapeLearningOutcome, ShapePlan, ShapePlanSummary,
+    ShapeApplyReceipt, ShapeApplyRun, ShapeLearningOutcome, ShapePlan, ShapePlanSummary,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,8 +20,7 @@ use serde::{Deserialize, Serialize};
 pub use oneiron_verb_wire::genui::shape_plan::ShapePlanCardItem;
 #[doc(hidden)]
 use oneiron_verb_wire::genui::shape_plan::{
-    MAX_CARD_TEXT_BYTES, cell, change_word, conversation_learning_text, lens_text, sheet, standing,
-    text_block,
+    cell, change_word, conversation_learning_text, lens_text, sheet, standing, text_block,
 };
 
 /// The plan card.

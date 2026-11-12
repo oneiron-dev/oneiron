@@ -3,8 +3,33 @@
 
 pub use oneiron_store::attempt_run_signal::*;
 
-use crate::store::attempt_cancel::CancelStanding;
-use serde::{Deserialize, Serialize};
+/// No answer variant grants effect confirmation: that remains at the
+/// authenticated effect/consent door, not at this message transport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum RunSignalKind {
+    Steer {
+        instruction: String,
+    },
+    Interject {
+        content: String,
+    },
+    Cancel {
+        standing: CancelStanding,
+        reason: Option<String>,
+    },
+    AskAnswer {
+        handle: String,
+        who: String,
+        answer: String,
+        kind: RunAskAnswerKind,
+    },
+}
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::store::attempt_run_signal::{RunBranchSignal, RunSignalKind};
+/// A per-branch idempotency receipt, kept after consumption for retry replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RunBranchSignal {
+    pub key: String,
+    pub actor: String,
+    pub kind: RunSignalKind,
+    pub state: RunSignalState,
+}

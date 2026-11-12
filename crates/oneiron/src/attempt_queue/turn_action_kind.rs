@@ -1,7 +1,5 @@
 //! Action discriminator and kind of a queued conversation turn action.
 
-use serde::{Deserialize, Serialize};
-
 /// The attempt kind a host's turn-action worker claims.
 pub const TURN_ACTION_ATTEMPT_KIND: &str = "conversation.turn_action";
 

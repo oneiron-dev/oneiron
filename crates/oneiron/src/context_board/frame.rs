@@ -11,7 +11,6 @@
 use super::one_line_token;
 use super::tasks::{TasksSection, fits_row};
 use crate::tokenizer::count_context_pack_tokens;
-use serde::{Deserialize, Serialize};
 
 /// Canonical Phase-A legend copy (ARCH-0067 §1). Hardcoded protocol text: no
 /// configuration seam may omit or rewrite it, and localization is out of scope.

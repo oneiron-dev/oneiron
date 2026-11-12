@@ -18,19 +18,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    SkillRevisionRef, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
-    store_team_type_tree, team_shape_skill_in_force_in_txn,
+    load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, store_team_type_tree,
+    team_shape_skill_in_force_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
 use crate::memory::{MemoryError, MemoryResult};
-use crate::model_decision::{DecisionRung, ProviderPin};
 use crate::receipt::task_type_ref::TypeRef;
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
 use crate::team::team_shape::CoordinationPattern;
-use crate::team::{PatternSkillRef, SpawnErasure, SpawnPhase, TeamAxis, TeamPattern};
+use crate::team::{SpawnErasure, SpawnPhase, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
-use oneiron_model::llm::ReasoningEffort;
 
 pub use spawn::{SpawnAskKnob, SpawnIntentReply, SpawnIntentRequest, spawn_as_owner};
 
@@ -44,10 +42,10 @@ const STRUCTURE_FIX: &str = "Author one root node `root` with no parent, unique 
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::team::doors::{
-    BorrowedCellView, CriticAssociation, CriticObservation, LaunchedMember, LearningCellView,
-    LearningEvidenceView, LearningObservation, ObservationIssue, PlannedSpawnRead, ProviderPinView,
-    RouteObservation, SkillRevisionView, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin,
-    TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TypeStamp,
+    BorrowedCellView, CriticAssociation, CriticObservation, LearningCellView, LearningEvidenceView,
+    LearningObservation, ObservationIssue, PlannedSpawnRead, ProviderPinView, RouteObservation,
+    SkillRevisionView, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin, TaskTypeTreePinReceipt,
+    TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TypeStamp,
 };
 
 impl From<&TaskTypeRef> for TypeStamp {
@@ -145,6 +143,21 @@ pub struct PlanObservation {
     #[serde(default)]
     pub rung_skill: Option<SkillRevisionView>,
     pub rung_providers: Vec<ProviderPinView>,
+}
+
+/// One attempt that launched: durably queued, not necessarily run. Its
+/// state, type stamp and team stamp are its own row's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LaunchedMember {
+    pub attempt_ref: EntityId,
+    pub state: String,
+    pub type_ref: TypeStamp,
+    /// The team its dispatch froze, which a leader's may predate.
+    #[serde(default)]
+    pub team_ref: Option<String>,
+    /// The caller origin the dispatch froze (FIX 4973): provenance only,
+    /// read from the attempt's own input, never the reading host's.
+    pub caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
 /// The team the frozen plan resolved to, given only when the one team the

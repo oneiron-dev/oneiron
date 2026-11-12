@@ -3,8 +3,6 @@
 //! separate from the signed born-with [`super::TravelChoice`] (OF-491),
 //! whose authority actions and meet stay as they are.
 
-use serde::{Deserialize, Serialize};
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::share_travel::copy::{CopyRefs, CopyTravelChoice};
 

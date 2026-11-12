@@ -85,8 +85,5 @@ pub struct RecallExecution<'a> {
     pub render_budget: Option<usize>,
 }
 
-use crate::store::RetrievalTurn;
-use serde::{Deserialize, Serialize};
-
 #[doc(hidden)]
 pub use oneiron_verb_wire::retrieval_depth::controls::RecallTelemetry;

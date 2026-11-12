@@ -27,7 +27,6 @@ use crate::memory::HostWriteOrigin;
 use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
-use serde::{Deserialize, Serialize};
 
 use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
 

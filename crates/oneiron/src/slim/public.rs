@@ -1,10 +1,6 @@
 //! Typed lifecycle observations and completion receipts over the SLIM controller.
-use serde::{Deserialize, Serialize};
 
-use super::{
-    HeapDropReport, InboundResumeOutcome, JournaledResumeStep, ShedBlocker, ShedCause, ShedOutcome,
-    SlimResidue, SlimState,
-};
+use super::{InboundResumeOutcome, JournaledResumeStep, ShedOutcome, SlimResidue, SlimState};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;

@@ -1,7 +1,6 @@
 pub use crate::team::doors::BorrowedCellView;
 pub use crate::team::doors::CriticAssociation;
 pub use crate::team::doors::CriticObservation;
-pub use crate::team::doors::LaunchedMember;
 pub use crate::team::doors::LearningCellView;
 pub use crate::team::doors::LearningEvidenceView;
 pub use crate::team::doors::LearningObservation;

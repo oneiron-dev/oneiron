@@ -1,8 +1,6 @@
 //! Host-injected HyDE query-expansion seam.
 
-use std::collections::BTreeMap;
-
-use crate::{EntityId, Error, Result};
+use crate::{Error, Result};
 
 pub mod host;
 

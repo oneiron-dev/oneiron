@@ -92,8 +92,6 @@ pub use oneiron_store::writer_lease::VaultWriterLease;
 
 pub mod agent_refusal;
 pub mod attempt_cancel;
-pub mod attempt_manifest;
-pub mod attempt_run_signal;
 #[cfg(unix)]
 pub mod body_envelope;
 pub mod code_document_receipt;

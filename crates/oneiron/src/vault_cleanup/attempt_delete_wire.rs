@@ -2,9 +2,6 @@
 //! Preview describes one row; confirm checks its exact row and archive mark,
 //! current authority and all deletion effects in a single write transaction.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
 use super::attempt_delete_authority::require_delete_in_txn;
 use super::attempt_delete_receipts::stamp_in_txn;
 use super::marks::{self, CleanupMark};

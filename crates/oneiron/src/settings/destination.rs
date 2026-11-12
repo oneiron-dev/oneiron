@@ -21,8 +21,21 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::authority::WorldPrivacyView;
 use oneiron_base::machine_destination::{Destination, EffectiveRead, PeerMachine};
-#[doc(hidden)]
-pub use oneiron_verb_wire::settings::destination::{CallerLocality, RecipientChoice, RecipientWhy};
+/// Where a read's caller sits relative to this device (DEC-0005). Only the
+/// host decides it, from the connection the caller reached it on; nothing the
+/// caller sends sets it. A device that forwards its caller's search to the
+/// home states it there, signed with the request (FIX 3550).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CallerLocality {
+    /// On this device: the embedded host, or a caller on its local socket or
+    /// loopback.
+    OnDevice,
+    /// Anywhere else.
+    OffDevice,
+}
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -81,6 +94,9 @@ pub(crate) fn withheld_worlds_in(
     }
     Ok(withheld)
 }
+
+#[doc(hidden)]
+pub use oneiron_verb_wire::settings::destination::{RecipientChoice, RecipientWhy};
 
 /// The owner's world recipient choice keeping a world from a destination
 /// (L11-B (B)): named as his choice, and content-free, so a refusal that

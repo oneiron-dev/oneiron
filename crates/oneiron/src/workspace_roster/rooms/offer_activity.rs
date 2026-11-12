@@ -14,11 +14,8 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::TURNS;
 use super::offer_history::{OFFER_ROWS, OfferRow, live_offer};
-use super::offer_settle::OfferAnswer;
 use super::offers::{
     OFFER_CURRENT, OFFERS, OfferBallot, OfferCard, OfferState, StoredOffer, current_key,
     is_offer_id, room_wide_prefix,

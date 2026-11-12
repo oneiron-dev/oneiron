@@ -2,7 +2,6 @@
 //! the erase that takes it with the PERSON. Run admission
 //! (`llm::run_admission::person_billing`) files and reads the row; the row's
 //! side-table declaration names its erase hook.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;

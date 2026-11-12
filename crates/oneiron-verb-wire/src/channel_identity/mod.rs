@@ -1,7 +1,3 @@
-pub use crate::channel_identity::binding::ChannelIdentityFulfillment;
-pub use crate::channel_identity::custody::DelegatedGrant;
-pub use crate::channel_identity::custody::DelegatedGrantScope;
-pub use crate::channel_identity::lifecycle::ChannelIdentityState;
 pub use oneiron_authority::channel_address::AssignmentAddress;
 pub use oneiron_authority::channel_address::AssignmentKey;
 pub use oneiron_authority::channel_address::ChannelKey;
@@ -33,6 +29,4 @@ pub use oneiron_store::write_envelope::channel_identity::keys::PREDICATE_CHANNEL
 pub use oneiron_store::write_envelope::channel_identity::keys::SUBJECT_CLASS_SELF_HELD;
 pub use oneiron_store::write_envelope::channel_identity::keys::WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE;
 
-pub mod binding;
 pub mod custody;
-pub mod lifecycle;

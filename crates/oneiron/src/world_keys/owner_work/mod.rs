@@ -61,7 +61,6 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome,
-    OwnerWorkRefusal,
 };
 use oneiron_authority::authority::CustodyRegisterCheck;
 

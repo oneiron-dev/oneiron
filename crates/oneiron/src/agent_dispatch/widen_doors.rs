@@ -8,8 +8,6 @@
 //! [`AgentDispatcher::decline_context_widen`]): the owner of the board's
 //! TASK, a live human, and the immediate board above.
 
-use serde::{Deserialize, Serialize};
-
 use super::AgentDispatcher;
 use super::codec::{agent_dispatch_actor, record_dispatch_input};
 use super::widen_record::{

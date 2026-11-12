@@ -8,7 +8,6 @@ use crate::entity_id::EntityId;
 use crate::llm::manifest::{ModelBinding, ModelRole};
 use crate::llm::run_admission::{BudgetLine, LeaseUnit, Payer};
 use crate::llm::{ModelId, ModelLocality};
-use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 
 use super::TrainingTarget;

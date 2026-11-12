@@ -1,11 +1,6 @@
 pub use crate::federation::agent_grant::grantless::AgentGrantFromSlipUnchangedReason;
-pub use crate::federation::grant::FederationGrantRole;
-pub use crate::federation::grant::FederationGrantScope;
-pub use crate::federation::guest::GuestShareEnvelope;
-pub use crate::federation::guest::GuestShareEnvelopeBody;
 pub use crate::federation::org_admin::OrgAdminError;
 pub use crate::federation::pending_act::ActExecution;
-pub use crate::federation::pending_act::PendingAuthorityAct;
 pub use crate::federation::pending_act::SharedActPrecedence;
 pub use crate::federation::pending_act::policy_change::SharedActPolicyChangeState;
 pub use crate::federation::relationships::MemberRelationship;
@@ -46,9 +41,6 @@ pub use oneiron_store::world_registration_keys::FEDERATION_STALE_KEY_PREFIX;
 pub use oneiron_store::world_registration_keys::FEDERATION_WORLD_KEY_PREFIX;
 
 pub mod agent_grant;
-pub mod grant;
-pub mod guest;
 pub mod org_admin;
 pub mod pending_act;
 pub mod relationships;
-pub mod vault_id_decimal;
