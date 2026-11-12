@@ -271,6 +271,11 @@ pub async fn run_task_realize(
             return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
+        // A spend scope refused the step for good: the try ends Failed,
+        // typed, settling what it spent with its paid steps.
+        Err(other @ DurableStepError::BudgetRefused(_)) => {
+            return Ok(charges.end_on_step_error(&other.to_string(), &other));
+        }
         // A failed call's paid usage has no terminal step: it is handed
         // to the driver's settlement with the park (FIX 11554).
         Err(other) => {

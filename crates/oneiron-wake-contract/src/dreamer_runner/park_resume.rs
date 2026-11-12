@@ -122,7 +122,7 @@ pub enum ParkResumer {
     FeedbackTriage,
     /// The vault's owner releases a park that waits on an owner act and that no other resumer frees (WAKE-D1).
     OwnerRelease,
-    /// A top-up of the spend scope a budget wait names; it wakes the park's trap.
+    /// A top-up of the spend scope a budget wait, or a pass budget wait, names; it wakes the park's trap.
     BudgetTopUp,
     /// The durable seat-available write of the seat a seat wait names; it resumes that seat's parks in its own write.
     SeatAvailable,
@@ -173,7 +173,7 @@ impl ParkResume {
     /// | DrafterTrained | any | DrafterRetrain |
     /// | FeedbackTriage | any | FeedbackTriage |
     /// | OwnerRelease | ExecutorError, Other | DreamerServer, AgentRuns, Workflows, Other |
-    /// | BudgetTopUp | none here: only [`Self::admits_wait`] admits it, for a Budget wait on a Trap park | none |
+    /// | BudgetTopUp | none here: only [`Self::admits_wait`] admits it, for a Budget or PassBudget wait on a Trap park | none |
     /// | SeatAvailable | none here: only [`Self::admits_wait`] admits it, for a Seat wait | none |
     /// | PassStart | none here: only [`Self::admits_wait`] admits it, for a PassBudget wait on a Trap park | none |
     ///
@@ -182,7 +182,7 @@ impl ParkResume {
     /// | wait | resumers for every cause | owners |
     /// |---|---|---|
     /// | Budget | BudgetTopUp, TrapConsume, OwnerRelease | Trap |
-    /// | PassBudget | PassStart, TrapConsume, OwnerRelease | Trap |
+    /// | PassBudget | PassStart, BudgetTopUp, TrapConsume, OwnerRelease | Trap |
     /// | Consent, Peer, Human | TrapConsume through the wait's own delivery | Trap; none for other owners |
     /// | Seat | SeatAvailable, OwnerRelease | any |
     ///
@@ -250,8 +250,9 @@ impl ParkResume {
     /// Without a wait (`None`) this is [`Self::admits`], except `BudgetTopUp`, `SeatAvailable` and
     /// `PassStart`, which resume nothing: an untyped park waits on no scope, seat or pass. With a
     /// `Budget` wait under a `Trap` owner, only `BudgetTopUp`, `TrapConsume` and `OwnerRelease`
-    /// admit; with a `PassBudget` wait under a `Trap` owner, only `PassStart`, `TrapConsume` and
-    /// `OwnerRelease`. The owner's release wakes the park's trap, or stops its try (D2,
+    /// admit; with a `PassBudget` wait under a `Trap` owner, only `PassStart`, `BudgetTopUp`,
+    /// `TrapConsume` and `OwnerRelease` (a top-up wakes only a pass budget wait that names its
+    /// scope, B3). The owner's release wakes the park's trap, or stops its try (D2,
     /// BUDGET-TRAP-UNTYPED-NO-SENDER). Other owners keep the untyped rules; the writer refuses
     /// typed waits on those owners. A later pass, a boot recovery, an outage sweep or a
     /// provider recovery must never blind-retry a park that waits on a scope refill (constraint
@@ -291,11 +292,14 @@ impl ParkResume {
                     Self::admits(cause, owner, resumer)
                 }
             }
+            // A pass budget wait that names a spend scope (a free-time item's) is also woken by a
+            // top-up of that scope; a top-up's scan matches only the scope the park names.
             Some(DreamerParkWaitClass::PassBudget) => {
                 if matches!(owner, ParkOwnerClass::Trap) {
                     matches!(
                         resumer,
                         ParkResumer::PassStart
+                            | ParkResumer::BudgetTopUp
                             | ParkResumer::TrapConsume
                             | ParkResumer::OwnerRelease
                     )
@@ -1002,6 +1006,7 @@ mod tests {
                         matches!(
                             resumer,
                             ParkResumer::PassStart
+                                | ParkResumer::BudgetTopUp
                                 | ParkResumer::TrapConsume
                                 | ParkResumer::OwnerRelease
                         )
@@ -1056,14 +1061,15 @@ mod tests {
                     );
                 }
             }
-            // Each sender wakes only its own class.
+            // A pass start wakes no scope's wait; a top-up may wake a pass budget wait, whose
+            // scope its scan matches (a free-time item's step, B3).
             assert!(!ParkResume::admits_wait(
                 cause,
                 ParkOwnerClass::Trap,
                 Some(DreamerParkWaitClass::Budget),
                 ParkResumer::PassStart
             ));
-            assert!(!ParkResume::admits_wait(
+            assert!(ParkResume::admits_wait(
                 cause,
                 ParkOwnerClass::Trap,
                 Some(DreamerParkWaitClass::PassBudget),

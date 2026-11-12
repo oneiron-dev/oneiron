@@ -369,6 +369,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 }
                 return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
             }
+            // A spend scope refused the step for good: the try ends Failed,
+            // typed, settling what it spent with its paid steps.
+            Err(other @ DurableStepError::BudgetRefused(_)) => {
+                return Ok(charges.end_on_step_error(&other.to_string(), &other));
+            }
             // Parks Retry unless only an owner act clears it (FIX 7369).
             // A failed call's paid usage has no terminal step: it is handed
             // to the driver's settlement with the park (FIX 11554).

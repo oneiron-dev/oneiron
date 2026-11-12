@@ -228,6 +228,7 @@ fn owner_not_live(
         reason: crate::authority::OWNER_NOT_LIVE.to_owned(),
         completed_units,
         budget_refusal: None,
+        step_bindings: Vec::new(),
     }
 }
 
@@ -251,6 +252,7 @@ fn withdrawn(
         reason: reason.to_owned(),
         completed_units,
         budget_refusal: None,
+        step_bindings: Vec::new(),
     }
 }
 
@@ -557,6 +559,18 @@ fn settle(
                     reason: TRAPPED_REASON.to_owned(),
                     cause: DreamerParkCause::Signal,
                 },
+                // A step its meter can never fit, or a spend scope, refused
+                // for good: the try ends Failed, typed, with what it spent
+                // and its paid steps (BUDGET-TRAP-UNTYPED-NO-SENDER). It never
+                // checkpoint-parks to meet the same refusal each pass.
+                Some(SeamStop::BudgetRefused { reason, refusal }) => {
+                    DreamerAttemptExecution::Failed {
+                        reason,
+                        completed_units: used,
+                        budget_refusal: Some(refusal),
+                        step_bindings: step_bindings.clone(),
+                    }
+                }
                 // A write's reservation met the owner refusal (FIX 11090).
                 _ if matches!(
                     &error,
@@ -598,7 +612,7 @@ fn settle(
 }
 
 /// Why the program's model seam stopped the run.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum SeamStop {
     /// A step trapped (budget or consent): the step layer parked the try.
     Trapped,
@@ -606,6 +620,12 @@ enum SeamStop {
     Deadline,
     /// A step failed, or could not be bound.
     Failed,
+    /// The step's budget refused it for good, with the step error's text:
+    /// no write refills it, so the try ends Failed.
+    BudgetRefused {
+        reason: String,
+        refusal: crate::store::model_step_submission::StepBudgetRefusal,
+    },
 }
 
 /// The program run's model door: each call the engine executor makes is one
@@ -633,7 +653,10 @@ struct ProgramModelSeam<'s> {
 
 impl ProgramModelSeam<'_> {
     fn stop(&self) -> Option<SeamStop> {
-        *self.stop.lock().unwrap_or_else(PoisonError::into_inner)
+        self.stop
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn step_bindings(&self) -> Vec<StepEffectBinding> {
@@ -770,6 +793,11 @@ impl ProgramModelSeam<'_> {
                 self.note(SeamStop::Failed);
                 Err(error)
             }
+            Some(Err(ref error @ DurableStepError::BudgetRefused(ref refusal))) => Err(self
+                .stopped(SeamStop::BudgetRefused {
+                    reason: error.to_string(),
+                    refusal: refusal.clone(),
+                })),
             Some(Err(_)) | None => Err(self.stopped(SeamStop::Failed)),
         }
     }

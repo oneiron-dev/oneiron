@@ -266,16 +266,14 @@ fn assert_pass_budget_park(
         Some(DreamerParkedWait {
             wait: DreamerParkWait::PassBudget {
                 asked_units: STEP_RESERVE,
+                scope: None,
             },
             lease_generation: row.attempt_count,
         }),
         "a pass step's spent guard parks a pass budget wait asking its reserve"
     );
-    for resumer in [
-        ParkResumer::LaterPass,
-        ParkResumer::BootRecovery,
-        ParkResumer::BudgetTopUp,
-    ] {
+    // A top-up wakes only a pass budget wait that names its scope; this one names none.
+    for resumer in [ParkResumer::LaterPass, ParkResumer::BootRecovery] {
         assert!(
             !park.resumable_by(resumer),
             "a pass budget park admits no {resumer:?}"
