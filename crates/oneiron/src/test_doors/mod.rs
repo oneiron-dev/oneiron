@@ -58,6 +58,7 @@ pub mod source_audience_binding;
 pub mod spend;
 pub mod split_phrase_carrier;
 pub mod steward;
+pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod turn_programs;
 pub mod uncertain_send_questions;
