@@ -9,6 +9,9 @@
 //! A committed release, and a fresh declaration that replaced a held one,
 //! wake the merge queue driver after the commit, so an accepted entry that
 //! waited behind the old declaration stages on its next pass (FIX 4338).
+//! `self.code.symbols.observe` reads the run's own current declaration and
+//! what it waits behind now, and writes nothing (NO-DOOR
+//! SYMBOL-LEASE-OBSERVATION): a renewal is not a read.
 //! The owner's `vault.code.symbols.*` doors are unchanged.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,8 +19,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::work::RepoOwnWork;
 use super::{
     NO_PATHS, RepoRunAnswer, RepoRunBinding, RepoRunStamp, RepoSymbolDeclarationView,
-    RepoSymbolsDeclareInput, RepoSymbolsDeclareOutput, RepoSymbolsReleaseInput,
-    RepoSymbolsReleaseOutput, RepoSymbolsRenewInput, RepoSymbolsRenewOutput, repo_target,
+    RepoSymbolsDeclareInput, RepoSymbolsDeclareOutput, RepoSymbolsObserveInput,
+    RepoSymbolsObserveOutput, RepoSymbolsReleaseInput, RepoSymbolsReleaseOutput,
+    RepoSymbolsRenewInput, RepoSymbolsRenewOutput, repo_target,
 };
 use crate::code_symbol::code_symbol_entity_id;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
@@ -219,6 +223,66 @@ impl Memory<'_> {
                 task: binding.task,
             },
         })
+    }
+
+    /// `self.code.symbols.observe` for a run: its own current declaration
+    /// for its TASK, held or waiting, with the TASKs it waits behind now as
+    /// its lane reads them. The run's membership and lease are judged in the
+    /// read snapshot the declaration is read from, at the vault clock read
+    /// with it. Nothing is written: the id, the expiry and whether it is
+    /// held stay as stored, and no queue entry is woken. A run with no
+    /// current unexpired declaration has a stale lease, as on a renewal.
+    pub fn repo_symbols_observe_for_run(
+        &self,
+        binding: &RepoRunBinding,
+        input: RepoSymbolsObserveInput,
+    ) -> MemoryResult<RepoRunAnswer<RepoSymbolsObserveOutput>> {
+        let own = self.repo_own_work(binding, input.work, NO_PATHS, RepoAccessIntent::Read)?;
+        let target = repo_target(own.stamp.repo, &own.stamp.git_ref, NO_PATHS);
+        let observed = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)?;
+            let now = self.vault.now_recorded_at();
+            match self.vault.readmit_repo_work_in_txn(
+                &txn,
+                binding,
+                &own,
+                &target,
+                RepoAccessIntent::Read,
+            )? {
+                Err(refused) => Err(refused),
+                Ok(()) => match crate::task_verb::run_declaration_in_txn(
+                    self.vault,
+                    &txn,
+                    binding.task,
+                    binding.actor.entity_ref(),
+                    &symbol_run(&own.stamp),
+                    now,
+                )? {
+                    None => Err(RepoAccessRefusal::StaleLease),
+                    Some(lease) if lease.held => Ok((lease, Vec::new())),
+                    Some(lease) => {
+                        let blockers = crate::task_verb::symbol_blockers_in_txn(
+                            self.vault,
+                            &txn,
+                            binding.task,
+                            &lease.symbols,
+                            now,
+                        )?
+                        .into_iter()
+                        .map(|(task, _)| task)
+                        .collect();
+                        Ok((lease, blockers))
+                    }
+                },
+            }
+        };
+        let (lease, blockers) = observed.map_err(super::refusal_error)?;
+        self.repo_declaration_answer(binding, &own, &lease, blockers)
     }
 
     /// The paths of `symbols` in the stored symbol manifest of `repo`: each
