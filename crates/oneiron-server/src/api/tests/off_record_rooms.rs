@@ -822,6 +822,10 @@ async fn a_shared_vaults_member_saves_and_its_viewer_does_not() {
         .vault()
         .initialize_shared_vault(&proof, 42, None, &members, 10)
         .unwrap();
+    // Both invitees accept, so the Viewer's refusal below rests on its role.
+    for invitee in [gil, ana] {
+        accept_founding_invitation(server.vault(), invitee, 42);
+    }
     let (viewer, member) = (slip("gil", gil, "human"), slip("ana", ana, "human"));
 
     start(&server, member.clone(), room, "attic").await;

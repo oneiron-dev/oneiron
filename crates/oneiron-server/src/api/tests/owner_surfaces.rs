@@ -1315,6 +1315,7 @@ async fn two_owners_sending_one_bundle_are_two_sends() {
     vault
         .initialize_shared_vault(&proof, 42, None, &owners, 1)
         .unwrap();
+    accept_founding_invitation(vault, second, 42);
     let recipes = [
         owner_recipe(&server),
         test_bearer(&format!(

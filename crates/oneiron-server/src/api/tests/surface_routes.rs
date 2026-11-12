@@ -1287,7 +1287,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    let creation = server
+    server
         .vault
         .initialize_shared_vault(
             &authenticated_owner,
@@ -1300,6 +1300,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             10,
         )
         .unwrap();
+    let accepted = accept_founding_invitation(&server.vault, member, 42);
     server
         .vault
         .publish_artifact_pointer_with_tier(
@@ -1400,7 +1401,7 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             (missing.0, stable_error(&missing.2))
         );
     }
-    let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
+    let member_grant = oneiron::EntityId::from_hex(&accepted[0]).unwrap();
     let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
     let discarded = route_bytes(
         server.clone(),
@@ -1729,7 +1730,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    let creation = server
+    server
         .vault
         .initialize_shared_vault(
             &authenticated_owner,
@@ -1742,6 +1743,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
             10,
         )
         .unwrap();
+    let accepted = accept_founding_invitation(&server.vault, member, 42);
     let missing = route_bytes(
         server.clone(),
         Request::builder()
@@ -1842,7 +1844,7 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
         )
         .unwrap();
 
-    let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
+    let member_grant = oneiron::EntityId::from_hex(&accepted[0]).unwrap();
     let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
     let blob_discarded = route_bytes(
         server.clone(),
@@ -2177,7 +2179,7 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
             oneiron::store::GateDecisionId::now(),
         )
         .unwrap();
-    let creation = server
+    server
         .vault
         .initialize_shared_vault(
             &authenticated,
@@ -2190,7 +2192,8 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
             10,
         )
         .unwrap();
-    let grant_id = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
+    let accepted = accept_founding_invitation(&server.vault, member, 42);
+    let grant_id = oneiron::EntityId::from_hex(&accepted[0]).unwrap();
     let grant = oneiron::federation::FederationGrant::new(
         oneiron::federation::FederationGrantScope::vault(42),
         member,

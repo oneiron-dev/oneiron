@@ -298,6 +298,33 @@ pub(super) fn seed_companion_profile_targets(
     }
 }
 
+/// Since OF-531 a founding member other than the creator is only invited:
+/// `invitee` accepts its one pending invitation to shared vault `vault_id`.
+/// Returns the member grants the acceptance wrote.
+pub(super) fn accept_founding_invitation(
+    vault: &oneiron::Vault,
+    invitee: oneiron::EntityId,
+    vault_id: u64,
+) -> Vec<String> {
+    let proof = vault
+        .authenticate_owner(
+            invitee,
+            &invitee.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("invitee proof");
+    let mut open = vault
+        .shared_invitations(&proof, vault_id)
+        .expect("invitee's open invitations");
+    assert_eq!(open.len(), 1, "one founding invitation per invitee");
+    let invitation = open.remove(0);
+    vault
+        .accept_shared_invitation(&proof, vault_id, &invitation.id)
+        .expect("accept founding invitation")
+        .grants
+}
+
 pub(super) fn seed_companion_profile_access(
     server: &SyncServer,
     grant_id: oneiron::EntityId,
