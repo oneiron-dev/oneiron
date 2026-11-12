@@ -555,6 +555,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "RETRIEVAL_AGE_BY_RUN",
         "RETRIEVAL_TRACE_KEY_LOCAL",
         "ROOMS_THREAD_CHILDREN",
+        "ROOMS_TURN_BACKFILL",
         "RUN_TREE_ASK_WAIT",
         "SCOPE_RECORD",
         "SCOPE_RECORD_REVISION",

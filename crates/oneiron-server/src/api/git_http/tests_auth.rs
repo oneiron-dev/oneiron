@@ -103,7 +103,10 @@ mod tests {
             oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open vault"),
         );
         let config = secret_config();
-        let pusher = principal();
+        let pusher = vault
+            .ensure_embedded_owner_actor()
+            .expect("embedded owner")
+            .to_hex();
         let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
         let server = Arc::new(
             crate::test_credentials::server_with_fixture_keystore(Arc::clone(&vault), config)

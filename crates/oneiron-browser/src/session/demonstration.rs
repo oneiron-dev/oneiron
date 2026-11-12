@@ -503,6 +503,7 @@ impl BrowserSession {
             after_seq: Some(0),
             through_seq: Some(recording.steps.last().map_or(0, |step| step.seq)),
             past_press: false,
+            type_ref: None,
         };
         let mut draft = self.draft_over(draft, &steps, url)?;
         // A navigation no recorded act made leaves the draft incomplete,

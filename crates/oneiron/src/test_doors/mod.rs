@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod agent_definition_scans;
+pub mod archive_import;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
@@ -41,6 +42,7 @@ pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod retrieval_policy_default_floor;
+pub mod room_turn_backfill;
 pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;
@@ -57,6 +59,8 @@ pub mod turn_programs;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod wake_d1_park_release;
+#[cfg(feature = "sync")]
+pub use crate::sync::connection::sync_outbox;
 
 /// Runs the identity-topology reconcile that a replica's sync ingest runs,
 /// over this vault's own ledger: shell edges, redirects and split assignment

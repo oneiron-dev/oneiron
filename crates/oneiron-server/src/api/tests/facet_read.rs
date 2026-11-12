@@ -29,25 +29,22 @@ struct Room {
 
 fn facets() -> Facets {
     let (_dir, server) = interlocutor_test_server();
-    let owner = seeded_test_entity_id(0x2614_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     // The seeded manifest's agent ceiling names the first-party connector
     // actor; MCP resolves an agent connector only under one.
     let agent = oneiron::EntityId::from_bytes([0xE1; 16]).unwrap();
-    for (id, kind) in [
-        (owner, oneiron::registry::ENTITY_TYPE_PERSON),
-        (agent, oneiron::registry::ENTITY_TYPE_PERSON),
-    ] {
-        server
-            .vault
-            .put_entity(
-                &id,
-                kind,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"person",
-            )
-            .expect("onboard person");
-    }
+    server
+        .vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .expect("onboard person");
     bind_room_owner(&server, owner);
     let room = |seed: u128| {
         let facet = seeded_test_entity_id(seed);

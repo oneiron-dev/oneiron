@@ -164,6 +164,9 @@ impl Vault {
                             vec![INBOX_REASON_BUNDLE_REJECT.to_owned()],
                             Some(bundle_ref.clone()),
                         )? {
+                            // The action the row parked goes with it, as the
+                            // bundle and settle declines cancel theirs.
+                            self.cancel_deferred_claim_in_txn(wtxn, &id)?;
                             if let (Some((actor, target)), Some(reviewed)) =
                                 (learning, reviewed.as_ref())
                             {

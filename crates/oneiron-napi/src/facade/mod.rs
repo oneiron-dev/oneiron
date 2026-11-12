@@ -13,6 +13,8 @@
 
 mod boundary;
 mod bridge;
+#[cfg(test)]
+mod calendar_paging_tests;
 mod client;
 mod convert;
 mod custody_seal;
