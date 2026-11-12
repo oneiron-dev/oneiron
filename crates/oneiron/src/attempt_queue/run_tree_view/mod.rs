@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptInterventionKind, AttemptState};
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 mod wire;
 pub use wire::RunTreeWireError;
@@ -264,6 +265,11 @@ pub struct RunTreeTimestamps {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunTreeFailure {
     pub reason: String,
+    /// The typed refusal of a try a spend scope refused for good
+    /// (BUDGET-TRAP-UNTYPED-NO-SENDER), copied from the failed row beside
+    /// `reason`; `None` for every other failure and on a tree kept before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
 }
 
 /// Lifecycle/operator event for display and API reads.

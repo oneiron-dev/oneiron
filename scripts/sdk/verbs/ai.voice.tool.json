@@ -6,6 +6,7 @@
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.tool\", &input)?",
   "host_door": true,
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

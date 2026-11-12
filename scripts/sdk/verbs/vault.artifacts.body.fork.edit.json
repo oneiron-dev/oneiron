@@ -13,6 +13,7 @@
   "output": "crate::office_body::OfficeBodyEdit",
   "call": "memory.artifacts_body_fork_edit(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

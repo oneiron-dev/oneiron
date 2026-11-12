@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::ParticipantsPage",
   "call": "memory.rooms_participants(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$",
     "room_ref": "=room"

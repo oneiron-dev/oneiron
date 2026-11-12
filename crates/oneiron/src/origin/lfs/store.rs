@@ -370,9 +370,13 @@ impl Vault {
         policy: &dyn LfsPathPolicy,
         intent: &LfsPointerIntent,
     ) -> Result<LfsAdmission> {
+        // A build-required asset is needed wherever the repository builds,
+        // so its pushed pointer keeps its object too (Engine CODECUSTODY-LFS
+        // Q2 = A). The class is still read, so a classifier error refuses.
         Ok(match policy.classify(intent.repo_id, &intent.path)? {
-            LfsAssetClass::RepositoryLarge => LfsAdmission::StoreInLfs,
-            LfsAssetClass::BuildRequired => LfsAdmission::KeepInGit,
+            LfsAssetClass::RepositoryLarge | LfsAssetClass::BuildRequired => {
+                LfsAdmission::StoreInLfs
+            }
         })
     }
 }

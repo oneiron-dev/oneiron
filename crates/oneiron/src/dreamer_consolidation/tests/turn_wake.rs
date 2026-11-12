@@ -143,6 +143,7 @@ fn queued_material_survives_a_restart_once_and_applies_with_its_attempt() -> Res
         lease_owner: OWNER.to_owned(),
         attempt_count: record.attempt_count,
         reason: "fixture failure".to_owned(),
+        budget_refusal: None,
         now: at + 7,
     })?;
     let again = seed_turn(&vault, &session, "user", "The budget is fixed.", at + 8);

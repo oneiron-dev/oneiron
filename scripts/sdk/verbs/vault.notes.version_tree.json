@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteVersionTree>>",
   "call": "memory.note_version_tree(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

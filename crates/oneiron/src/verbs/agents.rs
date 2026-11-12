@@ -7,6 +7,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, TimeRange, Vault};
 
+pub use crate::agent_def::ProposedAgentDefinitionChangeDecision;
 pub use crate::code_run::workflow_operations::{
     AgentCeilingInput, AgentDefinitionSpec, AgentMcpInput, AgentScopeInput, AgentSkillInput,
 };
@@ -131,5 +132,160 @@ pub fn read_agent_definition_as(
     Ok(view(
         input.agent_def_ref,
         &load(vault, input.agent_def_ref)?,
+    ))
+}
+
+/// The owner's approval of one proposed change to a stored definition.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProposedAgentDefinitionChangeApproveRequest {
+    /// The proposal row, as `vault.agents.proposed_changes.list` names it.
+    pub proposal_ref: EntityId,
+    /// The stored definition's version the owner read beside the proposal.
+    /// The approval is refused once the stored definition has moved on.
+    pub expected_target_version: String,
+}
+
+/// The owner's rejection of one proposed change to a stored definition.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProposedAgentDefinitionChangeRejectRequest {
+    /// The proposal row, as `vault.agents.proposed_changes.list` names it.
+    pub proposal_ref: EntityId,
+}
+
+/// Which proposed changes the owner lists.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProposedAgentDefinitionChangesRequest {
+    /// Only the changes proposed to this stored definition; every waiting
+    /// change when absent.
+    #[serde(default)]
+    pub target_ref: Option<EntityId>,
+}
+
+/// One proposed change waiting for the owner, beside the stored definition
+/// it would replace.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProposedAgentDefinitionChangeView {
+    /// The proposal row and the definition it holds.
+    pub proposal: AgentDefinitionView,
+    /// The stored definition it would replace.
+    pub target_ref: EntityId,
+    /// That definition as it stands now; `None` when no row stands there.
+    pub target: Option<AgentDefinitionView>,
+    /// The agent that put the proposal.
+    pub proposed_by: Option<EntityId>,
+    /// The door the proposal was put through.
+    pub proposed_through: Option<String>,
+}
+
+/// The proposed changes waiting for the owner.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProposedAgentDefinitionChanges {
+    pub changes: Vec<ProposedAgentDefinitionChangeView>,
+}
+
+/// What the owner's answer to a proposed change wrote. The proposal row is
+/// deleted; the gate decision at `receipt_ref` records the answer.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProposedAgentDefinitionChangeSettlementView {
+    pub proposal_ref: EntityId,
+    pub target_ref: EntityId,
+    pub decision: ProposedAgentDefinitionChangeDecision,
+    pub proposal_version: String,
+    /// The stored definition's version before the answer; `None` when a
+    /// rejected proposal named a row that no longer stands.
+    pub target_version_before: Option<String>,
+    /// The stored definition as the answer left it; `None` as above.
+    pub target: Option<AgentDefinitionView>,
+    /// The agent that put the proposal.
+    pub proposed_by: Option<EntityId>,
+    /// The door the proposal was put through.
+    pub proposed_through: Option<String>,
+    /// The gate decision that records the answer, as `gate:<id hex>`.
+    pub receipt_ref: String,
+}
+
+fn settlement_view(
+    settlement: crate::agent_def::ProposedAgentDefinitionChangeSettlement,
+) -> ProposedAgentDefinitionChangeSettlementView {
+    let change = settlement.change;
+    ProposedAgentDefinitionChangeSettlementView {
+        proposal_ref: change.proposal,
+        target_ref: change.target,
+        decision: settlement.decision,
+        proposal_version: change.definition.version,
+        target_version_before: settlement.target_version_before,
+        target: settlement
+            .target_after
+            .as_ref()
+            .map(|after| view(change.target, after)),
+        proposed_by: change.proposed_by,
+        proposed_through: change.proposed_through,
+        receipt_ref: settlement.receipt_ref,
+    }
+}
+
+/// `vault.agents.proposed_changes.list`: the proposed changes to stored
+/// definitions waiting for the owner.
+///
+/// # Errors
+///
+/// The owner proof's refusal, and a stored definition that does not decode.
+pub fn list_proposed_agent_definition_changes_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: ProposedAgentDefinitionChangesRequest,
+) -> MemoryResult<ProposedAgentDefinitionChanges> {
+    let changes = vault
+        .proposed_agent_definition_changes_as(owner, input.target_ref.as_ref())?
+        .into_iter()
+        .map(|(change, current)| ProposedAgentDefinitionChangeView {
+            proposal: view(change.proposal, &change.definition),
+            target_ref: change.target,
+            target: current.as_ref().map(|current| view(change.target, current)),
+            proposed_by: change.proposed_by,
+            proposed_through: change.proposed_through,
+        })
+        .collect();
+    Ok(ProposedAgentDefinitionChanges { changes })
+}
+
+/// `vault.agents.proposed_changes.approve`: the stored definition takes the
+/// proposal as its next version, and the proposal row is deleted.
+///
+/// # Errors
+///
+/// The owner proof's refusal; no proposal waiting at `proposal_ref`; a
+/// stored definition no longer at `expected_target_version`; the refusals
+/// the owner's own update of the stored definition meets.
+pub fn approve_proposed_agent_definition_change_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: ProposedAgentDefinitionChangeApproveRequest,
+) -> MemoryResult<ProposedAgentDefinitionChangeSettlementView> {
+    Ok(settlement_view(
+        vault.approve_proposed_agent_definition_change_as(
+            owner,
+            &input.proposal_ref,
+            &input.expected_target_version,
+        )?,
+    ))
+}
+
+/// `vault.agents.proposed_changes.reject`: the stored definition stays as it
+/// is, and the proposal row is deleted.
+///
+/// # Errors
+///
+/// The owner proof's refusal; no proposal waiting at `proposal_ref`.
+pub fn reject_proposed_agent_definition_change_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: ProposedAgentDefinitionChangeRejectRequest,
+) -> MemoryResult<ProposedAgentDefinitionChangeSettlementView> {
+    Ok(settlement_view(
+        vault.reject_proposed_agent_definition_change_as(owner, &input.proposal_ref)?,
     ))
 }

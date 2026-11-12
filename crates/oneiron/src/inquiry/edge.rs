@@ -27,9 +27,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
-    ConnectGrantRequest, FederationDirectionScope, FederationGrantScope, INQUIRE_VERB_CLASS, Scope,
-    ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling, connect_direction_projection,
-    decode_federation_grant_body, require_one_connect_per_peer,
+    ConnectGrantRequest, FederationDirectionScope, FederationGrant, FederationGrantScope,
+    INQUIRE_VERB_CLASS, Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
+    connect_direction_projection, decode_federation_grant_body, require_one_connect_per_peer,
 };
 use crate::receipt::GuestRevokeOutcome;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT};
@@ -186,12 +186,14 @@ fn refused(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())
 }
 
-/// The inquiry edge `grant` names, when it is a live inquiry edge here.
-fn inquiry_edge_in_txn(
+/// The inquiry edge `grant` names, with the grant it decodes from, when it
+/// is a live inquiry edge here. "Live" is the grant's row: its expiry, its
+/// withdrawal and its pact are the caller's to check.
+pub(super) fn inquiry_edge_grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     grant: &EntityId,
-) -> Result<Option<InquiryEdge>> {
+) -> Result<Option<(InquiryEdge, FederationGrant)>> {
     let LiveEntityRow::Live {
         entity_type: ENTITY_TYPE_FEDERATION_GRANT,
         body,
@@ -201,18 +203,28 @@ fn inquiry_edge_in_txn(
     };
     let decoded = decode_federation_grant_body(&body)?;
     let (FederationGrantScope::Connect { peer_vault_id }, Some(terms)) =
-        (decoded.scope, decoded.inquiry_terms)
+        (&decoded.scope, decoded.inquiry_terms)
     else {
         return Ok(None);
     };
-    Ok(Some(InquiryEdge {
+    let edge = InquiryEdge {
         grant: *grant,
-        company_vault_id: peer_vault_id,
+        company_vault_id: *peer_vault_id,
         guest_actor: decoded.member_ref,
-        authority_scope: decoded.authority_scope,
+        authority_scope: decoded.authority_scope.clone(),
         terms,
         expires_at: decoded.expires_at,
-    }))
+    };
+    Ok(Some((edge, decoded)))
+}
+
+/// The inquiry edge `grant` names, when it is a live inquiry edge here.
+pub(super) fn inquiry_edge_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    grant: &EntityId,
+) -> Result<Option<InquiryEdge>> {
+    Ok(inquiry_edge_grant_in_txn(vault, txn, grant)?.map(|(edge, _)| edge))
 }
 
 fn require_inquiry_edge_in_txn(
@@ -222,6 +234,117 @@ fn require_inquiry_edge_in_txn(
 ) -> Result<InquiryEdge> {
     inquiry_edge_in_txn(vault, txn, grant)?
         .ok_or_else(|| refused("that grant is not a live inquiry edge of this vault"))
+}
+
+/// One statement to open in an edge's scope: its new CLAIM's id, the member
+/// it is about, its words (trimmed, not empty) and the claim it was drawn
+/// from.
+pub(super) struct NewScopeItem<'a> {
+    pub(super) claim: EntityId,
+    pub(super) member: EntityId,
+    pub(super) statement: &'a str,
+    pub(super) drawn_from: Option<EntityId>,
+}
+
+/// Writes `item` into `edge`'s opened scope in `txn` at `now`: a new CLAIM
+/// about the member in the opened WORLD, stated by the member, and, when it
+/// was drawn from another claim (live and outside the opened WORLD), the
+/// member-local link to it. The caller checked who opens it and notifies
+/// proactivity after its commit.
+pub(super) fn open_inquiry_scope_item_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    item: &NewScopeItem<'_>,
+    edge: &InquiryEdge,
+    now: u64,
+) -> Result<()> {
+    let opened_world = edge.terms.opened_world;
+    if let Some(source) = item.drawn_from {
+        let source_body = vault
+            .get_claim_in_txn(txn, &source)?
+            .ok_or(Error::EntityNotFound)?;
+        if source_body.lifecycle != ClaimLifecycleStatus::Active
+            || source_body.world == Some(opened_world)
+        {
+            return Err(refused(
+                "an opened statement is drawn from a live claim outside the opened scope",
+            ));
+        }
+    }
+    let mut body = ClaimBody::new(
+        INQUIRY_STATEMENT_PREDICATE,
+        ClaimSubject::Entity(item.member),
+        Value::from(item.statement),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::UserStated);
+    body.world = Some(opened_world);
+    body.scope_facet = vault.default_facet_in_txn(txn)?;
+    body.valid_from = Some(now);
+    vault.put_claim_in_txn(
+        txn,
+        &item.claim,
+        &body,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+    )?;
+    if let Some(source) = item.drawn_from {
+        SCOPE_LINK.put(&vault.store, txn, &item.claim, &source)?;
+        SCOPE_LINK_BY_SOURCE.put(&vault.store, txn, &(source, item.claim), &())?;
+    }
+    Ok(())
+}
+
+/// One live statement of an opened scope, with the body it was read from.
+pub(super) struct OpenedStatement {
+    pub(super) claim: EntityId,
+    pub(super) text: String,
+    pub(super) body: ClaimBody,
+}
+
+/// The live statements of the opened WORLD `world`, in id order: the Active
+/// claims of the statement predicate in that WORLD whose value is text.
+/// Nothing outside the WORLD is read.
+pub(super) fn opened_statements_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+) -> Result<Vec<OpenedStatement>> {
+    let mut statements = Vec::new();
+    let mut after = None;
+    loop {
+        let page = crate::store::claim_projection::claim_ids_for_world_page_in_txn(
+            &vault.store,
+            txn,
+            world,
+            after,
+            SCOPE_PAGE,
+        )?;
+        let Some(last) = page.last().copied() else {
+            return Ok(statements);
+        };
+        for claim in page {
+            let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
+                continue;
+            };
+            let Some(text) = body.value.as_str().map(str::to_owned) else {
+                continue;
+            };
+            if body.lifecycle != ClaimLifecycleStatus::Active
+                || body.predicate != INQUIRY_STATEMENT_PREDICATE
+                || body.world != Some(world)
+            {
+                continue;
+            }
+            statements.push(OpenedStatement { claim, text, body });
+        }
+        after = Some(last);
+    }
 }
 
 /// Drops the link `statement` was opened with, when it has one: when the
@@ -412,47 +535,19 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let member = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let edge = require_inquiry_edge_in_txn(self, txn, &grant)?;
-            let opened_world = edge.terms.opened_world;
-            if let Some(source) = drawn_from {
-                let source_body = self
-                    .get_claim_in_txn(txn, &source)?
-                    .ok_or(Error::EntityNotFound)?;
-                if source_body.lifecycle != ClaimLifecycleStatus::Active
-                    || source_body.world == Some(opened_world)
-                {
-                    return Err(refused(
-                        "an opened statement is drawn from a live claim outside the opened scope",
-                    ));
-                }
-            }
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let mut body = ClaimBody::new(
-                INQUIRY_STATEMENT_PREDICATE,
-                ClaimSubject::Entity(member),
-                Value::from(statement),
-                1.0,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            )?;
-            body.source = Some(ClaimSource::UserStated);
-            body.world = Some(opened_world);
-            body.scope_facet = self.default_facet_in_txn(txn)?;
-            body.valid_from = Some(now);
-            self.put_claim_in_txn(
+            open_inquiry_scope_item_in_txn(
+                self,
                 txn,
-                &claim,
-                &body,
-                TimeRange {
-                    start: now,
-                    end: now,
+                &NewScopeItem {
+                    claim,
+                    member,
+                    statement,
+                    drawn_from,
                 },
+                &edge,
                 now,
-            )?;
-            if let Some(source) = drawn_from {
-                SCOPE_LINK.put(&self.store, txn, &claim, &source)?;
-                SCOPE_LINK_BY_SOURCE.put(&self.store, txn, &(source, claim), &())?;
-            }
-            Ok(())
+            )
         })?;
         self.store.notify_proactivity_changes();
         Ok(InquiryScopeItem {
@@ -507,38 +602,15 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let edge = require_inquiry_edge_in_txn(self, &txn, &grant)?;
-        let mut items = Vec::new();
-        let mut after = None;
-        loop {
-            let page = crate::store::claim_projection::claim_ids_for_world_page_in_txn(
-                &self.store,
-                &txn,
-                edge.terms.opened_world,
-                after,
-                SCOPE_PAGE,
-            )?;
-            let Some(last) = page.last().copied() else {
-                return Ok(items);
-            };
-            for claim in page {
-                let Some(body) = self.get_claim_in_txn(&txn, &claim)? else {
-                    continue;
-                };
-                let Some(statement) = body.value.as_str() else {
-                    continue;
-                };
-                if body.lifecycle != ClaimLifecycleStatus::Active
-                    || body.predicate != INQUIRY_STATEMENT_PREDICATE
-                {
-                    continue;
-                }
-                items.push(InquiryScopeItem {
-                    claim,
-                    statement: statement.to_owned(),
-                    drawn_from: SCOPE_LINK.get(&self.store, &txn, &claim)?,
-                });
-            }
-            after = Some(last);
-        }
+        opened_statements_in_txn(self, &txn, edge.terms.opened_world)?
+            .into_iter()
+            .map(|opened| {
+                Ok(InquiryScopeItem {
+                    claim: opened.claim,
+                    statement: opened.text,
+                    drawn_from: SCOPE_LINK.get(&self.store, &txn, &opened.claim)?,
+                })
+            })
+            .collect()
     }
 }

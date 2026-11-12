@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserDemonstrationStartOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_start(input)?)",
   "scope": "Write",
+  "act_class": "reversible_work",
   "context": "browser",
   "mcp": "none",
   "section": false,

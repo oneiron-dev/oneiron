@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Vec<crate::memory::EdgeProvenanceView>>",
   "call": "memory.edge_provenance(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

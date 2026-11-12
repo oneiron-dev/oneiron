@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>",
   "call": "memory.vector_search_config()?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },
