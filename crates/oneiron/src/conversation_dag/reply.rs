@@ -741,6 +741,10 @@ impl Vault {
             }
             input.advance = false;
             let appended = super::append_in_txn(self, txn, &input, None, true)?;
+            // THREAD-TASK-ONE-SURFACE: in a project room the reply keeps its
+            // room row and stages its wakes in this write, as a witness turn
+            // does.
+            crate::workspace_roster::record_thread_reply_in_txn(self, txn, &input, &appended)?;
             // A nested reply also changes the ancestor trunk's meta line.
             let mut cursor = Some(target);
             let mut visited = HashSet::new();

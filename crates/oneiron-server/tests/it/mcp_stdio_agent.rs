@@ -79,7 +79,7 @@ fn serve(config: &Path, port: u16, log: &Path) -> Server {
         .stdout(Stdio::null())
         .stderr(std::fs::File::create(log).expect("server log file"));
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
-    let url = format!("http://127.0.0.1:{port}/v1/core/facade/receipts");
+    let url = format!("http://127.0.0.1:{port}/v1/core/facade/vault.receipts");
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if let Some(status) = server.0.try_wait().expect("poll oneiron serve") {
@@ -338,18 +338,28 @@ fn output(answer: &Value) -> &Value {
     &answer["result"]["structuredContent"]["output"]
 }
 
+fn claim_scope(subject: &str) -> Value {
+    let person = oneiron::EntityId::from_hex(subject).unwrap();
+    json!({
+        "world_id": oneiron::claim::base_world_id().to_hex(),
+        "scope_facet_id": oneiron::claim::substrate_facet_id(person).unwrap().to_hex(),
+        "scope_relationship_id": "all",
+        "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+    })
+}
+
 /// A new claim about `subject`, with no `id`: the engine mints one.
 fn proposal(subject: &str) -> Value {
     json!({
         "predicate": "note.reviewed", "subject_ref": subject, "value": "worth a second look",
-        "confidence": 0.8, "source": "observed",
+        "confidence": 0.8, "source": "observed", "scope": claim_scope(subject),
     })
 }
 
 fn recall(bridge: &mut Bridge, id: u64, version: &Value) -> Value {
     let (id, params) = tool_call(
         id,
-        "recall",
+        "vault.recall",
         version,
         json!({ "spec": { "query": "Vellichor ferry pier nine", "limit": 10 } }),
     );
@@ -499,7 +509,9 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
-        names.contains("witness") && names.contains("recall"),
+        // ONE-2510 (#1616): every verb sits at its canonical root; the bare
+        // names are gone with no aliases.
+        names.contains("vault.witness") && names.contains("vault.recall"),
         "{names:?}"
     );
     // WHO is the credential's: no tool asks the agent to name an actor.
@@ -507,12 +519,15 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         let required = tool["inputSchema"]["required"].as_array().unwrap();
         assert!(!required.contains(&json!("actor")), "{tool:#}");
     }
-    let witness = tools.iter().find(|tool| tool["name"] == "witness").unwrap();
+    let witness = tools
+        .iter()
+        .find(|tool| tool["name"] == "vault.witness")
+        .unwrap();
     let version = witness["inputSchema"]["properties"]["schema_version"]["const"].clone();
 
     let (id, params) = tool_call(
         3,
-        "witness",
+        "vault.witness",
         &version,
         json!({ "spec": {
             "conversation_ref": "45454545454545454545454545454545",
@@ -539,7 +554,7 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     );
     let (id, params) = tool_call(
         1,
-        "claim_upsert",
+        "vault.claims.upsert",
         &version,
         json!({ "spec": proposal(&principal) }),
     );
@@ -573,9 +588,8 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
             .send()
             .unwrap()
     };
-    let owner_door = signed(
-        reqwest::blocking::Client::new().get(format!("{origin}/api/search/text?query=Vellichor")),
-    );
+    let owner_door =
+        signed(reqwest::blocking::Client::new().get(format!("{origin}/api/entity/{principal}")));
     assert!(
         matches!(owner_door.status().as_u16(), 401 | 403),
         "{}",
@@ -628,9 +642,10 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     ] {
         seen.push_str(&std::fs::read_to_string(dir.path().join(log)).unwrap());
     }
-    let argv = std::fs::read_to_string(&argv_log).expect("curl ran through the wrapper");
-    assert!(argv.contains("--config -"), "{argv}");
-    seen.push_str(&argv);
+    assert!(
+        !argv_log.exists(),
+        "the bridge does not execute curl (OF-601)"
+    );
     seen.push_str(&minted.to_string());
     for secret in [slip_hex, seed] {
         assert!(!seen.contains(secret), "a credential leaked");
@@ -914,6 +929,13 @@ fn answer_fake(
             stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
         }
     }
+    // This endpoint serves HTTP RPC only, not the bridge's default /ws carrier.
+    if request_line.starts_with("GET ") {
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        return;
+    }
     let mut body = vec![0; length];
     reader.read_exact(&mut body).unwrap();
     let request: Value = serde_json::from_slice(&body).unwrap();
@@ -923,7 +945,7 @@ fn answer_fake(
         .push((path.to_owned(), request.clone()));
     let head = |length: usize| {
         format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n"
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
         )
     };
     let reply = match request["method"].as_str() {
@@ -1014,11 +1036,8 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
         fake_mcp_server(Arc::clone(&seen), json!([]), Some(false))
     );
     let env_log = dir.path().join("curl-env.log");
-    let curl_dir = recording_curl(
-        dir.path(),
-        &dir.path().join("curl-argv.log"),
-        Some(&env_log),
-    );
+    let argv_log = dir.path().join("curl-argv.log");
+    let curl_dir = recording_curl(dir.path(), &argv_log, Some(&env_log));
     let mut bridge = Bridge::spawn_with(
         &[
             "--url",
@@ -1031,6 +1050,8 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
             "4",
             "--idle-timeout-secs",
             "1",
+            "--transport",
+            "http",
         ],
         &[
             ("AGENT_SLIP", &token),
@@ -1041,18 +1062,20 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
         &curl_dir,
         &dir.path().join("mcp.stderr"),
     );
-    // Headers and no body: the request's deadline ends it.
+    // Headers and no body: the pooled HTTP client's idle limit ends it.
     let (stalled, took) = ask(&mut bridge, 1, "stall/headers");
     assert_eq!(
         stalled["error"]["data"]["kind"],
         json!("server_unreachable"),
         "{stalled:#}"
     );
-    assert!(
-        stalled["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("within 4s"),
+    assert_eq!(
+        stalled["error"]["message"],
+        json!(format!(
+            "{origin}/mcp/tool-first's answer stalled for 1s (--idle-timeout-secs); \
+             start the vault with `oneiron serve --config <vault-config>` and check \
+             --url matches its host and port; MCP does not start a vault"
+        )),
         "{stalled:#}"
     );
     assert!(took < Duration::from_secs(15), "took {took:?}");
@@ -1129,8 +1152,12 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
         "{last:#}"
     );
 
-    // curl inherited no variable the credential was in, under either name.
-    let env = std::fs::read_to_string(&env_log).expect("curl ran through the wrapper");
+    assert!(
+        !argv_log.exists() && !env_log.exists(),
+        "the bridge does not execute curl (OF-601)"
+    );
+    // Retain every nondisclosure check even though no curl environment exists.
+    let env = std::fs::read_to_string(&env_log).unwrap_or_default();
     for name in [
         "AGENT_SLIP=",
         "AGENT_SEED=",
@@ -1158,6 +1185,7 @@ fn seed_failed_task_and_open_turn(
     let principal = |minted: &Minted| {
         oneiron::EntityId::from_hex(minted.printed["principal_ref"].as_str().unwrap()).unwrap()
     };
+    let vault_path = vault.to_path_buf();
     let vault = oneiron::Vault::open_owned(vault, oneiron::VaultConfig::server()).unwrap();
 
     let created = oneiron::task_verb::sdk::tasks_create(
@@ -1165,6 +1193,13 @@ fn seed_failed_task_and_open_turn(
         oneiron::task_verb::sdk::TaskCreateRequest {
             spec: json!("a task whose run fails"),
             label: None,
+            assignee: None,
+            intent_key: None,
+            brief: None,
+            ttl: None,
+            parent_ref: None,
+            due_at: None,
+            watch: false,
         },
     )
     .unwrap();
@@ -1194,37 +1229,94 @@ fn seed_failed_task_and_open_turn(
         })
         .unwrap();
 
-    // Minting a slip roots the vault in the host key: the owner acts only
-    // once the host has bound it, and a new project needs its signed birth.
-    let host = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        SECRET.as_bytes(),
-    ));
+    // The shipped mints rooted this vault under this install's own host
+    // issuer seed (#4015): their genesis bound the owner, so no hand-signed
+    // bind is needed or possible. The room below is born the way an
+    // owner's tap bears one: a card minted through the public door, signed
+    // by the host for the owner under the loaded issuer.
+    oneiron_server::config::KeystoreConfig::default().install_on(&vault, &vault_path);
     let owner = vault.ensure_embedded_owner_actor().unwrap();
-    bind_owner(&vault, &host, owner);
-    let root = vault.root_project().unwrap();
-    let project = oneiron::EntityId::now();
-    let mut record =
-        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
-    record.roster.extend(
-        std::iter::once(writer)
-            .chain(members.iter().copied())
-            .map(|minted| principal(minted).to_hex()),
-    );
-    vault
-        .create_project_with_owner(
-            project,
-            &record,
-            &oneiron::write_envelope::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
-            1,
-            oneiron::authority::AuthorityKey::Ed25519(host.verifying_key().to_bytes()),
-            |message| {
-                use ed25519_dalek::Signer;
-                Ok(host.sign(message).to_bytes().to_vec())
-            },
+    let issuer = vault.load_host_slip_issuer().unwrap();
+    let project_signer = vault.owner_project_signer(&issuer).unwrap();
+    let owner_proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
         )
-        .expect("the owner's signed project birth");
-    let room = record.home_room.clone();
+        .unwrap();
+    // The mint's source message goes through the witness door, never a raw
+    // put, with a caller-supplied id the card names.
+    let source_message = oneiron::EntityId::now().to_hex();
+    let staged: oneiron::memory::WitnessTurn = serde_json::from_value(json!({
+        "conversation_ref": oneiron::EntityId::now().to_hex(),
+        "occurred_at": unix_seconds_now(),
+        "messages": [{ "id": source_message, "author": "user",
+            "message_type": "text", "content": "Does this sound like a project?",
+            "is_visible": true, "order": 0 }],
+    }))
+    .unwrap();
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .witness(&staged)
+        .expect("the owner stages the card's source message");
+    let leader = oneiron::EntityId::from_hex(
+        &vault
+            .project(vault.root_project().unwrap())
+            .expect("the root project reads")
+            .expect("the root project is stored")
+            .leader,
+    )
+    .unwrap();
+    // The agents sit on the card's board, so the minted roster seats them
+    // in the home room exactly as the old signed birth did.
+    let card = oneiron::genui::ProjectProposalCard::new(
+        "e2e-room-seed-card",
+        owner.to_hex(),
+        source_message,
+        oneiron::genui::ProjectGoalDraft {
+            goal: "Seed a room the agents stand in".to_owned(),
+            why: "The tier and actor promises need a project room".to_owned(),
+            axes: vec!["coverage".to_owned()],
+        },
+        oneiron::genui::ProjectProposalPicks {
+            leader_agent_def_ref: leader.to_hex(),
+            board_human_refs: std::iter::once(owner)
+                .chain(
+                    std::iter::once(writer)
+                        .chain(members.iter().copied())
+                        .map(principal),
+                )
+                .map(|actor| actor.to_hex())
+                .collect(),
+            budget_share_bps: 1200,
+            starting_skill_refs: vec![],
+        },
+    )
+    .expect("the seeding card validates");
+    let tap = oneiron::genui::ConsentActionRequest::new(
+        card.card_id.clone(),
+        oneiron::genui::PROJECT_PROPOSAL_MINT_ACTION_ID,
+        oneiron::genui::ConsentActionKind::ProjectMint,
+        oneiron::genui::ConsentActorIdentity::SurfaceActor {
+            actor_ref: owner.to_hex(),
+        },
+        oneiron::genui::ConsentSurface::Dashboard,
+        unix_seconds_now(),
+    )
+    .expect("the owner's tap validates");
+    let receipt = vault
+        .mint_project_from_card(&card, &tap, &owner_proof, &project_signer)
+        .expect("the owner's card mints the project");
+    let project =
+        oneiron::EntityId::from_hex(&receipt.project_id).expect("the mint names its project");
+    let room = vault
+        .project(project)
+        .expect("the minted project reads")
+        .expect("the minted project is stored")
+        .home_room
+        .clone();
     let turn = oneiron::EntityId::now().to_hex();
     let opened: oneiron::memory::WitnessTurn = serde_json::from_value(json!({
         "conversation_ref": room, "turn_ref": turn, "occurred_at": unix_seconds_now(),
@@ -1241,6 +1333,11 @@ fn seed_failed_task_and_open_turn(
 
 /// Appends the host-signed authority entry that binds `owner` as the vault's
 /// human, as the host does when its owner first signs in.
+///
+/// Kept for the record: genesis binds the owner since H149, and the sealed
+/// host key (#4015) admits no hand-signed bind. The seed above mints its
+/// room through the public card door instead.
+#[allow(dead_code)]
 fn bind_owner(vault: &oneiron::Vault, host: &SigningKey, owner: oneiron::EntityId) {
     use ed25519_dalek::Signer;
     use oneiron::authority::{
@@ -1252,7 +1349,7 @@ fn bind_owner(vault: &oneiron::Vault, host: &SigningKey, owner: oneiron::EntityI
     assert_eq!(host.verifying_key().to_bytes(), issuer.binding_key());
     let host_key = issuer.public_key();
     let fold = vault.authority_fold().unwrap();
-    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<_> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0;
     for row in vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
@@ -1393,7 +1490,8 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     // Acknowledging a failed task commits at once: refused, and the failure
     // is still on the board.
     let task = json!({ "task_ref": failed });
-    let acked = call(&mut as_reviewer, 2, "tasks.update", task.clone());
+    let task_update = json!({ "task_ref": failed, "spec": task.clone() });
+    let acked = call(&mut as_reviewer, 2, "tasks.update", task_update.clone());
     assert!(refused_for_write(&acked), "{acked:#}");
     let card = call(&mut as_writer, 2, "describe", task.clone());
     assert!(
@@ -1404,11 +1502,11 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     // So does an exclusive room claim: refused for propose-only and
     // read-only, and the turn is still free for the full-access agent.
     let claim = json!({ "room_ref": room, "turn_ref": turn });
-    let proposer_claim = call(&mut as_reviewer, 3, "rooms.claim", claim.clone());
+    let proposer_claim = call(&mut as_reviewer, 3, "vault.rooms.claim", claim.clone());
     assert!(refused_for_write(&proposer_claim), "{proposer_claim:#}");
-    let reader_claim = call(&mut as_reader, 2, "rooms.claim", claim.clone());
+    let reader_claim = call(&mut as_reader, 2, "vault.rooms.claim", claim.clone());
     assert!(refused_for_write(&reader_claim), "{reader_claim:#}");
-    let claimed = call(&mut as_writer, 3, "rooms.claim", claim);
+    let claimed = call(&mut as_writer, 3, "vault.rooms.claim", claim);
     assert_eq!(
         output(&claimed)["Claimed"]["actor"],
         json!(principal(&writer)),
@@ -1428,9 +1526,9 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
         "replaced",
         0.8,
         "observed",
+        claim_scope(&principal(&writer)),
         null,
-        null,
-        null,
+        [],
         null,
         null,
         null,
@@ -1439,7 +1537,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     ]);
     let commits = [
         (
-            "witness",
+            "vault.witness",
             json!({ "spec": {
                 "conversation_ref": oneiron::EntityId::now().to_hex(), "occurred_at": unix_seconds_now(),
                 "messages": [{ "author": "user", "message_type": "dialogue", "content": "a note",
@@ -1447,7 +1545,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
             }}),
         ),
         (
-            "rooms.speak",
+            "vault.rooms.speak",
             json!({ "room_ref": room, "spec": {
                 "conversation_ref": room, "occurred_at": unix_seconds_now(),
                 "messages": [{ "author": "companion", "message_type": "text", "content": "mine",
@@ -1455,17 +1553,17 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
             }}),
         ),
         (
-            "key_value_put",
+            "vault.kv.put",
             json!({ "spec": {
                 "namespace": ["e2e"], "key": "k", "value": 1, "request_id": "put-1", "source": "observed",
             }}),
         ),
         (
-            "key_value_delete",
+            "vault.kv.delete",
             json!({ "spec": { "namespace": ["e2e"], "key": "k" } }),
         ),
         (
-            "tasks.ask",
+            "ask",
             json!({ "spec": {
                 "intent_key": "ask-e2e", "who": { "responder": { "human": { "actor_ref": reviewer_ref } } },
                 "what": { "reference": { "turn": turn }, "revision": 1, "options": {}, "context_refs": [],
@@ -1474,7 +1572,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
             }}),
         ),
         (
-            "tasks.wait",
+            "wait",
             json!({ "spec": { "handle": { "group_ref": failed }, "step_key": "step-one" } }),
         ),
         (
@@ -1483,8 +1581,8 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
                 "result_ref": failed, "option": null, "inform_for": null, "provenance_refs": [],
             }}}),
         ),
-        ("claim_upsert", json!({ "spec": in_place })),
-        ("claim_upsert", json!({ "spec": positional })),
+        ("vault.claims.upsert", json!({ "spec": in_place })),
+        ("vault.claims.upsert", json!({ "spec": positional })),
     ];
     for (id, (tool, arguments)) in (10..).zip(commits) {
         let answer = call(&mut as_reviewer, id, tool, arguments);
@@ -1495,7 +1593,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     let drafted = call(
         &mut as_reviewer,
         30,
-        "claim_upsert",
+        "vault.claims.upsert",
         json!({ "spec": proposal(&principal(&writer)) }),
     );
     assert_eq!(
@@ -1514,7 +1612,7 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
 
     // The full-access agent still acknowledges the failure, which then
     // leaves the board.
-    let acked = call(&mut as_writer, 4, "tasks.update", task.clone());
+    let acked = call(&mut as_writer, 4, "tasks.update", task_update.clone());
     assert_eq!(output(&acked)["acked"], json!(true), "{acked:#}");
     let gone = call(&mut as_writer, 5, "describe", task);
     assert!(gone.get("error").is_some(), "{gone:#}");
@@ -1680,7 +1778,7 @@ fn a_tool_call_runs_as_its_credential_and_one_naming_another_actor_is_refused() 
     // Straight to the server, with no bridge and no actor: the claim is the
     // writer's.
     let claim = json!({ "room_ref": room, "turn_ref": turn });
-    let (id, params) = tool_call(2, "rooms.claim", &version, claim);
+    let (id, params) = tool_call(2, "vault.rooms.claim", &version, claim);
     let claimed = writer.rpc(&endpoint, id, "tools/call", params);
     assert_eq!(
         output(&claimed)["Claimed"]["actor"],

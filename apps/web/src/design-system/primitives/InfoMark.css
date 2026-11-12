@@ -1,0 +1,49 @@
+/* The mark takes the IconAction's size and states; while its note shows
+   it holds the lit tone. */
+.sl-info-mark[data-open] {
+  color: var(--sl-ink-1);
+  background: var(--sl-lit);
+}
+
+/* The note: a layer in the popover tone with the popover shadow. Its
+   width and place are measured (300 px beside the block, 340 px under the
+   mark). The popover attribute keeps it hidden until it opens; nothing
+   here sets display. It takes no pointer: resting on the mark is what
+   holds it. */
+.sl-info-note {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  z-index: var(--sl-z-tip);
+  max-width: calc(100vw - 16px);
+  padding: 10px 12px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+  color: var(--sl-ink-2);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  text-wrap: pretty;
+  pointer-events: none;
+}
+
+.sl-info-note:popover-open {
+  animation: sl-info-note-in 125ms var(--sl-ease-out) both;
+}
+
+@keyframes sl-info-note-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-info-note:popover-open {
+    animation: none;
+  }
+}

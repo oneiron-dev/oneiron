@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum ShapeMemberRole {
     Owner,
+    /// Admin's powers plus a Grant for delegated Owner powers; never the
+    /// org root (ARCH-0082 #roles).
+    Deputy,
     Admin,
     /// A Steward looks after the vault's memory for its owners: it can read
     /// and organise everything in this vault, but it can only suggest who
@@ -31,16 +34,17 @@ pub enum ShapeMemberRole {
 }
 
 impl ShapeMemberRole {
-    /// The row a live role reads as; the legacy auditor spelling is a
-    /// viewer, and a delegate or guest is no member row at all.
+    /// The row a live role reads as; a delegate or guest is no member row at
+    /// all.
     #[must_use]
     pub const fn of(role: FederationGrantRole) -> Option<Self> {
         match role {
             FederationGrantRole::Owner => Some(Self::Owner),
+            FederationGrantRole::Deputy => Some(Self::Deputy),
             FederationGrantRole::Admin => Some(Self::Admin),
             FederationGrantRole::Steward => Some(Self::Steward),
             FederationGrantRole::Member => Some(Self::Member),
-            FederationGrantRole::Viewer | FederationGrantRole::Auditor => Some(Self::Viewer),
+            FederationGrantRole::Viewer => Some(Self::Viewer),
             _ => None,
         }
     }
@@ -52,7 +56,8 @@ impl ShapeMemberRole {
             Self::Member => 1,
             Self::Steward => 2,
             Self::Admin => 3,
-            Self::Owner => 4,
+            Self::Deputy => 4,
+            Self::Owner => 5,
         }
     }
 
@@ -69,6 +74,7 @@ impl From<ShapeMemberRole> for FederationGrantRole {
     fn from(role: ShapeMemberRole) -> Self {
         match role {
             ShapeMemberRole::Owner => Self::Owner,
+            ShapeMemberRole::Deputy => Self::Deputy,
             ShapeMemberRole::Admin => Self::Admin,
             ShapeMemberRole::Steward => Self::Steward,
             ShapeMemberRole::Member => Self::Member,

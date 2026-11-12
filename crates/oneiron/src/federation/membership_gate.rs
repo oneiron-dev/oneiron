@@ -149,6 +149,7 @@ pub(crate) fn grant_allows_content_write(grant: &FederationGrant, scope: &Scope)
     if !matches!(
         grant.role,
         FederationGrantRole::Owner
+            | FederationGrantRole::Deputy
             | FederationGrantRole::Admin
             | FederationGrantRole::Member
             | FederationGrantRole::Delegate
@@ -233,7 +234,7 @@ impl Vault {
 /// never changes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MembershipStanding {
-    /// A live Owner, Admin, Member, Viewer or Delegate grant over this vault:
+    /// A live Owner, Deputy, Admin, Member, Viewer or Delegate grant over this vault:
     /// roster standing (ARCH-0043). A Delegate's `role` stays `Delegate`: it
     /// is never administrative, and its grant keeps its own scope, expiry
     /// and one-hop limits.
@@ -252,9 +253,10 @@ pub enum MembershipStanding {
 /// The roles whose live grant over this shared vault makes its holder a
 /// member for first-party admission (FIX 360): ARCH-0043's member
 /// federation names Member, Viewer or Delegate on the roster, with Owner,
-/// Admin and Steward above them. Auditor and Guest keep guest grading.
-pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 6] = [
+/// Deputy, Admin and Steward above them. Guest keeps guest grading.
+pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 7] = [
     FederationGrantRole::Owner,
+    FederationGrantRole::Deputy,
     FederationGrantRole::Admin,
     FederationGrantRole::Steward,
     FederationGrantRole::Member,
@@ -337,11 +339,11 @@ impl Vault {
             }
             match grant.role {
                 FederationGrantRole::Owner
+                | FederationGrantRole::Deputy
                 | FederationGrantRole::Admin
                 | FederationGrantRole::Steward
                 | FederationGrantRole::Member
                 | FederationGrantRole::Viewer
-                | FederationGrantRole::Auditor
                     if grant.scope == FederationGrantScope::vault(vault_id) =>
                 {
                     return Ok(Some(MembershipStanding::Member {

@@ -59,6 +59,7 @@ mod step;
 pub use step::public as model_step;
 pub mod tagger;
 
+pub(crate) use step::wake_budget_traps_in_txn;
 pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,

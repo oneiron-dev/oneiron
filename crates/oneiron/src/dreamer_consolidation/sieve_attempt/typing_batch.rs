@@ -72,6 +72,7 @@ impl ConsolidationExecutor<'_> {
             subject: turn,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         let per_call = self.decisions.bands.questions_per_call();
         let mut charges = StepChargeTally::default();

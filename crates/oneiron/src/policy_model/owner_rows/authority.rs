@@ -376,7 +376,8 @@ pub(crate) fn owners_for_store_in_txn(
 }
 
 /// Whether `actor` is a live member of this shared vault whose grant writes
-/// content (an Owner, Admin or Member role; a Viewer, Delegate or Guest reads),
+/// content (an Owner, Deputy, Admin or Member role; a Viewer, Delegate or
+/// Guest reads),
 /// over the same census as [`owners_for_store_in_txn`], each PERSON's
 /// liveness read through the store (FIX 21272). `false` on a personal vault.
 pub(crate) fn is_live_writing_member_for_store_in_txn(
@@ -394,6 +395,7 @@ pub(crate) fn is_live_writing_member_for_store_in_txn(
                 && matches!(
                     grant.role,
                     FederationGrantRole::Owner
+                        | FederationGrantRole::Deputy
                         | FederationGrantRole::Admin
                         | FederationGrantRole::Member
                 )
@@ -440,7 +442,9 @@ pub(super) fn holders_for_in_txn(
     for grant in grants.iter().filter(|g| {
         matches!(
             g.role,
-            FederationGrantRole::Admin | FederationGrantRole::Delegate
+            FederationGrantRole::Deputy
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Delegate
         ) && scope_covers(&g.authority_scope, row_scope)
     }) {
         let Ok(envelope) = &envelope else {

@@ -2,13 +2,14 @@
 //! step-up witness.
 //!
 //! An [`AuthenticatedWeaveAdmin`] is one live person's request instrument
-//! (a verified capability slip) bound to ONE exact live Admin membership
-//! grant over this shared vault, and to the [`AdminStepUp`] witness that
-//! person's step-up left. Canon: an Admin cannot skip MFA, because any one
-//! admin can act alone (ARCH-0043, MFA-1 A, 2026-10-09). Only real step-up
-//! ingress may mint the witness: it has no public constructor, and its one
-//! producer is the passkey step-up verifier, [`Vault::admin_step_up`]
-//! (`authority::step_up`, FIX 11694).
+//! (a verified capability slip) bound to ONE exact live Admin or Deputy
+//! membership grant over this shared vault (a Deputy holds Admin's powers,
+//! ARCH-0082 #roles), and to the [`AdminStepUp`] witness that person's
+//! step-up left. Canon: an Admin cannot skip MFA, because any one admin can
+//! act alone (ARCH-0043, MFA-1 A, 2026-10-09); nor can a Deputy. Only real
+//! step-up ingress may mint the witness: it has no public constructor, and
+//! its one producer is the passkey step-up verifier,
+//! [`Vault::admin_step_up`] (`authority::step_up`, FIX 11694).
 //!
 //! The proof only ADDS a path. A Person, Owner or Agent read never asks for
 //! it, and a live vault Owner, co-Owners included, never needs it: an
@@ -43,11 +44,6 @@ pub const WEAVE_ADMIN_NOT_CURRENT: &str = "weave_admin_not_current: weave admin 
 /// MFA required`): always, by canon (ARCH-0043 :51, :213).
 pub const WEAVE_ADMIN_MFA_REQUIRED: bool = true;
 const _: () = assert!(WEAVE_ADMIN_MFA_REQUIRED);
-
-/// The one membership role that makes a weave Admin (CALLS `OF-499 A3 admin
-/// role`): exactly Admin on the named grant, never Owner through
-/// `is_admin`, never a room role or an organization power.
-const WEAVE_ADMIN_ROLE: FederationGrantRole = FederationGrantRole::Admin;
 
 /// The verb the Admin's met grant and credential Scope must carry to read.
 const WEAVE_ADMIN_READ_VERB: &str = "read";
@@ -99,6 +95,21 @@ pub struct AuthenticatedWeaveAdmin {
     actor: EntityId,
     membership_grant: EntityId,
     mfa: AdminStepUp,
+}
+
+impl AuthenticatedWeaveAdmin {
+    /// Whether a membership grant of `role` makes its member a weave Admin
+    /// (CALLS `OF-499 A3 admin role`): Admin or Deputy on the named grant (a
+    /// Deputy holds Admin's powers, ARCH-0082 #roles), never Owner through
+    /// `is_admin`, never a room role or an organization power. Both role
+    /// guards of [`Self::revalidate_in_txn`] ask this; the step-up stays
+    /// required for both roles.
+    pub(crate) const fn is_weave_admin_role(role: FederationGrantRole) -> bool {
+        matches!(
+            role,
+            FederationGrantRole::Admin | FederationGrantRole::Deputy
+        )
+    }
 }
 
 impl Vault {
@@ -243,7 +254,7 @@ impl AuthenticatedWeaveAdmin {
             .map_err(&checked)?
         {
             Some(MembershipStanding::Member { grant, role })
-                if grant == self.membership_grant && role == WEAVE_ADMIN_ROLE => {}
+                if grant == self.membership_grant && Self::is_weave_admin_role(role) => {}
             _ => return Err(not_current()),
         }
         if vault
@@ -263,7 +274,7 @@ impl AuthenticatedWeaveAdmin {
         let now = vault.instant_in_txn(txn).map_err(&checked)?.secs();
         let read = grant.authority_scope.meet(&claims.scope);
         if grant.member_ref != self.actor
-            || grant.role != WEAVE_ADMIN_ROLE
+            || !Self::is_weave_admin_role(grant.role)
             || !grant.confers_at(now)
             || !read.verbs.contains(&WEAVE_ADMIN_READ_VERB.to_owned())
             || read.worlds.is_bottom()
