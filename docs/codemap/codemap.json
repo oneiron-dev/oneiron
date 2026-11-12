@@ -5158,7 +5158,7 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 4
      }
     },
@@ -7940,7 +7940,7 @@
      "path": "src/batch/export/bundle_validation.rs",
      "purpose": "Validate source identities, facet/body agreement and explicit archive-only omissions",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -8238,7 +8238,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 13
      }
     },
@@ -16213,7 +16213,7 @@
      "path": "src/claim/scope_stamp.rs",
      "purpose": "Required record-position Scope stamps and the versioned CLAIM wire upgrade",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 3,
       "re-export": 1,
       "trait": 1
@@ -27475,7 +27475,7 @@
      "path": "src/conversation_dag/participation.rs",
      "purpose": "A live append's participation (OF-529): the thread it lands in, and the room's participation gate its writer…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -89479,7 +89479,7 @@
      "path": "src/task_verb/ask_forward.rs",
      "purpose": "A person's word on a `tasks.ask` this node did not admit (FIX 7494)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -91910,6 +91910,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/archive_import.rs",
+     "purpose": "Doors for `tests/archive_import_reserved_families.rs`: the whole-vault import's decision for each reserved…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/authority_view_grant.rs",
      "purpose": "Agent-binding fixture for the warm authority-view Grant regression",
      "surface": {
@@ -92266,7 +92276,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 53
+      "mod": 55
      }
     },
     {
@@ -92344,6 +92354,21 @@
      "purpose": "The finalized-run writer needed by `tests/retrieval_policy_default_floor.rs`",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackfillCounts",
+      "RoomIndexRows"
+     ],
+     "path": "src/test_doors/room_turn_backfill.rs",
+     "purpose": "Doors for `tests/room_turn_backfill.rs` (THREAD-TASK-EVERY-ROOM P2): strip a room's rows to the state a…",
+     "surface": {
+      "const": 1,
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -98410,7 +98435,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 44,
       "mod": 1,
       "re-export": 28
      }
@@ -99386,6 +99411,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/workspace_roster/rooms/backfill.rs",
+     "purpose": "The one-time room-row backfill at writable open (THREAD-TASK-EVERY-ROOM P2, Engine ruling 12 Nov 16:01)",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/workspace_roster/rooms/carrier_erase.rs",
      "purpose": "A room side row as this vault takes it from a carrier (FIX 4227, 4228): another machine's copy, a window's…",
      "surface": {
@@ -99489,7 +99524,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 49,
+      "crate-vis": 51,
       "enum": 2,
       "fn": 6,
       "re-export": 23,
@@ -99785,7 +99820,7 @@
      "path": "src/workspace_roster/rooms/turn_record.rs",
      "purpose": "A room turn's row, kept in the write that lands the turn (FIX 15647, THREAD-TASK-ONE-SURFACE…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -100993,6 +101028,30 @@
      "notable": [],
      "path": "tests/agent_room_offer.rs",
      "purpose": "A custom agent asks to join a room by an offer card (ARCH-0006a, OF-530 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/archive_import_reserved_claims.rs",
+     "purpose": "Whole-vault archive restore of a vault that holds reserved claims (FIX row…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/archive_import_reserved_families.rs",
+     "purpose": "The whole-vault import's one decision per reserved predicate family, and two families whose omitted rows…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/ask_forward_intent_secret_scan.rs",
+     "purpose": "FIX-LIST [ASK-FORWARD-INTENT-TOKEN-MASKED]: a person's relayed ask word (FIX 7494) stores, and the ask's…",
      "surface": {}
     },
     {
@@ -102829,6 +102888,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/room_offer_ageing.rs",
+     "purpose": "An open offer card ages out with its thread, through the one row fold every room's cards take (OF-530…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/room_offer_paired_agent.rs",
      "purpose": "A paired agent asks into a room by an offer card on a rooted vault (ARCH-0006a:243: \"An agent that wants in…",
      "surface": {}
@@ -102855,6 +102922,14 @@
      "notable": [],
      "path": "tests/room_thread_task_parity.rs",
      "purpose": "Every room keeps one turn projection and one access path (THREAD-TASK-EVERY-ROOM, P1): a project's home…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/room_turn_backfill.rs",
+     "purpose": "The one-time room-row backfill at writable open (THREAD-TASK-EVERY-ROOM P2; Engine RULING EVERYROOM-P2-SHAPE…",
      "surface": {}
     },
     {
@@ -105065,7 +105140,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 55,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105226,7 +105301,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 140,
+     "files": 141,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105242,8 +105317,8 @@
    },
    "over_bar": 263,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7442,
-   "test_files": 1124
+   "source_files": 7445,
+   "test_files": 1129
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -146444,6 +146519,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_init_fresh_node.rs",
+     "purpose": "`oneiron host init` on a fresh node path (FIX-LIST [T0I-HOST-INIT-SYSTEMD-DIR-TWICE]): the reference…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -147424,7 +147507,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1840,
-   "test_files": 208
+   "test_files": 209
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -155670,7 +155753,7 @@
      "path": "src/write_envelope/claim_predicate.rs",
      "purpose": "Predicate grammar and the engine-owned predicate vocabulary used by stored claims",
      "surface": {
-      "const": 32,
+      "const": 34,
       "enum": 5,
       "fn": 7,
       "struct": 3
