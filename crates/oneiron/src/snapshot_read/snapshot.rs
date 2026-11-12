@@ -91,7 +91,9 @@ pub struct SnapshotHandle {
 }
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::snapshot_read::snapshot::{SnapshotOversizedRow, SnapshotPageRequest};
+pub(crate) use oneiron_verb_wire::snapshot_read::snapshot::SnapshotOversizedRow;
+#[doc(hidden)]
+pub use oneiron_verb_wire::snapshot_read::snapshot::SnapshotPageRequest;
 
 /// One page of a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
