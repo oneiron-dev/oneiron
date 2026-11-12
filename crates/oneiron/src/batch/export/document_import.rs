@@ -28,7 +28,7 @@ use crate::registry::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
     ENTITY_TYPE_WORKFLOW,
 };
-use crate::serialize::{ExportBody, ExportBodyFile};
+use crate::serialize::{ExportBody, ExportBodyFile, ExportSecrets};
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
@@ -137,7 +137,11 @@ impl Vault {
             .store
             .archive_scratch_env(self.config.page_seal.as_ref())?;
         let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
-        archive.validate(self)?;
+        // The archive's policy, derived once from its manifest: validation and
+        // every kept body and source tree below reuse it, while agent facets
+        // and receipt sources stay Nulled.
+        let secrets = ExportSecrets::of_manifest(&archive.manifest);
+        archive.validate_with(self, secrets)?;
         if actor.is_none() && archive.expressions {
             return Err(actor_required());
         }
@@ -196,7 +200,7 @@ impl Vault {
         let mut after = None;
         while let Some((id, at)) = archive.next_entity(after.as_ref())? {
             if at.section == Section::Ledger && at.has(FLAG_PACK_BODY) {
-                imported_row(self, &wtxn, &archive, &at, None)?;
+                imported_row(self, &wtxn, &archive, &at, None, secrets)?;
             }
             after = Some(id);
         }
@@ -222,13 +226,13 @@ impl Vault {
             if self.store.off_record_sessions.contains_entity(&id)? {
                 return Err(invalid("import ID belongs to an off-record overlay"));
             }
-            let row = imported_row(self, &wtxn, &archive, &at, projects.as_ref())?;
+            let row = imported_row(self, &wtxn, &archive, &at, projects.as_ref(), secrets)?;
             let existing = match &row.body {
                 // OF-222, FIX 3677: a file body meets no lossy form and no
                 // copy of the row stored under its id.
                 ExportBody::File(file) => {
                     if file_row_stored(self, &wtxn, &id, &row, file, &archive.files)? {
-                        validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                        validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                         stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                         unchanged_entities += 1;
                         continue;
@@ -245,8 +249,8 @@ impl Vault {
                 // its row keeps (FIX 3677).
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 let existing = live_note_row(self, &wtxn, &id, existing)?;
-                if matches_row(&row, &existing, &row.body) {
-                    validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                if matches_row(&row, &existing, &row.body, secrets) {
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     if row.entity_type == ENTITY_TYPE_MESSAGE {
                         super::evidence_import::validate_stored_message(
                             self, &wtxn, &archive, &id,
@@ -256,13 +260,14 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(&row, &archive.index, &archive.files)?;
+                let body = imported_body(&row, &archive.index, &archive.files, secrets)?;
                 if matches_row(
                     &row,
                     &existing,
-                    &ExportBody::from_bytes(&body, row.entity_type),
+                    &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
+                    secrets,
                 ) {
-                    validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     if row.entity_type == ENTITY_TYPE_MESSAGE {
                         super::evidence_import::validate_stored_message(
                             self, &wtxn, &archive, &id,
@@ -287,7 +292,7 @@ impl Vault {
                     self,
                     &mut wtxn,
                     &id,
-                    &row.body.to_bytes_in(&archive.files)?,
+                    &row.body.to_bytes_in_with(&archive.files, secrets)?,
                     TimeRange {
                         start: row.occurred_start,
                         end: row.occurred_end,
@@ -309,7 +314,7 @@ impl Vault {
             } else {
                 dependencies(
                     row.entity_type,
-                    &imported_body(&row, &archive.index, &archive.files)?,
+                    &imported_body(&row, &archive.index, &archive.files, secrets)?,
                 )?
             };
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
@@ -377,8 +382,13 @@ impl Vault {
                 let id = id_at(&key, 1)?;
                 let (inserted, unchanged) = match key[0] {
                     QUEUE_PROVENANCE => {
-                        let (inserted, unchanged) =
-                            super::provenance_import::restore(id, self, &mut wtxn, &mut archive)?;
+                        let (inserted, unchanged) = super::provenance_import::restore(
+                            id,
+                            self,
+                            &mut wtxn,
+                            &mut archive,
+                            secrets,
+                        )?;
                         (inserted.into_iter().collect::<Vec<_>>(), unchanged)
                     }
                     QUEUE_EXPRESSION => {
@@ -387,7 +397,15 @@ impl Vault {
                     }
                     _ => {
                         let projects = projects.as_ref();
-                        insert_ready_row(self, &mut wtxn, &mut archive, id, projects, &assets)?;
+                        insert_ready_row(
+                            self,
+                            &mut wtxn,
+                            &mut archive,
+                            id,
+                            projects,
+                            &assets,
+                            secrets,
+                        )?;
                         (Vec::new(), 0)
                     }
                 };
@@ -555,6 +573,7 @@ fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Resul
 }
 
 /// Writes one pending row whose references are in, through its type's door.
+/// The row and a skill's source tree read under the archive's `secrets`.
 fn insert_ready_row<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -562,6 +581,7 @@ fn insert_ready_row<R: Read + Seek>(
     id: EntityId,
     projects: Option<&ProjectRootMap>,
     assets: &super::asset_reserve::ArchiveAssets,
+    secrets: ExportSecrets,
 ) -> Result<()> {
     if !archive.index.remove(Tag::Pending, id.as_bytes())? {
         return Err(Error::InvariantViolation("import queue lost row"));
@@ -570,7 +590,7 @@ fn insert_ready_row<R: Read + Seek>(
     let at = archive
         .entity_at(&id)?
         .ok_or(Error::InvariantViolation("import queue lost row"))?;
-    let row = imported_row(vault, wtxn, archive, &at, projects)?;
+    let row = imported_row(vault, wtxn, archive, &at, projects, secrets)?;
     let occurred = TimeRange {
         start: row.occurred_start,
         end: row.occurred_end,
@@ -591,7 +611,7 @@ fn insert_ready_row<R: Read + Seek>(
         vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged)?;
         return stamp_archived_birth(vault, wtxn, archive, &id);
     }
-    let body = imported_body(&row, &archive.index, &archive.files)?;
+    let body = imported_body(&row, &archive.index, &archive.files, secrets)?;
     let landed = match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
@@ -654,7 +674,7 @@ fn insert_ready_row<R: Read + Seek>(
                         bundle
                             .source_format
                             .ok_or_else(|| invalid("skill source format missing"))?,
-                        tree.import_files_in(&archive.files)?,
+                        tree.import_files_in_with(&archive.files, secrets)?,
                     ),
                     occurred,
                     row.learned_at,
@@ -808,13 +828,15 @@ struct ProjectRootMap {
 
 /// The row `at` as the import writes it: a project row's parent moves from
 /// the source root to this vault's root, and a runtime pack row is mapped
-/// onto this vault's pack handle for its kind.
+/// onto this vault's pack handle for its kind. Both remaps re-serialize under
+/// the archive's `secrets`, so writer and reader agree.
 fn imported_row<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     archive: &IndexedArchive<'_, R>,
     at: &EntityAt,
     projects: Option<&ProjectRootMap>,
+    secrets: ExportSecrets,
 ) -> Result<ExportEntity> {
     let mut row = archive.entity_row(at)?;
     // Fix list row 16256: an archive row is never a source landing's, so
@@ -841,7 +863,7 @@ fn imported_row<R: Read + Seek>(
             }
         }
         let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
-        row.body = ExportBody::from_bytes(&bytes, row.entity_type);
+        row.body = ExportBody::from_bytes_with(&bytes, row.entity_type, secrets);
     }
     if at.section == Section::Ledger
         && let ExportBody::Pack(value) = &row.body
@@ -850,7 +872,7 @@ fn imported_row<R: Read + Seek>(
             .store
             .remap_pack_instance_in_txn(txn, &value.envelope()?)?;
         row.entity_type = handle;
-        row.body = ExportBody::from_bytes(&envelope.to_bytes()?, handle);
+        row.body = ExportBody::from_bytes_with(&envelope.to_bytes()?, handle, secrets);
     }
     Ok(row)
 }
@@ -970,19 +992,22 @@ fn owed_secrets_in_txn(
     Ok(owed)
 }
 
+/// A stored skill's source package against the archive's: the tree reads
+/// under the archive's `secrets`, so writer and reader agree.
 fn validate_existing_source<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &ExportEntity,
     archive: &IndexedArchive<'_, R>,
     at: &EntityAt,
+    secrets: ExportSecrets,
 ) -> Result<()> {
     if at.section != Section::Skill {
         return Ok(());
     }
     let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
     if let Some(tree) = &bundle.source_tree {
-        let files = tree.import_files_in(&archive.files)?;
+        let files = tree.import_files_in_with(&archive.files, secrets)?;
         let stored = vault
             .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
             .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;
@@ -1210,9 +1235,18 @@ pub(super) fn parse_id(text: &str) -> Result<EntityId> {
     Ok(id)
 }
 
-pub(super) fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody) -> bool {
+/// Whether the stored row `raw` is the archived `row`, whose body re-serializes
+/// to `expected`: the comparison re-runs the serializer under the archive's
+/// `secrets`, so writer and reader agree.
+pub(super) fn matches_row(
+    row: &ExportEntity,
+    raw: &[u8],
+    expected: &ExportBody,
+    secrets: ExportSecrets,
+) -> bool {
     matches_header(row, raw)
-        && ExportBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..], row.entity_type) == *expected
+        && ExportBody::from_bytes_with(&raw[ENTITY_METADATA_HEADER_LEN..], row.entity_type, secrets)
+            == *expected
 }
 
 /// Whether the row this vault stores under `id` is the archived `row`, whose
@@ -1341,13 +1375,16 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 /// The body the import writes; an ASSET's file body is its archive file's
 /// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
 /// vault's MODEL rows through the row index. Claim-class vocabulary is normalized
-/// by its owning adapter without carrying a foreign owner approval.
+/// by its owning adapter without carrying a foreign owner approval. A hub
+/// source carrier rebuilds under the archive's `secrets`, so a kept carrier
+/// tree restores its exact package instead of being re-nulled.
 fn imported_body(
     row: &ExportEntity,
     index: &ArchiveIndex<'_>,
     files: &dyn ArchiveFiles,
+    secrets: ExportSecrets,
 ) -> Result<Vec<u8>> {
-    let bytes = row.body.to_bytes_in(files)?;
+    let bytes = row.body.to_bytes_in_with(files, secrets)?;
     let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
     match row.entity_type {
         ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => {

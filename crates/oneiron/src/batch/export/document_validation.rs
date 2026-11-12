@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SKILL,
 };
-use crate::serialize::{ExportBody, ExportValue};
+use crate::serialize::{ExportBody, ExportSecrets, ExportValue};
 use crate::write_envelope::claim_body::ClaimSubject;
 
 impl<R: Read + Seek> IndexedArchive<'_, R> {
@@ -27,6 +27,16 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     /// against their names: an ASSET's file body is validated against them
     /// (OF-222).
     pub(super) fn validate(&mut self, vault: &Vault) -> Result<()> {
+        // The read-only path derives the archive's policy once here.
+        let secrets = ExportSecrets::of_manifest(&self.manifest);
+        self.validate_with(vault, secrets)
+    }
+
+    /// [`Self::validate`] under the archive's already-derived `secrets`: the
+    /// import derives once and reuses it for validation and restore, so the
+    /// manifest's policy is read once per flow. Agent facets and receipt
+    /// sources stay Nulled.
+    pub(super) fn validate_with(&mut self, vault: &Vault, secrets: ExportSecrets) -> Result<()> {
         self.manifest.validate()?;
         super::epoch_floors::validate_epoch_floors(&self.spool)?;
         let mut runs = self.spool.rows(ArchiveRecordKind::Run);
@@ -57,7 +67,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                     Section::Claim => row.entity_type != ENTITY_TYPE_CLAIM,
                     Section::Skill => row.entity_type != ENTITY_TYPE_SKILL,
                 };
-                self.validate_entity(vault, section, loc, &row)?;
+                self.validate_entity(vault, section, loc, &row, secrets)?;
             }
         }
         self.validate_row_births()?;
@@ -69,7 +79,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         }
         self.validate_edges()?;
         self.validate_derivations()?;
-        self.validate_packs()?;
+        self.validate_packs(secrets)?;
         let mut after = None;
         while let Some(id) = self.next_of_type(ENTITY_TYPE_ASSET, after.as_ref())? {
             if self
@@ -81,7 +91,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             }
             after = Some(id);
         }
-        self.validate_bundles()?;
+        self.validate_bundles(secrets)?;
         self.validate_embedding_setup()?;
         Ok(())
     }
@@ -94,6 +104,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         section: Section,
         loc: Loc,
         row: &ExportEntity,
+        secrets: ExportSecrets,
     ) -> Result<()> {
         let id = parse_id(&row.id)?;
         if self.index.contains(Tag::Entity, id.as_bytes())? {
@@ -110,7 +121,8 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         if row.occurred_start > row.occurred_end {
             return Err(invalid("invalid entity time range"));
         }
-        row.body.validate_in(row.entity_type, &self.files)?;
+        row.body
+            .validate_in_with(row.entity_type, &self.files, secrets)?;
         let mut flags = 0;
         if matches!(row.body, ExportBody::File(_)) {
             flags |= FLAG_FILE;
@@ -303,7 +315,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
 
     /// Built-in registrations are descriptors, not installable code. Unknown
     /// descriptors must not be silently ignored as if their adapter exists.
-    fn validate_packs(&mut self) -> Result<()> {
+    fn validate_packs(&mut self, secrets: ExportSecrets) -> Result<()> {
         let known: BTreeMap<_, _> = crate::ingest::INGEST_SOURCE_REGISTRY
             .source_configs()
             .map(|config| (config.source_id, config.adapter_skill))
@@ -334,7 +346,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             if !self.index.insert(Tag::PackSource, id.as_bytes(), &[])? {
                 return Err(invalid("duplicate pack source"));
             }
-            source.source_tree.validate_in(&self.files)?;
+            source.source_tree.validate_in_with(&self.files, secrets)?;
             let row = match self.entity(&id)? {
                 Some((at, row)) if at.section == Section::Ledger => row,
                 _ => return Err(invalid("pack source entity missing")),
@@ -344,9 +356,12 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             }
             if source.source_tree.content_hash.is_some() {
                 let pack = crate::skill_hub::pack_catalog::PackSource::from_files(
-                    source.source_tree.import_files_in(&self.files)?,
+                    source
+                        .source_tree
+                        .import_files_in_with(&self.files, secrets)?,
                 )?;
-                if crate::skill_hub::pack_catalog::export_source_body(&pack)? != row.body
+                if crate::skill_hub::pack_catalog::export_source_body_with(&pack, secrets)?
+                    != row.body
                     || pack.entity_id()? != id
                 {
                     return Err(invalid("pack source disagrees with its evidence row"));
