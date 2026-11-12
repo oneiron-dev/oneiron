@@ -180,7 +180,10 @@ fn write_door_refuses_encoding(value: &rmpv::Value) -> bool {
     rmpv::encode::write_value(&mut bytes, value).is_err() || write_door_refuses_raw(&bytes)
 }
 
-fn messagepack_leaves(value: &rmpv::Value, out: &mut Zeroizing<String>) {
+/// Every text `value` carries, one per line, in order, at any depth: each
+/// string and map key, binary and extension bytes, each array of byte
+/// values.
+pub(super) fn messagepack_leaves(value: &rmpv::Value, out: &mut Zeroizing<String>) {
     use rmpv::Value;
     match value {
         Value::String(text) => push_line(out, text.as_bytes()),

@@ -21,6 +21,9 @@ use crate::dreamer_runner::{
 };
 use crate::{EntityId, Error, Result, Vault};
 
+mod label_ask;
+pub use label_ask::{EvalLabelAskRequest, ask_label, training_offer_decision};
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalAuthorNowRequest {}

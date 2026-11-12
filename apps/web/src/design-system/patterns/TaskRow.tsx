@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { ProgressDonut } from '../marks/ProgressDonut'
-import type { DonutArc } from '../marks/donut-segments'
+import { arcsDone, type DonutArc } from '../marks/donut-segments'
+import { Icon } from '../primitives/Icon'
 import { Unfold } from '../primitives/Unfold'
 import { Verb } from '../primitives/Verb'
 import { cx, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
@@ -21,7 +22,8 @@ export const TaskListContext = React.createContext<TaskListContextValue | null>(
 
 export interface TaskRowProps extends Omit<React.ComponentPropsWithRef<'div'>, 'id'> {
   id: string
-  /* The task's steps, in order, for its donut. */
+  /* The task's steps, in order, for its donut. All done: a plain check
+     in place of the donut. */
   arcs: readonly DonutArc[]
   /* The task waits on the person: a dot in the donut. */
   needsYou?: boolean
@@ -36,7 +38,8 @@ export interface TaskRowProps extends Omit<React.ComponentPropsWithRef<'div'>, '
   onOpenChange?: (open: boolean) => void
 }
 
-/* One task under a message: its donut, what it is, who has it. A click
+/* One task under a message: its donut (a plain check once done), what it
+   is, who has it. A click
    unfolds its children (a TaskRow.Body) in place under the row; Escape
    inside folds it and puts focus back on the row. */
 function TaskRowRoot({
@@ -93,7 +96,11 @@ function TaskRowRoot({
       {...props}
     >
       <Unfold.Trigger ref={triggerRef} className="sl-task-row">
-        <ProgressDonut arcs={arcs} needsYou={needsYou} />
+        {!needsYou && arcsDone(arcs) ? (
+          <Icon name="check" size={15} className="sl-task-check" role="img" aria-label="done" aria-hidden={undefined} />
+        ) : (
+          <ProgressDonut arcs={arcs} needsYou={needsYou} />
+        )}
         <span className="sl-task-name">{name}</span>
         {who !== undefined ? <span className="sl-task-who">{who}</span> : null}
       </Unfold.Trigger>

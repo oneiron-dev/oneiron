@@ -159,8 +159,9 @@
 }
 
 /* Marks and the count sit on the first line, so a caption that wraps
-   under the label leaves them where they were. One line of words (21 px)
-   and the padding make the 30 px row. */
+   under the label leaves them where they were. Words at the say size on a
+   21 px line and the padding make the 30 px row; with the 1 px gap between
+   rows the pitch is 31 px. */
 .sl-sidebar-row {
   position: relative;
   display: flex;
@@ -171,8 +172,8 @@
   min-height: 30px;
   padding: 4.5px 10px 4.5px calc(10px + var(--sl-sidebar-indent));
   border-radius: var(--sl-radius);
-  font-size: var(--sl-t-do);
-  line-height: 1.5;
+  font-size: var(--sl-t-say);
+  line-height: 1.4;
   color: var(--sl-sidebar-ink);
   text-align: left;
   text-decoration: none;
@@ -200,6 +201,8 @@
   padding-right: 34px;
 }
 
+/* The symbol box, centred on the first 21 px line; a symbol is 17 px at
+   both levels of the tree. */
 .sl-sidebar-row-mark {
   display: grid;
   place-items: center;
@@ -210,15 +213,9 @@
   color: var(--sl-sidebar-ink);
 }
 
-.sl-sidebar-item[data-level="1"] .sl-sidebar-row-mark {
-  width: 16px;
-  height: 16px;
-  margin-top: 2.5px;
-}
-
-.sl-sidebar-item[data-level="1"] .sl-sidebar-row-mark > .sl-icon {
-  width: 14px;
-  height: 14px;
+.sl-sidebar-row-mark > .sl-icon {
+  width: 17px;
+  height: 17px;
 }
 
 /* The words: the name (the label and the shared mark) and then the
@@ -343,7 +340,7 @@
   align-items: baseline;
   gap: 8px;
   min-height: 28px;
-  padding: 3px 10px 3px calc(10px + var(--sl-sidebar-child-indent) + 16px + 11px);
+  padding: 3px 10px 3px calc(10px + var(--sl-sidebar-child-indent) + 18px + 11px);
 }
 
 .sl-sidebar .sl-sidebar-more .sl-verb {

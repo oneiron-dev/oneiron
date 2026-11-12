@@ -340,6 +340,7 @@ fn stop_in_txn(
     if let Some(park) = PARKED.get(&vault.store, &*wtxn, &attempt)? {
         super::outage_due::unindex_outage_due_in_txn(vault, wtxn, &park)?;
         super::program::unindex_program_hold_in_txn(vault, wtxn, &park)?;
+        super::seat_wait::unindex_seat_wait_in_txn(vault, wtxn, &park)?;
     }
     PARKED.delete(&vault.store, wtxn, &attempt)?;
     super::program::abandon_stopped_sends_in_txn(vault, wtxn, attempt, now);
@@ -348,7 +349,7 @@ fn stop_in_txn(
 
 /// Marks each live owner's notice of `park` (lease generation `attempt_count`) seen and acknowledged for that
 /// owner: the park is released for all of them. A notice that was never raised, or is gone, stays as it is.
-fn resolve_notices_in_txn(
+pub(super) fn resolve_notices_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     park: &DreamerParkedAttemptRecord,
