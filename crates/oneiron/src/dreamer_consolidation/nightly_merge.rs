@@ -374,6 +374,7 @@ impl ConsolidationExecutor<'_> {
                 subject: first.scope_project,
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
+                spend_scope: None,
             };
             let (response, binding) = match call_as_step_checked(
                 &step,

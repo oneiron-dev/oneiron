@@ -436,7 +436,12 @@ rungs = [{{ model = "paid:teacher-small" }}, {{ model = "paid:teacher-large" }}]
     )
     .expect("models config");
     let keys: Arc<dyn KeyDoor> = keys.clone();
-    ModelRuntime::build_with_keys(Some(&config), Some(keys)).with_receipts(receipts.clone())
+    ModelRuntime::build_with_keys(
+        Some(&config),
+        Some(keys),
+        oneiron::HostingPrivacyPosture::SelfHostLocal,
+    )
+    .with_receipts(receipts.clone())
 }
 
 /// The fake answers a call that carries `key` with `text`, and anything
@@ -485,10 +490,15 @@ fn request(model: &str, text: &str) -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
-            content: vec![ContentPart::Text { text: text.into() }],
+            content: vec![ContentPart::Text {
+                text: text.into(),
+                signature: None,
+            }],
         }],
         tools: Vec::new(),
         params: Default::default(),
@@ -502,7 +512,7 @@ fn text_of(message: &LlmMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect()
