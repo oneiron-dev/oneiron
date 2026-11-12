@@ -5,10 +5,12 @@
 //! rung's holders as the test names them, each of them free to answer. The
 //! `_verified` doors run the ladder from verified records (2c), with the
 //! test's agent verdicts. Beside them: the check-in tables' actor scrubs, as
-//! an erase runs them, and the rows the off-device screen reads a receipt by.
+//! an erase runs them, the rows the off-device screen reads a receipt by, and
+//! a member grant narrowed to some worlds in place.
 
 use std::collections::BTreeMap;
 
+use crate::batch::BatchOp;
 use crate::check_in::{
     AgentHolderVerdict, CheckInTransition, HolderAnswer, HolderKind, NoAgentVerdict,
     OpenPendingCheckIn, PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver, VerifiedChain,
@@ -16,9 +18,14 @@ use crate::check_in::{
     extend_pending_check_in_in_txn, open_pending_check_in_in_txn, record_objection_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::federation::{
+    ScopeAxis, ScopeId, decode_federation_grant_body, encode_federation_grant_body,
+};
 use crate::receipt::ReceiptRecord;
-use crate::{EntityId, Vault};
+use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::{EntityId, TimeRange, Vault};
 
 /// A chain the test names: each rung's members. A rung it does not name is
 /// missing, with the link "not in the test chain".
@@ -291,4 +298,55 @@ pub fn erase_actor(vault: &Vault, actor: &EntityId) -> Result<usize> {
 /// Storage errors.
 pub fn screened_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<EntityId>>> {
     crate::receipt::referenced_rows(vault, receipt)
+}
+
+/// Narrows the live FederationGrant `grant` to `worlds` in place, as a
+/// writer that rewrites a member's grant does: its other bounds stay.
+///
+/// # Errors
+///
+/// No live grant under `grant`; storage errors.
+pub fn narrow_grant_worlds(vault: &Vault, grant: EntityId, worlds: &[EntityId]) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &grant)?
+        else {
+            return Err(Error::EntityNotFound);
+        };
+        let mut row = decode_federation_grant_body(&body)?;
+        row.authority_scope.worlds = worlds
+            .iter()
+            .copied()
+            .map(ScopeId)
+            .collect::<ScopeAxis<_>>();
+        let put = BatchOp::Put {
+            id: grant,
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            row_version: None,
+            data: encode_federation_grant_body(&row)?,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        };
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![put],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })
 }
