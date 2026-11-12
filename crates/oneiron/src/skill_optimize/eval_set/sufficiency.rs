@@ -233,6 +233,28 @@ fn encode(row: &EvalLabelAsk) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(row).map_err(|_| invalid("eval label ask encoding failed"))
 }
 
+/// Whether `waiting` wants an ask: its card is unknown for a reason more
+/// labels could settle. `false` for a known card, or an unknown one no label
+/// fixes.
+/// # Errors
+/// Unbounded text or identical options, for an ask it wants.
+fn ask_wanted(waiting: &WaitingDecision, option_a: &str, option_b: &str) -> Result<bool> {
+    let SufficiencyVerdict::Unknown(reasons) = &waiting.card.verdict else {
+        return Ok(false);
+    };
+    if !reasons.iter().any(UnknownReason::labels_help) {
+        return Ok(false);
+    }
+    if !bounded(&waiting.reference)
+        || !bounded(option_a)
+        || !bounded(option_b)
+        || option_a == option_b
+    {
+        return Err(invalid("an eval label ask needs bounded, distinct text"));
+    }
+    Ok(true)
+}
+
 impl Vault {
     /// Ask the responsible person to label one case, only while `waiting`
     /// holds an unknown card that more labels could settle. `None` when the
@@ -250,45 +272,59 @@ impl Vault {
         option_b: &str,
         at: u64,
     ) -> Result<Option<EvalLabelAsk>> {
-        let SufficiencyVerdict::Unknown(reasons) = &waiting.card.verdict else {
+        if !ask_wanted(waiting, option_a, option_b)? {
             return Ok(None);
-        };
-        if !reasons.iter().any(UnknownReason::labels_help) {
-            return Ok(None);
-        }
-        if !bounded(&waiting.reference)
-            || !bounded(option_a)
-            || !bounded(option_b)
-            || option_a == option_b
-        {
-            return Err(invalid("an eval label ask needs bounded, distinct text"));
         }
         self.with_write_txn_grouped(|txn| {
-            let key = ask_key(&waiting.reference, case);
-            if let Some(raw) = self.store.vault_meta.get(txn, &key)? {
-                return Ok(Some(super::decode(&raw)?));
-            }
-            let row: EvalCase = case_in_txn(self, txn, case)?.ok_or(Error::EntityNotFound)?;
-            if !crate::consent::person_is_live_in_txn(self, txn, &responsible)? {
-                return Err(invalid("an eval label is asked of a live person"));
-            }
-            let ask = EvalLabelAsk {
-                id: self.store.clock.entity_id()?,
-                seat: row.seat,
-                case: *case,
-                decision: waiting.reference.clone(),
-                responsible,
-                option_a: option_a.to_owned(),
-                option_b: option_b.to_owned(),
-                minutes: super::super::policy::resolved_in_txn(self, txn)?.ask_minutes,
-                asked_at: at,
-                delivered_at: None,
-                chosen: None,
-                answered_at: None,
-            };
-            self.store.vault_meta.put(txn, &key, &encode(&ask)?)?;
-            Ok(Some(ask))
+            self.ask_eval_label_in_txn(txn, waiting, case, responsible, option_a, option_b, at)
         })
+    }
+
+    /// [`Self::ask_eval_label`] in the caller's writer, for a producer that
+    /// read the waiting decision and its card in that same writer.
+    /// # Errors
+    /// As [`Self::ask_eval_label`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the ask's own arguments, beside its writer"
+    )]
+    pub(in crate::skill_optimize) fn ask_eval_label_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        waiting: &WaitingDecision,
+        case: &EntityId,
+        responsible: EntityId,
+        option_a: &str,
+        option_b: &str,
+        at: u64,
+    ) -> Result<Option<EvalLabelAsk>> {
+        if !ask_wanted(waiting, option_a, option_b)? {
+            return Ok(None);
+        }
+        let key = ask_key(&waiting.reference, case);
+        if let Some(raw) = self.store.vault_meta.get(txn, &key)? {
+            return Ok(Some(super::decode(&raw)?));
+        }
+        let row: EvalCase = case_in_txn(self, txn, case)?.ok_or(Error::EntityNotFound)?;
+        if !crate::consent::person_is_live_in_txn(self, txn, &responsible)? {
+            return Err(invalid("an eval label is asked of a live person"));
+        }
+        let ask = EvalLabelAsk {
+            id: self.store.clock.entity_id()?,
+            seat: row.seat,
+            case: *case,
+            decision: waiting.reference.clone(),
+            responsible,
+            option_a: option_a.to_owned(),
+            option_b: option_b.to_owned(),
+            minutes: super::super::policy::resolved_in_txn(self, txn)?.ask_minutes,
+            asked_at: at,
+            delivered_at: None,
+            chosen: None,
+            answered_at: None,
+        };
+        self.store.vault_meta.put(txn, &key, &encode(&ask)?)?;
+        Ok(Some(ask))
     }
 
     /// The open eval label asks `person` is responsible for.
