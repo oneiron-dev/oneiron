@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserExpectOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.expect(input)?)",
   "scope": "Read",
+  "act_class": "read",
   "context": "browser",
   "mcp": "none",
   "section": false,

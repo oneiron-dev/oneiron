@@ -5,6 +5,7 @@
   "output": "crate::origin::mirror::OriginMirrorRun",
   "call": "memory.origin_mirror_push_as(&memory.embedded_owner(\"vault.code.origin.mirror.push\")?, input)?",
   "scope": "Write",
+  "act_class": "outbound_send",
   "admission": {
     "unrestricted_record_scope": true
   },

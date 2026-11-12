@@ -5,6 +5,7 @@
   "output": "Vec<crate::task_verb::sdk::BootstrapSkillView>",
   "call": "crate::task_verb::sdk::skill_bootstrap_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.bootstrap\")?, &_input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

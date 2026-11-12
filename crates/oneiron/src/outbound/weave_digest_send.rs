@@ -247,9 +247,10 @@ impl Vault {
         }
     }
 
-    /// The vault's companion agents: each live AGENT_DEF whose wake cadence
-    /// is a companion's, in id order.
-    fn companion_agents_in(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    /// The vault's companion agents: each live AGENT_DEF its agent runs
+    /// under (`agent_def::stands`) whose wake cadence is a companion's, in id
+    /// order. A proposal, waiting or answered, is no companion.
+    pub(crate) fn companion_agents_in(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
         let mut agents = Vec::new();
         for entry in self
             .store
@@ -262,10 +263,11 @@ impl Vault {
             if self
                 .read_agent_definition_in_txn(txn, &id)
                 .is_ok_and(|definition| {
-                    matches!(
-                        definition.wake_cadence,
-                        Some(AgentWakeCadence::Companion { .. })
-                    )
+                    crate::agent_def::stands(&definition)
+                        && matches!(
+                            definition.wake_cadence,
+                            Some(AgentWakeCadence::Companion { .. })
+                        )
                 })
             {
                 agents.push(id);

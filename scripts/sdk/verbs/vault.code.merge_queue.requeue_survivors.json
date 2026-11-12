@@ -5,6 +5,7 @@
   "output": "crate::memory::merge_queue_doors::MergeQueueRequeueView",
   "call": "memory.merge_queue_requeue_survivors_as(&memory.embedded_owner(\"vault.code.merge_queue.requeue_survivors\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

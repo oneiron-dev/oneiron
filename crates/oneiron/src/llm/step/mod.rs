@@ -48,7 +48,9 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
-pub(crate) use self::budget_wait::wake_budget_traps_in_txn;
+pub(crate) use self::budget_wait::{
+    wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
+};
 
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 

@@ -14,6 +14,7 @@ use crate::dreamer_runner::{
     EnqueueDreamerConsolidationAttempt,
 };
 use crate::store::consolidation_scope::DreamerConsolidationScope;
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 /// One Dreamer consolidation enqueue (BRIDGE-03).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,6 +59,10 @@ pub struct DreamerAttemptView {
     pub run_id: Option<String>,
     /// Last failure message, if any.
     pub last_error: Option<String>,
+    /// The typed refusal of a try a spend scope refused for good, kept on
+    /// the failed row beside `last_error`; `None` for every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
     /// Unix seconds.
     pub created_at: u64,
     /// Unix seconds.
@@ -224,6 +229,7 @@ fn attempt_view_from_record(attempt: &AttemptRecord) -> DreamerAttemptView {
         attempt_count: attempt.attempt_count,
         run_id: attempt.run_id.clone(),
         last_error: attempt.last_error.clone(),
+        budget_refusal: attempt.budget_refusal.clone(),
         created_at: attempt.created_at,
         updated_at: attempt.updated_at,
         parked: None,

@@ -102,8 +102,9 @@ pub struct SyncServerConfig {
     pub allowed_origins: Vec<String>,
     /// The role a workspace's house mind runs its org in when its binder
     /// names none (HOUSE-BIND-ROLE-SOURCE): the owner's finish with no
-    /// `role`, and the host start, which binds nothing without it. No
-    /// default: unset, a finish must name the role.
+    /// `role`, and the host start, which binds nothing without it. Unset, a
+    /// finish with no `role` runs the house as deputy
+    /// ([`oneiron::workspace_roster::DEFAULT_HOUSE_ROLE`]).
     pub house_role: Option<oneiron::federation::FederationGrantRole>,
     /// Domains whose subdomains name vaults on the artifact listener
     /// (`<vault>.<domain>/<artifact>/…`). Empty: local `/a/` serving only.
