@@ -1044,6 +1044,9 @@ async fn local_and_remote_provenance_deletes_refresh_both_edge_endpoints() {
                     100,
                 )
                 .unwrap();
+            // Drain the relay of the fixture's own writes before subscribing;
+            // only the delete below belongs to these retained reads.
+            tokio::task::yield_now().await;
             let output_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let input_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let other_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
