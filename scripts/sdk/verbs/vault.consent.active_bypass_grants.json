@@ -5,6 +5,7 @@
   "output": "Vec<crate::consent::bypass_lifecycle::BypassActiveState>",
   "call": "crate::consent::bypass_lifecycle::active_bypass_grants(memory.vault(), &memory.embedded_owner(\"vault.consent.active_bypass_grants\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

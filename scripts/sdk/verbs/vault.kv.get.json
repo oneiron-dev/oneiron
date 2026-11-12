@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::KeyValueItem>",
   "call": "memory.key_value_get(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

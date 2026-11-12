@@ -52,6 +52,7 @@ fn fixture(vault: &Vault) -> Result<DurableStepContext<'_>> {
         deadline: None,
         now_ms: 10_000,
         spend_scope: None,
+        wake_pass_bound: false,
     })
 }
 

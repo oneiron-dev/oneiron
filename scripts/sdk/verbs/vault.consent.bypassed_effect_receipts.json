@@ -5,6 +5,7 @@
   "output": "Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>",
   "call": "crate::consent::bypass_lifecycle::bypassed_effect_receipts(memory.vault(), &memory.embedded_owner(\"vault.consent.bypassed_effect_receipts\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

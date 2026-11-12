@@ -5,6 +5,7 @@
   "output": "crate::memory::codebase_doors::CodeSnapshotNeighborsView",
   "call": "memory.code_snapshot_neighbors_as(&memory.embedded_owner(\"vault.code.symbols.neighbors\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

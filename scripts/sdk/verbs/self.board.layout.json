@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BoardLayoutState",
   "call": "crate::task_verb::sdk::board_layout_reply(memory, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

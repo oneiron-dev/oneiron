@@ -5,6 +5,7 @@
   "output": "crate::conversation::TurnActionRebindReceipt",
   "call": "memory.conversations_turn_rebind(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "mcp_fields": {
     "spec": "$"
   },

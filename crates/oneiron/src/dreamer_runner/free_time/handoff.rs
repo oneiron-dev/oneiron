@@ -48,6 +48,7 @@ use super::{CLOCK, CYCLE, FreeTimeClock, FreeTimeItemReceipt, FreeTimeKind, POLI
 use crate::attempt_queue::AttemptQueue;
 use crate::authority::{GrantStanding, OwnerActKind, grant_standing_in_txn};
 use crate::side_table::{self, SideCodec, SideKey, SideTable, SideTableDecl};
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::sync::home_handoff::{
     HomeFence, HomeMove, HomeTable, TableAdopt, froze_home_state_in_txn,
 };
@@ -355,6 +356,10 @@ struct ReceiptFacts {
     attempt: Option<[u8; 16]>,
     proposal_landed: bool,
     at: u64,
+    /// The receipt's typed budget refusal: a spend scope's id and counts, no
+    /// actor detail. Absent from the row while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    budget_refusal: Option<StepBudgetRefusal>,
 }
 
 impl FreeTimeReceiptRows {
@@ -385,6 +390,7 @@ impl FreeTimeReceiptRows {
                 attempt: receipt.attempt,
                 proposal_landed: receipt.proposal.is_some(),
                 at: receipt.at,
+                budget_refusal: receipt.budget_refusal,
             });
         }
         Ok(pieces.partitioned(Self { receipts: facts }))
@@ -424,6 +430,7 @@ impl FreeTimeReceiptRows {
                     proposal,
                     context_unread,
                     at: facts.at,
+                    budget_refusal: facts.budget_refusal,
                 })
             })
             .collect())

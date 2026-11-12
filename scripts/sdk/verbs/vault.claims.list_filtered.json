@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
   "call": "memory.claim_list_filtered(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true,
     "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"

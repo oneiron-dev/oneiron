@@ -5,6 +5,7 @@
   "output": "crate::consent::bypass_lifecycle::BypassGrantWarningView",
   "call": "crate::consent::bypass_lifecycle::bypass_grant_warning(memory.vault(), &memory.embedded_owner(\"vault.consent.bypass_grant_warning\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

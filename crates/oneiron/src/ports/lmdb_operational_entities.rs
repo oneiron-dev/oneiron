@@ -97,7 +97,12 @@ impl EntityStoreMaintenance for Store {
         super::keep_worlds_of_unmade_epoch_in_txn(write, txn, id, entity_type, body)?;
         let mut payload = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
         payload.extend_from_slice(body);
-        self.entities.put(txn, id.as_bytes(), &payload)
+        self.entities.put(txn, id.as_bytes(), &payload)?;
+        // FIX SUMMARY-SHORT-REF-INDEX: a live read issues the row's short ref
+        // with the hash of the body it serves, which the pointer may change
+        // (its parts, or the document it names). A birth's document is
+        // stored after this put; its persist moves the index again.
+        crate::vault::entity_revision::refresh_live_short_id_in_txn(self, txn, id)
     }
     #[cfg(feature = "sync")]
     fn port_retained_shell_restore(

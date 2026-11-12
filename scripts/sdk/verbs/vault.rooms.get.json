@@ -5,6 +5,7 @@
   "output": "Option<crate::workspace_roster::RoomThread>",
   "call": "memory.rooms_get_thread(crate::EntityId::from_hex(&input.room_ref)?, crate::EntityId::from_hex(&input.turn_ref)?)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

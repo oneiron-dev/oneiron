@@ -141,6 +141,13 @@ pub struct DeriveArchiveInput {
     pub signals: DeriveStrengthSignals,
     /// Its score: below the owner's strength policy row, or refused.
     pub score: f64,
+    /// The stored observation row's pin, as the reader
+    /// `vault.consolidation.strength.observations.page` served it.
+    pub observation_pin: String,
+    /// The effective strength policy's pin, as the same reader served it.
+    pub policy_pin: String,
+    /// The effective scoring config's pin, as the same reader served it.
+    pub config_pin: String,
 }
 
 /// A SameAs between two claims. It lands as the link's proposed status
@@ -248,6 +255,9 @@ impl DeriveItemInput {
                     diversity: archive.signals.diversity,
                 },
                 score: archive.score,
+                observation_pin: archive.observation_pin,
+                policy_pin: archive.policy_pin,
+                config_pin: archive.config_pin,
             }),
         })
     }

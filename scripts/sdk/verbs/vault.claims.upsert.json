@@ -9,6 +9,7 @@
   "output": "crate::memory::CommitReceipt",
   "call": "memory.claim_upsert_scoped(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "proposes": true,
   "admission": {
     "claim_record_scope": true

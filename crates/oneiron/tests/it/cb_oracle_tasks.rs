@@ -1190,6 +1190,7 @@ mod cb_a {
                 deadline: None,
                 now_ms: NOW,
                 spend_scope: None,
+                wake_pass_bound: false,
             };
             let trap = open_trap(
                 &vault,
@@ -1466,6 +1467,7 @@ mod cb_a {
             deadline: None,
             now_ms: NOW,
             spend_scope: None,
+            wake_pass_bound: false,
         };
         let trap = open_trap(
             &fixture.vault,

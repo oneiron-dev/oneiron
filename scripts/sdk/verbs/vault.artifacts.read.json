@@ -12,6 +12,7 @@
   "output": "Option<crate::task_verb::sdk::BlobContent>",
   "call": "memory_requests::read_blob(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

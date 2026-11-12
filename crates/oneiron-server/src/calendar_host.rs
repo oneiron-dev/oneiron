@@ -7,6 +7,7 @@ use oneiron::outbound::{
     EngineSendId, OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
     OutboundIntent, SentLookup, SentLookupTarget, ServedChannelSink,
 };
+use oneiron::outbound_intent_ledger::DeliveryReadBack;
 use reqwest::header::HeaderValue;
 
 mod caldav;
@@ -253,6 +254,17 @@ impl OutboundExecutionSink for CalendarChannelSink<'_> {
             SentLookup::CannotTell
         } else {
             self.ordinary.lookup_sent(engine_send_id, target)
+        }
+    }
+
+    /// FIX 22348: an iMIP invite keeps no id of ours to read back; every
+    /// other send is the served sink's to read back (FIX 8814 follow-up), as
+    /// it is the served sink's to look up.
+    fn read_back_delivery(&self, request: &OutboundExecutionRequest<'_>) -> DeliveryReadBack {
+        if request.intent.channel == "calendar" && request.intent.verb == "calendar.invite" {
+            DeliveryReadBack::Unknown
+        } else {
+            self.ordinary.read_back_delivery(request)
         }
     }
 }

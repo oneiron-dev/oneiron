@@ -6,16 +6,18 @@
 //! keyed to the agent. The workspace's stored preset is the statement that
 //! its house runs its ORG. The bind adds the house's role in that org: one
 //! FEDERATION_GRANT over the workspace's shared vault, its member the house,
-//! at the role its binder chose, from member up to owner. So
+//! at the role its binder chose: member, steward, admin, deputy or owner. So
 //! [`Vault::authorize_shared_vault_write`] gates the house by that role and
-//! by nothing else, and its actor class stays `agent`. The role has no
-//! default here; the binder names it.
+//! by nothing else, and its actor class stays `agent`. The binder names the
+//! role; a binder that names none gets [`DEFAULT_HOUSE_ROLE`], deputy
+//! (DEPUTY = A, the owner, 10 Nov 07:45), which the host's finish applies.
 //!
 //! Who may set that role is the role table's rule (ARCH-0043), the one the
 //! membership acts apply: a member, steward or admin role is set by whoever
 //! holds `org:assign-role` over the vault (an Admin or an Owner by the
-//! shipped defaults), the owner role only by an Owner, and the vault's own
-//! owner holds every assignment. The bind checks it in its own write, and so
+//! shipped defaults), the deputy and owner roles only by an Owner
+//! (HOUSE-UNBIND-AUTHORITY = A), and the vault's own owner holds every
+//! assignment. The bind checks it in its own write, and so
 //! does the unbind. [`Vault::set_house_role`] and [`Vault::clear_house_role`]
 //! set and clear the role alone, under the same rule; neither touches the
 //! root's leader, which only the owner's bind and unbind sign.
@@ -93,11 +95,19 @@ pub(crate) struct HouseLinkReceipt {
     pub(crate) grant: EntityId,
 }
 
-/// The roles a house may run its org in: member up to owner.
+/// The role a house runs its org in when its binder names none: deputy, an
+/// Admin's powers that check in with the Owner on owner acts (DEPUTY = A,
+/// the owner, 10 Nov 07:45; HOUSE-ROLE-DEPUTY-AFTER-7071 = A). Only an
+/// Owner assigns it ([`assignment_write`]).
+pub const DEFAULT_HOUSE_ROLE: FederationGrantRole = FederationGrantRole::Deputy;
+
+/// The roles a house may run its org in: member up to owner, deputy among
+/// them. Viewer, delegate and guest are no org role for a house.
 fn require_house_role(role: FederationGrantRole) -> Result<()> {
     if matches!(
         role,
         FederationGrantRole::Owner
+            | FederationGrantRole::Deputy
             | FederationGrantRole::Admin
             | FederationGrantRole::Steward
             | FederationGrantRole::Member
@@ -105,12 +115,13 @@ fn require_house_role(role: FederationGrantRole) -> Result<()> {
         return Ok(());
     }
     Err(Error::InvalidConfig(
-        "a house runs its org as a member, steward, admin or owner".into(),
+        "a house runs its org as a member, steward, admin, deputy or owner".into(),
     ))
 }
 
 /// The role a house runs its org in, from its pinned spelling: `member`,
-/// `steward`, `admin` or `owner`. `None` for any other role or spelling.
+/// `steward`, `admin`, `deputy` or `owner`. `None` for any other role or
+/// spelling.
 #[must_use]
 pub fn parse_house_role(value: &str) -> Option<FederationGrantRole> {
     FederationGrantRole::parse(value).filter(|role| require_house_role(*role).is_ok())
@@ -134,16 +145,20 @@ fn require_undeleted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> 
 
 /// The refusal of a set or clear by someone the role table does not let
 /// assign that role.
-const ROLE_ASSIGNER_REFUSAL: &str = "a house's role is set or cleared only by whoever may assign that role: org:assign-role, or an Owner for the owner role";
+const ROLE_ASSIGNER_REFUSAL: &str = "a house's role is set or cleared only by whoever may assign that role: org:assign-role, or an Owner for the deputy or owner role";
 
 /// What the role table asks of whoever assigns `role` (ARCH-0043), as the
-/// membership acts ask it: a non-root role is the `org:assign-role` power's
-/// (`change_shared_member_role`), the owner role the org root's, an Owner's.
-/// An assigner never grants a power it lacks, so an Admin assigns up to
-/// Admin; a role above Admin (the `deputy` preset, once it lands) needs an
-/// Owner too.
+/// membership acts ask it: a member, steward or admin role is the
+/// `org:assign-role` power's (`change_shared_member_role`), the deputy and
+/// owner roles the org root's, an Owner's. An assigner never grants a power
+/// it lacks, so an Admin assigns up to Admin; a deputy is the Owner's
+/// delegate (ARCH-0082 #roles), so only an Owner seats a house there
+/// (HOUSE-UNBIND-AUTHORITY = A), and only an Owner moves or clears it.
 fn assignment_write(role: FederationGrantRole) -> SharedVaultWrite {
-    if role == FederationGrantRole::Owner {
+    if matches!(
+        role,
+        FederationGrantRole::Owner | FederationGrantRole::Deputy
+    ) {
         SharedVaultWrite::OrgRoot
     } else {
         SharedVaultWrite::Admin(OrgAdminPower::AssignRole)
@@ -506,7 +521,8 @@ impl Vault {
     /// rewritten in place if the house holds another, and one bind receipt
     /// naming `actor`. `actor` must be able to assign `role`, and the role it
     /// replaces, by the role table: `org:assign-role` for member, steward or
-    /// admin, an Owner for owner; the vault's owner may assign any. The house
+    /// admin, an Owner for deputy or owner; the vault's owner may assign
+    /// any. The house
     /// already at `role` is left as it is, with no receipt. No stored preset
     /// is `EntityNotFound`.
     pub fn set_house_role(
