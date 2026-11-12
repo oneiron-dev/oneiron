@@ -527,6 +527,7 @@ impl Memory<'_> {
                     .validate_in(self.vault(), &txn, Some(post.assignee))?;
                 Vec::new()
             };
+            self.require_approved_plan_pins_in(&txn, &post.brief)?;
             (
                 brief_type_ref_in(self.vault(), &txn, &post.brief)?,
                 stale_pins,
@@ -620,6 +621,9 @@ impl Memory<'_> {
             if let Some(binding) = &post.brief.context.workflow {
                 binding.validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
             }
+            // Plan mode: so is a plan the brief pins, so a verdict or edit
+            // that lands after the check above still decides.
+            self.require_approved_plan_pins_in(&*wtxn, &post.brief)?;
             record_task_create(
                 self.vault(),
                 wtxn,

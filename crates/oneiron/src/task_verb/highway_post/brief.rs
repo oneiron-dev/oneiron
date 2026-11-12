@@ -38,6 +38,7 @@ impl Memory<'_> {
                 ));
             }
             next.validate_in(self.vault(), &txn, body.assignee)?;
+            self.require_approved_plan_pins_in(&txn, &next)?;
             match body.brief {
                 Some(held) if held.rev == 1 => (1, Some(held.brief)),
                 Some(held) => (held.rev, None),
