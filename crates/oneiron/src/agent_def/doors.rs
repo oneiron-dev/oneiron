@@ -76,6 +76,10 @@ pub(crate) struct AgentAuthoring {
     /// What the author writer made of each definition the batch staged, for
     /// the committing door's receipt.
     receipts: super::AgentDefinitionWriteReceipts,
+    /// The author's instance whose grant decides `save_agent` (SPAWN-KNOB):
+    /// the run attempt the writing actor carries; `None` answers to the
+    /// author's root grant.
+    instance: Option<super::AgentPowerTarget>,
 }
 
 impl AgentAuthoring {
@@ -91,6 +95,7 @@ impl AgentAuthoring {
             door,
             read_key: read_key.cloned(),
             receipts: super::AgentDefinitionWriteReceipts::default(),
+            instance: super::actor_instance(actor),
         })
     }
 
@@ -292,6 +297,7 @@ impl Vault {
             requested,
             scope_widens,
             AGENTS_PUT_DOOR,
+            lease.map(|lease| super::AgentPowerTarget::Attempt(lease.attempt)),
         )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
@@ -357,6 +363,7 @@ impl Vault {
         if claims.single_use && issuer.is_none() {
             return Ok(None);
         }
+        // A credential's author answers to its own root grant.
         let (definition, disposition) = self.prepare_agent_definition_for_author_in_txn(
             txn,
             author,
@@ -364,6 +371,7 @@ impl Vault {
             requested,
             false,
             AGENTS_PUT_DOOR,
+            None,
         )?;
         if disposition != AgentDefinitionPutDisposition::Active {
             return Ok(None);
@@ -814,6 +822,9 @@ impl Vault {
         id: &EntityId,
         body: &[u8],
     ) -> Result<AuthoredPut> {
+        // SPAWN-KNOB: an author whose `save_agent` is off writes no
+        // definition, new or changed.
+        super::ensure_save_agent_in_txn(&self.store, txn, authoring.author, authoring.instance)?;
         match live_entity_row_in_txn(&self.store, txn, id)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
@@ -846,6 +857,7 @@ impl Vault {
         requested: &AgentDefinition,
     ) -> Result<AgentDefinition> {
         let author = &authoring.author;
+        super::ensure_save_agent_in_txn(&self.store, txn, *author, authoring.instance)?;
         let author_holds_definition = matches!(
             live_entity_row_in_txn(&self.store, txn, author)?,
             LiveEntityRow::Live {
@@ -861,6 +873,7 @@ impl Vault {
                 requested,
                 false,
                 authoring.door,
+                authoring.instance,
             )?
             .0
         } else {
@@ -1286,7 +1299,13 @@ impl Vault {
     }
 
     /// Prepares the same author-bounded definition for a door that owns its
-    /// writer. `door` is the verb name its provenance records.
+    /// writer. `door` is the verb name its provenance records; `instance` is
+    /// the author's instance whose `save_agent` decides (SPAWN-KNOB), `None`
+    /// for its root grant.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the author writer binds author, target, request, scope, door and the deciding grant in one read"
+    )]
     fn prepare_agent_definition_for_author_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -1295,7 +1314,9 @@ impl Vault {
         requested: &AgentDefinition,
         scope_widens: bool,
         door: &'static str,
+        instance: Option<super::AgentPowerTarget>,
     ) -> Result<(AgentDefinition, AgentDefinitionPutDisposition)> {
+        super::ensure_save_agent_in_txn(&self.store, txn, *author, instance)?;
         let author_def = self.read_agent_definition_in_txn(txn, author)?;
         if !stands(&author_def) {
             return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(

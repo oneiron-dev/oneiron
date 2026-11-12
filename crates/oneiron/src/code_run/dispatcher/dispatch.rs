@@ -35,18 +35,24 @@ impl HostSelfDispatcher<'_> {
         let outcome = match call {
             SelfCall::AgentsSpawn(call) => self.dispatch_agents_spawn(*call),
             SelfCall::AgentsPut(call) => {
-                let disposition = self.put_agent_definition(
-                    &call.id,
-                    &call.definition,
-                    call.occurred,
-                    call.learned_at,
-                )?;
-                Ok(SelfDispatchOutcome::AgentDefinitionPut(
-                    crate::code_run::SelfAgentDefinitionPutResult {
-                        id: call.id,
-                        disposition,
-                    },
-                ))
+                // SPAWN-KNOB: the standard deny, its receipt committed.
+                match self.check_save_agent_power(call.id.as_bytes())? {
+                    Some(denied) => Ok(SelfDispatchOutcome::Denied(denied)),
+                    None => {
+                        let disposition = self.put_agent_definition(
+                            &call.id,
+                            &call.definition,
+                            call.occurred,
+                            call.learned_at,
+                        )?;
+                        Ok(SelfDispatchOutcome::AgentDefinitionPut(
+                            crate::code_run::SelfAgentDefinitionPutResult {
+                                id: call.id,
+                                disposition,
+                            },
+                        ))
+                    }
+                }
             }
             // A run's own ask and wait take their turn in the vault's task-work
             // line (Rule 5), as the SDK rows do, and run on it.
