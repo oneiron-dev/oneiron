@@ -574,21 +574,26 @@ impl Vault {
                 "card": card.card_id,
             }
         });
-        AgentDispatcher::new(self).dispatch_with_context(
-            DispatchAgent {
-                target: AgentDispatchTarget::Custom(leader),
-                parent_attempt: None,
-                dedupe_key: Some(format!("project-goal-intake:{}", project.to_hex())),
-                run_id: Some(format!("project:{}", project.to_hex())),
-                now,
-            },
-            AgentSpawnContext {
-                project_ref: Some(project),
-                ..AgentSpawnContext::default()
-            }
-            .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
-            .with_origin_conversation(home_room),
-        )
+        // The interview is a root run in the new project, which has no run of
+        // its own yet to be its parent: the entry the dispatch writer proves
+        // against this card admits it.
+        AgentDispatcher::new(self)
+            .admitting_goal_intake(&card.card_id, project, home_room, leader)
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(leader),
+                    parent_attempt: None,
+                    dedupe_key: Some(format!("project-goal-intake:{}", project.to_hex())),
+                    run_id: Some(format!("project:{}", project.to_hex())),
+                    now,
+                },
+                AgentSpawnContext {
+                    project_ref: Some(project),
+                    ..AgentSpawnContext::default()
+                }
+                .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
+                .with_origin_conversation(home_room),
+            )
     }
 }
 
