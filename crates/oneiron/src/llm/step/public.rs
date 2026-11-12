@@ -18,7 +18,7 @@ use super::{
 };
 use crate::agent_def::{AgentDefinition, ensure_listed};
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
+    AGENT_DISPATCH_ATTEMPT_TYPE, SpendScopeId, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
@@ -118,7 +118,7 @@ pub async fn submit_as_owner(
             vault,
             Submitter::Owner(owner),
             input,
-            Some((backend, guard)),
+            Some((backend, guard, None)),
         )
         .await?,
     )
@@ -171,7 +171,19 @@ pub async fn submit_as_run_actor(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
 ) -> MemoryResult<ModelStepReceipt> {
-    let execution = Some((backend, guard));
+    submit_as_run_actor_on_scope(vault, caller, input, backend, guard, None).await
+}
+
+/// A run's step on its spend scope's guard, for a typed budget wait.
+pub async fn submit_as_run_actor_on_scope(
+    vault: &Vault,
+    caller: RunStepCaller<'_>,
+    input: ModelStepSubmit,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    spend_scope: Option<&SpendScopeId>,
+) -> MemoryResult<ModelStepReceipt> {
+    let execution = Some((backend, guard, spend_scope.cloned()));
     admitted(submit(vault, Submitter::Run(caller), input, execution).await?)
 }
 
@@ -354,7 +366,7 @@ async fn submit(
     vault: &Vault,
     submitter: Submitter<'_>,
     input: ModelStepSubmit,
-    execution: Option<(&dyn LlmBackend, &BudgetGuard)>,
+    execution: Option<(&dyn LlmBackend, &BudgetGuard, Option<SpendScopeId>)>,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
     submitter.attached()?;
@@ -493,6 +505,7 @@ async fn submit(
         }
         return view(vault, id, &row).map(Some).map_err(MemoryError::from);
     };
+    let spend_scope = execution.as_ref().and_then(|(_, _, scope)| scope.clone());
     let context = DurableStepContext {
         vault,
         attempt_id: id,
@@ -501,8 +514,9 @@ async fn submit(
         subject: actor,
         deadline: None,
         now_ms: vault.now_recorded_at().saturating_mul(1000),
+        spend_scope,
     };
-    let outcome = if let Some((backend, guard)) = execution {
+    let outcome = if let Some((backend, guard, _)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
             backend,

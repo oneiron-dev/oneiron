@@ -115,6 +115,8 @@ impl Vault {
         }
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
+        #[cfg(feature = "sync")]
+        admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::Due, budget, access)
     }
 
@@ -142,6 +144,8 @@ impl Vault {
         let deadline = budget.deadline();
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
+        #[cfg(feature = "sync")]
+        admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::All, budget, access)
     }
 
@@ -437,6 +441,21 @@ impl Vault {
 /// (untangle slice 6.8c). Beside a live runner, a row two releases both plan moves once, and
 /// a row two prunes both plan goes once (`prune_hook_feeds`). A failed
 /// release or prune is logged and retried on the next pass.
+/// The turn-program wakes another machine carried to this one (FIX 5266).
+/// On the elected home they arrive with no turn here to drain them, so each
+/// pass merges the carried rows (a wake that came before its arming is taken
+/// once the arming has) and admits every wake owed here. Off the home the
+/// merge does nothing and the admission passes riding wakes by. A failure is
+/// logged by the admission and waits for the next pass.
+#[cfg(feature = "sync")]
+fn admit_carried_turn_program_wakes(vault: &Vault, deadline: &Deadline) {
+    if deadline.stopped() {
+        return;
+    }
+    vault.merge_carried_turn_program_wakes();
+    vault.admit_owed_turn_programs(vault.now_recorded_at());
+}
+
 fn release_ticks_and_prune_hook_feeds(vault: &Vault, deadline: &Deadline) {
     if deadline.stopped() {
         return;

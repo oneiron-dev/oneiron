@@ -33,6 +33,13 @@
   background: var(--sl-lit);
 }
 
+/* A done task: a plain check in the reading ink, centred in the donut's
+   column. */
+.sl-task-check {
+  justify-self: center;
+  color: var(--sl-ink-2);
+}
+
 .sl-task-name {
   min-width: 0;
   overflow: hidden;
@@ -78,7 +85,7 @@
   color: var(--sl-ink-1);
 }
 
-.sl-task-body .sl-needs-you-picks {
+.sl-task-body .sl-needs-you-answers {
   margin-top: -4px;
 }
 

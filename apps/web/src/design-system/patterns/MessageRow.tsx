@@ -10,23 +10,46 @@ import { cx } from '../lib/react-utils'
 import { taskCountWords } from './task-group'
 
 export interface MessageRowProps extends React.ComponentPropsWithRef<'article'> {
-  /* Who wrote it: a Glyph. */
+  /* Who wrote it: a Glyph at 24 px. */
   author: React.ReactNode
   name: React.ReactNode
-  /* When, as a figure at the end of the name line: `31 min ago`, `14:02`. */
+  /* When, as a figure after the name: `31 min ago`, `14:02`. */
   time?: string
   /* Machine-readable time for the figure. */
   dateTime?: string
+  /* Marks at the end of the name line, after the time (a pin mark). */
+  marks?: React.ReactNode
   /* Not yet accepted by a member: the text prints one ink step fainter. */
   provisional?: boolean
+  /* The row was just pointed at (a pin or a link led here): it carries the
+     lit tone, which fades out. */
+  marked?: boolean
 }
 
-/* One message: the author's mark, the name line with its time, then the
-   text and only what the row lacks (an attachment, a fold, the thread
-   line, reactions). It carries no state caption and no presence mark. */
-function MessageRowRoot({ author, name, time, dateTime, provisional = false, className, children, ...props }: MessageRowProps) {
+/* One message: the author's portrait in a 24 px gutter, then the column
+   (capped at --sl-col): the name line with its time and marks, the text,
+   and only what the row lacks (an attachment, a fold, the thread line, a
+   card). It carries no state caption and no presence mark, and no tone
+   of its own: only hover and a marked row are toned. */
+function MessageRowRoot({
+  author,
+  name,
+  time,
+  dateTime,
+  marks,
+  provisional = false,
+  marked = false,
+  className,
+  children,
+  ...props
+}: MessageRowProps) {
   return (
-    <article className={cx('sl-message-row', className)} data-provisional={provisional ? '' : undefined} {...props}>
+    <article
+      className={cx('sl-message-row', className)}
+      data-provisional={provisional ? '' : undefined}
+      data-marked={marked ? '' : undefined}
+      {...props}
+    >
       <span className="sl-message-author">{author}</span>
       <div className="sl-message-body">
         <div className="sl-message-name-line">
@@ -36,6 +59,7 @@ function MessageRowRoot({ author, name, time, dateTime, provisional = false, cla
               {time}
             </Figure>
           ) : null}
+          {marks !== undefined ? <span className="sl-message-marks">{marks}</span> : null}
         </div>
         {children}
       </div>

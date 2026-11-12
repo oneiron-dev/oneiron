@@ -152,6 +152,33 @@
   color: var(--sl-ink-2);
 }
 
+/* A token on a swatch, edged with a hairline so a ground the size of the
+   page still shows where it ends. */
+.lib-swatch {
+  display: block;
+  width: 56px;
+  height: 36px;
+  border-radius: var(--sl-radius);
+  box-shadow: inset 0 0 0 1px var(--sl-rule);
+}
+
+.lib-swatch[data-shadow="card"] {
+  background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
+}
+
+.lib-swatch[data-shadow="pop"] {
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+}
+
+.lib-swatch[data-shadow="image"] {
+  background: var(--sl-disc);
+  box-shadow: none;
+  outline: 1px solid var(--sl-image-line);
+  outline-offset: -1px;
+}
+
 .lib-t-place {
   font-size: var(--sl-t-place);
   font-weight: 500;
@@ -204,6 +231,28 @@
 
 .lib-well {
   padding: 10px 14px;
+}
+
+/* The mark prints in the strongest ink. */
+.lib-brand {
+  color: var(--sl-ink-1);
+}
+
+/* A theme's window ground on a stage of its own. */
+.lib-ground-stage {
+  display: flex;
+  align-items: flex-end;
+  width: 240px;
+  height: 120px;
+  padding: 10px 12px;
+  border-radius: var(--sl-radius);
+  overflow: hidden;
+}
+
+.lib-ground-word {
+  position: relative;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ground-ink);
 }
 
 .lib-icons {
@@ -349,15 +398,50 @@
   gap: 8px;
 }
 
-.lib-mini-ledger {
-  width: auto;
-}
-
 .lib-messages {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 8px;
+}
+
+/* The column demo: the card under a message keeps a little air. */
+.lib-column-card {
+  margin-top: 10px;
+}
+
+/* Bare cards one under the other. */
+.lib-cards-bare {
+  gap: 28px;
+}
+
+/* A block with an information mark: a raised card, the column's width. */
+.lib-info-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: var(--sl-col);
+  min-height: 44px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
+}
+
+.lib-info-title {
+  flex: 1;
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-1);
+}
+
+/* A clipping area only a little wider than the block: no room beside it.
+   The space under the block is for the note. */
+.lib-info-narrow {
+  width: calc(var(--sl-col) + 40px);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.lib-info-narrow .lib-info-block {
+  margin-bottom: 120px;
 }
 
 .lib-crew-right {
@@ -390,7 +474,7 @@
 }
 
 .lib-split-pane + .sl-split-handle + .lib-split-pane {
-  background: var(--sl-sunk);
+  background: var(--sl-well);
 }
 
 .lib-thread-pane {
@@ -400,14 +484,13 @@
 /* The reply line sits at the foot of the thread pane. */
 .lib-thread-reply {
   margin-top: auto;
-  background: var(--sl-island);
 }
 
 .lib-split-closed {
   justify-content: flex-start;
 }
 
-.lib-write-line {
+.lib-composer-small {
   width: 360px;
 }
 
@@ -612,40 +695,127 @@
   gap: 8px;
 }
 
-/* The app frame on the field: a fixed height so the sidebar, the strip
-   and the work area scroll inside it and the peek spans it. */
-.lib-frame-demo {
+/* A sidebar alone, on the tone it has in the sheet. */
+.lib-sheet-stage {
+  display: flex;
+  border-radius: var(--sl-radius);
+  background: var(--sl-bg);
+}
+
+/* The app frame at 1100 x 620 on a bordered stage of its own theme; a
+   narrow window scrolls it sideways. */
+.lib-frame-scroller {
+  max-width: 100%;
+  padding: 1px;
+  overflow-x: auto;
+}
+
+.lib-frame-root {
+  width: 1100px;
+  height: 620px;
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+/* A frame at a set width and height (given inline) for one thing beside a room. */
+.lib-beside-root {
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+.lib-beside-split {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lib-beside-room {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  overflow: hidden;
 }
 
 .lib-frame {
-  height: 620px;
+  height: 100%;
 }
 
 .lib-frame .lib-field-readout {
   display: none;
 }
 
-.lib-frame .lib-sidebar-demo > .sl-sidebar {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.lib-frame-island {
+/* A place's page in the work area. */
+.lib-frame-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 22px 28px 24px;
+  padding: 18px 28px 24px;
 }
 
-/* The work area's content keeps a reading width and re-centres when the
-   sidebar folds. */
 .lib-frame-column {
   max-width: 760px;
-  margin: 0 auto;
 }
+
+.lib-frame-line {
+  padding-top: 12px;
+  font-size: var(--sl-t-say);
+  color: var(--sl-ink-2);
+}
+
+/* A room at a set width (given inline): its head line, then the view its
+   tab selects, on the island tone. */
+.lib-room-root {
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+.lib-room-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 150px;
+  padding: 22px 28px 20px;
+  background: var(--sl-island);
+}
+
+.lib-room-caption {
+  max-width: 640px;
+}
+
+/* The companion's room: the head, the messages ending at the bottom, the
+   write box at the foot. Messages sit flush with the head: the rows'
+   own padding hangs into the margin. */
+.lib-room {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 12px;
+  min-height: 0;
+  padding: 18px 28px 14px;
+}
+
+.lib-room-trunk {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-inline: -8px;
+  padding-inline: 8px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.lib-room-messages {
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+}
+
+.lib-room-asks {
+  margin-top: 10px;
+}
+
 
 /* The place's name in a sidebar head inside the frame. */
 .lib-sidebar-title {
@@ -655,27 +825,27 @@
   font-weight: 600;
   line-height: 30px;
   color: var(--sl-sidebar-ink-on);
-  text-shadow: var(--sl-sidebar-text-shadow);
 }
 
-/* The vault's initial: the vault switch's symbol in the microsidebar. */
-.lib-vault-initial {
-  display: block;
-  font-size: var(--sl-t-section);
-  font-weight: 600;
-  line-height: 1;
-}
-
-/* A microsidebar alone: the height of a window, its foot at the bottom. */
+/* A microsidebar alone: the height of a window on its window ground, its
+   foot at the bottom. */
 .lib-micro-demo {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  height: 560px;
 }
 
-.lib-micro-demo > .sl-micro-sidebar {
-  flex: 1 1 auto;
+.lib-micro-stage {
+  position: relative;
+  display: flex;
+  align-self: flex-start;
+  height: 560px;
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+}
+
+.lib-micro-stage > .sl-micro-sidebar {
+  z-index: 1;
 }
 
 .lib-field-pick {
@@ -697,4 +867,151 @@
   .lib-crew-pop {
     width: 320px;
   }
+}
+
+
+/* ── the new parts in the island ──────────────────────────────────────── */
+
+/* A stage at the width of a sign-in sheet's column. */
+.lib-tone-stage {
+  width: 350px;
+}
+
+.lib-provider-disc {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--sl-ink-4);
+}
+
+/* A list pane's width: 340 px less its 16 px sides. */
+.lib-outline-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 308px;
+}
+
+.lib-vault-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 560px;
+}
+
+.lib-vault-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -10px;
+  padding: 0;
+  list-style: none;
+}
+
+/* ── a place and its panes ────────────────────────────────────────────── */
+
+.lib-place-caption {
+  max-width: 760px;
+}
+
+/* A list pane: the head, then the list, inside the pane's 16 px sides. */
+.lib-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 16px;
+}
+
+.lib-list-pane > .sl-split-head {
+  padding: 0 2px 4px 8px;
+}
+
+.lib-list-pane > .sl-split-head .sl-split-head-title {
+  font-weight: 600;
+}
+
+.lib-thing-origin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-2);
+}
+
+/* ── outside a vault ──────────────────────────────────────────────────── */
+
+.lib-outside-root {
+  width: 1440px;
+  height: 900px;
+  overflow: hidden;
+  border-radius: var(--sl-radius);
+  box-shadow: 0 0 0 1px var(--sl-rule);
+}
+
+.lib-sign-in {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lib-sign-in-or {
+  margin-top: 8px;
+}
+
+.lib-sign-in-email {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.lib-wide-button.sl-primary-button {
+  width: 100%;
+  height: 44px;
+  font-size: var(--sl-t-say);
+}
+
+.lib-sign-in-passkey {
+  align-self: center;
+  margin-top: 6px;
+}
+
+.lib-vaults-title {
+  margin-bottom: 12px;
+  font-size: var(--sl-t-place);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--sl-ink-1);
+}
+
+.lib-vault-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  padding: 12px 10px 4px 26px;
+}
+
+.lib-vaults-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 14px;
+  box-shadow: 0 -1px 0 var(--sl-rule);
+}
+
+.lib-vaults-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--sl-t-do);
+  color: var(--sl-ink-1);
+}
+
+.lib-vaults-verbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
 }

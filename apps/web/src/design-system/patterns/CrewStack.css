@@ -1,9 +1,10 @@
-/* Overlapping round marks, each cut out of the ground it sits on (set
-   --sl-mark-ground to that surface; the island by default). */
+/* Overlapping round marks of 22 px, each over the one before by 5 px and
+   cut out of the ground it sits on by a 2 px ring (set --sl-mark-ground to
+   that surface; the island by default). */
 .sl-crew-stack {
   display: flex;
   align-items: center;
-  padding-left: 4px;
+  padding-left: 5px;
 }
 
 .sl-crew-member {
@@ -11,17 +12,19 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
-  height: 28px;
-  margin-left: -4px;
+  width: 22px;
+  height: 22px;
+  margin-left: -5px;
   border-radius: 50%;
   background: var(--sl-chip);
   box-shadow: 0 0 0 2px var(--sl-mark-ground, var(--sl-island));
   color: var(--sl-ink-1);
 }
 
-/* The Glyph fills the round plate: no frame, the plate is the shape. */
-.sl-crew-member > .sl-glyph {
+/* The Glyph or the face fills the round plate: no frame, the plate is the
+   shape. */
+.sl-crew-member > .sl-glyph,
+.sl-crew-member > .sl-portrait {
   width: 100%;
   height: 100%;
   border: 0;
@@ -29,7 +32,8 @@
   background: transparent;
 }
 
-.sl-crew-member > .sl-glyph[data-kind="person"] {
+.sl-crew-member > .sl-glyph[data-kind="person"],
+.sl-crew-member > .sl-portrait[data-form="disc"] {
   background: var(--sl-disc);
 }
 
@@ -47,7 +51,10 @@ button.sl-crew-member:focus-visible,
 
 button.sl-crew-member:hover > .sl-glyph[data-kind="person"],
 button.sl-crew-member:focus-visible > .sl-glyph[data-kind="person"],
-.sl-crew-member[aria-expanded="true"] > .sl-glyph[data-kind="person"] {
+.sl-crew-member[aria-expanded="true"] > .sl-glyph[data-kind="person"],
+button.sl-crew-member:hover > .sl-portrait[data-form="disc"],
+button.sl-crew-member:focus-visible > .sl-portrait[data-form="disc"],
+.sl-crew-member[aria-expanded="true"] > .sl-portrait[data-form="disc"] {
   background: var(--sl-disc-hover);
 }
 

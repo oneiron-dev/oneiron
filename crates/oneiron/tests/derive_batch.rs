@@ -312,7 +312,6 @@ fn the_refusal_tokens_are_stable() {
         vec![
             "gate.deny.derive.no_landing_rows",
             "gate.deny.derive.opted_out",
-            "gate.deny.derive.grant_gone",
             "gate.deny.derive.grant_lacks_derive",
             "gate.deny.derive.grant_lacks_archive",
             "gate.deny.derive.outside_grant",
