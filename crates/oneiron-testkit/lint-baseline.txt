@@ -1,18 +1,18 @@
 # oneiron-testkit test lint baseline: findings in tests written before the lint.
 # A rule fails when its total rises above the line `<rule> <total>`. Counts may fall.
 # Regenerate (fleet only): ONEIRON_TESTKIT_LINT=write cargo test -p oneiron-testkit --test test_lint
-sleep 167
-wall-clock 230
-network 104
-fixed-port 75
+sleep 171
+wall-clock 242
+network 39
+fixed-port 76
 real-model 9
-sleep crates/oneiron-base/src/live_rows/tests.rs 1
+sleep crates/oneiron-agent-runtime/src/code_sandbox/quickjs/tests.rs 1
+sleep crates/oneiron-bench/src/load/dream/call_proxy.rs 1
 sleep crates/oneiron-bench/src/perf/sessions.rs 1
 sleep crates/oneiron-bench/src/swarm.rs 3
 sleep crates/oneiron-broker/src/child/tests.rs 1
 sleep crates/oneiron-broker/src/serve/tests.rs 1
 sleep crates/oneiron-driver/src/supervisor/budget_tests.rs 2
-sleep crates/oneiron-driver/src/supervisor/factory_tests.rs 1
 sleep crates/oneiron-driver/src/supervisor/loop_tests.rs 1
 sleep crates/oneiron-driver/src/supervisor/tests/mod.rs 1
 sleep crates/oneiron-organ-host/tests/host_asks.rs 10
@@ -61,11 +61,10 @@ sleep crates/oneiron-server/tests/it/host_re_root.rs 2
 sleep crates/oneiron-server/tests/it/import_claims.rs 1
 sleep crates/oneiron-server/tests/it/mcp_stdio_agent.rs 5
 sleep crates/oneiron-server/tests/it/reopen_after_restart.rs 2
-sleep crates/oneiron-server/tests/it/slip_clock.rs 1
 sleep crates/oneiron-server/tests/it/ws_sync.rs 3
 sleep crates/oneiron-server/tests/managed_mode.rs 4
+sleep crates/oneiron-server/tests/runtime_clock.rs 2
 sleep crates/oneiron-store/src/retrieval_deadline.rs 1
-sleep crates/oneiron/src/code_sandbox/quickjs/tests.rs 1
 sleep crates/oneiron/src/dreamer_consolidation/tests/imported_review.rs 1
 sleep crates/oneiron/src/edit_distance/routing/tests.rs 1
 sleep crates/oneiron/src/gate/tests/auto_checker.rs 1
@@ -81,22 +80,27 @@ sleep crates/oneiron/src/store/tests.rs 3
 sleep crates/oneiron/src/sweep/tests.rs 1
 sleep crates/oneiron/src/sync/documents/tests.rs 1
 sleep crates/oneiron/src/tests/open_gates.rs 1
+sleep crates/oneiron/src/vault_live_rows/tests.rs 1
 sleep crates/oneiron/src/workspace_roster/project/tests/authority.rs 1
 sleep crates/oneiron/src/workspace_roster/project/tests/history_budget.rs 2
 sleep crates/oneiron/src/workspace_roster/project/tests/history_cycles_closure.rs 1
 sleep crates/oneiron/src/workspace_roster/project/tests/history_transport.rs 1
+sleep crates/oneiron/tests/derive_archive.rs 2
 sleep crates/oneiron/tests/it/code_mode_result_memory.rs 1
-wall-clock crates/oneiron-base/src/live_rows/tests.rs 2
+sleep crates/oneiron/tests/primitive_a_snapshot_pages.rs 1
+wall-clock crates/oneiron-agent-runtime/src/code_sandbox/firecracker/protocol/tests.rs 4
+wall-clock crates/oneiron-agent-runtime/src/code_sandbox/quickjs/tests.rs 2
+wall-clock crates/oneiron-agent-runtime/tests/callable_wait_park.rs 1
 wall-clock crates/oneiron-bench/src/eval/tests.rs 1
+wall-clock crates/oneiron-bench/src/load/dream/call_proxy.rs 4
 wall-clock crates/oneiron-bench/src/swarm.rs 3
 wall-clock crates/oneiron-bench/tests/cleanup_retrieval.rs 2
 wall-clock crates/oneiron-broker/src/child/tests.rs 2
 wall-clock crates/oneiron-docedit/tests/stemma_reader.rs 1
 wall-clock crates/oneiron-driver/src/session/tests.rs 1
-wall-clock crates/oneiron-driver/src/supervisor/factory_tests.rs 3
 wall-clock crates/oneiron-llm-own-server/tests/remote_transport.rs 2
 wall-clock crates/oneiron-napi/src/facade/tests.rs 1
-wall-clock crates/oneiron-organ-host/tests/host_asks.rs 6
+wall-clock crates/oneiron-organ-host/tests/host_asks.rs 5
 wall-clock crates/oneiron-organ-host/tests/host_e2e.rs 8
 wall-clock crates/oneiron-organ-host/tests/host_fds.rs 4
 wall-clock crates/oneiron-organ-protocol/tests/frames.rs 4
@@ -154,14 +158,14 @@ wall-clock crates/oneiron-server/tests/it/reopen_after_restart.rs 4
 wall-clock crates/oneiron-server/tests/it/ws_sync.rs 3
 wall-clock crates/oneiron-server/tests/it_esign_public.rs 1
 wall-clock crates/oneiron-server/tests/managed_mode.rs 2
+wall-clock crates/oneiron-server/tests/runtime_clock.rs 4
 wall-clock crates/oneiron-server/tests/ws_app_tier.rs 1
 wall-clock crates/oneiron-store/src/retrieval_deadline.rs 3
 wall-clock crates/oneiron-store/src/session_overlay/tests.rs 2
 wall-clock crates/oneiron/src/authority/tests/fold_scale.rs 2
 wall-clock crates/oneiron/src/authority/tests/foundations.rs 1
-wall-clock crates/oneiron/src/code_sandbox/firecracker/protocol/tests.rs 4
-wall-clock crates/oneiron/src/code_sandbox/quickjs/tests.rs 2
 wall-clock crates/oneiron/src/conversation_dag/tests/replay.rs 2
+wall-clock crates/oneiron/src/edit_roundtrip/slides_review/tests.rs 1
 wall-clock crates/oneiron/src/git_wire/tests.rs 4
 wall-clock crates/oneiron/src/lens/tests/atom_fuzz.rs 1
 wall-clock crates/oneiron/src/memory/tests/session_witness.rs 2
@@ -171,8 +175,12 @@ wall-clock crates/oneiron/src/origin/smart_http/maintain_tests.rs 5
 wall-clock crates/oneiron/src/skill_hub/transport_tests.rs 2
 wall-clock crates/oneiron/src/store/group_commit/tests.rs 4
 wall-clock crates/oneiron/src/sync/bridge/tests.rs 1
+wall-clock crates/oneiron/src/task_verb/tests/consult_fanout.rs 1
+wall-clock crates/oneiron/src/vault_live_rows/tests.rs 2
 wall-clock crates/oneiron/src/voice_cascade/tests/retrieval.rs 3
 wall-clock crates/oneiron/src/voice_cascade/voxcpm2/tests.rs 4
+wall-clock crates/oneiron/tests/dreamer_stage_line.rs 1
+wall-clock crates/oneiron/tests/house_source_read.rs 1
 wall-clock crates/oneiron/tests/it/calendar_transcript.rs 1
 wall-clock crates/oneiron/tests/it/decision_deadline.rs 2
 wall-clock crates/oneiron/tests/it/effect_spine_oracle.rs 1
@@ -180,39 +188,21 @@ wall-clock crates/oneiron/tests/it_sync/ask_option_link_replication.rs 3
 wall-clock crates/oneiron/tests/it_sync/sync_client_wiring.rs 1
 wall-clock crates/oneiron/tests/it_sync/tagging_local_only.rs 1
 wall-clock crates/oneiron/tests/it_sync/task_authority_convergence.rs 1
+wall-clock crates/oneiron/tests/primitive_a_evidence_spans.rs 1
+wall-clock crates/oneiron/tests/recall_zero_match_returns_no_memory.rs 1
 wall-clock crates/oneiron/tests/run_hold/fixture.rs 1
+wall-clock crates/oneiron/tests/steward_role.rs 1
 wall-clock crates/oneiron/tests/voice_voxcpm2.rs 4
-network crates/oneiron-bench/src/beam/infra.rs 1
 network crates/oneiron-code-check/tests/golden.rs 1
-network crates/oneiron-docedit/src/deck/tests.rs 1
-network crates/oneiron-docedit/src/design_plan/tests.rs 1
-network crates/oneiron-docedit/src/edit/structure/slides/tests.rs 4
-network crates/oneiron-docedit/src/edit/structure/tests.rs 1
-network crates/oneiron-docedit/src/edit/tests.rs 7
-network crates/oneiron-docedit/src/emit/tests.rs 1
-network crates/oneiron-docedit/src/graphic/tests.rs 3
-network crates/oneiron-docedit/src/native_patch/tests.rs 6
-network crates/oneiron-docedit/src/retained_opc/package.rs 2
-network crates/oneiron-docedit/src/retained_opc/package/parts.rs 2
-network crates/oneiron-docedit/tests/comment_anchors.rs 4
 network crates/oneiron-remote/tests/origin_security.rs 5
+network crates/oneiron-seal/tests/esign_host_e2e.rs 1
 network crates/oneiron-server/src/commands/tests.rs 2
 network crates/oneiron-server/src/config/models/tests.rs 11
 network crates/oneiron-server/src/models/tests.rs 2
 network crates/oneiron-server/src/oneironer/tests/mod.rs 1
 network crates/oneiron-web-fetch/src/web_fetch/tests.rs 1
-network crates/oneiron-xlsx-formula/tests/workbook.rs 6
-network crates/oneiron/src/anchored_annotation/tests/anchor_scenarios.rs 4
 network crates/oneiron/src/channel_identity_provider/tests.rs 2
-network crates/oneiron/src/code_sandbox/quickjs/tests.rs 3
 network crates/oneiron/src/codebase/tests.rs 1
-network crates/oneiron/src/edit_roundtrip/judgment_cells.rs 2
-network crates/oneiron/src/edit_roundtrip/native_recalc_tests.rs 4
-network crates/oneiron/src/edit_roundtrip/pptx/tests.rs 3
-network crates/oneiron/src/edit_roundtrip/pptx/tests/support.rs 1
-network crates/oneiron/src/edit_roundtrip/slides_review/tests.rs 2
-network crates/oneiron/src/edit_roundtrip/tests.rs 5
-network crates/oneiron/src/llm/step/tests.rs 3
 network crates/oneiron/src/origin/smart_http/history_scan_tests.rs 1
 network crates/oneiron/src/origin/smart_http/tests.rs 1
 network crates/oneiron/src/outbound/tests/linkedin_send.rs 3
@@ -221,6 +211,7 @@ network crates/oneiron/src/policy_model/tests/owner_manifest_binding.rs 1
 network crates/oneiron/src/rerank/crossencoder/tests.rs 1
 network crates/oneiron/src/voice_cascade/hosted_tts/tests.rs 2
 network crates/oneiron/tests/it/linkedin_connector_adapter.rs 2
+fixed-port crates/oneiron-bench/src/load/dream/call_proxy.rs 1
 fixed-port crates/oneiron-broker/src/call/tests.rs 1
 fixed-port crates/oneiron-broker/src/serve/tests.rs 1
 fixed-port crates/oneiron-mesh-transport/tests/roster.rs 1

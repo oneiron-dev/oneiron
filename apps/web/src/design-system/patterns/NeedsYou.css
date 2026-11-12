@@ -1,0 +1,253 @@
+/* The needs-you block: in a room a raised card (the sunk tone and the
+   card ring) as wide as the messages column; bare on a popover or a desk.
+   Groups by room, one skeleton per ask. */
+.sl-needs-you {
+  display: flex;
+  flex-direction: column;
+  --sl-mark-ground: var(--sl-sunk);
+}
+
+.sl-needs-you[data-ground="well"] {
+  max-width: var(--sl-col);
+  padding: 2px 6px 4px 12px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sunk);
+  box-shadow: var(--sl-card-shadow);
+}
+
+.sl-needs-you[data-ground="bare"] {
+  --sl-mark-ground: var(--sl-pop);
+}
+
+/* A group: the room's name as a quiet label; a hairline before the next. */
+.sl-needs-you-group + .sl-needs-you-group {
+  margin-top: 2px;
+  box-shadow: 0 -1px 0 var(--sl-rule);
+}
+
+.sl-needs-you-group-label {
+  padding-top: 9px;
+  font-size: var(--sl-t-figure);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+}
+
+/* One ask. */
+.sl-needs-you-ask {
+  padding: 4px 0 8px;
+}
+
+.sl-needs-you-ask:not([data-state="open"]) {
+  padding-bottom: 4px;
+}
+
+/* Line 1: the asker's portrait, the ask, then later and the information
+   mark at the right. */
+.sl-needs-you-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.sl-needs-you-asker {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.sl-needs-you-question {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--sl-t-say);
+  line-height: 1.5;
+  color: var(--sl-ink-1);
+  text-wrap: pretty;
+}
+
+.sl-needs-you-line > .sl-icon-action {
+  color: var(--sl-ink-3);
+}
+
+.sl-needs-you-line > .sl-icon-action:hover,
+.sl-needs-you-line > .sl-icon-action:focus-visible,
+.sl-needs-you-line > .sl-info-mark[data-open] {
+  color: var(--sl-ink-1);
+  background: var(--sl-lit);
+}
+
+/* Line 2: the answers, under the ask's text (past the portrait). */
+.sl-needs-you-answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+
+.sl-needs-you-ask[data-asker] .sl-needs-you-answers {
+  margin-left: 28px;
+}
+
+.sl-needs-you-answer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  line-height: 1;
+  white-space: nowrap;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-needs-you-answer:active {
+  transform: scale(0.96);
+}
+
+/* The clock of an answers line outside an ask sits at its right end. */
+.sl-needs-you-answers > .sl-needs-you-later {
+  margin-left: auto;
+}
+
+/* Chips: each answer on the chip tone; hover lifts it to the disc tone.
+   The pencil and the cross are quieter than the words. */
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-answer {
+  padding: 0 11px;
+  background: var(--sl-chip);
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-answer:hover {
+  background: var(--sl-disc);
+}
+
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-answer:is([data-kind="own"], [data-kind="no"]) {
+  padding: 0 8px;
+  color: var(--sl-ink-2);
+}
+
+.sl-needs-you-answers[data-answers="chips"] .sl-needs-you-diamond {
+  display: none;
+}
+
+/* Plain: a diamond and a word, no chip tone. */
+.sl-needs-you-answers[data-answers="plain"] {
+  gap: 6px 12px;
+}
+
+.sl-needs-you-answers[data-answers="plain"] .sl-needs-you-answer {
+  padding: 0 4px;
+  color: var(--sl-ink-2);
+}
+
+.sl-needs-you-answers[data-answers="plain"] .sl-needs-you-answer:hover {
+  color: var(--sl-ink-1);
+}
+
+/* Yes carries the weight, and the figure when money is involved. */
+.sl-needs-you-answer[data-kind="yes"] {
+  font-weight: 600;
+}
+
+.sl-needs-you-answers .sl-needs-you-answer[data-kind="yes"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-answer[data-kind="yes"] > .sl-figure {
+  color: var(--sl-ink-1);
+  font-weight: 400;
+}
+
+/* The field of an own answer replaces the line. */
+.sl-needs-you-own {
+  flex: 1 1 240px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--sl-radius);
+  background: var(--sl-island);
+  box-shadow: inset 0 0 0 1px var(--sl-rule);
+  color: var(--sl-ink-1);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-say);
+}
+
+.sl-needs-you-own::placeholder {
+  color: var(--sl-ink-3);
+  font-style: italic;
+  opacity: 1;
+}
+
+.sl-needs-you-own:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--sl-ink-4);
+}
+
+/* Answered: one record line. The ask in the quiet ink, cut at 44
+   characters; the mark of the answer, its word, its time; `undo` while
+   the window is open. */
+.sl-needs-you-record,
+.sl-needs-you-aside {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-3);
+}
+
+.sl-needs-you-record-ask {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-needs-you-record-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  margin-left: 6px;
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-record-word {
+  flex: none;
+  color: var(--sl-ink-1);
+  white-space: nowrap;
+}
+
+.sl-needs-you-record-time {
+  flex: none;
+  margin-left: 2px;
+}
+
+.sl-needs-you-record > .sl-needs-you-undo {
+  margin-left: 6px;
+  color: var(--sl-ink-1);
+}
+
+.sl-needs-you-aside-state {
+  flex: none;
+  white-space: nowrap;
+}
+
+.sl-needs-you-answer-now {
+  flex: none;
+  color: var(--sl-ink-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-needs-you-answer {
+    transition: none;
+  }
+  .sl-needs-you-answer:active {
+    transform: none;
+  }
+}

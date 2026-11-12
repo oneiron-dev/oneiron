@@ -110,15 +110,16 @@ impl AttemptQueue<'_> {
                 let mut record = decode_record(&raw_record, id)?;
                 // Rechecked under the writer: a candidate was not held when
                 // the scan read it.
+                let expired = lease_expired(&record, input.now, input.lease_timeout_secs);
                 let reclaim = RunLifecycle::step(
                     RunRow::of(&record),
                     RunEvent::Reclaim {
-                        expired: lease_expired(&record, input.now, input.lease_timeout_secs),
+                        expired,
                         held: false,
                     },
                 );
                 match (record.state, reclaim) {
-                    (AttemptState::Leased, RunStep::Move { to, pause }) => {
+                    (AttemptState::Leased, RunStep::Move { .. }) => {
                         // A reclaimed lease resumes the SAME try — the row was
                         // never finalized, so this is a lease-generation reset,
                         // not a logical retry, and mints no new row. FIX 9932:
@@ -139,10 +140,7 @@ impl AttemptQueue<'_> {
                             observed_at: input.now,
                             lease_timeout_secs: input.lease_timeout_secs,
                         });
-                        record.state = to;
-                        record.active_pause = pause;
-                        record.lease_owner = None;
-                        record.scheduled_at = None;
+                        let _ = RunLifecycle::reclaim(&mut record, expired, false);
                         record.backoff_until = None;
                         record.last_error = Some(RETRY_REASON_LEASE_TIMEOUT.to_owned());
                         record.updated_at = input.now;

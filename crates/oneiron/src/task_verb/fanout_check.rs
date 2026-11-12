@@ -10,7 +10,7 @@
 //! an acknowledgement, never a denial, because nothing was held.
 
 use super::consult_fanout_store::policy_in;
-use super::{ConsultFanOutMode, ConsultFanOutScope};
+use super::{CheckInMode, ConsultFanOutScope};
 use crate::Vault;
 use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::error::Result;
@@ -32,10 +32,10 @@ pub(super) fn raise_unheld_width_check(
         return Ok(false);
     }
     let cleared = match policy.mode {
-        ConsultFanOutMode::Auto => {
+        CheckInMode::AskWhenUnsure => {
             crate::fanout_auto::covering_approval(vault, scope, statement.task_count)
         }
-        ConsultFanOutMode::Manual | ConsultFanOutMode::FullAccess => None,
+        CheckInMode::AlwaysAsk | CheckInMode::NeverAsk => None,
     };
     let (classification, asked) = match cleared {
         Some(row) => (

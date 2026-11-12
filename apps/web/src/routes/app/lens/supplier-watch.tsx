@@ -55,8 +55,8 @@ const CLAIMS: Claim[] = [
     learned: '2026-05-14',
     world: 'work',
     src: '#ops',
-    srcTip: 'slack · #ops · Yurii · 2026-05-14',
-    why: 'The standing claim. Yurii heard it from the Hokuei buyer in May. The new filing may supersede it.',
+    srcTip: 'slack · #ops · Yuki · 2026-05-14',
+    why: 'The standing claim. Yuki heard it from the Hokuei buyer in May. The new filing may supersede it.',
   },
   {
     id: 'cl_4c02',
@@ -106,19 +106,19 @@ const WIRE: Wire[] = [
     time: '16:22',
     chan: 'slack',
     by: (
-      <span className="seal seal-human" title="y · yurii">
+      <span className="seal seal-human" title="y · yuki">
         y
       </span>
     ),
     line: 'Hokuei’s buyer says fewer vendors next year. Nothing on paper yet.',
     crumb: '08-14 · 16:22 · slack · #ops',
-    title: 'Yurii in #ops',
+    title: 'Yuki in #ops',
     ctxBy: (
       <>
-        <span className="seal seal-human" title="y · yurii">
+        <span className="seal seal-human" title="y · yuki">
           y
         </span>
-        <span>yurii</span>
+        <span>yuki</span>
       </>
     ),
     body:

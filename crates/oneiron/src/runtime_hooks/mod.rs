@@ -81,6 +81,7 @@ pub use source::{
 };
 pub(crate) use source::{
     index_task_due_in_txn, next_tick_release_at, record_surface_inbound_in_txn, release_due_ticks,
+    releases_here as releases_ticks_here,
 };
 pub(crate) use store::{
     forget_scrubbed_source_in_txn, hook_receipts, hook_run_read_rows, scrub_erased_hook_sources,

@@ -74,11 +74,11 @@ type Org = {
 }
 
 const OWNER_TIP: Record<Owner, string> = {
-  o: 'o · oleksii · owner',
-  y: 'y · yurii',
+  o: 'o · owen · owner',
+  y: 'y · yuki',
 }
-const O: Who = { seal: 'o', tip: 'o · oleksii' }
-const Y: Who = { seal: 'y', tip: 'y · yurii' }
+const O: Who = { seal: 'o', tip: 'o · owen' }
+const Y: Who = { seal: 'y', tip: 'y · yuki' }
 const EIRI: Who = { agent: 'eiri', tip: 'Eiri · outbound' }
 const TORY: Who = { agent: 'tory', tip: 'Tory · research · reads only' }
 const ANTEVON: Who = { agent: 'antevon', tip: 'Antevon · the house mind' }
@@ -92,9 +92,9 @@ const ORGS: Org[] = [
     name: 'Hokuei Foods',
     stage: 'audit',
     owner: 'y',
-    touch: { date: '08-15', time: '14:02', tip: '2026-08-15 14:02 · linkedin · yurii' },
+    touch: { date: '08-15', time: '14:02', tip: '2026-08-15 14:02 · linkedin · yuki' },
     claims: 42,
-    byline: 'pilot client · supplier-consolidation storyline · Yurii owns it',
+    byline: 'pilot client · supplier-consolidation storyline · Yuki owns it',
     money: '¥1.8M · pilot, 12 weeks',
     moneyTip: 'the pilot as scoped 08-15 · not yet signed',
     people: [
@@ -112,7 +112,7 @@ const ORGS: Org[] = [
         tip: 'k · the COO · contact · budget owner · not yet met',
         chans: ['linkedin'],
         door: {
-          text: 'reach through Yurii’s account',
+          text: 'reach through Yuki’s account',
           href: '/app/inbox',
           tip: 'Eiri asks before it reaches · the consent waits in your inbox',
         },
@@ -125,13 +125,13 @@ const ORGS: Org[] = [
       { text: 'May be consolidating suppliers this fiscal year', conf: 3, score: '.58', source: 'Tory · filings', state: 'proposed', tip: 'confidence 0.58 · proposed by Tory from public filings · learned 08-14 · waits in your inbox' },
     ],
     thread: [
-      { kind: 'human', seal: 'y', tip: 'y · yurii · 08-15 14:02 · linkedin · sent from his account, his click · verifying', msg: 'Thanks for the call. Sending the pilot one-pager over email now.', conf: 1 },
-      { kind: 'agent', agent: 'eiri', name: 'Eiri', tip: 'Eiri · outbound · 08-15 11:48 · email · draft approved by yurii 11:46 · verified in thread', msg: 'Pilot scope summary: 12-week chilled-line forecast, weekly re-fit, waste target under 5%.', conf: 2 },
+      { kind: 'human', seal: 'y', tip: 'y · yuki · 08-15 14:02 · linkedin · sent from his account, his click · verifying', msg: 'Thanks for the call. Sending the pilot one-pager over email now.', conf: 1 },
+      { kind: 'agent', agent: 'eiri', name: 'Eiri', tip: 'Eiri · outbound · 08-15 11:48 · email · draft approved by yuki 11:46 · verified in thread', msg: 'Pilot scope summary: 12-week chilled-line forecast, weekly re-fit, waste target under 5%.', conf: 2 },
       { kind: 'human', seal: 'm', cls: true, tip: 'm · Mika Tanaka · 08-12 09:15 · LINE', msg: '見積もりの件、来週の火曜までにお願いできますか。', lang: 'ja', conf: 2 },
     ],
     next: { line: 'Send Mika the quote by Tuesday. Follow up on the one-pager if no reply by 08-19.', when: '08-19', draft: 'draft the follow-up', book: true },
     notes: [
-      { title: 'Pilot scope note', tip: 'note · yurii · 08-11' },
+      { title: 'Pilot scope note', tip: 'note · yuki · 08-11' },
       { title: 'Their reply pace changed after 08-09', tip: 'note · Tory · 08-14 · a competitor quote is likely on the table' },
     ],
     timeline: [
@@ -163,9 +163,9 @@ const ORGS: Org[] = [
     name: 'Fuji Kitchens',
     stage: 'outreach',
     owner: 'y',
-    touch: { date: '08-15', time: '09:40', tip: '2026-08-15 09:40 · email · yurii' },
+    touch: { date: '08-15', time: '09:40', tip: '2026-08-15 09:40 · email · yuki' },
     claims: 31,
-    byline: 'client · frozen-line forecast, 12 weeks · Yurii owns it',
+    byline: 'client · frozen-line forecast, 12 weeks · Yuki owns it',
     money: '¥2.4M · 12 weeks, deposit paid',
     moneyTip: 'deposit ¥600k received 08-10 · balance on delivery',
     people: [
@@ -177,7 +177,7 @@ const ORGS: Org[] = [
       { text: 'Their ERP exports CSV weekly, no API', conf: 2, score: '.81', source: 'LINE 08-14', state: 'auto', tip: 'confidence 0.81 · auto · occurred 08-14' },
     ],
     thread: [
-      { kind: 'human', seal: 'y', tip: 'y · yurii · 08-15 09:40 · email', msg: 'Kickoff deck sent. Asked for the sales export by Friday.', conf: 1 },
+      { kind: 'human', seal: 'y', tip: 'y · yuki · 08-15 09:40 · email', msg: 'Kickoff deck sent. Asked for the sales export by Friday.', conf: 1 },
       { kind: 'human', seal: 'r', cls: true, tip: 'r · Rina Sato · 08-14 17:10 · LINE', msg: 'データは金曜までにお送りします。', lang: 'ja', conf: 2 },
     ],
     next: { line: 'Confirm the export lands by Friday. Prepare the kickoff brief for 08-22.', when: '08-22', draft: 'draft the follow-up' },
@@ -204,7 +204,7 @@ const ORGS: Org[] = [
     name: 'Kanto Logistics',
     stage: 'call booked',
     owner: 'o',
-    touch: { date: '08-14', time: '16:20', tip: '2026-08-14 16:20 · linkedin · oleksii' },
+    touch: { date: '08-14', time: '16:20', tip: '2026-08-14 16:20 · linkedin · owen' },
     claims: 18,
     byline: 'prospect · cold-chain routing waste · you own it',
     money: '¥1.2M · estimate',
@@ -218,7 +218,7 @@ const ORGS: Org[] = [
       { text: 'May be tendering a routing tool this autumn', conf: 3, score: '.55', source: 'Tory · trade note', state: 'proposed', tip: 'confidence 0.55 · proposed by Tory from a trade note · learned 08-13' },
     ],
     thread: [
-      { kind: 'human', seal: 'o', tip: 'o · oleksii · 08-14 16:20 · linkedin', msg: 'Confirmed Thursday 15:00. Sending an agenda tomorrow.', conf: 1 },
+      { kind: 'human', seal: 'o', tip: 'o · owen · 08-14 16:20 · linkedin', msg: 'Confirmed Thursday 15:00. Sending an agenda tomorrow.', conf: 1 },
       { kind: 'human', seal: 'h', cls: true, tip: 'h · Hiroshi Kondo · 08-14 11:02 · linkedin', msg: '来週木曜15時でお願いします。', lang: 'ja', conf: 2 },
     ],
     next: { line: 'Send the agenda for 08-18. Ask for one month of route data before the call.', when: '08-16', draft: 'draft the follow-up' },
@@ -245,7 +245,7 @@ const ORGS: Org[] = [
     owner: 'y',
     touch: { date: '08-13', time: '10:15', tip: '2026-08-13 10:15 · email · Aya Mori' },
     claims: 11,
-    byline: 'prospect · store-level replenishment · Yurii owns it',
+    byline: 'prospect · store-level replenishment · Yuki owns it',
     money: '¥3.0M · proposal, 8 weeks',
     moneyTip: 'proposal as sent 08-11 · store level, weekly re-fit',
     people: [
@@ -257,7 +257,7 @@ const ORGS: Org[] = [
     ],
     thread: [
       { kind: 'human', seal: 'a', cls: true, tip: 'a · Aya Mori · 08-13 10:15 · email', msg: 'まず事例を1枚いただけますか。その後で相談させてください。', lang: 'ja', conf: 2 },
-      { kind: 'agent', agent: 'eiri', name: 'Eiri', tip: 'Eiri · outbound · 08-11 09:30 · email · draft approved by yurii · verified in thread', msg: 'Intro: demand forecasting for store replenishment, three lines.', conf: 2 },
+      { kind: 'agent', agent: 'eiri', name: 'Eiri', tip: 'Eiri · outbound · 08-11 09:30 · email · draft approved by yuki · verified in thread', msg: 'Intro: demand forecasting for store replenishment, three lines.', conf: 2 },
     ],
     next: { line: 'Send the one-page case. Offer two call slots once it lands.', when: '08-18', draft: 'draft the follow-up', book: true },
     notes: [],
@@ -278,7 +278,7 @@ const ORGS: Org[] = [
     name: 'Nishi Trading',
     stage: 'deposit',
     owner: 'o',
-    touch: { date: '08-11', time: '13:00', tip: '2026-08-11 13:00 · meeting · oleksii' },
+    touch: { date: '08-11', time: '13:00', tip: '2026-08-11 13:00 · meeting · owen' },
     claims: 27,
     byline: 'prospect · import demand audit · you own it',
     money: '¥900k · audit, deposit paid',
@@ -293,11 +293,11 @@ const ORGS: Org[] = [
       { text: 'Wants the audit read-out before 08-28', conf: 2, score: '.80', source: 'mail 08-09', state: 'auto', tip: 'confidence 0.80 · auto · occurred 08-09' },
     ],
     thread: [
-      { kind: 'human', seal: 'o', tip: 'o · oleksii · 08-11 13:00 · meeting · 45 min · 9 claims extracted', msg: 'Audit kickoff, 45 minutes. Data in hand, questions sent.', conf: 1 },
+      { kind: 'human', seal: 'o', tip: 'o · owen · 08-11 13:00 · meeting · 45 min · 9 claims extracted', msg: 'Audit kickoff, 45 minutes. Data in hand, questions sent.', conf: 1 },
       { kind: 'human', seal: 't', cls: true, tip: 't · Takeshi Nishi · 08-09 15:40 · email', msg: '7月20日までに結果を見たいです。', lang: 'ja', conf: 2 },
     ],
     next: { line: 'Finish the read-out by 08-25. Book the read-out call.', when: '08-25', book: true },
-    notes: [{ title: 'Audit working notes', tip: 'note · oleksii · 08-13' }],
+    notes: [{ title: 'Audit working notes', tip: 'note · owen · 08-13' }],
     timeline: [
       { when: '08-11 13:00', chan: 'meeting', who: O, what: 'Audit kickoff, 45 minutes. Data in hand, questions sent.' },
       { when: '08-11 14:10', chan: 'meeting', who: ANTEVON, what: 'Transcribed the kickoff. 45 minutes, nine claims.' },
@@ -322,7 +322,7 @@ const ORGS: Org[] = [
     owner: 'y',
     touch: { date: '08-09', time: '11:20', tip: '2026-08-09 11:20 · email · Eiri' },
     claims: 6,
-    byline: 'prospect · daily bake planning · Yurii owns it',
+    byline: 'prospect · daily bake planning · Yuki owns it',
     money: '¥600k · estimate',
     moneyTip: 'a first estimate from the returns profile · not quoted',
     people: [
@@ -333,7 +333,7 @@ const ORGS: Org[] = [
       { text: 'Bakes to a fixed daily plan; returns near 10%', conf: 3, score: '.62', source: 'interview 2025', state: 'auto', tip: 'confidence 0.62 · auto · a public interview, 2025' },
     ],
     thread: [
-      { kind: 'agent', agent: 'eiri', name: 'Eiri', tip: 'Eiri · outbound · 08-09 11:20 · email · draft approved by yurii · verified in thread', msg: 'Intro: daily bake planning from POS data, three lines.', conf: 2 },
+      { kind: 'agent', agent: 'eiri', name: 'Eiri', tip: 'Eiri · outbound · 08-09 11:20 · email · draft approved by yuki · verified in thread', msg: 'Intro: daily bake planning from POS data, three lines.', conf: 2 },
     ],
     next: { line: 'Follow up on 08-16 if there is no reply.', when: '08-16', draft: 'draft the follow-up' },
     notes: [],
@@ -358,7 +358,7 @@ const ORGS: Org[] = [
     people: [],
     know: [
       { text: 'Two plants in Gunma; ships to three auto suppliers', conf: 2, score: '.78', source: 'filings', state: 'auto', tip: 'confidence 0.78 · auto · public filings' },
-      { text: 'Fits the plant-demand profile; qualified 08-06', conf: 1, score: '.90', source: 'oleksii 08-06', state: 'approved', tip: 'confidence 0.90 · approved · occurred 08-06' },
+      { text: 'Fits the plant-demand profile; qualified 08-06', conf: 1, score: '.90', source: 'owen 08-06', state: 'approved', tip: 'confidence 0.90 · approved · occurred 08-06' },
       { text: 'May be opening a third line in 2027', conf: 4, score: '.35', source: 'Tory · trade note', state: 'proposed', tip: 'confidence 0.35 · proposed by Tory from a trade note · learned 08-06' },
     ],
     thread: [
@@ -967,7 +967,7 @@ function OrgPage({
     setMoved({ from: stage, to: s })
     onMove(s)
   }
-  const holder = org.owner === 'o' ? 'you' : 'Yurii'
+  const holder = org.owner === 'o' ? 'you' : 'Yuki'
   const touches = org.timeline.slice(0, 8)
 
   /* the record takes focus when it lands, so tab and esc carry on here */

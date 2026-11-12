@@ -182,6 +182,12 @@ impl Memory<'_> {
         puts: &[RawEntityPut<'_>],
     ) -> MemoryResult<()> {
         let lane = self.core_write_lane()?;
+        // An agent's new AGENT_DEF is held to its own slice (ARCH-0053:20).
+        let batch = batch.authored_through(
+            &self.write_actor(),
+            "memory.raw_put_entities",
+            lane.actor_key(),
+        );
         let ids: Vec<EntityId> = puts.iter().map(|put| put.id).collect();
         let mut refusal = None;
         let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {

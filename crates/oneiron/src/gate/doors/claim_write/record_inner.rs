@@ -88,7 +88,9 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     // unchanged — and every persisted Dreamer claim candidate, on every
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
-    let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
+    // The derivation floors (GATE-12, GATE-13, the checker) hold every
+    // derivation-class write: a Dreamer run's or a `vault.derive` commit's.
+    let dreamer_candidate = envelope.is_some_and(derivation_class_write) && !operation_effect_body;
     // FIX 3983 (review 6881 P1): a caller's live-run claim put is the other Generated producer the
     // host's auto checker reviews. It is not a Dreamer write, so the GATE-12 pre-commit floor above stays
     // Dreamer-only; only the checker consult below reads this.
@@ -116,6 +118,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 },
                 GateProvenanceHandles {
                     actor_entity_ref: Some(actor.entity_ref()),
+                    derive_commit: dreamer_run_id.is_none() && derivation_class_write(envelope),
                     dreamer_run_id,
                     ..GateProvenanceHandles::default()
                 },

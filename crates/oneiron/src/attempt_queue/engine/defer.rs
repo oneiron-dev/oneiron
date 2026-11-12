@@ -3,8 +3,9 @@
 //! payload names when it is due.
 
 use super::AttemptQueue;
+use crate::attempt_queue::AttemptRecord;
 use crate::attempt_queue::encoding::{ready_key, waiting_on_backoff};
-use crate::attempt_queue::{AttemptRecord, AttemptState};
+use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::error::Result;
 
 impl AttemptQueue<'_> {
@@ -14,21 +15,24 @@ impl AttemptQueue<'_> {
     /// reaches `due`, as it does a retry's backoff. Nothing is dropped or
     /// refused: a row that is not `Queued`, already waits on an instant, or is
     /// due by its own creation comes back as it was.
+    ///
+    /// [`AttemptState::Scheduled`]: crate::attempt_queue::AttemptState::Scheduled
     pub(crate) fn defer_enqueued_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         mut record: AttemptRecord,
         due: u64,
     ) -> Result<AttemptRecord> {
-        if record.state != AttemptState::Queued
-            || waiting_on_backoff(&record)
+        if !matches!(
+            RunLifecycle::step(RunRow::of(&record), RunEvent::Defer),
+            RunStep::Move { .. }
+        ) || waiting_on_backoff(&record)
             || due <= record.created_at
         {
             return Ok(record);
         }
         self.delete_ready_entry_for_record(txn, &record)?;
-        record.state = AttemptState::Scheduled;
-        record.scheduled_at = Some(due);
+        let _ = RunLifecycle::defer(&mut record, due);
         let encoded = self.encode_in_txn(txn, &mut record)?;
         self.store
             .attempt_records
