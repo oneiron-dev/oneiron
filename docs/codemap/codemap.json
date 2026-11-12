@@ -100802,6 +100802,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_edit_window_open.rs",
+     "purpose": "An owner's edit of an agent definition survives the next cold open of the window that carries the row (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -105113,7 +105121,7 @@
    "over_bar": 262,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7435,
-   "test_files": 1119
+   "test_files": 1120
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -146540,6 +146548,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/ladder_caller_census.rs",
+     "purpose": "Every file of this crate that reaches a fallback ladder, and where the world of the call it sends comes from…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -146661,6 +146677,14 @@
      "notable": [],
      "path": "tests/token_agent_own_vault_agent.rs",
      "purpose": "`oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/window_sync_ask_drain.rs",
+     "purpose": "FIX 20468 (last part): the server drains the relayed ask intents a window update landed, as the client lane…",
      "surface": {}
     },
     {
@@ -147244,7 +147268,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1838,
-   "test_files": 206
+   "test_files": 208
   },
   "oneiron-skill-attribution": {
    "files": [
