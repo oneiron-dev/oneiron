@@ -20,6 +20,7 @@ use oneiron::blob_artifact::esign::{
 };
 use oneiron::commitment::{
     CommitmentBirthKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
+    decode_commitment_claim,
 };
 use oneiron::memory::commitment_doors::{
     CommitmentContent, CommitmentObligor, CommitmentObligorKind, CommitmentSchedule,
@@ -254,21 +255,19 @@ fn draft_with_two_obligations_mints_two_inert_commitments() -> Result<()> {
     Ok(())
 }
 
-/// `esign.completed` opens both commitments, each with the completion claim,
-/// the document and the sealed bytes of each item as its evidence.
-#[test]
-fn completion_opens_each_commitment_with_the_sealed_version_as_evidence() -> Result<()> {
-    let fixture = setup()?;
-    event(&fixture, EsignEvent::Sent, 4)?;
+/// Sends the document and has its one signer view and sign it, leaving it
+/// ready to seal.
+fn sign(fixture: &Fixture) -> Result<EsignState> {
+    event(fixture, EsignEvent::Sent, 4)?;
     event(
-        &fixture,
+        fixture,
         EsignEvent::Viewed {
             recipient: fixture.signer.clone(),
         },
         5,
     )?;
-    let signed = event(
-        &fixture,
+    event(
+        fixture,
         EsignEvent::Signed {
             recipient: fixture.signer.clone(),
             next: None,
@@ -279,21 +278,19 @@ fn completion_opens_each_commitment_with_the_sealed_version_as_evidence() -> Res
             }],
         },
         6,
-    )?;
-    assert!(signed.ready_to_seal());
-    for index in 0..2 {
-        assert_eq!(
-            commitment(&fixture, index)?.1.status,
-            CommitmentStatus::Inert,
-            "a signature short of completion opens nothing"
-        );
-    }
-    let sealed = [7_u8; 32];
+    )
+}
+
+/// The sha256 the fixture's seal reports for the one sealed item.
+const SEALED_SHA256: [u8; 32] = [7; 32];
+
+/// Lands the verified seal: `esign.completed`.
+fn seal(fixture: &Fixture) -> Result<EsignState> {
     event(
-        &fixture,
+        fixture,
         EsignEvent::Sealed {
             rejected: false,
-            item_sha256: vec![sealed],
+            item_sha256: vec![SEALED_SHA256],
             item_profiles: vec![SealProfileEvidence {
                 requested: SealProfile::BaselineB,
                 achieved: SealProfile::BaselineB,
@@ -301,7 +298,44 @@ fn completion_opens_each_commitment_with_the_sealed_version_as_evidence() -> Res
             }],
         },
         7,
-    )?;
+    )
+}
+
+/// The texts of the open commitments among the obligor's claims whose birth
+/// names the document, sorted: read through the generic claim reads.
+fn open_commitments_named_by_the_document(fixture: &Fixture) -> Result<Vec<String>> {
+    let mut texts = Vec::new();
+    for id in fixture.vault.claims_for_subject(&fixture.obligor)? {
+        let Some(body) = fixture.vault.get_claim(&id)? else {
+            continue;
+        };
+        let Some(record) = decode_commitment_claim(&body)? else {
+            continue;
+        };
+        if record.status == CommitmentStatus::Open
+            && record.birth_provenance.reference == fixture.document.to_hex()
+        {
+            texts.push(record.content.text);
+        }
+    }
+    texts.sort();
+    Ok(texts)
+}
+
+/// `esign.completed` opens both commitments, each with the completion claim,
+/// the document and the sealed bytes of each item as its evidence.
+#[test]
+fn completion_opens_each_commitment_with_the_sealed_version_as_evidence() -> Result<()> {
+    let fixture = setup()?;
+    assert!(sign(&fixture)?.ready_to_seal());
+    for index in 0..2 {
+        assert_eq!(
+            commitment(&fixture, index)?.1.status,
+            CommitmentStatus::Inert,
+            "a signature short of completion opens nothing"
+        );
+    }
+    seal(&fixture)?;
     for index in 0..2 {
         let (id, record) = commitment(&fixture, index)?;
         assert_eq!(
@@ -333,6 +367,26 @@ fn completion_opens_each_commitment_with_the_sealed_version_as_evidence() -> Res
             Some("07".repeat(32).as_str())
         );
     }
+    Ok(())
+}
+
+/// After `esign.completed`, the obligor's own claims hold the two promises
+/// the document names as open commitments; before it, none.
+#[test]
+fn completion_opens_the_named_commitments_among_the_obligors_claims() -> Result<()> {
+    let fixture = setup()?;
+    sign(&fixture)?;
+    assert_eq!(
+        open_commitments_named_by_the_document(&fixture)?,
+        Vec::<String>::new(),
+        "nothing the document names is open before it completes"
+    );
+    seal(&fixture)?;
+    assert_eq!(
+        open_commitments_named_by_the_document(&fixture)?,
+        OBLIGATIONS.map(str::to_owned).to_vec(),
+        "esign.completed opens the commitments the document names"
+    );
     Ok(())
 }
 
