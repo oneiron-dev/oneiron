@@ -9635,6 +9635,18 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/commitments.rs",
+     "purpose": "The commitments a signing document names (ARCH-0064 §3, the OF-187 wire)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -9883,13 +9895,14 @@
      "surface": {
       "crate-vis": 10,
       "mod": 3,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EsignCommitmentTerm",
       "EsignDocument",
       "EsignEvent",
       "EsignEventRow",
@@ -9901,7 +9914,7 @@
       "crate-vis": 2,
       "enum": 1,
       "re-export": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -22597,7 +22610,7 @@
      "path": "src/commitment/codec.rs",
      "purpose": "Commitment claim codec: candidate builders and closed-schema helpers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -22681,7 +22694,7 @@
      "path": "src/commitment/write.rs",
      "purpose": "Vault commitment write verbs over the gated claim path",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -75872,6 +75885,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_attribution/decay_fit_door.rs",
+     "purpose": "The `credit_decay` fit's door for the integration tests (FIX-LIST…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_attribution/decision_receipts.rs",
      "purpose": "The decision receipts behind each attempt-lane judgment (FIX 11512): the judgment row is immutable by…",
      "surface": {
@@ -75974,7 +75997,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 22
      }
     },
@@ -88482,7 +88505,7 @@
      "surface": {
       "const": 42,
       "crate-vis": 2,
-      "fn": 27,
+      "fn": 28,
       "mod": 1,
       "re-export": 11,
       "struct": 2
@@ -88529,7 +88552,7 @@
      "purpose": "The own-link codec frame (ARCH-0081 §7, OF-604): zstd-3 on our own sockets",
      "surface": {
       "const": 11,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 17,
       "mod": 2,
       "struct": 4
@@ -92167,6 +92190,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/credit_decay_fit.rs",
+     "purpose": "Doors to the `credit_decay` fit (FIX-LIST CREDIT-DECAY-FIT-DROPS-OWNER-AND-WORLD-ANCHORS): one credited…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/dag_append.rs",
      "purpose": "Doors for `tests/dag_append_composed_source.rs` (DAG-APPEND-SOURCE-LABEL): the source label each of the DAG…",
      "surface": {
@@ -92239,6 +92272,16 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/esign_commitments.rs",
+     "purpose": "Door for `tests/esign_commitments.rs`: the evidence a commitment's current status carries, read at the head…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -92384,7 +92427,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 56,
+      "mod": 58,
       "re-export": 1
      }
     },
@@ -101639,6 +101682,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/credit_decay_fit_anchor.rs",
+     "purpose": "A matched ancestor check fits `credit_decay` whatever correctness anchor credited its run (FIX-LIST…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dag_append_composed_source.rs",
      "purpose": "The DAG append's source label follows who composed the words (Engine ruling…",
      "surface": {}
@@ -101839,8 +101890,24 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/esign_commitments.rs",
+     "purpose": "`ESIGN-COMMITMENTS` (ARCH-0064 §3, the OF-187 wire): a signed document opens the commitments it names",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/esign_seal_verify_reasons.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/evidence_revert_end_time.rs",
+     "purpose": "A reverted evidence attachment ends now, in Unix seconds (FIX-LIST PROVENANCE-RETRACT-MS-AS-SECONDS)",
      "surface": {}
     },
     {
@@ -103129,6 +103196,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/residence_rpc_hello.rs",
+     "purpose": "The residence RPC lane's hello lists the codecs only, not the sealed world-update frame kind (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/residence_rpc_leaf_key_lane.rs",
+     "purpose": "The residence RPC lane is no custody carrier leaf-key lane (FIX 11785, FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/restore_over_live_compartment_rows.rs",
      "purpose": "Live restores compare refused families with the image's opened compartments",
      "surface": {}
@@ -104029,7 +104112,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105275,7 +105358,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105429,7 +105512,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 59,
+     "files": 61,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105606,8 +105689,8 @@
    },
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7455,
-   "test_files": 1148
+   "source_files": 7459,
+   "test_files": 1153
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -113254,7 +113337,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 102,
+      "const": 103,
       "crate-vis": 1
      }
     },
