@@ -48,9 +48,12 @@ const fn range(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-/// A vault with no manifest yet, a manifest whose defaults let the owner's
-/// run land its claims, and its embedded owner bound under the host root
-/// (the run review doors act only for the root owner).
+/// An owned vault (its writer lease is what the owner's verb doors ask for,
+/// `Memory::embedded_owner`), its shipped policy manifest replaced at its own
+/// id by one whose defaults let the owner's run land its claims (a manifest
+/// at a new id would still meet the shipped pack's fallback), and its
+/// embedded owner bound under the host root (the run review doors act only
+/// for the root owner).
 struct Fixture {
     vault: Arc<Vault>,
     owner: EntityId,
@@ -63,14 +66,15 @@ impl Fixture {
     fn open() -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
         let mut config = VaultConfig::device();
-        config.map_size = 64 * 1024 * 1024;
         config.dimensions = 4;
         config.embedding_model = None;
-        let vault = Vault::open_unseeded_for_test(dir.path(), config).map_err(at("open"))?;
+        let vault = Vault::open_owned(dir.path(), config).map_err(at("open owned"))?;
         let owner = vault
             .ensure_embedded_owner_actor()
             .map_err(at("embedded owner"))?;
-        put_policy_manifest_bytes(&vault, EntityId::now(), &run_policy(owner)?)
+        let shipped = oneiron_store::policy_record::default_policy_manifest_id()
+            .map_err(at("the shipped manifest's id"))?;
+        put_policy_manifest_bytes(&vault, shipped, &run_policy(owner)?)
             .map_err(at("install the policy"))?;
         // The host root's genesis, then the owner bound under it.
         let issuer = provision_engine_machines(&vault);
