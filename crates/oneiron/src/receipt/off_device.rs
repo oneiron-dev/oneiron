@@ -153,7 +153,10 @@ const REFILL_GROWTH: usize = 2;
 /// rows its family's [`ROW_FIELDS`] hold, a share's parties, and the rows a
 /// hook run's reads served. `None` when they cannot be known: a hook receipt
 /// whose run is not kept.
-fn referenced_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<EntityId>>> {
+pub(crate) fn referenced_rows(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<Option<Vec<EntityId>>> {
     let mut rows: Vec<EntityId> = receipt
         .trigger_ref
         .as_deref()
