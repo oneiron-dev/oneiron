@@ -40,6 +40,7 @@ pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod retrieval_policy_default_floor;
+pub mod room_turn_backfill;
 pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;

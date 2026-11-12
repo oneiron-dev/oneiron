@@ -777,6 +777,10 @@ impl Vault {
                 error.to_string(),
             ))
         })?;
+        // THREAD-TASK-EVERY-ROOM P2: every TURN of a vault older than its
+        // room rows gets its row once, room by room, before any reader or
+        // window holds this handle; an archived vault is left as it is.
+        crate::workspace_roster::backfill_room_turns_on_open(&vault)?;
         // Carrier data must still match the local installation head on reopen.
         let _ = vault.pack_byte_map_snapshot()?;
         // The image a restore in this vault's place set aside reads, and
