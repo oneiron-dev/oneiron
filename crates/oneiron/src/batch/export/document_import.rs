@@ -6,7 +6,10 @@
 mod owner_archive_restore;
 mod seed_replacement;
 
-pub(crate) use owner_archive_restore::OwnerArchiveRestorePermit;
+use owner_archive_restore::OwnerRestore;
+pub(crate) use owner_archive_restore::{
+    OwnerArchiveRestorePermit, owner_restore_opened_claim_in_txn,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
@@ -153,10 +156,15 @@ impl Vault {
     /// `owner`, never an actor taken from the archive. Expression preferences carry an
     /// Imported-source Auto permit for this synchronous call only, recorded as an owner-act
     /// receipt naming the archive in `owner_restore_receipt_ref`. No policy is changed and
-    /// no later write gains a permit. In a destination proved fresh before any import write,
-    /// owner-edited census AGENT_DEF, PERSON and SKILL seeds replace their fresh rows with the
-    /// archive's native bodies and header times, through the owner's own edit writers; they
-    /// keep the destination's birth metadata and are counted in `replaced_seed_entities`.
+    /// no later write gains a permit. Each stamped claim of an unreserved predicate
+    /// carries that receipt in its evidence's `owner_restore_receipt`, so the owner may
+    /// settle it: the restore opened the proposal. A MACHINE-signed one, which every other
+    /// door keeps as archive data, comes back as the owner's restore of it, Imported and
+    /// Proposed, with its MACHINE author and proof inert in `archived_author`. In a
+    /// destination proved fresh before any import write, owner-edited census AGENT_DEF,
+    /// PERSON and SKILL seeds replace their fresh rows with the archive's native bodies and
+    /// header times, through the owner's own edit writers; they keep the destination's
+    /// birth metadata and are counted in `replaced_seed_entities`.
     pub fn import_whole_vault_archive_from_as_owner<R: Read + Seek>(
         &self,
         source: R,
@@ -187,7 +195,15 @@ impl Vault {
             self.classify_vault_import_manifest(&archive.manifest.storage.to_json_pretty()?, None)?;
         // Classification is advisory provenance, not an admission capability.
         // Even a forged same-chain manifest cannot enable replay or Auto here.
+        // Only the owner's restore brings back a MACHINE-signed claim, as the
+        // owner's restore of it (`owner_archive_restore::owner_restored_claim`);
+        // every other door keeps it as archive data (D1, RULING 00:08 13 Nov).
         for entry in &archive.manifest.import_omissions {
+            if owner.is_some()
+                && entry.reason == ImportOmissionReason::MachineSignedClaimNotRestored
+            {
+                continue;
+            }
             let id = parse_id(&entry.entity_id)?;
             archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
         }
@@ -250,6 +266,16 @@ impl Vault {
             None
         };
         let actor = owner_actor.as_ref().or(actor);
+        let receipt_ref = permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref);
+        let source_vault = archive.manifest.source_vault.vault_id.clone();
+        let owner_restore = owner_actor
+            .zip(receipt_ref.as_deref())
+            .map(|(actor, receipt_ref)| OwnerRestore {
+                actor,
+                receipt_ref,
+                fresh: restore_fresh,
+                source_vault: source_vault.as_deref(),
+            });
         withhold_unborn_projects(self, &wtxn, &mut archive)?;
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
@@ -328,13 +354,17 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(&row, &archive.index, &archive.files, secrets)?;
+                let body =
+                    imported_body(&row, &archive.index, &archive.files, secrets, owner_restore)?;
                 if matches_row(
                     &row,
                     &existing,
                     &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
                     secrets,
-                ) {
+                ) || (owner_restore.is_some()
+                    && row.entity_type == ENTITY_TYPE_CLAIM
+                    && matches_restored_claim(&row, &existing, &body, secrets)?)
+                {
                     validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     if row.entity_type == ENTITY_TYPE_MESSAGE {
                         super::evidence_import::validate_stored_message(
@@ -416,7 +446,7 @@ impl Vault {
             } else {
                 dependencies(
                     row.entity_type,
-                    &imported_body(&row, &archive.index, &archive.files, secrets)?,
+                    &imported_body(&row, &archive.index, &archive.files, secrets, None)?,
                 )?
             };
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
@@ -469,8 +499,6 @@ impl Vault {
             pending += 1;
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
-        // Only the owner's restore into a fresh vault sets the default facet.
-        let default_facet_owner = owner_actor.filter(|_| restore_fresh);
         let mut destination_omissions = Vec::new();
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
@@ -517,7 +545,7 @@ impl Vault {
                             projects,
                             &assets,
                             secrets,
-                            default_facet_owner,
+                            owner_restore,
                         )? {
                             inserted_entities -= 1;
                             destination_omissions.push(ExportImportOmission {
@@ -646,7 +674,7 @@ impl Vault {
         }
         Ok(WholeVaultImportReceipt {
             authority,
-            owner_restore_receipt_ref: permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref),
+            owner_restore_receipt_ref: receipt_ref,
             inserted_entities,
             unchanged_entities,
             replaced_seed_entities,
@@ -704,12 +732,14 @@ fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Resul
 
 /// Writes one pending row whose references are in, through its type's door.
 /// The row and a skill's source tree read under the archive's `secrets`.
-/// `default_facet_owner` is the owner of a restore into a fresh vault, the
-/// one import that sets the default facet. Returns the reason for a row the
-/// destination keeps as archive data instead (`TargetDefaultFacetKept`).
+/// `owner_restore` is the owner's restore act, if this import is one: a claim
+/// comes back as that restore's (`owner_archive_restore::owner_restored_claim`),
+/// and only its restore into a fresh vault sets the default facet. Returns the
+/// reason for a row the destination keeps as archive data instead
+/// (`TargetDefaultFacetKept`).
 #[expect(
     clippy::too_many_arguments,
-    reason = "the import's writer, archive and maps, plus the one row and its owner"
+    reason = "the import's writer, archive and maps, plus the one row and its owner restore"
 )]
 fn insert_ready_row<R: Read + Seek>(
     vault: &Vault,
@@ -719,7 +749,7 @@ fn insert_ready_row<R: Read + Seek>(
     projects: Option<&ProjectRootMap>,
     assets: &super::asset_reserve::ArchiveAssets,
     secrets: ExportSecrets,
-    default_facet_owner: Option<WriteActor>,
+    owner_restore: Option<OwnerRestore<'_>>,
 ) -> Result<Option<ImportOmissionReason>> {
     if !archive.index.remove(Tag::Pending, id.as_bytes())? {
         return Err(Error::InvariantViolation("import queue lost row"));
@@ -750,7 +780,7 @@ fn insert_ready_row<R: Read + Seek>(
         stamp_archived_birth(vault, wtxn, archive, &id)?;
         return Ok(None);
     }
-    let body = imported_body(&row, &archive.index, &archive.files, secrets)?;
+    let body = imported_body(&row, &archive.index, &archive.files, secrets, owner_restore)?;
     let landed = match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
@@ -773,7 +803,9 @@ fn insert_ready_row<R: Read + Seek>(
                         &id,
                         &claim,
                         &row,
-                        default_facet_owner,
+                        owner_restore
+                            .filter(|restore| restore.fresh)
+                            .map(|restore| restore.actor),
                     );
                 }
                 Some(ReservedClaimImport::Restore(ReservedClaimRestore::SubjectModel)) => {
@@ -1459,6 +1491,32 @@ pub(super) fn matches_row(
             == *expected
 }
 
+/// Whether the stored claim `raw` is the claim `body` the owner's restore
+/// writes, apart from the restore receipt each stamps: a claim an earlier
+/// owner restore brought back is unchanged by a repeat restore, and keeps its
+/// own receipt.
+fn matches_restored_claim(
+    row: &ExportEntity,
+    raw: &[u8],
+    body: &[u8],
+    secrets: ExportSecrets,
+) -> Result<bool> {
+    let Some((header, stored)) = raw.split_at_checked(ENTITY_METADATA_HEADER_LEN) else {
+        return Ok(false);
+    };
+    let mut unstamped = header.to_vec();
+    unstamped.extend(owner_archive_restore::without_owner_restore_receipt(
+        stored,
+    )?);
+    let expected = owner_archive_restore::without_owner_restore_receipt(body)?;
+    Ok(matches_row(
+        row,
+        &unstamped,
+        &ExportBody::from_bytes_with(&expected, row.entity_type, secrets),
+        secrets,
+    ))
+}
+
 /// An allowlisted seed's stored kind and adapted body must match exactly;
 /// only its occurred and learned seed times are ignored. The caller keeps the
 /// destination row, header and birth metadata.
@@ -1603,7 +1661,9 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 
 /// The body the import writes; an ASSET's file body is its archive file's
 /// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
-/// vault's MODEL rows through the row index. Claim-class vocabulary is normalized
+/// vault's MODEL rows through the row index, and the owner's restore stamps a
+/// claim as its own (`owner_archive_restore::owner_restored_claim`).
+/// Claim-class vocabulary is normalized
 /// by its owning adapter without carrying a foreign owner approval. A hub
 /// source carrier rebuilds under the archive's `secrets`, so a kept carrier
 /// tree restores its exact package instead of being re-nulled.
@@ -1612,6 +1672,7 @@ fn imported_body(
     index: &ArchiveIndex<'_>,
     files: &dyn ArchiveFiles,
     secrets: ExportSecrets,
+    owner_restore: Option<OwnerRestore<'_>>,
 ) -> Result<Vec<u8>> {
     let bytes = row.body.to_bytes_in_with(files, secrets)?;
     let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
@@ -1633,6 +1694,9 @@ fn imported_body(
             body.source = Some(ClaimSource::Imported);
             if body.approval != ClaimApprovalStatus::Rejected {
                 body.approval = ClaimApprovalStatus::Proposed;
+            }
+            if let Some(restore) = owner_restore {
+                owner_archive_restore::owner_restored_claim(&mut body, restore);
             }
             encode_claim_body(&body)
         }
