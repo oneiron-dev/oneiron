@@ -10,7 +10,9 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::define_agent;
-use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
+use oneiron::test_doors::consolidation::{
+    UnboundPass, consolidate_unbound_turn, consolidate_unbound_turn_pair, open_dreamer_vault,
+};
 use oneiron::test_doors::derive::{claim_subject, narrow_steward_grant_to_project};
 use oneiron::test_doors::steward::{
     STEWARD_READ_VERB, STEWARD_VERBS, dreamer, record_strength_observations, stand_steward_grant,
@@ -49,6 +51,15 @@ fn observe_strength_claim(
     .to_string();
     let pass = consolidate_unbound_turn(vault, "call me owen", None, None, &reply)?;
     assert_eq!(pass.landed.len(), predicates.len());
+    observe_landed_claims(vault, pass)
+}
+
+/// Records one independent user-stated claim as the second source of every
+/// claim `pass` landed, beside the TURN each was landed from.
+fn observe_landed_claims(
+    vault: &Vault,
+    pass: UnboundPass,
+) -> StrengthPageTestResult<(Vec<EntityId>, [EntityId; 2], u64)> {
     let person = claim_subject(vault, pass.landed[0])?
         .unwrap_or_else(|| panic!("the generated claim has a person subject"));
     let mut source = ClaimBody::new(
@@ -140,25 +151,56 @@ fn assert_current_observation(page: &Value, claim: EntityId, sources: &[EntityId
     assert!(page["next"].is_null());
 }
 
-/// Observes two claims, moves the one with the higher id into a project of
-/// its own, and holds the Dreamer's Steward grant to the other's project, so
-/// the Dreamer reads the lower claim and not the higher; `(read, unread)`.
+fn claim_project(vault: &Vault, claim: EntityId) -> StrengthPageTestResult<EntityId> {
+    Ok(vault
+        .get_claim(&claim)?
+        .unwrap_or_else(|| panic!("the observed claim exists"))
+        .scope_project)
+}
+
+/// Observes two claims, each landed from a TURN of its own, the second TURN
+/// in a project of its own, and holds the Dreamer's Steward grant to the
+/// project of the claim with the lower id, so the Dreamer reads that claim and
+/// not the other; `(read, unread)`. No claim is written twice: a Dreamer claim
+/// lands in the project of the TURN it cites.
 fn observe_a_read_and_an_unread_claim(
     vault: &Vault,
 ) -> StrengthPageTestResult<(EntityId, EntityId)> {
-    let (mut claims, _, _) = observe_strength_claim(vault, &["profile.name", "profile.nickname"])?;
+    // Each TURN names both people, so either TURN holds either quote.
+    let reply = json!({
+        "persons": [
+            {"id": "new:P1", "name": "owen", "evidence_turn_refs": ["T1"]},
+            {"id": "new:P2", "name": "yuki", "evidence_turn_refs": ["T2"]},
+        ],
+        "candidates": [
+            {
+                "subject": "new:P1", "predicate": "profile.name", "value": "owen",
+                "confidence": 0.8, "evidence_refs": [{"source": "T1", "quote": "owen"}],
+            },
+            {
+                "subject": "new:P2", "predicate": "profile.name", "value": "yuki",
+                "confidence": 0.8, "evidence_refs": [{"source": "T2", "quote": "yuki"}],
+            },
+        ],
+    })
+    .to_string();
+    let pass = consolidate_unbound_turn_pair(
+        vault,
+        "call me owen, and this is yuki",
+        "call me yuki, and this is owen",
+        EntityId::now(),
+        &reply,
+    )?;
+    assert_eq!(pass.landed.len(), 2);
+    let (mut claims, _, _) = observe_landed_claims(vault, pass)?;
     claims.sort_by_key(EntityId::to_hex);
     let (read, unread) = (claims[0], claims[1]);
-    let mut body = vault
-        .get_claim(&unread)?
-        .unwrap_or_else(|| panic!("the observed claim exists"));
-    body.scope_project = EntityId::now();
-    let at = vault.now_recorded_at();
-    vault.put_claim(&unread, &body, TimeRange { start: at, end: at }, at)?;
-    let project = vault
-        .get_claim(&read)?
-        .unwrap_or_else(|| panic!("the observed claim exists"))
-        .scope_project;
+    let project = claim_project(vault, read)?;
+    assert_ne!(
+        project,
+        claim_project(vault, unread)?,
+        "each claim lands in its own TURN's project"
+    );
     let grant = stand_steward_grant(vault, dreamer(vault)?, &STEWARD_VERBS)?;
     narrow_steward_grant_to_project(vault, grant, project)?;
     Ok((read, unread))
