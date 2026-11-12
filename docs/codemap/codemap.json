@@ -103501,6 +103501,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sync_state_retain_refused_window.rs",
+     "purpose": "A window whose retain the home refused is found again by the residence upkeep's retry (FIX…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -105452,7 +105460,7 @@
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7449,
-   "test_files": 1139
+   "test_files": 1140
   },
   "oneiron-agent-runtime": {
    "files": [
