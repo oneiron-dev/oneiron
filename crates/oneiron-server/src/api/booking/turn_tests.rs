@@ -23,7 +23,7 @@ fn install(fixture: &Fixture, rule: BookingAntiAbuseRule) {
             rule,
             version: 1,
             amended_at: 0,
-            amended_by: fixture.page,
+            amended_by: fixture.owner_actor(),
             owner_stamp_ref: None,
         },
         None,

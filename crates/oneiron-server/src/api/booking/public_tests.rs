@@ -693,7 +693,7 @@ async fn public_booking_render_admits_once_and_ignores_spoofed_source_ip() {
                 rule,
                 version: 1,
                 amended_at: 0,
-                amended_by: fixture.page,
+                amended_by: fixture.owner_actor(),
                 owner_stamp_ref: None,
             },
             None,
