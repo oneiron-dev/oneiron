@@ -368,6 +368,7 @@ pub(super) fn mcp_board_sections(
     let narrowed = super::children::mcp_children_narrowed(actor);
     let mut bare_children = std::collections::BTreeSet::new();
     rows.attach_people_admitted(
+        &server.vault,
         &oneiron::context_board::PeopleView::new(&people, resident),
         &children,
         |child| {
