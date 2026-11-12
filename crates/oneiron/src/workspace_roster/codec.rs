@@ -13,21 +13,24 @@ use crate::ports::EntityStoreRead;
 ///
 /// `display_name` is the owner override when present and the deployment's
 /// `venture_name` otherwise; both are runtime intent data and neither is
-/// compiled in. `subject_ref` resolves through the anchor so a merged ORG reads
-/// as its survivor, and falls back to the stated `org_ref` when the anchor is
+/// compiled in. `subject_ref` is the ORG the preset says the house runs
+/// (HOUSE-BIND = A), never the house agent's own anchor, which stays its model
+/// PERSON. It resolves through identity redirects so a merged ORG reads as its
+/// survivor, and falls back to the stated `org_ref` when the redirects are
 /// ambiguous (a split shell) — the roster answers with what the writer stated
 /// rather than guessing a head.
 pub(super) fn house_mind_entry(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
-    at: u64,
 ) -> Result<WorkspaceRosterEntry> {
     let display_name = preset
         .house_display_name
         .clone()
         .unwrap_or_else(|| preset.venture_name.clone());
-    let subject_ref =
-        actor_subject_anchor(vault, &preset.house_actor_ref, at)?.unwrap_or(preset.org_ref);
+    let subject_ref = match vault.resolve_entity(&preset.org_ref)?.as_slice() {
+        [head] => *head,
+        _ => preset.org_ref,
+    };
     Ok(WorkspaceRosterEntry {
         workspace_ref: preset.workspace_ref.clone(),
         role: WorkspaceRosterRole::HouseMind,

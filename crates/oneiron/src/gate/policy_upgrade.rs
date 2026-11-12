@@ -1,5 +1,7 @@
 //! A vault's untouched seeded policy manifest taking the one this build
-//! ships, and the re-gate of every consent that waited on the old one.
+//! ships, and the re-gate of every consent that waited on the old one. The
+//! body a vault seeds is the shipped one with the read row of the house mind
+//! that leads its root (`house_grant`), so a bound house keeps its row.
 //!
 //! The seeded marker holds only while no local write re-authored the default
 //! manifest, so an owner's own policy is never touched. A new manifest moves
@@ -239,31 +241,45 @@ fn untouched_seeded(
 }
 
 impl Vault {
-    /// Replaces an untouched seeded default whose bytes differ from the
-    /// shipped manifest, and re-gates every consent that waited on it, in
+    /// Replaces an untouched seeded default whose bytes differ from the body
+    /// this vault seeds now, and re-gates every consent that waited on it, in
     /// one transaction. `None` when there is nothing to upgrade.
     pub(crate) fn upgrade_seeded_policy_manifest(&self) -> Result<Option<ConsentRegate>> {
-        let shipped = super::default_policy_manifest()?;
         self.with_write_txn_grouped(|txn| {
-            let Some((id, header, body)) = untouched_seeded(self, txn)? else {
-                return Ok(None);
-            };
-            if body == shipped {
-                return Ok(None);
-            }
-            let old_frontier =
-                super::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
-            install_seeded_in_txn(self, txn, id, &header, shipped.clone())?;
-            let policy = super::resolve_policy_manifest(&self.store, txn)?;
-            if policy.is_fail_closed() || policy.diagnostics().loaded_manifest_forces_fail_closed()
-            {
-                return Err(Error::InvariantViolation(
-                    "the shipped policy manifest does not resolve open",
-                ));
-            }
             let now = self.store.clock.now_recorded_at();
-            regate_pending_consents_in_txn(self, txn, &old_frontier, now).map(Some)
+            self.reseed_policy_manifest_in_txn(txn, now)
         })
+    }
+
+    /// Re-seeds an untouched seeded default in `txn` with the body this vault
+    /// seeds now ([`super::house_grant::seeded_policy_manifest_in_txn`]): the
+    /// shipped manifest, with the read row of the house mind that leads the
+    /// root. It takes the seeded install, so the default stays the engine's,
+    /// never the owner's, and every consent that waited on the old one is
+    /// re-gated at `now`. `None` when the default is the owner's own or
+    /// already carries that body.
+    pub(crate) fn reseed_policy_manifest_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<Option<ConsentRegate>> {
+        let Some((id, header, body)) = untouched_seeded(self, txn)? else {
+            return Ok(None);
+        };
+        let seeded = super::house_grant::seeded_policy_manifest_in_txn(self, txn)?;
+        if body == seeded {
+            return Ok(None);
+        }
+        let old_frontier =
+            super::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
+        install_seeded_in_txn(self, txn, id, &header, seeded)?;
+        let policy = super::resolve_policy_manifest(&self.store, txn)?;
+        if policy.is_fail_closed() || policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Err(Error::InvariantViolation(
+                "the shipped policy manifest does not resolve open",
+            ));
+        }
+        regate_pending_consents_in_txn(self, txn, &old_frontier, now).map(Some)
     }
 
     /// Puts `body` in place of the seeded default as an earlier build would

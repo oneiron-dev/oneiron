@@ -76,7 +76,7 @@ pub use self::types::{
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
     DurableStepContext, DurableStepError, DurableStepResult, ReplyCheck, StepOutcome,
-    StepProgression, TrapRef,
+    StepProgression, StepSpendScope, TrapRef,
 };
 
 pub(crate) use self::step_only::{
