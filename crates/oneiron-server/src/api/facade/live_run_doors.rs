@@ -169,6 +169,70 @@ pub(crate) async fn vault_claims_put(
     (answer, Vec::new())
 }
 
+/// `vault.derive.commit` (`host_door_lists`): the reply is the batch's id
+/// and each item's outcome: the ids of the rows it landed, or its refusal
+/// tokens. The rows the items cite are read by the commit's gates, not
+/// served, so the list is complete and empty.
+pub(crate) async fn vault_derive_commit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<oneiron::derive::DeriveCommitInput>,
+) -> Listed<oneiron::derive::DeriveCommitView> {
+    let answer = on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "vault.derive.commit",
+        move |dispatcher| dispatcher.derive_commit_from_host(input.spec),
+    )
+    .await;
+    (answer, Vec::new())
+}
+
+/// `vault.derive.revert` (`host_door_lists`): one verb, two callers. A
+/// caller that names its attached live run reverts its own batch through
+/// that held run. A caller that names none is the vault's owner, under the
+/// owner's own in-request proof, and reverts any batch. The reply is the
+/// batch's id and its items' names, so the list is complete and empty.
+pub(crate) async fn vault_derive_revert(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: oneiron::derive::DeriveRevertInput,
+) -> Listed<oneiron::derive::DeriveRevertView> {
+    const VERB: &str = "vault.derive.revert";
+    let batch = input.batch;
+    let answer = match input.live_run {
+        Some(live_run) => {
+            on_live_run(server, auth, session, live_run, VERB, move |dispatcher| {
+                dispatcher.derive_revert_from_host(batch)
+            })
+            .await
+        }
+        None => match super::owner_binding::facade_owner_or(server, auth, || {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "vault.derive.revert with no live_run is the vault owner's",
+                &["An agent names the live_run it attached to and reverts its own batch."],
+            )
+        }) {
+            Ok(owner) => {
+                let server = Arc::clone(server);
+                super::clock_ingress::run_blocking(move || {
+                    server.vault().derive_revert_as_owner(&owner, batch)
+                })
+                .await
+                .map_err(|_| internal(VERB))
+                .and_then(|answer| answer)
+            }
+            Err(refused) => Err(refused),
+        },
+    };
+    (answer, Vec::new())
+}
+
 /// Batched child admission through the same attachment guard as single spawn.
 pub(crate) async fn vault_fanout_spawn(
     server: &Arc<SyncServer>,

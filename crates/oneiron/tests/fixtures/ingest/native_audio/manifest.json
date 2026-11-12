@@ -1,10 +1,10 @@
 {
   "proof_class": "real_inference_on_public_synthetic_audio",
   "python": "3.13.5 (main, Jun 12 2025, 12:22:43) [Clang 20.1.4 ]",
-  "interpreter": "/Users/olety/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python",
+  "interpreter": "<host-home>/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python",
   "machine": "arm64",
   "ffmpeg": "ffmpeg version 8.1.1 Copyright (c) 2000-2026 the FFmpeg developers",
-  "model_snapshot": "/Users/olety/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+  "model_snapshot": "<host-home>/.cache/huggingface/hub/models--mlx-community--Qwen3-ASR-1.7B-8bit/snapshots/a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
   "packages": {
     "mlx": "0.32.2",
     "mlx-metal": "0.32.2",
@@ -28,15 +28,15 @@
   "e3": "not run",
   "files": {
     "self-test.txt": "27c1d81e0e7d5c9264c930a24a7eb6490e81185c666f9e44b0082af47f306be3",
-    "trace.json": "d111ba23452e35ea1241e7e148974413551a09120c4d387a8efa2d18a0d207d0",
+    "trace.json": "bd555fbb222c20c5b9186f210e0adb9e1eb8464914420d31d91b316ed081594b",
     "final-decode.json": "5088528556c79b620f40598f30624ee2bc71a614e09bd756eb825615497fe311",
     "reference.txt": "673898b80d2fd5572bc8f0a50f7cfd4a5b7fc890aebbb48e004c30c969397553",
     "public-speech.mp4": "0401d5626fa0a5e6401da721f62479033358d9b3dc2db6a19c889913d4c0d089",
     "community1_exclusive_full_file.json": "0df05248620d13129bfa4729e9ce02489facc55c6ccca4798719e71063151908",
-    "backend-gaps.json": "6fc45b843bc8315893b9bfc7fa472b376ee8f26eb01604a4acc84654ea707f5e",
-    "transcribe_pack.json": "f9549ddb186e1d1ea810476c38dff1cb9dbe696f6ed326f14af52fe4f8734942",
+    "backend-gaps.json": "b87924ac8f204a8fb9a9e7a47a46ac200365de1f6728b55842e50daaa32f8000",
+    "transcribe_pack.json": "cf62b95aadd98e01cb511c5be04fe382be46f86ab0702eca4f2ae61ed5f78ce9",
     "silero_vad.json": "7319b25be6a744e69a4104093e950e95c739885b0b2fdbb3facd79a113f0cdba",
-    "transcribe_text.json": "ef07ab3d82e7e551d69fdf331ad9c8254282393e705e63ab2e204174afc6f5af",
+    "transcribe_text.json": "83002e073d9eefa5bc075673af22c92ba9029546d8e59b28cabdeab03e9cd3ec",
     "bridge-at-proof.py.txt": "dd7068af16c3019c1e21e566881ff4c446292599904befa8255a2924a01dec5c"
   },
   "bridge_sha256": "dd7068af16c3019c1e21e566881ff4c446292599904befa8255a2924a01dec5c",

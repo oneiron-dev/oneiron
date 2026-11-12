@@ -128,6 +128,48 @@ pub fn retrieval_runs_as_owner(
     input: RetrievalRunsRequest,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
     admitted(memory, owner)?;
+    retrieval_runs(memory, input)
+}
+
+/// [`retrieval_runs_as_owner`] for the caller `memory` binds when it holds a
+/// live Steward grant naming `read` (untangle 6.6c), checked at this read.
+///
+/// # Errors
+///
+/// A caller who holds no such grant; storage errors.
+pub fn retrieval_runs_as_reader(
+    memory: &Memory<'_>,
+    input: RetrievalRunsRequest,
+) -> MemoryResult<Vec<RetrievalRunEvidence>> {
+    crate::federation::admit_substrate_read_by(
+        memory.vault(),
+        crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        "vault.retrieval.runs",
+        crate::federation::SubstrateRead::Evidence,
+    )?;
+    retrieval_runs(memory, input)
+}
+
+/// `vault.retrieval.runs` on a bound handle: the embedded owner reads under
+/// its own proof, any other caller as a reader.
+///
+/// # Errors
+///
+/// As [`retrieval_runs_as_owner`] and [`retrieval_runs_as_reader`].
+pub fn retrieval_runs_embedded(
+    memory: &Memory<'_>,
+    input: RetrievalRunsRequest,
+) -> MemoryResult<Vec<RetrievalRunEvidence>> {
+    match memory.embedded_owner("vault.retrieval.runs") {
+        Ok(owner) => retrieval_runs_as_owner(memory, &owner, input),
+        Err(_) => retrieval_runs_as_reader(memory, input),
+    }
+}
+
+fn retrieval_runs(
+    memory: &Memory<'_>,
+    input: RetrievalRunsRequest,
+) -> MemoryResult<Vec<RetrievalRunEvidence>> {
     memory
         .vault()
         .retrieval_runs(input.limit.unwrap_or(RETRIEVAL_RUNS_DEFAULT))?

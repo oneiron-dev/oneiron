@@ -113,7 +113,7 @@ const ENTRIES: Entry[] = [
   {
     key: 'e3',
     who: { seal: 'y' },
-    whoTitle: 'y · yurii · 08-13 13:02 · slack #ops',
+    whoTitle: 'y · yuki · 08-13 13:02 · slack #ops',
     voice: 'Their ops lead asked about freight terms. Parking it here until we hear it a second time.',
     conf: 2,
     voiceTitle: 'nothing minted · one mention is under the evidence floor',
@@ -121,7 +121,7 @@ const ENTRIES: Entry[] = [
   {
     key: 'e4',
     who: { seal: 'o' },
-    whoTitle: 'o · oleksii · 08-13 10:38 · slack · a direct message',
+    whoTitle: 'o · owen · 08-13 10:38 · slack · a direct message',
     voice: 'Note to self: ask whether Mika’s team can host the kickoff in Osaka.',
     conf: 3,
     end: { word: 'DM → your vault', title: 'a direct message writes to your own vault, never the shared one' },
@@ -137,7 +137,7 @@ const ENTRIES: Entry[] = [
   {
     key: 'e6',
     who: { seal: 'o' },
-    whoTitle: 'o · oleksii · 08-08 09:02 · slack #ops',
+    whoTitle: 'o · owen · 08-08 09:02 · slack #ops',
     voice: 'Confirmed with Mika: six weeks, starting the first week of September.',
     conf: 1,
     door: {
@@ -148,7 +148,7 @@ const ENTRIES: Entry[] = [
   {
     key: 'e7',
     who: { seal: 'y' },
-    whoTitle: 'y · yurii · 08-08 08:40 · slack #ops',
+    whoTitle: 'y · yuki · 08-08 08:40 · slack #ops',
     voice: 'Hokuei want to move the pilot start. I said we would confirm today.',
     conf: 2,
     end: { word: '→ the shared vault', title: '#ops is a shared room · what it mints goes to antevon / ops' },

@@ -12,7 +12,7 @@ fn rows(subject: EntityId, turn: EntityId, eligible: bool) -> Vec<u8> {
                     "declared_fallback",
                     Some(serde_json::json!({"persons":[{
                         "id": EntityId::from_bytes([0x68; 16]).expect("person").to_hex(),
-                        "name":"Oleksii", "evidence_turn_refs":[turn.to_hex()]
+                        "name":"Owen", "evidence_turn_refs":[turn.to_hex()]
                     }], "candidates":[{
                         "subject":subject.to_hex(), "predicate":"profile.name",
                         "value":"from declared fallback", "confidence":0.7,
@@ -177,7 +177,7 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
             &vault,
             &store,
             if eligible { 0x63 } else { 0x64 },
-            &[("user", "my name is Oleksii")],
+            &[("user", "my name is Owen")],
         )?;
         let subject = EntityId::from_bytes([0x65; 16])?;
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
@@ -382,7 +382,7 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
                 fields
                     .iter()
                     .any(|(key, value)| key.as_str() == Some("name")
-                        && value.as_str() == Some("Oleksii"))
+                        && value.as_str() == Some("Owen"))
             );
         }
         assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
@@ -672,7 +672,7 @@ fn a_claim_retracted_during_the_call_leaves_the_reply_to_the_manifest() -> Resul
     set_manifest_failure_policy(&vault, true, true, "holder_override_capped_at_vault")?;
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, _) =
-        admitted_attempt_fixture(&vault, &store, 0x63, &[("user", "my name is Oleksii")])?;
+        admitted_attempt_fixture(&vault, &store, 0x63, &[("user", "my name is Owen")])?;
     let subject = EntityId::from_bytes([0x65; 16])?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let resident = EntityId::from_bytes([0x69; 16])?;

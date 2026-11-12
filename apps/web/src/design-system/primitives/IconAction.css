@@ -1,0 +1,62 @@
+.sl-icon-action {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--sl-radius);
+  color: var(--sl-ink-2);
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-icon-action svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.sl-icon-action:hover,
+.sl-icon-action:focus-visible,
+.sl-icon-action[aria-expanded="true"] {
+  color: var(--sl-ink-1);
+  background: var(--sl-hover);
+}
+
+.sl-icon-action[aria-pressed="true"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-icon-action[data-tone="consent"]:hover,
+.sl-icon-action[data-tone="consent"]:focus-visible {
+  color: var(--sl-safelight);
+}
+
+.sl-icon-action:active {
+  transform: scale(0.96);
+}
+
+.sl-icon-action:disabled {
+  color: var(--sl-ink-4);
+  background: none;
+  cursor: default;
+  transform: none;
+}
+
+.sl-icon-action[data-size="sm"] {
+  width: 26px;
+  height: 26px;
+}
+
+.sl-icon-action[data-size="sm"] svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-icon-action {
+    transition: none;
+  }
+  .sl-icon-action:active {
+    transform: none;
+  }
+}

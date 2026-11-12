@@ -18,6 +18,7 @@ use crate::error::Error;
 use crate::vault::ReadMode;
 
 mod hydrate_filtered;
+mod revisions_read;
 
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
