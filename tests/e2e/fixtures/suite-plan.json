@@ -60,6 +60,14 @@
         "file": "artifacts.test.ts",
         "ruling": "Engine ANSWER 2026-11-10 11:52 JST (MUSE-LOOP-REGISTRATION; Muse Wonder loop cases)",
         "promiseRegister": "lanes/post-untangle/promise-register/PROMISE-REGISTER.md (ratified 2026-11-10)"
+      },
+      {
+        "ids": [
+          "SYNC-09"
+        ],
+        "file": "sync.test.ts",
+        "ruling": "Engine RULING 2026-11-12 21:34 and 22:00 JST (FIX DEVICE-RENEWAL-REFUSED-BEFORE-FIRST-SYNC; ASK DEVICE-RENEWAL-TEST-ROUTE = A; plan id placeholder until OPUS-E2E-1 names the row)",
+        "promiseRegister": "none: no PROMISE-REGISTER row names device credential renewal"
       }
     ]
   },
@@ -1851,7 +1859,7 @@
       "file": "sync.test.ts",
       "area": "Sync and federation",
       "slots": 2,
-      "estimatedSeconds": 65,
+      "estimatedSeconds": 85,
       "tests": [
         {
           "id": "SYNC-01",
@@ -1958,6 +1966,15 @@
             "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
             "/oneiron/identity/#authority-log",
             "/registry/oneiron/#OF-535"
+          ]
+        },
+        {
+          "id": "SYNC-09",
+          "name": "A freshly enrolled device renews its paired credential once its first sync lands the vault's authority, keeps its holder key, and goes on syncing on the renewed credential",
+          "rows": [],
+          "source": [
+            "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+            "/oneiron/identity/#authority-log"
           ]
         }
       ]
