@@ -34,6 +34,7 @@ mod thread_history;
 mod thread_join;
 mod thread_projection;
 mod thread_reads;
+mod thread_task_source;
 mod turn_record;
 mod upkeep;
 mod upkeep_voice;
@@ -142,6 +143,7 @@ pub use thread_join::{
 };
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
+pub(crate) use thread_task_source::room_thread_source_in;
 pub(crate) use turn_record::{record_room_message_in_txn, record_thread_reply_in_txn};
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use upkeep::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
