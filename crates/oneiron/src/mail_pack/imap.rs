@@ -1069,8 +1069,11 @@ fn headers_of(
     labels: Vec<String>,
 ) -> MailHeaders {
     let parsed = MimeMessage::parse(read.raw);
+    // A parse keeps only a message's first header fields, so a late
+    // Reply-To would be lost and the reply would go to From (fix list row
+    // 20852): the address fields come from the whole header block.
+    let addresses = super::mime::raw_address_headers(read.raw);
     let rfc_message_id = parsed.header("message-id").filter(|id| !id.is_empty());
-    let addresses = |name: &str| parsed.address_header(name);
     let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
     let flagged = |flag: &str| read.flags.iter().any(|held| held == flag);
     MailHeaders {
@@ -1081,10 +1084,10 @@ fn headers_of(
             .header("references")
             .map(|value| value.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default(),
-        from: Some(parsed.address_header("from").join(", ")).filter(|from| !from.is_empty()),
-        to: addresses("to"),
-        cc: addresses("cc"),
-        reply_to: addresses("reply-to"),
+        from: Some(addresses.from.join(", ")).filter(|from| !from.is_empty()),
+        to: addresses.to,
+        cc: addresses.cc,
+        reply_to: addresses.reply_to,
         subject: parsed.header("subject"),
         date,
         received_at: read.received_at.or(date).unwrap_or(0),
@@ -1095,6 +1098,27 @@ fn headers_of(
         rfc_message_id,
         labels,
     }
+}
+
+/// The headers the raw header block `raw` lands with from a received-mail
+/// folder (fix list row 20852). A test door: built only under
+/// `--cfg oneiron_test_support`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn imap_landed_headers(raw: &[u8]) -> MailHeaders {
+    let folder = Folder {
+        name: "INBOX".to_owned(),
+        label: "INBOX".to_owned(),
+        role: FolderRole::Mail,
+        digest: String::new(),
+    };
+    let read = MessageRead {
+        uid: 1,
+        flags: Vec::new(),
+        received_at: None,
+        thread: None,
+        raw,
+    };
+    headers_of(&read, "1".to_owned(), &folder, Vec::new())
 }
 
 /// One folder's entry in an anchor:
