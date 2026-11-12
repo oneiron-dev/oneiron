@@ -599,6 +599,10 @@ impl Offer<'_> {
             ClaimLifecycleStatus::Active,
         )?;
         claim.source = Some(ClaimSource::Generated);
+        // The target is a SKILL or another row with no substrate FACET.
+        claim.scope_facet =
+            self.vault
+                .claim_put_facet_keeping_in_txn(txn, &claim_id, claim.scope_facet)?;
         self.vault
             .put_claim_in_txn(txn, &claim_id, &claim, occurred, self.now)?;
 
@@ -616,6 +620,9 @@ impl Offer<'_> {
         )?;
         body.source = Some(ClaimSource::Observed);
         let receipt_id = self.vault.store.clock.entity_id()?;
+        body.scope_facet =
+            self.vault
+                .claim_put_facet_keeping_in_txn(txn, &receipt_id, body.scope_facet)?;
         self.vault
             .put_reserved_claim_in_txn(txn, &receipt_id, &body, occurred, self.now)?;
         Ok(PluginSectionInstalled {
