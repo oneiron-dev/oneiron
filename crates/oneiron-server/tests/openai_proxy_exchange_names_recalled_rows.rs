@@ -3,11 +3,12 @@
 //! One seeded claim carries a distinctive word the caller's query lacks. The
 //! test calls `POST /v1/chat/completions` through the HTTP door with a scripted
 //! local model, asserts the injected memory block (and only it) carried the
-//! word, then binds the response's saved claim ref through `POST /v1/core/hydrate`
-//! to the exact proposed row and asserts its birth names the seeded row as a
-//! prompt input. The birth itself is read through the public `Vault::row_birth`
-//! library door; the checked core-hydrate door returns the raw row body, which
-//! carries no `made_by`.
+//! word, then resolves the response's saved claim ref through the public
+//! `Vault::hydrate_short_id` library door to the exact proposed row and asserts
+//! its birth, read through `Vault::row_birth`, names the seeded row as a prompt
+//! input. The exchange lands Proposed, and `POST /v1/core/hydrate` reads the
+//! surfaceable lane (auto and approved claims only), so that door does not
+//! serve it.
 
 #[path = "support/fake_llm.rs"]
 mod fake_llm;
@@ -280,24 +281,18 @@ async fn chat(
     serde_json::from_value(body).expect("proxy rows chat response")
 }
 
-async fn hydrate_id(
-    router: &Router,
-    vault: &Vault,
-    slip: &CapabilitySlip,
-    key: &SigningKey,
-    short_ref: &str,
-) -> EntityId {
-    let auth = holder_auth(vault, slip, key);
-    let request = post(
-        "/v1/core/hydrate",
-        &auth,
-        json!({"ref": short_ref, "view": "full"}),
-    );
-    let (status, body) = send(router.clone(), request).await;
-    assert_eq!(status, StatusCode::OK, "hydrate exchange: {body}");
-    assert_eq!(body["status"], json!("live"), "hydrate exchange: {body}");
-    let id = body["id"].as_str().expect("hydrate exchange id");
-    EntityId::from_hex(id).expect("hydrate exchange entity")
+/// The proposed exchange's row id, from its `shortId:hash` reference.
+fn exchange_id(vault: &Vault, short_ref: &str) -> EntityId {
+    let (short_id, hash) = short_ref
+        .split_once(':')
+        .expect("exchange ref is shortId:hash");
+    let hash = u8::from_str_radix(hash, 16).expect("exchange ref hash is two hex digits");
+    let hydrated = vault
+        .hydrate_short_id(short_id, hash)
+        .expect("proxy rows exchange short id")
+        .expect("proxy rows exchange short id resolves");
+    assert!(hydrated.body.is_some(), "the exchange row is live");
+    hydrated.id
 }
 
 /// The proxy's recall, model call and proposal poll engine futures; the
@@ -330,7 +325,15 @@ async fn exchange_birth_names_recalled_row() {
         "the query must not carry the seeded word"
     );
     let dir = tempfile::tempdir().expect("proxy rows dir");
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("proxy rows vault"));
+    let mut config = VaultConfig::device();
+    // The proxy recalls in call mode, which answers an empty partial pack once
+    // the vault's call-mode deadline (100 ms by default) has passed; a cold
+    // first recall in a debug test build on a loaded host misses it. This test
+    // is not about the deadline, so it gets the longest one, as the voice host
+    // tests do.
+    config.call_mode_deadline =
+        std::time::Duration::from_millis(oneiron::memory::caps::MAX_RECALL_DEADLINE_MS);
+    let vault = Arc::new(Vault::open(dir.path(), config).expect("proxy rows vault"));
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
     let fake = FakeLlm::start(Vec::new(), Some(Reply::text("the remembered answer"))).await;
     let (server, host) = serve(Arc::clone(&vault), &fake.base_url).await;
@@ -343,6 +346,11 @@ async fn exchange_birth_names_recalled_row() {
     let seeded = seed_word_claim(&vault);
     admit_proxy(&router, &vault, &issuer, actor).await;
     let answer = chat(&router, &vault, &slip, &key).await;
+    assert!(
+        answer.oneiron.recall_skipped.is_none(),
+        "the connector's recall setting withheld recall: {:?}",
+        answer.oneiron.recall_skipped
+    );
     assert!(answer.oneiron.injected, "recall found nothing to inject");
     let claim = match answer.oneiron.remembered {
         ChatCompletionRemembered::Saved { claim, .. } => claim,
@@ -354,7 +362,7 @@ async fn exchange_birth_names_recalled_row() {
         .filter(|request| {
             message_texts(&request.body)
                 .iter()
-                .any(|text| text.contains(QUERY))
+                .any(|text| text == QUERY)
         })
         .map(|request| message_texts(&request.body));
     let texts = calls.next().expect("the model saw the query call");
@@ -373,7 +381,7 @@ async fn exchange_birth_names_recalled_row() {
         QUERY,
         "the carrier is memory, not the query"
     );
-    let exchange = hydrate_id(&router, &vault, &slip, &key, &claim).await;
+    let exchange = exchange_id(&vault, &claim);
     let stored = vault
         .get_claim(&exchange)
         .expect("proxy rows exchange claim")
