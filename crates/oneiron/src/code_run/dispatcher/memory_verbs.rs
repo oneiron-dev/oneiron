@@ -15,7 +15,6 @@ use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vaul
 use oneiron_base::edge::kind_tables::ensure_public_memory_edge_kind;
 
 use super::envelope::edge_operation_gate_id;
-use super::read_worlds::{ServedRows, served_row_in};
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::error::{CodeError, OffRecordError};
 
@@ -247,40 +246,19 @@ impl HostSelfDispatcher<'_> {
         read_as: Option<ScopedReadActorKey>,
         filter: Option<&crate::gate::RetrievalFilter>,
     ) -> Result<Vec<ScoredEntity>> {
-        let mut scored = ServedRows::new();
-        let observe = |txn: &heed::RoTxn<'_>, hits: &[ScoredEntity]| {
-            scored = hits
-                .iter()
-                .map(|hit| (hit.id, served_row_in(vault, txn, hit.id)))
-                .collect();
-        };
-        let attempt = self.agent_lease.as_ref().map(|lease| lease.attempt);
-        let lane = read_as.map(|reader| {
-            vault
-                .scoped_read(reader)
-                .with_claim_status(self.keyed_claims())
-                .with_read_filter(filter)
-        });
-        // A caller filter is met inside the scan, before the rank and the
-        // cut, so a row it excludes takes no place an admitted row could
-        // fill (FIX 3977).
-        let hits = match (&lane, filter) {
-            (Some(lane), Some(_)) => {
-                vault.search_text_scoped_observed(lane, query, limit, observe, attempt)?
-            }
-            _ => vault.search_text_observed_for_attempt(query, limit, observe, attempt)?,
-        };
-        let (hits, admitted) = match lane {
-            Some(lane) => {
-                let mut admitted = ServedRows::new();
-                let hits = lane
-                    .filter_scored_entities_observed(hits, None, |txn, id| {
-                        admitted.insert(id, served_row_in(vault, txn, id));
-                    })?
-                    .value;
-                (hits, Some(admitted))
-            }
-            None => (self.own_entry_hits(hits)?, None),
+        let (hits, scored, admitted) = crate::task_verb::run_rows::search::search_observed(
+            vault,
+            query,
+            limit,
+            read_as,
+            self.keyed_claims(),
+            filter,
+            self.agent_lease.as_ref().map(|lease| lease.attempt),
+        )?;
+        let hits = if admitted.is_none() {
+            self.own_entry_hits(hits)?
+        } else {
+            hits
         };
         self.note_search_worlds(site, &hits, &scored, admitted.as_ref());
         Ok(hits)
@@ -368,6 +346,27 @@ impl HostSelfDispatcher<'_> {
         call: SelfMemoryPutClaimCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
+        self.dispatch_memory_put_claim_requesting(
+            call,
+            read_as,
+            crate::claim::ClaimApprovalStatus::Proposed,
+            false,
+        )
+    }
+
+    /// The claim put asking `approval` of the gates: code mode asks
+    /// Proposed; a caller's live run asks Auto first (FIX 3983).
+    /// `checker_review`: the put is a caller's live-run put, which names
+    /// itself to the gate whatever it asks, so the host's auto checker
+    /// reviews its Auto request and its Proposed resubmission keeps that
+    /// review's hold as a pending review (review 6908 P1).
+    pub(super) fn dispatch_memory_put_claim_requesting(
+        &self,
+        call: SelfMemoryPutClaimCall,
+        read_as: Option<ScopedReadActorKey>,
+        approval: crate::claim::ClaimApprovalStatus,
+        checker_review: bool,
+    ) -> Result<SelfDispatchOutcome> {
         // A position-narrowed slip places no row in core (FIX 10666).
         self.refuse_narrowed_program_write()?;
         let admission = self.code_emission_admission()?;
@@ -378,7 +377,21 @@ impl HostSelfDispatcher<'_> {
             Some(evidence) => (*call.candidate).clone().with_evidence(evidence),
             None => *call.candidate,
         };
-        let envelope = self.write_envelope(SelfEffect::MemoryPutClaim, admission.as_ref())?;
+        // A live run's put names itself to the gate, whose auto checker reviews it as it reviews a Dreamer
+        // write (FIX 3983, review 6881 P1). Its Proposed resubmission carries the same marker, so a checker
+        // hold parks it with a pending review instead of landing it unreviewed (review 6908 P1). Code mode
+        // carries no marker.
+        let producer = if checker_review {
+            vec![(
+                rmpv::Value::from(crate::gate::CHECKED_PRODUCER_PROVENANCE_KEY),
+                rmpv::Value::from(crate::gate::LIVE_RUN_CLAIM_PUT_PRODUCER),
+            )]
+        } else {
+            Vec::new()
+        };
+        let envelope = self
+            .write_envelope_with(SelfEffect::MemoryPutClaim, admission.as_ref(), producer)?
+            .with_approval(approval);
         // The write gate reads no facet; the stored body takes the vault
         // default when the write applies.
         let gate_body = candidate.clone().into_claim_body(

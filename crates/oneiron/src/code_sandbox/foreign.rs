@@ -6,7 +6,6 @@ use std::sync::Arc;
 use oneiron_container::HostNetFloor;
 use sha2::{Digest, Sha256};
 
-use super::guest_error::{GuestErrorMask, GuestProgramError};
 use super::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialResolver, ExecutionBudget, GuestImage,
     MicroVmBackend, MicroVmSandboxAdapter, SandboxBackends, select_backend_for_tier,
@@ -17,6 +16,7 @@ use super::{
     SandboxProposalDelta,
 };
 use crate::engine_executor::StepCancellation;
+use crate::guest_error::{GuestErrorMask, GuestProgramError};
 use crate::{Error, Result};
 
 /// Host-selected interpreter bytes and their reviewed SHA-256, never a wire input.
@@ -93,7 +93,7 @@ pub fn execute_foreign_code(
     clippy::too_many_arguments,
     reason = "the host supplies each isolated execution axis"
 )]
-pub(crate) fn execute_foreign_code_on(
+pub fn execute_foreign_code_on(
     source: &str,
     tier: SandboxGuestTier,
     mounts: SandboxMountTable,

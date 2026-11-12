@@ -7,26 +7,47 @@ candidate. Nothing here is a merge check: the merge bar is
 
 ## Profile settings
 
-The workspace uses limited debug information (`debug = 1`) in the `dev` profile.
-The `test` profile inherits it. This keeps file/line backtraces and module-level
-information, but omits type and local-variable debugger information. It does not
-by itself change optimization, assertions, overflow checks, panic behavior,
-features, or release profiles.
+The `dev` profile keeps line tables only (`debug = "line-tables-only"`), and the
+`test` profile inherits it. Backtraces and panics still name file and line, and
+symbol names are kept; type, module-level and local-variable debugger
+information is left out, which cuts codegen, link time and target size. It does
+not by itself change optimization, assertions, overflow checks, panic behavior,
+features, or release profiles. (Until November 2026 the setting was `debug = 1`,
+limited debug information.)
 
 The `release` profile sets `lto = "thin"` and otherwise keeps Cargo's defaults.
 Thin LTO lets LLVM inline across the workspace's crate boundaries, so moving
 engine modules into their own crates does not stop hot calls from inlining.
 
-For a debugging session that needs locals, opt back into full debug information:
+For a debugging session that needs locals, opt back into full debug information
+for that run, with either the environment or the command line:
 
 ```sh
-CARGO_PROFILE_DEV_DEBUG=2 cargo test -p oneiron --lib --all-features
+CARGO_PROFILE_DEV_DEBUG=full cargo test -p oneiron --lib --all-features
+cargo test --config 'profile.dev.debug="full"' -p oneiron --lib --all-features
 ```
 
 Use the same profile setting for repeated commands that should reuse artifacts.
 Changing the setting invalidates affected Cargo units once. Do not set
-`RUSTFLAGS`: global flags also reach vendored path dependencies and split
-otherwise compatible caches.
+`RUSTFLAGS` for dev and test builds: global flags also reach vendored path
+dependencies and split otherwise compatible caches. The `profiling` build below
+is the one exception; it has its own output directory.
+
+### profiling profile
+
+`profiling` is the profile for perf work: profilers, flame graphs and annotated
+assembly. It inherits `release` optimization, adds full debug information
+(`debug = "full"`, `strip = "none"`) so inlined frames and locals resolve, and
+sets `lto = "off"` so a rebuild relinks quickly. Frame pointers are a rustc
+flag, not a profile key on stable Rust, so the build sets them for its own run:
+
+```sh
+RUSTFLAGS="-C force-frame-pointers=yes" cargo build --locked --profile profiling -p oneiron-server
+```
+
+Outputs land under `target/profiling`, so the flag never touches the dev, test
+or release caches. Without LTO the code differs a little from `release`;
+publish measurements from `release`.
 
 The core package also uses 256 codegen units for dev/test builds. This improves
 the measured non-incremental Mini core build while matching the ordinary
@@ -100,7 +121,7 @@ cargo test --config 'profile.dev.package."*".opt-level=0' \
 This causes a separate one-time dependency rebuild. To inspect build
 scripts/build dependencies without optimization too, add
 `--config 'profile.dev.build-override.opt-level=0'`. For debugger locals,
-also use `CARGO_PROFILE_DEV_DEBUG=2`. Keep override choices the same across
+also use `CARGO_PROFILE_DEV_DEBUG=full`. Keep override choices the same across
 commands when you want to reuse their artifacts.
 
 ## CI build settings
@@ -372,6 +393,6 @@ reproduction, so no Linux or universal speedup is claimed.
   (`-fuse-ld=lld`). The mold comparison was interrupted and is inconclusive.
 
 The machine-local evidence archive is
-`<workspace>/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`
+`<host-home>/.local/share/oneiron-build-ci-evidence/2026-09-17-aa35e5ce/followups/`
 (`cgu-result-mini.json`, `trybuild-result-mini.json`, cache/featureless
 reports, raw commands). It is outside the public repository.

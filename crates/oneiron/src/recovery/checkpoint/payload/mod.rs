@@ -79,6 +79,14 @@ pub(super) const NOT_COMPARTMENTED: &str =
 /// The family a receipt names a row by when no declaration covers its key.
 const UNDECLARED: &str = "undeclared rows";
 
+/// The payload registry's gaps that hold a side table out of the
+/// compartments, as a capture receipt names each
+/// (`tests/checkpoint_registry_rows.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_table_registry_gaps() -> Vec<String> {
+    preflight::preflight().side_table_gaps()
+}
+
 pub(in crate::recovery::checkpoint) use crate::store::checkpoint_payload::rows::{Carrier, Getter};
 
 /// Each owner getter's store module, beside its own codecs (KS7-2a): it reads the getter's
@@ -548,6 +556,31 @@ impl Projected {
                 .map(|actor| OwnerRef::entity(&actor)),
         );
         owners
+    }
+
+    /// Keeps the body descriptor getter's parts only where `databases`, the
+    /// image's rows once the snapshot wrote them, hold the row as it rests:
+    /// a carried step start's descriptor travels in no row, and its replay
+    /// landing writes it again (FIX 9180, `replay::note_start`), so no
+    /// compartment carries it either. A restore puts the rest back among the
+    /// image's rows as they rested (`restore::open_image_payload`), so it
+    /// reads the rows it read while they stayed in the image (FIX
+    /// [PROVENANCE-BODY-OWNER-FAMILY-READ-BEFORE-LANDING]).
+    pub(super) fn keep_imaged_body_descriptors(
+        &mut self,
+        databases: &BTreeMap<String, super::CanonicalRows>,
+    ) {
+        let imaged = |db: RowDb, key: &[u8], value: &[u8]| {
+            databases.get(db_name(db)).is_some_and(|rows| {
+                rows.binary_search_by(|(row, _)| row.as_slice().cmp(key))
+                    .is_ok_and(|at| rows[at].1 == value)
+            })
+        };
+        for (role, captured) in &mut self.captures {
+            if *role == BundleRole::Content(Getter::ProvenanceBody) {
+                *captured = keep_owner_parts(std::mem::take(captured), &imaged, &|_| true);
+            }
+        }
     }
 
     /// Seals every bundle for `vault`, each under its owner's compartment

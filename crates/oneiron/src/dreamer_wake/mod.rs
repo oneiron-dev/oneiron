@@ -75,9 +75,9 @@ pub(crate) use self::sieve::grant_written_in_txn as sieve_grant_written_in_txn;
 pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{
     RuleClass, SieveAudit, SieveAuditDiscovery, SieveAuditExpectation, SieveAuditFinding,
-    SieveAuditRecord, SieveAuditWindow, SieveConsumeReceipt, SievePass, SievePolicy, SieveQueue,
-    SieveRung, SieveSkipped, SieveSpan, SieveUnlocatedCause, SieveUnlocatedDiscovery,
-    SieveWindowAudit, SpanBand, SpanKind, SpanOrigin,
+    SieveAuditRecord, SieveAuditWindow, SieveConsumeReceipt, SievePass, SievePassBudgets,
+    SievePolicy, SieveQueue, SieveRung, SieveSkipped, SieveSpan, SieveUnlocatedCause,
+    SieveUnlocatedDiscovery, SieveWindowAudit, SpanBand, SpanKind, SpanOrigin,
 };
 pub mod sieve_doors;
 pub use self::sieve::evidence as sieve_evidence;
@@ -156,14 +156,17 @@ pub(crate) fn mark_on_publication_in_txn(
 }
 
 /// A TURN whose words changed owes the sieve a new read, holds nothing in
-/// the projection more, and rides no round, in the commit that changes them.
+/// the projection more, rides no round, and is a redirty notice on the
+/// change feed while one is followed, in the commit that changes them.
 pub(crate) fn words_changed_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     turn: &crate::EntityId,
 ) -> crate::Result<()> {
     sieve::owe_read_in_txn(store, txn, turn)?;
-    projector::words_changed_in_txn(store, txn, turn)
+    projector::words_changed_in_txn(store, txn, turn)?;
+    // Untangle slice 6.8b: any subscriber following redirty notices learns it in this commit.
+    crate::feeds::record_redirty_in_txn(store, txn, turn)
 }
 
 /// The TURNs whose words `id` is: itself for a TURN, every TURN a MESSAGE is

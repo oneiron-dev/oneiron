@@ -1,0 +1,55 @@
+/* The tasks under a message: rows, or rows under three quiet heads. */
+.sl-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 640px;
+}
+
+.sl-task-list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sl-task-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-task-group-head {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  padding: 4px 0 2px;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--sl-ink-2);
+}
+
+/* A done group that folds: its head is a control, the chevron turns. */
+button.sl-task-group-head:hover,
+button.sl-task-group-head:focus-visible {
+  color: var(--sl-ink-1);
+}
+
+.sl-task-group-head > .sl-figure {
+  margin-left: 2px;
+}
+
+.sl-task-group-chevron {
+  transform: rotate(-90deg);
+  transition: transform 160ms var(--sl-ease-out);
+}
+
+.sl-task-group-head[aria-expanded="true"] > .sl-task-group-chevron {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-task-group-chevron {
+    transition: none;
+  }
+}

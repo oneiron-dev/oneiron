@@ -59,6 +59,7 @@ mod step;
 pub use step::public as model_step;
 pub mod tagger;
 
+pub(crate) use step::wake_budget_traps_in_txn;
 pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
@@ -169,7 +170,8 @@ pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
-    settled_step_usage_in_txn, terminal_step_identity,
+    settled_step_for_reader, settled_step_target, settled_step_usage_in_txn,
+    terminal_step_identity,
 };
 pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;

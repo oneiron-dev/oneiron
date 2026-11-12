@@ -149,7 +149,7 @@ impl std::io::Write for ByteCount {
 /// A verb answer whose JSON is longer than this is stored as a body of the
 /// run, and the guest and the replay row get its handle: no reply passes one
 /// message, and no answer is refused for its size.
-pub(crate) const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
+pub const RESULT_REPLY_INLINE_BYTES: usize = 512 * 1024;
 
 /// The guest's read path for a stored result body; `<path>/chunk/<offset>`
 /// reads up to [`RECOVERABLE_OUTPUT_CHUNK_BYTES`] from `offset`.
@@ -211,7 +211,7 @@ pub(crate) fn parse_result_read_path(path: &str) -> Option<(OutputRef, Option<En
 }
 
 /// Where the guest reads stored result bodies.
-pub(crate) const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
+pub const RESULT_READ_ROOT: &str = "/mnt/outputs/.oneiron-result/";
 
 /// What the guest gets in place of a result stored as a body: its handle,
 /// size, kind, completion and preview, where to read it, and the ref that
@@ -603,12 +603,15 @@ pub(super) fn scan_output_windows(
 pub(super) const IMPLICIT_SPEECH_TEXT_BYTES: u64 = COMPACTION_OBSERVATION_WINDOW_BYTES as u64;
 
 /// What a terminal checkpoint will say on a run's behalf (FIX 365): words,
-/// or the typed result that names a stored answer too large to say. Stored
-/// as its exact JSON, hashed into the checkpoint by those bytes, and decoded
-/// from them by a recovery, never rebuilt.
+/// the typed result that names a stored answer too large to say, or a
+/// result-only decision when the actor cannot witness a companion MESSAGE.
+/// Stored as its exact JSON, hashed into the checkpoint by those bytes, and
+/// decoded from them by a recovery, never rebuilt.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "intent", rename_all = "snake_case")]
 pub(super) enum ImplicitSpeechIntent {
+    /// The answer remains in the run's result; recovery must not witness it.
+    ResultOnly,
     Text {
         text: String,
     },

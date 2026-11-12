@@ -4,10 +4,11 @@
 //! outside it does not read. On main the claim was stamped `rel: all`.
 //!
 //! Runs on public paths: `cargo test -p oneiron --all-features --test
-//! step_claim_audience`.
-use std::collections::{BTreeSet, VecDeque};
+//! step_claim_audience`. On the testkit: a copy of the empty fixture vault,
+//! and a scripted model that answers each prompt by its digest.
+use std::collections::BTreeSet;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use oneiron::claim::{PointRead, ScopedReadActorKey};
@@ -20,13 +21,12 @@ use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELAT
 use oneiron::temporal::TimeRange;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
-    ContentPart, FatalLlmError, FinishReason, LlmBackend, LlmCapability, LlmError,
-    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
-    LlmResponse, LlmResult, LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef,
-    ResponseFormat, TierPrecedence, UnsupportedCapability,
+    BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence,
 };
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{EntityId, Vault};
+use oneiron_testkit::{FixtureVault, ScriptedBackend, Step, fixture_cache};
 
 fn block_on<F: Future>(future: F) -> F::Output {
     struct ThreadWaker(std::thread::Thread);
@@ -43,65 +43,6 @@ fn block_on<F: Future>(future: F) -> F::Output {
             Poll::Ready(output) => return output,
             Poll::Pending => std::thread::park(),
         }
-    }
-}
-
-struct ScriptedBackend {
-    script: Mutex<VecDeque<LlmResult<LlmResponse>>>,
-}
-
-impl LlmBackend for ScriptedBackend {
-    fn generate<'a>(
-        &'a self,
-        _request: LlmRequest,
-        _lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        let next = self
-            .script
-            .lock()
-            .expect("script mutex")
-            .pop_front()
-            .expect("scripted backend exhausted");
-        Box::pin(async move { next })
-    }
-
-    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Err(LlmError::Fatal(FatalLlmError::Unsupported(
-            UnsupportedCapability {
-                capability: LlmCapability::Streaming,
-                model: None,
-                reason: None,
-            },
-        )))
-    }
-}
-
-fn response(text: &str) -> LlmResponse {
-    LlmResponse {
-        message: LlmMessage {
-            role: LlmMessageRole::Assistant,
-            content: vec![ContentPart::Text {
-                text: text.to_owned(),
-                signature: None,
-            }],
-        },
-        usage: LlmUsage {
-            input: LlmInputUsage {
-                total: 100,
-                cache_read: 0,
-                cache_write: 0,
-            },
-            output: LlmOutputUsage {
-                total: 50,
-                text: 50,
-                reasoning: 0,
-            },
-            raw_provider: serde_json::Value::Null,
-            call_metadata: None,
-        },
-        finish_reason: FinishReason::Stop,
-        reply_assertions: Default::default(),
-        token_scores: None,
     }
 }
 
@@ -167,8 +108,11 @@ fn step_claims(vault: &Vault) -> BTreeSet<EntityId> {
 
 #[test]
 fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+    let copy = FixtureVault::empty(&fixture_cache!())
+        .expect("the empty fixture")
+        .copy()
+        .expect("a private copy");
+    let vault = copy.open().expect("vault");
     let actor = person(&vault);
     let subject = person(&vault);
     let outsider = person(&vault);
@@ -195,12 +139,7 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
         subject,
         deadline: None,
         now_ms: 10_000,
-    };
-    let backend = ScriptedBackend {
-        script: Mutex::new(VecDeque::from([
-            Ok(response("the private words, echoed back")),
-            Ok(response("an open answer")),
-        ])),
+        spend_scope: None,
     };
     let guard =
         BudgetGuard::with_reserve_units("step-test", 10_000, 500, BudgetExhaustionPolicy::Suspend);
@@ -220,15 +159,28 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
         relationship: Some(BTreeSet::from([relationship])),
         ..Scope::default()
     };
+    let bound_request = request(bound, "words from a relationship-limited MESSAGE");
+    let open_request = request(Scope::default(), "open words");
+    let backend = ScriptedBackend::new(vec![
+        Step::text(
+            "bound",
+            ScriptedBackend::digest_of(&bound_request),
+            "the private words, echoed back",
+        )
+        .buffered()
+        .usage(100, 50),
+        Step::text(
+            "open",
+            ScriptedBackend::digest_of(&open_request),
+            "an open answer",
+        )
+        .buffered()
+        .usage(100, 50),
+    ])
+    .expect("the script");
     let before = step_claims(&vault);
     assert!(matches!(
-        block_on(call_as_step(
-            &ctx,
-            &backend,
-            &guard,
-            request(bound, "words from a relationship-limited MESSAGE"),
-        ))
-        .expect("the bound step"),
+        block_on(call_as_step(&ctx, &backend, &guard, bound_request,)).expect("the bound step"),
         StepOutcome::Finished { .. }
     ));
     let filed: Vec<EntityId> = step_claims(&vault).difference(&before).copied().collect();
@@ -264,13 +216,7 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
     // An unbound call's claim is as before.
     let before = step_claims(&vault);
     assert!(matches!(
-        block_on(call_as_step(
-            &ctx,
-            &backend,
-            &guard,
-            request(Scope::default(), "open words"),
-        ))
-        .expect("the unbound step"),
+        block_on(call_as_step(&ctx, &backend, &guard, open_request,)).expect("the unbound step"),
         StepOutcome::Finished { .. }
     ));
     let filed: Vec<EntityId> = step_claims(&vault).difference(&before).copied().collect();
@@ -285,4 +231,5 @@ fn a_step_claim_from_a_relationship_bound_call_stays_inside_the_relationship() {
             .rel,
         None
     );
+    backend.finish();
 }

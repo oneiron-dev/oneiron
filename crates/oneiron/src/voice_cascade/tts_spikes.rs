@@ -755,6 +755,9 @@ mod tests {
 
     #[test]
     fn provider_callbacks_check_pcm_identity_order_and_mode_without_slicing() {
+        // 1505c0fe737 (Rule 5, #2686) removed the PCM byte cap; the old value
+        // seeds the admitted oversized input below.
+        const OLD_MAX_PCM_BYTES: usize = 2 * 1024 * 1024;
         for provider in [Provider::Irodori, Provider::MossLocal] {
             for incremental in [false, true] {
                 let mut a = open(provider, incremental);
@@ -768,8 +771,21 @@ mod tests {
                 if !incremental {
                     a.submit(TtsCommand::End { generation }).unwrap();
                 }
-                let oversized = vec![0; MAX_PCM_BYTES + 2];
-                for bad in 0..10 {
+                // Ruled refusal removed (Rule 5, PCM is never refused for
+                // length): the old 2 MiB cap's input is admitted whole.
+                let oversized = vec![0; OLD_MAX_PCM_BYTES + 2];
+                let mut big = open(provider, incremental);
+                text(&mut big, "unit text").unwrap();
+                if !incremental {
+                    big.submit(TtsCommand::End { generation }).unwrap();
+                }
+                let mut input = audio(delivery);
+                input.bytes = &oversized;
+                let pcm = big
+                    .handle_pcm(input)
+                    .expect("PCM is not refused for its length");
+                assert_eq!(pcm.frame.samples.len(), (OLD_MAX_PCM_BYTES + 2) / 2);
+                for bad in 0..9 {
                     let mut input = audio(delivery);
                     match bad {
                         0 => input.generation = epoch(2),
@@ -780,7 +796,6 @@ mod tests {
                         5 => input.encoding = AudioEncoding::Float32Le,
                         6 => input.bytes = &[],
                         7 => input.chunk_index = 1,
-                        8 => input.bytes = &oversized,
                         _ => input.delivery = AudioDelivery::BufferedResponse { submission: 99 },
                     }
                     assert!(a.handle_pcm(input).is_err());

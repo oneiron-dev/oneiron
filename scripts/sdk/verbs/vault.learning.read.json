@@ -1,9 +1,9 @@
 {
   "name": "vault.learning.read",
-  "description": "The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs.",
+  "description": "The owner, or a holder of a Steward grant naming read, reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs.",
   "input": "crate::learning::doors::LearningReadRequest",
   "output": "crate::learning::doors::LearningCellView",
-  "call": "crate::learning::doors::read_learning_as_owner(memory.vault(), &memory.embedded_owner(\"vault.learning.read\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "call": "crate::learning::doors::read_learning_embedded(memory, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -12,5 +12,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "substrate_reader"
 }

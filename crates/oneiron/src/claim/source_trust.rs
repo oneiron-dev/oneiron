@@ -8,10 +8,18 @@ use rmpv::Value;
 use super::*;
 use crate::error::{Error, Result};
 
+// claim re-exports these five pub (core_types). Named here, so this module's pub(crate) glob
+// below does not re-export them again, pub(crate): rustc 1.99 ambiguous_import_visibilities.
+use crate::write_envelope::claim_body::ClaimBody;
 pub(crate) use crate::write_envelope::claim_body::*;
 pub use crate::write_envelope::claim_body::{
     ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung,
 };
+#[allow(
+    unused_imports,
+    reason = "named only to keep them out of the pub(crate) glob re-export"
+)]
+use crate::write_envelope::claim_body::{ClaimSubject, CursorSpan, EvidenceKind, EvidenceRef};
 
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
@@ -27,8 +35,15 @@ pub(crate) use crate::store::claim_lineage::{
 pub(crate) const KEY_VALUE_PREDICATE: &str = "core.memory.key_value";
 
 pub(crate) fn claim_generic_readable(body: &ClaimBody) -> bool {
-    body.predicate != KEY_VALUE_PREDICATE
+    !claim_exact_store(body)
         && super::history_store::machine_history_kind(&body.predicate).is_none()
+}
+
+/// Whether `body` is an actor-owned exact-store claim, which only the keyed
+/// reader's own lane mode ([`crate::ports::ClaimReadStatus::ExactStore`])
+/// admits.
+pub(crate) fn claim_exact_store(body: &ClaimBody) -> bool {
+    body.predicate == KEY_VALUE_PREDICATE
 }
 
 /// D19 read-path status gate predicate (ARCH-0003 retrieval rule; ARCH-0004

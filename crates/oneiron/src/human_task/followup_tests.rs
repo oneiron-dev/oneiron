@@ -119,7 +119,8 @@ pub(super) fn seed_human_vault(vault: &Vault, granted: bool) -> (EntityId, Entit
     if granted {
         vault
             .mint_standing_outbound_grant(
-                &crate::test_util::entity(0x7B),
+                &crate::test_util::embedded_owner_proof(&vault),
+                crate::test_util::entity(0x7B),
                 &GrantMintIntent {
                     principal_ref: owner.to_hex(),
                     origin_component_id: "tasks".to_owned(),
@@ -129,7 +130,6 @@ pub(super) fn seed_human_vault(vault: &Vault, granted: bool) -> (EntityId, Entit
                         verb_class: HUMAN_FOLLOWUP_VERB.to_owned(),
                     },
                 },
-                NOW,
             )
             .expect("mint outbound grant");
     }
@@ -255,6 +255,7 @@ pub(super) fn park_on_human(
         subject: fixture.person,
         deadline: None,
         now_ms: NOW,
+        spend_scope: None,
     };
     let kind = trap_for_durable_wait(&human_input_wait(task_ref), step_hash);
     let trap = open_trap(&fixture.vault, &ctx, kind, step_hash, "human response")
@@ -326,6 +327,7 @@ pub(super) fn open_test_trap(
         subject: fixture.person,
         deadline: None,
         now_ms: NOW,
+        spend_scope: None,
     };
     open_trap(&fixture.vault, &ctx, kind, step_hash, "human response").expect("open test trap")
 }

@@ -15,6 +15,7 @@ use crate::api::{
     SigningIdentity,
 };
 use crate::error::SealError;
+use crate::memory::testing::{operation_ledger, operation_limits, shared_bytes};
 
 #[test]
 fn key_bound_issuer_ignores_position_and_binds_by_key() {
@@ -24,8 +25,9 @@ fn key_bound_issuer_ignores_position_and_binds_by_key() {
     // A deliberately shuffled set: the issuer is found by key, never by
     // the next slot.
     let shuffled = vec![inter.cert_der.clone(), leaf.clone()];
+    let memory = operation_ledger();
     assert_eq!(
-        key_bound_issuer(&leaf, &shuffled, &[]),
+        key_bound_issuer(&leaf, &shuffled, &[], &memory).unwrap(),
         Some(inter.cert_der.as_slice())
     );
     // Anchor-omitted tip: resolves to the anchor, not to itself or a
@@ -34,19 +36,27 @@ fn key_bound_issuer_ignores_position_and_binds_by_key() {
         key_bound_issuer(
             &inter.cert_der,
             &shuffled,
-            std::slice::from_ref(&root.cert_der)
-        ),
+            std::slice::from_ref(&root.cert_der),
+            &memory,
+        )
+        .unwrap(),
         Some(root.cert_der.as_slice())
     );
     // A self-signed tip still resolves to itself.
     assert_eq!(
-        key_bound_issuer(&root.cert_der, std::slice::from_ref(&root.cert_der), &[]),
+        key_bound_issuer(
+            &root.cert_der,
+            std::slice::from_ref(&root.cert_der),
+            &[],
+            &memory,
+        )
+        .unwrap(),
         Some(root.cert_der.as_slice())
     );
     // Issuer unknown (not in the chain, not an anchor): None — never a
     // positional guess.
     assert_eq!(
-        key_bound_issuer(&leaf, std::slice::from_ref(&leaf), &[]),
+        key_bound_issuer(&leaf, std::slice::from_ref(&leaf), &[], &memory).unwrap(),
         None
     );
 }
@@ -55,10 +65,10 @@ fn key_bound_issuer_ignores_position_and_binds_by_key() {
 fn dss_uses_global_arrays_and_omits_vri() {
     let material = DssMaterial {
         certs_der: vec![vec![0x30, 0x03, 0x02, 0x01, 0x01]],
-        ocsps_der: vec![vec![0x30, 0x00]],
-        crls_der: vec![vec![0x30, 0x00]],
+        ocsps_der: vec![shared_bytes(&[0x30, 0x00])],
+        crls_der: vec![shared_bytes(&[0x30, 0x00])],
     };
-    let (objs, dss_num) = build_dss_objects(&material, 10).unwrap();
+    let (objs, dss_num) = build_dss_objects(&material, 10, &operation_limits()).unwrap();
     let dss = objs
         .iter()
         .find(|(n, _)| *n == dss_num)
@@ -84,7 +94,8 @@ fn build_dss_objects_checked_at_object_number_boundary() {
         ocsps_der: Vec::new(),
         crls_der: Vec::new(),
     };
-    let err = build_dss_objects(&material, u32::MAX).unwrap_err();
+    let limits = operation_limits();
+    let err = build_dss_objects(&material, u32::MAX, &limits).unwrap_err();
     assert!(matches!(
         err,
         SealError::InputInvalid {
@@ -94,7 +105,7 @@ fn build_dss_objects_checked_at_object_number_boundary() {
     // Just inside the space still works: cert at MAX-2, DSS dict at
     // MAX-1 (allocation mirrors pdf's next_obj: a number without a
     // successor fails conservatively).
-    let (objs, dss_num) = build_dss_objects(&material, u32::MAX - 2).unwrap();
+    let (objs, dss_num) = build_dss_objects(&material, u32::MAX - 2, &limits).unwrap();
     assert_eq!(dss_num, u32::MAX - 1);
     assert_eq!(objs.len(), 2);
 }
@@ -113,7 +124,7 @@ impl SealFetcher for StaticFetcher {
         _request: FetchRequest,
     ) -> Result<crate::api::FetchResponse, crate::api::FetchError> {
         Ok(crate::api::FetchResponse {
-            body: self.0.clone(),
+            body: shared_bytes(&self.0),
             content_type: None,
         })
     }
@@ -270,6 +281,7 @@ fn crl_ctx<'a>(
 ) -> SealContext<'a> {
     SealContext {
         config,
+        limits: &config.resource_limits,
         backend,
         fetcher,
         clock_ms: CRL_NOW_SECS * 1000,
@@ -284,13 +296,18 @@ async fn fetch_valid_crl_rejects_stale_next_update() {
         trust_anchors_der: Vec::new(),
         timestamp_authorities: Vec::new(),
         fetch_policy: FetchPolicy::default(),
-        resource_limits: crate::api::SealResourceLimits::default(),
+        resource_limits: operation_limits(),
     };
     let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
     let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(crl));
     let ctx = crl_ctx(&config, &backend, &fetcher);
     let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
-    assert!(fetch_valid_crl(&ctx, &ca.cert_der, url).await.is_none());
+    assert!(
+        fetch_valid_crl(&ctx, &ca.cert_der, url)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -324,14 +341,17 @@ async fn fetch_valid_crl_rejects_delta_and_idp_scoped_crls() {
             trust_anchors_der: Vec::new(),
             timestamp_authorities: Vec::new(),
             fetch_policy: FetchPolicy::default(),
-            resource_limits: crate::api::SealResourceLimits::default(),
+            resource_limits: operation_limits(),
         };
         let backend: Arc<dyn SealBackend> = Arc::new(NoopBackend);
         let fetcher: Arc<dyn SealFetcher> = Arc::new(StaticFetcher(crl));
         let ctx = crl_ctx(&config, &backend, &fetcher);
         let url = url::Url::parse("https://crl.example.test/ca.crl").unwrap();
         assert!(
-            fetch_valid_crl(&ctx, &ca.cert_der, url).await.is_none(),
+            fetch_valid_crl(&ctx, &ca.cert_der, url)
+                .await
+                .unwrap()
+                .is_none(),
             "scoped CRL must not be gathered as complete evidence"
         );
     }
@@ -351,7 +371,7 @@ impl SealFetcher for MapFetcher {
             .get(request.url.as_str())
             .cloned()
             .map(|body| crate::api::FetchResponse {
-                body,
+                body: shared_bytes(&body),
                 content_type: None,
             })
             .ok_or(crate::api::FetchError::Unavailable)
@@ -363,7 +383,7 @@ fn gather_config(anchors: Vec<Vec<u8>>) -> SealConfig {
         trust_anchors_der: anchors,
         timestamp_authorities: Vec::new(),
         fetch_policy: FetchPolicy::default(),
-        resource_limits: crate::api::SealResourceLimits::default(),
+        resource_limits: operation_limits(),
     }
 }
 
@@ -417,7 +437,9 @@ async fn gather_chain_cert_without_crl_dp_degrades_not_zero_evidence_lt() {
     let fetcher: Arc<dyn SealFetcher> = Arc::new(MapFetcher(map));
     let ctx = crl_ctx(&config, &backend, &fetcher);
     let identity = p256_identity_for(leaf, vec![inter.cert_der.clone()]);
-    let material = gather_validation_material(&ctx, &identity, None).await;
+    let material = gather_validation_material(&ctx, &identity, None)
+        .await
+        .unwrap();
     assert!(
         material.is_none(),
         "a non-anchor chain cert with no CRL DP must degrade the gather"
@@ -434,7 +456,9 @@ async fn gather_chain_cert_without_crl_dp_degrades_not_zero_evidence_lt() {
     let fetcher: Arc<dyn SealFetcher> = Arc::new(MapFetcher(map));
     let ctx = crl_ctx(&config, &backend, &fetcher);
     let identity = p256_identity_for(leaf2, vec![inter_dp.cert_der.clone()]);
-    let material = gather_validation_material(&ctx, &identity, None).await;
+    let material = gather_validation_material(&ctx, &identity, None)
+        .await
+        .unwrap();
     assert_eq!(
         material.map(|m| m.crls_der.len()),
         Some(2),

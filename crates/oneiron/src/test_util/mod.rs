@@ -116,8 +116,8 @@ pub(crate) fn seed_agent_definition(vault: &Vault, id: EntityId, label: &str) ->
 }
 
 // One implementation each, shared with the test-support doors other crates
-// use (the seal organ's end-to-end check).
-pub(crate) use crate::test_support::{
+// use (the seal organ's end-to-end check) and the integration-test doors.
+pub(crate) use crate::test_fixtures::{
     entity_record, provision_engine_machines, put_policy_manifest_bytes, test_host_issuer,
 };
 
@@ -752,8 +752,6 @@ pub(crate) fn critical_confirm_owner_entry(
             },
             genesis_nonce: [seed.wrapping_add(1); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
         },
         signer: AuthoritySignature {
             suite: key.suite(),
