@@ -114,6 +114,7 @@ impl Memory<'_> {
                     subject: self.actor(),
                     deadline: None,
                     now_ms,
+                    spend_scope: None,
                 };
                 crate::llm::register_detached_step_in_txn(self.vault(), txn, &ctx, step_hash)?;
                 Some(

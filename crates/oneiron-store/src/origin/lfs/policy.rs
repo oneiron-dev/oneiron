@@ -2,16 +2,23 @@
 
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Classification
 // ---------------------------------------------------------------------------
-/// What a repository path's bytes ARE, which is what decides where they live.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What a repository path's bytes ARE: the owner's word for a path, kept in
+/// the origin's LFS path policy (`vault.code.origin.lfs_path_policy.*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum LfsAssetClass {
     /// A large asset the repository carries: it belongs in the LFS plane.
     RepositoryLarge,
-    /// An asset a build produces or consumes: it stays ordinary Git content.
+    /// An asset a build produces or consumes: its bytes must be there
+    /// wherever the repository builds, so a pushed LFS pointer to it keeps
+    /// its object, required and attached, like a repository-large one
+    /// (Engine CODECUSTODY-LFS Q2 = A). A file pushed as ordinary Git bytes
+    /// stays ordinary Git bytes; nothing is rewritten.
     BuildRequired,
 }
 
@@ -26,15 +33,12 @@ impl LfsAssetClass {
     }
 }
 
-/// What the caller must do with one pointer.
+/// What the caller must do with one pushed pointer, whatever its class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LfsAdmission {
     /// The pointer's bytes belong in the LFS plane, and the pointer publishes
     /// only once those bytes are present.
     StoreInLfs,
-    /// The pointer stays ordinary Git content: no LFS publication, and no
-    /// durable ref attachment.
-    KeepInGit,
 }
 
 impl LfsAdmission {
@@ -43,7 +47,6 @@ impl LfsAdmission {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::StoreInLfs => "store-in-lfs",
-            Self::KeepInGit => "keep-in-git",
         }
     }
 }
@@ -58,11 +61,8 @@ pub trait LfsPathPolicy: Send + Sync {
     fn classify(&self, repo_id: EntityId, path: &[u8]) -> Result<LfsAssetClass>;
 }
 
-/// The v1 default: every path is [`LfsAssetClass::RepositoryLarge`].
-///
-/// A configuration-driven classifier belongs to the ticket that makes the
-/// server configuration a claimed file; until then the honest default is the
-/// one that stores what a push declared as LFS and refuses to guess.
+/// The default: every path is [`LfsAssetClass::RepositoryLarge`], as is
+/// every path no rule of an origin's owner-set path policy matches.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DefaultRepositoryLargeLfsPathPolicy;
 

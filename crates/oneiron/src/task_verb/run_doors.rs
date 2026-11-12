@@ -49,6 +49,7 @@ use crate::memory::{
 };
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::run_tree::{RunAsk, RunBranchSignal, RunTreeStatus};
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::{EntityId, Vault, WriteActor};
 
 /// What a door that names no TASK should name instead.
@@ -109,6 +110,10 @@ pub struct RunBranchView {
     pub result_ref: Option<String>,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// The typed refusal of a try a spend scope refused for good, kept on
+    /// the failed row beside `last_error`; `None` for every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
     /// Durable ask handles, partial answers included.
     pub asks: Vec<RunAsk>,
     /// The branch's control inbox and settled replay receipts.
@@ -488,6 +493,7 @@ pub fn read_branches_as_reader(
                 let mut view = branch_view(record);
                 if !own {
                     view.last_error = None;
+                    view.budget_refusal = None;
                     view.asks = Vec::new();
                     view.signals = Vec::new();
                     view.cancel_state = without_text(view.cancel_state);
@@ -606,6 +612,7 @@ pub(super) fn branch_view(record: AttemptRecord) -> RunBranchView {
         attempt_count: record.attempt_count,
         result_ref: record.result_ref.map(AttemptResultRef::into_string),
         last_error: record.last_error,
+        budget_refusal: record.budget_refusal,
         asks: record.asks,
         signals: record.signals,
         cancel_state: record.cancel_state,

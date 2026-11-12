@@ -3,7 +3,7 @@
 
 pub(crate) use oneiron_store::serialize::export_actor_references::*;
 
-use super::ExportValue;
+use super::{ExportSecrets, ExportValue};
 use crate::{entity_id::EntityId, write_envelope::claim_body::ClaimBody};
 
 fn field<'a>(value: &'a mut ExportValue, name: &str) -> Option<&'a mut ExportValue> {
@@ -15,31 +15,43 @@ fn field<'a>(value: &'a mut ExportValue, name: &str) -> Option<&'a mut ExportVal
     })
 }
 
-fn reference(id: EntityId) -> ExportValue {
-    if crate::batch::secret_scan::scan_file_content("", id.as_bytes()).is_some() {
+fn reference(id: EntityId, secrets: ExportSecrets) -> ExportValue {
+    // Under Included the credential scan is skipped: the reference is kept.
+    if secrets == ExportSecrets::Nulled
+        && crate::batch::secret_scan::scan_file_content("", id.as_bytes()).is_some()
+    {
         ExportValue::Nil
     } else {
         ExportValue::EntityReference(id.as_bytes().to_vec())
     }
 }
 
-pub(super) fn export_actor_references(body: &ClaimBody, exported: &mut ExportValue) {
+pub(super) fn export_actor_references(
+    body: &ClaimBody,
+    exported: &mut ExportValue,
+    secrets: ExportSecrets,
+) {
     let Some(refs) = crate::actor_claims::actor_archive_references(body) else {
         return;
     };
     if let Some(skill) = refs.skill
         && let Some(value) = field(exported, "scope").and_then(|scope| field(scope, "skill"))
     {
-        *value = reference(skill);
+        *value = reference(skill, secrets);
     }
     if let Some((session, turns)) = refs.chat
         && let Some(evidence) = field(exported, "evid")
     {
         if let Some(value) = field(evidence, "session") {
-            *value = reference(session);
+            *value = reference(session, secrets);
         }
         if let Some(value) = field(evidence, "turns") {
-            *value = ExportValue::Array(turns.into_iter().map(reference).collect());
+            *value = ExportValue::Array(
+                turns
+                    .into_iter()
+                    .map(|turn| reference(turn, secrets))
+                    .collect(),
+            );
         }
     }
 }

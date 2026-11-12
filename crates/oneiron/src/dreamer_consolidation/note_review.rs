@@ -301,6 +301,7 @@ impl ConsolidationExecutor<'_> {
             subject: note.id,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         let response = match call_as_step_checked(
             &step,

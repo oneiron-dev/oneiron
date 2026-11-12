@@ -155,6 +155,13 @@ pub enum OwnerActKind {
     /// device key, and its `seen` is over that pair's live successions. No
     /// Grant line names it.
     DeviceSuccession,
+    /// An agent's model-binding proposal under its live Grant naming the
+    /// verb (Engine ruling Wed 11-11: "An agent whose Grant names
+    /// vault.models.bindings.propose may propose a binding. It is a
+    /// proposal, and the owner still decides."). No record carries it: the
+    /// proposal lands `Proposed` under the carrying owner's principal, and
+    /// only the owner accepts.
+    ModelBindingPropose,
 }
 
 impl OwnerActKind {
@@ -183,6 +190,7 @@ impl OwnerActKind {
             Self::AccessGrant => "access_grant",
             Self::OriginCut => "origin_cut",
             Self::DeviceSuccession => "device_succession",
+            Self::ModelBindingPropose => "model_binding_propose",
         }
     }
 
@@ -211,6 +219,7 @@ impl OwnerActKind {
             "access_grant" => Self::AccessGrant,
             "origin_cut" => Self::OriginCut,
             "device_succession" => Self::DeviceSuccession,
+            "model_binding_propose" => Self::ModelBindingPropose,
             _ => return None,
         })
     }

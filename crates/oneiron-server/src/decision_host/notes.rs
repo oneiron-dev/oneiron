@@ -9,7 +9,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::critic::review::{ReviewFinding, ReviewNote, ReviewNotes};
+use oneiron::critic::FlawIdentity;
+use oneiron::critic::review::{
+    ReviewFinding, ReviewNote, ReviewNotes, flaw_fits_review_state, review_state_body_text,
+};
 use oneiron::llm::decision::cut_text;
 use serde_json::{Value, json};
 
@@ -33,9 +36,13 @@ const REVIEW_SUGGESTED_EDIT_BYTES: usize = 8192;
 
 const REVIEW_NOTE_SYSTEM: &str = "You write notes beside a critic review's findings. Each \
 finding is already decided, and your notes cannot change it. For each finding, name the \
-evidence refs that support it, and when a change would address it, one suggested edit. Reply \
-with one JSON array and nothing else: [{\"finding\": <its index>, \"evidence_refs\": [<ref>], \
-\"suggested_edit\": <text or null>}].";
+evidence refs that support it, and when a change would address it, one suggested edit. When \
+the finding is one concrete flaw, name it: its kind, a token of lowercase letters, digits and \
+underscores such as missing_guard, and where it is, the whole target or the UTF-8 bytes \
+start..end (end excluded) of body_text; else null. Reply with one JSON array and nothing \
+else: [{\"finding\": <its index>, \"evidence_refs\": [<ref>], \"suggested_edit\": <text or \
+null>, \"flaw\": {\"kind\": <token>, \"location\": {\"type\": \"whole_target\"} or \
+{\"type\": \"body_bytes\", \"start\": <byte>, \"end\": <byte>}} or null}].";
 
 const SEAT_NOTE_SYSTEM: &str = "In one or two plain sentences, say why the host's decision \
 ladder picked this model at this effort for the task, from the candidates it had. The pick is \
@@ -75,17 +82,34 @@ impl HostNotes {
     }
 }
 
+/// The host's notes for one review: [`HostNotes`] over `state`, the target
+/// as that review's questions read it.
+pub(crate) struct ReviewStateNotes<'a> {
+    host: &'a HostNotes,
+    state: &'a Value,
+}
+
+impl<'a> ReviewStateNotes<'a> {
+    pub(super) fn new(host: &'a HostNotes, state: &'a Value) -> Self {
+        Self { host, state }
+    }
+}
+
 /// A critic review's notes (FIX 3040): one call for every finding, after the
 /// typed answers are in. A finding the reply names no usable note for keeps
-/// none, as it did before.
-impl ReviewNotes for HostNotes {
+/// none, as it did before. The call reads the target's body text, so a note
+/// can name the flaw a finding is (LEARN-CRITIC Q1 = B); a flaw that names no
+/// place in that text is dropped, and the rest of its note kept.
+impl ReviewNotes for ReviewStateNotes<'_> {
     fn notes(&self, findings: &[ReviewFinding]) -> oneiron::Result<Vec<ReviewNote>> {
         let mut notes = vec![ReviewNote::default(); findings.len()];
-        if findings.is_empty() {
+        let Some(first) = findings.first() else {
             return Ok(notes);
-        }
-        let data = Value::Array(
-            findings
+        };
+        let body_text = review_state_body_text(first.input.target, first.input.kind, self.state);
+        let data = json!({
+            "body_text": body_text,
+            "findings": findings
                 .iter()
                 .enumerate()
                 .map(|(index, finding)| {
@@ -101,28 +125,38 @@ impl ReviewNotes for HostNotes {
                         "out_of_scope": finding.out_of_scope,
                     })
                 })
-                .collect(),
-        );
+                .collect::<Vec<_>>(),
+        });
         let mut sources: Vec<_> = findings
             .iter()
             .map(|finding| finding.input.target)
             .collect();
         sources.sort_unstable();
         sources.dedup();
-        let Some(text) = self.written(REVIEW_NOTE_SYSTEM, &data, Some(sources), NOTE_BUDGET) else {
+        let Some(text) = self
+            .host
+            .written(REVIEW_NOTE_SYSTEM, &data, Some(sources), NOTE_BUDGET)
+        else {
             return Ok(notes);
         };
-        for (index, note) in review_notes(&text) {
-            if let Some(slot) = notes.get_mut(index) {
-                *slot = note;
+        for (index, mut note) in review_notes(&text) {
+            let (Some(slot), Some(finding)) = (notes.get_mut(index), findings.get(index)) else {
+                continue;
+            };
+            if note.flaw.as_ref().is_some_and(|flaw| {
+                !flaw_fits_review_state(finding.input.target, finding.input.kind, self.state, flaw)
+            }) {
+                note.flaw = None;
             }
+            *slot = note;
         }
         Ok(notes)
     }
 }
 
 /// Each usable note in a review notes reply, by the finding it names: its
-/// refs nonempty and cut to the engine's bounds, its edit cut to fit.
+/// refs nonempty and cut to the engine's bounds, its edit cut to fit, its
+/// flaw kept only when it reads whole (a flaw is never cut into another).
 fn review_notes(text: &str) -> Vec<(usize, ReviewNote)> {
     let Some(rows) = text
         .find('[')
@@ -152,12 +186,17 @@ fn review_notes(text: &str) -> Vec<(usize, ReviewNote)> {
                 .map(str::trim)
                 .filter(|edit| !edit.is_empty())
                 .map(|edit| cut_text(edit, Some(REVIEW_SUGGESTED_EDIT_BYTES)).to_owned());
+            let flaw = row
+                .get("flaw")
+                .filter(|flaw| !flaw.is_null())
+                .and_then(|flaw| serde_json::from_value::<FlawIdentity>(flaw.clone()).ok());
             Some((
                 index,
                 ReviewNote {
                     evidence_refs,
                     suggested_edit,
                     prediction: None,
+                    flaw,
                 },
             ))
         })
