@@ -5,7 +5,7 @@
     "415632c6",
     "da7c04c5"
   ],
-  "host": "MacBook owen@example.com",
+  "host": "MacBook owner@macbook",
   "temporary_root": "native macOS default; no TMPDIR override",
   "durable_unit": "w7-c11-fixture-validation-chain-01.service",
   "terminal": {

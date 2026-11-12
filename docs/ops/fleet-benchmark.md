@@ -163,9 +163,12 @@ approved host, honours `CI_PAUSED`, and retains candidate/comparison artifacts.
 It uses the committed `docs/ops/evidence/W7-C10/fleet-<host>-floor.json`, never a
 floor regenerated from the candidate. The job prepares only the scratch path
 explicitly approved in that floor; workload/host mismatches fail closed. Choose
-`arch`. The `macbook` floor was recorded on the owner's MacBook (`mac`),
+`arch`. The `macbook` floor was recorded on the owner's MacBook (`macbook`),
 and the job runs `cargo build` on the host it checks, so do not dispatch the
 `macbook` choice.
+The committed `macbook` floor carries a masked host name (`macbook.local`), so it
+is a record only: `verify-floor` refuses it (it no longer equals the floor its
+archived receipt makes), and a `macbook` dispatch fails the host check.
 
 CI checks a committed floor's shape only: the full receipts are off-repo, so no CI
 step can recompute a floor. On a host that holds the archive, recompute it:
