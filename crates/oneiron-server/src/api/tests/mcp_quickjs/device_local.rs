@@ -15,17 +15,18 @@ fn run_request(actor: oneiron::EntityId, credential: &str, run_ref: &str) -> Req
 
 /// A run whose guest states `claim` about `subject` in `world`.
 fn state_in(
+    vault: &oneiron::Vault,
     claim: oneiron::EntityId,
     subject: oneiron::EntityId,
     world: oneiron::EntityId,
 ) -> String {
     format!(
-        "await self.memory.claim_upsert({{id: '{}', predicate: 'profile.favorite_drink', \
+        "await vault.claims.upsert({{id: '{}', predicate: 'profile.favorite_drink', \
          subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated', \
-         world_ref: '{}'}}); finish('stated');",
+         scope: {}}}); finish('stated');",
         claim.to_hex(),
         subject.to_hex(),
-        world.to_hex()
+        upsert_scope(vault, world)
     )
 }
 
@@ -41,10 +42,7 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
     let world = seeded_test_entity_id(0x0024_66d3);
     let portable = seeded_test_entity_id(0x0024_66d4);
     let kept = seeded_test_entity_id(0x0024_66d5);
-    let mode = code_mode_server(vec![
-        state_in(portable, subject, world),
-        state_in(kept, subject, world),
-    ]);
+    let mode = code_mode_server(Vec::new());
     for (id, kind) in [
         (subject, oneiron::registry::ENTITY_TYPE_PERSON),
         (world, oneiron::registry::ENTITY_TYPE_WORLD),
@@ -59,6 +57,10 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
             )
             .unwrap();
     }
+    mode.backend.scripts.lock().unwrap().extend([
+        state_in(&mode.vault, portable, subject, world),
+        state_in(&mode.vault, kept, subject, world),
+    ]);
     let credential = "quickjs-device-local";
     register_mcp_actor(
         &mode.server,

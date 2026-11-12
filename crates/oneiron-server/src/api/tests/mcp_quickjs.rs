@@ -747,22 +747,35 @@ async fn quickjs_code_mode_applies_the_tool_argument_rules() {
     );
 }
 
-/// Review repro (Astra P1): generated code cannot name a claim's source. The
-/// guest's `self.memory.put_claim` input is closed and lists no source, so a
-/// guest's claim is stored as `Generated`, under the run's provenance, and
-/// asks only the approval a generated claim may ask for.
+/// The four-axis position `vault.claims.upsert` takes: `world`, the vault's
+/// default facet, every relationship and the default project.
+fn upsert_scope(vault: &oneiron::Vault, world: oneiron::EntityId) -> serde_json::Value {
+    json!({
+        "world_id": world.to_hex(),
+        "scope_facet_id": vault.default_facet().expect("default facet").to_hex(),
+        "scope_relationship_id": "all",
+        "scope_project_id": oneiron::claim::default_project_id().to_hex(),
+    })
+}
+
+/// Review repro (Astra P1): generated code cannot name a claim's source. A
+/// guest's `user_stated` claim through `vault.claims.upsert` is stored as
+/// `Generated`, under the run's provenance, and asks only the approval a
+/// generated claim may ask for.
 #[tokio::test]
 async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     let actor = seeded_test_entity_id(0x0024_6541);
     let subject = seeded_test_entity_id(0x0024_6542);
     let claim = seeded_test_entity_id(0x0024_6543);
-    let script = format!(
-        "await self.memory.put_claim({{id: '{}', predicate: 'profile.favorite_drink', \
-         subject: '{}', value: 'sencha', confidence: 1}}); finish('stated');",
+    let mode = code_mode_server(Vec::new());
+    mode.backend.scripts.lock().unwrap().push_back(format!(
+        "await vault.claims.upsert({{id: '{}', predicate: 'profile.favorite_drink', \
+         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated', \
+         scope: {}}}); finish('stated');",
         claim.to_hex(),
-        subject.to_hex()
-    );
-    let mode = code_mode_server(vec![script]);
+        subject.to_hex(),
+        upsert_scope(&mode.vault, oneiron::claim::base_world_id())
+    ));
     mode.vault
         .put_entity(
             &subject,
