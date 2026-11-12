@@ -179,7 +179,7 @@ fn outcome_key(verdict: &EntityId, artifact: &str) -> String {
 /// The trusted, surfaceable `review.outcome` of the critique `artifact` of
 /// the review `verdict` in `session`: the one that stands, since a later
 /// outcome supersedes it (FIX 12160).
-fn standing_outcome_in_txn(
+pub(super) fn standing_outcome_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     session: &EntityId,
@@ -307,11 +307,44 @@ fn owed_outcome_in_txn(
 }
 
 /// The source and acceptance a `review.outcome` value records.
-fn outcome_of(value: &Value) -> Result<(ReliabilityOutcomeSource, bool)> {
+pub(super) fn outcome_of(value: &Value) -> Result<(ReliabilityOutcomeSource, bool)> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid_critic_config("review outcome value"))?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid_critic_config("review outcome value"))
+}
+
+/// The critiques a standing `review.outcome` settles from the directed seal
+/// recheck of the sealed try `attempt`: each one's review verdict and critique.
+pub(super) fn standing_recheck_outcomes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Vec<(EntityId, String)>> {
+    let mut settled = Vec::new();
+    for id in crate::claim::claim_ids_for_predicate_in_txn(&vault.store, txn, "review.outcome")? {
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+            continue;
+        };
+        if !crate::claim::claim_surfaceable(&body) || !trusted_claim(vault, txn, &id, &body)? {
+            continue;
+        }
+        let Ok((ReliabilityOutcomeSource::SealRecheck { attempt: judged }, _)) =
+            outcome_of(&body.value)
+        else {
+            continue;
+        };
+        let Some((verdict, artifact)) = candidate_evidence(&body)
+            .and_then(Value::as_str)
+            .and_then(|key| key.split_once(':'))
+        else {
+            continue;
+        };
+        if judged == attempt {
+            settled.push((EntityId::from_hex(verdict)?, artifact.to_owned()));
+        }
+    }
+    Ok(settled)
 }
 
 /// Records the calibration evidence every standing critique outcome still
