@@ -53142,7 +53142,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ClaimChangeVerdict",
@@ -53174,6 +53174,16 @@
      "purpose": "Authority for one proposed claim's review and settlement",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/settle/conflict_head.rs",
+     "purpose": "The head an approved proposal supersedes (e2e MEMORY-01; ARCH-0040 `mcp:5`, ARCH-0003 conflictSet): the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -89658,7 +89668,7 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "TASK creation door with admission, hooks, and rate limiting",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -89670,6 +89680,16 @@
      "purpose": "Transaction-composable, brief-less task creation for engine effects",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/create_from_message.rs",
+     "purpose": "A TASK made from a project-room message, bound to that message's thread in the same write…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -95355,6 +95375,7 @@
       "RoomTurnRequest",
       "TaskAnswerRequest",
       "TaskCanAskRequest",
+      "TaskCreateFromMessageRequest",
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaveReceipt",
@@ -95367,10 +95388,10 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "mod": 1,
       "re-export": 125,
-      "struct": 33
+      "struct": 34
      }
     },
     {
@@ -97854,7 +97875,7 @@
      "path": "src/workspace_roster/project/conversion/views.rs",
      "purpose": "Thread task binding and conversion views",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -98863,7 +98884,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 45,
+      "crate-vis": 46,
       "enum": 2,
       "fn": 6,
       "re-export": 22,
@@ -99123,6 +99144,16 @@
      "purpose": "A room's threads as one reader reaches them (FIX 5545, Engine ruling 2026-10-19)",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/thread_task_source.rs",
+     "purpose": "The thread a TASK made from a room message binds to (`tasks.create.from_message`, THREAD-TASK-ONE-SURFACE)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -100364,6 +100395,14 @@
      "notable": [],
      "path": "tests/claim_declared_cardinality.rs",
      "purpose": "E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_settle_supersession.rs",
+     "purpose": "Settling a proposal closes the supersession it proposed (e2e MEMORY-01; ARCH-0040 `mcp:5`: a destructive…",
      "surface": {}
     },
     {
@@ -102158,6 +102197,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/thread_task_from_message.rs",
+     "purpose": "A TASK made from a project-room message binds to that message's thread in the create's own write…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/thread_task_one_surface.rs",
      "purpose": "A plain thread reply in a project room lands on the same surface as a witness turn…",
      "surface": {}
@@ -103313,7 +103360,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 399,
+     "files": 400,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103852,7 +103899,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 180,
+     "files": 181,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104041,7 +104088,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 137,
+     "files": 138,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104055,10 +104102,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 255,
+   "over_bar": 256,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7395,
-   "test_files": 1058
+   "source_files": 7398,
+   "test_files": 1060
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -145086,6 +145133,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/bounded_legacy_reads.rs",
+     "purpose": "BOUNDED-LEGACY-READ (RETRIEVAL-04): the legacy reads `GET /api/search/vector`, `/api/entity/{id}` and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/consent_revoke_grantee_renounce.rs",
      "purpose": "A grantee may renounce its own standing consent grant (P-GATE-010, DEC-0006)",
      "surface": {}
@@ -146005,7 +146060,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1833,
-   "test_files": 192
+   "test_files": 193
   },
   "oneiron-skill-attribution": {
    "files": [
