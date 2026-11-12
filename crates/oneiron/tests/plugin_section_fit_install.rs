@@ -5,7 +5,7 @@
 //! decides that by the deterministic fit, and a ready fit lands the install
 //! claim through `Offer::land_in_txn` (context_board/plugin/fit_install.rs).
 //!
-//! Two refusals stand between a ready fit and the install on main:
+//! Two refusals stood between a ready fit and the install:
 //! - The install claim and its fit receipt are about the SKILL, so
 //!   `ClaimBody::new` gives them the SKILL's substrate facet, which no row
 //!   holds: the birth gate refuses them InvalidFacet (#4389). #7205 (FIX
@@ -17,11 +17,17 @@
 //! Either way the writer rolls back and the door answers the owner's
 //! permission ask instead, so a ready fit never installs. The second test
 //! stores the SKILL's facet first, as #7205 would give the claim a stored
-//! facet, so its red shows the gate refusal alone.
+//! facet, so its red shows the gate refusal alone. Engine RULING
+//! FIT-INSTALL-DESIGN = A: the install claim lands under the engine's own
+//! fit install writer, a host-provisioned MACHINE that the shipped manifest
+//! binds one actor ceiling row and one `generated` source-trust row to.
 //!
-//! Fixture: a plain device vault (the shipped manifest is seeded on create),
-//! its owner as the caller, a hub skill imported Active through a ready rule
-//! fit, and a code-free section on it whose verb and lane the caller holds.
+//! Fixture: a device vault rooted by its host, which provisions the engine's
+//! MACHINE writers (as a serving host does on every open; the shipped
+//! manifest is seeded on create), its owner as the caller, a hub skill
+//! imported Active through a ready rule fit, and a code-free section on it
+//! whose verb and lane the caller holds. The controls: a fit short of ready
+//! still asks the owner, and the owner's revoke undoes a fitted install.
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron --all-features --test plugin_section_fit_install`
@@ -31,15 +37,18 @@
 
 use std::sync::Arc;
 
-use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron::authority::MachineRole;
+use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::context_board::{
-    AuthorityLaneRef, BudgetPolicyRef, PLUGIN_SECTION_BUDGET_POLICY_REF,
-    SECTION_MANIFEST_SCHEMA_VERSION, SectionId, SectionManifest, SectionManifestEnvelope,
-    SectionManifestProvenance, SectionVerbRef, StateFamilyRef,
+    AuthorityLaneRef, BudgetPolicyRef, EngineSectionBindings, PLUGIN_SECTION_BUDGET_POLICY_REF,
+    PluginSectionRegistry, SECTION_MANIFEST_SCHEMA_VERSION, SectionId, SectionManifest,
+    SectionManifestEnvelope, SectionManifestProvenance, SectionVerbRef, StateFamilyRef,
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{
-    PluginSectionInstallOutcome, PluginSectionProposeRequest, PluginSectionTargetInput,
+    PluginSectionInstallOutcome, PluginSectionProposeRequest, PluginSectionRevokeRequest,
+    PluginSectionTargetInput,
 };
 use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::skill::{SkillLifecycle, SkillRecord};
@@ -53,12 +62,22 @@ use serde_json::json;
 const HUB_ENDPOINT: &str = "https://example.invalid/index.json";
 const SKILL_ID: &str = "sk_open_tasks";
 const SKILL_VERSION: &str = "1.0.0";
+const SECTION_ID: &str = "open_task_digest";
 
 /// A host that judges the caller's credential to hold every permission.
 struct HoldsAll;
 impl CallerPermissions for HoldsAll {
     fn holds(&self, _permission: &str) -> bool {
         true
+    }
+}
+
+/// A host that judges the caller to hold the section's lane but not its
+/// verb.
+struct HoldsLaneOnly;
+impl CallerPermissions for HoldsLaneOnly {
+    fn holds(&self, permission: &str) -> bool {
+        permission == "lane:read"
     }
 }
 
@@ -126,7 +145,7 @@ fn manifest(content_hash_hex: String) -> SectionManifestEnvelope {
     SectionManifestEnvelope {
         schema_version: SECTION_MANIFEST_SCHEMA_VERSION,
         manifest: SectionManifest {
-            section_id: SectionId("open_task_digest".to_owned()),
+            section_id: SectionId(SECTION_ID.to_owned()),
             name: "Open task digest".to_owned(),
             state_family: StateFamilyRef {
                 family: "claim".to_owned(),
@@ -151,6 +170,7 @@ fn manifest(content_hash_hex: String) -> SectionManifestEnvelope {
 struct Offered {
     vault: Vault,
     owner_id: EntityId,
+    owner: AuthenticatedOwner,
     skill: EntityId,
     request: PluginSectionProposeRequest,
     _dir: tempfile::TempDir,
@@ -164,13 +184,24 @@ fn offered() -> Offered {
     config.embedding_model = None;
     let vault = Vault::open(dir.path(), config).expect("open the vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    // The host roots the vault and provisions the engine's MACHINE writers,
+    // as a serving host does each time it opens the vault.
+    vault.prepare_install_signing().expect("install signing");
+    let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("engine machine identities");
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("serving install profile");
     let owner_id = vault
         .ensure_embedded_owner_actor()
         .expect("the vault's owner");
     let owner = vault
         .authenticate_owner(
             owner_id,
-            "principal:fit-install",
+            &owner_id.to_hex(),
             true,
             oneiron::store::GateDecisionId::now(),
         )
@@ -228,14 +259,25 @@ fn offered() -> Offered {
     Offered {
         vault,
         owner_id,
+        owner,
         skill,
         request,
         _dir: dir,
     }
 }
 
-/// Runs the production door as the owner and expects the install at once.
-fn assert_installs(offered: &Offered) {
+/// Whether the rebuilt section registry admits the offered section.
+fn admitted(offered: &Offered) -> bool {
+    PluginSectionRegistry::rebuild(&offered.vault, &EngineSectionBindings)
+        .expect("rebuild the section registry")
+        .get(&SectionId(SECTION_ID.to_owned()))
+        .is_some()
+}
+
+/// Runs the production door as the owner and expects the install at once:
+/// a live Auto install claim the rebuilt registry admits. Answers the
+/// install claim.
+fn assert_installs(offered: &Offered) -> EntityId {
     let outcome = offered
         .vault
         .memory(offered.owner_id, EdgeActorClass::Human)
@@ -254,12 +296,97 @@ fn assert_installs(offered: &Offered) {
         &vec!["lane:read".to_owned(), "verb:self.focus.refresh".to_owned()],
         "the install names every permission the fit evaluated: {outcome:?}"
     );
-    assert_eq!(claim_ref.len(), 32, "the install claim ref: {outcome:?}");
+    let claim = EntityId::from_hex(claim_ref).expect("the install claim ref");
+    let body = offered
+        .vault
+        .get_claim(&claim)
+        .expect("read the install claim")
+        .expect("the install claim is stored");
+    assert_eq!(
+        (body.approval, body.lifecycle, body.source),
+        (
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            Some(ClaimSource::Generated)
+        ),
+        "the install claim lands live, Auto and Generated"
+    );
+    assert!(
+        admitted(offered),
+        "the rebuilt registry admits the installed section"
+    );
+    claim
 }
 
 #[test]
 fn ready_fit_installs_a_code_free_section_under_the_shipped_gate() {
     assert_installs(&offered());
+}
+
+/// The control: a caller who does not hold the section's verb gets the
+/// owner's permission ask, naming it, and nothing installs.
+#[test]
+fn fit_short_of_ready_still_asks_the_owner() {
+    let offered = offered();
+    let outcome = offered
+        .vault
+        .memory(offered.owner_id, EdgeActorClass::Human)
+        .plugin_section_propose_holding(&offered.request, &HoldsLaneOnly)
+        .expect("the propose door answers");
+    let PluginSectionInstallOutcome::PermissionAsk {
+        analysis,
+        pending_ref,
+        ..
+    } = &outcome
+    else {
+        panic!("a fit short of ready asks the owner: {outcome:?}");
+    };
+    assert!(
+        analysis.contains("verb:self.focus.refresh"),
+        "the ask names the verb the caller does not hold: {outcome:?}"
+    );
+    assert!(
+        pending_ref.starts_with("gate:"),
+        "the ask waits on the owner's gate consent: {outcome:?}"
+    );
+    assert!(
+        !admitted(&offered),
+        "an asked section is not admitted before the owner answers"
+    );
+}
+
+/// The owner's revoke retracts a fitted install, and the rebuilt registry
+/// drops its section.
+#[test]
+fn owner_revoke_undoes_a_fitted_install() {
+    let offered = offered();
+    let claim = assert_installs(&offered);
+    let revoked = offered
+        .vault
+        .memory(offered.owner_id, EdgeActorClass::Human)
+        .plugin_section_revoke_as_owner(
+            &offered.owner,
+            &PluginSectionRevokeRequest {
+                claim_ref: Some(claim.to_hex()),
+                section_id: None,
+            },
+        )
+        .expect("the owner revokes the install");
+    assert_eq!(
+        revoked.claim_refs,
+        vec![claim.to_hex()],
+        "the revoke retracts the install claim"
+    );
+    let body = offered
+        .vault
+        .get_claim(&claim)
+        .expect("read the install claim")
+        .expect("the install claim is stored");
+    assert_eq!(body.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert!(
+        !admitted(&offered),
+        "a revoked section leaves the rebuilt registry"
+    );
 }
 
 /// The same offer with the SKILL's substrate FACET stored first, so the
