@@ -225,6 +225,7 @@ fn outcome_label(executed: &Result<DreamerAttemptExecution>) -> String {
             DreamerAttemptExecution::Park { cause, .. }
             | DreamerAttemptExecution::ParkWithSpend { cause, .. },
         ) => format!("parked:{}", cause.as_str()),
+        Ok(DreamerAttemptExecution::ParkOnSeat { .. }) => "parked:signal".to_owned(),
         Ok(DreamerAttemptExecution::Failed { .. }) => "failed:terminal".to_owned(),
         Ok(DreamerAttemptExecution::Landed { .. }) => "landing".to_owned(),
         Err(error) => format!("failed:{:?}", error.kind()),

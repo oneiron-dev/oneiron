@@ -31,11 +31,11 @@ fn models(ladder: &[Rung]) -> Vec<String> {
 
 #[test]
 fn high_level_one_model_fills_every_shorthand_seat() {
-    let config = resolve(r#"default = "cpa:owen7/gpt-6.1-sol""#).unwrap();
+    let config = resolve(r#"default = "cpa:team/gpt-6.1-sol""#).unwrap();
     for role in SHORTHAND_ROLES {
         assert_eq!(
             models(config.ladder(role).unwrap()),
-            ["cpa:owen7/gpt-6.1-sol"]
+            ["cpa:team/gpt-6.1-sol"]
         );
     }
     assert!(config.ladder(ModelRole::LocalReasoner).is_none());

@@ -16,7 +16,8 @@ impl Masker {
             && let Ok(value) = serde_json::from_slice::<Value>(data)
         {
             let mut tree = PlanTree(value);
-            if !self.mask_value(&mut tree.0)? {
+            let changed = self.mask_value(&mut tree.0)?;
+            if !(self.mask_spread_phrases(&mut tree.0, false)? || changed) {
                 return Ok(None);
             }
             return serde_json::to_vec(&tree.0)
@@ -29,7 +30,8 @@ impl Masker {
         {
             let mut tree = PlanTree(value);
             if cursor.position() == data.len() as u64 {
-                if !self.mask_value(&mut tree.0)? {
+                let changed = self.mask_value(&mut tree.0)?;
+                if !(self.mask_spread_phrases(&mut tree.0, true)? || changed) {
                     return Ok(None);
                 }
                 let mut out = Vec::with_capacity(data.len());

@@ -495,6 +495,7 @@ fn park_on_wait(
             subject: parked.wait.wait_id,
             deadline: None,
             now_ms,
+            spend_scope: None,
         },
         trap_for_durable_wait(&parked.wait, parked.step_hash),
         parked.step_hash,

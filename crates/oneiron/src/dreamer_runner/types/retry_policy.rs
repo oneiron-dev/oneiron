@@ -48,16 +48,24 @@ impl Vault {
 }
 
 impl DreamerParkedAttemptRecord {
-    /// Whether `resumer` may resume this park, by its cause and its owner's
-    /// class (the park resume table). The resumer's other gates still apply.
+    /// Whether `resumer` may resume this park, by its cause, its owner's
+    /// class and its typed wait (the park resume table). The resumer's other
+    /// gates still apply.
     #[must_use]
     pub fn resumable_by(&self, resumer: ParkResumer) -> bool {
-        ParkResume::admits(self.cause, ParkOwnerClass::of(&self.park_owner), resumer)
+        ParkResume::admits_wait(
+            self.cause,
+            ParkOwnerClass::of(&self.park_owner),
+            self.wait.as_ref().map(|wait| wait.wait.class()),
+            resumer,
+        )
     }
 
     /// When a later wake pass may resume this park as the same try, in
     /// store-clock seconds, under the vault's resolved Retry pause
-    /// `retry_secs`; `None` for a park no later pass resumes.
+    /// `retry_secs`; `None` for a park no later pass resumes. The cause alone
+    /// sets it: the typed wait does not move it (a Budget wait sits on a
+    /// Signal park, which no later pass resumes).
     #[must_use]
     pub fn later_pass_due_at(&self, retry_secs: u64) -> Option<u64> {
         self.cause
