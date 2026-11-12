@@ -317,6 +317,7 @@ pub(super) fn resident_wakes() -> Result<Case> {
                 axes: vec![],
             },
             wake: ResidentWakeMode::HumanMessages,
+            wake_hold_secs: 0,
         },
         3,
     )?;
