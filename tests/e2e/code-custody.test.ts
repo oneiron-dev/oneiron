@@ -783,14 +783,9 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
       operation: "download", transfers: ["basic"], objects: [{ oid, size }],
     });
     expect(deadLfs.status).toBe(401);
-    try {
-      expect(codeCustody06ErrorBody(deadLfs).code).toBe("UNAUTHORIZED");
-    } catch (error) {
-      throw new Error(
-        `CODE-CUSTODY-06 ENGINE DEFECT 2026-11-12: FIX [GIT-LFS-PREHANDLER-REFUSAL-BARE-BODY] the binding door (auth/binding_admission.rs) envelopes a pre-route refusal only on /v1/ paths, so the revoked slip's LFS batch 401 is a bare ApiError while the same door's 403 is enveloped; ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
+    // FIX [GIT-LFS-PREHANDLER-REFUSAL-BARE-BODY], fixed by #7201: the binding
+    // door envelopes its pre-route refusal on the LFS paths too.
+    expect(codeCustody06ErrorBody(deadLfs).code).toBe("UNAUTHORIZED");
     const stillLive = await codeCustody06ExpectedSuccess("independent read-scoped slip self.actor", () =>
       agent.client.call("self.actor", {}));
     expect(stillLive.actor_ref).toBe(agentId);
