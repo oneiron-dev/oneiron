@@ -37,6 +37,7 @@ pub mod skill_read_hold;
 pub mod source_audience;
 pub mod source_audience_binding;
 pub mod spend;
+pub mod split_phrase_carrier;
 pub mod steward;
 pub mod substrate_reads;
 pub mod turn_programs;
