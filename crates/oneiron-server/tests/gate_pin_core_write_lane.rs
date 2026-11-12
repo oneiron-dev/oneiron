@@ -82,7 +82,8 @@ impl Fixture {
         let issuer = HostSlipIssuer::from_secret(b"oneiron-test-gate-pin-core-write-lane")?;
         let root = vault.ensure_host_root_slip(&issuer)?;
         // The record-scope guard of `vault.batch` admits only a slip whose
-        // verbs alone are narrowed, so each keeps the root's top scope.
+        // verbs alone are narrowed, so each keeps the root's top scope. The
+        // verbs are core scopes, as `oneiron token` mints them.
         let mint = |seed: u8, verbs: &[&str]| -> TestResult<Credential> {
             let key = SigningKey::from_bytes(&[seed; 32]);
             let mut claims = root.claims.clone();
@@ -98,8 +99,8 @@ impl Fixture {
                 key,
             })
         };
-        let reader = mint(0x81, &["read", "write"])?;
-        let writer = mint(0x82, &["write"])?;
+        let reader = mint(0x81, &["core:read", "core:write"])?;
+        let writer = mint(0x82, &["core:write"])?;
 
         let server = Arc::new(SyncServer::new(vault.clone(), SyncServerConfig::default())?);
         Ok(Self {
