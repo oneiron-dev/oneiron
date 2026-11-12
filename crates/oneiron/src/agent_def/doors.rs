@@ -1343,6 +1343,14 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        // A raw apply records no changed row, so the edit names its row to
+        // the owning write door as the builder does: the door leaves the
+        // row's window a durable owed-mirror marker and mirrors the new body
+        // into a live window. Without it, the window keeps the old body, and
+        // its next cold open lands that body back over this edit
+        // (AGENT-DEF-DIAL-REVERTS-ON-RESTART).
+        crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
+        Ok(())
     }
 }
