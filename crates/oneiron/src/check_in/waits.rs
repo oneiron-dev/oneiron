@@ -6,8 +6,8 @@
 //! one rung, and a rung's wait starts when its entry is recorded, so a late
 //! tick delays a rung and never skips its holders. A rung with no verified
 //! holder skips no holder, so it is passed at once, with a receipt. At the
-//! due instant the climb wins over an answer; at `until`, let-go wins over
-//! everything.
+//! due instant the climb wins over an answer; at a delay window's end, its
+//! settlement wins over an answer; at `until`, let-go wins over everything.
 
 use super::act_class::{ActClass, UndoClass};
 use super::mode::CheckInMode;
