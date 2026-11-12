@@ -70,7 +70,9 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub use self::identity::{OpenOptions, VaultStorageId};
-pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
+pub(crate) use self::open::{
+    EngineSeedIdentities, embedded_owner_actor_id, encode_embedded_owner_actor_body,
+};
 pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
@@ -100,6 +102,10 @@ pub struct Vault {
     /// What the runtime witnesses of each leased attempt it runs now (OF-568
     /// L5). In memory only: never persisted, never restored.
     pub(crate) attempt_activity: crate::code_run::activity::AttemptActivityRuntime,
+    /// The answers of task-kept inquiries this vault asked (INQUIRE-1 PR 4),
+    /// each until its task ends or its `valid_until`. In memory only: never
+    /// persisted, never restored.
+    pub(crate) inquiry_answers: crate::inquiry::InquiryAnswerHolder,
     /// Task work's one fair line on this vault, whichever door the work came
     /// in by ([`Vault::admit_task_work`]).
     pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,

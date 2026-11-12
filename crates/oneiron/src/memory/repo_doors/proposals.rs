@@ -494,7 +494,6 @@ impl Memory<'_> {
             .iter()
             .map(|row| self.repo_run_candidate(row, &own.stamp.base_green))
             .collect::<MemoryResult<Vec<_>>>()?;
-        let manifest = self.vault.get_code_symbol_manifest(&own.stamp.repo)?;
         let accepted: Vec<EntityId> = rows.iter().map(|row| row.id).collect();
         let formed = queue.enqueue_for_run(candidates, |txn| {
             let now = self.vault.now_recorded_at();
@@ -516,6 +515,14 @@ impl Memory<'_> {
                     ));
                 }
             }
+            // The work's base snapshot's manifest, not the anchor's: the
+            // anchor holds none (FIX RUN-DECLARE-ANCHOR-MANIFEST).
+            let manifest = self.vault.repo_base_symbol_manifest_in_txn(
+                txn,
+                own.stamp.repo,
+                &own.admitted.membership.repo_ref,
+                &own.stamp.base_green,
+            )?;
             let symbols = repo_touched_symbols(manifest.as_ref(), &paths, declaration.as_ref())?;
             let predecessors = crate::task_verb::symbol_blockers_in_txn(
                 self.vault,

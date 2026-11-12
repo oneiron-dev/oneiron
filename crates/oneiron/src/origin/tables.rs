@@ -50,6 +50,10 @@ crate::side_table::side_tables! {
     /// Key: id16.
     ORIGIN_LFS_GC_QUEUE: VaultMeta b"origin:lfs:gc:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The owner's ordered LFS path rules for one served origin and the revision of the last set
+    /// (NO-DOOR REPO-LFS-PATH-POLICY). Key: id16 (repo id).
+    ORIGIN_LFS_PATH_POLICY: VaultMeta b"origin:lfs:path_policy:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Crash-recoverable heartbeat journal (oid32+timestamp8, 40 bytes) for one in-progress streamed
     /// LFS upload. Key: id16.
     ORIGIN_LFS_UPLOAD_JOURNAL: VaultMeta b"origin:lfs:upload:v1:" Raw

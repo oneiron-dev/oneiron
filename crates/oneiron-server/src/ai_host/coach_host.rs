@@ -93,8 +93,8 @@ mod weave_digest_settings;
 const TICK: Duration = Duration::from_secs(60);
 /// The queue's own admission counter; each lease reserves one unit and gives
 /// it back.
-const BUDGET_ID: &str = "coach.host";
-const BUDGET_UNITS: u64 = 1 << 20;
+pub(super) const BUDGET_ID: &str = "coach.host";
+pub(super) const BUDGET_UNITS: u64 = 1 << 20;
 /// Attempts one round runs.
 const ROUND: usize = 4;
 /// Ended sittings one distill job reads.

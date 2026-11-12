@@ -15,6 +15,7 @@
 mod external_import;
 mod import;
 mod import_types;
+mod lfs_path_policy;
 mod operations;
 mod preview;
 mod publish;

@@ -180,16 +180,35 @@ impl Vault {
         writer: Option<&crate::WriteActor>,
         door: &'static str,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
-        let (mut batch, entities, carried) = self.stage_core_batch(input, announcement)?;
+        let (mut batch, mut entities, carried) = self.stage_core_batch(input, announcement)?;
         if let Some(writer) = writer {
             batch = batch.authored_through(writer, door, lane.actor_key());
         }
+        let receipts = batch.agent_definition_write_receipts();
         batch.commit_in_core_lane(lane, commit, |txn| {
             for (id, expected) in &carried {
                 verify_project_group_carry(self, txn, id, *expected)?;
             }
             Ok(())
         })?;
+        // Each AGENT_DEF row takes its own put's receipt, in input order, so
+        // two puts at one id each name what they became.
+        let definitions: Vec<&mut CoreBatchEntityReceipt> = entities
+            .iter_mut()
+            .filter(|entity| entity.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF)
+            .collect();
+        let staged: Vec<crate::entity_id::EntityId> = definitions
+            .iter()
+            .filter_map(|entity| crate::entity_id::EntityId::from_hex(&entity.id).ok())
+            .collect();
+        if staged.len() == definitions.len() {
+            for (entity, receipt) in definitions
+                .into_iter()
+                .zip(receipts.in_staged_order(&staged))
+            {
+                entity.agent_definition = receipt;
+            }
+        }
         Ok(CoreBatchWriteReceipt {
             count: entities.len(),
             entities,
@@ -280,6 +299,7 @@ impl Vault {
             entities.push(CoreBatchEntityReceipt {
                 id: id.to_hex(),
                 entity_type: entity.entity_type,
+                agent_definition: None,
             });
         }
         Ok((batch, entities, carried.into_iter().collect()))
