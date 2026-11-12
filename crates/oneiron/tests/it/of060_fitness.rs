@@ -158,16 +158,55 @@ const F1_SYNC_HELPER_CALLS: [(&str, &str); 3] = [
     ),
 ];
 
+/// The test doors are not production code: lib.rs mounts them only under
+/// `--cfg oneiron_test_support`, which only the integration test command sets.
+/// The shared scanner knows only `#[cfg(test)]` mounts, so F1 skips this
+/// directory itself, the way it skips `src/sync/`. The skip holds only while
+/// that gate stays: `assert_test_doors_mount_is_cfg_gated` fails loud if lib.rs
+/// mounts the doors without it.
+const F1_TEST_DOORS_DIR: &str = "crates/oneiron/src/test_doors/";
+const TEST_DOORS_GATE: &str = "#[cfg(oneiron_test_support)]";
+
+fn assert_test_doors_mount_is_cfg_gated(repo: &Path) {
+    let lib_rs = std::fs::read_to_string(repo.join("crates/oneiron/src/lib.rs"))
+        .expect("read crates/oneiron/src/lib.rs");
+    let lib_lines = lib_rs.lines().map(str::trim).collect::<Vec<_>>();
+    let mounts = lib_lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| !line.starts_with("//") && line.ends_with("mod test_doors;"))
+        .map(|(idx, _)| idx)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        mounts.len(),
+        1,
+        "OF-060 F1 skips {F1_TEST_DOORS_DIR}: lib.rs must mount `pub mod test_doors;` exactly once"
+    );
+    let attributes = lib_lines[..mounts[0]]
+        .iter()
+        .rev()
+        .copied()
+        .take_while(|line| line.starts_with("#[") || line.starts_with("///"))
+        .filter(|line| line.starts_with("#["))
+        .collect::<Vec<_>>();
+    assert!(
+        attributes.contains(&TEST_DOORS_GATE),
+        "OF-060 F1 skips {F1_TEST_DOORS_DIR} only while lib.rs mounts `pub mod test_doors;` \
+         under `{TEST_DOORS_GATE}`; its attributes now: {attributes:?}"
+    );
+}
+
 #[test]
 fn of060_f1_put_replicated_stays_sync_only() {
     let repo = repo_root();
+    assert_test_doors_mount_is_cfg_gated(&repo);
     let mut violations = Vec::new();
     let mut helper_calls = BTreeMap::<(String, String), usize>::new();
     let tree = SourceTree::read(&repo.join("crates"));
 
     for (path, source) in tree.production_sources() {
         let rel = normalized(relative_path(&repo, path));
-        if rel.starts_with("crates/oneiron/src/sync/") {
+        if rel.starts_with("crates/oneiron/src/sync/") || rel.starts_with(F1_TEST_DOORS_DIR) {
             continue;
         }
         let source = production_source(source);
