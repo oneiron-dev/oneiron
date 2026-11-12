@@ -68,6 +68,48 @@ pub(crate) fn task_binding_turns_in(
     Ok(turns)
 }
 
+/// The one room whose threads `task` is bound into, read from its own
+/// inverse rows (ROOM-SCOPED-PINS P2c). `None` for a TASK bound into no
+/// thread, into threads of more than one room, or into a thread whose
+/// binding turn is gone, which [`task_binding_turns_in`] reads as a denial.
+/// The room only selects; it grants its reader nothing.
+pub(crate) fn task_thread_room_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Option<EntityId>> {
+    let turns = match task_binding_turns_in(vault, txn, task) {
+        Ok(turns) => turns,
+        Err(Error::EntityNotFound) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut room = None;
+    for turn in turns {
+        let Some(found) = turn_room_in(vault, txn, turn)? else {
+            return Ok(None);
+        };
+        match room {
+            None => room = Some(found),
+            Some(seen) if seen == found => {}
+            Some(_) => return Ok(None),
+        }
+    }
+    Ok(room)
+}
+
+/// The room the stored room TURN `turn` was spoken in, trunk or thread, read
+/// from its own row; `None` when no row names it.
+pub(crate) fn turn_room_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+) -> Result<Option<EntityId>> {
+    let Some(row) = TURNS.get(&vault.store, txn, &turn)? else {
+        return Ok(None);
+    };
+    Ok(Some(EntityId::from_hex(&row.room_id)?))
+}
+
 /// Deletes the inverse binding rows of an erased TASK. An erased room or
 /// turn leaves them standing, so the surviving TASK keeps denying.
 fn delete_task_bindings(store: &Store, txn: &mut heed::RwTxn<'_>, task: EntityId) -> Result<()> {

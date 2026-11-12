@@ -47,6 +47,8 @@ use self::admission::{
     mcp_validated_call_args,
 };
 pub(crate) use self::board_observations::{mcp_session_reads, run_session_reads};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::board_setup::run_board_pins_for_test;
 pub(crate) use self::board_setup::{
     McpBoardOmissions, execute_mcp_setup, mcp_brief_pins, ride_run_carrier,
     run_brief_people_budget, run_brief_pins,
