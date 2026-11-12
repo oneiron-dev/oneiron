@@ -12,6 +12,8 @@
 //!   regenerated reply to the owner's Retry lands beside the old one. The
 //!   agent's reply joined the agent's own open sitting, so the Retry names
 //!   that SESSION; two pins vary the bands the agent's read row grants. The
+//!   Retry's TURN answers owen's turn, so owen's turn addresses the agent
+//!   (ARCH-0006a: an agent speaks only when it is addressed there). The
 //!   Retry's assistant TURN is checked as generated under the agent, so the
 //!   owner gives the agent an actor-bound generated source-trust permit, as
 //!   `put_dag_test_policy` does; without it the TURN pends on
@@ -40,6 +42,7 @@ use oneiron::context_projection::{
     ChatProjection, ContextResolutionRequest, ContextSpec, MemoryProjection, resolve_context_spec,
 };
 use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt, TurnActionRequest};
+use oneiron::conversation_dag::{AddressMode, AppendRecord};
 use oneiron::core_write::ConversationCreateInput;
 use oneiron::embed::{EmbeddingSpace, InputKind};
 use oneiron::federation::{Scope, ScopeAxis};
@@ -70,6 +73,7 @@ use oneiron::workspace_roster::{JoinDecision, OfferAnswer, OfferAnswerRequest, O
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EdgeKind, EntityId, LlmRequest, ModelId,
     ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, TimeRange, Vault, VaultConfig,
+    WriteActor,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -310,8 +314,9 @@ struct Exchange {
     sitting: EntityId,
 }
 
-/// owen speaks on the room's trunk, then the agent, in its own open sitting,
-/// answers through the witness stream, as the chat host streams a reply.
+/// owen speaks on the room's trunk, addressing the agent, then the agent, in
+/// its own open sitting, answers through the witness stream, as the chat
+/// host streams a reply.
 fn exchange(fixture: &RoomFixture) -> TestResult<Exchange> {
     let vault = &fixture.vault;
     // The agent's sitting, open before its reply: the witness joins a
@@ -323,53 +328,99 @@ fn exchange(fixture: &RoomFixture) -> TestResult<Exchange> {
         .ok_or("fixture: the agent's sitting is not open")?
         .session;
 
-    let user_turn = EntityId::now();
-    vault
-        .memory(fixture.owen, EdgeActorClass::Human)
-        .rooms_speak(&WitnessTurn {
-            conversation_ref: fixture.room.to_hex(),
-            turn_ref: Some(user_turn.to_hex()),
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: Some(EntityId::now().to_hex()),
-                author: WitnessAuthor::User,
-                message_type: "text".into(),
-                content: "owen asks".into(),
-                parts: None,
-                metadata: Some(serde_json::json!({})),
-                is_visible: true,
-                order: 0,
+    // owen's TURN, appended on the room's DAG and addressed to the agent:
+    // an agent speaks only when it is addressed on the turn it answers
+    // (ARCH-0006a), and the Retry's TURN answers this one. A turn witnessed
+    // in an ordinary room addresses no one. As
+    // tests/room_thread_task_parity.rs appends a plain TURN.
+    let owen = vault.memory(fixture.owen, EdgeActorClass::Human);
+    let now = vault.now_recorded_at();
+    let user_turn = vault
+        .append_dag_record(
+            &owen,
+            &AppendRecord {
+                conversation: fixture.room,
+                parent: vault.head(&fixture.room)?,
+                reply_to: None,
                 quote: None,
-            }],
-            occurred_at: vault.now_recorded_at(),
-            assertions: Default::default(),
-        })?;
+                address: AddressMode::Direct,
+                recipients: vec![fixture.agent],
+                advance: true,
+                kind: ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                body: rmp_serde::to_vec_named(&serde_json::json!({"txt": "owen asks"}))?,
+                text: vec![],
+                session: None,
+                actor: WriteActor::new(fixture.owen, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .map_err(|error| format!("fixture: owen's addressed TURN: {error:?}"))?
+        .id;
+    // His words, witnessed into that TURN: a Retry answers the newest turn
+    // before the reply that holds a User line.
+    owen.rooms_speak(&WitnessTurn {
+        conversation_ref: fixture.room.to_hex(),
+        turn_ref: Some(user_turn.to_hex()),
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: Some(EntityId::now().to_hex()),
+            author: WitnessAuthor::User,
+            message_type: "text".into(),
+            content: "owen asks".into(),
+            parts: None,
+            metadata: Some(serde_json::json!({})),
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: vault.now_recorded_at(),
+        assertions: Default::default(),
+    })
+    .map_err(|error| format!("fixture: owen's MESSAGE in his TURN: {error:?}"))?;
+    let row = owen
+        .rooms_messages(fixture.room)?
+        .into_iter()
+        .find(|row| row.turn_id == user_turn.to_hex())
+        .ok_or("fixture: owen's TURN keeps no room row")?;
+    if !row.addressed_agents.contains(&fixture.agent.to_hex()) {
+        return Err(format!("fixture: owen's TURN does not address the agent: {row:?}").into());
+    }
 
     let agent = vault.memory(fixture.agent, EdgeActorClass::Agent);
     let reply_turn = EntityId::now();
-    let handle = agent.begin_message_stream(
-        &WitnessTurn {
-            conversation_ref: fixture.room.to_hex(),
-            turn_ref: Some(reply_turn.to_hex()),
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: Some(EntityId::now().to_hex()),
-                author: WitnessAuthor::Companion,
-                message_type: "text".into(),
-                content: String::new(),
-                parts: None,
-                metadata: None,
-                is_visible: true,
-                order: 0,
-                quote: None,
-            }],
-            occurred_at: vault.now_recorded_at(),
-            assertions: Default::default(),
-        },
-        None,
-    )?;
+    let handle = agent
+        .begin_message_stream(
+            &WitnessTurn {
+                conversation_ref: fixture.room.to_hex(),
+                turn_ref: Some(reply_turn.to_hex()),
+                thread_audience: None,
+                messages: vec![WitnessMessage {
+                    id: Some(EntityId::now().to_hex()),
+                    author: WitnessAuthor::Companion,
+                    message_type: "text".into(),
+                    content: String::new(),
+                    parts: None,
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: vault.now_recorded_at(),
+                assertions: Default::default(),
+            },
+            None,
+        )
+        .map_err(|error| format!("fixture: the agent's reply opens: {error:?}"))?;
     agent.append_to_stream(handle, "yuki answers")?;
-    let reply = agent.finalize_stream(handle)?;
+    let reply = agent
+        .finalize_stream(handle)
+        .map_err(|error| format!("fixture: the agent's reply lands: {error:?}"))?;
     Ok(Exchange {
         user_turn,
         reply_turn,
@@ -412,30 +463,34 @@ fn queue_retry(fixture: &RoomFixture, exchange: &Exchange) -> TestResult<TurnAct
 fn answer_retry(fixture: &RoomFixture, action: &TurnActionAttempt) -> TestResult<EntityId> {
     let vault = &fixture.vault;
     let agent = vault.memory(fixture.agent, EdgeActorClass::Agent);
-    let handle = agent.begin_message_regeneration(
-        &WitnessTurn {
-            conversation_ref: action.conversation.to_hex(),
-            turn_ref: None,
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: None,
-                author: WitnessAuthor::Companion,
-                message_type: "text".into(),
-                content: String::new(),
-                parts: None,
-                metadata: None,
-                is_visible: true,
-                order: 0,
-                quote: None,
-            }],
-            occurred_at: vault.now_recorded_at(),
-            assertions: Default::default(),
-        },
-        action,
-        None,
-    )?;
+    let handle = agent
+        .begin_message_regeneration(
+            &WitnessTurn {
+                conversation_ref: action.conversation.to_hex(),
+                turn_ref: None,
+                thread_audience: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::Companion,
+                    message_type: "text".into(),
+                    content: String::new(),
+                    parts: None,
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: vault.now_recorded_at(),
+                assertions: Default::default(),
+            },
+            action,
+            None,
+        )
+        .map_err(|error| format!("the Retry's answer opens: {error:?}"))?;
     agent.append_to_stream(handle, "yuki answers again")?;
-    let receipt = agent.finalize_stream(handle)?;
+    let receipt = agent
+        .finalize_stream(handle)
+        .map_err(|error| format!("the Retry's answer lands: {error:?}"))?;
     Ok(receipt.message_id)
 }
 
