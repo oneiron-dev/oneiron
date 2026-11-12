@@ -655,7 +655,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 10
      }
@@ -697,9 +697,9 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -773,6 +773,26 @@
      "path": "src/agent_def/portable_source/tests.rs",
      "purpose": "Actual birth capture and replay retain bytes without granting authority",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentPowerHolderKind",
+      "AgentPowerSetRequest",
+      "AgentPowerTarget",
+      "AgentPowers",
+      "ChildPowerRequest"
+     ],
+     "path": "src/agent_def/powers.rs",
+     "purpose": "The two grant powers an agent holds beside its definition (ARCH-0053:20; owner ruling SPAWN-KNOB = A…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 15,
+      "enum": 2,
+      "fn": 6,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -1092,7 +1112,7 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 6,
       "struct": 1
      }
@@ -18601,6 +18621,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/agent_powers.rs",
+     "purpose": "The grant powers a running agent acts under (SPAWN-KNOB, ARCH-0053:20): which instance's grant decides its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -20187,9 +20217,9 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "enum": 1,
-      "fn": 14,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -34524,8 +34554,25 @@
      "surface": {
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealObjectiveCheck",
+      "SealObjectiveDecision",
+      "SealObjectiveDecisions"
+     ],
+     "path": "src/dreamer_runner/maintenance/seal_checks/decide.rs",
+     "purpose": "The seal's objective questions on the decision ladder (ARCH-0076 #decide-required, DECIDE-BYPASS-2): \"Every…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -42637,6 +42684,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/agent_power_refusal.rs",
+     "purpose": "The Gate receipt for one refused agent-power act (SPAWN-KNOB): a spawn by an instance whose `spawn` is off…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -43664,7 +43721,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 96,
+      "crate-vis": 97,
       "mod": 2,
       "re-export": 8
      }
@@ -74948,7 +75005,7 @@
      "surface": {
       "const": 1,
       "enum": 10,
-      "fn": 9,
+      "fn": 10,
       "struct": 13
      }
     },
@@ -76492,7 +76549,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission.rs",
@@ -76554,7 +76611,7 @@
      "path": "src/skill_hub/pack_catalog/agent_admission.rs",
      "purpose": "The receiving half of the AgentPack another party shared (OF-491, FIX 2041 and 3168)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -100760,6 +100817,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_definition_slice_invariant.rs",
+     "purpose": "Nothing wider than its author's slice lands Active, on any door an agent reaches (ARCH-0053:20, owner, 22…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_definition_write_receipt.rs",
      "purpose": "The write receipt of an agent's AGENT_DEF put names what the author writer made of it (ARCH-0053:20; FIX…",
      "surface": {}
@@ -100794,6 +100859,14 @@
      "notable": [],
      "path": "tests/agent_pair_default_grant.rs",
      "purpose": "Pairing a named agent mints its default read Grant, and revoking an agent's last Grant narrows its read…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_powers.rs",
+     "purpose": "The two grant powers (owner ruling SPAWN-KNOB = A, 10 Nov 2026, beside ARCH-0053:20): `spawn` starts a…",
      "surface": {}
     },
     {
@@ -100964,6 +101037,14 @@
      "notable": [],
      "path": "tests/claim_declared_cardinality.rs",
      "purpose": "E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_scope_string_readers.rs",
+     "purpose": "FIX-LIST CLAIM-SCOPE-STRING-REFUSED (OPUS-GATECENSUS row 2, Engine ruling 12 Nov 16:2x): a critic's…",
      "surface": {}
     },
     {
@@ -101382,6 +101463,14 @@
      "notable": [],
      "path": "tests/force_cancel_pause.rs",
      "purpose": "[FORCE-CANCEL-KEEPS-ACTIVE-PAUSE]: the hard cancel of a held row clears its pause, as the operator's Cancel…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_census_pins.rs",
+     "purpose": "OPUS-GATECENSUS row 2 (Engine ruling 12 Nov 16:2x): green pins for three write gates added or tightened…",
      "surface": {}
     },
     {
@@ -102757,6 +102846,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/seal_check_decide.rs",
+     "purpose": "DECIDE-BYPASS-2 (ARCH-0076 #decide-required: \"Every such call goes through decide()\"): the seal checker's…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -103316,7 +103413,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103561,7 +103658,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 266,
+     "files": 267,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103834,7 +103931,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 222,
+     "files": 223,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -103967,7 +104064,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 209,
+     "files": 210,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104961,10 +105058,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 261,
+   "over_bar": 262,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7429,
-   "test_files": 1110
+   "source_files": 7433,
+   "test_files": 1115
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -125326,7 +125423,7 @@
      "path": "src/ai_host/coach_host/seal_checks/checker.rs",
      "purpose": "The seal checker's protocol (OF-544): the judge's instruction, which models count as independent of the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -125550,7 +125647,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/contribution/audit.rs",
@@ -128355,7 +128452,7 @@
      "path": "src/api/facade/agent_definition_doors.rs",
      "purpose": "Custom definitions, saved workflows and workspace onboarding, with the caller's own proof",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -151434,7 +151531,7 @@
      "path": "src/model_decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 53,
+      "const": 54,
       "fn": 1,
       "struct": 1
      }
@@ -155293,7 +155390,7 @@
       "const": 5,
       "crate-vis": 1,
       "enum": 5,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
