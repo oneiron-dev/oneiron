@@ -35,22 +35,45 @@ pub(crate) async fn vault_budgets_lease_open(
     .await
 }
 
+/// The owner reads any lease on its proof; a person or agent on a verified
+/// slip of its own reads a lease its own run spends under or reserved
+/// (slice 6.5a, S65-BUDGET = A). Spend rows are read by no read lane, so the
+/// row refuses a slip narrowed to records, worlds or facets
+/// (`unrestricted_record_scope`, FACET-READ).
 pub(crate) async fn vault_budgets_lease(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    caller: (oneiron::EntityId, oneiron::EdgeActorClass),
+    _invocation: Option<oneiron::runtime_hooks::InvocationId>,
     input: SpendScopeRequest,
 ) -> Listed<SpendLeaseView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.lease",
-        move |server, owner| {
-            budget_doors::spend_lease_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
+    const VERB: &str = "vault.budgets.lease";
+    match super::run_read_doors::run_reader(server, auth, VERB) {
+        Ok(Some(_)) => {
+            as_owner_naming(
+                server,
+                auth,
+                VERB,
+                move |server, owner| {
+                    budget_doors::spend_lease_as_owner(server.vault(), owner, &input)
+                        .map_err(MemoryError::from)
+                },
+                |_| Vec::new(),
+            )
+            .await
+        }
+        Ok(None) => {
+            super::host_doors::support::credential_listing(
+                server,
+                auth,
+                caller,
+                VERB,
+                move |_, _, memory| budget_doors::spend_lease_as_reader(&memory, &input),
+            )
+            .await
+        }
+        Err(refusal) => (Err(refusal), Vec::new()),
+    }
 }
 
 pub(crate) async fn vault_budgets_lease_top_up(

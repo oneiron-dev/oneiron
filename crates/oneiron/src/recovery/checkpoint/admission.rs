@@ -185,6 +185,7 @@ impl Vault {
             &BTreeSet::new(),
             &write_budget::Unfloored,
             None,
+            None,
         )
         .map_err(|rejected| rejected.at(P::RowsLanding))?;
         finish(&vault, artifact_holds.as_ref())?;

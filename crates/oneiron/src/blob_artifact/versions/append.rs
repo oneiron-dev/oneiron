@@ -165,13 +165,15 @@ impl Vault {
             seal_job,
             BirthPosition::default(),
             lane,
+            None,
         )
     }
 
     /// [`Self::append_blob_artifact_version_body_in_txn`] under `authority`.
     /// `producer_position` is where the producing run's host bound it
     /// (FIX 3171): the version's claim is born there. The default position,
-    /// which an unbound append passes, keeps the birth default.
+    /// which an unbound append passes, keeps the birth default. `claim_id`
+    /// is the id reserved by an unlabelled machine append, if any.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn append_blob_artifact_version_body_with_authority_in_txn(
         &self,
@@ -190,6 +192,7 @@ impl Vault {
         seal_job: Option<&super::super::esign::SealJobWrite<'_>>,
         producer_position: BirthPosition,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        claim_id: Option<EntityId>,
     ) -> Result<BlobArtifactVersion> {
         let actor = match &authority {
             VersionAuthority::Actor(actor) => *actor,
@@ -207,7 +210,10 @@ impl Vault {
             stamp.validate()?;
         }
         let content_hash = body.content_hash();
-        let claim_id = EntityId::from_bytes(self.store.clock.ulid()?)?;
+        let claim_id = match claim_id {
+            Some(claim_id) => claim_id,
+            None => self.store.clock.entity_id()?,
+        };
 
         require_entity_type(
             &self.store,

@@ -105,7 +105,7 @@ fn owner_consent(compile: &PersonaSnapshotCompile) -> PersonaSnapshotExportConse
 fn tier_a_claims_never_enter_compile_or_renders() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     put_claim(
         &vault,
         subject,
@@ -168,7 +168,7 @@ fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
     let friend = put_person(&vault, 0xB1)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     put_claim(
         &vault,
         subject,
@@ -230,7 +230,7 @@ fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
 fn stale_consent_stamp_rejects_export() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
 
     let compile =
         vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
@@ -361,7 +361,7 @@ fn persona_export_wire_fixture_is_persisted_and_malformed_rows_are_refused() -> 
 fn soft_deleted_subject_is_absent_for_compile() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
 
     vault.delete_entity_with_reason(&subject, DeleteReason::UserDelete)?;
 
@@ -376,7 +376,7 @@ fn soft_deleted_subject_is_absent_for_compile() -> Result<()> {
 fn soft_deleted_claim_shells_are_skipped_in_compile() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     let deleted = put_claim(
         &vault,
         subject,
@@ -412,7 +412,7 @@ fn soft_deleted_claim_shells_are_skipped_in_compile() -> Result<()> {
 fn tampered_compile_is_rejected_at_export() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     put_claim(
         &vault,
         subject,
@@ -464,7 +464,7 @@ fn relationship_rows_render_coarse_without_internal_refs() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
     let friend = put_person(&vault, 0xB1)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     put_claim(&vault, friend, "profile.name", "Kenji", 0.9, None)?;
     put_relationship(&vault, subject, friend, "coworker", Sensitivity::Public)?;
 
@@ -508,7 +508,7 @@ fn relationship_rows_render_coarse_without_internal_refs() -> Result<()> {
 fn markdown_render_collapses_multiline_text() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     put_claim(
         &vault,
         subject,
@@ -567,7 +567,7 @@ fn markdown_card_keeps_every_caller_field_on_its_own_line() -> Result<()> {
     };
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x66)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     put_claim(
         &vault,
         subject,
@@ -637,7 +637,7 @@ fn markdown_card_keeps_every_caller_field_on_its_own_line() -> Result<()> {
 fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x61)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     put_claim(&vault, subject, "profile.hobby", "bouldering", 0.7, None)?;
 
     let compile =
@@ -656,14 +656,14 @@ fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
     };
     let artifact = vault.export_persona_snapshot(&compile, &strikes, &owner_consent(&compile))?;
 
-    assert!(!artifact.markdown.contains("Lexi"));
-    assert!(!artifact.memory_pack_json.contains("Lexi"));
+    assert!(!artifact.markdown.contains("Owen"));
+    assert!(!artifact.memory_pack_json.contains("Owen"));
     let record = vault
         .get_persona_snapshot_export(&artifact.export_id)?
         .expect("export record persisted");
     assert_eq!(record.identity_line, STRUCK_IDENTITY_LINE_PLACEHOLDER);
     assert!(
-        !record.identity_line.contains("Lexi"),
+        !record.identity_line.contains("Owen"),
         "struck identity text must not survive in the queryable export record"
     );
     Ok(())
@@ -831,7 +831,7 @@ fn portable_card_excludes_nonpublic_relationships_and_their_claims() -> Result<(
 fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
     let (_dir, vault) = test_vault();
     let subject = put_person(&vault, 0x62)?;
-    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    put_claim(&vault, subject, "profile.name", "Owen", 0.9, None)?;
     // A card compiled for nobody reads through no audience.
     assert!(
         vault
@@ -849,7 +849,7 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
     )?;
     let receipt = for_kenji.read_receipt.expect("the audience read");
     assert_eq!(receipt.suppressed_count, 1);
-    assert!(!for_kenji.identity_line.contains("Lexi"));
+    assert!(!for_kenji.identity_line.contains("Owen"));
 
     // A standing block session reads the agent's claims as its reader: a
     // reader slip scoped to one world withholds the other world's claim.

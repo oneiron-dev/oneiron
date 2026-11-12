@@ -180,6 +180,7 @@ impl ConsolidationExecutor<'_> {
                 subject: anchor.body.scope_project,
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
+                spend_scope: None,
             };
             let mut decided = Vec::with_capacity(partners.len());
             for call in link_calls(anchor, &partners) {

@@ -72,8 +72,8 @@ pub use proposals::{
     NoteVerdict, PendingNoteForkErase,
 };
 pub(crate) use proposals::{
-    erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
-    recovery_fork_value,
+    NoteEditLanding, erase_fork_actor_in_txn, erase_proposal_actor_in_txn,
+    erase_receipt_actor_in_txn, recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 pub use tombstone_review::NoteTombstoneProposal;
