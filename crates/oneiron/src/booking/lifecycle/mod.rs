@@ -55,6 +55,7 @@ mod claim;
 mod confirmation_state;
 mod door;
 mod emergency;
+mod feed_move;
 mod hold_source;
 mod occurrence;
 mod passport;
@@ -82,6 +83,11 @@ pub use self::door::{
     run_booking_lifecycle_attempt, run_booking_lifecycle_attempt_with_invites,
     run_booking_lifecycle_once,
 };
+pub use self::feed_move::{
+    BOOKING_REVISION_INVITE_ATTEMPT_KIND, BookingRevisionInviteDrain, BookingRevisionInvitePayload,
+    run_booking_revision_invites,
+};
+pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
