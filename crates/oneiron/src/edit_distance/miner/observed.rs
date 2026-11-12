@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 
 use super::model::SubstitutionCluster;
 use crate::Vault;
+use crate::claim::{OBSERVED_PREFERENCE_MIN_OBSERVATIONS, OBSERVED_PREFERENCE_MIN_SESSIONS};
 use crate::compaction::turn_session_membership_in_txn;
 use crate::edit_distance::delta::captured_amendment_delta_in_txn;
 use crate::edit_distance::text_ref::retained_proposal_in_txn;
@@ -27,14 +28,6 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
-
-/// Distinct observations an Observed preference needs: ARCH-0003's minting
-/// rule, "three observations across two or more sessions".
-pub(super) const OBSERVED_PREFERENCE_MIN_OBSERVATIONS: usize = 3;
-
-/// Distinct sessions those observations must span: the same rule's "two or
-/// more sessions".
-pub(super) const OBSERVED_PREFERENCE_MIN_SESSIONS: usize = 2;
 
 /// Whether `cluster`'s receipts join to at least
 /// [`OBSERVED_PREFERENCE_MIN_OBSERVATIONS`] distinct observations across at

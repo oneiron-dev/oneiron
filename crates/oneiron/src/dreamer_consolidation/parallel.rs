@@ -173,6 +173,7 @@ impl ConsolidationExecutor<'_> {
             subject,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         let call = self.role(DREAMER_EXTRACTION_ROLE);
         let rules = failure_rules::load(ctx.vault)?;
@@ -404,6 +405,7 @@ impl ConsolidationExecutor<'_> {
             subject,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
         };
         let corrections_started = Instant::now();
         let decided = self
