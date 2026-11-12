@@ -68,6 +68,9 @@ mod replay;
 mod run_replay;
 // FIX 780, 6083: a program's media jobs on its run's line.
 mod run_line;
+// [MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH]: doors for its integration test.
+#[cfg(oneiron_test_support)]
+mod scoped_job_door;
 // FIX 1816: a video job charged by its length.
 mod video_length;
 // FIX 9517: every reference upload under the bank's current reference.

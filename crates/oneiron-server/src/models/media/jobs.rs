@@ -24,7 +24,7 @@ use oneiron::{ModelId, Vault};
 use serde::{Deserialize, Serialize};
 
 use super::job_lifecycle::JobWrite;
-use super::run_line::JobLine;
+use super::run_line::{JobLine, ScopeStage};
 use crate::models::ladder::PendingReceipt;
 
 mod custody;
@@ -149,11 +149,28 @@ impl JobStore {
     /// one, and only while that row is there (FIX 9511): a job a delete
     /// dropped meanwhile is not written back, and neither are its clips.
     pub(super) fn update(&self, ticket: &str, row: JobRow) -> Result<JobWrite, String> {
+        self.update_staged(ticket, row, None)
+    }
+
+    /// [`Self::update`] with `stage`, the part of a scoped job's guard use
+    /// its scope does not hold yet, staged on that scope in the same commit
+    /// ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH]): a job's end and its stage
+    /// are durable together or not at all, so a restart that finds the job
+    /// running finds no stage of its end. The stage commits when the write
+    /// finds the job erased or dropped too, since no restart takes such a
+    /// job up.
+    pub(super) fn update_staged(
+        &self,
+        ticket: &str,
+        row: JobRow,
+        stage: Option<&ScopeStage>,
+    ) -> Result<JobWrite, String> {
         let (kept, parts) = encoded(ticket, row)?;
-        let written = self
-            .vault
-            .media_job_update(&row_key(ticket), &kept, &parts)
-            .map_err(|error| error.to_string())?;
+        let key = row_key(ticket);
+        let written = self.write_staged(stage, |txn| {
+            self.vault
+                .media_job_put_in_write_txn(txn, &key, &kept, &parts, true)
+        })?;
         // Nothing was written: an erase took the job, or a delete dropped it.
         Ok(match written {
             true => JobWrite::Kept,
@@ -211,16 +228,31 @@ impl JobStore {
     /// refused there (FIX 2963), as its held write, clips left out: a
     /// smaller write than the one refused, kept until a flush writes it in
     /// place.
-    pub(super) fn hold(&self, ticket: &str, mut row: JobRow) -> Result<(), String> {
+    pub(super) fn hold(&self, ticket: &str, row: JobRow) -> Result<(), String> {
+        self.hold_staged(ticket, row, None)
+    }
+
+    /// [`Self::hold`] with `stage` staged in the same commit, as
+    /// [`Self::update_staged`] stages it: a restart flushes the held end in
+    /// place before it takes any job up, so it takes up no job whose end's
+    /// stage committed.
+    pub(super) fn hold_staged(
+        &self,
+        ticket: &str,
+        mut row: JobRow,
+        stage: Option<&ScopeStage>,
+    ) -> Result<(), String> {
         if let Some(MediaJobState::Done { .. }) = &row.ended {
             row.ended = None;
             row.paid = true;
         }
         let (kept, _) = encoded(ticket, row)?;
-        self.vault
-            .media_job_put(&row_key(&held_ticket(ticket)), &kept, &[])
-            .map(drop)
-            .map_err(|error| error.to_string())
+        let key = row_key(&held_ticket(ticket));
+        self.write_staged(stage, |txn| {
+            self.vault
+                .media_job_put_in_write_txn(txn, &key, &kept, &[], false)
+        })
+        .map(drop)
     }
 
     /// The row job `ticket`'s held write keeps, when the vault holds one.
@@ -277,21 +309,48 @@ impl JobStore {
     /// delete, which keeps every custody key, never an erase (KS-2B2). A
     /// write the vault refuses drops nothing, and says so.
     pub(super) fn delete(&self, ticket: &str) -> Result<(), String> {
+        self.delete_staged(ticket, None)
+    }
+
+    /// [`Self::delete`] with `stage` staged in the same commit, as
+    /// [`Self::update_staged`] stages it: a job whose delete committed is
+    /// never taken up again.
+    pub(super) fn delete_staged(
+        &self,
+        ticket: &str,
+        stage: Option<&ScopeStage>,
+    ) -> Result<(), String> {
         let row = row_key(ticket);
         let clips = format!("{row}:");
+        self.write_staged(stage, |txn| {
+            let mut keys = Vec::new();
+            self.vault
+                .sync_state_visit_prefix_in_write_txn(txn, &clips, |key, _| {
+                    keys.push(key.to_owned());
+                    Ok::<_, oneiron::Error>(())
+                })?;
+            keys.push(row.clone());
+            for key in &keys {
+                self.vault.sync_state_delete_in_write_txn(txn, key)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Runs `write` and stages `stage`, when there is one, in one grouped
+    /// write: both commit or neither does.
+    fn write_staged<T>(
+        &self,
+        stage: Option<&ScopeStage>,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> oneiron::Result<T>,
+    ) -> Result<T, String> {
         self.vault
             .try_with_write_txn_grouped(|txn| {
-                let mut keys = Vec::new();
-                self.vault
-                    .sync_state_visit_prefix_in_write_txn(txn, &clips, |key, _| {
-                        keys.push(key.to_owned());
-                        Ok::<_, oneiron::Error>(())
-                    })?;
-                keys.push(row.clone());
-                for key in &keys {
-                    self.vault.sync_state_delete_in_write_txn(txn, key)?;
+                let written = write(txn)?;
+                if let Some(stage) = stage {
+                    stage.stage_in_txn(&self.vault, txn)?;
                 }
-                Ok::<_, oneiron::Error>(())
+                Ok::<_, oneiron::Error>(written)
             })
             .map_err(|error| error.to_string())
     }
