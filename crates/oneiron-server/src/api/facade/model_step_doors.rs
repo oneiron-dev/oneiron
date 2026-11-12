@@ -275,12 +275,13 @@ impl RunStep {
             attached: self.attached.as_ref(),
             detached: AtomicBool::new(false),
         };
-        let receipt = runtime.block_on(model_step::submit_as_run_actor(
+        let receipt = runtime.block_on(model_step::submit_as_run_actor_on_scope(
             vault,
             self.caller(),
             input,
             &backend,
             &line.guard,
+            self.held.spend_scope(),
         ));
         // What the step's calls spent and no look booked goes on the scope
         // whatever the step answered. A booking that fails is an error of
