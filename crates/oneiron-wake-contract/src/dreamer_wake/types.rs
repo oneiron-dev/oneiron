@@ -158,6 +158,16 @@ pub enum DreamerAttemptExecution {
         /// Atomic with wake-budget settlement so replay cannot double debit.
         step_bindings: Vec<StepEffectBinding>,
     },
+    /// A spent model seat parked the try: the seat's available write resumes it. `seat` is the
+    /// seat's 16-byte id; `reset_at_s` is the vendor-reported reset in seconds, when one was read.
+    ParkOnSeat {
+        /// The refusal recorded on the park.
+        reason: String,
+        /// The refused model seat's durable id.
+        seat: [u8; 16],
+        /// The vendor-reported reset in Unix seconds, when known.
+        reset_at_s: Option<u64>,
+    },
     /// Selection holds are scheduled retries, never unspent parked attempts.
     Deferred {
         completed_units: u64,
