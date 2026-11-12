@@ -413,6 +413,8 @@ pub struct WholeVaultImportReceipt {
     pub owner_restore_receipt_ref: Option<String>,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
+    /// Engine seed rows an owner restore into a fresh vault replaced with the archive's owner-edited row.
+    pub replaced_seed_entities: usize,
     /// New inert source ASSETs; these never count as native terminal receipts.
     pub archived_receipt_sources: usize,
     /// Archived rows intentionally not restored as local authority or verdicts.
