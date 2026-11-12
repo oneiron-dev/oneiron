@@ -52,11 +52,17 @@ impl Memory<'_> {
                 )
             })?;
         let now = self.vault.now_recorded_at();
-        self.with_verified_actor_write_txn(|wtxn| {
+        let armed = self.with_verified_actor_write_txn(|wtxn| {
             Ok(crate::dreamer_runner::arm_turn_program_in_txn(
                 self.vault, wtxn, &authority, input, now,
             )?)
-        })
+        })?;
+        // The arming reaches the vault's other machines (FIX 5266).
+        #[cfg(feature = "sync")]
+        if armed.newly_armed {
+            self.vault.refresh_turn_program_armings_in_live_windows();
+        }
+        Ok(armed)
     }
 
     /// Disarms one of this actor's programs; `true` when it was armed. A wake
@@ -66,14 +72,20 @@ impl Memory<'_> {
     ///
     /// The actor checks of any actor write; storage errors.
     pub fn disarm_turn_program(&self, registration: EntityId) -> MemoryResult<bool> {
-        self.with_verified_actor_write_txn(|wtxn| {
+        let disarmed = self.with_verified_actor_write_txn(|wtxn| {
             Ok(crate::dreamer_runner::disarm_turn_program_in_txn(
                 self.vault,
                 wtxn,
                 self.actor,
                 registration,
             )?)
-        })
+        })?;
+        // So does the disarm (FIX 5266).
+        #[cfg(feature = "sync")]
+        if disarmed {
+            self.vault.refresh_turn_program_armings_in_live_windows();
+        }
+        Ok(disarmed)
     }
 
     /// The authority a turn this surface lands seals for its actor's armed

@@ -652,14 +652,6 @@ mod tests {
         text.contains("sausage")
     }
 
-    /// Whether an output carries a custody handle (`sc` plus digits), as mask
-    /// on write leaves it where the secret was.
-    fn carries_handle(bytes: &[u8]) -> bool {
-        bytes
-            .windows(3)
-            .any(|window| window[0] == b's' && window[1] == b'c' && window[2].is_ascii_digit())
-    }
-
     /// The vault's custody rows, by id.
     fn custody_records(vault: &Vault) -> Result<Vec<EntityId>> {
         let rtxn = vault.store.env.read_txn()?;
@@ -736,18 +728,16 @@ mod tests {
         let custody_before = custody_records(&vault)?.len();
         for body in &bodies {
             assert!(carries_sausage(body));
-            // The write lands, never refused; the hit is sealed into custody
-            // with a handle, and the stored body carries the handle, not the phrase.
+            // The write lands, never refused; the hit is sealed into custody,
+            // and the file's mark covers each word: the stored bytes stay the
+            // owner's (owner ruling G04 binary = C2), and a masked reader is
+            // served no word.
             let id = put_asset(&vault, body).expect("LABEL-04: a split-phrase write lands");
             let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
-            assert!(
-                !carries_sausage(&stored),
-                "the stored body carries the handle, not the phrase"
-            );
-            assert!(
-                carries_handle(&stored),
-                "the stored body carries the custody handle"
-            );
+            assert_eq!(&stored, body, "the stored file stays the owner's");
+            let masked = vault
+                .sighted_asset_bytes(stored.clone(), crate::secret_custody::SecretSight::Masked)?;
+            assert!(!carries_sausage(&masked), "masked reader: {masked:?}");
             let served = redacted_memory_payload(stored)?;
             assert!(!carries_sausage(&served), "raw serving: {served:?}");
             let typed =
@@ -828,14 +818,10 @@ mod tests {
             );
             let id = put_asset(&vault, &body).expect("LABEL-04: a mapped split-phrase write lands");
             let stored = vault.get(&id)?.ok_or(Error::InvariantViolation("stored"))?;
-            assert!(
-                !carries_sausage(&stored),
-                "the stored body carries the handle, not the phrase"
-            );
-            assert!(
-                carries_handle(&stored),
-                "the stored body carries the custody handle"
-            );
+            assert_eq!(stored, body, "the stored file stays the owner's");
+            let masked =
+                vault.sighted_asset_bytes(stored, crate::secret_custody::SecretSight::Masked)?;
+            assert!(!carries_sausage(&masked), "masked reader: {masked:?}");
         }
         let mut kept = Vec::new();
         rmpv::encode::write_value(

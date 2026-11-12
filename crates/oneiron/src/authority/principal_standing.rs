@@ -6,10 +6,10 @@
 //! and this check, run again in each snapshot the work writes in, that the
 //! principal is still live. A person stands while its PERSON row is live and
 //! active. An agent stands while its agent row is live (an enabled, active
-//! agent definition, or a base agent's MACHINE principal) AND one live Grant
-//! the owner gave it names it, confers now and lists the work's verb (or
-//! names a verb class that admits it, FIX 8735), and,
-//! on a shared vault, whose pact membership still stands (FIX 7511). Grants
+//! agent definition, a named agent's PERSON, or a base agent's MACHINE
+//! principal) AND one live Grant the owner gave it names it, confers now and
+//! lists the work's verb (or names a verb class that admits it, FIX 8735),
+//! and, on a shared vault, whose pact membership still stands (FIX 7511). Grants
 //! are never unioned and no other holder is picked. It mints nothing, and
 //! the work still crosses every gate it crosses for a caller.
 
@@ -21,7 +21,9 @@ use crate::error::{Error, Result};
 use crate::federation::{
     AgentGrantStanding, AgentVerbClasses, FederationGrant, FederationGrantScope,
 };
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_authority::federation::{FederationGrantKind, ScopeAxis};
 
@@ -182,8 +184,13 @@ fn principal_standing_or_lapse_in(
 }
 
 /// Whether `agent` is a live agent principal acting as `class`: an enabled,
-/// active agent definition the archive has not taken, acting as an agent, or
-/// a base agent's MACHINE principal, which acts as the system class. The
+/// active agent definition the archive has not taken, acting as an agent; a
+/// named agent's PERSON (the one [`Vault::ensure_agent_principal`] derives
+/// from its name: `oneiron token agent`, an OAuth client's sign-in) the
+/// archive has not taken, whose identity is Active (not merged or split) and
+/// not deleted, acting as an agent, as the Grant mint admits it as a holder
+/// (FIX 20232); or a base agent's MACHINE principal, which acts as the system
+/// class. Any other PERSON is a person and never stands here. The
 /// cleanup-archive marker is read as every module outside deletion reads it.
 pub(crate) fn live_agent_principal_in(
     store: &crate::store::Store,
@@ -206,6 +213,15 @@ pub(crate) fn live_agent_principal_in(
             let definition = crate::agent_def::decode_agent_definition(&body)?;
             Ok(definition.enabled && definition.lifecycle_status == ClaimLifecycleStatus::Active)
         }
+        (
+            EdgeActorClass::Agent,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_PERSON,
+                body,
+            },
+        ) => Ok(crate::vault::is_named_agent_principal_body(&agent, &body)
+            && !store.port_deletion_marked(txn, DeletionMarker::Archive, &agent)?
+            && crate::consent::person_is_live_for_store_in_txn(store, txn, &agent)?),
         (
             EdgeActorClass::System,
             LiveEntityRow::Live {
