@@ -353,6 +353,9 @@ impl Vault {
             kinds: source.manifest.kinds.iter().cloned().collect(),
             skills: skills.into_iter().map(|id| id.to_hex()).collect(),
             agent: None,
+            agent_author: commit
+                .agent_author
+                .map(|author| author.entity_ref().to_hex()),
             installed_at: at,
             notices: super::import_notice::import_notices_kept_in_txn(self, &*txn, travel.as_ref()),
             owner_activated,
