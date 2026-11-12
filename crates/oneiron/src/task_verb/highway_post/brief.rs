@@ -37,8 +37,9 @@ impl Memory<'_> {
                     "Post a new task for new work.",
                 ));
             }
-            next.validate_in(self.vault(), &txn, body.assignee)?;
+            // Plan mode first: an unapproved plan pin is a plan refusal.
             self.require_approved_plan_pins_in(&txn, &next)?;
+            next.validate_in(self.vault(), &txn, body.assignee)?;
             match body.brief {
                 Some(held) if held.rev == 1 => (1, Some(held.brief)),
                 Some(held) => (held.rev, None),
