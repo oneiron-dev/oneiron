@@ -90,6 +90,10 @@ impl SyncConnection {
         if *mode_rx.borrow_and_update() != client.config.residence_mode {
             return LoopExit::Renegotiate;
         }
+        // The worlds this negotiation follows: a pick, a world setting or a
+        // grant that changes them renegotiates at once (ARCH-0023b
+        // #partial-sync), as a mode change does.
+        let followed = client.effective_worlds().ok();
         let mut left_rx = self.left.subscribe();
         // The host's admission for each batch, and its pause (FIX 12036).
         let mut gate = self.batch_gate();
@@ -400,6 +404,10 @@ impl SyncConnection {
                         sealed_relay.reset_immediately();
                         continue;
                     };
+                    // Which worlds this machine follows is judged again on
+                    // each tick: a world setting synced in a window moves it
+                    // in any mode.
+                    self.follow_wake.notify_one();
                     // The home handoff's delivery round (FIX 5661 C2a).
                     if peer_session.is_none() {
                         self.home_handoff_wake.notify_one();
@@ -447,6 +455,7 @@ impl SyncConnection {
                         let config = self.client_config();
                         let events = event_tx.clone();
                         let directives = std::sync::Arc::clone(&self.directive_wake);
+                        let follow = std::sync::Arc::clone(&self.follow_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
                         let jobs = upkeep.blocking_jobs();
                         upkeep.sealed = Some(tokio::spawn(async move {
@@ -478,6 +487,9 @@ impl SyncConnection {
                                                 // decide, its home candidacy among
                                                 // them (FIX 5572).
                                                 let _ = events.send(SyncEvent::AuthorityCaughtUp);
+                                                // So does the loop: which worlds
+                                                // this machine follows.
+                                                follow.notify_one();
                                             }
                                         })
                                 && !matches!(error, crate::sync::TransportError::InvalidPayload(_))
@@ -686,6 +698,24 @@ impl SyncConnection {
 
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
+                        self.queue_on_exit(&mut gate, debounce_buffer).await;
+                        let mut send_left = self.left.subscribe();
+                        tokio::select! {
+                            biased;
+                            () = async { let _ = send_left.wait_for(|left| *left).await; } => {
+                                self.publish_leave_unqueued(debounce_buffer);
+                                break LoopExit::Shutdown;
+                            }
+                            _ = write.send(Message::Close(None)) => {}
+                        }
+                        return LoopExit::Renegotiate;
+                    }
+                }
+
+                () = self.follow_wake.notified() => {
+                    // Only a changed set renegotiates: follow backfills, an
+                    // unfollowed world is no longer asked for.
+                    if client.effective_worlds().ok() != followed {
                         self.queue_on_exit(&mut gate, debounce_buffer).await;
                         let mut send_left = self.left.subscribe();
                         tokio::select! {

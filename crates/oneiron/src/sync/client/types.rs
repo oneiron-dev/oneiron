@@ -35,8 +35,10 @@ pub struct SyncClientConfig {
     pub note_session: Option<NoteSyncSession>,
     /// `None` on the home node means sync all worlds. On a device lane the
     /// default `Some([])` is the device's own follow: under sync all every
-    /// world readable on this machine, else none; `Some(worlds)` follows the
-    /// named worlds readable here (`SyncClient::effective_worlds`).
+    /// world readable on this machine, else the worlds the owner picked for
+    /// it (`SyncConnection::set_followed_worlds`) that are readable here;
+    /// `Some(worlds)` follows the named worlds readable here
+    /// (`SyncClient::effective_worlds`).
     pub followed_worlds: Option<Vec<crate::EntityId>>,
     /// Host-owned MACRO candidate feed. Its updates, not WebSocket liveness,
     /// cause the connection to persist a new home-node designation.
