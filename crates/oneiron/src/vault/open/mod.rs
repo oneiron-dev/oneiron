@@ -19,9 +19,11 @@ use std::path::Path;
 
 mod adopt;
 mod config_validation;
+mod engine_seed_identities;
 mod first_non_bootstrap_row;
 mod lease_door;
 use self::config_validation::validate_open_config;
+pub(crate) use self::engine_seed_identities::EngineSeedIdentities;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
 /// profile reads at every profile level.
