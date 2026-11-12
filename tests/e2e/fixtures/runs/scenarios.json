@@ -8,22 +8,22 @@
   "sourcePins": [
     {
       "uri": "/oneiron/agents/oneiron-arch-0026-dreamer-v2/",
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
       "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
     },
     {
       "uri": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
       "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
     },
     {
       "uri": "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/",
-      "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md",
+      "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md",
       "sha256": "d9261a0833eab70dfde34cd7195a6fd268ea34054c1f5c8f966e92dfea65cade"
     }
   ],
   "registryPin": {
-    "path": "<workspace>/Desktop/code/oneiron-docs/registry/oneiron.json",
+    "path": "<workspace>/oneiron-docs/registry/oneiron.json",
     "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
     "rows": [
       "OF-052",

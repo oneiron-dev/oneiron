@@ -1,0 +1,59 @@
+.sl-root {
+  position: relative;
+  isolation: isolate;
+  background: var(--sl-bg);
+  color: var(--sl-ink-2);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-say);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.sl-root :where(*, *::before, *::after) {
+  box-sizing: border-box;
+}
+
+.sl-root :where(button) {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+.sl-root :where(h1, h2, h3, p, ul, ol) {
+  margin: 0;
+  padding: 0;
+}
+
+.sl-root :where(:focus-visible) {
+  outline: 1.5px solid var(--sl-ink-3);
+  outline-offset: 2px;
+}
+
+.sl-root ::selection {
+  background: var(--sl-selection);
+  color: var(--sl-ink-1);
+}
+
+/* The breath of a live or working mark: opacity only, slow. */
+@keyframes sl-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* A floating layer grows from its anchor corner. */
+@keyframes sl-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -1130,8 +1130,10 @@ mod cb_a {
         };
         // ARCH-0026: the stock rows bind the commitment projector, the e-sign
         // seal actor with its SealJob auto checker (16fc2ad674d; Engine ruling
-        // T0F-STOCK-GENERATED-ROWS = A) and the Dreamer. The helper rebinds the
-        // projector's row and keeps the other two.
+        // T0F-STOCK-GENERATED-ROWS = A), the scope summary landing writer
+        // (cd9f9715a50; Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A) and
+        // the Dreamer. The helper rebinds the projector's row and keeps the
+        // other three.
         let mut actor_refs = permits.iter_mut().map(|permit| {
             let Value::Map(fields) = permit else {
                 panic!("Generated permit is a row");
@@ -1141,13 +1143,16 @@ mod cb_a {
                 .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
                 .expect("Generated permit is actor-bound")
         });
-        let (Some(actor_ref), Some(_seal_ref), Some(dreamer_ref), None) = (
+        let (Some(actor_ref), Some(_seal_ref), Some(_landing_ref), Some(dreamer_ref), None) = (
+            actor_refs.next(),
             actor_refs.next(),
             actor_refs.next(),
             actor_refs.next(),
             actor_refs.next(),
         ) else {
-            panic!("the stock Generated rows bind the projector, the seal actor and the Dreamer");
+            panic!(
+                "the stock Generated rows bind the projector, seal, summary landing and Dreamer"
+            );
         };
         let dreamer = vault
             .dreamer_authority()
@@ -1940,40 +1945,6 @@ mod peer_fixture {
                 .get(&candidate.claim_id)
                 .expect("read proposed correction")
                 .expect("proposal bytes");
-            eprintln!(
-                "T0F-DIAG C14 correction={} source={:?} evidence_meet={:?}",
-                candidate.claim_id.to_hex(),
-                self.claim(candidate.claim_id).source,
-                candidate.evidence_meet
-            );
-            eprintln!(
-                "T0F-DIAG C14 evidence_refs={:?}",
-                candidate
-                    .evidence_turn_refs
-                    .iter()
-                    .chain(candidate.provenance_chain.iter().map(|hop| &hop.entity_ref))
-                    .map(|id| {
-                        let entity_type =
-                            self.vault.get_entity_type(id).expect("T0F-DIAG C14 type");
-                        if entity_type == Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
-                            match self.vault.get_claim(id) {
-                                Ok(body) => (
-                                    id.to_hex(),
-                                    entity_type,
-                                    format!("claim source={:?}", body.map(|body| body.source)),
-                                ),
-                                Err(error) => (
-                                    id.to_hex(),
-                                    entity_type,
-                                    format!("claim read error={error:?}"),
-                                ),
-                            }
-                        } else {
-                            (id.to_hex(), entity_type, "non-claim ref".to_owned())
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            );
             self.vault
                 .approve_inbox_member_with_edit_at(&candidate.claim_id, &proposed, PEER_NOW + 1)
                 .expect("owner confirms attributed correction");
@@ -2797,6 +2768,7 @@ mod cb_x {
             subject,
             deadline: None,
             now_ms: 1,
+            spend_scope: None,
         };
         let trap = open_trap(
             &vault,
@@ -2865,10 +2837,6 @@ mod cb_x {
         assert_eq!(node.worker_kind, AGENT_DISPATCH_ATTEMPT_TYPE);
         let resumed = project_agent_run_status_with_park(node.status, is_parked);
         assert!(resumed.is_live_presence(), "working child presence");
-        eprintln!(
-            "T0F-DIAG C13 resumed node_status={:?} is_parked={} projected={:?}",
-            node.status, is_parked, resumed
-        );
         let resumed_to_working_after_input = usize::from(resumed == AgentRunStatus::Working);
         // The un-park returns the attempt to the queue; its worker leases it
         // again before it completes.

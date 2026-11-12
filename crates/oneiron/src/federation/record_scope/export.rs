@@ -4,6 +4,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::CallerLocality;
 use crate::provenance::birth::{WithheldKey, row_birth_in_txn};
 use crate::settings::ReadDestination;
+use crate::workspace_roster::project::extra_room_redaction;
 use crate::{
     Vault,
     error::{Error, Result},
@@ -109,6 +110,49 @@ impl Vault {
                     "export",
                     &withheld,
                 )?
+                && self.esign_dependencies_admitted_in(
+                    &txn,
+                    h.entity_type,
+                    &raw,
+                    |dep, ty, dep_raw| {
+                        Ok(!withheld(&dep)?
+                            && crate::ports::raw_readable_in_txn(&self.store, &txn, &dep, dep_raw)?
+                            && disclosure_scope_for_stored_row(
+                                &self.store,
+                                &txn,
+                                dep,
+                                ty,
+                                &dep_raw[ENTITY_METADATA_HEADER_LEN..],
+                            )?
+                            .is_some_and(|scope| {
+                                note_world::admits_at(
+                                    &self.store,
+                                    &txn,
+                                    dep,
+                                    ty,
+                                    &scope,
+                                    [selector, slip, channel],
+                                    "export",
+                                )
+                            })
+                            && crate::authority::row_causal_admitted(self, &txn, &dep, dep_raw)?
+                            && self.epoch_fence_in(
+                                &txn,
+                                dep,
+                                dep_raw,
+                                [selector, slip, channel],
+                                "export",
+                            )?
+                            && self.text_fence_in(
+                                &txn,
+                                dep,
+                                dep_raw,
+                                [selector, slip, channel],
+                                "export",
+                                &withheld,
+                            )?)
+                    },
+                )?
             {
                 // A pad row is key material, never memory text: a reference
                 // leaves as the carrier the world-key door builds and a pad
@@ -134,6 +178,11 @@ impl Vault {
                 } else {
                     bytes
                 };
+                let bytes = extra_room_redaction::strip_project_group_from_record_bytes(
+                    h.entity_type,
+                    &bytes,
+                )
+                .unwrap_or(bytes);
                 out.push(ScopedRecord {
                     id,
                     bytes,

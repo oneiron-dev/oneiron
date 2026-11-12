@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.grants.from_slip",
+  "description": "Owner converts one live slip the registry lists among its grantless agents into its holder's default read Grants; a slip no longer live or eligible, or a holder a Grant has named, answers unchanged with its reason.",
+  "input": "crate::task_verb::sdk::AgentGrantFromSlipRequest",
+  "output": "crate::task_verb::sdk::AgentGrantFromSlipOutcome",
+  "call": "crate::task_verb::sdk::mint_agent_grants_from_slip_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.from_slip\")?, crate::authority::ActSurface::ThisInstall, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

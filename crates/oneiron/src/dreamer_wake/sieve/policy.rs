@@ -125,4 +125,80 @@ impl Vault {
             POLICY.put(&self.store, txn, &(), &policy)
         })
     }
+
+    /// The owner, by its proof, or a holder of `engine.controls` lowers the
+    /// sieve's per-pass budgets (untangle 6.6b, the B1 family; work budget;
+    /// S66B-BUDGETS B1 = A; its verb is 6.6d's `vault.sieve.budgets.lower`).
+    /// The values in force are the owner's cap: each new budget must be at
+    /// or below its value in force, so this door never raises one. Raising a
+    /// budget and every scoring field stay the owner's act, at
+    /// `vault.sieve.policy.set`. Returns the receipt.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when `actor` is neither the owner, by a proof that
+    /// still holds, nor a live holder of `engine.controls`; for a budget
+    /// above its value in force, or for a row the policy refuses; store
+    /// failures.
+    pub fn lower_dreamer_sieve_budgets_by(
+        &self,
+        actor: crate::federation::EngineControlActor<'_>,
+        budgets: SievePassBudgets,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.apply_engine_control(
+            actor,
+            crate::federation::EngineControlClass::WorkBudget,
+            "DREAMER_SIEVE_POLICY",
+            &crate::federation::rendered_change(&budgets)?,
+            |txn| {
+                let held = policy_in_txn(self, &*txn)?;
+                if budgets.max_turns_per_pass > held.max_turns_per_pass
+                    || budgets.max_scan_per_pass > held.max_scan_per_pass
+                    || budgets.max_text_bytes_per_pass > held.max_text_bytes_per_pass
+                {
+                    return Err(Error::InvalidConfig(
+                        "this door only lowers the sieve's per-pass budgets; raising one is the owner's act at vault.sieve.policy.set"
+                            .into(),
+                    ));
+                }
+                let policy = SievePolicy {
+                    max_turns_per_pass: budgets.max_turns_per_pass,
+                    max_scan_per_pass: budgets.max_scan_per_pass,
+                    max_text_bytes_per_pass: budgets.max_text_bytes_per_pass,
+                    ..held
+                }
+                .validate()?;
+                POLICY.put(&self.store, txn, &(), &policy)
+            },
+        )
+    }
+
+    /// [`Self::lower_dreamer_sieve_budgets_by`] for a holder of
+    /// `engine.controls` (untangle 6.6b).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lower_dreamer_sieve_budgets_by`].
+    pub fn lower_dreamer_sieve_budgets_as_holder(
+        &self,
+        holder: crate::entity_id::EntityId,
+        budgets: SievePassBudgets,
+    ) -> Result<crate::entity_id::EntityId> {
+        self.lower_dreamer_sieve_budgets_by(
+            crate::federation::EngineControlActor::Holder(holder),
+            budgets,
+        )
+    }
+}
+
+/// The sieve's three per-pass work budgets, the part of its policy a holder
+/// of `engine.controls` may lower.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SievePassBudgets {
+    /// Turns one pass reads.
+    pub max_turns_per_pass: u32,
+    /// Timeline rows one pass's forward scan steps over.
+    pub max_scan_per_pass: u32,
+    /// Bytes of turn text one pass reads.
+    pub max_text_bytes_per_pass: u32,
 }

@@ -95,6 +95,7 @@ fn ctx<'a>(vault: &'a Vault, fixture: &StepFixture, now_ms: u64) -> DurableStepC
         subject: fixture.subject,
         deadline: None,
         now_ms,
+        spend_scope: None,
     }
 }
 

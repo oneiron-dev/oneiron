@@ -267,28 +267,17 @@ fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
             )
             .expect("manifest");
         let ClaimOutcome::Claimed(leased) = queue
-            .claim(ClaimAttempt {
-                lease_owner: "fixture".to_owned(),
-                now: now + 1,
-            })
+            .claim_kind(
+                oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "fixture".to_owned(),
+                    now: now + 1,
+                },
+            )
             .expect("claim")
         else {
             panic!("claimable attempt");
         };
-        eprintln!(
-            "T0F-DIAG C15 row={:?} claimed_count={}",
-            queue
-                .get(attempt.id)
-                .expect("T0F-DIAG C15 read")
-                .as_ref()
-                .map(|record| (
-                    record.state,
-                    record.lease_owner.clone(),
-                    record.attempt_count,
-                    record.executor_model.clone()
-                )),
-            leased.attempt_count
-        );
         queue
             .set_executor_model(
                 attempt.id,

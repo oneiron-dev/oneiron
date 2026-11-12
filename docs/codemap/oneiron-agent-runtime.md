@@ -39,3 +39,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/wasmtime_runtime/wire/reply.rs` | src | s | 1 crate-vis | — | A dispatched call's reply as the guest gets it: its JSON measured, and stored as a result of the run when it… |
 | `src/code_sandbox/wasmtime_runtime/wire/search.rs` | src | s | 1 crate-vis | — | `vault.search`'s reply body (WILL L11-01 S01-2c): the hits, framed as the row's output, and, in an… |
 | `src/lib.rs` | src | s | 1 mod · 1 crate-vis | — | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) |
+| `tests/callable_wait_park.rs` | test | s | — | — | ENGINE CALL SANDBOX-WAIT-PARK-SEMANTICS: a callable whose body finishes after its `wait` was answered with… |
+| `tests/code_mode_wait_park.rs` | test | s | — | — | ENGINE CALL CODE-SANDBOX-WAIT-RESPONSE-FIELD: a code-mode call whose row output holds a park, answered with… |
+| `tests/wait_park/fixture.rs` | test | s | 4 crate-vis | — | The shared fixture of `code_mode_wait_park.rs` and `callable_wait_park.rs` (ENGINE CALL… |

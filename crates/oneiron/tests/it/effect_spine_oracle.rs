@@ -43,8 +43,12 @@ fn test_config() -> VaultConfig {
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
+    open_vault_with_config(test_config())
+}
+
+fn open_vault_with_config(config: VaultConfig) -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), test_config()).unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
     // The host installs this device's keystore after each open and loads the
     // install's signing keys from it (P6c): a topology op's seal is signed
     // with the install's machine key.
@@ -835,7 +839,7 @@ mod seam {
 #[test]
 fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
     let (_dir, vault) = open_send_vault();
-    seam::schedule_send(&vault, "party-Yuki", "email");
+    seam::schedule_send(&vault, "party-yuki", "email");
     // Scheduling alone must not send: zero receipts and zero wire
     // dispatches until the EXECUTOR runs (doc 13 §1/§9.2 — the pipeline is
     // the executor, not a bystander to an immediate send).
@@ -855,38 +859,38 @@ fn es02_dispatch_pipeline_executes_task_and_emits_lineaged_receipt() {
 #[test]
 fn es03_clearing_opt_out_is_human_gated_and_receipted() {
     let (_dir, vault) = open_comm_vault();
-    seam::record_inbound_stop(&vault, "party-Yuki", "email");
+    seam::record_inbound_stop(&vault, "party-yuki", "email");
     seam::run_comm_projector(&vault);
 
-    let outcome = seam::request_opt_out_clear(&vault, "party-Yuki", "email");
+    let outcome = seam::request_opt_out_clear(&vault, "party-yuki", "email");
     assert_eq!(outcome, ClearOptOutOutcome::PendingHumanRuling);
     // fail closed: still opted out, one pending gate row, nothing receipted.
     assert_eq!(
-        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-Yuki", "email"),
+        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-yuki", "email"),
         1
     );
     assert_eq!(seam::count_pending_comm_consent_gates(&vault), 1);
-    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-Yuki"), 0);
+    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-yuki"), 0);
 
     // §4 human-gated means HUMAN (authorization, not just sequencing): an
     // agent principal's approval is REFUSED — nothing clears, the gate
     // stays pending, nothing is receipted.
-    seam::attempt_agent_opt_out_clear_approval(&vault, "party-Yuki", "email");
+    seam::attempt_agent_opt_out_clear_approval(&vault, "party-yuki", "email");
     assert_eq!(
-        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-Yuki", "email"),
+        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-yuki", "email"),
         1
     );
     assert_eq!(seam::count_pending_comm_consent_gates(&vault), 1);
-    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-Yuki"), 0);
+    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-yuki"), 0);
 
-    seam::approve_pending_opt_out_clear(&vault, "party-Yuki", "email");
+    seam::approve_pending_opt_out_clear(&vault, "party-yuki", "email");
     assert_eq!(
-        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-Yuki", "email"),
+        seam::count_active_comm_claims(&vault, "comm.opt_out", "party-yuki", "email"),
         0
     );
     // §4 one-shot: the human approval CONSUMES the pending gate.
     assert_eq!(seam::count_pending_comm_consent_gates(&vault), 0);
-    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-Yuki"), 1);
+    assert_eq!(seam::count_opt_out_clear_receipts(&vault, "party-yuki"), 1);
 }
 
 // ===== ONE-1719 (ES-06) — fan-out estimate-then-approve gate =====
@@ -973,7 +977,7 @@ fn es06_deny_ruling_dispatches_nothing_and_records_denial() {
 // replays frozen bytes instead of minting anything.
 
 mod calendar_invite_fixture {
-    use super::{Vault, open_vault};
+    use super::{Vault, VaultConfig, open_vault_with_config, test_config};
 
     pub(super) const UID: &str = "one-1786-oracle@oneiron.test";
     pub(super) const RECIPIENT: &str = "guest@example.test";
@@ -995,7 +999,13 @@ mod calendar_invite_fixture {
     /// domain, the R7 booking-page standing grant, and the rendered invitation
     /// in the blob store.
     pub(super) fn admitted_vault() -> (tempfile::TempDir, Vault, String) {
-        let (dir, vault) = open_vault();
+        admitted_vault_with_config(test_config())
+    }
+
+    pub(super) fn admitted_vault_with_config(
+        config: VaultConfig,
+    ) -> (tempfile::TempDir, Vault, String) {
+        let (dir, vault) = open_vault_with_config(config);
         let actor = actor_ref();
         vault
             .put_entity(
@@ -1134,7 +1144,10 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
     use calendar_invite_fixture as fixture;
     use oneiron::outbound_intent_ledger::{IntentState, intent_ledger_records};
 
-    let (_dir, vault, blob_ref) = fixture::admitted_vault();
+    let clock = oneiron_store::ports::manual_clock::ManualClock::new(0);
+    let mut config = test_config();
+    config.store_clock = clock.bundle();
+    let (_dir, vault, blob_ref) = fixture::admitted_vault_with_config(config);
     vault
         .memory(fixture::actor_ref(), oneiron::EdgeActorClass::Human)
         .calendar_invite(&fixture::invite(&blob_ref))
@@ -1143,6 +1156,7 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
         uncertain_first: true,
         ..Default::default()
     };
+    clock.set(200);
     assert_eq!(
         vault
             .run_connector_task_executor(&mut sink, 200)
@@ -1161,6 +1175,7 @@ fn calendar_invite_ambiguous_crossing_replays_identical_revision() {
 
     // The transport curve re-arms at 200+60. No new UID, SEQUENCE or method
     // may be minted when that durable attempt resumes.
+    clock.set(261);
     assert_eq!(
         vault
             .run_connector_task_executor(&mut sink, 261)
@@ -1758,6 +1773,7 @@ fn one1891_enrichment_validator_rejects_unattributable_bodies_on_every_door() {
 #[test]
 fn one1891_enrichment_validator_rejects_edge_subjects_on_every_door() {
     let (_dir, vault) = one1891::open_unseeded_vault();
+    vault.ensure_embedded_owner_actor().expect("fixture owner");
     let actor = one1891::put_person(&vault, 0xa2);
     let source = one1891::put_person(&vault, 0xb2);
     let target = one1891::put_person(&vault, 0xb3);

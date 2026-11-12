@@ -1,6 +1,6 @@
 /** Hash-checked external facts. No vault or engine implementation is imported here. */
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, type Stats } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,7 +64,8 @@ export interface BuildManifest {
     readonly bindings: Readonly<Record<string, "real" | "stub">>;
   };
 }
-export interface PlannedTest { readonly id: string; readonly name: string; readonly rows: readonly string[]; readonly source: readonly string[] }
+// estimatedSeconds: the case's own measured child wall, used for dispatch order; absent = an equal share of its file's estimate.
+export interface PlannedTest { readonly id: string; readonly name: string; readonly estimatedSeconds?: number; readonly rows: readonly string[]; readonly source: readonly string[] }
 export interface PlannedFile {
   readonly file: string; readonly area: string; readonly slots: 1 | 2;
   readonly estimatedSeconds: number; readonly tests: readonly PlannedTest[];
@@ -188,31 +189,69 @@ export async function ownerBaseClaimScope(client: PublicHttpClient, ownerRef: st
   throw new FixturePinError("Fresh vault has no readable owner substrate facet");
 }
 
-const verifiedBuilds = new Map<string, Promise<BuildManifest>>();
-export async function loadBuildManifest(profile: Profile): Promise<BuildManifest> {
+interface AssetIdentity { readonly size:number; readonly mtimeMs:number; readonly ino:number; readonly dev:number }
+interface VerifiedAsset extends AssetIdentity { readonly path:string; readonly sha256:string }
+export interface BuildVerification {
+  readonly manifestPath:string; readonly manifestSha256:string; readonly profile:Profile;
+  readonly assets:Readonly<Record<string,VerifiedAsset>>;
+}
+interface VerifiedBuild { readonly build:BuildManifest; readonly verification:BuildVerification }
+function sameAssetIdentity(left:AssetIdentity, right:AssetIdentity): boolean {
+  return left.size === right.size && left.mtimeMs === right.mtimeMs && left.ino === right.ino && left.dev === right.dev;
+}
+function assetIdentity(value:Stats): AssetIdentity {
+  return {size:value.size,mtimeMs:value.mtimeMs,ino:value.ino,dev:value.dev};
+}
+function buildManifestPin(): {path:string;digest:string} {
   const path = process.env.E2E_BUILD_MANIFEST;
   const digest = process.env.E2E_BUILD_MANIFEST_SHA256;
   if (!path || !isAbsolute(path) || !digest) throw new FixturePinError("Set absolute E2E_BUILD_MANIFEST and its E2E_BUILD_MANIFEST_SHA256 from the build lane");
-  const key = JSON.stringify([path, digest, profile]);
+  return {path,digest};
+}
+async function loadBuildVerification(path:string, digest:string, profile:Profile): Promise<BuildVerification | undefined> {
+  if (!process.env.E2E_BUILD_VERIFIED) return;
+  try {
+    const record = JSON.parse(await readFile(process.env.E2E_BUILD_VERIFIED,"utf8")) as BuildVerification | null;
+    if (record?.manifestPath === path && record.manifestSha256 === digest && record.profile === profile) return record;
+  } catch { /* An unavailable record cannot replace full verification. */ }
+}
+const verifiedBuilds = new Map<string, Promise<VerifiedBuild>>();
+export async function loadBuildManifest(profile: Profile): Promise<BuildManifest> {
+  const {path,digest} = buildManifestPin();
+  const key = JSON.stringify([path, digest, profile, process.env.E2E_BUILD_VERIFIED]);
   let verified = verifiedBuilds.get(key);
   if (!verified) {
-    verified = verifyBuildManifest(path, digest, profile);
+    verified = loadBuildVerification(path,digest,profile).then(record => verifyBuildManifest(path,digest,profile,record));
     verifiedBuilds.set(key, verified);
   }
-  return verified;
+  return (await verified).build;
 }
-async function verifyBuildManifest(path: string, digest: string, profile: Profile): Promise<BuildManifest> {
+/** The suite parent always hashes assets itself, regardless of an inherited record or cache. */
+export async function loadBuildManifestWithVerification(profile:Profile): Promise<VerifiedBuild> {
+  const {path,digest} = buildManifestPin();
+  return verifyBuildManifest(path,digest,profile);
+}
+async function verifyBuildManifest(path: string, digest: string, profile: Profile, record?:BuildVerification): Promise<VerifiedBuild> {
   await verifyFile(path, digest);
   const value = JSON.parse(await readFile(path, "utf8")) as BuildManifest;
   if (value.version !== 1 || value.profile !== profile || !/^[a-f0-9]{40}$/.test(value.head) ||
       !value.assets || !Array.isArray(value.capabilities) || !Array.isArray(value.launcher) ||
       !value.environment) throw new FixturePinError("Invalid build manifest");
+  const assets:Record<string,VerifiedAsset> = {};
   for (const [id, asset] of Object.entries(value.assets)) {
     if (!isAbsolute(asset.path) || !asset.source?.uri || !asset.source.revision || !asset.licence || !("expectedFacts" in asset))
       throw new FixturePinError(`Missing binary provenance: ${id}`);
-    await verifyFile(asset.path, asset.sha256);
+    if (!SHA256.test(asset.sha256)) throw new FixturePinError(`Unpinned file: ${asset.path}`);
+    const before = await stat(asset.path);
+    const cached = record?.assets?.[id];
+    if (!(before.isFile() && cached?.path === asset.path && cached.sha256 === asset.sha256 && sameAssetIdentity(before,cached))) {
+      await verifyFile(asset.path, asset.sha256);
+      const after = await stat(asset.path);
+      if (!sameAssetIdentity(before,after)) throw new FixturePinError(`Fixture digest mismatch: ${asset.path}`);
+    }
+    assets[id] = {path:asset.path,sha256:asset.sha256,...assetIdentity(before)};
   }
-  return value;
+  return {build:value,verification:{manifestPath:path,manifestSha256:digest,profile,assets}};
 }
 export function requireAsset(build: BuildManifest, id: string): string {
   const asset = build.assets[id];

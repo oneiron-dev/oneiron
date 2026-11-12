@@ -361,6 +361,7 @@ impl Vault {
                 learned_at,
                 BirthPosition::default(),
                 crate::core_write::CoreWriteLaneRef::Unbound,
+                None,
             )
         })?;
         if let Some(version) = version {
@@ -623,6 +624,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
         producer_position: BirthPosition,
+        claim_id: Option<EntityId>,
     ) -> Result<(BlobArtifactVersion, Option<StagedHold>)> {
         let staged = self.stage_version_slice_in_txn(wtxn, bytes, mint)?;
         let body = staged
@@ -644,6 +646,7 @@ impl Vault {
             None,
             producer_position,
             crate::core_write::CoreWriteLaneRef::Unbound,
+            claim_id,
         )?;
         Ok((version, staged.map(StagedAssetBody::into_hold)))
     }

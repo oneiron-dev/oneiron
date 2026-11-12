@@ -1,0 +1,12 @@
+/* The ring is cut out of whatever it sits on: set --sl-mark-ground to that
+   surface (island by default). */
+.sl-guest-ring {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sl-mark-ground, var(--sl-island));
+  box-shadow: inset 0 0 0 1.4px var(--sl-outside);
+  pointer-events: none;
+}

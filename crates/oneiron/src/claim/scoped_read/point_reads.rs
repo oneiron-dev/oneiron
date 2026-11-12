@@ -227,8 +227,27 @@ impl ScopedRead<'_> {
         &self,
         reads: &[PointRead<'_>],
     ) -> Result<ScopedReadResult<Vec<Option<(ReadRow, Option<RevisionRef>)>>>> {
-        self.read_projected(reads, None, |txn, rows| {
-            rows.into_iter()
+        self.read_revisions_projected(reads, None, |_, rows| Ok::<_, Error>(rows))
+    }
+
+    /// [`Self::read_revisions`] with the caller's projection of each row and
+    /// its live revision in the same snapshot: the revision lookup runs first,
+    /// then `project` sees the rows with their revisions and the open
+    /// transaction, so a view projection labels exactly these rows.
+    /// `vault.revisions.read` projects each admitted row to its entity view
+    /// here, preserving the lane's masking and short refs.
+    pub(crate) fn read_revisions_projected<T, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(
+            &heed::RoTxn<'_>,
+            Vec<Option<(ReadRow, Option<RevisionRef>)>>,
+        ) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_projected(reads, requested, |txn, rows| {
+            let rows = rows
+                .into_iter()
                 .map(|row| {
                     row.map(|row| {
                         let revision = match self.session_view {
@@ -246,7 +265,8 @@ impl ScopedRead<'_> {
                     })
                     .transpose()
                 })
-                .collect::<Result<Vec<_>>>()
+                .collect::<Result<Vec<_>>>()?;
+            project(txn, rows)
         })
     }
 
