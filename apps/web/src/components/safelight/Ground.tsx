@@ -320,7 +320,7 @@ export function Ground() {
               {pastOpen === 'The Hokuei quote' && (
                 <>
                   <div className="cmsg">
-                    <span className="seal seal-human" title="o · Owen">
+                    <span className="seal seal-human" title="o · owen">
                       o
                     </span>
                     <span className="ctext">When is the Hokuei call?</span>
@@ -345,7 +345,7 @@ export function Ground() {
                 .filter((m) => m.scope === 'ask')
                 .map((m, i) => (
                   <div className="cmsg" key={i}>
-                    <span className="seal seal-human" title="o · Owen">
+                    <span className="seal seal-human" title="o · owen">
                       o
                     </span>
                     <span className="ctext">{m.text}</span>
@@ -370,7 +370,7 @@ export function Ground() {
                     <div className="cmsg" key={i}>
                       <span
                         className="seal seal-human"
-                        title="o · Owen · a steer: the run reads it at its next turn"
+                        title="o · owen · a steer: the run reads it at its next turn"
                       >
                         o
                       </span>

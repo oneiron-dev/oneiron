@@ -90,7 +90,7 @@ separate setup/failure/capture/scoring states. No test package is a real model o
 ## Exact remaining qualification inputs
 
 Use the existing interpreter on the owner's MacBook,
-`<workspace>/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python`
+`<host-home>/.cache/uv/environments-v1/380c8dfde949156d/6690cf870a60f2e2/bin/python`
 (CPython 3.13.5 arm64 with mlx/mlx-metal 0.32.2, mlx-lm 0.31.3, mlx-audio
 0.4.7, torch 2.14.0, silero-vad 6.2.1 and onnxruntime 1.30.0; `pyannote.audio`
 and `qwen-asr` are not installed in it). Do not downgrade its packages, and do
