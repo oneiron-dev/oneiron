@@ -44,8 +44,8 @@ use crate::sync::row_birth::ROW_BIRTHS_MAP;
 use crate::sync::schema::ASSET_BODY_REFS_MAP;
 use crate::sync::selector::{HELD_EDIT_CAUSALITY_KEY, HELD_EDIT_CAUSALITY_MAP};
 use crate::sync::source_audiences::SOURCE_AUDIENCES_MAP;
-use crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP;
 use crate::sync::turn_programs::{TURN_PROGRAM_ARMS_MAP, TURN_PROGRAM_WAKES_MAP};
+use crate::sync::typed_body_rows::TYPED_BODY_ROWS_MAP;
 use crate::sync::withdrawn_cutoffs::{
     CarriedCutoff, EPOCH_FLOOR, WITHDRAWN_CUTOFFS_MAP, admit_withdrawn_cutoff_carrier,
     epoch_floor_scope,

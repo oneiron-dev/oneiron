@@ -1,0 +1,17 @@
+{
+  "name": "vault.evals.authoring.execute",
+  "description": "Run one Coach eval-authoring pass now on this host, for the owner or an agent whose own Grant lists this verb; its effects stay the Coach's, and its kept record names the caller.",
+  "input": "crate::skill_optimize::EvalAuthoringExecuteRequest",
+  "output": "crate::skill_optimize::EvalAuthoringExecuteAnswer",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.authoring.execute\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "eval_authoring",
+  "act_class": "unstated"
+}
