@@ -10,4 +10,5 @@ pub mod live_lease;
 pub mod live_run_payer;
 pub mod native_board;
 pub mod resident_pump;
+pub mod siwc_seat;
 pub mod solved_runs;
