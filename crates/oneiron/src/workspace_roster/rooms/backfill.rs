@@ -18,6 +18,13 @@
 //!   one the home witness never admitted, so it is left out as well. A TURN
 //!   whose stored body or DAG parent does not decode gets no row either, and
 //!   the open goes on. Each skip is counted by kind.
+//! - A thread reply is rowed only when the turn it answers keeps a row,
+//!   present or written in the same pass. A reply under an erased or
+//!   skipped reply gets no row, and neither does any reply under it: every
+//!   reader of a room's threads walks `reply_to` through rows, so a row
+//!   naming a turn with no row would break the whole thread. The thread
+//!   above the gap reads as the DAG's own thread read gives it: its live
+//!   prefix.
 //! - A room with a waiting erase is skipped with no marker, and a later
 //!   open retries it (Q3 = A). An archived vault is left as it is.
 //!
@@ -60,6 +67,9 @@ pub(crate) struct RoomTurnBackfill {
     pub(crate) skipped_home_witness: u64,
     /// TURNs whose body or DAG parent does not decode: no row.
     pub(crate) skipped_undecodable: u64,
+    /// Thread replies whose DAG parent keeps no row, such as one under an
+    /// erased reply: no row.
+    pub(crate) skipped_unrowed_parent: u64,
 }
 
 impl RoomTurnBackfill {
@@ -73,6 +83,7 @@ impl RoomTurnBackfill {
         self.skipped_unbound += room.skipped_unbound;
         self.skipped_home_witness += room.skipped_home_witness;
         self.skipped_undecodable += room.skipped_undecodable;
+        self.skipped_unrowed_parent += room.skipped_unrowed_parent;
     }
 }
 
@@ -132,6 +143,7 @@ pub(crate) fn backfill_room_turns_on_open(vault: &Vault) -> Result<RoomTurnBackf
             skipped_unbound = report.skipped_unbound,
             skipped_home_witness = report.skipped_home_witness,
             skipped_undecodable = report.skipped_undecodable,
+            skipped_unrowed_parent = report.skipped_unrowed_parent,
             ms = started.elapsed().as_millis() as u64,
             "room turn backfill"
         );
@@ -140,7 +152,10 @@ pub(crate) fn backfill_room_turns_on_open(vault: &Vault) -> Result<RoomTurnBackf
 }
 
 /// Rows each TURN of `room` that keeps none, then marks `room`, in `txn`.
-/// A room that is gone is left unmarked: it has no TURN to row.
+/// Every row is built first and written once all of them are known, so a
+/// thread reply is written only when the turn it answers keeps a row
+/// ([`replies_under_unrowed_parent`]). A room that is gone is left
+/// unmarked: it has no TURN to row.
 fn backfill_room_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -162,6 +177,7 @@ fn backfill_room_in_txn(
     for row in store.port_edges(txn, &room, EdgeDirection::In, Some(EdgeKind::ChildOf), None)? {
         turns.push(row?.target);
     }
+    let mut built = BTreeMap::new();
     for id in turns {
         if TURNS.contains(store, txn, &id)? {
             report.turns_present += 1;
@@ -185,14 +201,22 @@ fn backfill_room_in_txn(
         };
         match recorded_turn_in(vault, txn, room, id, &body, home)? {
             Ok(turn) => {
-                super::turn_record::put_room_turn_projection_in_txn(vault, txn, &turn)?;
-                report.turns_written += 1;
+                built.insert(id, turn);
             }
             Err(Skip::NoWriter) => report.skipped_no_writer += 1,
             Err(Skip::Unbound) => report.skipped_unbound += 1,
             Err(Skip::HomeWitness) => report.skipped_home_witness += 1,
             Err(Skip::Undecodable) => report.skipped_undecodable += 1,
         }
+    }
+    let unrowed = replies_under_unrowed_parent(vault, txn, &built)?;
+    for (id, turn) in &built {
+        if unrowed.contains(id) {
+            report.skipped_unrowed_parent += 1;
+            continue;
+        }
+        super::turn_record::put_room_turn_projection_in_txn(vault, txn, turn)?;
+        report.turns_written += 1;
     }
     TURN_BACKFILL.put(store, txn, &room, &ROOM_TURN_BACKFILL_VERSION)?;
     report.rooms_completed = 1;
@@ -285,6 +309,51 @@ fn recorded_shape(
 
 /// A TURN's recorded writer, recipients (hex), `reply_to` and `thread_of`.
 type RecordedShape = (EntityId, BTreeSet<String>, Option<String>, Option<String>);
+
+/// The TURNs among `built` whose row would answer a turn that keeps no
+/// row: a thread reply other than its thread's root whose `reply_to` is
+/// neither a present row nor a built row kept itself, and every reply under
+/// such a one. A thread's root answers its anchor, which no reader of its
+/// thread looks up, and a trunk turn answers none, so each of those is
+/// kept. Each chain is walked once; a chain that closes on itself reaches
+/// no kept turn.
+fn replies_under_unrowed_parent(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    built: &BTreeMap<EntityId, RoomTurn>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut kept: BTreeMap<EntityId, bool> = BTreeMap::new();
+    for &start in built.keys() {
+        let mut path = Vec::new();
+        let mut on_path = BTreeSet::new();
+        let mut cursor = start;
+        let keep = loop {
+            if let Some(&known) = kept.get(&cursor) {
+                break known;
+            }
+            let Some(turn) = built.get(&cursor) else {
+                break TURNS.contains(&vault.store, txn, &cursor)?;
+            };
+            if !on_path.insert(cursor) {
+                break false;
+            }
+            path.push(cursor);
+            match (&turn.reply_to, &turn.thread_of) {
+                (Some(parent), Some(anchor)) if parent != anchor => {
+                    cursor = EntityId::from_hex(parent)?;
+                }
+                _ => break true,
+            }
+        };
+        for id in path {
+            kept.insert(id, keep);
+        }
+    }
+    Ok(kept
+        .into_iter()
+        .filter_map(|(id, keep)| (!keep).then_some(id))
+        .collect())
+}
 
 /// Whether `room` is a live Conversation.
 fn live_room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<bool> {
