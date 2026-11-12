@@ -8,6 +8,7 @@ pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
 pub mod checkpoint_registry;
+pub mod claim_facet_birth;
 pub mod coach;
 pub mod code_reply_healer;
 pub mod code_run_answer;
