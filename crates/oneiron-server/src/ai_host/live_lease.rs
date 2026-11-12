@@ -12,11 +12,17 @@
 //! One lease can be lent ([`LeaseLine`], FIX 11747) to the calls of its
 //! entry that run beside its backend, on its meter: each handle books on the
 //! one ledger, so their spend is booked once.
+//!
+//! What a look books is first staged on the scope in a commit of its own
+//! ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]), then drained onto it: a
+//! process that dies, or a booking that fails, after a call settled loses
+//! none of its spend, and the scope's next drain books it once
+//! (`AgentDispatcher::drain_lease_spend`).
 
 use std::sync::{Arc, Mutex};
 
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
-use oneiron::{BudgetGuard, Vault};
+use oneiron::{BudgetGuard, EntityId, Vault};
 
 /// One try's meter, bounded by its spend scope's live room.
 pub(crate) struct LiveLease<'a> {
@@ -28,10 +34,28 @@ pub(crate) struct LiveLease<'a> {
     /// The try's own budget (a step's, shared by its tries): the meter's
     /// limit never rises past it.
     budget_units: u64,
-    /// How much of the meter's spend is on the scope already: the replayed
-    /// tries', which booked their own, then what this try booked since.
-    /// Shared by every handle its [`LeaseLine`] lends.
-    booked: Arc<Mutex<u64>>,
+    /// What the lease made durable on the scope. Shared by every handle its
+    /// [`LeaseLine`] lends.
+    ledger: Arc<LeaseLedger>,
+}
+
+/// What one lease made durable on its scope, shared by every handle of it.
+struct LeaseLedger {
+    /// The key of this lease's staged-spend row on its scope.
+    id: EntityId,
+    /// How much of the meter's spend is durable on the scope, booked or
+    /// staged: the replayed tries', which booked their own, then what this
+    /// lease staged since.
+    staged: Mutex<u64>,
+}
+
+impl LeaseLedger {
+    fn new(staged: u64) -> Arc<Self> {
+        Arc::new(Self {
+            id: EntityId::now(),
+            staged: Mutex::new(staged),
+        })
+    }
 }
 
 /// The vault-free state of one live lease, shared with a code-mode backend so
@@ -42,7 +66,7 @@ pub struct LiveLeaseState {
     scope: Option<SpendScopeId>,
     meter: BudgetGuard,
     budget_units: u64,
-    booked: Arc<Mutex<u64>>,
+    ledger: Arc<LeaseLedger>,
 }
 
 /// A lease without its vault, lent to the calls of one entry that run
@@ -54,7 +78,7 @@ pub(crate) struct LeaseLine {
     scope: SpendScopeId,
     meter: BudgetGuard,
     budget_units: u64,
-    booked: Arc<Mutex<u64>>,
+    ledger: Arc<LeaseLedger>,
 }
 
 impl LeaseLine {
@@ -65,7 +89,7 @@ impl LeaseLine {
             budget_units: meter.read().limit_units,
             scope,
             meter,
-            booked: Arc::default(),
+            ledger: LeaseLedger::new(0),
         }
     }
 
@@ -76,7 +100,7 @@ impl LeaseLine {
             scope: Some(self.scope.clone()),
             meter: self.meter.clone(),
             budget_units: self.budget_units,
-            booked: Arc::clone(&self.booked),
+            ledger: Arc::clone(&self.ledger),
         }
     }
 }
@@ -95,7 +119,7 @@ impl<'a> LiveLease<'a> {
             scope,
             meter,
             budget_units,
-            booked: Arc::new(Mutex::new(booked)),
+            ledger: LeaseLedger::new(booked),
         }
     }
 
@@ -105,7 +129,7 @@ impl<'a> LiveLease<'a> {
             scope: self.scope.clone(),
             meter: self.meter.clone(),
             budget_units: self.budget_units,
-            booked: Arc::clone(&self.booked),
+            ledger: Arc::clone(&self.ledger),
         }
     }
 
@@ -116,7 +140,7 @@ impl<'a> LiveLease<'a> {
             scope: state.scope,
             meter: state.meter,
             budget_units: state.budget_units,
-            booked: state.booked,
+            ledger: state.ledger,
         }
     }
 
@@ -125,24 +149,34 @@ impl<'a> LiveLease<'a> {
     /// left now, never past the step's own budget. Asked before each call
     /// is admitted: a scope its siblings spent down refuses the next
     /// admission as the meter's own exhaustion, and an admitted call goes
-    /// on. A booking or read that fails leaves the limit, and what is
-    /// unbooked, as they were: the next look or the try's end books it.
+    /// on. A stage, booking or read that fails leaves the limit as it was:
+    /// what is staged books at the scope's next drain, and what the stage
+    /// missed at the next look or the try's end.
     pub(crate) fn book_and_revise(&self) {
+        if let Err(error) = self.look() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                scope = self.scope.as_ref().map(SpendScopeId::as_str),
+                "a spend lease's settled spend was not staged"
+            );
+        }
+    }
+
+    fn look(&self) -> oneiron::Result<()> {
         let Some(scope) = &self.scope else {
-            return;
+            return Ok(());
         };
-        let mut booked = self.booked.lock().expect("step lease mutex poisoned");
+        let mut staged = self
+            .ledger
+            .staged
+            .lock()
+            .expect("step lease mutex poisoned");
         let line = self.meter.read();
-        let unbooked = line.used_units.saturating_sub(*booked);
         let dispatcher = AgentDispatcher::new(self.vault);
-        let available = if unbooked == 0 {
-            dispatcher.available_units(scope)
-        } else {
-            dispatcher.record_guard_spend(scope, unbooked).map(|read| {
-                *booked = line.used_units;
-                read.available_units
-            })
-        };
+        self.stage(&dispatcher, scope, &mut staged, line.used_units)?;
+        let available = dispatcher
+            .drain_lease_spend(scope)
+            .and_then(|_| dispatcher.available_units(scope));
         match available {
             Ok(available) => {
                 let limit = self
@@ -155,22 +189,61 @@ impl<'a> LiveLease<'a> {
             Err(error) => tracing::warn!(
                 kind = ?error.kind(),
                 scope = scope.as_str(),
-                unbooked,
                 "a spend lease was not read live"
             ),
         }
+        Ok(())
     }
 
     /// Books on the scope what the try spent and no look booked, at the
-    /// try's end, whatever its calls answered.
+    /// try's end, whatever its calls answered. It is staged first, so a
+    /// booking that fails here still books at the scope's next drain.
     pub(crate) fn book_rest(&self) -> oneiron::Result<()> {
         let Some(scope) = &self.scope else {
             return Ok(());
         };
-        let mut booked = self.booked.lock().expect("step lease mutex poisoned");
+        let mut staged = self
+            .ledger
+            .staged
+            .lock()
+            .expect("step lease mutex poisoned");
         let used = self.meter.read().used_units;
-        AgentDispatcher::new(self.vault).record_guard_spend(scope, used.saturating_sub(*booked))?;
-        *booked = used;
+        let dispatcher = AgentDispatcher::new(self.vault);
+        self.stage(&dispatcher, scope, &mut staged, used)?;
+        dispatcher.drain_lease_spend(scope)?;
+        Ok(())
+    }
+
+    /// A look's first commit alone, the stage, for the integration test
+    /// doors: a lease whose process dies right after it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn stage_only(&self) -> oneiron::Result<()> {
+        let Some(scope) = &self.scope else {
+            return Ok(());
+        };
+        let mut staged = self
+            .ledger
+            .staged
+            .lock()
+            .expect("step lease mutex poisoned");
+        let used = self.meter.read().used_units;
+        self.stage(&AgentDispatcher::new(self.vault), scope, &mut staged, used)
+    }
+
+    /// Stages on `scope` what the meter spent past `staged`, in its own
+    /// commit, and only then counts it staged.
+    fn stage(
+        &self,
+        dispatcher: &AgentDispatcher<'_>,
+        scope: &SpendScopeId,
+        staged: &mut u64,
+        used: u64,
+    ) -> oneiron::Result<()> {
+        let unstaged = used.saturating_sub(*staged);
+        if unstaged > 0 {
+            dispatcher.stage_lease_spend(scope, self.ledger.id, unstaged)?;
+            *staged = used;
+        }
         Ok(())
     }
 }
