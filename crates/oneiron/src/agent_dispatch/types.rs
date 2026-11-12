@@ -276,6 +276,11 @@ pub struct AgentSpawnContext {
     /// frozen origin, including Unknown; this value cannot replace it.
     /// None means no fact was supplied for a new root, not on-device.
     pub caller_origin: Option<super::CallerOrigin>,
+    /// SPAWN-KNOB: the powers a spawning parent asks for its child. The
+    /// child is born with the parent's powers met with its agent's root
+    /// grant and this request; asking a power above the parent's refuses.
+    /// `None` asks nothing narrower. Ignored for a root.
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
 }
 
 impl AgentSpawnContext {

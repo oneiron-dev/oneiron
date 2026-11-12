@@ -11,10 +11,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod erase;
+mod fork;
 mod language_server;
 mod run;
 pub use erase::{collect_after_delete, collect_after_sweep, collect_erased_views};
+pub(crate) use fork::{
+    VIEW_FORK_FILES, VIEW_FORK_REVISIONS, ViewForkFile, ViewForkOp, erase_view_fork_actor_in_txn,
+    view_fork_copies_lock, view_fork_files_in_txn, view_fork_revision_in_txn,
+};
 pub use language_server::{LanguageServer, SharedLanguageServer, StdioLanguageServer};
+#[cfg(oneiron_test_support)]
+pub(crate) use run::put_view_receipt_in_txn;
 pub(crate) use run::{repo_view_receipts_in_txn, view_receipt_in_txn};
 
 /// One materialized view's receipt, keyed by view id.
@@ -159,6 +166,39 @@ impl<'a> CodeViewSet<'a> {
             return Err(Error::InvalidClaimBody("unknown view"));
         }
         Ok(self.root.join("views").join(id.to_hex()))
+    }
+
+    /// Replaces view `id`'s copy of `path` with `bytes` (row 6
+    /// WORKING-VIEW-EDIT): a new private read-only inode, written whole
+    /// beside the view directory and renamed over the copy, so a reader sees
+    /// the old copy or the new one, never part of either. A root, parent or
+    /// copy that is no plain directory or file refuses, as
+    /// [`read_view_file`] does.
+    pub(crate) fn replace_view_file(&self, id: EntityId, path: &str, bytes: &[u8]) -> Result<()> {
+        use std::io::Write;
+        let target = view_file_target(&self.view_path(id)?, path)?;
+        let staged = self.root.join("views").join(format!(
+            ".{}.{}.edit",
+            id.to_hex(),
+            EntityId::now().to_hex()
+        ));
+        let written = (|| -> Result<()> {
+            let mut output = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&staged)?;
+            output.write_all(bytes)?;
+            output.sync_all()?;
+            let mut permissions = output.metadata()?.permissions();
+            permissions.set_readonly(true);
+            output.set_permissions(permissions)?;
+            std::fs::rename(&staged, &target)?;
+            Ok(())
+        })();
+        if written.is_err() {
+            let _ = std::fs::remove_file(&staged);
+        }
+        written
     }
     pub fn build(
         &self,
@@ -369,6 +409,12 @@ fn verify_view_inputs(root: &Path, receipt: &ViewReceipt) -> Result<()> {
 }
 
 pub(crate) fn read_view_file(root: &Path, path: &str) -> Result<Vec<u8>> {
+    Ok(std::fs::read(view_file_target(root, path)?)?)
+}
+
+/// The view file `path` under `root`, once its root and every parent are
+/// plain directories and it is a plain file: never a link out of the view.
+fn view_file_target(root: &Path, path: &str) -> Result<PathBuf> {
     relative(path)?;
     if !std::fs::symlink_metadata(root)?.is_dir() {
         return Err(Error::CorruptedIndex("view root was replaced"));
@@ -385,7 +431,7 @@ pub(crate) fn read_view_file(root: &Path, path: &str) -> Result<Vec<u8>> {
     if !std::fs::symlink_metadata(&target)?.is_file() {
         return Err(Error::CorruptedIndex("view file was replaced"));
     }
-    Ok(std::fs::read(target)?)
+    Ok(target)
 }
 
 /// A view path, a Git path's text (FIX 21326): a name outside UTF-8 holds its

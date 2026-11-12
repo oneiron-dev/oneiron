@@ -260,7 +260,7 @@ async fn same_key_and_body_are_isolated_by_principal() {
     )
     .await;
 
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         store.store.vault.clone(),
         SyncServerConfig {
             auth_secret: Some("secret".into()),
@@ -353,7 +353,7 @@ async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
     )
     .await;
 
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         store.store.vault.clone(),
         SyncServerConfig {
             auth_secret: Some("secret".into()),

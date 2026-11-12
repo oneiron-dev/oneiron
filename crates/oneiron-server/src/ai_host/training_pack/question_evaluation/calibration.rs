@@ -25,7 +25,7 @@ fn sigmoid(margin: f64) -> f64 {
     }
 }
 
-pub(super) fn yes_probability(logits: [f64; 2], temperature: f64) -> f64 {
+pub(crate) fn yes_probability(logits: [f64; 2], temperature: f64) -> f64 {
     sigmoid((logits[1] - logits[0]) / temperature)
 }
 

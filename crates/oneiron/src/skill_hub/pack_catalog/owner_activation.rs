@@ -54,6 +54,7 @@ impl Vault {
             {
                 return Err(invalid("the Candidate changed"));
             }
+            let agent_author = self.candidate_agent_author_in_txn(&*txn, &candidate)?;
             let publisher = match self.hook_author_in_txn(&*txn, &candidate)? {
                 HookAuthor::ForeignActor {
                     identity,
@@ -82,6 +83,7 @@ impl Vault {
                     source_id,
                     hub: &hub,
                     publisher: &candidate.publisher,
+                    agent_author,
                     foreign: publisher.as_ref(),
                     verdict: PackFitVerdict {
                         fits: true,

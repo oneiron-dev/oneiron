@@ -107,6 +107,10 @@ pub struct ConsentRegistryAgentGrant {
     /// when it names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallet_ref: Option<crate::federation::WalletRef>,
+    /// The one owner working view, and its account, the grant edits alone
+    /// (row 6 WORKING-VIEW-EDIT); absent on a grant bound to none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_view_bounds: Option<crate::federation::WorkingViewEditBounds>,
     /// Whether it confers now: unexpired, with `read` among its verbs (or
     /// admitted by a class it names) and no empty world, band, audience or
     /// sensitivity axis.
@@ -339,6 +343,7 @@ impl ConsentRegistryRow {
                 repo_bounds: grant.repo_bounds.clone(),
                 verb_classes: grant.verb_classes.clone(),
                 wallet_ref: grant.wallet_ref.clone(),
+                working_view_bounds: grant.working_view_bounds,
                 confers: grant.confers_with_classes_at(now, classes),
             },
             if standing.stands_at(now) {

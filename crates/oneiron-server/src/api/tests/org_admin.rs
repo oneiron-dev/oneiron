@@ -46,6 +46,7 @@ async fn org_admin_routes_render_only_setup_powers_and_refuse_excluded_operation
                 actor_class: Some("human".into()),
                 org_ref: Some(org.to_hex()),
                 write_facet: None,
+                comm: None,
             },
         )
         .unwrap();

@@ -64,6 +64,10 @@ pub struct SyncClient {
     /// A peer session binds the socket's actor, never the NOTE authority, so
     /// this stays false on one (FIX 4748).
     pub(crate) note_session_bound: bool,
+    /// The stamp on the answer to this connection's NOTE session bind: the
+    /// bind's call receipt where the far end recorded it. `None` until the
+    /// bind is answered on this connection.
+    pub(crate) note_bind_receipt: Option<super::note_session::BindReceipt>,
     /// FIX 11111: the main socket already logged that it withholds this
     /// machine's credentials from a cleartext server.
     pub(crate) cleartext_withhold_logged: bool,
@@ -233,6 +237,7 @@ impl SyncClient {
         let document_updates = manager.documents().subscribe();
         let mut client = Self {
             note_session_bound: false,
+            note_bind_receipt: None,
             cleartext_withhold_logged: false,
             document_updates,
             document_retries: Mutex::default(),
@@ -281,6 +286,12 @@ impl SyncClient {
 
     pub fn status(&self) -> &SyncStatus {
         &self.status
+    }
+
+    /// The stamp of the home's answer to this connection's NOTE session
+    /// bind, once the home has answered it.
+    pub fn note_bind_receipt(&self) -> Option<&super::note_session::BindReceipt> {
+        self.note_bind_receipt.as_ref()
     }
 
     /// This device's stable CRDT client id (`m:client_id`).

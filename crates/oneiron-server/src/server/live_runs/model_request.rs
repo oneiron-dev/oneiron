@@ -63,6 +63,13 @@ impl HeldLiveRun {
         self.entry.leased.id
     }
 
+    /// Whether the run's model calls must read a payer, as its steps' do
+    /// (LIVE-RUN-PAYER-REQUIRED): its leased try works in a room, or is a
+    /// step of a member's bound run.
+    pub(crate) fn payer_required(&self, vault: &oneiron::Vault) -> oneiron::Result<bool> {
+        crate::ai_host::payer_funding::leased_requires_payer(vault, &self.entry.leased)
+    }
+
     /// Whether this exact attachment still stands for `credential`, as a
     /// check a whole call keeps asking: the entry's lease, the binding, the
     /// credential's read key, and the credential itself, unexpired and
@@ -109,7 +116,7 @@ impl HeldLiveRun {
         let (guard, payer, state) = match self.entry.spend_scope.as_ref() {
             Some(scope) => {
                 // A failed scoped line never falls back to the host's line.
-                let meter = ScopeMeter::open(&vault, scope).map_err(|_| {
+                let meter = ScopeMeter::open(&vault, &self.entry.leased, scope).map_err(|_| {
                     MemoryError::bad_request("the attached run's spend line did not open")
                 })?;
                 let state = meter.lease.on(&vault).state();
