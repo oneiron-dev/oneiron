@@ -663,6 +663,20 @@ interface Retrieval04Pack extends ContextPackReply {
     readonly candidates_considered: number; readonly entities_hydrated: number;
     readonly neighbors_hydrated: number; readonly claims_suppressed: number;
   };
+  readonly l2_base?: { readonly content_hash: string; readonly body: string } | null;
+}
+interface Retrieval04L2Row {
+  readonly id: string; readonly subj: string; readonly pred: string | null;
+  readonly val: unknown; readonly world: string | null;
+}
+// A pack serves each claim about an L2 subject (the vault owner, and the
+// reader's own PERSON) once, as an l2_base row, and drops it from results and
+// neighbors (serialize/pack_preparation.rs prepare_entities skips
+// l2_base.evidence_ids). The visible stats are set before that cut
+// (api/context_pack/response_limits.rs scrub_context_pack_visible_stats), so
+// they count the served l2_base rows as well.
+function retrieval04L2Rows(pack: Retrieval04Pack): Retrieval04L2Row[] {
+  return pack.l2_base ? JSON.parse(pack.l2_base.body) as Retrieval04L2Row[] : [];
 }
 interface Retrieval04QueryPage {
   readonly items: { readonly id: string }[];
@@ -755,7 +769,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
           );
         }
         throw new Error(
-          `RETRIEVAL-04 ENGINE DEFECT 2026-11-11: owner ${label} Public user_stated fixture did not pass claim()'s auto/approved landing/readback guard; sensitivity-stamped writes are parked Proposed by requested_approval; world=${claimScope.world_id}; ${errorText(error)}`,
+          `RETRIEVAL-04 owner ${label} Public user_stated fixture did not pass claim()'s auto/approved landing/readback guard (FIX-LIST [CLAIM-SENSITIVITY-STAMP-FORCES-PROPOSED] was fixed by #7269); world=${claimScope.world_id}; ${errorText(error)}`,
           { cause: error },
         );
       }
@@ -890,23 +904,52 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     const packInput = { query: graphToken, limit: 20, hydrate: true, include_edges: true,
       edge_hop: 1, max_neighbors: 20, view: "full", budget: { token_budget: 8192 },
       filter: { include_stale: true } };
+    // Both fixture claims are about the owner, an L2 subject of every pack
+    // here, so a pack serves them as l2_base rows, not as results or neighbors.
+    const packShape = (reply: Retrieval04Pack, rows: readonly Retrieval04L2Row[]) => JSON.stringify({
+      results: reply.results.map(row => row.id), neighbors: reply.neighbors.map(row => row.id),
+      l2_rows: rows.map(row => ({ id: row.id, pred: row.pred, world: row.world,
+        matches_query: typeof row.val === "string" && row.val.includes(graphToken) })),
+      stats: reply.stats,
+    });
     async function retrieval04CheckPacks() {
       const ownerPack = await engine.client.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
       expect(ownerPack.status).toBe(200);
-      expect(ownerPack.body.results.map(row => row.id)).toContain(readable.id);
-      expect(ownerPack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
-      expect(ownerPack.body.neighbors.map(row => row.id)).toContain(hidden.id);
+      const ownerL2 = retrieval04L2Rows(ownerPack.body);
+      try {
+        // Control: the owner's pack reaches the TASK anchor and both claims.
+        expect(ownerPack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
+        expect(ownerL2.map(row => row.val)).toContain(readableText);
+        expect(ownerL2.some(row => row.val === hiddenText)
+          || ownerPack.body.neighbors.some(row => row.id === hidden.id)).toBe(true);
+      } catch (error) {
+        throw new Error(`RETRIEVAL-04 owner context-pack control: ${errorText(error)}; pack=${packShape(ownerPack.body, ownerL2)}`,
+          { cause: error });
+      }
       const pack = await reader.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
       expect(pack.status).toBe(200);
-      expect(pack.body.results.map(row => row.id)).toContain(readable.id);
-      expect(pack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
-      expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
-      retrieval04Receipt(pack.body.narrowing);
-      retrieval04Absent(pack.body, forbidden);
-      expect(pack.body.stats.claims_suppressed).toBe(0);
-      expect(pack.body.stats.candidates_considered).toBe(pack.body.results.length);
-      expect(pack.body.stats.entities_hydrated).toBe(pack.body.results.length);
-      expect(pack.body.stats.neighbors_hydrated).toBe(pack.body.neighbors.length);
+      const readerL2 = retrieval04L2Rows(pack.body);
+      try {
+        expect(pack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
+        expect(readerL2.map(row => row.val)).toContain(readableText);
+        expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
+        retrieval04Receipt(pack.body.narrowing);
+        retrieval04Absent(pack.body, forbidden);
+        // Honest counts: every counted row is one the reader was served, as a
+        // result, a neighbor or an l2_base row; the hidden claim is never one.
+        const servedQueryRows = readerL2.filter(row => typeof row.val === "string" && row.val.includes(graphToken)).length;
+        expect(servedQueryRows).toBe(1);
+        expect(pack.body.stats.claims_suppressed).toBe(0);
+        for (const counted of [pack.body.stats.candidates_considered, pack.body.stats.entities_hydrated]) {
+          expect(counted).toBeGreaterThanOrEqual(pack.body.results.length + servedQueryRows);
+          expect(counted).toBeLessThanOrEqual(pack.body.results.length + readerL2.length);
+        }
+        expect(pack.body.stats.neighbors_hydrated).toBeGreaterThanOrEqual(pack.body.neighbors.length);
+        expect(pack.body.stats.neighbors_hydrated).toBeLessThanOrEqual(pack.body.neighbors.length + readerL2.length);
+      } catch (error) {
+        throw new Error(`RETRIEVAL-04 reader context-pack: ${errorText(error)}; pack=${packShape(pack.body, readerL2)}`,
+          { cause: error });
+      }
       return { ownerPack, pack };
     }
     const { ownerPack, pack } = await retrieval04CheckPacks();
