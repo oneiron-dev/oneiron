@@ -232,7 +232,10 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
 async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
     let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1704_0091);
-    let facet_a = seeded_test_entity_id(0x1704_0092);
+    // Facet A is the vault default facet: a bare TURN is born in it, and a
+    // row's facet stamp is fixed at birth (d2423e39bbc), so no later edge
+    // can move it into another facet.
+    let facet_a = server.vault.default_facet().expect("default facet");
     let facet_b = seeded_test_entity_id(0x1704_0093);
     let world_a = seeded_test_entity_id(0x1704_0094);
     let world_b = seeded_test_entity_id(0x1704_0095);
@@ -275,28 +278,7 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             b"facet-a row",
         )
         .expect("seed a facet-scoped row");
-    // ONE-1645's write-time `FacetOf` table admits CLAIM|TURN|EVENT -> FACET
-    // only, and reads BOTH endpoint types from STORED rows: an endpoint with no
-    // entity row is unknowable-typed and fails closed exactly like a wrong one.
-    // The facet this scope names must therefore be an established FACET fact
-    // before anything stamps it.
-    server
-        .vault
-        .put_entity(
-            &facet_a,
-            oneiron::registry::ENTITY_TYPE_FACET,
-            oneiron::TimeRange {
-                start: 100,
-                end: 100,
-            },
-            101,
-            b"facet a",
-        )
-        .expect("seed the facet the edge points at");
-    server
-        .vault
-        .put_edge(&owned, oneiron::EdgeKind::FacetOf, &facet_a, 1.0)
-        .expect("seed the facet edge");
+    // `owned` was born in the vault default facet, which is facet A above.
 
     // Two CLAIM rows, one in each world.
     let in_world = seeded_test_entity_id(0x1704_0097);

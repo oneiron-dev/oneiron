@@ -1008,6 +1008,9 @@ pub(super) fn seed_world_claim(
     )
     .unwrap();
     body.world = Some(world);
+    // The subject has no stored row, so no substrate FACET of its own, and a
+    // CLAIM birth needs a stored one: the claim takes the vault's default facet.
+    body.scope_facet = server.vault.default_facet().expect("default facet");
     server
         .vault
         .put_claim(
