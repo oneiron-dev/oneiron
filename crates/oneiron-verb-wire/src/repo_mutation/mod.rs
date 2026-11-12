@@ -1,3 +1,4 @@
+pub(crate) use oneiron_store::git_wire::bundle_tree::BundleTreeEdit;
 #[allow(unused_imports)]
 pub(crate) use oneiron_store::git_wire::bundle_tree::BundleTreeEdit as ReceivedTreeEdit;
 pub use oneiron_store::repo_mutation_record::REPO_MUTATION_ALLOWED_OPERATION_KINDS;

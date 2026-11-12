@@ -7,7 +7,6 @@ use super::resolution::{ProjectResolution, ProjectSeal};
 use super::*;
 use crate::authority::{AuthorityFold, CapabilitySlip};
 use crate::entity_id::derived_domains::PROJECT_REVISION;
-use crate::side_table::{FixedSideKey, SideKey};
 use crate::store::Store;
 use std::collections::BTreeMap;
 

@@ -2,7 +2,7 @@
 use crate::build_cache::{ActionResult, BuildAction, BuildCache, BuildCacheResult, CachedBuildLeg};
 use crate::codebase::CodebaseSnapshotMount;
 use crate::error::{Error, Result};
-use crate::git_wire::{git_path_bytes, git_path_os_str, git_path_text_of_os};
+use crate::git_wire::{git_path_os_str, git_path_text_of_os};
 use crate::side_table::{self, LegacyJson, Named, SideTable};
 use crate::store::checkout_task::CheckoutTaskClass;
 use crate::{EntityId, Vault};

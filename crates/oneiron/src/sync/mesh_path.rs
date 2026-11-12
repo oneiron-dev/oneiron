@@ -9,8 +9,6 @@
 //! synced. A write drops the receipts older than
 //! [`MESH_PATH_RECEIPT_RETAIN_MS`].
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};

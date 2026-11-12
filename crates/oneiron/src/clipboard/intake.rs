@@ -1,5 +1,4 @@
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use crate::claim::decode_claim_body;
 use crate::consent::AuthenticatedOwner;

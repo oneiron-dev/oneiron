@@ -7,8 +7,6 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::source_audience;

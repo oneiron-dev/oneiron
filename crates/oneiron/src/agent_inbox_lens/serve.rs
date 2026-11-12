@@ -4,7 +4,6 @@ use super::{AgentInboxItemKind, AgentInboxLensItem, AgentInboxLensQuery, InboxIm
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::agent_inbox_lens::serve::{

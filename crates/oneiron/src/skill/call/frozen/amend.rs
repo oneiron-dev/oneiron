@@ -7,7 +7,6 @@
 //! kept cases stay as they are.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
 
 use super::super::invalid;
 use super::{CASES, CaseCaller, FrozenCall, erase, index};

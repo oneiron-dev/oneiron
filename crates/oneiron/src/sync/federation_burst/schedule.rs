@@ -8,15 +8,11 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use serde::{Deserialize, Serialize};
-
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::{Error, Result, Vault};
 
-#[doc(hidden)]
-use oneiron_verb_wire::sync::federation_burst::schedule::DAY;
 #[doc(hidden)]
 pub use oneiron_verb_wire::sync::federation_burst::schedule::{
     FACET_STAMP_WAIT_SECS, FEDERATION_BURST_WAIT_SECS, MAINTENANCE_INGEST_WAIT_SECS,

@@ -23,8 +23,6 @@ use crate::store::attempt_inputs::AttemptInterventionKind;
 use crate::store::attempt_inputs::ClaimAttempt;
 use crate::store::attempt_inputs::EnqueueAttempt;
 use crate::store::attempt_result::AttemptResultRef;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
 /// The kind of an apply's root row.
 pub const SHAPE_APPLY_ATTEMPT_KIND: &str = "vault_shape.apply";

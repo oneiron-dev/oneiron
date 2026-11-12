@@ -5,7 +5,6 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
-use serde::{Deserialize, Serialize};
 
 const PURPOSE: SideTable<String, SummaryPurpose, Named> =
     SideTable::new(&side_table::SCOPE_SUMMARY_PURPOSE);

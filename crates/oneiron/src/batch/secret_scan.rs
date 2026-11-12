@@ -17,8 +17,7 @@ use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
     ContainerReader, RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container,
-    is_sealed, live_content_hit, masked_copy, scan_text_content, served_masked_copy,
-    tree_rebuilt_copy,
+    is_sealed, scan_text_content,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,

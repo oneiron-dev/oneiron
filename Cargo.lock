@@ -9085,7 +9085,6 @@ dependencies = [
 name = "oneiron-verb-wire"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
  "loro",
@@ -9108,7 +9107,6 @@ dependencies = [
  "oneiron-wake-contract",
  "oneiron-web-fetch",
  "rmp-serde",
- "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",

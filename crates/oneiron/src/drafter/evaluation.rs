@@ -70,10 +70,6 @@ pub use oneiron_verb_wire::drafter::evaluation::{
     DrafterSpeedMetric, DrafterSpeedOutcome, DrafterSpeedStatistic, DrafterSpeedVerdict,
     DrafterTieEvidence, DrafterTokenIdentity, DrafterUnknownReason, compare_speed,
 };
-#[doc(hidden)]
-use oneiron_verb_wire::drafter::evaluation::{
-    MICROS_PER_SECOND, compare_metric, mean_of, median, outcome, pooled, runs_of,
-};
 
 const EVALUATIONS: SideTable<EntityId, DrafterEvaluation, Named> =
     SideTable::new(&side_table::DRAFTER_EVALUATION);

@@ -19,7 +19,6 @@ use crate::error::ClaimError;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::workspace_roster::join_consent::person_of_actor_in_txn;
 use crate::write_envelope::WriteActor;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::rooms::pins::{

@@ -11,7 +11,6 @@
 //! read; any other is absent.
 
 use base64::Engine as _;
-use serde::{Deserialize, Serialize};
 
 use super::checkpoint_read::owner_read_sources;
 use super::store::{RESULT_REPLY_INLINE_BYTES, clean_for_context, reply_output_path};

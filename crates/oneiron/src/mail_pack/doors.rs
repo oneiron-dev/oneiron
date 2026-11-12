@@ -15,14 +15,12 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-
 use super::credential::{CredentialHolder, credential_refusal_in};
 use super::pack::require_pack_active_in;
 use super::source::{
-    CalendarDetailSetting, MAX_OWN_ADDRESSES, MailCopySetting, MailProvider,
-    MailProviderDeleteSetting, MailSourceKind, MailSourceRow, MailSourceStatus, MailSourceView,
-    SOURCE_INDEX, SOURCES, own_address_set, source_identity_key, valid_field,
+    CalendarDetailSetting, MAX_OWN_ADDRESSES, MailCopySetting, MailProvider, MailSourceKind,
+    MailSourceRow, MailSourceStatus, MailSourceView, SOURCE_INDEX, SOURCES, own_address_set,
+    source_identity_key, valid_field,
 };
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::memory::{Memory, MemoryError, MemoryResult};

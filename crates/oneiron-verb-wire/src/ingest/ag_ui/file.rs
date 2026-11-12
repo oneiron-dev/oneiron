@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::ingest::ag_ui::observations::AgUiCustomMapping;
-use rmpv::Value as Msgpack;
 use serde::Deserialize;
 use serde::Serialize;
 

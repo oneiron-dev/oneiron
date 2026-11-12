@@ -2,9 +2,7 @@
 //! CALL P1): the opaque placeholder's bytes, the reply descriptor beside a
 //! projected file, and the proof a real-byte file reveal would carry.
 
-use serde::{Deserialize, Serialize};
-
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::secret_custody::RepoFileRevealDelivery;
@@ -14,8 +12,6 @@ use crate::secret_custody::RepoFileRevealDelivery;
 /// never a raw prefix, an empty file or a rewritten original.
 pub(crate) const REPO_OPAQUE_FILE_BYTES: &[u8] = b"[sealed file: reveal required]\n";
 
-#[doc(hidden)]
-use oneiron_verb_wire::origin::secret_projection::types::REPO_PROJECTION_WAY_OUT;
 #[doc(hidden)]
 pub use oneiron_verb_wire::origin::secret_projection::types::{
     RepoFileProjectionKind, RepoFileProjectionView,

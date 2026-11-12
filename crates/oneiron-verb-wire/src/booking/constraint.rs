@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 use std::fmt;
 
 /// Wire version of [`ConstraintObject`]. A payload carrying any other version

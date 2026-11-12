@@ -8,15 +8,10 @@
 //! enumerated files; no blob content or file list is copied here. Both
 //! claims have deterministic ids, so a repeat finds the same row and a
 //! different body under that id is corruption, never an overwrite.
-use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::CodeTreeBlob;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
-use crate::code_document::CodeDocumentFrontier;
+use crate::claim::{ClaimBody, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::critic::LensCatalog;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};

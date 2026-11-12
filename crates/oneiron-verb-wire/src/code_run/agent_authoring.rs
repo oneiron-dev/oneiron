@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 
 /// `vault.agents.put`'s row input: the new definition's id and the guest's
 /// draft, which [`parse_agent_put_request`] reads.

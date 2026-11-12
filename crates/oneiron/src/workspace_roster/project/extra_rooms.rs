@@ -7,8 +7,6 @@
 //! Linking or unlinking never widens or narrows any room's audience and
 //! writes no membership, role, audience, join or scope row.
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::{Error, Result};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::workspace_roster::ProjectRoomPlace;

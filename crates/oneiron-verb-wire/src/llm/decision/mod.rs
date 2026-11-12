@@ -1,4 +1,3 @@
-use base64::Engine as _;
 pub use oneiron_store::model_decision::AnswerActor;
 pub use oneiron_store::model_decision::HostRuleRef;
 pub use oneiron_store::model_decision::cut_text;

@@ -27,7 +27,7 @@ use crate::code_sandbox::SandboxCredentialHandle;
 use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::llm::{RetryableLlmError, SpentKind, limit};
+use crate::llm::limit;
 
 use super::connector::{ByoaConnectorSpec, ByoaDispatchOutcome, CliSandboxSpec};
 use super::error::{

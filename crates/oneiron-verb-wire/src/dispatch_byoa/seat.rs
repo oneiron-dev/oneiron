@@ -5,7 +5,6 @@ use oneiron_model::llm::RetryableLlmError;
 use oneiron_model::llm::SpentKind;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 
 /// The approval OpenAI's hosted-login bounds name.
 pub const OPENAI_HOSTED_PLAN_APPROVAL: &str =

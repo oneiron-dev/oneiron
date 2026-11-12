@@ -64,8 +64,6 @@ pub struct EvalCohort {
 }
 
 #[doc(hidden)]
-use oneiron_verb_wire::skill_optimize::eval_set::cohort::StoredCohortRetirement;
-#[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::eval_set::cohort::{
     CohortRetirement, EvalCohortRetirementAuthor, EvalExposure, EvalExposureCounts,
     EvalExposureKind,

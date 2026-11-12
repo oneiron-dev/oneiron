@@ -106,8 +106,6 @@ pub const COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET: &str = "coach.feedback_triage_s
 pub const COACH_FEEDBACK_TRIAGE_PARK_OWNER: &str =
     crate::dreamer_runner::FEEDBACK_TRIAGE_PARK_OWNER;
 #[doc(hidden)]
-use oneiron_verb_wire::feedback::triage::DEFAULT_ENQUEUE_ON_INTAKE;
-#[doc(hidden)]
 pub use oneiron_verb_wire::feedback::triage::{
     FEEDBACK_TRIAGE_INBOX_SOURCE, FeedbackTriageBinding, FeedbackTriageContinuation,
     FeedbackTriageResult,

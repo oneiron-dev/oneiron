@@ -1,7 +1,5 @@
 //! ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject.
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 

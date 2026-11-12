@@ -8,7 +8,6 @@ use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::{EntityId, Result, Vault};
-use serde::{Deserialize, Serialize};
 
 // The citation vocabulary is the claim's own (FIX 904); promotion names it
 // from there, as its writers and the Gate's reference read always have.

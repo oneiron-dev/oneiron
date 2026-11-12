@@ -3,7 +3,6 @@
 
 pub use oneiron_store::deletion::coop_delivery::types::*;
 
-use super::super::coop_reply::CooperativeDeletionReplyOutcome;
 use super::CooperativeDeletionDeliveryStatus;
 use crate::deletion::{LegalHold, LegalHoldKind};
 use crate::store::legal_hold as hold_store;

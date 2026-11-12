@@ -8,9 +8,7 @@
 //! keeps everything else it was asked with, and its standing is judged
 //! again on the new slip whenever it is judged.
 
-use serde::{Deserialize, Serialize};
-
-use super::{TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority};
+use super::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt, TurnActionAuthority};
 use crate::Error;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};

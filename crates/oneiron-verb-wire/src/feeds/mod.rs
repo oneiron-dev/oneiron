@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::runtime_hooks::source::FactPosition;
-use base64::Engine as _;
 use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;

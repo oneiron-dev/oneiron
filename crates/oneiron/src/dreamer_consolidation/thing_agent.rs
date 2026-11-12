@@ -22,8 +22,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
-
 use super::sieve_ports::PortFuture;
 use crate::attempt_queue::AttemptRecord;
 use crate::code_run::{DelegatedSource, ReaderJobState};

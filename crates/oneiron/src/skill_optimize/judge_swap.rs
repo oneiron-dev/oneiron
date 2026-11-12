@@ -47,7 +47,6 @@ use crate::model_decision::DecisionAnswer;
 use crate::self_heal::audit::SealCheckKind;
 use crate::skill::learning_judge::DivergenceCase;
 use crate::skill::learning_judge::TakeoverVerdict;
-use crate::skill_optimize::labels::JUDGE_SKILL_ID;
 use crate::skill_optimize::{
     GoalAxisKind, JudgeLabel, SkillEditDisposition, TradeoffRung, judge_label_anchor,
     skill_edit_goal, skill_edit_verdicts_for_proposal,

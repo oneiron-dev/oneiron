@@ -5,8 +5,6 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

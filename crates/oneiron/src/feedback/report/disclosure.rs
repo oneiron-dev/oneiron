@@ -16,7 +16,6 @@
 //! writes its quiet use receipt there: a revoke before that writer wins,
 //! and text that already left is recorded as sent. The content-free
 //! signature lane never reads text through here.
-use serde::{Deserialize, Serialize};
 
 use super::{
     ReportDisclosure, ReportDisclosureChoice, ReportIssue, ReportRequest, ReportRoute, ReportStatus,

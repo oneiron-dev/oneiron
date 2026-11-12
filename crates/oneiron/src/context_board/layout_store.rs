@@ -88,8 +88,6 @@ impl BoardLayoutCandidate {
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::context_board::layout_store::BoardLayoutState;
-#[doc(hidden)]
-use oneiron_verb_wire::context_board::layout_store::is_empty_layout;
 
 /// Every actor's own live board layout in `txn`, by actor id, for readers
 /// that learn from layouts (the Coach's layout suggestions, FIX 12572).

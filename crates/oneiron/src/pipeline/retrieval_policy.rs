@@ -11,7 +11,6 @@ use crate::error::Result;
 use crate::memory::Effort;
 use crate::store::RetrievalState;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::pipeline::retrieval_policy::RetrievalIntent;

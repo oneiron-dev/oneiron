@@ -1,9 +1,5 @@
 //! Receipts from the existing saved-query evaluator, including actual generated usage.
 
-use serde::{Deserialize, Serialize};
-
-use crate::llm::LlmUsage;
-use crate::model_decision::ProviderPin;
 use crate::{Error, Result};
 
 use super::evaluator::{EvaluationRequest, SavedQueryEvaluator, WakeVisit};

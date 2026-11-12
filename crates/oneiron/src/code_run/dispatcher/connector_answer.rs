@@ -7,8 +7,6 @@ use crate::code_run::types::{
     SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::Result;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 

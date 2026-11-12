@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The owner and holder edges' key for the elicitation row, beside tool
 /// names. MCP tool names are `[A-Za-z0-9_.-]`, so no tool can take it, and

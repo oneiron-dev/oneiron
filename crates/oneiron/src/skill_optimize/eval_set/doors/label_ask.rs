@@ -12,8 +12,6 @@
 //! the live owner who gave the Grant that admits it. Admission, the offer,
 //! the card and the ask are read and written in one writer, on a repeat too.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::cohort::cohort_in_txn;
 use super::super::{EvalLabelAsk, WaitingDecision, case_in_txn};
 use crate::EdgeActorClass;

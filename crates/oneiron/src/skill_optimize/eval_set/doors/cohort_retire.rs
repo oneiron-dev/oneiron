@@ -6,12 +6,9 @@
 //! the caller as its author (LEARN-RETIRE-SOURCE = B); the eval-authoring
 //! skill's own retirements keep naming its attempt.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::cohort::{EvalCohort, EvalCohortRetirementAuthor};
 use crate::EdgeActorClass;
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
-use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
 /// The verb a Grant lists to name the retirement: the row's own name.

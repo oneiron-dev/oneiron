@@ -14,7 +14,7 @@ use super::{CodeDocumentFrontier, CodeOpAttribution};
 use crate::blob_artifact::hash_hex;
 use crate::code_symbol::{
     CodeAttributedChange, CodeContentVersion, CodeUnitBlame, render_code_semantic_diff,
-    semantic_code_diff, whole_file_code_diff,
+    whole_file_code_diff,
 };
 use crate::codebase::snapshot_asset_entity_id;
 use crate::entity_id::EntityId;

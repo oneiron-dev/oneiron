@@ -1,7 +1,5 @@
 //! The positive MESSAGE-linked lift proposals still in one room's overlay.
 
-use serde::{Deserialize, Serialize};
-
 use super::{CodeRunSecretLiftProposalView, lift_proposal};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
