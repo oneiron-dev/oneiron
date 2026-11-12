@@ -222,7 +222,11 @@ fn checked_span(
                 after_seq: mark,
             }))
         }
-        AgentVerb::SelfBrowserLibraryDraft => draft_span(input).map(Some),
+        // Red proof (FIX 10508): the draft arm as main has it.
+        AgentVerb::SelfBrowserLibraryDraft => {
+            let _ = draft_span;
+            Err("a draft names its checks but no recorded task type".to_owned())
+        }
         _ => Ok(None),
     }
 }
