@@ -33,8 +33,10 @@ pub struct SyncClientConfig {
     /// Must be a MAC-verified actor-bound slip with core:read,core:write and jti.
     /// Only TLS or loopback URLs are accepted for this lane.
     pub note_session: Option<NoteSyncSession>,
-    /// `None` on the home node means sync all worlds; `Some(worlds)` follows
-    /// only the named worlds. The device default follows none until selected.
+    /// `None` on the home node means sync all worlds. On a device lane the
+    /// default `Some([])` is the device's own follow: under sync all every
+    /// world readable on this machine, else none; `Some(worlds)` follows the
+    /// named worlds readable here (`SyncClient::effective_worlds`).
     pub followed_worlds: Option<Vec<crate::EntityId>>,
     /// Host-owned MACRO candidate feed. Its updates, not WebSocket liveness,
     /// cause the connection to persist a new home-node designation.

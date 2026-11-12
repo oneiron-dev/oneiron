@@ -2,7 +2,7 @@
 
 use loro::{LoroDoc, VersionVector};
 
-use super::base::SyncClient;
+use super::base::{FollowedWorlds, SyncClient};
 use super::types::{SVF_FRESH, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use crate::error::Result;
 use crate::sync::loro_support::doc_version_vector;
@@ -176,7 +176,7 @@ impl SyncClient {
             for _ in 0..self.config.default_window_count {
                 let Some(key) = next else { break };
                 next = key.previous_month();
-                if let Some(worlds) = &effective_worlds {
+                if let FollowedWorlds::Only(worlds) = &effective_worlds {
                     for world in worlds {
                         let scoped = WindowKey::for_month_world(&key, *world);
                         if !keys.contains(&scoped) {
@@ -195,10 +195,7 @@ impl SyncClient {
             // including historical base months and world claims not yet indexed
             // by a fresh server. A followed world also needs its base month.
             let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
-            if effective_worlds
-                .as_ref()
-                .is_none_or(|worlds| !worlds.is_empty())
-            {
+            if effective_worlds.follows_any() {
                 discovered.extend(
                     crate::sync::discover_local_window_keys(&self.vault)
                         .map_err(|error| TransportError::Storage(error.to_string()))?,
@@ -346,7 +343,7 @@ impl SyncClient {
 
     fn selected_discovered_windows(
         discovered: Vec<WindowKey>,
-        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
+        effective_worlds: &FollowedWorlds,
     ) -> Vec<WindowKey> {
         let mut selected = Vec::new();
         for key in discovered {
@@ -360,9 +357,7 @@ impl SyncClient {
                     selected.push(key);
                 }
             } else if key.world().is_none()
-                && effective_worlds
-                    .as_ref()
-                    .is_none_or(|worlds| !worlds.is_empty())
+                && effective_worlds.follows_any()
                 && !selected.contains(&key)
             {
                 // A selected-world edge can name a shared base endpoint
@@ -400,12 +395,7 @@ impl SyncClient {
                 .iter()
                 .cloned(),
         );
-        if !opened
-            && !self.root_bootstrapped
-            && effective_worlds
-                .as_ref()
-                .is_none_or(|worlds| !worlds.is_empty())
-        {
+        if !opened && !self.root_bootstrapped && effective_worlds.follows_any() {
             discovered.extend(
                 crate::sync::discover_local_window_keys(&self.vault)
                     .map_err(|error| TransportError::Storage(error.to_string()))?,
@@ -510,11 +500,7 @@ impl SyncClient {
 
     /// Whether ready window `key` may be asked of the home on this
     /// connection now ([`Self::ready_window_requests`]).
-    fn ready_window_requestable(
-        &self,
-        key: &WindowKey,
-        effective_worlds: &Option<std::collections::BTreeSet<crate::EntityId>>,
-    ) -> bool {
+    fn ready_window_requestable(&self, key: &WindowKey, effective_worlds: &FollowedWorlds) -> bool {
         let exchanged = self
             .requested_windows
             .lock()
