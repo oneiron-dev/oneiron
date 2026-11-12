@@ -32,6 +32,7 @@
 
 mod approval;
 mod audience;
+mod copy_review;
 mod detection;
 mod held;
 mod home_node;
@@ -48,6 +49,7 @@ pub(crate) use self::approval::{
     drop_enrollment_asks_of_actor_in_txn, drop_enrollment_asks_of_call_in_txn,
     erase_enrollment_ask_actor_in_txn,
 };
+pub(crate) use self::copy_review::{CopyReviewHold, campaign_copy_review_gate};
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
 pub(crate) use self::reconcile::{
     IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
@@ -55,6 +57,10 @@ pub(crate) use self::reconcile::{
 pub(crate) use self::runner::reentry_dedupe_key;
 
 pub use self::audience::{AudienceWakeReport, audience_programs, enroll_audience_wake};
+pub use self::copy_review::{
+    CAMPAIGN_COPY_REVIEW_DIAL, COPY_REVIEW_REASONS, CampaignCopyReviewDecisions,
+    CampaignCopyReviewWording, CopyReviewOutcome, CopyReviewVerdict,
+};
 pub use self::detection::{
     CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection, accept_enrollment_baseline,
     campaign_enrollment_event, detect_enrollment,
