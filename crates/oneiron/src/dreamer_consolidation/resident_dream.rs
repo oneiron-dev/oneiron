@@ -184,6 +184,12 @@ pub struct ResidentDreamModel<'a> {
     /// `backend` bound per call to the rows its input was read from, when
     /// the host lends that (FIX 6998).
     pub sourced: Option<&'a dyn SourcedBackend>,
+    /// The spend scope a free-time item's step spends under, read before
+    /// the host built `guard`: a closed boundary or a ceiling of the scope
+    /// refuses the step for good, and a top-up of its nearest open hard
+    /// scope wakes the step's pass budget wait (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    /// `None` for a resident's own dreaming outside free time.
+    pub spend_scope: Option<crate::model_step_context::StepSpendScope>,
 }
 
 /// The payload input naming the resident a dreaming child dreams for.
@@ -622,7 +628,8 @@ pub async fn run_resident_dream(
         subject: resident_id,
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
-        spend_scope: None,
+        spend_scope: model.spend_scope.clone(),
+        wake_pass_bound: true,
     };
     let mut charges = StepChargeTally::default();
     let (response, binding) = match call_as_step_checked(
@@ -683,10 +690,7 @@ pub async fn run_resident_dream(
             {
                 charges.record_usage(usage);
             }
-            return Ok(charges.park_for(
-                &other.to_string(),
-                crate::dreamer_runner::dreamer_park_cause_of_step(&other),
-            ));
+            return Ok(charges.end_on_step_error(&other.to_string(), &other));
         }
     };
     if ctx.deadline.expired() {

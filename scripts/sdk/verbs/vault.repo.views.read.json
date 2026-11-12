@@ -5,6 +5,7 @@
   "output": "crate::memory::repo_doors::RepoViewsReadOutput",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.views.read\", &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

@@ -5,6 +5,7 @@
   "output": "crate::consent::lifecycle::ConsentActReceipt",
   "call": "crate::dreamer_consolidation::mint_nightly_link_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_nightly_link_grant\")?, input)?",
   "scope": "Write",
+  "act_class": "grant_widen",
   "admission": {
     "unrestricted_record_scope": true
   },

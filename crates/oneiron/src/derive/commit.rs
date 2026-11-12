@@ -230,6 +230,8 @@ impl Vault {
 /// refused row (`about`, when the item minted or names one), the reason
 /// tokens and the policy frontier the item was judged under. Its diff
 /// handle is the batch's id, which links the receipt to the batch record.
+/// The grant is what judged it, as [`crate::gate::derive_grant_ref_in_txn`]
+/// names it in this same writer.
 pub(super) fn refusal_receipt_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -238,7 +240,9 @@ pub(super) fn refusal_receipt_in_txn(
     reasons: &[String],
 ) -> Result<GateDecisionId> {
     let frontier = crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
-    let record = item_receipt(context, about, "deny", reasons, None, frontier);
+    let grant_ref =
+        crate::gate::derive_grant_ref_in_txn(&vault.store, txn, context.stamp.actor.entity_ref())?;
+    let record = item_receipt(context, about, "deny", reasons, grant_ref, frontier);
     vault.store.append_gate_decision_in_txn(txn, &record)?;
     Ok(record.decision_id)
 }

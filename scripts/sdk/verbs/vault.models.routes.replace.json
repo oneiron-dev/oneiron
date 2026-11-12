@@ -5,6 +5,7 @@
   "output": "crate::llm::manifest::doors::ModelRouteView",
   "call": "crate::task_verb::sdk::replace_model_route(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,

@@ -14,6 +14,7 @@
   "output": "Vec<crate::memory::CommitReceipt>",
   "call": "memory_requests::forget_claims(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {},
   "section": false,
   "binding": {

@@ -11,6 +11,7 @@
   "output": "crate::memory::DreamerAttemptRef",
   "call": "memory_requests::enqueue_consolidation(memory, input)?",
   "scope": "Write",
+  "act_class": "spawn",
   "admission": {
     "unrestricted_record_scope": true
   },

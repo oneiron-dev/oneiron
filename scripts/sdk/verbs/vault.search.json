@@ -3,6 +3,7 @@
   "input": "crate::code_run::MemorySearchInput",
   "output": "crate::code_run::MemorySearchOutput",
   "scope": "Read",
+  "act_class": "read",
   "context": "run",
   "effect": "MemorySearch",
   "run_surface": "memory"

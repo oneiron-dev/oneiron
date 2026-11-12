@@ -390,6 +390,11 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::RunHoldOverride) {
         records.extend(crate::attempt_queue::hold_override_receipts(vault, query)?);
     }
+    // ROLES-CHECKIN P2.2: each transition of a pending check-in, kept in the
+    // transition's own transaction. Its own kind and store; its own read txn.
+    if query.includes_kind(ReceiptKind::CheckIn) {
+        records.extend(crate::check_in::check_in_receipts(vault, query)?);
+    }
     // INQUIRE-1: each send of an inquiry on the asking vault, kept in the
     // send's own transaction. Its own kind and store; its own read txn.
     if query.includes_kind(ReceiptKind::Inquiry) {

@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::hook_regen_doors::HookRegenView>",
   "call": "memory.hooks_regen_record_as(&memory.embedded_owner(\"vault.hooks.regen.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

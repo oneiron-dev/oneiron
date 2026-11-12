@@ -2759,6 +2759,7 @@ mod cb_x {
             deadline: None,
             now_ms: 1,
             spend_scope: None,
+            wake_pass_bound: false,
         };
         let trap = open_trap(
             &vault,

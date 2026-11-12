@@ -5,6 +5,7 @@
   "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
   "call": "memory.wellness_policy_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.get\")?)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {
