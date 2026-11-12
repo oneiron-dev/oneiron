@@ -36,6 +36,14 @@ crate::side_table::side_tables! {
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Marker that this self-hosted vault's serve-start backfill of default agent Grants has run
+    /// (FIX AGENT-GRANTLESS-VISIBLE; Engine RULING GRANTLESS-SHAPE Q5 = A): written in the
+    /// writer that mints them, also when no agent was eligible; never written by a refused run.
+    /// Key: (). Value: the byte 1.
+    FEDERATION_AGENT_DEFAULT_GRANT_BACKFILL: VaultMeta b"federation:agent-default-grant-backfill:v1" Raw
+        // Restore class: the marker records the owner's mints, which stand as the live vault
+        // holds them: a restore never runs the backfill again over them.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Every agent a signed owner-agent Grant mint of the authority log has ever named, revoked
     /// Grants included (Engine RULING PAIR-GRANT-DESIGN Q2 = A): written as each authority-log
     /// row is staged, never removed, rebuilt from the log at open and after a restore. One posting
