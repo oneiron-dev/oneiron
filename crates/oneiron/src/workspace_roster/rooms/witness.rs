@@ -45,23 +45,6 @@ pub(crate) struct RoomRegenerationPermit {
 }
 
 impl RoomRegenerationPermit {
-    /// Whether a Retry of the rowed turn `turn` answers a claim, and so
-    /// stands on a permit: its parent holds a claim
-    /// (THREAD-TASK-NATIVE-AGENT-RETRY). A turn whose parent holds none, a
-    /// plain reply or a trunk turn, retries on its DAG. A claim another
-    /// actor or room holds is still a claim, which [`Self::prove_in`]
-    /// refuses.
-    pub(crate) fn answers_claim_in(
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        turn: &RoomTurn,
-    ) -> Result<bool> {
-        let Some(parent) = turn.reply_to.as_deref() else {
-            return Ok(false);
-        };
-        CLAIMS.contains(&vault.store, txn, &EntityId::from_hex(parent)?)
-    }
-
     /// Proves `action`, a standing Retry, lets `actor` answer its source's
     /// claimed parent again: the source is `actor`'s room turn of the
     /// action's conversation holding its MESSAGE, `actor` and the requester
