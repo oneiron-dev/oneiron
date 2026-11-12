@@ -350,7 +350,8 @@ impl AttemptQueue<'_> {
     /// — that row belongs to cleanup's hard rung. Per-row it applies exactly
     /// [`Self::warn_lease_expiry`]'s rule, through the same private
     /// `lease_warning_step` decision, so the sweep and the single-row door
-    /// cannot drift.
+    /// cannot drift. A run parked on its signal keeps its lease and has no
+    /// work to land, so it is counted, never warned (FIX RUN-LEASE).
     pub fn warn_expiring_leases(
         &self,
         input: WarnExpiringAttemptLeases,
@@ -389,7 +390,9 @@ impl AttemptQueue<'_> {
                 continue;
             }
             report.scanned += 1;
-            match lease_warning_step(&record, input.now, input.lease_timeout_secs) {
+            let parked = self.parked_in_txn(&wtxn, id)?;
+            match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+                LeaseWarningStep::Parked => report.parked += 1,
                 LeaseWarningStep::Expired => report.expired += 1,
                 LeaseWarningStep::NotDue => report.not_due += 1,
                 LeaseWarningStep::AlreadyRequested => report.already_requested += 1,
@@ -416,6 +419,8 @@ impl AttemptQueue<'_> {
     /// the whole point of the distinction: expiry can only reclaim or force,
     /// and by then the worker's unlanded work is already lost. The request is
     /// idempotent per outstanding ask, so repeated polling records one row.
+    /// A run parked on its signal is answered [`LeaseWarningOutcome::Parked`]
+    /// and nothing is recorded (FIX RUN-LEASE).
     pub fn warn_lease_expiry(&self, input: WarnAttemptLeaseExpiry) -> Result<LeaseWarningOutcome> {
         if input.lease_timeout_secs == 0 {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
@@ -433,7 +438,9 @@ impl AttemptQueue<'_> {
             AttemptState::Leased => {}
             state => return Err(invalid_transition("lease_warning", state.as_str())),
         }
-        match lease_warning_step(&record, input.now, input.lease_timeout_secs) {
+        let parked = self.parked_in_txn(&wtxn, input.id)?;
+        match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+            LeaseWarningStep::Parked => return Ok(LeaseWarningOutcome::Parked(record)),
             LeaseWarningStep::Expired => return Ok(LeaseWarningOutcome::Expired(record)),
             LeaseWarningStep::NotDue => return Ok(LeaseWarningOutcome::NotDue(record)),
             LeaseWarningStep::AlreadyRequested => {
@@ -469,6 +476,9 @@ fn runtime_landing_request(trigger: LandingTrigger) -> SoftRequestAuthorship {
 /// sweep and the single-attempt door so both rungs read the same clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LeaseWarningStep {
+    /// The run is parked on its signal: it keeps its lease, which cleanup
+    /// never reclaims, and has no work to land.
+    Parked,
     /// Already past expiry: cleanup's hard rung owns it, never a warning.
     Expired,
     /// Inside the lease and before the warning window.
@@ -481,9 +491,13 @@ enum LeaseWarningStep {
 
 fn lease_warning_step(
     record: &AttemptRecord,
+    parked: bool,
     now: u64,
     lease_timeout_secs: u64,
 ) -> LeaseWarningStep {
+    if parked {
+        return LeaseWarningStep::Parked;
+    }
     if lease_expired(record, now, lease_timeout_secs) {
         return LeaseWarningStep::Expired;
     }
