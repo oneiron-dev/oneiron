@@ -141,6 +141,11 @@ struct ImportedArchive {
     /// Secrets the archive could not carry even as a handle, by id: each
     /// comes as its export secret supplement (FIX 12066).
     owed_secrets: Vec<String>,
+    /// The owner-act receipt for this restore (`gate:<id>`, content kind
+    /// `owner_archive_restore`): it names the archive by its full-manifest
+    /// digest, and covers the expression preferences this restore carried
+    /// under that restore's permit only.
+    owner_restore_receipt: Option<String>,
     embedding_setup: ImportedEmbeddingSetup,
 }
 
@@ -176,9 +181,29 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("read {}: {error}", args.path.display()))?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_stopped_vault(&config, "stop `serve` to import an archive")?;
-    let receipt = vault
-        .import_whole_vault_archive_from(io::BufReader::new(file))
-        .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
+    let owner = local_owner(&vault).and_then(|owner| {
+        vault.verify_archive_restore_owner(&owner)?;
+        Ok(owner)
+    });
+    let receipt = match owner {
+        Ok(owner) => vault
+            .import_whole_vault_archive_from_as_owner(io::BufReader::new(file), &owner)
+            .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?,
+        Err(owner_unavailable) => vault
+            .import_whole_vault_archive_from(io::BufReader::new(file))
+            .map_err(|error| {
+                if oneiron::Vault::is_archive_expression_owner_refusal(&error) {
+                    anyhow::anyhow!(
+                        "archive import failed: {error}. This vault's owner could not be \
+                         authenticated ({owner_unavailable}); bind this vault's owner, then \
+                         run the import again (see docs/agent-sdk/errors.md, \
+                         OWNER_BINDING_REQUIRED)."
+                    )
+                } else {
+                    anyhow::anyhow!("archive import failed: {error}")
+                }
+            })?,
+    };
     let setup = receipt.embedding_setup;
     let status = setup
         .vectors_pending_recompute()
@@ -204,6 +229,7 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
             .iter()
             .map(|secret| secret.to_hex())
             .collect(),
+        owner_restore_receipt: receipt.owner_restore_receipt_ref,
         embedding_setup: ImportedEmbeddingSetup {
             status,
             declared_spaces: setup.declared_spaces,

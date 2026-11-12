@@ -8,7 +8,7 @@ use super::archive_index::{
     FLAG_EXPRESSION, IndexedArchive, Loc, QUEUE_EXPRESSION, Tag, id_at, ready_key,
 };
 use super::document_import::{parse_id, stamp_archived_birth};
-use super::{ArchiveRecordKind, ExportEdge, ExportEntity};
+use super::{ArchiveRecordKind, ExportEdge, ExportEntity, OwnerArchiveRestorePermit};
 use crate::claim::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 use crate::edge::EdgeKind;
 use crate::entity_id::ENTITY_ID_LEN;
@@ -213,6 +213,7 @@ pub(super) fn restore<R: Read + Seek>(
     txn: &mut heed::RwTxn<'_>,
     actor: &WriteActor,
     archive: &mut IndexedArchive<'_, R>,
+    permit: Option<&OwnerArchiveRestorePermit>,
 ) -> Result<(Vec<EntityId>, usize)> {
     let group = archive
         .index
@@ -221,7 +222,7 @@ pub(super) fn restore<R: Read + Seek>(
             "expression import queue lost history",
         ))?;
     let history = history(archive, &group)?;
-    let (inserted, unchanged) = history.restore_in_txn(vault, txn, actor)?;
+    let (inserted, unchanged) = history.restore_in_txn(vault, txn, actor, permit)?;
     // FIX 1178: each landed row's archived birth, stamped once the history
     // compares exact.
     for id in history.ids() {
