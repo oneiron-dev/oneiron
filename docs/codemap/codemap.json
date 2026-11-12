@@ -647,7 +647,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AgentDefinitionPutDisposition"
@@ -655,7 +655,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 10
      }
@@ -835,7 +835,7 @@
      "path": "src/agent_def/widening.rs",
      "purpose": "Which puts hand an agent definition back authority it gave up",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -1199,7 +1199,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 2,
       "re-export": 31
      }
@@ -1420,6 +1420,16 @@
       "enum": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/research_root.rs",
+     "purpose": "A parentless, run-bearing research root through ordinary dispatch (`vault.research.create_root`…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -3157,7 +3167,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "PauseKind",
@@ -3166,7 +3176,7 @@
      "path": "src/attempt_queue/lifecycle.rs",
      "purpose": "The run lifecycle (untangle slice 5.0c, S5-3): ONE transition table for an attempt row's state and pause…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 43,
       "enum": 2,
       "fn": 3
      }
@@ -3189,7 +3199,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 9,
       "re-export": 12
      }
@@ -3610,7 +3620,7 @@
      "path": "src/attempt_queue/validate/cancel_receipt_landing.rs",
      "purpose": "Cancel-receipt shape table, landing validators, and receipt/event append mutators",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 2
      }
     },
     {
@@ -6701,7 +6711,7 @@
      "purpose": "OF-499 A3: a real, current Admin proof for the weave, behind an MFA step-up witness",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "struct": 2
      }
@@ -7550,6 +7560,7 @@
      "purpose": "The atomic multi-database write-batch builder and its two terminals",
      "surface": {
       "crate-vis": 10,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -15168,6 +15179,89 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ActClass",
+      "ActClassRow",
+      "ModelCheck",
+      "ProofKind",
+      "UndoClass"
+     ],
+     "path": "src/check_in/act_class.rs",
+     "purpose": "The shipped act table (ARCH-0082 #act-table and #catastrophe-floor)",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 2,
+      "static": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/check_in/mod.rs",
+     "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckInMode"
+     ],
+     "path": "src/check_in/mode.rs",
+     "purpose": "The three check-in modes and their stable wire tokens",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckInAnswer",
+      "CheckInRequest",
+      "GoReason",
+      "ModeSource",
+      "ResolvedMode",
+      "UnsureTest",
+      "WaitReason"
+     ],
+     "path": "src/check_in/resolve.rs",
+     "purpose": "One check-in: power, mode and rung 0, then the unsure test (ARCH-0082 #composing and #ladder)",
+     "surface": {
+      "enum": 5,
+      "fn": 3,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoleDefault",
+      "RolePreset",
+      "RolePresetRow"
+     ],
+     "path": "src/check_in/role_preset.rs",
+     "purpose": "The seven role presets and their default check-in mode per act class (ARCH-0082 #role-defaults; ARCH-0043…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 3,
+      "static": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -16259,7 +16353,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 6,
       "re-export": 1
      }
@@ -27312,9 +27406,9 @@
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -40177,7 +40271,7 @@
      "path": "src/federation/content_write.rs",
      "purpose": "Actor-bound content transaction interface",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -40876,6 +40970,7 @@
      "purpose": "Erase asks (ARCH-0043 \"Who may archive, delete and erase\", 2026-10-09): in a shared vault a Member requests…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 3,
       "struct": 1
@@ -41090,7 +41185,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "InitialSharedMember",
@@ -42351,7 +42446,6 @@
      "path": "src/gate/consult_fanout_values.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
       "struct": 4
      }
     },
@@ -43046,19 +43140,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "FanoutApprovalMode"
-     ],
-     "path": "src/gate/fanout_mode.rs",
-     "purpose": "Fan-out approval policy dial and its stable wire spelling",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/gate/fanout_policy.rs",
      "purpose": "Manifest-backed fan-out policy composition; no executable defaults",
@@ -43178,7 +43259,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 97,
+      "crate-vis": 96,
       "mod": 2,
       "re-export": 8
      }
@@ -43332,7 +43413,7 @@
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 7,
       "re-export": 8
      }
@@ -48216,7 +48297,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 216,
+      "mod": 217,
       "re-export": 105
      }
     },
@@ -53490,7 +53571,7 @@
      "path": "src/memory/diary_read/doors.rs",
      "purpose": "Diary read, review, grant, and reader-list doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 9
      }
     },
@@ -54797,6 +54878,16 @@
      "notable": [],
      "path": "src/memory/read_lane/hydrate_filtered.rs",
      "purpose": "Hydration with an additional reader-bound row filter before projection",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/read_lane/revisions_read.rs",
+     "purpose": "`vault.revisions.read`'s lane read: each ref's entity view with its live revision, in one snapshot under one…",
      "surface": {
       "crate-vis": 1
      }
@@ -62427,8 +62518,7 @@
      "path": "src/outbound_chokepoint/fanout.rs",
      "purpose": "Pre-execution fan-out admission",
      "surface": {
-      "crate-vis": 26,
-      "re-export": 1
+      "crate-vis": 26
      }
     },
     {
@@ -62456,8 +62546,7 @@
      "path": "src/outbound_chokepoint/mod.rs",
      "purpose": "Replay-first outbound effect execution",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 1
+      "crate-vis": 7
      }
     },
     {
@@ -71407,7 +71496,7 @@
      "path": "src/scope_summary/self_model.rs",
      "purpose": "A self-model SUMMARY as its own resident reads it (FIX 4570)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -89037,7 +89126,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "re-export": 3,
+      "re-export": 2,
       "struct": 4
      }
     },
@@ -91089,11 +91178,36 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AdmissionOutcome",
+      "Classifier"
+     ],
+     "path": "src/test_doors/fanout_admission.rs",
+     "purpose": "Door for `tests/check_in_fanout_modes.rs` (ROLES-CHECKIN PR 1): one fan-out admission under a mode named by…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/feeds.rs",
      "purpose": "Doors for `tests/feed_erase_doors.rs`: the change feed rows that name an entity, which an erase leaves at…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/grant_roles.rs",
+     "purpose": "Door for `tests/grant_roles_seven.rs` (ROLES R1, the lead 11 Nov 11:38): the default membership scope a…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -91114,6 +91228,16 @@
      "purpose": "Fixture vaults for the label-writer tests (OPUS-LEAKS, lead call G): the shipped policy plus a `core:read`…",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/learning_claim_value.rs",
+     "purpose": "Doors for `tests/learning_claim_value.rs` (FIX LEARNING-CELL-POSITIONAL-DECODE): the learning claim value…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -91154,7 +91278,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 32
+      "mod": 36
      }
     },
     {
@@ -91184,6 +91308,20 @@
      "path": "src/test_doors/run_hold.rs",
      "purpose": "Doors for `tests/run_hold_doors.rs` (RUN-HOLD): the hook hold the verb-hook runtime writes, the override…",
      "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TableAnswer",
+      "TableEvent"
+     ],
+     "path": "src/test_doors/run_lifecycle.rs",
+     "purpose": "Doors for `tests/run_lifecycle_props.rs`: the lifecycle table's answer, the stored pause kind, force-cancel…",
+     "surface": {
+      "enum": 2,
       "fn": 6
      }
     },
@@ -93950,6 +94088,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DiaryPinnedEntry",
+      "DiaryPinnedOutcome"
+     ],
+     "path": "src/verbs/diary_pinned.rs",
+     "purpose": "`self.memory.diary.pinned`: the caller reads an agent's diary with each entry's live NOTE revision, stating…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DisclosureOfferRequest",
       "DisclosureOffered",
       "RevealAnswerRequest",
@@ -94181,6 +94333,33 @@
      "purpose": "`vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GateDecisionReadNotice",
+      "GateDecisionReadView"
+     ],
+     "path": "src/verbs/gate_decision_read.rs",
+     "purpose": "One gate decision under a live verb Grant and the explain door's visibility rule",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReadablePolicyManifestRows"
+     ],
+     "path": "src/verbs/gate_policy_read.rs",
+     "purpose": "Caller-readable policy contributors, not the policy in force",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -94638,7 +94817,7 @@
       "crate-vis": 1,
       "fn": 8,
       "mod": 1,
-      "re-export": 116,
+      "re-export": 122,
       "struct": 33
      }
     },
@@ -95027,6 +95206,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ResearchRootReceipt",
+      "ResearchRootWire"
+     ],
+     "path": "src/verbs/research_root.rs",
+     "purpose": "`vault.research.create_root` (CAMPAIGN-ROOT): the owner, or an agent whose live owner Grant names it and…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ReservoirSourcesRequest"
      ],
      "path": "src/verbs/reservoir_sources.rs",
@@ -95101,6 +95294,20 @@
       "fn": 17,
       "re-export": 1,
       "struct": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevisionEntry",
+      "RevisionsReadRequest"
+     ],
+     "path": "src/verbs/revisions_read.rs",
+     "purpose": "`vault.revisions.read`: each ref's entity view with its live revision, under the caller's lane and a live…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -95265,6 +95472,19 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SelfModelReadView"
+     ],
+     "path": "src/verbs/self_model_read.rs",
+     "purpose": "`self.memory.self_model`: the caller's own self-model SUMMARY text with its live revision, or why it is absent",
+     "surface": {
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -99344,6 +99564,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_generic_writers.rs",
+     "purpose": "An agent's generic row writers follow ARCH-0053:20 for AGENT_DEF rows",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99405,6 +99633,22 @@
      "notable": [],
      "path": "tests/cb_oracle_common/mod.rs",
      "purpose": "Shared fixtures for the split Context Board oracle files",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_fanout_modes.rs",
+     "purpose": "ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_tables.rs",
+     "purpose": "ROLES-CHECKIN PR 1 (ONEIRON-ARCH-0082): the check-in modes, the act table, the role defaults and the…",
      "surface": {}
     },
     {
@@ -99783,6 +100027,14 @@
      "notable": [],
      "path": "tests/goal_read_through_grant.rs",
      "purpose": "The goal read is an ordinary granted read with an actor (untangle 6.6d, F4; Engine 10 Nov 06:53 and 07:23)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/grant_roles_seven.rs",
+     "purpose": "The grant roles after the lead's 11 Nov 11:38 ruling (VS-CHECKIN-NAMES = A with the roles, VS-OLD-NAMES =…",
      "surface": {}
     },
     {
@@ -100453,6 +100705,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/learning_claim_value.rs",
+     "purpose": "FIX LEARNING-CELL-POSITIONAL-DECODE: a learning claim value is written with named fields, so a cell with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/linked_self_verb_surface.rs",
      "purpose": "The verb table is closed over the linked `self.*` operations (F2.1): each operation a code-mode guest can…",
      "surface": {}
@@ -100740,6 +101000,22 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lifecycle_props.rs",
+     "purpose": "Real queue operations agree with the lifecycle table for E1, E2 and E3",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_lifecycle_single_writer.rs",
+     "purpose": "Single-writer guard for the run lifecycle (untangle slices E1, E2 and E3)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100996,6 +101272,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sufficiency_like_for_like.rs",
+     "purpose": "A sufficiency card reads unknown, not worse, when the comparison is not like for like: the set or rubric…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -101049,6 +101333,54 @@
      "notable": [],
      "path": "tests/vault_read_parity.rs",
      "purpose": "ONE-1433 adapter parity suite: one read contract whose behavior does not change with deployment topology",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_self_memory_diary_pinned.rs",
+     "purpose": "`self.memory.diary.pinned` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_self_memory_self_model.rs",
+     "purpose": "`self.memory.self_model` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_gate_decision_get.rs",
+     "purpose": "`vault.gate.decision.get` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_gate_policy_resolve.rs",
+     "purpose": "`vault.gate.policy.resolve` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_research_create_root.rs",
+     "purpose": "`vault.research.create_root` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_revisions_read.rs",
+     "purpose": "`vault.revisions.read`: an agent with no Grant is refused, the holder reads only its lane's rows with live…",
      "surface": {}
     },
     {
@@ -101125,12 +101457,12 @@
     "agent_def": {
      "files": 24,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 94,
+     "files": 95,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -101296,6 +101628,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
+    },
+    "check_in": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…"
     },
     "checkout": {
      "files": 14,
@@ -101767,7 +102106,7 @@
      "purpose": "Value-free file-mask paths, read visibility, and byte-span transformations"
     },
     "gate": {
-     "files": 210,
+     "files": 209,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102012,7 +102351,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 395,
+     "files": 396,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102579,7 +102918,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 34,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102691,7 +103030,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 129,
+     "files": 135,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102754,10 +103093,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 248,
+   "over_bar": 250,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7328,
-   "test_files": 1009
+   "source_files": 7344,
+   "test_files": 1023
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -126588,7 +126927,7 @@
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -127096,9 +127435,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors/diary.rs",
-     "purpose": "The caller's own diary query door (`self.memory.diary.query`), and the sealed-pad doors on a person's own…",
+     "purpose": "The caller's own diary query doors (`self.memory.diary.query` and `self.memory.diary.pinned`), and the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -143746,6 +144085,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_definition_served_batch.rs",
+     "purpose": "The served row doors follow ARCH-0053:20 on their credential's agent slice: `vault.batch`, and the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -144660,7 +145007,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1831,
-   "test_files": 189
+   "test_files": 190
   },
   "oneiron-skill-attribution": {
    "files": [

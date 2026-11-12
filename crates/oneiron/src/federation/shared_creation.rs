@@ -59,11 +59,10 @@ fn invalid(message: &str) -> Error {
 pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
     Ok(match role {
         Role::Owner => GrantPreset::Owner,
-        Role::Admin => GrantPreset::Admin,
+        Role::Deputy | Role::Admin => GrantPreset::Admin,
         Role::Steward => GrantPreset::Steward,
         Role::Member => GrantPreset::Member,
         Role::Viewer => GrantPreset::ReadOnly,
-        Role::Auditor => GrantPreset::ReadOnly,
         Role::Delegate => {
             return Err(invalid(
                 "delegate needs a separately attenuated expiring grant",
@@ -183,11 +182,6 @@ impl Vault {
             if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &member)? {
                 return Err(Error::EntityNotFound);
             }
-            let role = if role == Role::Auditor {
-                Role::Viewer
-            } else {
-                role
-            };
             let mut grant = FederationGrant::new(
                 FederationGrantScope::vault(vault_id),
                 member,
@@ -265,11 +259,6 @@ impl Vault {
                 {
                     return Err(Error::EntityNotFound);
                 }
-                let role = if role == Role::Auditor {
-                    Role::Viewer
-                } else {
-                    role
-                };
                 self.invite_founding_member_in_txn(
                     &mut txn, vault_id, actor, member, role, invited_at,
                 )?;

@@ -1,0 +1,20 @@
+{
+  "name": "vault.gate.decision.get",
+  "description": "Reads one gate decision under the caller's live Grant and explain visibility rule, with screened references and frontier hash.",
+  "input": "crate::task_verb::sdk::ExplainGateRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::task_verb::sdk::GateDecisionReadView>>",
+  "call": "crate::task_verb::sdk::vault_gate_decision_get_embedded(memory, input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "grant_class": "vault.gate.decision.get grant + own, owner or lane-readable claim",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}

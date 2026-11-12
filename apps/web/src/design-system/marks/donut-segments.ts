@@ -111,8 +111,13 @@ export function donutSegments(arcs: readonly DonutArc[], size: DonutSize = 18): 
    check once every entry is done and nothing waits; never both. */
 export function donutCentre(arcs: readonly DonutArc[], needsYou: boolean): 'dot' | 'check' | 'none' {
   if (needsYou) return 'dot'
-  if (arcs.length > 0 && arcs.every((a) => a === 'done')) return 'check'
+  if (arcsDone(arcs)) return 'check'
   return 'none'
+}
+
+/* Every entry is done (and there is at least one). */
+export function arcsDone(arcs: readonly DonutArc[]): boolean {
+  return arcs.length > 0 && arcs.every((a) => a === 'done')
 }
 
 /* The donut in words, for its tooltip and accessible name:
