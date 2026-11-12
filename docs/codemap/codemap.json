@@ -133775,7 +133775,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/auth/binding_admission.rs",
@@ -145680,6 +145680,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/git_lfs_prehandler_refusal_envelope.rs",
+     "purpose": "A slip the owner revoked is refused at the binding door, before any route runs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/inference_defaults.rs",
      "purpose": "Owner-grade HTTP edit/read proof for resident inference policy rows",
      "surface": {}
@@ -146591,7 +146599,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1833,
-   "test_files": 197
+   "test_files": 198
   },
   "oneiron-skill-attribution": {
    "files": [
