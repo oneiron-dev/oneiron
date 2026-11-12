@@ -142,9 +142,6 @@ fn observations_page(
     let _pins = read.prepare_point_read::<MemoryError>()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     memory.prove_read_authority_in_txn(&txn)?;
-    if let Some(binding) = binding {
-        binding.check_in_txn(&txn)?;
-    }
     let scope = observation_reader_scope_in_txn(memory, &txn, owner.as_ref())?;
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
         let mut page = StrengthObservationsPage {

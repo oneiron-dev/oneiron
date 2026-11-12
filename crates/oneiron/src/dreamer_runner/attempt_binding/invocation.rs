@@ -42,7 +42,6 @@ impl DreamerAttemptBinding {
         if verb != STRENGTH_PAGE_VERB && verb != DERIVE_COMMIT_VERB {
             return Err(facet_refused());
         }
-        self.check()?;
         let memory = self
             .vault
             .memory(self.stamp.actor, self.actor().actor_class());

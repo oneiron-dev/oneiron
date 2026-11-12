@@ -175,10 +175,9 @@ impl DreamerAttemptBinding {
             lineage: SourceLineage::of(ClaimSource::Generated),
         };
         let receipt = self.vault.with_write_txn_grouped(|txn| {
-            if let Err(refused) = self.check_in_txn(txn) {
-                return Ok(Err(refused));
-            }
-            self.vault.derive_commit_in_txn(txn, &stamp, &batch).map(Ok)
+            self.vault
+                .derive_commit_in_txn(txn, &stamp, &batch)
+                .map(Ok::<_, MemoryError>)
         })??;
         Ok(receipt.into())
     }
