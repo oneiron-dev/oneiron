@@ -59,6 +59,10 @@ pub struct FederationMemberGrant {
     pub delegated_by: Option<EntityId>,
     pub expires_at: Option<u64>,
     pub active: bool,
+    /// The role in one plain sentence, beside its name, for a role whose
+    /// reach a reader cannot guess from the name (the Steward's: ARCH-0043).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -150,6 +154,8 @@ fn member_grant(
         delegated_by: grant.delegated_by,
         expires_at: grant.expires_at,
         active,
+        role_note: (grant.role == FederationGrantRole::Steward)
+            .then(|| crate::federation::STEWARD_ROLE_NOTE.to_owned()),
     })
 }
 

@@ -21,7 +21,8 @@ impl Memory<'_> {
     /// grade: it commits below owner grade, never above it. Its TURNs are
     /// platform announcements only while the bound actor is a live owner.
     /// It is held to this handle's write lane ([`Self::core_write_lane`],
-    /// FIX 1223, 6068).
+    /// FIX 1223, 6068). An agent's handle holds each AGENT_DEF the batch
+    /// creates to that agent's own slice (ARCH-0053:20).
     /// # Errors
     /// As [`Self::core_write_lane`] and [`Vault::write_core_batch_in_lane`].
     pub fn core_batch_write(
@@ -30,11 +31,13 @@ impl Memory<'_> {
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
         let lane = self.core_write_lane()?;
-        self.vault().write_core_batch_in_lane(
+        self.vault().write_core_batch_in_lane_as(
             input,
             CoreBatchCommit::BelowOwner,
             announcement,
             &lane,
+            Some(&self.write_actor()),
+            "vault.batch",
         )
     }
 

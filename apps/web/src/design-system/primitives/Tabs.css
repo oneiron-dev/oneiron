@@ -1,0 +1,119 @@
+.sl-tabs-list {
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sl-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 0 9px;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  white-space: nowrap;
+}
+
+.sl-tab:hover,
+.sl-tab:focus-visible,
+.sl-tab[aria-selected="true"] {
+  color: var(--sl-ink-1);
+  outline: none;
+}
+
+/* The selected tab carries the line; keyboard focus on another tab shows a
+   faint one. */
+.sl-tab[aria-selected="true"]::after,
+.sl-tab:focus-visible::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.5px;
+  background: var(--sl-ink-1);
+}
+
+.sl-tab:focus-visible:not([aria-selected="true"])::after {
+  background: var(--sl-ink-4);
+}
+
+.sl-tab > .sl-figure {
+  color: var(--sl-ink-3);
+}
+
+.sl-tab:disabled {
+  cursor: default;
+  color: var(--sl-ink-2);
+}
+
+.sl-tab-panel:focus-visible {
+  outline-offset: 4px;
+}
+
+/* A tab's symbol: quiet at rest, in the first ink when hovered or chosen. */
+.sl-tab > .sl-icon {
+  align-self: center;
+  color: var(--sl-ink-3);
+}
+
+.sl-tab:hover > .sl-icon,
+.sl-tab[aria-selected="true"] > .sl-icon {
+  color: var(--sl-ink-1);
+}
+
+/* A pin: its symbol or portrait, then its name cut at 17 characters. */
+.sl-tab-pin {
+  align-items: center;
+  gap: 6px;
+}
+
+.sl-tab-pin-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.sl-tab-pin-name {
+  max-width: 17ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The hairline between the fixed tabs and the pins. */
+.sl-tabs-divider {
+  align-self: center;
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 -4px;
+  background: var(--sl-rule);
+}
+
+.sl-tabs-add {
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -10px;
+  color: var(--sl-ink-3);
+}
+
+.sl-tabs-add:hover,
+.sl-tabs-add:focus-visible {
+  background: var(--sl-lit);
+}
+
+/* Folded: the pins, the divider and the add action give way to one tab. */
+.sl-tab-fold {
+  align-items: center;
+  gap: 6px;
+}
+
+.sl-tabs-list[data-folded] > [data-pin-part],
+.sl-tabs-list:not([data-folded]) > .sl-tab-fold {
+  display: none;
+}

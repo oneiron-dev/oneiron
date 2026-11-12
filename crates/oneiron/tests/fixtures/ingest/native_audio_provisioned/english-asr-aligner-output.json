@@ -138,7 +138,7 @@
       "meeting_audio_process.py": "707ef32d057dbb478889c070119659db4113c80524df684c5bc3af63880f9abb",
       "meeting_audio_ctc.py": "d9a89905d461db38b995c7dac166453452d680cf6ae06be0f106933cbcd295ba"
     },
-    "runtime_profile_sha256": "8e40caaa33020b874d94aee05a2ecc301d9b82217aa81c5d3ebd5e5c1e531e6f",
+    "runtime_profile_sha256": "5e2b787e3a816fbd7dafbf43fcdbb2e32776c5fde61f250cc0a87701edaac0a2",
     "runtime_helper_sha256": "446f9c57b257fb221aacd30900d6cb22a5355b1f61d4d53030abf9714be65e47",
     "alignment_runtime": {
       "runtime_binding": {

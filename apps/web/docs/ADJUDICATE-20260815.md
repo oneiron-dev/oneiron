@@ -32,7 +32,7 @@ line · Antevon's one line under the eyebrow.
 - Rows carry both `last touch` and `age`. Keep both, or age in the tooltip only?
 - Keep Antevon's line above the queue, or is the queue quieter without it?
 
-## Settings — `/app/settings` (chip menu → settings / Owen)
+## Settings — `/app/settings` (chip menu → settings / owen)
 Vault (seal = the one red, path, the moth) · Appearance (theme ○◐● + sound —
 their real home) · Members · Grants (revoke arms red, receipt lands) · Export ·
 Forget (two-phase) · Account · doors.

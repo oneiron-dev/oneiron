@@ -1,4 +1,4 @@
-//! The `load dream` result: the JSON report and the 15-line summary on
+//! The `load dream` result: the JSON report and the summary lines on
 //! stdout. The report holds ids, counts, ms and the recall query strings,
 //! never the model key.
 
@@ -96,6 +96,17 @@ fn window(ticks: &[Tick], from_ms: f64, to_ms: f64) -> Summary {
     Summary::of(&samples, (to_ms - from_ms).max(0.0) / 1000.0)
 }
 
+/// What the `after` recall arm measured (FIX 21929): `post_bound` when the
+/// round hit its bound, so the Dreamer still worked beside it; else
+/// `after_cycle`.
+pub(super) fn after_arm(end_reason: &str) -> &'static str {
+    if end_reason == "timeout" {
+        "post_bound"
+    } else {
+        "after_cycle"
+    }
+}
+
 /// The report's `cycle` part: how the round ended, its stage lines and
 /// pass lines, their sums, and the Dreamer's status around it.
 fn cycle_json(m: &Measured<'_>) -> Value {
@@ -105,6 +116,10 @@ fn cycle_json(m: &Measured<'_>) -> Value {
         "prep_ms",
         "branch_ms",
         "extract_ms",
+        "call_ms",
+        "prefix_ready_ms",
+        "finish_start_ms",
+        "finish_ms",
         "corrections_ms",
         "resolve_ms",
         "gap_ms",
@@ -199,6 +214,7 @@ fn recalls_json(m: &Measured<'_>) -> Value {
         "during": window(ticks, t0, end),
         // The loop stops `AFTER` past the end, give or take one step.
         "after": window(ticks, end, end + after_ms + 1000.0),
+        "after_arm": after_arm(&m.cycle.waited.reason),
         // Taken once the Dreamer stayed still, inside the cycle's bound:
         // the after-cycle recall with no Dreamer work beside it.
         "still_wait": m.still,
@@ -313,7 +329,7 @@ fn spread(summary: &Value) -> String {
     )
 }
 
-/// The 15-line summary on stdout.
+/// The summary lines on stdout.
 pub(super) fn summary(r: &Value) -> String {
     let c = &r["cycle"];
     let s = &c["stage_ms_sum"];
@@ -352,10 +368,14 @@ pub(super) fn summary(r: &Value) -> String {
             c["pass_lines"].as_array().map_or(0, Vec::len)
         ),
         format!(
-            "stage ms (sum): prep {} branch {} extract {} corrections {} resolve {} gap {} commit {} total {}",
+            "stage ms (sum): prep {} branch {} extract {} (call {} prefix_ready {} finish_start {} finish {}) corrections {} resolve {} gap {} commit {} total {}",
             ms_text(&s["prep_ms"]),
             ms_text(&s["branch_ms"]),
             ms_text(&s["extract_ms"]),
+            ms_text(&s["call_ms"]),
+            ms_text(&s["prefix_ready_ms"]),
+            ms_text(&s["finish_start_ms"]),
+            ms_text(&s["finish_ms"]),
             ms_text(&s["corrections_ms"]),
             ms_text(&s["resolve_ms"]),
             ms_text(&s["gap_ms"]),
@@ -390,7 +410,26 @@ pub(super) fn summary(r: &Value) -> String {
         format!("5 timed: {}", yes(&p["5_timed"])),
         format!("recall baseline: {}", spread(&r["recalls"]["baseline"])),
         format!("recall during:   {}", spread(&r["recalls"]["during"])),
-        format!("recall after:    {}", spread(&r["recalls"]["after"])),
+        format!(
+            "recall {}: {}",
+            if r["recalls"]["after_arm"] == "post_bound" {
+                "post-bound"
+            } else {
+                "after:    "
+            },
+            spread(&r["recalls"]["after"])
+        ),
+        format!(
+            "model calls during: {} (retries {}, corrective {}) p50 {} p95 {} max {} ms; busy {} ms, most in flight {}",
+            r["calls"]["during"]["calls"],
+            r["calls"]["during"]["retries"],
+            r["calls"]["during"]["corrective"],
+            ms_text(&r["calls"]["during"]["p50_ms"]),
+            ms_text(&r["calls"]["during"]["p95_ms"]),
+            ms_text(&r["calls"]["during"]["max_ms"]),
+            ms_text(&r["calls"]["during"]["busy_ms"]),
+            r["calls"]["during"]["most_in_flight"]
+        ),
         format!(
             "server log during the cycle: {} warn, {} error",
             r["server_log"]["warn_during_cycle"], r["server_log"]["error_during_cycle"]

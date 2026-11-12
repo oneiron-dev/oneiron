@@ -448,23 +448,91 @@ fn a_codex_reply_read_before_all_its_block_echoes_were_logged_lands_once() {
     assert_eq!(home.search("so 19.99 rounds"), 1);
 }
 
-/// The largest resident set any child process of this test has reached.
+/// Runs `oneiron import <source> <path> [--dry-run]` like [`Home::import`]
+/// and returns its report with the peak resident set of that child alone.
+///
+/// `getrusage(RUSAGE_CHILDREN)` is process-wide: a sibling test's huge
+/// import (a 1 GiB log read whole, a million messages landed) pollutes it.
+/// This reaps exactly the child it ran (`wait4`) and reports its own peak.
 #[cfg(unix)]
-fn peak_child_bytes() -> u64 {
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    // SAFETY: `getrusage` fills the `rusage` it is given; zeroed is a valid
-    // `rusage` either way.
-    let usage = unsafe {
-        libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr());
-        usage.assume_init()
+fn import_measured(home: &Home, source: &str, path: &Path, dry_run: bool) -> (Value, u64) {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
+    command
+        .args(["import", source])
+        .arg(path)
+        .arg("--config")
+        .arg(&home.config)
+        .env_remove("ONEIRON_VAULT_PATH");
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("test fixture");
+    let mut stdout = child.stdout.take().expect("test fixture");
+    let mut stderr = child.stderr.take().expect("test fixture");
+    let (stdout, stderr, status, usage) = std::thread::scope(|scope| {
+        // Drained while the child runs, so it never blocks on a full pipe.
+        let out = scope.spawn(|| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut stdout, &mut bytes).expect("test fixture");
+            bytes
+        });
+        let err = scope.spawn(|| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut stderr, &mut bytes).expect("test fixture");
+            bytes
+        });
+        let pid = child.id() as libc::pid_t;
+        let mut status = 0;
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        let usage = loop {
+            // SAFETY: `wait4` fills the status and `rusage` it is given;
+            // zeroed is a valid `rusage` either way. `pid` is this child,
+            // waited once: nothing else waits for it.
+            let waited = unsafe { libc::wait4(pid, &mut status, 0, usage.as_mut_ptr()) };
+            if waited == pid {
+                // SAFETY: `wait4` returned this child's pid, so it filled
+                // the `rusage`.
+                break unsafe { usage.assume_init() };
+            }
+            (std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted)
+                .then_some(())
+                .expect("test fixture: the import's wait failed");
+        };
+        // Already reaped: never waited again.
+        std::mem::forget(child);
+        (
+            out.join().expect("test fixture"),
+            err.join().expect("test fixture"),
+            status,
+            usage,
+        )
+    });
+    let output = std::process::Output {
+        status: std::process::ExitStatus::from_raw(status),
+        stdout,
+        stderr,
     };
+    let succeeded = output.status.success();
+    let failure = format!(
+        "import {source}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    succeeded.then_some(()).expect(failure.as_str());
+    let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report on stdout");
     let max = u64::try_from(usage.ru_maxrss).unwrap_or(0);
     // Linux counts kilobytes; macOS counts bytes.
-    if cfg!(target_os = "macos") {
+    let peak = if cfg!(target_os = "macos") {
         max
     } else {
         max * 1024
-    }
+    };
+    (report, peak)
 }
 
 /// An export zip whose `conversations.json` is `head`, `filler` bytes of
@@ -503,9 +571,8 @@ fn an_export_holding_a_long_list_beside_its_conversations_imports_in_bounded_mem
     let zip_path = home.dir.path().join("padded-export.zip");
     zip_padded_export(&zip_path, &head, b"0,", 64 << 20, b"0]}");
 
-    let report = home.import("chatgpt", &zip_path, false);
+    let (report, peak) = import_measured(&home, "chatgpt", &zip_path, false);
     assert_eq!(totals(&report), (6, 0, 0, 0));
-    let peak = peak_child_bytes();
     assert!(
         peak < 1 << 30,
         "the import peaked at {peak} bytes for a 64 MiB export"
@@ -530,10 +597,8 @@ fn an_export_that_unzips_past_the_limit_is_refused_and_nothing_lands() {
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0);
 }
 
-/// First try, 2026-10-10: one session log over the per-log limit (the
-/// owner's Codex folder held a 1.8 GB rollout) refused the whole folder. Now
-/// it is left out and named in the report, every other log lands, and the
-/// import succeeds, dry run or not. The big log is sparse: no disk.
+/// Rule 5: even a log over the former per-log limit is read, and the other
+/// logs still land, dry run or not. The big log is sparse: no disk.
 #[cfg(unix)]
 #[test]
 fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
@@ -548,12 +613,6 @@ fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
         .expect("test fixture")
         .set_len(limit + 1)
         .expect("test fixture");
-    let left_out = serde_json::json!([{
-        "warning": "log_too_large",
-        "path": big,
-        "bytes": limit + 1,
-        "limit": limit,
-    }]);
 
     for dry_run in [true, false] {
         let output = home.run_import("codex", &sessions, dry_run);
@@ -563,9 +622,9 @@ fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
             String::from_utf8_lossy(&output.stderr)
         );
         let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
-        assert_eq!(report["warnings"], left_out, "{report}");
-        assert_eq!(report["files"]["too_large"], 1, "{report}");
-        assert_eq!(report["files"]["read"], 5, "{report}");
+        assert_eq!(report["warnings"], serde_json::json!([]), "{report}");
+        assert!(report["files"].get("too_large").is_none(), "{report}");
+        assert_eq!(report["files"]["read"], 6, "{report}");
         assert_eq!(totals(&report), (12, 4, 0, 0), "every other log lands");
     }
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 12);
@@ -607,9 +666,8 @@ fn a_hard_linked_session_log_is_passed_over() {
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 12);
 }
 
-/// Astra 1310 #5: session logs each within the per-log limit that together
-/// decode to more messages than one import holds are refused before anything
-/// lands, dry run or not.
+/// Rule 5: decoded-message crossings warn after the whole import lands;
+/// a dry run succeeds without writing anything.
 #[test]
 fn session_logs_past_the_decoded_limit_are_refused_before_anything_lands() {
     let home = Home::new();
@@ -637,19 +695,42 @@ fn session_logs_past_the_decoded_limit_are_refused_before_anything_lands() {
     }
     let before = home.vault_bytes();
     let dry = home.run_import("codex", &home.dir.path().join("sessions"), true);
-    assert!(!dry.status.success(), "a dry run is refused too");
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert_eq!(home.vault_bytes(), before, "a dry run writes nothing");
     let output = home.run_import("codex", &home.dir.path().join("sessions"), false);
     assert!(
-        !output.status.success(),
-        "over a million messages is refused"
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(home.vault_bytes(), before, "nothing was written");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
+    assert_eq!(totals(&report), (1_000_002, 0, 0, 0));
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 1_000_002);
+    assert!(
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning["warning"] == "limit_crossed"
+                    && warning["row"] == "limits.import_decoded_messages"
+                    && warning["observed"] == 1_000_002
+                    && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
+            }),
+        "{report}"
+    );
+    assert_ne!(home.vault_bytes(), before, "the real import landed");
 }
 
 /// Astra 1310 re-check R4: what a folder's logs keep besides messages counts
 /// toward the decoded limit. Nine logs hold one 120 MiB title each and no
-/// message; together they pass 1 GiB, so the import is refused before
-/// anything lands, instead of holding every title.
+/// message; together they pass 1 GiB. Rule 5: only a codec bound may refuse,
+/// so the import succeeds, dry run or not, and the real run reports the
+/// decoded-bytes crossing. No log holds a message, so no message lands.
 #[test]
 fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
     let home = Home::new();
@@ -673,10 +754,32 @@ fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
     }
     let before = home.vault_bytes();
     let dry = home.run_import("claude-code", &home.dir.path().join("projects"), true);
-    assert!(!dry.status.success(), "a dry run is refused too");
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert_eq!(home.vault_bytes(), before, "a dry run writes nothing");
     let output = home.run_import("claude-code", &home.dir.path().join("projects"), false);
-    assert!(!output.status.success(), "over 1 GiB of titles is refused");
-    assert_eq!(home.vault_bytes(), before, "nothing was written");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
+    assert!(
+        report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning["warning"] == "limit_crossed"
+                    && warning["row"] == "limits.import_decoded_bytes"
+                    && warning["observed"].as_u64().unwrap() > warning["limit"].as_u64().unwrap()
+            }),
+        "{report}"
+    );
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0, "no log holds a message");
 }
 
 /// Done-means (Wave 9b, Claude Code hooks): sessions handed over with

@@ -40,17 +40,28 @@ pub(super) async fn create_link(
     let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
     let link = match request.machine {
         // A link the owner makes records them: a holder that can propose has
-        // the OpenAI proxy admitted under that owner when it redeems.
+        // the OpenAI proxy admitted under that owner when it redeems. A named
+        // agent's link mints its default read Grant, an owner act from this
+        // request's surface (PAIR-GRANT-DESIGN Q3/Q4).
         None => match super::owner_routes::owner(&auth, &server).ok() {
-            Some(owner) => with_issuer(&server, |issuer| {
-                server.vault().issue_owner_pairing_link(
-                    issuer,
-                    &owner,
-                    request.scope,
-                    request.lifetime_secs,
-                    request.principal,
-                )
-            })?,
+            Some(owner) => {
+                let surface = super::owner_routes::machine_routes::act_surface_admitted(
+                    &server,
+                    &auth,
+                    &parts.headers,
+                    &parts.extensions,
+                );
+                with_issuer(&server, |issuer| {
+                    server.vault().issue_owner_pairing_link_from_surface(
+                        issuer,
+                        &owner,
+                        surface,
+                        request.scope,
+                        request.lifetime_secs,
+                        request.principal,
+                    )
+                })?
+            }
             None => with_issuer(&server, |issuer| {
                 server.vault().issue_pairing_link_for_principal(
                     issuer,
@@ -536,25 +547,32 @@ fn paired_mcp_record(
 
 /// Records a live paired slip the in-memory registry has not seen: one
 /// redeemed before this process started, or minted on the stopped vault
-/// (`token agent`, `token read`). The slip must verify with its holder proof
-/// first; `auth` is the exact instrument the gateway already verified. Then
-/// it gets the record redeem would have written. Returns whether
-/// it recorded one.
+/// (`token agent`, `token read`), or a holder's caveated copy of one
+/// (MCP-CAVEATED-READER). The slip must verify with its holder proof first;
+/// `auth` is the exact instrument the gateway already verified. Then it gets
+/// the record redeem would have written for its verified claims, which a
+/// caveat only narrows. Returns whether it recorded one.
 ///
-/// Only the slip as redeem minted it: a holder's caveated copy has its own
-/// token, and a fresh record for it would drop whatever the registry holds
-/// against the original.
+/// A caveated copy has its own token, so its record is also held to what the
+/// registry holds against each signed prefix of it, the mint first
+/// ([`McpConnectorActorRecord::within_parent`]): a revoked prefix refuses it,
+/// and a prefix's bound tools and earlier expiry carry over. Nothing is
+/// persisted and no Grant is minted: after a restart the same rule runs
+/// again at the first use.
+///
+/// [`McpConnectorActorRecord::within_parent`]: crate::mcp::McpConnectorActorRecord::within_parent
 pub(super) fn register_live_paired_mcp(
     registry: &mut crate::mcp::McpConnectorActorRegistry,
     credential: &str,
     auth: &crate::auth::CoreAuth,
     server: &SyncServer,
 ) -> bool {
-    let uncaveated = oneiron::authority::CapabilitySlip::from_token(credential)
-        .is_ok_and(|slip| slip.caveats.is_empty());
-    if !credential.starts_with("v2.slip.") || !uncaveated {
+    if !credential.starts_with("v2.slip.") {
         return false;
     }
+    let Ok(presented) = oneiron::authority::CapabilitySlip::from_token(credential) else {
+        return false;
+    };
     let Some(slip) = auth
         .verified_slip()
         .filter(|_| auth.credential_is_live(server.vault()))
@@ -569,10 +587,23 @@ pub(super) fn register_live_paired_mcp(
     if !holder_exists && slip.claims().share_ref.is_none() {
         return false;
     }
-    match paired_mcp_record(server.vault(), slip.claims()) {
-        Ok(Some(record)) => registry.register(credential, record).is_ok(),
-        _ => false,
+    let Ok(Some(mut record)) = paired_mcp_record(server.vault(), slip.claims()) else {
+        return false;
+    };
+    for signed in 0..presented.caveats.len() {
+        let mut prefix = presented.clone();
+        prefix.caveats.truncate(signed);
+        let Ok(token) = prefix.to_token() else {
+            return false;
+        };
+        if let Some(parent) = registry.registered_record(&token) {
+            let Some(held) = record.within_parent(parent) else {
+                return false;
+            };
+            record = held;
+        }
     }
+    registry.register(credential, record).is_ok()
 }
 
 pub(super) fn with_issuer<T>(

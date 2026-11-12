@@ -27,6 +27,9 @@ impl ScopedRead<'_> {
                 return Ok(true);
             };
             let raw = record.encode();
+            if !self.system_agent_scope_admits_in(txn, id, &raw)? {
+                return Ok(false);
+            }
             return Ok(self.scoped_comm_audience_readable_in(
                 txn,
                 id,
@@ -39,6 +42,48 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         self.audience_readable_raw_in(txn, id, &record.encode(), &HeldAuthority::default())
+    }
+
+    /// A base agent's read of the revision `raw` of `id` stays inside the
+    /// data axes of its standing Steward grant (S67-READ-AXES = C, Engine
+    /// 10 Nov): the row's record position is judged against the grant's
+    /// scope met with the read preset, as the derive verdict judges its
+    /// target, whichever policy row admits the key. A grant that still holds
+    /// the whole read preset, as the host mints it, bounds nothing here; a
+    /// vault no host has given the grant yet reads by its policy rows, as
+    /// before. Under a narrowed grant a row with no record position is not
+    /// read. Any other key adds nothing here.
+    fn system_agent_scope_admits_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        use oneiron_authority::federation::Scope;
+        let Some(agent) = self.actor_key.system_agent_guard() else {
+            return Ok(true);
+        };
+        let Some(scope) = self.vault.system_agent_read_scope_in(txn, agent)? else {
+            return Ok(true);
+        };
+        if scope == crate::federation::scope_codec::read_preset() {
+            return Ok(true);
+        }
+        // A NOTE sits at one world it is in that the grant's worlds and the
+        // read's own world ceiling hold (FIX-LIST 9433).
+        let ceiling = self.actor_key.world_ceiling();
+        let Some(mut record) = crate::federation::record_scope::note_world::blob_scope_held_at(
+            &self.store_read(),
+            txn,
+            *id,
+            raw,
+            &[&ceiling.worlds, &scope.worlds],
+        )?
+        else {
+            return Ok(false);
+        };
+        record.verbs = std::iter::once("read".to_owned()).collect();
+        Ok(scope.admits("read", &record, &Scope::top()))
     }
 
     /// An unbound agent's or the system's read of the revision `raw` of
@@ -87,6 +132,9 @@ impl ScopedRead<'_> {
         authority: &HeldAuthority,
     ) -> Result<bool> {
         if self.device_withholds_in(txn, id, Some(raw))? {
+            return Ok(false);
+        }
+        if !self.system_agent_scope_admits_in(txn, id, raw)? {
             return Ok(false);
         }
         if !self.scoped_comm_audience_readable_in(txn, id, raw, authority)?

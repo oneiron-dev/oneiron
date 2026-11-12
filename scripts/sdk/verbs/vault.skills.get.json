@@ -1,16 +1,16 @@
 {
   "name": "vault.skills.get",
-  "description": "Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry.",
+  "description": "Reads one skill: the owner sees its lifecycle, exact source, provenance, scans, receipts and fork ancestry; another caller reads a loadable skill it may read, as its package without the owner's evidence.",
   "input": "HubSkillRequest",
   "output": "crate::task_verb::sdk::SkillLibraryView",
-  "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_library_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.get\")?, &input))?",
+  "call": "memory.witness_skill_bodies(crate::snapshot_read::skill_library_get_embedded(memory, &input))?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
   "admission": {
-    "unrestricted_record_scope": true
+    "lane_record_scope": true
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "skill_reader"
 }

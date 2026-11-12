@@ -83,6 +83,7 @@ pub(super) fn authorize_at_in_txn(
         && !matches!(
             grant.role,
             FederationGrantRole::Owner
+                | FederationGrantRole::Deputy
                 | FederationGrantRole::Admin
                 | FederationGrantRole::Member
                 | FederationGrantRole::Delegate

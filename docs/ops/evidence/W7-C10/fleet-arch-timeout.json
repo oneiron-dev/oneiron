@@ -5,7 +5,7 @@
     "profile": "fleet20k-v1",
     "host_label": "arch",
     "storage_label": "worktree-filesystem",
-    "scratch": "<host-home>/w7-build/wt/W7-C10/target/fleet-scratch",
+    "scratch": "target/fleet-scratch",
     "agents": 20000,
     "listeners": 4,
     "concurrency": 64,
