@@ -5,6 +5,7 @@
   "output": "crate::settings::non_base_world_claim_fraction::NonBaseWorldClaimFraction",
   "call": "{ let _ = &input; crate::settings::non_base_world_claim_fraction::read_non_base_world_claim_fraction(memory)? }",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,
