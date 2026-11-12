@@ -214,6 +214,34 @@ fn rebind_owed_wake(
                 "this wake was admitted; rebind its try by attempt".to_owned(),
             ));
         }
+        if super::DECIDED.get(vault, &*txn, &key)? == Some(wake.admission_id()) {
+            return Err(Error::InvalidConfig(
+                "this wake was admitted on another machine; rebind its try by attempt".to_owned(),
+            ));
+        }
+        // A riding wake is the elected home's to admit (FIX 5266): its
+        // rebind runs there, where the admission it commits with can.
+        #[cfg(feature = "sync")]
+        if super::replica::wake_is_the_homes_in_txn(vault, &*txn, &wake)? {
+            return Err(Error::InvalidConfig(
+                "this wake is the elected home's to admit; rebind it on the home".to_owned(),
+            ));
+        }
+        // A turn's wake waits while its ChildOf edge is deferred here: its
+        // admission would hold it, so its rebind waits for the edge too.
+        #[cfg(feature = "sync")]
+        if wake.occurrence.is_none()
+            && crate::sync::bridge::has_deferred_child_of_source_in_txn(
+                vault,
+                &*txn,
+                &wake.turn.turn,
+            )?
+        {
+            return Err(Error::InvalidConfig(
+                "this wake waits for its turn's conversation; rebind it once that arrives"
+                    .to_owned(),
+            ));
+        }
         let (authority, rebind) =
             rebound_in_txn(vault, txn, &wake.authority, successor, actor, class)?;
         wake.authority = authority;

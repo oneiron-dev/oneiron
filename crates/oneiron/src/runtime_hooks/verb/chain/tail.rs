@@ -16,7 +16,7 @@ use super::super::storage::VerbHookStorage;
 /// Receipts the input's tail carries.
 const RECEIPT_TAIL: usize = 8;
 /// The tail's kinds: the full receipt family (FIX 1429).
-const RECEIPT_TAIL_KINDS: [ReceiptKind; 14] = [
+const RECEIPT_TAIL_KINDS: [ReceiptKind; 15] = [
     ReceiptKind::Outbound,
     ReceiptKind::Gate,
     ReceiptKind::IdentityLifecycle,
@@ -31,6 +31,7 @@ const RECEIPT_TAIL_KINDS: [ReceiptKind; 14] = [
     ReceiptKind::ReferenceRefusal,
     ReceiptKind::TaskLifecycle,
     ReceiptKind::RunHoldOverride,
+    ReceiptKind::Inquiry,
 ];
 
 /// The tail `call`'s chain on `storage` reads, as JSON, and the source rows

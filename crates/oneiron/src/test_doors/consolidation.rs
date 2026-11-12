@@ -230,10 +230,54 @@ pub fn consolidate_unbound_turn(
     readable_space: Option<EntityId>,
     reply: &str,
 ) -> Result<UnboundPass> {
+    let (turn, _) = witness_user_turn(vault, EntityId::now(), words, metadata, 10)?;
+    consolidate_witnessed_turns(vault, turn, readable_space, reply)
+}
+
+/// Witnesses `first_words`, then `second_words`, each spoken by a person of
+/// its own, as two TURNs of one conversation; settles the second TURN and its
+/// MESSAGE into `project`, as the leader-chat door settles a project's turn;
+/// then runs the pass of [`consolidate_unbound_turn`] with no readable space.
+/// A claim whose evidence is the first TURN lands in the default project, and
+/// one whose evidence is the second lands in `project`. `UnboundPass::turn`
+/// is the first TURN.
+///
+/// # Errors
+///
+/// The vault's, or a pass that does not complete.
+pub fn consolidate_unbound_turn_pair(
+    vault: &Vault,
+    first_words: &str,
+    second_words: &str,
+    project: EntityId,
+    reply: &str,
+) -> Result<UnboundPass> {
+    let conversation = EntityId::now();
+    let (first, _) = witness_user_turn(vault, conversation, first_words, None, 10)?;
+    let (second, message) = witness_user_turn(vault, conversation, second_words, None, 11)?;
+    vault.with_write_txn_grouped(|txn| {
+        for id in [second, message] {
+            crate::federation::record_scope::stamp_leader_project(&vault.store, txn, id, project)?;
+        }
+        Ok(())
+    })?;
+    consolidate_witnessed_turns(vault, first, None, reply)
+}
+
+/// Witnesses `words`, spoken by a fresh PERSON, as one visible user MESSAGE
+/// carrying `metadata` into a fresh TURN of `conversation` at `occurred_at`;
+/// `(turn, message)`.
+fn witness_user_turn(
+    vault: &Vault,
+    conversation: EntityId,
+    words: &str,
+    metadata: Option<serde_json::Value>,
+    occurred_at: u64,
+) -> Result<(EntityId, EntityId)> {
     let speaker = EntityId::now();
     vault.put_entity(&speaker, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
-    let conversation = EntityId::now();
     let turn = EntityId::now();
+    let message = EntityId::now();
     vault
         .memory(speaker, EdgeActorClass::Human)
         .witness(&WitnessTurn {
@@ -241,7 +285,7 @@ pub fn consolidate_unbound_turn(
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
             messages: vec![WitnessMessage {
-                id: Some(EntityId::now().to_hex()),
+                id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: words.to_owned(),
@@ -251,10 +295,24 @@ pub fn consolidate_unbound_turn(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 10,
+            occurred_at,
             assertions: WitnessAssertions::default(),
         })
         .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;
+    Ok((turn, message))
+}
+
+/// Gives the Dreamer a live `MessagesRead` grant on `readable_space` when one
+/// is named, then runs one Micro consolidation pass over the dirty TURNs with
+/// no caller scope (an unbound branch), the scripted model answering every
+/// call with `reply`, and lands what it extracts through the promotion
+/// writer; `turn` is the pass's `UnboundPass::turn`.
+fn consolidate_witnessed_turns(
+    vault: &Vault,
+    turn: EntityId,
+    readable_space: Option<EntityId>,
+    reply: &str,
+) -> Result<UnboundPass> {
     let actor = vault.dreamer_authority()?;
     if let Some(space) = readable_space {
         vault.create_access_grant(

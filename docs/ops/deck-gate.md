@@ -80,13 +80,13 @@ an Office oracle run.
   ```
 
   The first command prints the rows and the digest; check them. The second
-  records only this account's digest. Do it for `olety` (over ssh) and for
+  records only this account's digest. Do it for the owner account (over ssh) and for
   `decktest` (in its own logged-in Terminal), then commit `environment.json`
   and start a new run: a run directory pins its copy of the script, so
   approving inside a run invalidates it.
 - The account running the Office half needs a console (Aqua) session on vel:
   it owns `/dev/console`, or `who` lists its `console` login. Without one the
-  pass refuses before opening anything with "log olety into vel's desktop (use
+  pass refuses before opening anything with "log `<account>` into vel's desktop (use
   fast user switching for decktest)", not with osascript's -10810.
 - `scripts/office/README.md` "Safe Mac setup" applies: Automation and
   Accessibility granted once, no Grant File Access, no other open presentation.

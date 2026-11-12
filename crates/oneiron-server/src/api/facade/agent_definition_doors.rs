@@ -8,10 +8,12 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, AgentDefinitionCreateRequest, AgentDefinitionRequest, AgentDefinitionUpdateRequest,
-    AgentDefinitionView, WorkflowDispatchRequest, WorkflowPersonDispatchRequest, WorkflowRequest,
-    WorkflowRunRequest, WorkflowRunView, WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView,
-    WorkspaceMemberOnboardRequest, WorkspacePresetReceipt, WorkspacePresetRequest,
-    WorkspaceRosterRequest,
+    AgentDefinitionView, ProposedAgentDefinitionChangeApproveRequest,
+    ProposedAgentDefinitionChangeRejectRequest, ProposedAgentDefinitionChangeSettlementView,
+    ProposedAgentDefinitionChanges, ProposedAgentDefinitionChangesRequest, WorkflowDispatchRequest,
+    WorkflowPersonDispatchRequest, WorkflowRequest, WorkflowRunRequest, WorkflowRunView,
+    WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView, WorkspaceMemberOnboardRequest,
+    WorkspacePresetReceipt, WorkspacePresetRequest, WorkspaceRosterRequest,
 };
 use oneiron::workspace_roster::{MemberOnboardingOutcome, WorkspaceRosterEntry};
 use oneiron::{EdgeActorClass, EntityId};
@@ -65,6 +67,76 @@ pub(crate) async fn vault_agents_get(
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::read_agent_definition_as(server.vault(), &owner, input),
         |saved| Some(vec![saved.agent_def_ref]),
+    )
+    .await
+}
+
+/// An answered proposed change names the proposal and the stored definition.
+fn settled_change_rows(
+    settled: &ProposedAgentDefinitionChangeSettlementView,
+) -> Option<Vec<EntityId>> {
+    Some(vec![settled.proposal_ref, settled.target_ref])
+}
+
+pub(crate) async fn vault_agents_proposed_changes_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ProposedAgentDefinitionChangesRequest,
+) -> MaybeListed<ProposedAgentDefinitionChanges> {
+    const VERB: &str = "vault.agents.proposed_changes.list";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            sdk::list_proposed_agent_definition_changes_as(server.vault(), &owner, input)
+        },
+        |listed| {
+            let mut rows: Vec<EntityId> = listed
+                .changes
+                .iter()
+                .flat_map(|change| [change.proposal.agent_def_ref, change.target_ref])
+                .collect();
+            rows.sort_unstable();
+            rows.dedup();
+            Some(rows)
+        },
+    )
+    .await
+}
+
+pub(crate) async fn vault_agents_proposed_changes_approve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ProposedAgentDefinitionChangeApproveRequest,
+) -> MaybeListed<ProposedAgentDefinitionChangeSettlementView> {
+    const VERB: &str = "vault.agents.proposed_changes.approve";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            sdk::approve_proposed_agent_definition_change_as(server.vault(), &owner, input)
+        },
+        settled_change_rows,
+    )
+    .await
+}
+
+pub(crate) async fn vault_agents_proposed_changes_reject(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ProposedAgentDefinitionChangeRejectRequest,
+) -> MaybeListed<ProposedAgentDefinitionChangeSettlementView> {
+    const VERB: &str = "vault.agents.proposed_changes.reject";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            sdk::reject_proposed_agent_definition_change_as(server.vault(), &owner, input)
+        },
+        settled_change_rows,
     )
     .await
 }

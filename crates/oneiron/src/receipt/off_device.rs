@@ -133,6 +133,9 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
     // A settlement: the artifact it settled. Its trigger names the
     // artifact at a version, which is not a row spelling. (FIX 4848)
     (ReceiptKind::ArtifactSettle, &["artifact_ref"]),
+    // An inquiry send: the member it asked about. Its trigger names the
+    // task. (INQUIRE-1)
+    (ReceiptKind::Inquiry, &["member"]),
 ];
 
 /// The families whose `actor` and `on_behalf_of` are parties the receipt

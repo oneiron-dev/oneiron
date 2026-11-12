@@ -155,6 +155,7 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
         tier: MemoryTier::Snippet,
         snippet: None,
         hook: None,
+        room_pin: None,
         source_revision: entity.source_revision_ref.map(crate::vault::RevisionRef),
         question: None,
         fiction: false,
