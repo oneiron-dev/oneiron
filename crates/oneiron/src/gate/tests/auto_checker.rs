@@ -647,16 +647,20 @@ fn dead_checker_fail_closed() -> Result<()> {
         AutoCheckOutcome::Unavailable,
     )));
     // A hold that names no reason is a malformed verdict.
-    let malformed = bounded(Arc::new(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
-        reasons: vec!["  ".to_owned()],
-    })));
+    let malformed = bounded(Arc::new(RecordingAutoChecker::new(
+        AutoCheckOutcome::Hold {
+            reasons: vec!["  ".to_owned()],
+        },
+    )));
     // Prose naming no token the receipt vocabulary can keep is the same
     // malformed verdict one step later: the hold survives `normalized`
     // but renders to nothing, and an unexplained refusal must not be
     // recorded as an explained one.
-    let untokenizable = bounded(Arc::new(RecordingAutoChecker::new(AutoCheckOutcome::Hold {
-        reasons: vec!["...!!".to_owned()],
-    })));
+    let untokenizable = bounded(Arc::new(RecordingAutoChecker::new(
+        AutoCheckOutcome::Hold {
+            reasons: vec!["...!!".to_owned()],
+        },
+    )));
     let panicking = bounded(Arc::new(PanickingAutoChecker));
     let slow = bounded(Arc::new(SlowAutoChecker));
     let dead: [(&str, &BoundedAutoChecker); 5] = [
@@ -949,7 +953,9 @@ fn restricted_lineage_consults_checker_once_and_preserves_declared_source() -> R
             "the host request must disclose both historical source classes"
         );
         assert_eq!(
-            seen[0]["actor_class"].as_str().expect("checker actor class"),
+            seen[0]["actor_class"]
+                .as_str()
+                .expect("checker actor class"),
             "agent"
         );
         assert_eq!(
@@ -1103,12 +1109,12 @@ fn a_checker_never_allows_a_value_it_saw_only_part_of() -> Result<()> {
             .as_ref()
             .is_none_or(|body| body.approval != ClaimApprovalStatus::Auto),
         "H282: the checker saw {} bytes and the whole value landed Auto",
-        checker
-            .seen()
-            .last()
-            .map_or(0, |seen| {
-                seen["value_preview"].as_str().expect("checker preview").len()
-            })
+        checker.seen().last().map_or(0, |seen| {
+            seen["value_preview"]
+                .as_str()
+                .expect("checker preview")
+                .len()
+        })
     );
     assert!(result.is_err(), "the Auto write is held");
     assert_eq!(checker.calls(), 1, "a partial value is never sent");
