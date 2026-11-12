@@ -8,7 +8,8 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, AgentDefinitionCreateRequest, AgentDefinitionRequest, AgentDefinitionUpdateRequest,
-    AgentDefinitionView, AgentMadeBy, AgentMadeByRequest,
+    AgentDefinitionView, AgentMadeBy, AgentMadeByRequest, AgentTreePauseReceipt,
+    AgentTreePauseRequest, AgentTreeResumeReceipt, AgentTreeResumeRequest,
     ProposedAgentDefinitionChangeApproveRequest, ProposedAgentDefinitionChangeRejectRequest,
     ProposedAgentDefinitionChangeSettlementView, ProposedAgentDefinitionChanges,
     ProposedAgentDefinitionChangesRequest, WorkflowDispatchRequest, WorkflowPersonDispatchRequest,
@@ -107,6 +108,42 @@ pub(crate) async fn vault_agents_made_by_get(
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::read_agent_made_by_as(server.vault(), &owner, input),
         |made| Some(made.listed_rows()),
+    )
+    .await
+}
+
+/// AUTHOR-OFF: the owner pauses what one agent made that waits; the rows
+/// it paused are listed.
+pub(crate) async fn vault_agents_pause_tree(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AgentTreePauseRequest,
+) -> MaybeListed<AgentTreePauseReceipt> {
+    const VERB: &str = "vault.agents.pause_tree";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::pause_agent_tree_as(server.vault(), &owner, input),
+        |paused| Some(paused.listed_rows()),
+    )
+    .await
+}
+
+/// AUTHOR-OFF: the owner undoes one tree pause; the rows it moved or left
+/// are listed.
+pub(crate) async fn vault_agents_resume_tree(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AgentTreeResumeRequest,
+) -> MaybeListed<AgentTreeResumeReceipt> {
+    const VERB: &str = "vault.agents.resume_tree";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::resume_agent_tree_as(server.vault(), &owner, input),
+        |resumed| Some(resumed.listed_rows()),
     )
     .await
 }

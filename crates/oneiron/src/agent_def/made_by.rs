@@ -15,10 +15,15 @@
 //! - a watcher: a TASK it owns that still waits for its due tick (ARCH-0080
 //!   §4: a TASK with a due time is a watcher);
 //! - a hook: a pack hook binding whose outcomes run as it
-//!   (`HookAuthor::Agent`).
+//!   (`HookAuthor::Agent`);
+//! - a send: a live scheduled send whose connector TASK names it as the
+//!   actor that scheduled it.
 //!
 //! A definition it saved made things of its own; those are listed too, as
 //! far down as saved definitions go, each under the agent that made it.
+//!
+//! The answer carries the offer to pause them: how many entries
+//! `vault.agents.pause_tree` would pause now (`agent_def::tree_pause`).
 //!
 //! Entry: [`Vault::agent_made_by_as`]. [`switches_off_or_narrows`] decides
 //! which owner edits answer with it.
@@ -54,7 +59,7 @@ pub struct AgentMadeByRequest {
 pub struct AgentMadeBy {
     /// The agent the lists answer for.
     pub agent_def_ref: EntityId,
-    /// How many entries the four lists hold together.
+    /// How many entries the five lists hold together.
     pub count: usize,
     /// The definitions it saved, and those they saved, each with what it is
     /// doing now.
@@ -66,6 +71,22 @@ pub struct AgentMadeBy {
     pub watchers: Vec<MadeWatcher>,
     /// The hook bindings whose outcomes run as it.
     pub hooks: Vec<MadeHook>,
+    /// Its scheduled sends that have not gone out.
+    pub sends: Vec<MadeSend>,
+    /// The offer to pause what waits among them; absent when nothing does.
+    pub pause_offer: Option<AgentTreePauseOffer>,
+}
+
+/// "Also pause these" (ARCH-0053 #author-off-no-cascade): one owner act with
+/// one receipt and an undo.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgentTreePauseOffer {
+    /// The verb that pauses them: `vault.agents.pause_tree`.
+    pub verb: String,
+    /// How many entries it would pause now: the saved agents that stand,
+    /// the queued and scheduled branches, runs and sends, the watchers not
+    /// held and the hooks switched on. A running branch is not paused.
+    pub pausable: usize,
 }
 
 impl AgentMadeBy {
@@ -77,6 +98,7 @@ impl AgentMadeBy {
             .chain(self.agents.iter().map(|agent| agent.agent_def_ref))
             .chain(self.watchers.iter().map(|watcher| watcher.task_ref))
             .chain(self.hooks.iter().map(|hook| hook.binding_ref))
+            .chain(self.sends.iter().map(|send| send.task_ref))
             .collect();
         rows.sort_unstable();
         rows.dedup();
@@ -132,6 +154,22 @@ pub struct MadeWatcher {
     pub made_by: EntityId,
     /// When it ticks, Unix seconds.
     pub due_at: u64,
+    /// Whether a tree pause holds its tick.
+    pub held: bool,
+}
+
+/// A scheduled send an agent made that has not gone out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MadeSend {
+    /// The send's attempt id, as `vault.runs.pause` names a branch.
+    pub branch: String,
+    /// Its connector TASK.
+    pub task_ref: EntityId,
+    /// The agent that scheduled it.
+    pub made_by: EntityId,
+    pub state: AttemptState,
+    /// When a scheduled send becomes ready, Unix seconds.
+    pub scheduled_at: Option<u64>,
 }
 
 /// A pack hook binding whose outcomes run as an agent.
@@ -164,7 +202,13 @@ struct Makings {
     runs: BTreeMap<EntityId, Vec<AttemptRecord>>,
     /// Each hook binding whose outcomes run as an agent, by that agent.
     hooks: BTreeMap<EntityId, Vec<(EntityId, PackHookBinding)>>,
+    /// Each live scheduled send with its connector TASK, by the actor its
+    /// TASK names.
+    sends: BTreeMap<EntityId, Vec<(EntityId, AttemptRecord)>>,
 }
+
+/// The verb the offer names.
+pub(crate) const PAUSE_TREE_VERB: &str = "vault.agents.pause_tree";
 
 /// The agent an attempt runs as, when it is an agent's run.
 fn run_agent(record: &AttemptRecord) -> Option<EntityId> {
@@ -172,8 +216,32 @@ fn run_agent(record: &AttemptRecord) -> Option<EntityId> {
         .and_then(|input| input.target.agent_definition_ref().ok())
 }
 
-fn branch_hex(id: AttemptId) -> String {
+pub(super) fn branch_hex(id: AttemptId) -> String {
     crate::entity_id::bytes_to_hex_lower(id.as_bytes())
+}
+
+/// The attempt a branch id names ([`branch_hex`]'s inverse).
+pub(super) fn branch_id(branch: &str) -> Result<AttemptId> {
+    AttemptId::from_bytes(EntityId::from_hex(branch)?.as_bytes())
+}
+
+/// How many entries of `made` the tree pause would pause now.
+fn pausable(made: &AgentMadeBy) -> usize {
+    let waits = |state: AttemptState| state.is_ready_indexed();
+    made.agents
+        .iter()
+        .map(|agent| {
+            usize::from(agent.stands) + agent.runs.iter().filter(|run| waits(run.state)).count()
+        })
+        .sum::<usize>()
+        + made
+            .branches
+            .iter()
+            .filter(|branch| waits(branch.state))
+            .count()
+        + made.sends.iter().filter(|send| waits(send.state)).count()
+        + made.watchers.iter().filter(|watcher| !watcher.held).count()
+        + made.hooks.iter().filter(|hook| hook.enabled).count()
 }
 
 impl Vault {
@@ -225,6 +293,8 @@ impl Vault {
             branches: Vec::new(),
             watchers: Vec::new(),
             hooks: Vec::new(),
+            sends: Vec::new(),
+            pause_offer: None,
         };
         let mut listed_branches = BTreeSet::new();
         let mut seen = BTreeSet::from([*agent]);
@@ -260,6 +330,19 @@ impl Vault {
                 });
                 makers.push_back(*id);
             }
+            // A send is listed once, as a send, before the branches.
+            for (task, record) in makings.sends.get(&maker).into_iter().flatten() {
+                if !listed_branches.insert(record.id) {
+                    continue;
+                }
+                made.sends.push(MadeSend {
+                    branch: branch_hex(record.id),
+                    task_ref: *task,
+                    made_by: maker,
+                    state: record.state,
+                    scheduled_at: record.scheduled_at,
+                });
+            }
             let own_runs = makings.runs.get(&maker).into_iter().flatten();
             let mut under = queue.descendant_rows_in_txn(txn, own_runs.map(|record| record.id))?;
             for task in crate::task_verb::indexed_tasks_of_in(&self.store, txn, &maker)? {
@@ -280,6 +363,7 @@ impl Vault {
                         task_ref: task,
                         made_by: maker,
                         due_at,
+                        held: crate::runtime_hooks::task_tick_held_in_txn(self, txn, task)?,
                     });
                 }
                 under.extend(queue.task_subtree_in_txn(txn, &task.to_hex())?);
@@ -310,13 +394,21 @@ impl Vault {
                 });
             }
         }
-        made.count =
-            made.agents.len() + made.branches.len() + made.watchers.len() + made.hooks.len();
+        made.count = made.agents.len()
+            + made.branches.len()
+            + made.watchers.len()
+            + made.hooks.len()
+            + made.sends.len();
+        let pausable = pausable(&made);
+        made.pause_offer = (pausable > 0).then(|| AgentTreePauseOffer {
+            verb: PAUSE_TREE_VERB.to_owned(),
+            pausable,
+        });
         Ok(made)
     }
 
-    /// Every saved definition, agent run and agent hook binding `txn`
-    /// holds, filed by maker. Every AGENT_DEF row is read (rule 5: past the
+    /// Every saved definition, agent run, agent hook binding and live
+    /// scheduled send `txn` holds, filed by maker. Every AGENT_DEF row is read (rule 5: past the
     /// type's threshold the scan raises one scan check and reads on).
     fn makings_in_txn(&self, txn: &heed::RoTxn<'_>, count: &mut ScanCount) -> Result<Makings> {
         let mut saved: BTreeMap<EntityId, Vec<(EntityId, AgentDefinition)>> = BTreeMap::new();
@@ -353,6 +445,32 @@ impl Vault {
                 hooks.entry(*agent).or_default().push((id, binding));
             }
         }
-        Ok(Makings { saved, runs, hooks })
+        let mut sends: BTreeMap<EntityId, Vec<(EntityId, AttemptRecord)>> = BTreeMap::new();
+        for record in AttemptQueue::new(self)
+            .working_kind_rows_in_txn(txn, crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND)?
+        {
+            let Some(task) = record
+                .task_ref
+                .as_deref()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+            else {
+                continue;
+            };
+            if !record.state.is_pending() {
+                continue;
+            }
+            if let Some(send) = self.connector_send_task_in(txn, &task)? {
+                sends
+                    .entry(send.actor_ref)
+                    .or_default()
+                    .push((task, record));
+            }
+        }
+        Ok(Makings {
+            saved,
+            runs,
+            hooks,
+            sends,
+        })
     }
 }

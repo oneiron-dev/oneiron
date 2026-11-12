@@ -21,6 +21,7 @@ mod optional_memory;
 mod powers;
 mod proposed_change;
 mod refusal;
+mod tree_pause;
 mod types;
 mod widening;
 pub mod workflow;
@@ -31,7 +32,8 @@ pub use self::doors::AgentDefinitionPutDisposition;
 pub(crate) use self::doors::{AgentAuthorLease, AgentAuthoring, stands};
 pub(crate) use self::made_by::switches_off_or_narrows;
 pub use self::made_by::{
-    AgentMadeBy, AgentMadeByRequest, AgentRunNow, MadeAgent, MadeBranch, MadeHook, MadeWatcher,
+    AgentMadeBy, AgentMadeByRequest, AgentRunNow, AgentTreePauseOffer, MadeAgent, MadeBranch,
+    MadeHook, MadeSend, MadeWatcher,
 };
 pub use self::models::{
     AgentModel, UNBOUND_LIST_KEEPS_ROUTE, birth_under_inherited_list, ensure_inherited_model_list,
@@ -57,6 +59,10 @@ pub(crate) use self::proposed_change::{
 pub use self::refusal::{
     REFUSAL_DIAL_KEYS, RefusalDial, RefusalDomain, RefusalLevel, RefusalOutcome, VaultKind,
     resolve_refusal,
+};
+pub use self::tree_pause::{
+    AgentTreeMembers, AgentTreePauseReceipt, AgentTreePauseRequest, AgentTreeResumeReceipt,
+    AgentTreeResumeRequest,
 };
 pub use self::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,

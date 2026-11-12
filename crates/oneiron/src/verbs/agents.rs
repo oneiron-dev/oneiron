@@ -8,7 +8,10 @@ use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, TimeRange, Vault};
 
 pub use crate::agent_def::ProposedAgentDefinitionChangeDecision;
-pub use crate::agent_def::{AgentMadeBy, AgentMadeByRequest};
+pub use crate::agent_def::{
+    AgentMadeBy, AgentMadeByRequest, AgentTreePauseReceipt, AgentTreePauseRequest,
+    AgentTreeResumeReceipt, AgentTreeResumeRequest,
+};
 pub use crate::code_run::workflow_operations::{
     AgentCeilingInput, AgentDefinitionSpec, AgentMcpInput, AgentScopeInput, AgentSkillInput,
 };
@@ -145,6 +148,29 @@ pub fn read_agent_made_by_as(
 ) -> MemoryResult<AgentMadeBy> {
     vault
         .agent_made_by_as(owner, &input.agent_def_ref)
+        .map_err(MemoryError::from)
+}
+
+/// `vault.agents.pause_tree`: the owner pauses what one agent made that
+/// waits, in one act with one receipt (ARCH-0053 #author-off-no-cascade).
+pub fn pause_agent_tree_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: AgentTreePauseRequest,
+) -> MemoryResult<AgentTreePauseReceipt> {
+    vault
+        .pause_agent_tree_as(owner, &input.agent_def_ref)
+        .map_err(MemoryError::from)
+}
+
+/// `vault.agents.resume_tree`: the owner undoes one tree pause.
+pub fn resume_agent_tree_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: AgentTreeResumeRequest,
+) -> MemoryResult<AgentTreeResumeReceipt> {
+    vault
+        .resume_agent_tree_as(owner, &input.pause_ref)
         .map_err(MemoryError::from)
 }
 
