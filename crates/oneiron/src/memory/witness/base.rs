@@ -721,8 +721,8 @@ impl Memory<'_> {
                 Some(entity_type) if entity_type == expected_type => Ok((id, false)),
                 Some(entity_type) => Err(MemoryError::bad_request(format!(
                     "ref {trimmed:?} resolves to kind {} but {} was expected",
-                    kind_string_for_type(entity_type),
-                    kind_string_for_type(expected_type),
+                    self.vault.entity_kind_name(entity_type),
+                    self.vault.entity_kind_name(expected_type),
                 ))),
                 None => Ok((id, true)),
             };
@@ -732,8 +732,8 @@ impl Memory<'_> {
             Some(entity_type) if entity_type == expected_type => Ok((id, false)),
             Some(entity_type) => Err(MemoryError::bad_request(format!(
                 "ref {reference:?} resolves to kind {} but {} was expected",
-                kind_string_for_type(entity_type),
-                kind_string_for_type(expected_type),
+                self.vault.entity_kind_name(entity_type),
+                self.vault.entity_kind_name(expected_type),
             ))),
             None => Err(MemoryError::not_found(format!(
                 "entity {reference:?} does not resolve"

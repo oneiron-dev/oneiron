@@ -142,6 +142,7 @@ pub(crate) async fn get_entity(
         Ok(Some((entity_type, updated_at, data))) => (
             StatusCode::OK,
             Json(projection::project_entity_parts(
+                &server.vault,
                 &id,
                 entity_type,
                 updated_at,
