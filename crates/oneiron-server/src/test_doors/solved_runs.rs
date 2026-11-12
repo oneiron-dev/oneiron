@@ -6,8 +6,8 @@ use oneiron::learning::TypeRef;
 use serde_json::Value;
 
 /// What a capture reads on the page and keeps for a call: its subgoal, how
-/// many checks it names, its task type, its source and where its span
-/// starts.
+/// many checks it names, its task type, its source, where its span starts
+/// and the entry it ends with when the call names one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedSpanView {
     pub subgoal: String,
@@ -15,6 +15,7 @@ pub struct CheckedSpanView {
     pub type_ref: TypeRef,
     pub source: SolvedSource,
     pub after_seq: Option<u64>,
+    pub through_seq: Option<u64>,
 }
 
 /// What the call's capture names for a `self.browser.library.draft` call
