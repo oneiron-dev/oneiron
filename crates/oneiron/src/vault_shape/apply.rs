@@ -936,6 +936,19 @@ impl Vault {
         name: &str,
         now: u64,
     ) -> Result<EntityId> {
+        self.with_write_txn_grouped(|txn| self.create_world_in_txn(txn, owner, name, now))
+    }
+
+    /// [`Self::create_world`] in the caller's transaction, so a door that
+    /// creates a world and names it in the same write (an inquiry edge's
+    /// opened WORLD) lands both or neither.
+    pub(crate) fn create_world_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        name: &str,
+        now: u64,
+    ) -> Result<EntityId> {
         #[derive(Serialize)]
         struct WorldBody<'a> {
             name: &'a str,
@@ -946,27 +959,25 @@ impl Vault {
         let body = rmp_serde::to_vec_named(&WorldBody { name })
             .map_err(|_| invalid("world encoding failed"))?;
         let id = EntityId::now();
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            for (_, existing) in self.shape_bodies_in_txn(txn, ENTITY_TYPE_WORLD)? {
-                if world_name(&existing).as_deref() == Some(name) {
-                    return Err(invalid("a live world already carries that name"));
-                }
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        for (_, existing) in self.shape_bodies_in_txn(txn, ENTITY_TYPE_WORLD)? {
+            if world_name(&existing).as_deref() == Some(name) {
+                return Err(invalid("a live world already carries that name"));
             }
-            self.batch_in()
-                .put(
-                    &id,
-                    ENTITY_TYPE_WORLD,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .apply(txn)?;
-            Ok(id)
-        })
+        }
+        self.batch_in()
+            .put(
+                &id,
+                ENTITY_TYPE_WORLD,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )
+            .apply(txn)?;
+        Ok(id)
     }
 
     /// Creates a facet named `name` that `person` wears, as `owner`: a mask

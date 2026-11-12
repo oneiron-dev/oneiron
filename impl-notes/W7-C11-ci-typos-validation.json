@@ -258,7 +258,7 @@
     "mergeReceiptUnchanged": true,
     "mergeReceipt": {
       "path": "impl-notes/W7-C11-merge-validation.json",
-      "sha256": "5f2ec7fd3e95af34994cdda73d056e113f5e118fa60132f95424e18c05d9efe3"
+      "sha256": "c2a6b3ea4d212ee2bfd8df3aee78bcadf65d3f1c33bcbc4198a444251370116d"
     }
   },
   "notRun": [

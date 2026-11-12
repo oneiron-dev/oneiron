@@ -6,6 +6,7 @@
 
 mod buckets;
 mod budget_line;
+mod requested;
 mod requester;
 mod settlement;
 mod spend;
@@ -424,8 +425,22 @@ impl DreamerRunnerStore<'_> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
+        input: AdmitDreamerAttempt,
+        route: Option<&mut dyn FnMut(&AttemptRecord) -> Option<String>>,
+    ) -> Result<DreamerKindAdmissionResult> {
+        self.admit_kind_in_txn(wtxn, queue_kind, input, route, None)
+    }
+
+    /// [`Self::admit_next_kind_in_txn`]; with `only`, the scan of a plain
+    /// kind takes that one queued attempt or none, never the next other
+    /// one ([`requested`]).
+    fn admit_kind_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        queue_kind: &str,
         mut input: AdmitDreamerAttempt,
         route: Option<&mut dyn FnMut(&AttemptRecord) -> Option<String>>,
+        only: Option<AttemptId>,
     ) -> Result<DreamerKindAdmissionResult> {
         // FIX 5661: while this node drains its free-time rows toward a home
         // move, or froze them for one, a free-time item whose try never
@@ -445,7 +460,8 @@ impl DreamerRunnerStore<'_> {
         } else {
             self.attempts
                 .ready_kind_matching_in_txn(wtxn, queue_kind, input.now, |record| {
-                    Ok(record.accepts_worker(&input.lease_owner)
+                    Ok(only.is_none_or(|id| record.id == id)
+                        && record.accepts_worker(&input.lease_owner)
                         && !(fenced && super::free_time_item_waits_unstarted(record)))
                 })?
         };
