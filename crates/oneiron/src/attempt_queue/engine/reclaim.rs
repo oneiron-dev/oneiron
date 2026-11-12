@@ -8,7 +8,9 @@ use crate::attempt_queue::cancel::{
 use crate::attempt_queue::encoding::{
     decode_record, lease_expired, ready_at, ready_key, waiting_on_backoff,
 };
-use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
+use crate::attempt_queue::lifecycle::{
+    PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit,
+};
 use crate::attempt_queue::telemetry::emit_attempt_queue_cleanup_span;
 use crate::attempt_queue::types::{
     AttemptId, AttemptLeaseExpiry, AttemptQueueCleanupReport, AttemptQueueRetryReason,
@@ -187,19 +189,15 @@ impl AttemptQueue<'_> {
                             Some(RETRY_REASON_LEASE_TIMEOUT.to_owned()),
                             input.now,
                         )?;
-                        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
-                        self.store.attempt_records.put(
+                        self.commit_terminal_in_txn(
                             &mut wtxn,
-                            record.id.as_bytes(),
-                            &encoded,
+                            &mut record,
+                            TerminalCommit {
+                                last_error: None,
+                                now: input.now,
+                                receipt_actor: PackReceiptActor::Caller(ATTEMPT_RUNTIME_ACTOR),
+                            },
                         )?;
-                        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                            self.store,
-                            &mut wtxn,
-                            &record,
-                            ATTEMPT_RUNTIME_ACTOR,
-                        )?;
-                        self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
                         self.notify_settled_in_txn(&mut wtxn, &record)?;
                         // FIX 900: a landing expired into a force cancel
                         // settles its spend lease in the same write (OF-532);
