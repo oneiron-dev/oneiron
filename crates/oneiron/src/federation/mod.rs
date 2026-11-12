@@ -111,6 +111,7 @@ pub use shared_act::{
 };
 pub(crate) use shared_act::{DetachOutcome, SharedMemberDeparture};
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
+pub(crate) use shared_creation::role_preset;
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{
     InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,
