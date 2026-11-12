@@ -5,7 +5,7 @@
   "output": "crate::mail_pack::MailThreadShareReceipt",
   "call": "memory.mail_threads_share(&input)?",
   "scope": "Write",
-  "act_class": "reversible_work",
+  "act_class": "grant_widen",
   "mcp_fields": {
     "spec": "$"
   },
