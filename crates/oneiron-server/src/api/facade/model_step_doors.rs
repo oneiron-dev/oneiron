@@ -264,6 +264,10 @@ impl RunStep {
             &input,
         ));
         if let Ok(Some(receipt)) = saved {
+            // A saved answer's spend was staged before it was saved: what a
+            // booking that failed, or a process that died, left staged on
+            // the run's scope books now, once.
+            self.drain_staged_spend()?;
             return self.answer(receipt);
         }
         // The vault's inference policy for the model the step names, and its
@@ -293,6 +297,17 @@ impl RunStep {
         let receipt = receipt?;
         booked?;
         self.answer(receipt)
+    }
+
+    /// Books on the run's scope what its leases staged and no drain booked
+    /// ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]). A booking that fails is an
+    /// error of the call, as at a fresh call's end; the rows stay staged.
+    fn drain_staged_spend(&self) -> MemoryResult<()> {
+        let Some(scope) = self.held.spend_scope() else {
+            return Ok(());
+        };
+        AgentDispatcher::new(self.server.vault()).drain_lease_spend(scope)?;
+        Ok(())
     }
 
     fn receipt(&self, input: &ModelStepReceiptRequest) -> MemoryResult<ModelStepReceipt> {
