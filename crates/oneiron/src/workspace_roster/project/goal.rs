@@ -20,6 +20,7 @@ mod admission;
 mod context;
 mod interview;
 mod limits;
+mod proposals;
 pub(crate) use admission::{
     admitted_claim_of_project, guard_claim_put, guard_goal_delete, guard_pointer_put,
     precheck_delete as precheck_goal_delete, retire_for_delete as retire_goal_for_delete,
@@ -28,6 +29,18 @@ pub use context::ProjectGoalInterviewContext;
 pub use interview::GoalInterviewTurns;
 use limits::GoalLimitValues;
 pub(crate) use limits::GoalLimits;
+pub use proposals::{
+    GoalAxisChange, GoalAxisChanges, GoalBudgetChange, GoalPreferenceChange, GoalPreferenceChanges,
+    GoalRecordDiff, GoalTextChange, ProjectGoalBase, ProjectGoalProposal,
+    ProjectGoalProposalDismissal, ProjectGoalProposalEvidence, ProjectGoalProposalImprovement,
+    ProjectGoalProposalRate, ProjectGoalProposalReasons, ProjectGoalProposalStatus,
+    ProjectGoalProposalView, ProjectGoalProposeRequest, ProjectGoalProposer,
+    ProjectGoalRevisionsView, project_goal_propose,
+};
+pub(crate) use proposals::{
+    dismiss_project_goal_proposal, project_goal_base_in_txn, project_goal_proposals_in_txn,
+    reads_goal_proposals_in_txn,
+};
 
 fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> {
     if body.predicate != PREDICATE

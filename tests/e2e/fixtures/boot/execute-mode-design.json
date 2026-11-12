@@ -1,7 +1,7 @@
 {
   "id": "BOOT-06",
   "name": "MCP execute-mode session should work",
-  "reason": "waits on execute_code read-only/propose-only credential admission; the current typed door requires core:write",
+  "reason": "execute_code admits read-only and propose-only agent credentials at Read; neither tier gains core:write",
   "canon": [
     "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
     "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings"

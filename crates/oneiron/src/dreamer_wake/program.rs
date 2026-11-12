@@ -227,6 +227,7 @@ fn owner_not_live(
     DreamerAttemptExecution::Failed {
         reason: crate::authority::OWNER_NOT_LIVE.to_owned(),
         completed_units,
+        budget_refusal: None,
     }
 }
 
@@ -249,6 +250,7 @@ fn withdrawn(
     DreamerAttemptExecution::Failed {
         reason: reason.to_owned(),
         completed_units,
+        budget_refusal: None,
     }
 }
 

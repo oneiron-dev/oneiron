@@ -1,0 +1,18 @@
+{
+  "name": "vault.code.reply_evidence",
+  "description": "Reads one code run step's model reply as kept before healing, as untrusted evidence, by byte range: the owner reads any run, another caller a run it is the actor of.",
+  "input": "crate::engine_executor::reply_evidence::ReplyEvidenceRequest",
+  "output": "Option<crate::engine_executor::reply_evidence::ReplyEvidenceView>",
+  "call": "crate::snapshot_read::reply_evidence_embedded(memory, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "run_reader"
+}
