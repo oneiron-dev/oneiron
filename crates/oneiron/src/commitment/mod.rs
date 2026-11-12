@@ -6,6 +6,7 @@
 //! wakes, and projections are handled by later CMT tickets.
 
 mod codec;
+mod instance_state;
 mod lapse_batch;
 mod types;
 mod write;
@@ -20,6 +21,7 @@ pub use self::codec::{
     commitment_claim_candidate, decode_commitment_claim, decode_commitment_value,
     encode_commitment_value, is_commitment_claim_predicate,
 };
+pub(crate) use self::instance_state::CommitmentInstanceState;
 pub(crate) use self::lapse_batch::{
     lapse_claim_ids, lapse_commitments_in_txn, pending_commitment_lapses_in_txn,
 };

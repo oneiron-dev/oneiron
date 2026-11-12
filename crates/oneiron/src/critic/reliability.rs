@@ -41,6 +41,12 @@ pub enum ReliabilityOutcomeSource {
     OwnerVerdict,
     Beam,
     CriticAgreement,
+    /// The completed directed seal recheck of the sealed try `attempt`, whose
+    /// result a critique reviewed: the engine read what its findings settle
+    /// (`vault.critic.outcome`, ruling LEARN-CRITIC-ANCHOR).
+    SealRecheck {
+        attempt: AttemptId,
+    },
 }
 
 impl ReliabilityOutcomeSource {
@@ -53,6 +59,9 @@ impl ReliabilityOutcomeSource {
         match self {
             Self::HeldOutEval | Self::Beam => Ok(Anchor::HeldOut),
             Self::OwnerVerdict => Ok(Anchor::OwnerVerdict),
+            // The anchor the seal engine gives a directed check's finding: a
+            // check requested for that try alone, at rate one.
+            Self::SealRecheck { .. } => Ok(Anchor::Audit { rate: 1.0 }),
             Self::CriticAgreement => Err(invalid_critic_config(
                 "critic agreement is never learning evidence",
             )),

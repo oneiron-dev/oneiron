@@ -489,8 +489,9 @@ pub(crate) fn execute_reschedule(
             // status says cancelled, so moving it would attest a Confirmed passport
             // over a cancelled booking and silently re-occupy a slot someone else
             // may already hold. Un-cancelling is a different transition, and this
-            // lane does not have one.
-            if booking.status == BookingStatus::Cancelled {
+            // lane does not have one. A calendar provider's cancellation counts
+            // although it left booking.status Confirmed (FIX 22385).
+            if booking.effective_status() == BookingStatus::Cancelled {
                 return Err(refused("a cancelled booking cannot be rescheduled"));
             }
 

@@ -206,6 +206,7 @@ impl ConsolidationExecutor<'_> {
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
             spend_scope: None,
+            wake_pass_bound: true,
         };
         let check_labels = labels.clone();
         let check_text = evidence.text.clone();
@@ -286,10 +287,7 @@ impl ConsolidationExecutor<'_> {
                     {
                         charges.record_usage(usage);
                     }
-                    return Ok(charges.park_for(
-                        &error.to_string(),
-                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-                    ));
+                    return Ok(charges.end_on_step_error(&error.to_string(), &error));
                 }
             };
         if ctx.deadline.expired() {

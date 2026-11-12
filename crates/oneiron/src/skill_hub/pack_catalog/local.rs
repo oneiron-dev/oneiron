@@ -64,7 +64,10 @@ impl Vault {
     /// or Rewrite on another actor's verbs, or blocking) also becomes the
     /// owner's proposal, in the same write (§10). A binding another author
     /// stands on is left as it is; the owner sees every binding and turns any
-    /// off. A put of any other pack is refused.
+    /// off. A travelling agent in this local pack goes through the author
+    /// writer (ARCH-0053:20): in-slice it lands Active; wider it is Proposed.
+    /// Owner and hub installs keep their travelling agents inert. A put of
+    /// any other pack is refused.
     pub fn put_local_pack_as_agent(
         &self,
         agent: &WriteActor,
@@ -183,14 +186,14 @@ impl Vault {
         prepared: &PreparedPackPut,
     ) -> Result<PackInstallDisposition> {
         let source = &prepared.tree.source;
-        let holder = match binder {
-            HookBinder::Owner(owner) => owner.revalidate_in_txn(self, txn)?,
+        let (holder, agent_author) = match binder {
+            HookBinder::Owner(owner) => (owner.revalidate_in_txn(self, txn)?, None),
             HookBinder::Agent(agent) => {
                 self.verify_write_actor_in_txn(txn, &agent)?;
-                agent.entity_ref()
+                (agent.entity_ref(), Some(agent))
             }
-        }
-        .to_hex();
+        };
+        let holder = holder.to_hex();
         let at = crate::unix_seconds_now();
         let occurred = TimeRange { start: at, end: at };
         let source_id = self.stage_pack_source_in_txn(txn, source, occurred, at)?;
@@ -216,6 +219,7 @@ impl Vault {
                 source_id,
                 hub: &prepared.hub,
                 publisher: &holder,
+                agent_author,
                 foreign: None,
                 verdict,
                 permissions: &permissions,
@@ -275,6 +279,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
             kinds: Vec::new(),
             skills: Vec::new(),
             agent: None,
+            agent_author: None,
             installed_at: 0,
             notices: Vec::new(),
             owner_activated: Vec::new(),

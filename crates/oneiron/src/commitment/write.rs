@@ -18,8 +18,6 @@ use super::{
     decode_commitment_claim, decode_commitment_value,
 };
 
-pub(super) use crate::write_envelope::commitment_transition::STATUS_CHANGE_MINTS_SUCCESSOR;
-
 impl Vault {
     /// The head of a commitment's status chain: `id` itself, or the
     /// `commitment.record` claim that superseded it carrying the same promise
@@ -189,9 +187,9 @@ impl Vault {
     /// The status writer shared by the native lifecycle and credential-bound
     /// doors. Target, transition, evidence and Gate are judged in this writer.
     ///
-    /// With [`STATUS_CHANGE_MINTS_SUCCESSOR`], the new status is a successor
-    /// claim that supersedes `id` in this transaction, and a retry that finds
-    /// the chain already closed with `next` writes nothing.
+    /// The new status is a successor claim that supersedes `id` in this
+    /// transaction (FIX 9726), and a retry that finds the chain already closed
+    /// with `next` writes nothing.
     pub(crate) fn update_commitment_status_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -201,14 +199,12 @@ impl Vault {
         learned_at: u64,
         evidence: Option<rmpv::Value>,
     ) -> Result<()> {
-        if STATUS_CHANGE_MINTS_SUCCESSOR {
-            let head = self.commitment_head_in_txn(wtxn, id)?;
-            if head != *id
-                && let Some(body) = self.get_claim_in_txn(wtxn, &head)?
-                && decode_commitment_claim(&body)?.is_some_and(|record| record.status == next)
-            {
-                return Ok(());
-            }
+        let head = self.commitment_head_in_txn(wtxn, id)?;
+        if head != *id
+            && let Some(body) = self.get_claim_in_txn(wtxn, &head)?
+            && decode_commitment_claim(&body)?.is_some_and(|record| record.status == next)
+        {
+            return Ok(());
         }
         let body = self.require_named_claim_target_active_in(wtxn, id)?;
         if body.predicate != PREDICATE_COMMITMENT_RECORD {
@@ -238,11 +234,6 @@ impl Vault {
             start: header.occurred_start,
             end: header.occurred_end,
         };
-        if !STATUS_CHANGE_MINTS_SUCCESSOR {
-            return apply_commitment_ops(
-                self, wtxn, *id, candidate, envelope, occurred, learned_at,
-            );
-        }
         // The predecessor keeps the status it held; the successor carries the
         // new one, and the lifecycle closes and links the two together.
         let successor = EntityId::now();

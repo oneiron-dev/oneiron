@@ -235,9 +235,12 @@ impl ServedChannelSink<'_> {
             &mut |value: &[u8]| {
                 let header = authorization_header(value)?;
                 found = Some(match StalwartClient::connect(placement.clone(), header) {
-                    Ok(client) => {
-                        client.look_up_served_send(identity, &address, engine_send_id.as_str())
-                    }
+                    Ok(client) => client.look_up_served_send(
+                        identity,
+                        &address,
+                        engine_send_id.as_str(),
+                        &target.intent.target,
+                    ),
                     Err(_) => SentLookup::CannotTell,
                 });
                 Ok(())
