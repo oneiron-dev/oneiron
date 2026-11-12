@@ -1473,6 +1473,11 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
   }
 });
 
+// Readable filler claims RETRIEVAL-09 adds beside its six-row task clique: the
+// reader's walk admits about 9-17 fixture rows, so 56 more keep the clique at
+// or under 10% of the admitted graph (FIX-LIST [RETRIEVAL-09-FIXTURE-BELOW-COMMUNITY-CAP]).
+const retrieval09FillerCount = 56;
+
 /* RETRIEVAL-09: authored TURN self-reports, optional priors, real read ceiling. */
 suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should work", async () => {
   const fixture = await scenario<{
@@ -1553,6 +1558,33 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       ]);
       hubs.push(hub); allowed.push(hub.id_hex);
     }
+    // FIX-LIST [RETRIEVAL-09-FIXTURE-BELOW-COMMUNITY-CAP]: since #7272 the
+    // reader's narrowed walk takes its community prior from the rows it admits
+    // alone, and a fine community over 10% of them takes none (6 x 10 > ~20
+    // rows). Readable filler claims about the owner share no query word and
+    // sit two hops from every claim seed (claim -> owner -> filler; the walk
+    // follows ClaimOf both ways), so the walk admits them as singletons: the
+    // admitted graph passes 60 rows and the six-row task clique stays one
+    // community. They are written before `before`, and none is hidden.
+    const fillerRefs: string[] = [];
+    for (let start = 0; start < retrieval09FillerCount; start += 8) {
+      const receipts = await Promise.all(Array.from(
+        { length: Math.min(8, retrieval09FillerCount - start) },
+        (_, offset) => engine.client.call("vault.claims.upsert", {
+          predicate: `profile.retrieval_filler_${start + offset}`,
+          subject_ref: engine.pairedActor.principalRef, value: `quiet ledger line ${start + offset}`,
+          confidence: 0.875, source: "user_stated", scope, occurred_at: at, learned_at: at,
+        }),
+      ));
+      for (const receipt of receipts) {
+        expect(["auto", "approved"]).toContain(receipt.approval);
+        await engine.awaitReceipt(receipt.receipt_ref);
+        fillerRefs.push(receipt.claim_short_id);
+      }
+    }
+    const fillers = await engine.client.call("vault.hydrate", { refs: fillerRefs });
+    expect(fillers.value).toHaveLength(retrieval09FillerCount);
+    allowed.push(...fillers.value.map(entity => entity.id_hex));
     const reader = await recordBoundReader(engine, allowed);
     const privateRow = records.get("private-community")!;
     expect((await reader.call("vault.get", { entity_ref: privateRow.ref })).value).toBeNull();
@@ -3390,7 +3422,9 @@ suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit quest
 // - P-RECALL-011: "World sections are labeled and presented base-first
 //   within their budgets." Source: ARCH-0004#world-scope. Proved in the
 //   typed pack (per-item world label, base group first) and in the rendered
-//   pack (base text before story text, story label before story text). The
+//   pack (base text before story text, story label before story text; the
+//   rendered label is red on the engine, FIX-LIST
+//   [RECALL-RENDERED-PACK-WORLD-UNLABELED], and fails the case last). The
 //   exact non-base budget fraction is not asserted: no typed door read here
 //   lets the owner set or read that fraction. The fixture holds three base
 //   claims beside the three story claims, so the default non-base share
@@ -3471,8 +3505,9 @@ function museRecall03AssertBaseFirst(
     if (storyIndex < baseIndex) {
       // Slot order only: which world each matching item carries, never its text.
       const order = hits.map((item) => (item.value_text.includes(baseSentinel) ? "base" : item.world === baseLabel ? "base-world" : "story"));
+      // FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY], fixed by #7216.
       throw new Error(
-        `MUSE-RECALL-03 ENGINE DEFECT 2026-11-12: FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY] P-RECALL-011 base section first (ARCH-0004 #world-scope); the pack partitions worlds only under the All scope, so a {story, include_base} recall stays flat in score order; base_index=${baseIndex} story_index=${storyIndex} order=${JSON.stringify(order)}`,
+        `MUSE-RECALL-03 P-RECALL-011 base section first (ARCH-0004 #world-scope): a story claim ranks before the base claim in a {story, include_base} recall; base_index=${baseIndex} story_index=${storyIndex} order=${JSON.stringify(order)}`,
       );
     }
     expect(storyIndex).toBeGreaterThan(baseIndex);
@@ -3672,10 +3707,18 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     const renderedStoryAt = rendered.indexOf(storySentinels[0]!);
     expect(renderedBaseAt).toBeGreaterThanOrEqual(0);
     expect(renderedStoryAt).toBeGreaterThan(renderedBaseAt);
-    expect([storyWorldName, storyWorld.id_hex, storyWorld.entity_ref].some((label) => {
+    const storyWorldLabels = [storyWorldName, storyWorld.id_hex, storyWorld.entity_ref];
+    const renderedStoryLabelled = storyWorldLabels.some((label) => {
       const at = rendered.indexOf(label);
       return at >= 0 && at < renderedStoryAt;
-    })).toBe(true);
+    });
+    // FIX-LIST [RECALL-RENDERED-PACK-WORLD-UNLABELED]: serialize_pack groups the
+    // rows by record kind and writes no world label, so the story claims' text
+    // follows the base claim in one CLAIM group. The case records the defect and
+    // goes on, so every later step still runs; it fails at the end.
+    const renderedWorldDefect = renderedStoryLabelled
+      ? null
+      : `MUSE-RECALL-03 ENGINE DEFECT 2026-11-13: P-RECALL-011 the rendered recall pack (format=toon) writes no world label before the story section (ARCH-0004 #world-scope: labeled per-world sections; retrieval MUST NOT mix worlds unlabeled); FIX-LIST [RECALL-RENDERED-PACK-WORLD-UNLABELED]; story_label_anywhere=${storyWorldLabels.some((label) => rendered.includes(label))} rendered_chars=${rendered.length}`;
 
     const otherOnlyInput: FacadeInput<"vault.recall"> = {
       query: tokenOtherWorld, effort: "light", limit: 10,
@@ -3848,6 +3891,7 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       refusalReceiptRef,
       readerSlip,
     });
+    if (renderedWorldDefect !== null) throw new Error(renderedWorldDefect);
   } finally {
     await engine.close();
   }
