@@ -73,7 +73,8 @@ pub use authoring::{
     setup_eval_cohorts,
 };
 pub use cohort::{
-    CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease,
+    CohortRetirement, EvalCohort, EvalCohortRetirementAuthor, EvalExposure, EvalExposureCounts,
+    EvalExposureKind, EvalRelease,
 };
 pub use cut_audit::{
     AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft,

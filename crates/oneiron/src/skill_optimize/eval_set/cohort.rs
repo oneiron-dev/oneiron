@@ -11,7 +11,8 @@
 //!
 //! Every cut is audited: it commits with its near-copy audit in one
 //! transaction, and only a served cohort retires, with the decision that
-//! retired it kept on its row.
+//! retired it kept on its row: why, on what exposure, and who made it (the
+//! eval-authoring skill's attempt, the owner, or an agent on its Grant).
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -62,17 +63,71 @@ pub struct EvalCohort {
     pub retirement: Option<CohortRetirement>,
 }
 
-/// The eval-authoring skill's decision to retire one cohort: its bounded
-/// reason, the skill revision and attempt that made it, and the exposure it
-/// read.
+/// The decision to retire one cohort: its bounded reason, who made it, and
+/// the exposure the retiring writer read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "StoredCohortRetirement")]
 pub struct CohortRetirement {
     pub reason: String,
-    pub skill: EntityId,
-    pub revision: String,
-    pub attempt: EntityId,
+    pub author: EvalCohortRetirementAuthor,
     pub exposure: EvalExposureCounts,
+}
+
+/// Who retired a cohort, as the retiring writer checked them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EvalCohortRetirementAuthor {
+    /// The eval-authoring skill's plan, applied on its Coach attempt.
+    Skill {
+        attempt: EntityId,
+        skill: EntityId,
+        revision: String,
+    },
+    /// The vault owner, on its own proof.
+    Owner { person: EntityId },
+    /// An agent, on the live owner Grant that listed the verb.
+    Agent { agent: EntityId, grant: EntityId },
+}
+
+/// A kept retirement as stored. A row retired before retirements named
+/// their author holds the skill, revision and attempt flat: it reads as
+/// the skill's. Any other mix of the two is refused.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredCohortRetirement {
+    reason: String,
+    exposure: EvalExposureCounts,
+    #[serde(default)]
+    author: Option<EvalCohortRetirementAuthor>,
+    #[serde(default)]
+    skill: Option<EntityId>,
+    #[serde(default)]
+    revision: Option<String>,
+    #[serde(default)]
+    attempt: Option<EntityId>,
+}
+
+impl TryFrom<StoredCohortRetirement> for CohortRetirement {
+    type Error = &'static str;
+
+    fn try_from(stored: StoredCohortRetirement) -> std::result::Result<Self, Self::Error> {
+        let author = match (stored.author, stored.skill, stored.revision, stored.attempt) {
+            (Some(author), None, None, None) => author,
+            (None, Some(skill), Some(revision), Some(attempt)) => {
+                EvalCohortRetirementAuthor::Skill {
+                    attempt,
+                    skill,
+                    revision,
+                }
+            }
+            _ => return Err("a cohort retirement names one whole author"),
+        };
+        Ok(Self {
+            reason: stored.reason,
+            author,
+            exposure: stored.exposure,
+        })
+    }
 }
 
 /// What a serving of a sealed cohort was for. There is no search, authoring
@@ -487,44 +542,70 @@ impl Vault {
     /// Retire an exposed cohort: its families read as development from now
     /// on, and still never feed training. The reference cohort stays fixed,
     /// and a cohort that has served nothing is not retired. Which exposure
-    /// retires a cohort is the eval-authoring skill's policy; this door
-    /// records the act with its `decision`. Retiring twice keeps the first
-    /// date and decision.
+    /// retires a cohort is the eval-authoring skill's policy, or the owner's
+    /// or a granted agent's call; this door records the act with its trimmed
+    /// `reason`, its `author` and the exposure it reads in its own writer.
+    /// Retiring twice keeps the first date and decision.
     /// # Errors
     /// A missing cohort, the reference cohort, a cohort with no recorded
-    /// exposure, an empty or unbounded reason or revision, or storage errors.
+    /// exposure, an empty or unbounded reason, a skill author's empty or
+    /// unbounded revision, or storage errors.
     pub fn retire_eval_cohort(
         &self,
         cohort: &EntityId,
-        decision: CohortRetirement,
+        reason: &str,
+        author: EvalCohortRetirementAuthor,
         at: u64,
     ) -> Result<EvalCohort> {
-        if decision.reason.trim().is_empty()
-            || decision.reason.len() > MAX_REASON_BYTES
-            || decision.revision.trim().is_empty()
-            || decision.revision.len() > MAX_REF_BYTES
-        {
+        self.with_write_txn_grouped(|txn| {
+            self.retire_eval_cohort_in_txn(txn, cohort, reason, author, at)
+        })
+    }
+
+    /// [`Self::retire_eval_cohort`] in the caller's writer, after the
+    /// caller's own checks.
+    pub(in crate::skill_optimize) fn retire_eval_cohort_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        cohort: &EntityId,
+        reason: &str,
+        author: EvalCohortRetirementAuthor,
+        at: u64,
+    ) -> Result<EvalCohort> {
+        let reason = reason.trim();
+        let revision_bounded = match &author {
+            EvalCohortRetirementAuthor::Skill { revision, .. } => {
+                !revision.trim().is_empty() && revision.len() <= MAX_REF_BYTES
+            }
+            EvalCohortRetirementAuthor::Owner { .. } | EvalCohortRetirementAuthor::Agent { .. } => {
+                true
+            }
+        };
+        if reason.is_empty() || reason.len() > MAX_REASON_BYTES || !revision_bounded {
             return Err(invalid(
-                "a cohort retirement names a bounded reason and revision",
+                "a cohort retirement names a bounded reason, and a skill's bounded revision",
             ));
         }
-        self.with_write_txn_grouped(|txn| {
-            let mut row = cohort_in_txn(self, txn, cohort)?;
-            if row.reference {
-                return Err(invalid("the reference eval cohort is never retired"));
-            }
-            if row.retired_at.is_some() {
-                return Ok(row);
-            }
-            if !exposure_in_txn(self, txn, cohort)?.served() {
-                return Err(invalid("an eval cohort that served nothing is not retired"));
-            }
-            row.retired_at = Some(at);
-            row.retirement = Some(decision);
-            self.store
-                .vault_meta
-                .put(txn, &cohort_key(cohort), &encode(&row)?)?;
-            Ok(row)
-        })
+        let mut row = cohort_in_txn(self, txn, cohort)?;
+        if row.reference {
+            return Err(invalid("the reference eval cohort is never retired"));
+        }
+        if row.retired_at.is_some() {
+            return Ok(row);
+        }
+        let exposure = exposure_in_txn(self, txn, cohort)?;
+        if !exposure.served() {
+            return Err(invalid("an eval cohort that served nothing is not retired"));
+        }
+        row.retired_at = Some(at);
+        row.retirement = Some(CohortRetirement {
+            reason: reason.to_owned(),
+            author,
+            exposure,
+        });
+        self.store
+            .vault_meta
+            .put(txn, &cohort_key(cohort), &encode(&row)?)?;
+        Ok(row)
     }
 }

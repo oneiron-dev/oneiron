@@ -224,6 +224,8 @@ suite.todo(test, "LEARNING-05", "waits on its arming PR: goal/TASK/real output/c
 // summaries, rubrics or synthetic rows. Every derivative stays with its family.
 // New sealed cohorts use explicit dates. Exposed labels retire to development;
 // one fixed reference cohort stays. Near-copy similarity flags REVIEW only.
+// Retire: vault.evals.cohorts.retire (the owner, or an agent on a Grant that lists it)
+// retires a served non-reference cohort; its receipt names that caller.
 // Inspect counts of served candidates, queries and promotions independently.
 // Tiny rare slice, interval crossing margin, changed set, changed rubric and
 // divergent canary each yield unknown, never a confident invented number.
@@ -242,7 +244,7 @@ type Learning06 = {
 };
 type Learning06ExistingCard = PublicCall<"vault.research.promote">["request"]["sufficiency"];
 // Label ask: vault.evals.labels.ask asks one label for a pending stock-switch offer whose stored card labels can settle.
-suite.todo(test, "LEARNING-06", "waits on vault.evals.authoring.execute with a stored report, public cohort retirement, and grounded setup: terminal pack receipts, an installed eval-authoring recipe, a cut cohort with counted exposure, a Coach-recorded stock offer");
+suite.todo(test, "LEARNING-06", "waits on vault.evals.authoring.execute with a stored report and grounded setup: terminal pack receipts, an installed eval-authoring recipe, a cut cohort with counted exposure, a Coach-recorded stock offer");
 
 // LEARNING-07 — Training export and approval before deploy should work.
 // OF-382/400. Owner routes already exist:
