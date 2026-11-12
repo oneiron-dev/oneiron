@@ -545,11 +545,12 @@ impl<'a> ContextPackBuilder<'a> {
 
     /// Sets the ARCH-0004 / ARCH-0022 world scope. Delegates the post-fusion
     /// filter to the pipeline. Under a scope that selects base beside another
-    /// world — the default [`WorldScope::All`], or a [`WorldScope::WorldSet`]
-    /// that includes base and names a world — the pack additionally groups
-    /// surviving claims by world (base section first) and holds non-base claims
-    /// to the world share. For [`WorldScope::Base`], [`WorldScope::World`] and
-    /// a one-sided `WorldSet` the pack stays flat.
+    /// world — the default [`WorldScope::All`], a [`WorldScope::World`] (its
+    /// default selection is `{base, id}`, ARCH-0004 #world-scope), or a
+    /// [`WorldScope::WorldSet`] that includes base and names a world — the pack
+    /// additionally groups surviving claims by world (base section first) and
+    /// holds non-base claims to the world share. For [`WorldScope::Base`] and a
+    /// one-sided `WorldSet` the pack stays flat.
     pub fn world(mut self, scope: WorldScope) -> Self {
         self.pipeline = self.pipeline.world(scope.clone());
         self.world_scope = scope;
@@ -557,8 +558,9 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Sets the share of the pack's claims non-base worlds may occupy under a
-    /// partitioned scope (default `0.5`): [`WorldScope::All`], or a
-    /// [`WorldScope::WorldSet`] that includes base and names a world. The
+    /// partitioned scope (default `0.5`): [`WorldScope::All`],
+    /// [`WorldScope::World`], or a [`WorldScope::WorldSet`] that includes base
+    /// and names a world. The
     /// pack's rows are selected so non-base claims stay at most
     /// `floor(fraction × emitted claims)`: a base claim ranked below fiction
     /// still gets its slot, and the pack goes short rather than over the share
