@@ -70,7 +70,7 @@ fn redemption(code: &str, actor: oneiron::EntityId, holder: &SigningKey) -> Valu
 
 #[tokio::test]
 async fn owner_approved_org_ticket_delivers_fixed_principal_and_only_approved_powers() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::served();
     let org = oneiron::EntityId::now();
     configure(&fixture, org);
     let other = oneiron::EntityId::now();
@@ -232,7 +232,7 @@ fn org_ticket_requires_fixed_policy_registered_admin_and_closed_subset() {
 
 #[tokio::test]
 async fn mixed_org_request_is_refused_and_generic_pairing_remains_available() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::served();
     let org = oneiron::EntityId::now();
     configure(&fixture, org);
     let server = Arc::new(SyncServer::new(fixture.vault.clone(), fixture.config.clone()).unwrap());
@@ -268,7 +268,7 @@ async fn mixed_org_request_is_refused_and_generic_pairing_remains_available() {
 
 #[tokio::test]
 async fn paired_mcp_enrollment_requires_holder_proof_and_consumes_both_header_nonces() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::served();
     fixture
         .vault
         .put_entity(
