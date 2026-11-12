@@ -39,40 +39,40 @@ use tower::ServiceExt;
 use crate::fake_llm::{FakeLlm, Reply};
 
 /// The verb under test and its result reader.
-pub const VERB: &str = "vault.evals.authoring.execute";
-pub const RESULT_VERB: &str = "vault.evals.authoring.result";
+pub(crate) const VERB: &str = "vault.evals.authoring.execute";
+pub(crate) const RESULT_VERB: &str = "vault.evals.authoring.result";
 /// The Coach host queue's lease owner and budget line
 /// (`ai_host/coach_heal.rs:67`, `ai_host/coach_host.rs:96`).
-pub const COACH_HOST: &str = "coach.host";
+pub(crate) const COACH_HOST: &str = "coach.host";
 /// The facet of the eval-authoring job (`oneiron/src/claim/maintenance_kind.rs:13`).
-pub const EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
+pub(crate) const EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
 
 /// One paired agent credential: its registered principal, its holder
 /// signing key, its redeemed slip and the token it presents.
-pub struct Agent {
-    pub principal: EntityId,
-    pub holder: SigningKey,
-    pub slip: CapabilitySlip,
-    pub token: String,
+pub(crate) struct Agent {
+    pub(crate) principal: EntityId,
+    pub(crate) holder: SigningKey,
+    pub(crate) slip: CapabilitySlip,
+    pub(crate) token: String,
 }
 
-pub struct Fixture {
-    pub _dir: tempfile::TempDir,
-    pub vault: Arc<Vault>,
-    pub server: Arc<SyncServer>,
-    pub host: AiHost,
-    pub app: Router,
-    pub issuer: HostSlipIssuer,
-    pub owner_slip: CapabilitySlip,
-    pub owner_token: String,
-    pub model: FakeLlm,
+pub(crate) struct Fixture {
+    pub(crate) _dir: tempfile::TempDir,
+    pub(crate) vault: Arc<Vault>,
+    pub(crate) server: Arc<SyncServer>,
+    pub(crate) host: AiHost,
+    pub(crate) app: Router,
+    pub(crate) issuer: HostSlipIssuer,
+    pub(crate) owner_slip: CapabilitySlip,
+    pub(crate) owner_token: String,
+    pub(crate) model: FakeLlm,
 }
 
 /// Runs `test` on an engine-sized stack and runtime (the facade's generated
 /// dispatch needs more than a test thread's default stack; the Coach's
 /// model call blocks on this runtime). `test` builds the future inside the
 /// thread, so the future itself need not be `Send`.
-pub fn run_on_engine_stack<F, Fut>(name: &str, test: F)
+pub(crate) fn run_on_engine_stack<F, Fut>(name: &str, test: F)
 where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = ()>,
@@ -95,13 +95,13 @@ where
     }
 }
 
-pub fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// A model plan that decides nothing for the inventory in the request: the
 /// user message is the inventory's JSON; the answer echoes its digest.
-pub fn echo_plan() -> Reply {
+pub(crate) fn echo_plan() -> Reply {
     Reply::Computed(Arc::new(|request: &Value| {
         let inventory = request["messages"]
             .as_array()
@@ -117,7 +117,7 @@ pub fn echo_plan() -> Reply {
 }
 
 /// An answer holding no JSON object: `parse_plan` returns `None`.
-pub fn answer_without_plan() -> Reply {
+pub(crate) fn answer_without_plan() -> Reply {
     Reply::text("There is nothing I can decide for this inventory.")
 }
 
@@ -132,7 +132,7 @@ fn models_text(base_url: &str) -> String {
 /// The shipped eval-authoring recipe through the offline door: the record
 /// (Generated, Approved) and its native package in one writer, then
 /// activated. The id is the fixed one the Coach pass loads.
-pub fn install_eval_authoring_recipe(vault: &Vault) {
+pub(crate) fn install_eval_authoring_recipe(vault: &Vault) {
     let id = eval_authoring_skill_id().expect("eval-authoring skill id");
     let files = vec![HubFile::new(
         "SKILL.md",
@@ -186,7 +186,7 @@ pub fn install_eval_authoring_recipe(vault: &Vault) {
 
 /// One sealed family holding one case no cohort holds: the inventory then
 /// has work (an uncut family older than the pass), so the pass calls the model.
-pub fn add_unheld_sealed_case(vault: &Vault) {
+pub(crate) fn add_unheld_sealed_case(vault: &Vault) {
     let at = vault.now_recorded_at();
     let seat = EvalSeat::Companion;
     let root = "fixture-source:execute-served".to_owned();
@@ -216,7 +216,7 @@ pub fn add_unheld_sealed_case(vault: &Vault) {
 
 /// The `coach.host` budget line after a settled lease: nothing reserved,
 /// nothing overdrawn, the whole total remaining.
-pub fn assert_budget_settled(vault: &Vault) {
+pub(crate) fn assert_budget_settled(vault: &Vault) {
     let line = DreamerRunnerStore::new(vault)
         .budget(COACH_HOST)
         .expect("read the budget line")
@@ -231,7 +231,7 @@ pub fn assert_budget_settled(vault: &Vault) {
 
 /// No Coach eval-authoring job is queued: the Coach queue admits nothing, or
 /// only a job of another facet. (The probe leases what it admits.)
-pub fn assert_no_eval_authoring_job_queued(vault: &Vault) {
+pub(crate) fn assert_no_eval_authoring_job_queued(vault: &Vault) {
     let queued = DreamerRunnerStore::new(vault)
         .admit_next_coach_host_job(AdmitDreamerAttempt {
             lease_owner: COACH_HOST.to_owned(),
@@ -255,7 +255,7 @@ pub fn assert_no_eval_authoring_job_queued(vault: &Vault) {
 impl Fixture {
     /// `clock`: a manual vault clock (cases 4 and 5), else the real one.
     /// `script`/`fallback`: the fake model's replies.
-    pub async fn new(
+    pub(crate) async fn new(
         clock: Option<Arc<ManualClock>>,
         script: Vec<Reply>,
         fallback: Option<Reply>,
@@ -305,13 +305,13 @@ impl Fixture {
         }
     }
 
-    pub async fn finish(self) {
+    pub(crate) async fn finish(self) {
         self.host.shutdown().await;
     }
 
     /// Fake-model requests that carry the shipped skill body as their
     /// System message: the eval-authoring pass's own calls.
-    pub fn eval_authoring_calls(&self) -> usize {
+    pub(crate) fn eval_authoring_calls(&self) -> usize {
         self.model
             .seen()
             .iter()
@@ -375,18 +375,23 @@ impl Fixture {
         (status, body)
     }
 
-    pub async fn as_owner(&self, verb: &str, body: Value) -> (StatusCode, Value) {
+    pub(crate) async fn as_owner(&self, verb: &str, body: Value) -> (StatusCode, Value) {
         self.post(verb, &self.owner_token, self.owner_binding(), body)
             .await
     }
 
-    pub async fn as_agent(&self, agent: &Agent, verb: &str, body: Value) -> (StatusCode, Value) {
+    pub(crate) async fn as_agent(
+        &self,
+        agent: &Agent,
+        verb: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
         self.post(verb, &agent.token, self.agent_binding(agent), body)
             .await
     }
 
     /// The owner reads the kept result of `attempt` (hex).
-    pub async fn result_of(&self, attempt: &str) -> Value {
+    pub(crate) async fn result_of(&self, attempt: &str) -> Value {
         let (status, body) = self
             .as_owner(RESULT_VERB, json!({"attempt": attempt}))
             .await;
@@ -396,7 +401,7 @@ impl Fixture {
 
     /// Pairs one agent the way `token agent` does (template
     /// `model_binding_proposer_grant.rs:153-233`).
-    pub async fn pair_agent(&self, name: &str, seed: [u8; 32]) -> Agent {
+    pub(crate) async fn pair_agent(&self, name: &str, seed: [u8; 32]) -> Agent {
         let principal = self
             .vault
             .ensure_agent_principal(name)
@@ -461,7 +466,7 @@ impl Fixture {
 
     /// The owner mints `agent` a Grant naming `read` and the verb; returns
     /// its grant ref.
-    pub async fn mint_execute_grant(&self, agent_hex: &str) -> String {
+    pub(crate) async fn mint_execute_grant(&self, agent_hex: &str) -> String {
         let (status, body) = self
             .as_owner(
                 "vault.agents.grants.mint",
