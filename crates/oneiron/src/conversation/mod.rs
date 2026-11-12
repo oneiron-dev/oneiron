@@ -6,6 +6,7 @@ mod deletion;
 mod live_speakers;
 mod membership;
 mod output_guard;
+mod pins;
 mod preview;
 mod privacy_erase;
 mod roles;
@@ -16,7 +17,7 @@ mod turn_actions;
 mod visibility;
 
 pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
-pub use body::{ConversationBody, ConversationKind, RoomRole};
+pub use body::{ConversationBody, ConversationKind, RoomPin, RoomPinPolicy, RoomRole};
 pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
 pub use chat_breakpoint::{
     ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, ChatBreakpointUserTurn,
@@ -37,8 +38,10 @@ pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_spea
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use output_guard::ContainerOutputGuard;
 pub use output_guard::OutputMark;
+pub(crate) use pins::{PIN_UPDATES, served_room_body};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
+pub(crate) use roles::person_role_in;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
 pub use session::{SessionMode, SessionPresence};
 pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};

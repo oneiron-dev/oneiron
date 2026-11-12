@@ -205,6 +205,13 @@ impl From<MemoryError> for FacadeApiError {
                         refusal.status()
                     })
             }
+            // A repo door's typed refusal or hold (NO-DOOR
+            // REPO-MEMBER-SNAPSHOT-SYMBOL-READ): 403 where the Grant or the
+            // run's lane does not admit the act, 409 where a lease or a hold
+            // is the cause (`repo_doors::repo_refusal_status`).
+            code if repo_doors::repo_refusal_status(code).is_some() => {
+                repo_doors::repo_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
