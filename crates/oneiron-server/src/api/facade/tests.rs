@@ -48,7 +48,7 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault"));
     let actor = vault.ensure_embedded_owner_actor().expect("owner");
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             Arc::clone(&vault),
             crate::config::SyncServerConfig {
                 auth_secret: Some(SECRET.to_owned()),
@@ -197,7 +197,7 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
     let owner_token = token(owner, "core:read,core:write");
     let second_token = token(second, "core:read,core:write");
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault.clone(),
             crate::config::SyncServerConfig {
                 auth_secret: Some(SECRET.into()),
@@ -401,7 +401,7 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     let addressed_token = room_token(addressed, "agent");
     let other_token = room_token(other, "agent");
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault.clone(),
             crate::config::SyncServerConfig {
                 auth_secret: Some(SECRET.into()),
@@ -501,7 +501,7 @@ async fn rooms_http_history_reads_inside_the_rosters_scope() {
         ))
         .unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault.clone(),
             crate::config::SyncServerConfig {
                 auth_secret: Some("room-scope-http".into()),
@@ -593,7 +593,7 @@ async fn http_room_turn_header_keeps_ordinary_reads_inside_the_room() {
         })
         .unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault.clone(),
             crate::config::SyncServerConfig {
                 auth_secret: Some("room-turn-http".into()),
@@ -663,7 +663,7 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             Arc::clone(&vault),
             crate::config::SyncServerConfig {
                 auth_secret: Some(SECRET.into()),
@@ -789,7 +789,7 @@ pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission:
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             Arc::clone(&vault),
             crate::config::SyncServerConfig {
                 auth_secret: Some(SECRET.into()),
@@ -860,7 +860,7 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("generated-facade-scope".into()),
@@ -956,7 +956,7 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
     vault.put_project(project, &record, 1).unwrap();
     let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("room-facade-narrow".into()),
@@ -1130,7 +1130,7 @@ fn task_outside_read_floor() -> (
         })
         .unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("task-read-floor".into()),
@@ -1288,7 +1288,7 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
             .is_none()
     );
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("facade-export".into()),
@@ -1443,7 +1443,7 @@ impl OwnerFacade {
         let actor = vault.ensure_embedded_owner_actor().expect("owner");
         rows(&vault, actor);
         let server = Arc::new(
-            SyncServer::new(
+            crate::test_credentials::server_with_fixture_keystore(
                 vault,
                 crate::config::SyncServerConfig {
                     auth_secret: Some(secret.to_owned()),
