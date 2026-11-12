@@ -737,10 +737,10 @@ fn split_short_ref(short_ref: &str) -> Option<(String, u8)> {
 /// The registry type byte a read-back kind names — the inverse of the kind a
 /// hydrated view carries ([`crate::store::Store::entity_kind_name`]): a static
 /// kind, a compiled-in product kind this vault registered at run time
-/// (PROJECT), or the `TYPE_<n>` spelling an unregistered byte reads back as. A kind neither form accounts for renders under the
-/// reserved sentinel byte no stored entity may carry, so it is grouped as
-/// other and shows the fields it has instead of being profiled as a kind it
-/// is not.
+/// (PROJECT), or the `TYPE_<n>` spelling an unregistered byte reads back as.
+/// A kind neither form accounts for renders under the reserved sentinel byte
+/// no stored entity may carry, so it is grouped as other and shows the fields
+/// it has instead of being profiled as a kind it is not.
 fn document_entity_type(vault: &crate::Vault, kind: &str) -> u8 {
     if let Some(type_byte) = vault.store.entity_type_of_kind_name(kind) {
         return type_byte;
