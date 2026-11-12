@@ -231,6 +231,7 @@ fn critic_agent(fixture: &Fixture, name: &str, verbs: &[&str]) -> (EntityId, Ent
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("the owner grants the critic");
@@ -596,6 +597,7 @@ fn executor_agent(fixture: &Fixture) -> EntityId {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("the owner grants the executor base reach");

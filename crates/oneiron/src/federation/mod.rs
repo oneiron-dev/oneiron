@@ -275,7 +275,7 @@ use std::io::Cursor;
 pub use oneiron_authority::federation::{
     FederationGrantKind, GIT_PUSH_VERB, GitPushBounds, GitPushRepo, REPO_EDIT_VERB, REPO_READ_VERB,
     RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, ScopeAtom, ScopeAxis,
-    ScopeId, Sensitivity, SensitivityCeiling, WalletRef,
+    ScopeId, Sensitivity, SensitivityCeiling, WalletRef, WorkingViewEditBounds,
 };
 
 mod org_admin;
