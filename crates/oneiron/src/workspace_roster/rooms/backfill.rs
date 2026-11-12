@@ -15,8 +15,9 @@
 //!   offer engagement, and mints no quote pin.
 //! - No row for an erased TURN, or a TURN that recorded no writer, such as
 //!   an imported one (Q2 = A). A home room's witness TURN with no row is
-//!   one the home witness never admitted, so it is left out as well. Each
-//!   skip is counted by kind.
+//!   one the home witness never admitted, so it is left out as well. A TURN
+//!   whose stored body or DAG parent does not decode gets no row either, and
+//!   the open goes on. Each skip is counted by kind.
 //! - A room with a waiting erase is skipped with no marker, and a later
 //!   open retries it (Q3 = A). An archived vault is left as it is.
 //!
@@ -57,6 +58,8 @@ pub(crate) struct RoomTurnBackfill {
     pub(crate) skipped_unbound: u64,
     /// A home room's witness TURNs with no row: no row.
     pub(crate) skipped_home_witness: u64,
+    /// TURNs whose body or DAG parent does not decode: no row.
+    pub(crate) skipped_undecodable: u64,
 }
 
 impl RoomTurnBackfill {
@@ -69,6 +72,7 @@ impl RoomTurnBackfill {
         self.skipped_no_writer += room.skipped_no_writer;
         self.skipped_unbound += room.skipped_unbound;
         self.skipped_home_witness += room.skipped_home_witness;
+        self.skipped_undecodable += room.skipped_undecodable;
     }
 }
 
@@ -77,6 +81,7 @@ enum Skip {
     NoWriter,
     Unbound,
     HomeWitness,
+    Undecodable,
 }
 
 /// Rows every TURN of every room that has none, once per room, at a
@@ -96,9 +101,19 @@ pub(crate) fn backfill_room_turns_on_open(vault: &Vault) -> Result<RoomTurnBackf
             .port_entity_ids_by_type(&txn, ENTITY_TYPE_CONVERSATION, None)?
         {
             let room = row?;
-            if TURN_BACKFILL.get(&vault.store, &txn, &room)? != Some(ROOM_TURN_BACKFILL_VERSION) {
-                due.push(room);
+            if TURN_BACKFILL.get(&vault.store, &txn, &room)? == Some(ROOM_TURN_BACKFILL_VERSION)
+                || !live_room_in(vault, &txn, room)?
+            {
+                continue;
             }
+            // A room with a waiting erase is retried on a later open; no
+            // write is opened for it now.
+            if crate::store::legal_hold::pending_erase_in_txn(&vault.store, &txn, &room)?.is_some()
+            {
+                report.rooms_deferred += 1;
+                continue;
+            }
+            due.push(room);
         }
         due
     };
@@ -116,6 +131,7 @@ pub(crate) fn backfill_room_turns_on_open(vault: &Vault) -> Result<RoomTurnBackf
             skipped_no_writer = report.skipped_no_writer,
             skipped_unbound = report.skipped_unbound,
             skipped_home_witness = report.skipped_home_witness,
+            skipped_undecodable = report.skipped_undecodable,
             ms = started.elapsed().as_millis() as u64,
             "room turn backfill"
         );
@@ -133,13 +149,7 @@ fn backfill_room_in_txn(
     let mut report = RoomTurnBackfill::default();
     let store = &vault.store;
     if TURN_BACKFILL.get(store, txn, &room)? == Some(ROOM_TURN_BACKFILL_VERSION)
-        || !matches!(
-            live_entity_row_in_txn(store, txn, &room)?,
-            LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_CONVERSATION,
-                ..
-            }
-        )
+        || !live_room_in(vault, txn, room)?
     {
         return Ok(report);
     }
@@ -175,12 +185,13 @@ fn backfill_room_in_txn(
         };
         match recorded_turn_in(vault, txn, room, id, &body, home)? {
             Ok(turn) => {
-                put_room_turn_projection_in_txn(vault, txn, &turn)?;
+                super::turn_record::put_room_turn_projection_in_txn(vault, txn, &turn)?;
                 report.turns_written += 1;
             }
             Err(Skip::NoWriter) => report.skipped_no_writer += 1,
             Err(Skip::Unbound) => report.skipped_unbound += 1,
             Err(Skip::HomeWitness) => report.skipped_home_witness += 1,
+            Err(Skip::Undecodable) => report.skipped_undecodable += 1,
         }
     }
     TURN_BACKFILL.put(store, txn, &room, &ROOM_TURN_BACKFILL_VERSION)?;
@@ -204,27 +215,18 @@ fn recorded_turn_in(
     home: bool,
 ) -> Result<std::result::Result<RoomTurn, Skip>> {
     let store = &vault.store;
-    let Some(actor) = crate::conversation::record_author(body)? else {
-        return Ok(Err(Skip::NoWriter));
-    };
-    let (addressed, reply_to, thread_of) = match addressing(body)? {
-        Some((_, recipients)) => {
-            let (reply_to, thread_of) = match super::audience::thread_binding(body)? {
-                None => (None, None),
-                Some(binding) => {
-                    let (Some(parent), Some(anchor)) =
-                        (retained_parent(store, txn, &id)?, binding.anchor)
-                    else {
-                        return Ok(Err(Skip::Unbound));
-                    };
-                    (Some(parent.to_hex()), Some(anchor.to_hex()))
-                }
-            };
-            let addressed = recipients.iter().map(EntityId::to_hex).collect();
-            (addressed, reply_to, thread_of)
+    let (actor, addressed, reply_to, thread_of) = match recorded_shape(vault, txn, id, body, home) {
+        Ok(Ok(shape)) => shape,
+        Ok(Err(skip)) => return Ok(Err(skip)),
+        Err(error) => {
+            tracing::warn!(
+                turn = %id.to_hex(),
+                room = %room.to_hex(),
+                %error,
+                "room turn backfill: the TURN does not decode; it keeps no row"
+            );
+            return Ok(Err(Skip::Undecodable));
         }
-        None if home => return Ok(Err(Skip::HomeWitness)),
-        None => (BTreeSet::new(), None, None),
     };
     let at = store
         .port_entity_record(txn, &id)?
@@ -244,6 +246,55 @@ fn recorded_turn_in(
         converted_project: None,
         quotes: BTreeMap::new(),
     }))
+}
+
+/// The writer, recipients, `reply_to` and `thread_of` the TURN `id`, whose
+/// live body is `body`, recorded. An error is a body or DAG parent that
+/// does not decode.
+fn recorded_shape(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &[u8],
+    home: bool,
+) -> Result<std::result::Result<RecordedShape, Skip>> {
+    let Some(actor) = crate::conversation::record_author(body)? else {
+        return Ok(Err(Skip::NoWriter));
+    };
+    let Some((_, recipients)) = addressing(body)? else {
+        if home {
+            return Ok(Err(Skip::HomeWitness));
+        }
+        return Ok(Ok((actor, BTreeSet::new(), None, None)));
+    };
+    let addressed = recipients.iter().map(EntityId::to_hex).collect();
+    let Some(binding) = super::audience::thread_binding(body)? else {
+        return Ok(Ok((actor, addressed, None, None)));
+    };
+    let (Some(parent), Some(anchor)) = (retained_parent(&vault.store, txn, &id)?, binding.anchor)
+    else {
+        return Ok(Err(Skip::Unbound));
+    };
+    Ok(Ok((
+        actor,
+        addressed,
+        Some(parent.to_hex()),
+        Some(anchor.to_hex()),
+    )))
+}
+
+/// A TURN's recorded writer, recipients (hex), `reply_to` and `thread_of`.
+type RecordedShape = (EntityId, BTreeSet<String>, Option<String>, Option<String>);
+
+/// Whether `room` is a live Conversation.
+fn live_room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<bool> {
+    Ok(matches!(
+        live_entity_row_in_txn(&vault.store, txn, &room)?,
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_CONVERSATION,
+            ..
+        }
+    ))
 }
 
 /// The live MESSAGEs of `turn`, in their recorded order (ties by id). An
@@ -325,7 +376,9 @@ pub(crate) mod doors {
                         let anchor = EntityId::from_hex(&anchor)?;
                         THREAD_CHILDREN.delete(store, txn, &(room, anchor, turn))?;
                     }
-                    None => HEADS.delete(store, txn, &(room, row.at, turn))?,
+                    None => {
+                        HEADS.delete(store, txn, &(room, row.at, turn))?;
+                    }
                 }
                 HISTORY.delete(store, txn, &key)?;
                 TURNS.delete(store, txn, &turn)?;

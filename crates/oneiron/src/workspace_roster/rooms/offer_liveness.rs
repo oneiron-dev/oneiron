@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{RoomTurn, agent_off_room_in_txn, liveness};
+use super::{RoomTurn, agent_off_room_in_txn, liveness, require_reader};
 use crate::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult};
@@ -61,9 +61,10 @@ impl Memory<'_> {
     }
 
     /// [`Self::ended_offer_threads`] over the room's history, for the room's
-    /// `members`. An agent with no standing in the room itself reads each
-    /// thread on that thread's own receipt, through a snapshot and a lane
-    /// bound to it alone.
+    /// `members`. An agent with no standing in the room itself, and a person
+    /// the room does not read (a vault Owner or Admin reading a private
+    /// thread, FIX 5638), reads each thread on that thread's own receipt,
+    /// through a snapshot and a lane bound to it alone.
     fn ended_room_threads(
         &self,
         room: EntityId,
@@ -76,7 +77,8 @@ impl Memory<'_> {
         let (off_room, fold) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             (
-                agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?,
+                agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?
+                    || require_reader(self.vault(), &txn, room, self.actor()).is_err(),
                 liveness::direct_thread_fold_in(self.vault(), &txn, self.actor(), now)?,
             )
         };
