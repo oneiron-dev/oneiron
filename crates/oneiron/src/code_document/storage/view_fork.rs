@@ -31,8 +31,9 @@ impl Vault {
     /// a view file refuses.
     ///
     /// # Errors
-    /// The shared writer's refusals of the edit, a secret the edit brings
-    /// into a clean file, or a store failure.
+    /// The shared writer's refusals of the edit, a path outside the
+    /// registered repository's whitelist, a secret the edit brings into a
+    /// clean file, or a store failure.
     pub(crate) fn apply_view_fork_edit_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -44,6 +45,9 @@ impl Vault {
             return Err(invalid());
         }
         let (provenance, before, text) = Self::validate_code_file_edit(session, edit, None)?;
+        // A native edit passes the registered repository's retained
+        // whitelist, as on the shared writer (FIX 4299).
+        self.require_registered_edit_in_txn(wtxn, None, &session.repo, [edit.path.as_str()])?;
         // A replacement that writes a secret the door can place lands its
         // handle, as on the shared writer (FIX 2372; OF-067).
         let admitted =

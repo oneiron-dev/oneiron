@@ -20,6 +20,8 @@ pub(crate) use fork::{
     view_fork_copies_lock, view_fork_files_in_txn, view_fork_revision_in_txn,
 };
 pub use language_server::{LanguageServer, SharedLanguageServer, StdioLanguageServer};
+#[cfg(oneiron_test_support)]
+pub(crate) use run::put_view_receipt_in_txn;
 pub(crate) use run::{repo_view_receipts_in_txn, view_receipt_in_txn};
 
 /// One materialized view's receipt, keyed by view id.

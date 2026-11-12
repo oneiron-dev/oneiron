@@ -15,6 +15,7 @@ pub mod claim_transition;
 pub mod coach;
 pub mod code_reply_healer;
 pub mod code_run_answer;
+pub mod code_view_fork;
 pub mod consolidation;
 pub mod dag_append;
 pub mod derivation_floor;
