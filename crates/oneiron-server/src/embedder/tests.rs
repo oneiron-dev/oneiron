@@ -2389,6 +2389,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
     let mock = MockEndpoint::start(MockBehaviour::Concepts);
     let dir = tempfile::tempdir().unwrap();
     let vault = test_vault(dir.path());
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let config = EmbedderConfig {
         idle_interval_ms: 20,
@@ -2460,7 +2461,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
         {
             let at = now - 3_600 * (10 - hour as u64);
             let receipt = post(
-                "claim_upsert",
+                "vault.remember",
                 json!({"predicate": format!("note.n{hour}"), "subject_ref": owner.to_hex(),
                     "value": value, "confidence": 0.9, "source": "user_stated",
                     "occurred_at": at, "learned_at": at}),
@@ -2481,7 +2482,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
         let request = json!({"query": "car repair garage", "limit": 3});
         let mut http = Value::Null;
         for _ in 0..600 {
-            http = post("recall", request.clone()).await;
+            http = post("vault.recall", request.clone()).await;
             if found(&http).1 {
                 break;
             }
@@ -2495,7 +2496,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
             &auth,
             crate::livequery::RpcRequest {
                 request_id: 9,
-                method: "recall".to_owned(),
+                method: "vault.recall".to_owned(),
                 params: request,
             },
         )

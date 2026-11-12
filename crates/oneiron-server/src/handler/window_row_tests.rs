@@ -39,6 +39,7 @@ impl Home {
     async fn start(row: usize) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+        crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
         let server = Arc::new(
             SyncServer::new(
                 vault,
@@ -91,6 +92,7 @@ impl Home {
         for _ in 0..3 {
             row.extend_from_slice(&at.to_be_bytes());
         }
+        row.extend_from_slice(&1u64.to_be_bytes());
         row.extend_from_slice(b"placeholder person");
         edit.get_map("entities")
             .insert(&id.to_hex(), row.as_slice())
@@ -397,6 +399,7 @@ fn subscribe_owner_notes(row: usize) -> (tempfile::TempDir, SyncServer) {
             )
             .unwrap()
     });
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -478,6 +481,13 @@ fn selector_documents(
             b"placeholder facet",
         )
         .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    vault
+        .set_default_facet(
+            facet,
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        )
+        .unwrap();
     let ids = [b"placeholder one", b"placeholder two"].map(|body| {
         let id = EntityId::now();
         vault
@@ -510,6 +520,7 @@ fn selector_documents(
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
     );
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let server = SyncServer::new(
         vault,
         SyncServerConfig {

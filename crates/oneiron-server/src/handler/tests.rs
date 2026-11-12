@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 fn test_server() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"federation-test-root");
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -84,8 +85,9 @@ fn entity_id(byte: u8) -> oneiron::EntityId {
 }
 
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(33 + body.len());
     blob.push(entity_type);
+    blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
@@ -136,6 +138,14 @@ fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
             Value::Binary(claim.scope_project.as_bytes().to_vec()),
         ),
         ("scopeVersion".into(), 2_u64.into()),
+        (
+            "confBand".into(),
+            Value::from(claim.confidence_band.as_str()),
+        ),
+        (
+            "confBasis".into(),
+            Value::from(claim.confidence_basis.as_str()),
+        ),
     ]);
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &body).unwrap();
@@ -195,6 +205,20 @@ fn drain_broadcasts(
         }
     }
     frames
+}
+
+/// A raw window update as the PadFree envelope one socket frame carries.
+fn pad_free_update_envelope(update: &[u8]) -> Vec<u8> {
+    oneiron::sync::transport::WindowPadEnvelope {
+        kind: oneiron::sync::transport::WindowPadKind::Update,
+        form: oneiron::sync::transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: update.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
 }
 
 /// The WindowSync UPDATE frames a given connection fanned out for `key`.
@@ -732,12 +756,13 @@ async fn imported_update_is_visible_exportable_and_vv_advanced_without_commit() 
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_legacy_conn_state();
+    let framed = pad_free_update_envelope(&update);
     handle_window_sync(
         &server,
         conn_id,
         key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
         &|| false,
@@ -841,6 +866,7 @@ async fn imported_update_persists_before_broadcast() {
     insert_entity(&author, entity, 1, b"relayed");
     author.commit();
     let update = author.export(ExportMode::all_updates()).unwrap();
+    let framed = pad_free_update_envelope(&update);
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_legacy_conn_state();
@@ -852,7 +878,7 @@ async fn imported_update_persists_before_broadcast() {
         conn_id,
         durable_key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
         &|| false,
@@ -900,7 +926,7 @@ async fn imported_update_persists_before_broadcast() {
         conn_id,
         failing_key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
         &|| false,
@@ -3031,20 +3057,27 @@ async fn document_batch_exchange(version: u8) {
     for vault in [server.vault.as_ref(), client_vault.as_ref()] {
         vault
             .put_entity(
-                &id,
-                oneiron::registry::ENTITY_TYPE_TURN,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"ledger",
-            )
-            .unwrap();
-        vault
-            .put_entity(
                 &facet,
                 oneiron::registry::ENTITY_TYPE_FACET,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
                 b"shared document facet",
+            )
+            .unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        vault
+            .set_default_facet(
+                facet,
+                oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            )
+            .unwrap();
+        vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"ledger",
             )
             .unwrap();
         vault

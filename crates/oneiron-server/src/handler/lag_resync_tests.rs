@@ -310,6 +310,13 @@ async fn a_lag_reexports_each_selector_document_from_its_last_version() {
             b"placeholder facet",
         )
         .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    vault
+        .set_default_facet(
+            facet,
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        )
+        .unwrap();
     let id = EntityId::now();
     vault
         .put_entity(
@@ -339,6 +346,7 @@ async fn a_lag_reexports_each_selector_document_from_its_last_version() {
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
     );
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let server = SyncServer::new(
         vault,
         SyncServerConfig {

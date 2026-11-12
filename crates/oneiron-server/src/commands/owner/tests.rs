@@ -75,6 +75,7 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
     {
         let vault =
             oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let plan = BackupPlan::new(&vault_path, backups.clone(), 3);
         backup::take(&vault, &plan).unwrap();
     }

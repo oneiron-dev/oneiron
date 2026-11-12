@@ -224,6 +224,9 @@ fn consolidation_factory(fixture: &Fixture) -> ConsolidationExecutorFactory {
 
 fn voice_config(vault: &Arc<Vault>) -> VoiceHostConfig {
     let mut runtime = RuntimeConfig::default();
+    runtime.role_defaults.summarizer.mode = crate::runtime::RuntimeMode::OneironCloud;
+    runtime.role_defaults.summarizer.provider_kind =
+        crate::runtime::RuntimeProviderKind::OneironCloud;
     runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
     VoiceHostConfig::new(
         Arc::clone(vault),

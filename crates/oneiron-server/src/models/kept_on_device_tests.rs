@@ -125,6 +125,7 @@ async fn a_call_about_a_world_this_vault_does_not_hold_stays_on_the_device() {
     let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let deleted = portable_world(&vault);
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(vault.delete_entity(&deleted).unwrap());
     let error = seat
         .ladder
@@ -384,6 +385,7 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
     let image = dir.path().join("checkpoint");
     // The host's keystore signs and wraps the checkpoint (FIX 843, FIX 12225).
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.ensure_vault_key().unwrap();
     vault.snapshot_checkpoint(&image, T0).unwrap();
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();

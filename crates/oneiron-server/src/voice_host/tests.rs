@@ -65,6 +65,9 @@ fn fixture() -> (
         std::time::Duration::from_millis(oneiron::memory::caps::MAX_RECALL_DEADLINE_MS);
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     let mut runtime = RuntimeConfig::default();
+    runtime.role_defaults.summarizer.mode = crate::runtime::RuntimeMode::OneironCloud;
+    runtime.role_defaults.summarizer.provider_kind =
+        crate::runtime::RuntimeProviderKind::OneironCloud;
     runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
     let (send, calls) = mpsc::unbounded_channel();
     let budget = BudgetGuard::with_reserve_units(

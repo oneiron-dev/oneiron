@@ -223,10 +223,10 @@ async fn an_answer_pays_for_the_rungs_that_failed_before_it_and_never_nothing() 
         Some(&config(&format!(
             r#"
 [providers.first]
-kind = "local-openai-compat"
+kind = "openai-compat"
 base_url = "{}"
 [providers.second]
-kind = "local-openai-compat"
+kind = "openai-compat"
 base_url = "{}"
 [roles.generative_reasoner]
 rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
@@ -546,7 +546,7 @@ async fn a_failed_call_pays_for_each_provider_call_it_made() {
         Some(&config(&format!(
             r#"
 [providers.local]
-kind = "local-openai-compat"
+kind = "openai-compat"
 base_url = "{}"
 [roles.generative_reasoner]
 rungs = [
