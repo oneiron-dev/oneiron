@@ -256,7 +256,6 @@ async fn context_board_asset_text_consumer_hydrates_asset_text_by_ref() {
                 "turns": 0,
                 "summaries": 0,
                 "facets": 0,
-                "companions": 0,
                 "other": 1
             }
         }
