@@ -9,3 +9,4 @@ pub mod coach_round;
 pub mod live_lease;
 pub mod native_board;
 pub mod resident_pump;
+pub mod solved_runs;
