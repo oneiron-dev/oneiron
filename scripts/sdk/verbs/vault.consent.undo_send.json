@@ -1,6 +1,6 @@
 {
   "name": "vault.consent.undo_send",
-  "description": "The owner reads the undo-send window: the seconds an agent's send waits on every channel and on each channel set apart, and the first agent send through each channel, which carries the one-line hint.",
+  "description": "The owner reads the undo-send window: the seconds a send waits on every channel and on each channel set apart, and the first agent send through each channel, which carries the one-line hint.",
   "input": "crate::task_verb::sdk::EmptyRequest",
   "output": "crate::settings::undo_send::UndoSendSettings",
   "call": "{ let _ = &input; crate::settings::undo_send::read_undo_send_embedded(memory)? }",

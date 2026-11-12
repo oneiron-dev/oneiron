@@ -1,24 +1,25 @@
-//! The undo-send window on an agent's send (DEC-0006 #undo-send; owner
-//! ruling REV-8 = B, 2026-10-09: "undo send is a great idea, yeah. like
-//! email has it right"). Entry: [`hold_agent_send_for_undo_in_txn`], and the
-//! owner's [`Vault::undo_send`].
+//! The undo-send window on a send (DEC-0006 #undo-send; owner ruling REV-8 =
+//! B, 2026-10-09: "undo send is a great idea, yeah. like email has it
+//! right"). Entry: [`hold_send_for_undo_in_txn`], and [`Vault::undo_send`].
 //!
 //! The owner's setting (`settings::undo_send`) gives each outbound channel a
 //! length, off by default. While it is not zero, every schedule door's one
-//! enqueue holds an agent's send: in the same write that queues its attempt
+//! enqueue holds the send, whoever sends it: the owner, a person, an agent
+//! (Engine RULING 02:57, 13 Nov). In the same write that queues its attempt
 //! and its connector-send TASK, the attempt waits Scheduled until its release
 //! instant, and a held row names it. The connector executor claims it at that
 //! instant, as it claims a retry's backoff, so the release needs no worker of
-//! its own and a restart keeps the hold. Until then the owner takes it back
-//! with `vault.outbound.undo_send`: the attempt is cancelled and the TASK
-//! settles with the synced reason `undo_send`, so no machine sends it. Once
-//! the window closes the send is one-way in effect, like any outside effect.
+//! its own and a restart keeps the hold. Until then `vault.outbound.undo_send`
+//! takes it back: the attempt is cancelled and the TASK settles with the
+//! synced reason `undo_send`, so no machine sends it. The owner undoes any
+//! held send, and a person their own. Once the window closes the send is
+//! one-way in effect, like any outside effect.
 //!
-//! Never held: a person's or the system's own send, a legal send for
-//! signature (ARCH-0082 #act-table: no delay proof), and a send whose gate
-//! answer names the catastrophe floor, which stays one-way (DEC-0006
-//! #undo-send). The hold adds and skips no consent: the schedule's gate ran
-//! as it always runs (invariant 1; DEC-0006, reading not ruled).
+//! Never held: a legal send for signature (ARCH-0082 #act-table: no delay
+//! proof), and a send whose gate answer names the catastrophe floor, which
+//! stays one-way (DEC-0006 #undo-send). The hold adds and skips no consent:
+//! the schedule's gate ran as it always runs (invariant 1; DEC-0006, reading
+//! not ruled).
 //!
 //! The first agent send through each channel, held or not, is recorded once:
 //! the setting's read and the held list name it, so a surface shows the
@@ -36,9 +37,12 @@ use crate::attempt_queue::{
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
-use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
+};
 use crate::settings::undo_send::{UNDO_SEND_EXCLUDED_CHANNEL, undo_send_setting_in_txn};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::GateDecisionId;
 use crate::{EntityId, Vault};
 
 /// The list verb's name, as a refusal names it.
@@ -50,8 +54,7 @@ const UNDO_VERB: &str = "vault.outbound.undo_send";
 /// The note the owner's cancel leaves on the attempt's event history.
 const UNDO_SEND_NOTE: &str = "undo send";
 
-/// One agent send in its undo-send window. Key: id16 (the connector-send
-/// TASK).
+/// One send in its undo-send window. Key: id16 (the connector-send TASK).
 const HELD: SideTable<EntityId, UndoSendHold, Named> = SideTable::new(&side_table::UNDO_SEND_HELD);
 
 /// The first agent send through each channel. Key: string (the channel, as
@@ -96,10 +99,10 @@ pub struct UndoSendHeldSend {
     /// The send's connector-send TASK (32 hex): `vault.outbound.undo_send`
     /// names it.
     pub task_ref: EntityId,
-    /// The intent ref the schedule's receipt gave the agent
+    /// The intent ref the schedule's receipt gave its sender
     /// (`intent:<attempt hex>`).
     pub intent_ref: String,
-    /// The agent the send is from (32 hex).
+    /// Who the send is from (32 hex): the owner, a person or an agent.
     pub actor_ref: EntityId,
     pub channel: String,
     pub verb: String,
@@ -113,7 +116,7 @@ pub struct UndoSendHeldSend {
 }
 
 /// `vault.outbound.undo_send.held`'s answer: every send whose window is
-/// open, soonest release first.
+/// open that the caller may take back, soonest release first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UndoSendHeldSends {
@@ -149,11 +152,12 @@ pub enum UndoSendOutcome {
     /// The window closed at `release_at`, or the executor already took the
     /// send: it is one-way now. Nothing was written.
     WindowClosed { release_at: u64 },
-    /// No agent send under this TASK waits in a window. Nothing was written.
+    /// No send under this TASK that the caller may take back waits in a
+    /// window: none is held, or it is another person's. Nothing was written.
     NotHeld,
 }
 
-/// An agent send at the one schedule enqueue, as the window reads it.
+/// A send at the one schedule enqueue, as the window reads it.
 pub(crate) struct UndoSendCandidate<'a> {
     /// The send's connector-send TASK.
     pub(crate) task_ref: EntityId,
@@ -182,24 +186,21 @@ fn names_catastrophe_floor(gate_reason_codes: &[String]) -> bool {
     gate_reason_codes.iter().any(|code| code == floor)
 }
 
-/// Holds `record`, the attempt this transaction just enqueued for an agent's
-/// send, for its channel's undo-send window, in the caller's write. A send no
-/// window covers, a length of zero, and a row the queue does not defer come
-/// back as they were. The first agent send through a channel is recorded
-/// here, held or not.
+/// Holds `record`, the attempt this transaction just enqueued for a send,
+/// for its channel's undo-send window, in the caller's write, whoever sends
+/// it. A send no window covers, a length of zero, and a row the queue does
+/// not defer come back as they were. The first agent send through a channel
+/// is recorded here, held or not.
 ///
 /// # Errors
 ///
 /// Queue and storage errors.
-pub(crate) fn hold_agent_send_for_undo_in_txn(
+pub(crate) fn hold_send_for_undo_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: AttemptRecord,
     send: &UndoSendCandidate<'_>,
 ) -> Result<AttemptRecord> {
-    if send.actor_class != EdgeActorClass::Agent {
-        return Ok(record);
-    }
     let Some(manifest) = super::outbound_capability_manifest(send.channel) else {
         return Ok(record);
     };
@@ -208,7 +209,8 @@ pub(crate) fn hold_agent_send_for_undo_in_txn(
         return Ok(record);
     }
     let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let first_send_hint = record_first_agent_send_in_txn(vault, wtxn, channel, send.task_ref, now)?;
+    let first_send_hint = send.actor_class == EdgeActorClass::Agent
+        && record_first_agent_send_in_txn(vault, wtxn, channel, send.task_ref, now)?;
     if names_catastrophe_floor(send.gate_reason_codes) {
         return Ok(record);
     }
@@ -292,17 +294,33 @@ pub(crate) fn undo_send_first_agent_sends_in_txn(
         .collect())
 }
 
+/// Whether `caller`'s proof may take back the send `task` is: the vault
+/// owner may take back any, and a person only their own, in `txn`. `caller`
+/// is the live person [`AuthenticatedOwner::revalidate_person_in_txn`]
+/// answered.
+fn may_take_back_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proof: &AuthenticatedOwner,
+    caller: EntityId,
+    task: &super::ConnectorSendTask,
+) -> bool {
+    proof.revalidate_in_txn(vault, txn).is_ok()
+        || (task.actor_class == EdgeActorClass::Human && task.actor_ref == caller)
+}
+
 impl Vault {
-    /// Every agent send whose undo-send window is open, soonest release
-    /// first, under the owner's proof: its attempt still waits Scheduled and
-    /// its window has not closed.
+    /// Every send whose undo-send window is open that `caller` may take
+    /// back, soonest release first: the vault owner sees every one, and a
+    /// person their own. A listed send's attempt still waits Scheduled and
+    /// its window has not closed. The proof is a live person's, owner or not.
     ///
     /// # Errors
     ///
     /// A proof that no longer holds, and storage errors.
-    pub fn undo_send_held_as_owner(&self, owner: &AuthenticatedOwner) -> Result<UndoSendHeldSends> {
+    pub fn undo_send_held(&self, caller: &AuthenticatedOwner) -> Result<UndoSendHeldSends> {
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = caller.revalidate_person_in_txn(self, &txn)?;
         let now = self.now_recorded_at();
         let queue = AttemptQueue::new(self);
         let mut sends = Vec::new();
@@ -319,6 +337,9 @@ impl Vault {
             let Some(task) = self.connector_send_task_in(&txn, &task_ref)? else {
                 continue;
             };
+            if !may_take_back_in_txn(self, &txn, caller, actor, &task) {
+                continue;
+            }
             sends.push(UndoSendHeldSend {
                 task_ref,
                 intent_ref: intent_ref(hold.attempt_id),
@@ -334,28 +355,35 @@ impl Vault {
         Ok(UndoSendHeldSends { sends })
     }
 
-    /// The owner takes back the agent send `task_ref` names while its
-    /// undo-send window is open: in one write the attempt is cancelled, the
-    /// TASK settles failed with the synced reason `undo_send` (no machine
-    /// sends it again) and the held row goes. Once the window has closed, or
-    /// the executor took the send, the answer is
+    /// Takes back the send `task_ref` names while its undo-send window is
+    /// open: in one write the attempt is cancelled, the TASK settles failed
+    /// with the synced reason `undo_send` (no machine sends it again) and the
+    /// held row goes. The vault owner takes back any held send, and a person
+    /// their own; for any other caller the send reads as not held. Once the
+    /// window has closed, or the executor took the send, the answer is
     /// [`UndoSendOutcome::WindowClosed`] and nothing is written. The proof is
-    /// the vault owner's, rechecked in the writer.
+    /// a live person's, owner or not, rechecked in the writer.
     ///
     /// # Errors
     ///
-    /// A proof that is not a live owner's, queue and storage errors.
+    /// A proof that no longer holds, queue and storage errors.
     pub fn undo_send(
         &self,
-        owner: &AuthenticatedOwner,
+        caller: &AuthenticatedOwner,
         task_ref: EntityId,
     ) -> Result<UndoSendOutcome> {
         let outcome = self.with_write_txn_grouped(|wtxn| {
-            let actor = owner.revalidate_in_txn(self, &*wtxn)?;
+            let actor = caller.revalidate_person_in_txn(self, &*wtxn)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
             let Some(hold) = HELD.get(&self.store, wtxn, &task_ref)? else {
                 return Ok(UndoSendOutcome::NotHeld);
             };
+            let Some(task) = self.connector_send_task_in(wtxn, &task_ref)? else {
+                return Ok(UndoSendOutcome::NotHeld);
+            };
+            if !may_take_back_in_txn(self, wtxn, caller, actor, &task) {
+                return Ok(UndoSendOutcome::NotHeld);
+            }
             let closed = UndoSendOutcome::WindowClosed {
                 release_at: hold.release_at,
             };
@@ -399,40 +427,74 @@ impl Vault {
     }
 }
 
-/// `vault.outbound.undo_send.held` under the owner's proof.
+/// The proof an embedded handle calls the window's person doors under: the
+/// embedded owner's, or a person's own on a handle bound as that person
+/// (their presented slip, or a native call), as `vault.workflows.dispatch_bound`
+/// takes it. An agent's handle is refused.
+fn caller_proof(memory: &Memory<'_>, verb: &str) -> MemoryResult<AuthenticatedOwner> {
+    if let Ok(owner) = memory.embedded_owner(verb) {
+        return Ok(owner);
+    }
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is the vault owner's, or a person's own"),
+            &[
+                "Call it as the vault's owner, or as the person who sent it, on their own verified human credential.",
+            ],
+        )
+    };
+    if memory.actor_class() != EdgeActorClass::Human {
+        return Err(refused());
+    }
+    let vault = memory.vault();
+    let actor = memory.actor();
+    let person = vault
+        .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+        .map_err(|_| refused())?;
+    match memory.presented_credential() {
+        Some(slip) => Ok(vault.bind_person_credential(person, slip.clone())?),
+        None if memory.native_invocation() => Ok(person),
+        None => Err(refused()),
+    }
+}
+
+/// `vault.outbound.undo_send.held` under `caller`'s proof: the vault owner
+/// lists every held send, and a person their own.
 ///
 /// # Errors
 ///
 /// A proof that no longer holds, and storage errors.
 pub fn undo_send_held_as(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    caller: &AuthenticatedOwner,
 ) -> MemoryResult<UndoSendHeldSends> {
-    Ok(vault.undo_send_held_as_owner(owner)?)
+    Ok(vault.undo_send_held(caller)?)
 }
 
-/// `vault.outbound.undo_send.held` on the embedded owner's handle.
+/// `vault.outbound.undo_send.held` on an embedded handle ([`caller_proof`]).
 ///
 /// # Errors
 ///
-/// A handle that is not the vault owner's, and storage errors.
+/// A handle that is neither the owner's nor a person's own, and storage
+/// errors.
 pub fn undo_send_held_embedded(memory: &Memory<'_>) -> MemoryResult<UndoSendHeldSends> {
-    undo_send_held_as(memory.vault(), &memory.embedded_owner(HELD_VERB)?)
+    undo_send_held_as(memory.vault(), &caller_proof(memory, HELD_VERB)?)
 }
 
-/// `vault.outbound.undo_send` under the owner's proof. A send whose window
-/// closed is refused `INVALID_STATE`, and a TASK no window holds
-/// `NOT_FOUND`; neither writes anything.
+/// `vault.outbound.undo_send` under `caller`'s proof. A send whose window
+/// closed is refused `INVALID_STATE`, and a TASK the caller may not take
+/// back or no window holds `NOT_FOUND`; neither writes anything.
 ///
 /// # Errors
 ///
 /// As [`Vault::undo_send`], and the two refusals above.
 pub fn undo_send_as(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    caller: &AuthenticatedOwner,
     input: UndoSendRequest,
 ) -> MemoryResult<UndoSendUndone> {
-    match vault.undo_send(owner, input.task_ref)? {
+    match vault.undo_send(caller, input.task_ref)? {
         UndoSendOutcome::Undone {
             release_at,
             undone_at,
@@ -450,20 +512,21 @@ pub fn undo_send_as(
             &["A send can be taken back only while its window is open."],
         )),
         UndoSendOutcome::NotHeld => Err(MemoryError::not_found(format!(
-            "no agent send under {} waits in an undo-send window",
+            "no send of yours under {} waits in an undo-send window",
             input.task_ref.to_hex()
         ))),
     }
 }
 
-/// `vault.outbound.undo_send` on the embedded owner's handle.
+/// `vault.outbound.undo_send` on an embedded handle ([`caller_proof`]).
 ///
 /// # Errors
 ///
-/// A handle that is not the vault owner's, and as [`undo_send_as`].
+/// A handle that is neither the owner's nor a person's own, and as
+/// [`undo_send_as`].
 pub fn undo_send_embedded(
     memory: &Memory<'_>,
     input: UndoSendRequest,
 ) -> MemoryResult<UndoSendUndone> {
-    undo_send_as(memory.vault(), &memory.embedded_owner(UNDO_VERB)?, input)
+    undo_send_as(memory.vault(), &caller_proof(memory, UNDO_VERB)?, input)
 }

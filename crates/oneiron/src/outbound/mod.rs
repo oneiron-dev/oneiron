@@ -117,7 +117,7 @@ pub(crate) use self::uncertain_send::{
     UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER,
 };
 pub(crate) use self::undo_send::{
-    UndoSendCandidate, hold_agent_send_for_undo_in_txn, undo_send_first_agent_sends_in_txn,
+    UndoSendCandidate, hold_send_for_undo_in_txn, undo_send_first_agent_sends_in_txn,
 };
 pub use self::undo_send::{
     UndoSendFirstAgentSend, UndoSendHeldSend, UndoSendHeldSends, UndoSendOutcome, UndoSendRequest,
