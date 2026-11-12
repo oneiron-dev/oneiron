@@ -272,6 +272,11 @@ impl AgentDispatcher<'_> {
             return Ok(ResidentInboxDispatch::default());
         };
         validate(self.vault, &spec)?;
+        // AGM-2: a message that landed on a wake which then paused or parked
+        // returns to the inbox before the run is read, so this pass routes it.
+        if spec.wake != ResidentWakeMode::Manual {
+            self.withdraw_stranded_messages(agent)?;
+        }
         let view = self.resident_run_view(agent)?;
         let woken = &view.woken;
         let mut pass = ResidentInboxDispatch::default();

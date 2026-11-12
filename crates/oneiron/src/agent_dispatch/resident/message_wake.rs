@@ -28,10 +28,10 @@ use super::{
     ResidentWakeMode, WAKE_CARRY_LIMIT, resident_run_id,
 };
 use crate::EntityId;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::error::{Error, Result};
-use crate::run_tree::{RunSignalInput, RunSignalKind, RunTreeAdapter};
+use crate::run_tree::{RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter};
 use crate::surface_event::SurfaceCounterpartyStamp;
 
 /// The actor a message's landing on a resident's running wake names: the
@@ -318,5 +318,41 @@ impl AgentDispatcher<'_> {
         }
         briefing.truncate(briefing.floor_char_boundary(CONTEXT_SPEC_MAX_TEXT_BYTES));
         briefing
+    }
+
+    /// AGM-2: withdraws each message that landed on a wake of resident
+    /// `agent`'s run which then paused, or parked on a durable wait, before
+    /// a step took it. That wake runs no step, so it is not busy, and no
+    /// step of it would take the message while it waits. The message returns
+    /// to the inbox untaken: this pass wakes the resident for it, or lands
+    /// it on the wake that runs, and the waiting wake never takes it when it
+    /// resumes (#7339 review round 1).
+    pub(super) fn withdraw_stranded_messages(&self, agent: EntityId) -> Result<()> {
+        let run_id = resident_run_id(agent);
+        let adapter = RunTreeAdapter::new(self.vault);
+        for row in crate::attempt_queue::AttemptQueue::new(self.vault).list_run(&run_id)? {
+            let holds_message = !row.state.is_terminal()
+                && row.signals.iter().any(|signal| {
+                    signal.actor == RESIDENT_INBOX_SIGNAL_ACTOR
+                        && signal.state == RunSignalState::Pending
+                });
+            if !holds_message {
+                continue;
+            }
+            // A parked wake keeps its lease, so its row reads Leased; the
+            // adapter reads the state and the park again in its writer.
+            let idle = row.state == AttemptState::Paused
+                || crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                    .parked_attempt(row.id)?
+                    .is_some();
+            if idle {
+                adapter.withdraw_idle_interjections(
+                    row.id,
+                    &run_id,
+                    RESIDENT_INBOX_SIGNAL_ACTOR,
+                )?;
+            }
+        }
+        Ok(())
     }
 }
