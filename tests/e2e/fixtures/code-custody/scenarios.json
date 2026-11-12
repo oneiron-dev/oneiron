@@ -90,37 +90,37 @@
     "canon_sources": [
       {
         "uri": "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/",
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world.md",
         "sha256": "fd5c36e3c88430eaef2592ae8ce7fef734561295d95af57967866263fbfad888"
       },
       {
         "uri": "/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1/",
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0068-repo-custody-v1.md",
         "sha256": "cc8f12a513b6b3c0f3ab177a5300e048aa9dec4c442e296b7714d569e117745f"
       },
       {
         "uri": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0067-context-board-v1.md",
         "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
       },
       {
         "uri": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
         "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
       },
       {
         "uri": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
         "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
       },
       {
         "uri": "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/",
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md",
         "sha256": "b3bb0a5ee003e3baf6cd3b43bccc30bd26571b6af3c5ab40a403378db29d4538"
       }
     ],
     "registry": {
-      "path": "<workspace>/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "path": "<workspace>/oneiron-docs/registry/oneiron.json",
       "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
       "rows": [
         "OF-316",

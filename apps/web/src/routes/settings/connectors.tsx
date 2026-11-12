@@ -133,7 +133,7 @@ function ConnectorsPage() {
       settled: 'receipted',
       state: `revoked ${CLOCK}`,
       stateTitle: `revoked by o · ${CLOCK} · the threads it brought stay`,
-      receipts: [[CLOCK, 'Revoked by Owen. The reach stops here; the threads stay in the vault.'], ...c.receipts],
+      receipts: [[CLOCK, 'Revoked by owen. The reach stops here; the threads stay in the vault.'], ...c.receipts],
     })
     ledger.setSel(c.id)
     ledger.setOpen(c.id)

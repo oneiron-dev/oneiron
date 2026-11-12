@@ -11,13 +11,14 @@ use super::{
     work_vault_admin_in_txn,
 };
 use crate::batch::secret_scan::LiftedKeys;
+use crate::claim::{ClaimReadStatus, PointRead, ScopedRead};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::memory::authorship::*;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::note::NoteKind;
 use crate::vault::entity_revision::revision_for_mode_in_txn;
 use crate::vault::{ReadMode, RevisionRef};
@@ -27,6 +28,9 @@ use crate::{
     inbox::view_values::{AgentInboxDiaryReview, AgentInboxItemKind},
     inbox::view_values::{AgentInboxParticipant, InboxImpact},
 };
+
+/// The verb a Grant lists to name a pinned diary read.
+const DIARY_PINNED_VERB: &str = "self.memory.diary.pinned";
 
 impl Vault {
     /// Sets whether `agent` reviews each read of its diary first. The host
@@ -111,13 +115,86 @@ impl Memory<'_> {
         agent: EntityId,
         reason: &str,
     ) -> MemoryResult<(DiaryReadOutcome, Vec<(EntityId, Option<RevisionRef>)>)> {
+        self.read_agent_diary_pinned_through(reader, agent, reason, None)
+    }
+
+    /// [`Self::read_agent_diary_pinned`] through the caller's ordinary read lane:
+    /// `self.memory.diary.pinned`'s door. The diary checks stay the caller's `diary.read` Grants
+    /// ([`DiaryReadGate`]) with the same read log, and the caller additionally needs its live
+    /// owner Grant listing `self.memory.diary.pinned`, checked live in the same snapshot: an
+    /// agent or system without one is refused, a person stands by liveness. Each entry must also
+    /// be one the caller's ordinary read lane admits (credential, destination and room ceilings,
+    /// at `Recorded`, the record read's every status); an entry outside the lane is left out of
+    /// the result, not an error, and never reaches the gate or the log.
+    pub(crate) fn read_agent_diary_pinned_filtered(
+        &self,
+        reader: Option<&AuthenticatedOwner>,
+        agent: EntityId,
+        reason: &str,
+    ) -> MemoryResult<(DiaryReadOutcome, Vec<(EntityId, Option<RevisionRef>)>)> {
+        // The lane opens before the writer: its grant-clock persist takes its own writer, and the
+        // store holds one writer. The body pins are held across the read below.
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let _bodies = lane.prepare_point_read::<Error>()?;
+        self.read_agent_diary_pinned_through(reader, agent, reason, Some(&lane))
+    }
+
+    /// The read behind [`Self::read_agent_diary_pinned`] and
+    /// [`Self::read_agent_diary_pinned_filtered`], in one writer. With `lane`, the caller's live
+    /// Grant listing `self.memory.diary.pinned` is checked first, and an entry `lane` withholds
+    /// is left out before the gate judges it. Without `lane`, the diary gate alone decides: the
+    /// compaction path.
+    fn read_agent_diary_pinned_through(
+        &self,
+        reader: Option<&AuthenticatedOwner>,
+        agent: EntityId,
+        reason: &str,
+        lane: Option<&ScopedRead<'_>>,
+    ) -> MemoryResult<(DiaryReadOutcome, Vec<(EntityId, Option<RevisionRef>)>)> {
         self.with_verified_actor_write_txn(|txn| {
+            if lane.is_some()
+                && crate::authority::principal_standing_in_txn(
+                    self.vault,
+                    txn,
+                    self.actor,
+                    self.actor_class,
+                    DIARY_PINNED_VERB,
+                )?
+                .is_none()
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    format!(
+                        "{DIARY_PINNED_VERB} takes a live Grant listing {DIARY_PINNED_VERB}: no \
+                         live Grant from a live owner names this caller and lists the verb"
+                    ),
+                    &["Have the owner grant this caller the verb by name."],
+                ));
+            }
             let actor = self.diary_reader_in_txn(txn, reader)?;
             let mut gate = DiaryReadGate::new(actor, reason)?;
             gate.touch(self.vault, txn, agent)?;
+            let listed = diary_entries_in_txn(self.vault, txn, agent)?;
+            // Each entry the lane judges, in this same snapshot, by the point read every record
+            // read uses: a missing row or one the lane withholds is outside it.
+            let in_lane = match lane {
+                Some(lane) => {
+                    let reads: Vec<_> =
+                        listed.iter().map(|(id, _, _)| PointRead::id(*id)).collect();
+                    lane.read_projected_in_txn(txn, &reads, None, |_, rows| {
+                        Ok::<_, Error>(rows.iter().map(Option::is_some).collect::<Vec<_>>())
+                    })?
+                    .value
+                }
+                None => vec![true; listed.len()],
+            };
             let mut entries = Vec::new();
             let mut pins = Vec::new();
-            for (id, note, learned_at) in diary_entries_in_txn(self.vault, txn, agent)? {
+            for ((id, note, learned_at), in_lane) in listed.into_iter().zip(in_lane) {
+                // Outside the caller's lane: left out, never read, logged or counted as held.
+                if !in_lane {
+                    continue;
+                }
                 // Each entry the gate judges, read or counted as held.
                 self.produced_from([id]);
                 if gate.admit(self.vault, txn, agent, id)? == DiaryEntryAdmission::Read {
