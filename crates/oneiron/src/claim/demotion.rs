@@ -198,29 +198,19 @@ impl Vault {
                 )
             }
         };
-        let scope = match body.scope.take() {
-            None => vec![(
-                Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-                Value::from(match next {
-                    ClaimDemotionRung::Decayed => "decayed",
-                    ClaimDemotionRung::Weakened => "weakened",
-                    ClaimDemotionRung::Stale => "stale",
-                }),
-            )],
-            Some(Value::Map(mut entries)) => {
-                entries.retain(|(k, _)| k.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
-                entries.push((
-                    Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-                    Value::from(match next {
-                        ClaimDemotionRung::Decayed => "decayed",
-                        ClaimDemotionRung::Weakened => "weakened",
-                        ClaimDemotionRung::Stale => "stale",
-                    }),
-                ));
-                entries
-            }
-            Some(_) => return Err(Error::InvalidClaimBody("scope must be a map")),
-        };
+        // A scope that is not a map, such as a critic outcome's finding key,
+        // carries no recognized entry: the rung starts a map of its own, the
+        // same body the demotion materializer rebuilds.
+        let mut scope = crate::write_envelope::claim_body::scope_map_entries(body.scope.take());
+        scope.retain(|(k, _)| k.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
+        scope.push((
+            Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+            Value::from(match next {
+                ClaimDemotionRung::Decayed => "decayed",
+                ClaimDemotionRung::Weakened => "weakened",
+                ClaimDemotionRung::Stale => "stale",
+            }),
+        ));
         body.scope = Some(Value::Map(scope));
         if crate::authority::machine_claim_needs_history(&self.store, wtxn, &body)? {
             body = super::transition::stage_owner_machine_transition(
