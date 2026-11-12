@@ -17,7 +17,7 @@ use oneiron::context_pack::{ContextPack, DEFAULT_MAX_FIELD_CHARS, TokenAllocatio
 use oneiron::pipeline::{WorldAuthoritySet, WorldScope};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::serialize::pack_format::{FieldProfile, PackFormat};
-use oneiron::serialize::{SerializeConfig, serialize_pack};
+use oneiron::serialize::{SerializeConfig, project_pack_for_json_response, serialize_pack};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
     TimeRange, Vault, VaultConfig,
@@ -150,8 +150,8 @@ impl Fixture {
     }
 }
 
-fn render(pack: &ContextPack, format: PackFormat) -> String {
-    let config = SerializeConfig {
+fn config(format: PackFormat) -> SerializeConfig {
+    SerializeConfig {
         format,
         profile: FieldProfile::Minimal,
         budget: 8192,
@@ -160,8 +160,11 @@ fn render(pack: &ContextPack, format: PackFormat) -> String {
         merge_neighbors: true,
         max_field_chars: DEFAULT_MAX_FIELD_CHARS,
         max_item_tokens: 0,
-    };
-    String::from_utf8(serialize_pack(pack, &config)).expect("rendered pack is UTF-8")
+    }
+}
+
+fn render(pack: &ContextPack, format: PackFormat) -> String {
+    String::from_utf8(serialize_pack(pack, &config(format))).expect("rendered pack is UTF-8")
 }
 
 /// Every rendered JSON row that carries a claim value (`val`), by that value.
@@ -185,9 +188,11 @@ fn json_claim_rows(rendered: &str) -> Vec<serde_json::Map<String, serde_json::Va
 /// P-RECALL-011 / ARCH-0004 #world-scope. Under `{story, include_base}` the
 /// pack keeps both base claims and the three story claims (share 1.0). Each
 /// rendered JSON row carries `world_section` as its first field: `base` on a
-/// base claim, the story world's id hex on a story claim. In every text format
-/// the story world's id precedes each story claim's text, and no story label
-/// precedes a base claim's text (the base section comes first).
+/// base claim, the story world's id hex on a story claim. The structured JSON
+/// response keeps the base rows first. In every text format the story world's
+/// id precedes each story claim's text, and no story label precedes a base
+/// claim's text (the base section comes first, although every story claim
+/// outranks every base claim).
 #[test]
 fn partitioned_pack_renders_each_rows_world_before_its_text() {
     let fixture = fixture();
@@ -217,6 +222,30 @@ fn partitioned_pack_renders_each_rows_world_before_its_text() {
             first_field,
             Some(LABEL_KEY),
             "the world section comes before the row's text; row {row:?}"
+        );
+    }
+
+    // The structured JSON response a context-pack door returns keeps the
+    // partition's order although every story claim outranks every base claim.
+    let projected = project_pack_for_json_response(pack.clone(), &config(PackFormat::Json));
+    let position = |id: EntityId| {
+        projected
+            .results
+            .iter()
+            .position(|row| row.id == id)
+            .unwrap_or_else(|| panic!("projected JSON pack holds {id:?}"))
+    };
+    let last_base = fixture
+        .base
+        .iter()
+        .map(|id| position(*id))
+        .max()
+        .expect("two base claims");
+    for id in fixture.story {
+        assert!(
+            position(id) > last_base,
+            "projected JSON pack: the base section comes first; story claim {id:?} at {}, last base claim at {last_base}",
+            position(id)
         );
     }
 
