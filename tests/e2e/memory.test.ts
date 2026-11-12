@@ -279,7 +279,15 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
       { cause: error });
   }
   providers.releaseBarrier(intake);
-  expect((await entity(client, minted.project_id)).kind).toBe("PROJECT");
+  const project = await entity(client, minted.project_id);
+  try {
+    expect(project.kind).toBe("PROJECT");
+  } catch (error) {
+    throw new Error(`ENGINE DEFECT 2026-11-12: project ${minted.project_id} reads back with kind ${JSON.stringify(project.kind)}: `
+      + `the PROJECT kind registers at run time with no kind name, so every read spelling falls back to TYPE_<byte> `
+      + `(FIX PROJECT-KIND-READS-TYPE-103). ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error });
+  }
   return minted.project_id;
 }
 async function closeWorld(w: World): Promise<void> {
@@ -302,6 +310,9 @@ async function setup(id: string): Promise<World> {
   // refuses that spawn before it is queued (agent_dispatch/dispatch/depth.rs:82-85; the server only
   // warns "goal-intake interview not dispatched"). MEMORY-01, -02, -05, -07 and -08 stay red at the
   // project-intake barrier until that fix lands.
+  // DEFECT (2026-11-12, FIX PROJECT-KIND-READS-TYPE-103): with the intake step answered, the minted
+  // project reads back as kind TYPE_103, not PROJECT (fleet job 1112-130158-e1f6, set bd95597c8afc,
+  // diagnostic head e9b312e5d41 without the intake step). The same five cases stay red there next.
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
   const projects = new Map<string, string>();
   for (const [index, row] of data.fixture.projects.entries()) {
