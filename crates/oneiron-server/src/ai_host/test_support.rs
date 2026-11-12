@@ -137,9 +137,28 @@ pub(crate) fn capture_user_turn(vault: &Vault, text: &str) -> EntityId {
     turn
 }
 
-/// An extraction answer citing the first turn the transcript shows, as a
-/// real model would: the fake reads the source id out of the request.
-pub(crate) fn extraction_reply(subject: EntityId, value: &str) -> Reply {
+/// A PERSON whose stored name is an identity hint, so a turn that says the
+/// name lists it to the extraction call (FIX 7506: the call names each
+/// entity by a call-local label, and a reply names only what it listed).
+pub(crate) fn seed_named_person(vault: &Vault, name: &str) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({ "name": name })).unwrap(),
+        )
+        .unwrap();
+    id
+}
+
+/// An extraction answer naming `value` as the `profile.name` of the listed
+/// entity called `value`, quoted from the first turn the transcript shows,
+/// as a real model would: the fake reads both call-local labels (`P1`,
+/// `T1`) out of the request (FIX 7506).
+pub(crate) fn extraction_reply(value: &str) -> Reply {
     let value = value.to_owned();
     Reply::Computed(Arc::new(move |request: &Value| {
         let transcript = request["messages"]
@@ -148,6 +167,14 @@ pub(crate) fn extraction_reply(subject: EntityId, value: &str) -> Reply {
             .and_then(|message| message["content"].as_str())
             .unwrap_or_default()
             .to_owned();
+        let named = json!(value).to_string();
+        let subject = transcript
+            .lines()
+            .find_map(|line| {
+                let (label, name) = line.strip_prefix("entity ")?.split_once(' ')?;
+                (name == named).then(|| label.to_owned())
+            })
+            .unwrap_or_default();
         let source = transcript
             .split('[')
             .nth(1)
@@ -155,11 +182,11 @@ pub(crate) fn extraction_reply(subject: EntityId, value: &str) -> Reply {
             .unwrap_or_default()
             .to_owned();
         json!({"candidates": [{
-            "subject": subject.to_hex(),
+            "subject": subject,
             "predicate": "profile.name",
             "value": value,
             "confidence": 0.9,
-            "evidence_refs": [{"source_id": source, "byte_range": [0, 4]}],
+            "evidence_refs": [{"source": source, "quote": value}],
         }]})
         .to_string()
     }))

@@ -7,7 +7,7 @@ use oneiron_driver::SessionHint;
 
 use super::test_support::{
     capture_user_turn, eventually, extraction_reply, models, models_toml, name_claims,
-    pin_every_role, rooted_vault, route_extraction, saved_agent,
+    pin_every_role, rooted_vault, route_extraction, saved_agent, seed_named_person,
 };
 use super::*;
 use crate::fake_llm::FakeLlm;
@@ -89,17 +89,8 @@ async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writ
     let handle = host.handle();
     assert_eq!(handle.status().dreamer.state, WorkState::Waiting);
 
-    let subject = EntityId::now();
-    vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .unwrap();
-    fake.push(extraction_reply(subject, "Owen"));
+    let subject = seed_named_person(&vault, "Owen");
+    fake.push(extraction_reply("Owen"));
     let sitting = local_sitting(&vault);
     handle.session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Owen");
@@ -156,17 +147,8 @@ async fn a_vault_model_manifest_names_the_model_the_dreamer_extracts_with() {
         oneiron::ModelLocality::OwnServer,
     );
 
-    let subject = EntityId::now();
-    vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .unwrap();
-    fake.push(extraction_reply(subject, "Owen"));
+    let subject = seed_named_person(&vault, "Owen");
+    fake.push(extraction_reply("Owen"));
     let sitting = local_sitting(&vault);
     handle.session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Owen");
@@ -227,17 +209,8 @@ rungs = [{{ model = "local:teacher", prompt = "teacher rung rules" }}]
         handle.status().dreamer
     );
 
-    let subject = EntityId::now();
-    vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .unwrap();
-    local.push(extraction_reply(subject, "Owen"));
+    let subject = seed_named_person(&vault, "Owen");
+    local.push(extraction_reply("Owen"));
     let sitting = local_sitting(&vault);
     handle.session_hint(sitting, SessionHint::AppOpen, None);
     capture_user_turn(&vault, "call me Owen");
@@ -532,16 +505,7 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     let fake = FakeLlm::start(vec![], None).await;
     let (_dir, vault) = rooted_vault();
     route_extraction(&vault);
-    let subject = EntityId::now();
-    vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .unwrap();
+    seed_named_person(&vault, "Owen");
     // The pass keeps a 10% landing reserve: 8,500 leaves 7,650 ordinary
     // units, below the paid call's reservation, so extraction traps before sending.
     let tight = metered_models(models(
@@ -584,7 +548,7 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
     // passes may spend then: one still queued at the shutdown, or one the
     // restarted Dreamer schedules for the same turns. A pass parked on its
     // trap stays as it was: leased, on the same trap, never claimed again.
-    fake.push(extraction_reply(subject, "Owen"));
+    fake.push(extraction_reply("Owen"));
     let roomy = metered_models(models(
         &fake.base_url,
         "[dreamer]\nidle_floor_secs = 600\n[workflows]\nenabled = false",
