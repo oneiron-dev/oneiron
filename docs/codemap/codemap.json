@@ -41321,7 +41321,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -103659,6 +103659,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/task_facet.rs",
+     "purpose": "ARCH-0022 #facets (the owner, 2026-09-23): \"A record carries its facet as its one outgoing `facet_of` edge…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/tasks_person_fit.rs",
      "purpose": "FIX 1161: TASKS fits use measured person fit before completion count",
      "surface": {}
@@ -105599,7 +105607,7 @@
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7455,
-   "test_files": 1147
+   "test_files": 1148
   },
   "oneiron-agent-runtime": {
    "files": [
