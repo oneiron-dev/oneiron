@@ -306,6 +306,17 @@ fn proposer(core: &super::NoteCore) -> Option<EntityId> {
     }
 }
 
+/// Where a plan-doc whose text is at `revision` (hex) stands under `review`.
+fn state_at(review: &PlanDocReview, revision: &str) -> PlanDocState {
+    match &review.verdict {
+        Some(verdict) if verdict.revision == revision => match verdict.decision {
+            PlanDocDecision::Approved => PlanDocState::Approved,
+            PlanDocDecision::Rejected => PlanDocState::Rejected,
+        },
+        _ => PlanDocState::InReview,
+    }
+}
+
 /// The view of plan-doc `plan` whose text is `markdown`, under `review`.
 fn plan_doc_view(
     plan: EntityId,
@@ -314,13 +325,7 @@ fn plan_doc_view(
     review: PlanDocReview,
 ) -> PlanDocView {
     let revision = revision_hex(&revision_of(plan, &markdown));
-    let state = match &review.verdict {
-        Some(verdict) if verdict.revision == revision => match verdict.decision {
-            PlanDocDecision::Approved => PlanDocState::Approved,
-            PlanDocDecision::Rejected => PlanDocState::Rejected,
-        },
-        _ => PlanDocState::InReview,
-    };
+    let state = state_at(&review, &revision);
     PlanDocView {
         plan_ref: plan,
         state,
@@ -356,6 +361,34 @@ fn plan_doc_in_txn(
         .ok_or_else(not_plan_doc)?
         .text();
     Ok((core, markdown, review))
+}
+
+/// The revision row `id` is at and where it stands, when `id` names a
+/// plan-doc; `None` for any other row. A task brief pins a plan-doc at this
+/// revision, so the run carries the hash of the text the owner approved, and
+/// an edit to the text, and no other write, moves the pin.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn plan_doc_pin_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<([u8; 32], PlanDocState)>> {
+    let Some(review) = PLAN_DOC_REVIEW.get(&vault.store, txn, &id)? else {
+        return Ok(None);
+    };
+    let (_, core) = super::verbs::note_core(vault, txn, id)?;
+    if !is_plan_doc_kind(&core.kind) {
+        return Ok(None);
+    }
+    let Some(doc) = super::documents::load_doc(vault, txn, id)? else {
+        return Ok(None);
+    };
+    let revision = revision_of(id, &doc.text());
+    let state = state_at(&review, &revision_hex(&revision));
+    Ok(Some((revision, state)))
 }
 
 impl Memory<'_> {
