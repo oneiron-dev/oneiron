@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use crate::batch::BatchOp;
 use crate::check_in::{
-    AgentHolderVerdict, CheckInTransition, HolderAnswer, HolderKind, NoAgentVerdict,
+    AgentHolderVerdict, CheckInTransition, HolderAnswer, HolderKind, HolderReply, NoAgentVerdict,
     OpenPendingCheckIn, PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver, VerifiedChain,
     advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
     extend_pending_check_in_in_txn, open_pending_check_in_in_txn, record_objection_in_txn,
@@ -158,8 +158,10 @@ pub fn answer(
             txn,
             person,
             id,
-            effect_digest,
-            answer,
+            HolderReply {
+                effect_digest: *effect_digest,
+                answer,
+            },
             &FixedChain::default(),
             now,
         )
@@ -238,8 +240,10 @@ pub fn answer_verified(
             txn,
             person,
             id,
-            effect_digest,
-            answer,
+            HolderReply {
+                effect_digest: *effect_digest,
+                answer,
+            },
             &VerifiedChain::new(&NoAgentVerdict),
             now,
         )

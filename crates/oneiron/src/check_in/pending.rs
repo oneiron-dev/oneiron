@@ -231,6 +231,14 @@ impl HolderAnswer {
     }
 }
 
+/// A holder's answer and the effect it is over: it settles the ask only
+/// over the exact effect digest the ask waits on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HolderReply {
+    pub effect_digest: [u8; 32],
+    pub answer: HolderAnswer,
+}
+
 /// Where a pending check-in stands. Every state but `Open` is final, and
 /// each is receipted (canon's table "When nobody answers").
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -502,14 +510,17 @@ pub(crate) fn answer_pending_check_in_in_txn(
     txn: &mut heed::RwTxn<'_>,
     person: &AuthenticatedOwner,
     id: &EntityId,
-    effect_digest: &[u8; 32],
-    answer: HolderAnswer,
+    reply: HolderReply,
     chain: &dyn RungResolver,
     now: u64,
 ) -> Result<PendingCheckIn> {
+    let HolderReply {
+        effect_digest,
+        answer,
+    } = reply;
     let by = person.revalidate_person_in_txn(vault, txn)?;
     let mut row = open_row_in_txn(&vault.store, txn, id, now)?;
-    if row.effect_digest != *effect_digest {
+    if row.effect_digest != effect_digest {
         return Err(refuse("the answer is over another effect"));
     }
     let rung = pinned_person_rung(&row, by, now)?;
