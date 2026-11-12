@@ -1,7 +1,9 @@
 //! ARCH-0004 #world-scope: a context pack whose scope selects base reality
 //! beside a named world partitions its claims, base section first, with the
 //! non-base claims held to the same world share as the `All` scope
-//! (FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY]). A scope that selects one
+//! (FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY]). `World(id)` selects
+//! `{base, id}` by default, so it reads and partitions as that world set does
+//! (FIX [PIPELINE-WORLD-ID-SCOPE-EXCLUDES-BASE]). A scope that selects one
 //! side only stays flat and keeps every claim it selects.
 //!
 //! Public crate surface only: `Vault::put_claim`, a vector batch, and the
@@ -165,14 +167,42 @@ fn world_set_with_base_puts_base_section_first_and_caps_the_story_world() {
 /// A scope that selects the story world without base has no base section to
 /// share with: it keeps every story claim, in score order.
 #[test]
-fn world_only_scopes_keep_every_world_claim() {
+fn world_set_without_base_keeps_every_world_claim() {
     let fixture = fixture();
     let story = fixture.story.to_vec();
 
     let world_set = fixture.pack(fixture.story_world_set(false), None);
     assert_eq!(world_set, story, "a world set without base");
+}
 
-    let world = fixture.pack(WorldScope::World(fixture.story_world), None);
-    let world_claims: Vec<EntityId> = world.into_iter().filter(|id| story.contains(id)).collect();
-    assert_eq!(world_claims, story, "World(id) keeps every story claim");
+/// ARCH-0004 #world-scope: "`World(id)` | Default selection `{base, id}`".
+/// A `World(story)` pack reads both base claims beside the story world's,
+/// base section first, and holds the story claims to the default share as the
+/// `{story, base}` world set does. The other world stays out.
+#[test]
+fn world_scope_reads_base_beside_its_world() {
+    let fixture = fixture();
+    let [story_1, story_2, story_3] = fixture.story;
+    let [base_1, base_2] = fixture.base;
+    let world = WorldScope::World(fixture.story_world);
+
+    let unshared = fixture.pack(world.clone(), Some(1.0));
+    assert_eq!(
+        unshared,
+        [base_1, base_2, story_1, story_2, story_3],
+        "World(id) reads base: base section first, then the story section in score order"
+    );
+
+    let shared = fixture.pack(world, None);
+    assert_eq!(
+        shared,
+        [base_1, base_2, story_1, story_2],
+        "the default share keeps two story claims beside two base claims"
+    );
+    assert!(!shared.contains(&fixture.other_world_claim));
+    assert_eq!(
+        shared,
+        fixture.pack(fixture.story_world_set(true), None),
+        "World(story) reads as the {{story, base}} world set"
+    );
 }
