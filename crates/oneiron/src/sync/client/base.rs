@@ -482,14 +482,6 @@ impl SyncClient {
         let requested = match self.config.followed_worlds.as_deref() {
             None => FollowedWorlds::All,
             Some([]) if device && sync_all => self.readable_worlds_in(&txn)?,
-            Some([]) if device => {
-                let pick: Vec<crate::EntityId> =
-                    crate::sync::residence::device_world_pick_in(&self.vault, &txn)
-                        .map_err(|error| TransportError::Storage(error.to_string()))?
-                        .into_iter()
-                        .collect();
-                self.readable_worlds_in(&txn)?.narrowed_to(&pick)
-            }
             Some(worlds) if device => self.readable_worlds_in(&txn)?.narrowed_to(worlds),
             Some([]) if default_all => FollowedWorlds::All,
             Some(worlds) => FollowedWorlds::Only(worlds.iter().copied().collect()),
