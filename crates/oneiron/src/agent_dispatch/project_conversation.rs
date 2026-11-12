@@ -305,16 +305,40 @@ impl AgentDispatcher<'_> {
             return Err(invalid("goal-intake run has foreign lineage"));
         }
         let txn = self.vault.store.env.read_txn()?;
+        let leader = self.goal_intake_leader_in_txn(&txn, &brief.card, project, home_room)?;
+        let definition = self.dispatchable_definition_in_txn(&txn, &run.input.target)?;
+        if run.input.target.agent_definition_ref()? != leader
+            && definition.forked_from != Some(leader)
+        {
+            return Err(invalid(
+                "goal-intake run does not execute the project's current leader",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The leader a goal-intake interview of `project` runs on, read in
+    /// `txn`: the stored `card` minted `project`, whose home room is
+    /// `home_room`, and the project's current leader is still the card's.
+    /// The dispatch writer admits the interview's root run on it, and the
+    /// leased run is checked on it again before its skill loads.
+    pub(super) fn goal_intake_leader_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        card: &str,
+        project: EntityId,
+        home_room: EntityId,
+    ) -> Result<EntityId> {
         let (state, leader_ref) = self
             .vault
-            .project_card_mint_in_txn(&txn, &brief.card)?
+            .project_card_mint_in_txn(txn, card)?
             .ok_or(Error::EntityNotFound)?;
         if state != (ProjectCardState::Minted { project }) {
             return Err(invalid("goal-intake card did not mint this project"));
         }
         let (record, effective) = self
             .vault
-            .effective_project_in_txn(&txn, project)?
+            .effective_project_in_txn(txn, project)?
             .ok_or(Error::EntityNotFound)?;
         if record.home_room != home_room.to_hex() {
             return Err(invalid("goal-intake brief names another home room"));
@@ -325,15 +349,7 @@ impl AgentDispatcher<'_> {
                 "the project's leader changed since its card; its owner redispatches the interview",
             ));
         }
-        let definition = self.dispatchable_definition_in_txn(&txn, &run.input.target)?;
-        if run.input.target.agent_definition_ref()? != leader
-            && definition.forked_from != Some(leader)
-        {
-            return Err(invalid(
-                "goal-intake run does not execute the project's current leader",
-            ));
-        }
-        Ok(())
+        Ok(leader)
     }
 }
 

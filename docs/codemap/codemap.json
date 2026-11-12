@@ -1092,13 +1092,13 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 6,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/dispatch/depth.rs",
@@ -1412,6 +1412,7 @@
      "path": "src/agent_dispatch/project_conversation.rs",
      "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 1
      }
@@ -6915,13 +6916,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/write_authorization.rs",
      "purpose": "Transaction-bound actor authorization for engine-owned write doors",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -32601,7 +32602,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 1,
-      "crate-vis": 43,
+      "crate-vis": 45,
       "re-export": 25
      }
     },
@@ -43251,9 +43252,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/gate/doors/claim_write/stored_close.rs",
-     "purpose": "Whether a claim write only closes its stored row, under a verified in-place transition: the checks the claim…",
+     "purpose": "Whether a claim write only closes or only approves its stored row, under a verified in-place transition: the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -49424,6 +49425,7 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "Vault-local durable RSI budget ledger and resident share ledger (FIX 7767)",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
       "re-export": 2
      }
@@ -49438,6 +49440,7 @@
      "path": "src/llm/budget/resident.rs",
      "purpose": "The vault's durable resident ledger (FIX 7767): each resident's share of the host-paid allocation, as the…",
      "surface": {
+      "crate-vis": 2,
       "fn": 6,
       "struct": 2
      }
@@ -51530,9 +51533,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/budget_wait.rs",
-     "purpose": "Waking typed budget trap parks: in the spend scope top-up transaction, at a wake pass's start, and at the…",
+     "purpose": "Waking typed budget trap parks: in the spend scope top-up transaction, at a wake pass's start, in the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -51562,7 +51565,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -91861,6 +91864,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FoldedDecay"
+     ],
+     "path": "src/test_doors/claim_transition.rs",
+     "purpose": "Doors to the signed claim-transition fold (FIX 22387)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/coach.rs",
      "purpose": "The owner's proof, the Coach and a project goal, for integration tests (untangle 6.6: the Coach's…",
@@ -92124,7 +92140,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 50
+      "mod": 51
      }
     },
     {
@@ -100938,6 +100954,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/claim_decay_transition.rs",
+     "purpose": "One decay rule for the live demotion door and the signed-history fold (FIX 22387, brief 15 B)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/claim_declared_cardinality.rs",
      "purpose": "E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing",
      "surface": {}
@@ -101393,6 +101417,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/holder_approval_fallback_floor.rs",
+     "purpose": "A Grant holder's approval lands under the holder's Grant on a predicate no manifest rule names…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -101446,6 +101478,14 @@
      "notable": [],
      "path": "tests/identity_distinct_source_label.rs",
      "purpose": "The distinct fact an identity answer derives from a relationship-scoped MESSAGE stays inside that…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/image_ocr_unconfigured.rs",
+     "purpose": "Own test binary (ruling T0F-P12R-REDS id 10 = A): the image-text recognizer is process-global, so a…",
      "surface": {}
     },
     {
@@ -101649,7 +101689,7 @@
      "path": "tests/it/cb_oracle_agents.rs",
      "purpose": "Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01)",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 41
      }
     },
     {
@@ -101671,7 +101711,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/cb_oracle_plugin/admission.rs",
@@ -101707,7 +101747,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/code_consent.rs",
@@ -101739,7 +101779,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/decide_path_fitness.rs",
@@ -101761,7 +101801,7 @@
      "path": "tests/it/effect_spine_oracle.rs",
      "purpose": "Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener",
      "surface": {
-      "crate-vis": 69
+      "crate-vis": 70
      }
     },
     {
@@ -101823,7 +101863,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/of060_fitness.rs",
@@ -102523,6 +102563,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/room_offer_paired_agent.rs",
+     "purpose": "A paired agent asks into a room by an offer card on a rooted vault (ARCH-0006a:243: \"An agent that wants in…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -102544,6 +102592,14 @@
      "notable": [],
      "path": "tests/room_thread_task_parity.rs",
      "purpose": "Every room keeps one turn projection and one access path (THREAD-TASK-EVERY-ROOM, P1): a project's home…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_admission_step_budget.rs",
+     "purpose": "Row B4 of BUDGET-TRAP-UNTYPED-NO-SENDER (D3): the host's run admission tells a durable step why it refused a…",
      "surface": {}
     },
     {
@@ -104730,7 +104786,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 52,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104907,8 +104963,8 @@
    },
    "over_bar": 261,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7428,
-   "test_files": 1105
+   "source_files": 7429,
+   "test_files": 1110
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -146395,6 +146451,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/skill_judge_goal_privacy.rs",
+     "purpose": "FIX 22437 [GOAL-PRIVACY]: a project goal's text never leaves its project's audience through the skill judge",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -147003,7 +147067,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1836,
-   "test_files": 204
+   "test_files": 205
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -155220,6 +155284,7 @@
       "ClaimDemotionAction",
       "ClaimDemotionRung",
       "ClaimSuccession",
+      "DecayRefusal",
       "MapValue"
      ],
      "path": "src/write_envelope/claim_body/source_trust.rs",
@@ -155227,8 +155292,8 @@
      "surface": {
       "const": 5,
       "crate-vis": 1,
-      "enum": 4,
-      "fn": 6,
+      "enum": 5,
+      "fn": 7,
       "struct": 1
      }
     },

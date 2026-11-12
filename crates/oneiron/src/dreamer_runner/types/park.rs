@@ -27,8 +27,8 @@ pub struct ParkDreamerAttempt {
 /// A model seat's durable identity: one login or subscription.
 pub type ModelSeatId = EntityId;
 
-/// Exactly what wakes a parked attempt. A Budget, PassBudget, Consent, Peer or Human wait exists
-/// only on a trap park: for Consent, Peer and Human, the code-run wait's delivery wakes the trap through
+/// Exactly what wakes a parked attempt. A Budget, PassBudget, ResidentShare, Consent, Peer or Human
+/// wait exists only on a trap park: for Consent, Peer and Human, the code-run wait's delivery wakes the trap through
 /// the `TRAPS` binding written beside the park. A Seat wait exists only on the driver's own park.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DreamerParkWait {
@@ -77,6 +77,15 @@ pub enum DreamerParkWait {
         /// The vendor-reported reset in seconds, when the refusal named one.
         reset_at_s: Option<u64>,
     },
+    /// The owner pinned this resident's share of the host's allocation, and the step's call did
+    /// not fit it; the owner's share write that frees the call wakes the trap (D3).
+    ResidentShare {
+        /// The resident whose share refused the call.
+        resident: EntityId,
+        /// The share, in the allocation's unit, the call needed: what the resident had used and
+        /// held, plus the call's reservation.
+        needed_units: u64,
+    },
 }
 
 impl DreamerParkWait {
@@ -90,6 +99,7 @@ impl DreamerParkWait {
             Self::Peer { .. } => DreamerParkWaitClass::Peer,
             Self::Human { .. } => DreamerParkWaitClass::Human,
             Self::Seat { .. } => DreamerParkWaitClass::Seat,
+            Self::ResidentShare { .. } => DreamerParkWaitClass::ResidentShare,
         }
     }
 }

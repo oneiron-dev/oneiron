@@ -42,8 +42,13 @@ pub enum RunDenied {
     AllocationRefused { reason: AllocationRefusal },
     /// The resident's share of the allocation, which the owner pinned, does
     /// not fit the call (FIX 7767). An unpinned share never refuses.
+    /// `needed_units` is the share, in the allocation's unit, the call
+    /// needed: what the resident had used and held, plus its reservation.
     #[error("the owner's pinned share for this resident is spent")]
-    ResidentShareSpent { resident: crate::EntityId },
+    ResidentShareSpent {
+        resident: crate::EntityId,
+        needed_units: u64,
+    },
     #[error("dispatch refused: {refused}")]
     Dispatch { refused: DispatchRefused },
     #[error("a run never edits its own declaration")]
@@ -74,13 +79,22 @@ impl From<RunDenied> for LlmError {
         match denied {
             RunDenied::Budget { denied } => Self::BudgetDenied(denied),
             // No allocation of the funding grant's wallet is live: as with
-            // none at all, nothing funds the call (FIX 7766).
+            // none at all, nothing funds the call (FIX 7766), and no budget
+            // write frees it (BUDGET-TRAP-UNTYPED-NO-SENDER, D3).
             RunDenied::NoAllocation
             | RunDenied::AllocationExhausted
-            | RunDenied::ResidentShareSpent { .. }
             | RunDenied::AllocationWalletMismatch { .. } => {
-                Self::BudgetDenied(BudgetDenied::Exhausted)
+                Self::BudgetDenied(BudgetDenied::Unfunded)
             }
+            // The resident's pinned share keeps its resident and the share
+            // the call needed: the owner's share write that fits it frees it.
+            RunDenied::ResidentShareSpent {
+                resident,
+                needed_units,
+            } => Self::BudgetDenied(BudgetDenied::ResidentShareSpent {
+                resident,
+                needed_units,
+            }),
             // The account owner's question holds the work: never a spent
             // budget (FIX 9924).
             RunDenied::AllocationRefused {

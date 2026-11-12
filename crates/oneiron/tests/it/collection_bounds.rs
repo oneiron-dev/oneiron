@@ -11,12 +11,15 @@ use oneiron::lens::{
     LensNode,
 };
 use oneiron::psych_profile::{
-    PsychProfile, PsychProfileConfidence, decode_psych_profile_body, encode_psych_profile_body,
+    PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
+    decode_psych_profile_body, encode_psych_profile_body,
 };
+use oneiron::store::revision_ref::RevisionRef;
 use oneiron::{EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
 
-/// Most source revisions one PsychProfile snapshot cites (the engine's bound).
+/// The source count one PsychProfile snapshot was once bounded at, now one
+/// codec page of its sources (rule 5, FIX 10054).
 const SOURCE_BOUND: usize = 4096;
 
 /// A reader whose bytes end where the decoder must have stopped.
@@ -57,9 +60,10 @@ fn branch_open(id: &str) -> String {
 
 #[test]
 fn a_lens_tree_past_its_shared_entry_budget_is_refused_at_the_first_excess_entry() {
-    // Two branches whose child arrays are each under the per-array cap but
-    // together pass the 4096-entry tree budget: 2 + 2048 + 2047 entries fit,
-    // the next one does not.
+    // Rule 5 (FIX 9900, c14f8dc51b2 #4088): a lens tree validates whole; the
+    // 4,096-item budget is gone at every caller. Two branches that together
+    // pass the old budget (2 + 2048 + 2100 entries) meet no count refusal:
+    // the decoder reads on into the tail.
     let over = format!(
         "{root}{a}{a_leaves}]}},{b}{b_leaves},",
         root = branch_open("root"),
@@ -69,12 +73,24 @@ fn a_lens_tree_past_its_shared_entry_budget_is_refused_at_the_first_excess_entry
         b_leaves = leaves("b", 2100),
     );
     let error = decode_prefix::<LensNode>(&over);
-    assert!(!error.is_io(), "decoder read past the budget: {error}");
     assert!(
-        error
-            .to_string()
-            .contains("generated lens collections must contain at most 4096 total items"),
-        "{error}"
+        error.is_io(),
+        "a count refusal stopped the decoder before the tail: {error}"
+    );
+    // The same tree, closed, decodes whole.
+    let over_closed = format!(
+        "{root}{a}{a_leaves}]}},{b}{b_leaves}]}}]}}",
+        root = branch_open("root"),
+        a = branch_open("a"),
+        a_leaves = leaves("a", 2048),
+        b = branch_open("b"),
+        b_leaves = leaves("b", 2100),
+    );
+    let tree: LensNode =
+        serde_json::from_str(&over_closed).expect("a tree past the old budget decodes");
+    assert_eq!(
+        tree.children[0].children.len() + tree.children[1].children.len(),
+        4148
     );
 
     // Control: the largest tree validation admits (4096 nodes, 4095 entries)
@@ -199,7 +215,25 @@ fn source_ids(count: usize) -> Vec<EntityId> {
         .collect()
 }
 
+/// A record-native source for each of `ids`: a snapshot is stored only once
+/// every source revision carries the exact words it was read from (FIX
+/// 11766). Each source's record here is its revision itself.
+fn record_sources(ids: &[EntityId]) -> Vec<PsychProfileSource> {
+    ids.iter()
+        .map(|id| PsychProfileSource {
+            revision_ref: *id,
+            document_ref: *id,
+            world_ref: None,
+            document_revision: RevisionRef(*id.as_bytes()),
+            words: PsychProfileSourceWords::Record {
+                content: [0x5C; 32],
+            },
+        })
+        .collect()
+}
+
 fn profile(subject: EntityId, sources: Vec<EntityId>) -> oneiron::Result<PsychProfile> {
+    let words = record_sources(&sources);
     PsychProfile::new(
         subject,
         "compact",
@@ -207,11 +241,15 @@ fn profile(subject: EntityId, sources: Vec<EntityId>) -> oneiron::Result<PsychPr
         "Narrative.",
         sources,
         PsychProfileConfidence::new(0.9, 0.8, 0.7).expect("confidence"),
-    )
+    )?
+    .with_sources(words)
 }
 
 #[test]
 fn a_psych_profile_citing_more_sources_than_one_snapshot_holds_is_refused_at_every_door() {
+    // Rule 5 (FIX 10054, 7272b335f78 #4040): a snapshot keeps every source it
+    // cites; the 4,096-source bound is a codec page now, never a refusal. A
+    // profile citing one source past it is kept whole at every door.
     let dir = tempfile::tempdir().expect("tempdir");
     let mut config = VaultConfig::device();
     config.map_size = 64 * 1024 * 1024;
@@ -223,37 +261,24 @@ fn a_psych_profile_citing_more_sources_than_one_snapshot_holds_is_refused_at_eve
     let over = SOURCE_BOUND + 1;
 
     // Constructor, then a host-built record handed to the store.
-    profile(subject, source_ids(over)).expect_err("the constructor refuses");
-    let mut forged = profile(subject, source_ids(1)).expect("profile");
-    forged.source_revision_ids = source_ids(over);
+    let built = profile(subject, source_ids(over)).expect("the constructor keeps every source");
+    assert_eq!(built.source_revision_ids.len(), over);
     vault
-        .put_psych_profile(&subject, &forged)
-        .expect_err("the store refuses");
-    assert!(vault.get_psych_profile(&subject).expect("read").is_none());
+        .put_psych_profile(&subject, &built)
+        .expect("the store keeps every source");
+    let stored = vault
+        .get_psych_profile(&subject)
+        .expect("read")
+        .expect("stored");
+    assert_eq!(stored.source_revision_ids, source_ids(over));
 
-    // A peer's or a file's body: re-encode a valid body with one source too many.
-    let body = encode_psych_profile_body(&profile(subject, source_ids(1)).expect("profile"))
-        .expect("encode");
-    let rmpv::Value::Map(mut entries) =
-        rmpv::decode::read_value(&mut body.as_slice()).expect("decode map")
-    else {
-        panic!("a profile body is a map");
-    };
-    for (key, value) in &mut entries {
-        if key.as_str() == Some("sourceRevisionIds") {
-            *value = rmpv::Value::Array(
-                source_ids(over)
-                    .iter()
-                    .map(|id| rmpv::Value::from(id.to_hex()))
-                    .collect(),
-            );
-        }
-    }
-    let mut forged_body = Vec::new();
-    rmpv::encode::write_value(&mut forged_body, &rmpv::Value::Map(entries)).expect("encode");
-    decode_psych_profile_body(&forged_body).expect_err("the decoder refuses");
+    // A peer's or a file's body: the encoded snapshot spans two codec pages
+    // and decodes whole.
+    let body = encode_psych_profile_body(&built).expect("encode");
+    let decoded = decode_psych_profile_body(&body).expect("the decoder keeps every source");
+    assert_eq!(decoded, built);
 
-    // Control: a snapshot at the bound stores and reads back whole.
+    // Control: a snapshot at the old bound stores and reads back whole.
     let at_bound = profile(subject, source_ids(SOURCE_BOUND)).expect("a profile at the bound");
     vault
         .put_psych_profile(&subject, &at_bound)
