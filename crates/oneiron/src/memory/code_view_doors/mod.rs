@@ -1,7 +1,9 @@
 //! Owner-credential working views and account-local build/verify reuse.
 //! No account-vault path, foreign account lookup, secret value, or caller result is admitted.
+mod edit;
 mod execution;
 mod types;
+pub use edit::CodeViewEditProof;
 pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
@@ -251,6 +253,9 @@ impl Memory<'_> {
                 &[],
             ));
         }
+        // An edit whose copy did not land heals before any read of the view
+        // (row 6 WORKING-VIEW-EDIT).
+        set.project_view_forks(input.view)?;
         Ok((set, receipt, snapshot))
     }
 
@@ -550,6 +555,24 @@ fn working_view(
             git_oid: None,
         });
     }
+    let (revision, forked) = {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        (
+            crate::code_view::view_fork_revision_in_txn(vault, &txn, receipt.view_id)?,
+            crate::code_view::view_fork_files_in_txn(vault, &txn, receipt.view_id)?,
+        )
+    };
+    let mut forks = Vec::with_capacity(forked.len());
+    for (path, fork) in forked {
+        let text = vault.code_document_at(&fork.state)?;
+        forks.push(CodeViewForkFile {
+            path,
+            content_hash_blake3: bytes_to_hex_lower(&fork.text_blake3),
+            text_sha256: bytes_to_hex_lower(&Sha256::digest(text.as_bytes())),
+            frontier: fork.state,
+            edits: fork.ops.len() as u64,
+        });
+    }
     Ok(CodeWorkingView {
         view: receipt.view_id,
         repo,
@@ -562,6 +585,8 @@ fn working_view(
             .view_path(receipt.view_id)?
             .to_string_lossy()
             .into_owned(),
+        revision,
+        forks,
     })
 }
 fn digest(digest: crate::build_cache::ReapiDigest) -> CodeActionDigest {
