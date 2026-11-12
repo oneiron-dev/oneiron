@@ -64,6 +64,9 @@ pub(crate) use self::code_mode_verbs::{
 pub(crate) use self::code_run_resume::{McpCodeRunContinuations, reenter_ready_mcp_code_runs};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
 pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
+// The integration tests' door to a draft's solved-run span (FIX 10508).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::code_mode_verbs::draft_checked_span;
 #[cfg(test)]
 pub(crate) use self::device_release::release_hook;
 use self::device_release::{mcp_release_listed, mcp_release_result};
