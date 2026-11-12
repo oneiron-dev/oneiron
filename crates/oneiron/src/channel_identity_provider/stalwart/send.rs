@@ -183,6 +183,7 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
             Ok(mailbox) => self.client.look_up_submission(
                 &mailbox,
                 &self.client.native_message_id(engine_send_id.as_str()),
+                &self.message.to,
             ),
             Err(_) => SentLookup::CannotTell,
         }
@@ -214,70 +215,52 @@ impl StalwartClient {
     }
 
     /// Whether the served send keyed `send_key` from `identity`'s mailbox at
-    /// `address` went (FIX 4747): the submission of the draft its
-    /// Message-ID names. Reads ids only, never a message.
+    /// `address` to `to` went (FIX 4747): the submission of the draft its
+    /// Message-ID names. Reads ids, submission states and envelopes only,
+    /// never a message.
     pub fn look_up_served_send(
         &self,
         identity: crate::EntityId,
         address: &str,
         send_key: &str,
+        to: &str,
     ) -> SentLookup {
         if send_key.trim().is_empty() {
             return SentLookup::CannotTell;
         }
+        let Ok(to) = canonical_recipient(to) else {
+            return SentLookup::CannotTell;
+        };
         match self.mailbox(identity, address) {
-            Ok(mailbox) => self.look_up_submission(&mailbox, &self.native_message_id(send_key)),
+            Ok(mailbox) => {
+                self.look_up_submission(&mailbox, &self.native_message_id(send_key), &to)
+            }
             Err(_) => SentLookup::CannotTell,
         }
     }
 
-    /// The submission of the one draft carrying `message_id` (FIX 4747):
-    /// `Email/query` by the Message-ID header, then `EmailSubmission/query`
-    /// by that email, each bounded by [`SENT_LOOKUP_TIMEOUT`]. Engine call
-    /// (CALLS, FIX 4747): no such email, or an email no submission sent, is
-    /// not sent; a query that failed, or two emails under one id, cannot
-    /// tell.
-    fn look_up_submission(&self, mailbox: &StalwartMailbox, message_id: &str) -> SentLookup {
-        let Ok(query) = self.call_within(
-            "Email/query",
-            json!({
-                "accountId": &mailbox.account_id,
-                "filter": {"header": ["Message-ID", message_id]}, "limit": 2
-            }),
-            SENT_LOOKUP_TIMEOUT,
-        ) else {
-            return SentLookup::CannotTell;
-        };
-        let Ok(ids) = array(&query, "ids") else {
-            return SentLookup::CannotTell;
-        };
-        if ids.len() > 1 {
-            return SentLookup::CannotTell;
-        }
-        let Some(email_id) = ids.first() else {
-            return SentLookup::NotSent;
-        };
-        let Some(email_id) = email_id.as_str() else {
-            return SentLookup::CannotTell;
-        };
-        let Ok(previous) = self.call_within(
-            "EmailSubmission/query",
-            json!({
-                "accountId": &mailbox.account_id, "filter": {"emailIds": [email_id]}, "limit": 1
-            }),
-            SENT_LOOKUP_TIMEOUT,
-        ) else {
-            return SentLookup::CannotTell;
-        };
-        let Ok(ids) = array(&previous, "ids") else {
-            return SentLookup::CannotTell;
-        };
-        match ids.first().map(Value::as_str) {
-            None => SentLookup::NotSent,
-            Some(Some(id)) => SentLookup::Sent {
-                provider_ref: format!("stalwart:submission:{id}"),
+    /// The sent lookup of the send to `to` whose draft carries `message_id`
+    /// (FIX 4747), answered from [`Self::submission_record`], the same read
+    /// the read-back answers from (FIX 22347). Engine call (CALLS, FIX 4747):
+    /// no such email, or an email no submission sent, is not sent. Only a
+    /// submission that proves the send, as the read-back reads it, is sent. A
+    /// read that failed, two emails under one id, and submissions that were
+    /// all cancelled or went under another envelope cannot tell: the owner is
+    /// asked, and nothing is completed as delivered or sent again unasked.
+    fn look_up_submission(
+        &self,
+        mailbox: &StalwartMailbox,
+        message_id: &str,
+        to: &str,
+    ) -> SentLookup {
+        match self.submission_record(mailbox, message_id, to) {
+            Ok(SubmissionRecord::NoDraft | SubmissionRecord::Unsubmitted) => SentLookup::NotSent,
+            Ok(SubmissionRecord::Submitted { submission_id }) => SentLookup::Sent {
+                provider_ref: format!("stalwart:submission:{submission_id}"),
             },
-            Some(None) => SentLookup::CannotTell,
+            Ok(SubmissionRecord::Unproven | SubmissionRecord::Ambiguous) | Err(_) => {
+                SentLookup::CannotTell
+            }
         }
     }
 
@@ -330,55 +313,69 @@ impl StalwartClient {
     }
 
     /// What the server's own record says became of the send to `to` whose
-    /// draft carries `message_id` in `mailbox` (FIX 8814 follow-up). Only a
-    /// submission of the draft that was not cancelled and whose envelope is
-    /// the frozen send's own (from the mailbox's address to `to` alone)
-    /// proves the send: `Delivered`. Nothing here proves a send never went,
-    /// since an unanswered submission may still be landing and Sent
-    /// membership or a cleared `$draft` can be set by any client: every other
-    /// answer, an ambiguous Message-ID and a failed read are `Unknown`
-    /// (REVIEW-5934).
+    /// draft carries `message_id` in `mailbox` (FIX 8814 follow-up), answered
+    /// from [`Self::submission_record`], the read the sent lookup answers from
+    /// too (FIX 22347). Only a submission that proves the send is
+    /// `Delivered`. Nothing here proves a send never went, since an
+    /// unanswered submission may still be landing and Sent membership or a
+    /// cleared `$draft` can be set by any client: every other record, an
+    /// ambiguous Message-ID and a failed read are `Unknown` (REVIEW-5934).
     fn read_back(&self, mailbox: &StalwartMailbox, message_id: &str, to: &str) -> DeliveryReadBack {
-        self.read_back_checked(mailbox, message_id, to)
-            .unwrap_or(DeliveryReadBack::Unknown)
+        match self.submission_record(mailbox, message_id, to) {
+            Ok(SubmissionRecord::Submitted { .. }) => DeliveryReadBack::Delivered,
+            _ => DeliveryReadBack::Unknown,
+        }
     }
 
-    fn read_back_checked(
+    /// What the server's own record holds of the send to `to` whose draft
+    /// carries `message_id` in `mailbox`: `Email/query` by the Message-ID
+    /// header, then `EmailSubmission/query` by that email, then
+    /// `EmailSubmission/get` of its submissions. The sent lookup and the
+    /// read-back both answer from this one read, each in its own vocabulary,
+    /// so they never disagree on one record (FIX 22347). Each read is bounded
+    /// by [`SENT_LOOKUP_TIMEOUT`] (FIX 22349): a read that does not answer in
+    /// time is a failed read, so a stalled server holds a pass for one bound
+    /// per read, not the client's whole request bound.
+    fn submission_record(
         &self,
         mailbox: &StalwartMailbox,
         message_id: &str,
         to: &str,
-    ) -> Result<DeliveryReadBack> {
-        let query = self.call(
+    ) -> Result<SubmissionRecord> {
+        let query = self.call_within(
             "Email/query",
             json!({
                 "accountId": &mailbox.account_id,
                 "filter": {"header": ["Message-ID", message_id]}, "limit": 2
             }),
+            SENT_LOOKUP_TIMEOUT,
         )?;
         let email_id = match array(&query, "ids")?.as_slice() {
+            [] => return Ok(SubmissionRecord::NoDraft),
             [id] => id
                 .as_str()
                 .ok_or_else(|| invalid("invalid JMAP email id"))?
                 .to_owned(),
-            _ => return Ok(DeliveryReadBack::Unknown),
+            _ => return Ok(SubmissionRecord::Ambiguous),
         };
-        let submissions = self.call(
+        let submissions = self.call_within(
             "EmailSubmission/query",
             json!({
                 "accountId": &mailbox.account_id, "filter": {"emailIds": [&email_id]}
             }),
+            SENT_LOOKUP_TIMEOUT,
         )?;
         let ids = array(&submissions, "ids")?;
         if ids.is_empty() {
-            return Ok(DeliveryReadBack::Unknown);
+            return Ok(SubmissionRecord::Unsubmitted);
         }
-        let held = self.call(
+        let held = self.call_within(
             "EmailSubmission/get",
             json!({
                 "accountId": &mailbox.account_id, "ids": ids,
-                "properties": ["undoStatus", "envelope"]
+                "properties": ["id", "undoStatus", "envelope"]
             }),
+            SENT_LOOKUP_TIMEOUT,
         )?;
         // The envelope this sink submits: the mailbox's own address to the
         // frozen recipient alone. Another client's submission of the same
@@ -389,9 +386,9 @@ impl StalwartClient {
                 .is_some_and(|address| address == expected)
         };
         let Ok(from) = canonical_recipient(&mailbox.address) else {
-            return Ok(DeliveryReadBack::Unknown);
+            return Ok(SubmissionRecord::Unproven);
         };
-        let sent = array(&held, "list")?.iter().any(|submission| {
+        let proving = array(&held, "list")?.iter().find(|submission| {
             let envelope = submission.get("envelope");
             let rcpt = envelope
                 .and_then(|envelope| envelope.get("rcptTo"))
@@ -410,10 +407,11 @@ impl StalwartClient {
                     ))
                 })
         });
-        Ok(if sent {
-            DeliveryReadBack::Delivered
-        } else {
-            DeliveryReadBack::Unknown
+        Ok(match proving {
+            Some(submission) => SubmissionRecord::Submitted {
+                submission_id: string(submission, "id")?.to_owned(),
+            },
+            None => SubmissionRecord::Unproven,
         })
     }
 
@@ -562,6 +560,23 @@ impl StalwartClient {
                 .with_possible_delivery(),
         }
     }
+}
+
+/// What the server's own record holds of the one draft a send's Message-ID
+/// names ([`StalwartClient::submission_record`], FIX 22347).
+enum SubmissionRecord {
+    /// No email carries the Message-ID.
+    NoDraft,
+    /// One email carries it, and no submission sent it.
+    Unsubmitted,
+    /// A submission of it that was not cancelled, from the mailbox's own
+    /// address to the frozen recipient alone: it proves the send.
+    Submitted { submission_id: String },
+    /// Submissions of it exist, and none proves the send: each was cancelled
+    /// or went under another envelope.
+    Unproven,
+    /// Two emails carry the Message-ID.
+    Ambiguous,
 }
 
 /// The `In-Reply-To` and `References` ids of a reply to the message whose

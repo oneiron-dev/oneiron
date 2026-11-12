@@ -11,8 +11,10 @@
 //! The vault is deliberately UNSEEDED, so the external-effect ladder is
 //! fail-closed and a compliant dispatch lands on
 //! `gate.pending.external_effect_authority`. That pending IS the control: the
-//! compliance stage must convert it to a hard `deny` when a row refuses, and
-//! must leave it untouched when the facts satisfy every governing row. Nothing
+//! compliance stage must replace it with its own owner-clearable hold,
+//! `gate.pending.campaign_compliance`, when a row refuses (FIX 12542,
+//! CAMPAIGN-SEND-SAFETY = B, 177035af710 #4499), and must leave it untouched
+//! when the facts satisfy every governing row. Nothing
 //! reaches the transport in either case, which is what makes the difference
 //! between the two arms attributable to compliance alone.
 //!
@@ -53,8 +55,9 @@ const EMAIL_VERB: &str = "send";
 const DM_VERB: &str = "send_dm";
 /// The gate stage a compliant dispatch falls through to on this fixture.
 const PENDING_AUTHORITY: &str = "gate.pending.external_effect_authority";
-/// The reason code the compliance stage raises.
-const DENY_COMPLIANCE: &str = "gate.deny.campaign_compliance";
+/// The reason code the compliance stage raises: an owner-clearable hold
+/// (FIX 12542, 177035af710 #4499), not a denial.
+const PENDING_COMPLIANCE: &str = "gate.pending.campaign_compliance";
 
 const ACTOR_SEED: u8 = 0xB1;
 const CAMPAIGN_SEED: u8 = 0xB2;
@@ -102,6 +105,11 @@ struct Fixture {
 fn oracle_vault() -> (tempfile::TempDir, Fixture) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open_unseeded_for_test(dir.path(), test_config()).unwrap();
+    // The host installs this device's keystore after each open; the outbound
+    // and claim doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     for seed in [
         ACTOR_SEED,
         CAMPAIGN_SEED,
@@ -234,7 +242,7 @@ fn blocked_by_compliance(result: &OutboundDispatchResult) -> bool {
     result
         .gate_reason_codes
         .iter()
-        .any(|code| code == DENY_COMPLIANCE)
+        .any(|code| code == PENDING_COMPLIANCE)
 }
 
 /// The compliance stage let this dispatch through to the next existing gate
@@ -293,13 +301,13 @@ fn campaign_compliance_gate_oracle() -> Result<()> {
         test_id(EMAIL_IDENTITY_SEED),
         &mut sink,
     );
-    assert_eq!(no_jurisdiction.gate_outcome, "deny");
+    assert_eq!(no_jurisdiction.gate_outcome, "pending");
     assert!(blocked_by_compliance(&no_jurisdiction));
     assert!(
         no_jurisdiction
             .receipt
             .policy_trace
-            .contains(&DENY_COMPLIANCE.to_owned()),
+            .contains(&PENDING_COMPLIANCE.to_owned()),
         "the refusal must reach the receipt: {:?}",
         no_jurisdiction.receipt.policy_trace
     );
@@ -336,7 +344,7 @@ fn campaign_compliance_gate_oracle() -> Result<()> {
         !evidenced
             .receipt
             .policy_trace
-            .contains(&DENY_COMPLIANCE.to_owned())
+            .contains(&PENDING_COMPLIANCE.to_owned())
     );
     Ok(())
 }
@@ -366,7 +374,7 @@ fn campaign_compliance_gate_oracle_missing_message_elements_block_the_send() -> 
         test_id(EMAIL_IDENTITY_SEED),
         &mut sink,
     );
-    assert_eq!(unconfigured.gate_outcome, "deny");
+    assert_eq!(unconfigured.gate_outcome, "pending");
     assert!(blocked_by_compliance(&unconfigured));
 
     configure_message_elements(vault, EMAIL_ELEMENTS_SEED, test_id(EMAIL_IDENTITY_SEED))?;
@@ -434,7 +442,7 @@ fn campaign_compliance_gate_oracle_jurisdiction_rows_are_channel_local() -> Resu
         test_id(EMAIL_IDENTITY_SEED),
         &mut sink,
     );
-    assert_eq!(jp_email.gate_outcome, "deny");
+    assert_eq!(jp_email.gate_outcome, "pending");
     assert!(blocked_by_compliance(&jp_email));
 
     let jp_dm = dispatch(

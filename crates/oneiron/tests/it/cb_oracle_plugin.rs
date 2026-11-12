@@ -504,23 +504,22 @@ mod cb_x_props {
 // ONE-1706's own. The CRM pack is a test fixture/example only.
 // ════════════════════════════════════════════════════════════════════════
 mod plugin_fixture {
-    use oneiron::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
     use oneiron::config::VaultConfig;
     use oneiron::context_board::{
-        AgentLane, AgentRow, AgentsSection, BoardBlockHeader, BoardBudgetRequest, BoardFrame,
-        BoardLegend, BoardSection, PLUGIN_SECTION_BUDGET_POLICY_REF, PluginInstallExecutor,
-        PluginInstallOrigin, PluginInstallSource, PluginInstallTarget, PluginResult,
-        PluginSectionAdmission, PluginSectionError, PluginSectionInstallProposal,
-        PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot,
-        SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId, SectionManifest,
-        SectionManifestEnvelope, SectionManifestProvenance, SectionPolicy, SectionVerbRef,
-        ShedRank, SkillLifecycleSource, StateFamilyRef, TaskBoardStatus, TaskRow, TasksSection,
-        assemble_task_agent_sections, execute_approved_plugin_section_install,
-        propose_plugin_section_install, render_board_block, render_plugin_sections,
+        ApprovedPluginIdentity, AuthorityLaneRef, BudgetPolicyRef, PluginProposalRow,
+        pending_plugin_proposal_rows, render_plugin_proposal_section,
     };
     use oneiron::context_board::{
-        AuthorityLaneRef, BudgetPolicyRef, PluginProposalRow, pending_plugin_proposal_rows,
-        render_plugin_proposal_section,
+        BoardBlockHeader, BoardBudgetRequest, BoardFrame, BoardLegend, BoardSection,
+        PLUGIN_SECTION_BUDGET_POLICY_REF, PluginInstallExecutor, PluginInstallOrigin,
+        PluginInstallSource, PluginInstallTarget, PluginResult, PluginSectionAdmission,
+        PluginSectionError, PluginSectionInstallProposal, PluginSectionRegistry, PluginSectionRow,
+        PluginSectionSnapshot, SECTION_MANIFEST_SCHEMA_VERSION, SectionBindingResolver, SectionId,
+        SectionManifest, SectionManifestEnvelope, SectionManifestProvenance, SectionPolicy,
+        SectionVerbRef, ShedRank, SkillLifecycleSource, StateFamilyRef, TaskBoardStatus, TaskRow,
+        TasksSection, assemble_tasks_section, execute_approved_plugin_section_install,
+        propose_plugin_section_install, render_board_block, render_plugin_sections,
     };
     use oneiron::dreamer_plugin_suggest::{
         PackCandidate, PluginSuggestJob, PluginSuggestionDisposition, TestPackCatalog,
@@ -631,6 +630,7 @@ mod plugin_fixture {
             &self,
             vault: &Vault,
             target: &PluginInstallTarget,
+            _approved: &ApprovedPluginIdentity,
             _approved_claim_id: &EntityId,
             now: u64,
         ) -> PluginResult<EntityId> {
@@ -723,6 +723,9 @@ mod plugin_fixture {
         pub(crate) fn open() -> Self {
             let dir = tempfile::tempdir().expect("temporary vault directory");
             let vault = Vault::open(dir.path(), Self::config()).expect("open the fixture vault");
+            vault.install_device_keystore(std::sync::Arc::new(
+                oneiron_keystore::MemoryKeystore::default(),
+            ));
 
             let actor = EntityId::from_bytes([0x11; 16]).expect("actor id");
             let hub_id = EntityId::from_bytes([0x22; 16]).expect("hub id");
@@ -761,6 +764,11 @@ mod plugin_fixture {
 
         /// Takes a checkpoint of the fixture vault at `image`.
         pub(crate) fn back_up(&self, image: &std::path::Path) {
+            // A sealed checkpoint needs the vault data key: the owner's backup
+            // door mints or unlocks it first (oneiron-server owner/backup).
+            self.vault
+                .ensure_vault_key()
+                .expect("hold the vault data key");
             self.vault
                 .snapshot_checkpoint(image, 1_500)
                 .expect("checkpoint the fixture vault");
@@ -773,8 +781,11 @@ mod plugin_fixture {
             image: &std::path::Path,
             destination: &std::path::Path,
         ) -> oneiron::Result<()> {
+            // An open vault gives its own checkpoint key (df0d637eb95).
+            let key = self.vault.checkpoint_key()?;
             Vault::restore_checkpoint_keeping_authority(
                 image,
+                &key,
                 destination,
                 Self::config(),
                 &self.vault,
@@ -853,8 +864,7 @@ mod plugin_fixture {
                         version: 1,
                     },
                     verbs: vec![
-                        SectionVerbRef("board.expand".to_owned()),
-                        SectionVerbRef("board.refresh".to_owned()),
+                        SectionVerbRef("self.focus.refresh".to_owned()),
                         SectionVerbRef("tasks.create".to_owned()),
                     ],
                     authority_lane: AuthorityLaneRef("plugin.crm".to_owned()),
@@ -927,7 +937,8 @@ mod plugin_fixture {
                 .get_claim(claim_id)
                 .expect("read the proposed claim")
                 .expect("the proposal exists");
-            let reviewed = encode_claim_body(&body);
+            let reviewed = oneiron::write_envelope::claim_body::encode_claim_body(&body)
+                .expect("encode the reviewed claim body");
             self.vault
                 .approve_inbox_member_with_edit_at(claim_id, &reviewed, 3_000)
                 .expect("owner consent lands");
@@ -999,20 +1010,27 @@ mod plugin_fixture {
                     ladder_disposition: None,
                     counter_task_ref: None,
                     cancel_pathology: None,
+                    widening: None,
+                    due_at: None,
+                    fits: Vec::new(),
                 }],
                 overflow: None,
             };
-            let agents = AgentsSection {
-                rows: vec![AgentRow {
-                    id: "ag_1".to_owned(),
-                    lane: AgentLane::Child,
-                    line: format!("ag_1 idle lane=child label={}", values[3]),
-                    harness_label: None,
-                }],
-            };
-            let [tasks_section, agents_section] =
-                assemble_task_agent_sections(&tasks, &agents).expect("frame adapter");
-            vec![worlds, memories, tasks_section, agents_section]
+            let tasks_section = assemble_tasks_section(&tasks, Vec::new()).expect("frame adapter");
+            // The PEOPLE ruling (6bef6393118, ARCH-0067) removed the AGENTS
+            // section; ROOM holds its core slot, pinned and never shed.
+            let room = BoardSection::new(
+                "ROOM",
+                vec![format!("pr1 present human label={}", values[3])],
+                Vec::new(),
+                Vec::new(),
+                SectionPolicy {
+                    pinned: true,
+                    shed_rank: None,
+                },
+            )
+            .expect("fixture room section");
+            vec![worlds, memories, tasks_section, room]
         }
 
         fn all_sections_owned(
@@ -1064,6 +1082,7 @@ mod plugin_fixture {
                 header: &header,
                 legend: &legend,
                 sections: &sections,
+                you: None,
             };
             let rendered = render_board_block(
                 &frame,
@@ -1220,6 +1239,7 @@ mod plugin_fixture {
             self.vault
                 .inbox_groups(InboxQuery::at(6_000, 32))
                 .expect("project inbox groups")
+                .groups
                 .into_iter()
                 .flat_map(|group| {
                     let group_key = group.group_key.clone();
@@ -1300,80 +1320,5 @@ mod plugin_fixture {
             vec![HubFile::new("SKILL.md", format!("---\nname: {CRM_SKILL_ID}\ndescription: CRM contact pack\nversion: {CRM_SKILL_VERSION}\n---\n# CRM contacts\n").into_bytes())],
             SkillCapabilitySurface::default(),
         )
-    }
-
-    /// The engine's pinned CLAIM body encoding, mirrored for the bound
-    /// consent door (which takes the reviewed body as bytes). Field order
-    /// and key names follow `oneiron::claim::CLAIM_BODY_KEYS`.
-    ///
-    /// v2 stamps are REQUIRED: `worldId` always stamps (base id for
-    /// `None`), `scopeRelationshipId` is `all` or a singleton id array,
-    /// `scopeFacetId`/`scopeProjectId` round-trip the reviewed body's own
-    /// stamps, and `scopeVersion` is 2. The helper re-encodes the EXACT
-    /// reviewed body — the decision stays "yes to this", not an edit.
-    fn encode_claim_body(body: &ClaimBody) -> Vec<u8> {
-        let mut entries: Vec<(Value, Value)> = Vec::new();
-        entries.push((Value::from("pred"), Value::from(body.predicate.as_str())));
-        entries.push((Value::from("val"), body.value.clone()));
-        entries.push((Value::from("conf"), Value::F32(body.confidence)));
-        if let Some(salience) = body.salience {
-            entries.push((Value::from("sal"), Value::F32(salience)));
-        }
-        if let Some(evidence) = &body.evidence {
-            entries.push((Value::from("evid"), evidence.clone()));
-        }
-        if let Some(valid_from) = body.valid_from {
-            entries.push((Value::from("from"), Value::from(valid_from)));
-        }
-        if let Some(valid_to) = body.valid_to {
-            entries.push((Value::from("to"), Value::from(valid_to)));
-        }
-        if let Some(source) = body.source {
-            entries.push((Value::from("src"), Value::from(source.as_str())));
-        }
-        entries.push((
-            Value::from("worldId"),
-            Value::Binary(
-                body.world
-                    .unwrap_or_else(oneiron::claim::base_world_id)
-                    .as_bytes()
-                    .to_vec(),
-            ),
-        ));
-        entries.push((
-            Value::from("scopeRelationshipId"),
-            body.rel.map_or_else(
-                || Value::from("all"),
-                |id| Value::Array(vec![Value::Binary(id.as_bytes().to_vec())]),
-            ),
-        ));
-        let subject = match body.subject {
-            ClaimSubject::Entity(id) => id.as_bytes().to_vec(),
-            ClaimSubject::Edge { .. } => panic!("fixture claims are entity-subject"),
-        };
-        entries.push((Value::from("subj"), Value::Binary(subject)));
-        if let Some(scope) = &body.scope {
-            entries.push((Value::from("scope"), scope.clone()));
-        }
-        entries.push((Value::from("appr"), Value::from(body.approval.as_str())));
-        entries.push((Value::from("life"), Value::from(body.lifecycle.as_str())));
-        if body.stale {
-            entries.push((Value::from("stale"), Value::Boolean(true)));
-        }
-        if let Some(session_tag) = &body.session_tag {
-            entries.push((Value::from("sess"), Value::from(session_tag.as_str())));
-        }
-        entries.push((
-            Value::from("scopeFacetId"),
-            Value::Binary(body.scope_facet.as_bytes().to_vec()),
-        ));
-        entries.push((
-            Value::from("scopeProjectId"),
-            Value::Binary(body.scope_project.as_bytes().to_vec()),
-        ));
-        entries.push((Value::from("scopeVersion"), Value::from(2_u64)));
-        let mut out = Vec::new();
-        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("encode claim body");
-        out
     }
 }

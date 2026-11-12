@@ -205,7 +205,8 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
         }
         facts.extend(message_facts_in(vault, &txn, reply, turn.at, &cited)?);
     }
-    // A native append lands no room row, so only the DAG chain holds it.
+    // A native append that keeps no room row (a reply under an unrowed
+    // parent) is held by the DAG chain alone.
     for reply in chain {
         if !selected.contains(&reply)
             && crate::workspace_roster::replicated_turn_in(vault, &txn, reply)?.is_none()

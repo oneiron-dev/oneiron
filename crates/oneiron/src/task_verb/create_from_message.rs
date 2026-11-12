@@ -1,4 +1,4 @@
-//! A TASK made from a project-room message, bound to that message's thread
+//! A TASK made from a room message, bound to that message's thread
 //! in the same write (THREAD-TASK-ONE-SURFACE, `tasks.create.from_message`).
 //! Entry [`Memory::tasks_create_from_message`]. The mint is `create_facade`'s
 //! direct create; the binding is `Vault::bind_room_thread_task_in_txn`.
@@ -19,7 +19,7 @@ const TASKS_CREATE_FROM_MESSAGE: &str = "tasks.create.from_message";
 
 impl Memory<'_> {
     /// Mints one TASK as [`Memory::tasks_create`] mints a brief-less one,
-    /// and binds it to the root of the project-room thread that
+    /// and binds it to the root of the room thread that
     /// `source_ref`, a MESSAGE or TURN the actor reads, stands in. Mint and
     /// binding are one write: both commit or neither does. A later reply in
     /// that thread wakes the TASK's holder.
@@ -27,7 +27,7 @@ impl Memory<'_> {
     /// Refused as a bad request, with nothing written: a spec that routes
     /// through approval (a typed brief or an intent key, which post through
     /// the task highway, or an actor ceiling short of Auto, which parks a
-    /// proposal), and a source on the trunk or in no project-room thread.
+    /// proposal), and a source on the trunk or in no room thread.
     /// The binding's own checks are [`crate::Vault::bind_room_thread_task`]'s.
     pub fn tasks_create_from_message(
         &self,
@@ -105,8 +105,8 @@ impl Memory<'_> {
             crate::workspace_roster::room_thread_source_in(self.vault(), txn, source)?
         else {
             return Err(MemoryError::bad_request_with(
-                "tasks.create.from_message takes a MESSAGE or TURN inside a project-room \
-                 thread; a trunk message binds no thread",
+                "tasks.create.from_message takes a MESSAGE or TURN inside a room thread; \
+                 a trunk message binds no thread",
                 &["Open the message's thread, then name a message in it."],
             ));
         };

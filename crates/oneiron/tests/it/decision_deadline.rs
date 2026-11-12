@@ -9,11 +9,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, DecisionTime, HumanAskReason,
-    HumanDecisionQueue, HumanDecisionRequest, PairedAnswer, ProviderDecision, ProviderPin,
-    Reasoning, ReasoningCause, RemoteDecisionSeat, Reversibility, SeatAnswer, SeatFuture,
-    SeatPhase, SeatRequest, StopCause, TypedDecision, decide_at_remote_seat,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionClass,
+    DecisionDial, DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, DecisionTime,
+    HumanAskReason, HumanDecisionQueue, HumanDecisionRequest, PairedAnswer, ProviderDecision,
+    ProviderPin, Reasoning, ReasoningCause, RemoteDecisionSeat, Reversibility, SeatAnswer,
+    SeatFuture, SeatPhase, SeatRequest, StopCause, TypedDecision, decide_at_remote_seat,
 };
 use oneiron::retrieval_depth::{RetrievalDeadline, still_deadline_clock_for_test};
 use oneiron::{
@@ -84,6 +84,8 @@ fn answer(yes: bool, probability: f64, think: Option<f64>) -> ProviderDecision {
             probability,
         }),
         person: None,
+        served: None,
+        cost_per_thousand: None,
     }
 }
 
@@ -137,17 +139,12 @@ impl DecisionProvider for Rung {
         pin(self.rung)
     }
 
-    fn decide(
-        &self,
-        _: &DecisionQuestion,
-        _: &[EntityId],
-        deadline: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.seen
             .lock()
             .expect("reads")
-            .push(deadline.decision_time_left());
-        deadline.spend_for_test(self.spend);
+            .push(call.deadline.decision_time_left());
+        call.deadline.spend_for_test(self.spend);
         self.reply
             .clone()
             .ok_or_else(|| Error::InvalidConfig("the provider failed".into()))
@@ -207,6 +204,14 @@ impl Ladder {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<TypedDecision> {
+        let paired_question = DecisionQuestion {
+            id: EntityId::now(),
+            version: 1,
+            text: "Does this need more thinking?".into(),
+            class: DecisionClass::Judgment,
+            contract: AnswerContract::Noul,
+            accept_type: false,
+        };
         DecisionLadder {
             rule: None,
             local: None,
@@ -215,11 +220,18 @@ impl Ladder {
             big: None,
             human: &self.queue,
             human_pin: pin(DecisionRung::Human),
+            ask_to: None,
+            paired: Some(&paired_question),
+            person: None,
+            presence: None,
+            correlation: None,
         }
         .run(
             question,
             EntityId::now(),
             &[],
+            // The call's bounded state: these questions read none.
+            &serde_json::json!({}),
             DecisionDial {
                 first: DecisionRung::SystemOne,
                 ceiling,
@@ -473,6 +485,8 @@ fn a_stronger_rung_starts_only_for_a_cause_and_on_the_same_clock() {
         probability: None,
         paired: None,
         person: None,
+        served: None,
+        cost_per_thousand: None,
     };
     let ladder = Ladder::new(
         Rung::new(DecisionRung::SystemOne, ms(200), Some(abstains)),
@@ -745,6 +759,8 @@ fn at_seat(
             ..question()
         },
         state: serde_json::json!({ "note": "bounded" }),
+        images: Vec::new(),
+        audio: Vec::new(),
         score_levels: Vec::new(),
         posture: HostingPrivacyPosture::Hosted,
         remote_opt_in: false,

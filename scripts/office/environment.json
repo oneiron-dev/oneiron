@@ -1,7 +1,7 @@
 {
   "approved_font_inventories": {
-    "decktest": "bfbab21586946543d5b6c821a226532b7b84ca930f2aa1a9dd56674e7da6baf7",
-    "owen": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637"
+    "isolated": "bfbab21586946543d5b6c821a226532b7b84ca930f2aa1a9dd56674e7da6baf7",
+    "owner": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637"
   },
   "environment": {
     "harness": "one-2531-v1",
@@ -13,5 +13,8 @@
     "powerpoint": "16.113.2",
     "raster_scale": 2
   },
-  "version": 2
+  "isolated_accounts": [
+    "decktest"
+  ],
+  "version": 3
 }

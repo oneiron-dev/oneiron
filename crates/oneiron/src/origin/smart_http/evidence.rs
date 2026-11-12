@@ -248,7 +248,6 @@ fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> R
 
 impl Vault {
     fn put_receive_pack_evidence(&self, id: EntityId, body: &ClaimBody, at: u64) -> Result<()> {
-        let encoded = encode_claim_body(body)?;
         self.with_write_txn_grouped(|wtxn| {
             if self.store.port_entity_record(wtxn, &id)?.is_some()
                 || EVIDENCE.contains(&self.store, wtxn, &id)?
@@ -257,7 +256,16 @@ impl Vault {
                     "evidence id already exists",
                 ));
             }
-            self.put_reserved_claim_in_txn(wtxn, &id, body, TimeRange { start: at, end: at }, at)?;
+            // [SMART-HTTP-RECEIVE-PACK-EVIDENCE-FACET]: the derived substrate
+            // facet of the claim's source (a fresh operation id, or the
+            // actor) is no FACET, so the CLAIM birth gate refused every push.
+            // The evidence is born in the vault default facet, as the channel
+            // identity heads are (dfb2d85dfba), and its receipt encodes that
+            // body.
+            let mut body = body.clone();
+            body.scope_facet = self.default_facet_in_txn(wtxn)?;
+            let encoded = encode_claim_body(&body)?;
+            self.put_reserved_claim_in_txn(wtxn, &id, &body, TimeRange { start: at, end: at }, at)?;
             EVIDENCE.put(&self.store, wtxn, &id, &encoded)?;
             Ok(())
         })

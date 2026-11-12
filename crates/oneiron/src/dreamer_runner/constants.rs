@@ -70,6 +70,8 @@ pub(super) const KEY_WAIT_GENERATION: &str = "wait_generation";
 pub(super) const KEY_WAIT_SEAT: &str = "seat";
 pub(super) const KEY_WAIT_SEAT_GENERATION: &str = "seat_generation";
 pub(super) const KEY_WAIT_RESET_AT_S: &str = "reset_at_s";
+pub(super) const KEY_WAIT_RESIDENT: &str = "resident";
+pub(super) const KEY_WAIT_NEEDED_UNITS: &str = "needed_units";
 
 // v2 adds the mandatory overdraft and owed keys (FIX 8702, 8728, 9015).
 pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 2;
@@ -82,8 +84,9 @@ pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // The wait map's class is Budget (`scope`, `asked_units`), PassBudget (`asked_units`, and
 // `scope` only when the step's spend scope named one), one
 // answer class (Consent, Peer, Human: `wait_run`, `wait_id`, `wait_generation`) or Seat (`seat`,
-// `seat_generation`, `reset_at_s` only when the refusal named one); every map carries
-// `lease_generation`. A new class value under the pinned keys keeps the schema at 4.
+// `seat_generation`, `reset_at_s` only when the refusal named one) or ResidentShare (`resident`,
+// `needed_units`); every map carries `lease_generation`. A new class value, or a key only a new
+// class carries, keeps the schema at 4: an older binary refuses the unknown class either way.
 pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 4;
 pub(super) const DREAMER_BUDGET_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
@@ -120,7 +123,7 @@ pub(super) const DREAMER_PARKED_KEYS: [&str; 8] = [
     KEY_PARKED_AT,
     KEY_WAIT,
 ];
-pub(super) const DREAMER_PARKED_WAIT_KEYS: [&str; 10] = [
+pub(super) const DREAMER_PARKED_WAIT_KEYS: [&str; 12] = [
     KEY_CLASS,
     KEY_WAIT_SCOPE,
     KEY_WAIT_ASKED_UNITS,
@@ -131,6 +134,8 @@ pub(super) const DREAMER_PARKED_WAIT_KEYS: [&str; 10] = [
     KEY_WAIT_SEAT,
     KEY_WAIT_SEAT_GENERATION,
     KEY_WAIT_RESET_AT_S,
+    KEY_WAIT_RESIDENT,
+    KEY_WAIT_NEEDED_UNITS,
 ];
 
 pub(super) const MIN_DREAMER_TOURNAMENT_SAMPLE_COUNT: u32 = 3;

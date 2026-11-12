@@ -1516,9 +1516,14 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             == oneiron::dreamer_runner::maintenance::CLAIM_SOURCE_RECHECK_FACET
         {
             // FIX 15414: judged on the weaver's route, as a compaction's
-            // check is; it moves a claim only down the demotion ladder.
+            // check is, each verdict asked on the decision ladder
+            // (DECIDE-BYPASS-1); it moves a claim only down the demotion
+            // ladder.
             match self.check {
-                Some(lend) => lend.recheck_claim_sources(attempt, ctx).await,
+                Some(lend) => {
+                    lend.recheck_claim_sources(attempt, ctx, self.decisions)
+                        .await
+                }
                 None => Ok(oneiron::dreamer_runner::maintenance::claim_source_recheck::unlent()),
             }
         } else if attempt.status.payload.attempt_type
