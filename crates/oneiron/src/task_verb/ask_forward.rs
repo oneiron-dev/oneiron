@@ -107,24 +107,72 @@ impl std::fmt::Debug for AskForwardHolderProof {
 impl AskForwardHolderProof {
     /// The signature's bytes: exactly 128 lowercase hex characters.
     fn signature_bytes(&self) -> Option<[u8; 64]> {
-        let text = self.signature.as_bytes();
-        if text.len() != 128 {
-            return None;
-        }
-        let digit = |c: u8| match c {
-            b'0'..=b'9' => Some(c - b'0'),
-            b'a'..=b'f' => Some(c - b'a' + 10),
-            _ => None,
-        };
-        let mut bytes = [0_u8; 64];
-        for (byte, pair) in bytes.iter_mut().zip(text.chunks_exact(2)) {
-            let [high, low] = pair else {
-                return None;
-            };
-            *byte = (digit(*high)? << 4) | digit(*low)?;
-        }
-        Some(bytes)
+        holder_signature_bytes(&self.signature)
     }
+}
+
+/// The holder's proof as a stored intent keeps it: the slip token and the
+/// signature of [`AskForwardHolderProof`], under keys the write door's
+/// credential rule does not read as credential names. The wire name `token`
+/// is one, so the door's mask swapped the slip for a custody handle before
+/// the put's guard read it, and no intent stored while the secret scan was
+/// on (FIX-LIST [ASK-FORWARD-INTENT-TOKEN-MASKED]). The slip is stored on
+/// purpose (FIX 7494): the admitting node verifies it. It holds no private
+/// key, and nothing verifies with it without a signature by its holder's
+/// binding key.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StoredHolderProof {
+    /// The holder's `v2.slip.` token. An intent stored under the wire name,
+    /// while the owner had the scan off, still reads.
+    #[serde(alias = "token")]
+    slip: String,
+    /// The holder's Ed25519 signature, 128 lowercase hex characters.
+    signature: String,
+}
+
+/// Hand-written so the slip cannot reach a log through a derive.
+impl std::fmt::Debug for StoredHolderProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredHolderProof").finish_non_exhaustive()
+    }
+}
+
+impl From<&AskForwardHolderProof> for StoredHolderProof {
+    fn from(proof: &AskForwardHolderProof) -> Self {
+        Self {
+            slip: proof.token.clone(),
+            signature: proof.signature.clone(),
+        }
+    }
+}
+
+impl StoredHolderProof {
+    /// The signature's bytes: exactly 128 lowercase hex characters.
+    fn signature_bytes(&self) -> Option<[u8; 64]> {
+        holder_signature_bytes(&self.signature)
+    }
+}
+
+/// A holder signature's bytes: exactly 128 lowercase hex characters.
+fn holder_signature_bytes(signature: &str) -> Option<[u8; 64]> {
+    let text = signature.as_bytes();
+    if text.len() != 128 {
+        return None;
+    }
+    let digit = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        _ => None,
+    };
+    let mut bytes = [0_u8; 64];
+    for (byte, pair) in bytes.iter_mut().zip(text.chunks_exact(2)) {
+        let [high, low] = pair else {
+            return None;
+        };
+        *byte = (digit(*high)? << 4) | digit(*low)?;
+    }
+    Some(bytes)
 }
 
 /// One relayed intent, as the replica that took it persisted it: an
@@ -143,7 +191,7 @@ pub(super) struct AskForwardIntent {
     pub(super) act: AskForwardAct,
     /// The digest of `act` that the holder's signature commits.
     pub(super) payload_digest: [u8; 32],
-    pub(super) proof: AskForwardHolderProof,
+    pub(super) proof: StoredHolderProof,
     /// When the replica persisted it. The admitting node cuts on its own
     /// clock.
     pub(super) at: u64,
@@ -177,7 +225,7 @@ impl AskForwardIntent {
             || self.intent_key.is_empty()
             || intent_id(self.group, self.holder, &self.intent_key)? != id
             || self.act.digest()? != self.payload_digest
-            || !self.proof.token.starts_with(TOKEN_PREFIX)
+            || !self.proof.slip.starts_with(TOKEN_PREFIX)
             || self.proof.signature_bytes().is_none()
         {
             return Err(ask_record::invalid());
@@ -664,7 +712,7 @@ impl Memory<'_> {
                 intent_key: intent_key.to_owned(),
                 act: act.clone(),
                 payload_digest: act.digest()?,
-                proof: proof.clone(),
+                proof: StoredHolderProof::from(proof),
                 at: now,
             };
             match read_intent(self.vault(), txn, intent_ref)? {

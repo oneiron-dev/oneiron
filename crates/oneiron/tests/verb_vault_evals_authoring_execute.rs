@@ -133,6 +133,7 @@ fn grant_execute(fixture: &Fixture, agent: EntityId) -> EntityId {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints the execute Grant");

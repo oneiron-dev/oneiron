@@ -37,7 +37,8 @@ pub enum MediaStepOutcome {
 
 /// Runs the caller's existing media path as its durable step.
 /// The supplied path owns admission, replay, receipts, and settlement.
-/// Only a typed budget or host-check denial before any rung admitted opens a trap.
+/// Only a typed budget, host-check or resident-share denial before any rung
+/// admitted opens a trap; a call no allocation funds refuses `Unfunded`, typed.
 /// The media path sets `admitted` before an admitted rung can run its effect.
 /// `asked_units` is the reservation the media path's run line asks of its
 /// meter for one call, when the caller knows it: a spent budget walks the
@@ -50,7 +51,8 @@ pub enum MediaStepOutcome {
 /// budget whose step is bound to no wake pass and no spend scope refuses
 /// `DurableStepError::BudgetRefused` with `Unbound`: no write
 /// refills it. A spend scope that a closed boundary or a ceiling holds refuses it with that
-/// typed reason.
+/// typed reason. A call the host's run admission found no allocation for refuses
+/// `Unfunded`: no write funds it.
 pub async fn call_media_as_step<SendCall, CallFuture>(
     ctx: &DurableStepContext<'_>,
     request: MediaRequest,
@@ -66,10 +68,23 @@ where
     match send(request).await {
         Ok(response) => Ok(MediaStepOutcome::Finished(response)),
         Err(LlmError::BudgetDenied(
-            denied @ (BudgetDenied::Exhausted | BudgetDenied::HostCheck),
+            denied @ (BudgetDenied::Exhausted
+            | BudgetDenied::HostCheck
+            | BudgetDenied::Unfunded
+            | BudgetDenied::ResidentShareSpent { .. }),
         )) if !admitted.load(Ordering::Acquire) => {
             let cause = match denied {
                 BudgetDenied::HostCheck => BudgetTrapCause::HostCheck,
+                // No allocation funds the media call: refused typed (D3).
+                BudgetDenied::Unfunded => BudgetTrapCause::Unfunded { asked_units },
+                // The resident's pinned share: parked for the owner's share write (D3).
+                BudgetDenied::ResidentShareSpent {
+                    resident,
+                    needed_units,
+                } => BudgetTrapCause::ResidentShare {
+                    resident,
+                    needed_units,
+                },
                 _ => BudgetTrapCause::Spent { asked_units },
             };
             match budget_trap(ctx, step_hash, cause)? {

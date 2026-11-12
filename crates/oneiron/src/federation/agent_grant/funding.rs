@@ -223,6 +223,7 @@ fn mint_matches_row(record: &AgentGrantActRecord, standing: &AgentGrantStanding)
         verb_classes,
         wallet_ref,
         steward,
+        working_view_bounds,
     } = &record.change
     else {
         return false;
@@ -240,4 +241,5 @@ fn mint_matches_row(record: &AgentGrantActRecord, standing: &AgentGrantStanding)
         && *verb_classes == grant.verb_classes
         && wallet_ref.is_some()
         && *wallet_ref == grant.wallet_ref
+        && *working_view_bounds == grant.working_view_bounds
 }

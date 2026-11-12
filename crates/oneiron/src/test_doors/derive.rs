@@ -984,6 +984,7 @@ pub fn grant_topology_seal(vault: &Vault, agent: EntityId) -> Result<EntityId> {
         None,
         BTreeSet::new(),
         None,
+        None,
     )?;
     Ok(minted.standing.id)
 }

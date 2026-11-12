@@ -5602,6 +5602,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         verb_classes: std::collections::BTreeSet::new(),
         wallet_ref: None,
         inquiry_terms: None,
+        working_view_bounds: None,
     };
     vault
         .batch()

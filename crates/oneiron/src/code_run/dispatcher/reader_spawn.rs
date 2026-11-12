@@ -363,6 +363,16 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
+        // SPAWN-KNOB: the caller's powers decide first, before any seat,
+        // source or key is read; the child is born with the grant they give.
+        let powers = match self.check_spawn_powers(
+            SelfEffect::ReaderSpawn,
+            call.powers,
+            call.intent_key.as_bytes(),
+        )? {
+            Ok(powers) => powers,
+            Err(denied) => return Ok(SelfDispatchOutcome::Denied(denied)),
+        };
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
             return Ok(failed("reader_spawn_unbound"));
         };
@@ -389,6 +399,7 @@ impl HostSelfDispatcher<'_> {
             kind: crate::code_run::ReaderJobKind::Read,
             ask: call.ask,
             parent_lease: None,
+            powers,
         };
         let (job, replay) =
             match self
