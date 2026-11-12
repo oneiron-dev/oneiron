@@ -244,7 +244,7 @@ type Learning06 = {
 };
 type Learning06ExistingCard = PublicCall<"vault.research.promote">["request"]["sufficiency"];
 // Label ask: vault.evals.labels.ask asks one label for a pending stock-switch offer whose stored card labels can settle.
-suite.todo(test, "LEARNING-06", "waits on vault.evals.authoring.execute with a stored report, public cohort retirement, and grounded setup: terminal pack receipts, an installed eval-authoring recipe, a cut cohort with counted exposure, a Coach-recorded stock offer");
+suite.todo(test, "LEARNING-06", "waits on vault.evals.authoring.execute with a stored report and grounded setup: terminal pack receipts, an installed eval-authoring recipe, a cut cohort with counted exposure, a Coach-recorded stock offer");
 
 // LEARNING-07 — Training export and approval before deploy should work.
 // OF-382/400. Owner routes already exist:
