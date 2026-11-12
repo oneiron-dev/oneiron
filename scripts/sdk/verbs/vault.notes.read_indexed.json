@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>",
   "call": "memory.read_indexed_note(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

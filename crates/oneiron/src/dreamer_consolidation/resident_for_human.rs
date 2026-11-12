@@ -485,7 +485,8 @@ pub async fn run_free_time_for_human(
         subject: resident_id,
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
-        spend_scope: None,
+        spend_scope: model.spend_scope.clone(),
+        wake_pass_bound: true,
     };
     let mut charges = StepChargeTally::default();
     let response = match call_as_step(&step_ctx, model.backend, model.guard, request).await {
@@ -523,6 +524,11 @@ pub async fn run_free_time_for_human(
             });
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
+        // Its item's spend scope refused the step for good: the try ends
+        // Failed, typed on its row and its item's receipt.
+        Err(other @ DurableStepError::BudgetRefused(_)) => {
+            return Ok(charges.end_on_step_error(&other.to_string(), &other));
+        }
         Err(other) => {
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),

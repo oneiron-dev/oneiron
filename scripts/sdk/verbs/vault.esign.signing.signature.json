@@ -5,6 +5,7 @@
   "output": "crate::blob_artifact::esign::EsignSigningSignatureView",
   "call": "memory.esign_signing_signature(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

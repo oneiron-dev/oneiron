@@ -201,6 +201,11 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         FIELD_LEASE_GENERATION.to_owned(),
         record.attempt_count.to_string(),
     );
+    // BUDGET-TRAP-UNTYPED-NO-SENDER: the typed refusal a failed try settled
+    // on, beside the outcome. Additive, as the lease generation is.
+    if let Some(refusal) = &record.budget_refusal {
+        super::append_budget_refusal_field(&mut receipt.fields, refusal)?;
+    }
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())
 }

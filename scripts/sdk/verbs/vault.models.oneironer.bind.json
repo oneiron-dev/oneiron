@@ -5,6 +5,7 @@
   "output": "crate::llm::manifest::ModelManifest",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.oneironer.bind\", &input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,

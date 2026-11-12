@@ -3,6 +3,7 @@
   "input": "crate::memory::repo_doors::RepoSymbolsNeighborsInput",
   "output": "crate::memory::repo_doors::RepoSymbolsNeighborsOutput",
   "scope": "Read",
+  "act_class": "read",
   "context": "run",
   "effect": "RepoSymbolsNeighbors"
 }

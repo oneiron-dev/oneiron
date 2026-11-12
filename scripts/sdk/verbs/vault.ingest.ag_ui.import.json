@@ -8,6 +8,7 @@
   "host_door_precheck": true,
   "host_door_lists": true,
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

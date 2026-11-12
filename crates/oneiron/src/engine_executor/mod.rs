@@ -21,6 +21,7 @@ mod host;
 mod program_entry;
 mod record;
 mod repl;
+pub mod reply_evidence;
 mod run_position;
 mod self_brief;
 mod shadow_step;

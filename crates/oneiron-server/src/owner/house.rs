@@ -6,8 +6,10 @@
 //! board chose.
 //!
 //! The house runs its org in a role (HOUSE-BIND = A): the owner's finish
-//! names it, else the config's `house_role` does; the start binds only when
-//! the config names one (HOUSE-BIND-ROLE-SOURCE). No role is assumed.
+//! names it, else the config's `house_role` does, else the finish runs it
+//! as deputy, [`oneiron::workspace_roster::DEFAULT_HOUSE_ROLE`] (DEPUTY = A;
+//! HOUSE-ROLE-DEPUTY-AFTER-7071 = A). The start binds only when the config
+//! names one (HOUSE-BIND-ROLE-SOURCE): no owner act, no default.
 
 use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
@@ -19,9 +21,9 @@ use crate::server::SyncServer;
 
 /// `POST /v1/owner/workspace/finish`: the house `workspace_ref`'s stored
 /// preset names leads the root, signed by this host for the owner, and runs
-/// its org in `role`, else in the config's `house_role`. A root that already
-/// follows that house keeps it; an unknown workspace is not found; a finish
-/// with neither role binds nothing.
+/// its org in `role`, else in the config's `house_role`, else as deputy
+/// ([`oneiron::workspace_roster::DEFAULT_HOUSE_ROLE`]). A root that already
+/// follows that house keeps it; an unknown workspace is not found.
 pub(crate) fn finish_workspace(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
@@ -30,11 +32,12 @@ pub(crate) fn finish_workspace(
 ) -> OwnerResult<()> {
     let role = match role {
         Some(value) => oneiron::workspace_roster::parse_house_role(value).ok_or_else(|| {
-            OwnerError::Invalid("role must be member, steward, admin or owner".to_owned())
+            OwnerError::Invalid("role must be member, steward, admin, deputy or owner".to_owned())
         })?,
-        None => server.config.house_role.ok_or_else(|| {
-            OwnerError::Refused("house role not set: pass role or set house_role".to_owned())
-        })?,
+        None => server
+            .config
+            .house_role
+            .unwrap_or(oneiron::workspace_roster::DEFAULT_HOUSE_ROLE),
     };
     let vault = server.vault();
     with_issuer(server, |issuer| {
