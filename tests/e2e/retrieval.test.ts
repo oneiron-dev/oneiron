@@ -3485,8 +3485,8 @@ suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit quest
 //   within their budgets." Source: ARCH-0004#world-scope. Proved in the
 //   typed pack (per-item world label, base group first) and in the rendered
 //   pack (base text before story text, story label before story text; the
-//   rendered label is red on the engine, FIX-LIST
-//   [RECALL-RENDERED-PACK-WORLD-UNLABELED], and fails the case last). The
+//   rendered label came with #7304, FIX-LIST
+//   [RECALL-RENDERED-PACK-WORLD-UNLABELED]). The
 //   exact non-base budget fraction is not asserted: no typed door read here
 //   lets the owner set or read that fraction. The fixture holds three base
 //   claims beside the three story claims, so the default non-base share
@@ -3774,13 +3774,12 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       const at = rendered.indexOf(label);
       return at >= 0 && at < renderedStoryAt;
     });
-    // FIX-LIST [RECALL-RENDERED-PACK-WORLD-UNLABELED]: serialize_pack groups the
-    // rows by record kind and writes no world label, so the story claims' text
-    // follows the base claim in one CLAIM group. The case records the defect and
-    // goes on, so every later step still runs; it fails at the end.
-    const renderedWorldDefect = renderedStoryLabelled
-      ? null
-      : `MUSE-RECALL-03 ENGINE DEFECT 2026-11-13: P-RECALL-011 the rendered recall pack (format=toon) writes no world label before the story section (ARCH-0004 #world-scope: labeled per-world sections; retrieval MUST NOT mix worlds unlabeled); FIX-LIST [RECALL-RENDERED-PACK-WORLD-UNLABELED]; story_label_anywhere=${storyWorldLabels.some((label) => rendered.includes(label))} rendered_chars=${rendered.length}`;
+    // P-RECALL-011 in the rendered pack: each row carries its world section
+    // (#7304, FIX-LIST [RECALL-RENDERED-PACK-WORLD-UNLABELED]), so the story
+    // world's id hex is written before the first story claim's text.
+    if (!renderedStoryLabelled) {
+      throw new Error(`MUSE-RECALL-03 the rendered recall pack (format=toon) writes no world label before the story section; story_label_anywhere=${storyWorldLabels.some((label) => rendered.includes(label))} rendered_chars=${rendered.length}`);
+    }
 
     const otherOnlyInput: FacadeInput<"vault.recall"> = {
       query: tokenOtherWorld, effort: "light", limit: 10,
@@ -3953,7 +3952,6 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       refusalReceiptRef,
       readerSlip,
     });
-    if (renderedWorldDefect !== null) throw new Error(renderedWorldDefect);
   } finally {
     await engine.close();
   }
