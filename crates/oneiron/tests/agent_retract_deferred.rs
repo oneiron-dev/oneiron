@@ -275,7 +275,8 @@ fn another_agents_retract_is_still_refused() {
 
 /// A retract while the owner's critical confirm of a stale mark waits on
 /// the claim is refused: it would close that confirm's tray row as its own
-/// consent. The stale mark still waits (review round 1 of #7289).
+/// consent. It is refused by name, as a stale consent, before any tray row
+/// is touched. The stale mark still waits (review rounds 1 and 2 of #7289).
 #[test]
 fn a_retract_while_another_action_waits_on_the_claim_is_refused() {
     let f = Fixture::new();
@@ -298,8 +299,10 @@ fn a_retract_while_another_action_waits_on_the_claim_is_refused() {
     let refused = f.retract_as(f.agent, id);
 
     assert!(
-        refused.is_err(),
-        "the retract waits for the parked stale mark: {refused:?}"
+        refused
+            .as_ref()
+            .is_err_and(|error| error.message.contains("gate consent approval is stale")),
+        "the retract is refused as a stale consent while the stale mark waits: {refused:?}"
     );
     f.assert_standing(id, "a refused retract changes nothing");
     assert!(
