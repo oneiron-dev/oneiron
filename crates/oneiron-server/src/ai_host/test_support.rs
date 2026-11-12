@@ -100,6 +100,16 @@ pub(crate) fn models(base_url: &str, extra: &str) -> ModelsConfig {
     ))
 }
 
+/// Keep the configured own-server routes, but meter their simulated account
+/// work: a keyless own-server provider is free work (9ef0dfa3a17, FIX 9482),
+/// an unmetered lease no budget line can deny.
+pub(crate) fn metered_models(mut config: ModelsConfig) -> ModelsConfig {
+    for provider in config.providers.values_mut() {
+        provider.payer = oneiron::llm::run_admission::Payer::CustomerAccount;
+    }
+    config
+}
+
 /// `[models]` as written in `oneiron.toml`.
 pub(crate) fn models_toml(text: &str) -> ModelsConfig {
     let file: ModelsFile = toml::from_str(text).unwrap();

@@ -17,7 +17,7 @@ use tower::ServiceExt;
 
 use super::*;
 use crate::ai_host::AiHost;
-use crate::ai_host::test_support::{TEST_SECRET, models_toml, rooted_vault};
+use crate::ai_host::test_support::{TEST_SECRET, metered_models, models_toml, rooted_vault};
 use crate::config::models::ModelsConfig;
 use crate::fake_llm::{FakeLlm, Reply};
 use crate::models::ModelRuntime;
@@ -198,16 +198,17 @@ async fn every_server_call_writes_one_dispatched_row_per_provider_call() {
 
 /// A line of one reservation: the failing rung spends it, so the answering
 /// rung has no permit. Its admission is denied with a row, and it is never
-/// sent, through each path.
+/// sent, through each path. The rungs are metered: a keyless own-server rung
+/// is free work, which no line denies.
 #[tokio::test]
 async fn a_rung_its_line_cannot_cover_is_denied_and_never_sent() {
     let failing = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
     let answering = FakeLlm::start(vec![], Some(Reply::text("Hello"))).await;
-    let config = two_rungs(
+    let config = metered_models(two_rungs(
         &failing,
         &answering,
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
-    );
+    ));
     for (path, sent) in [("generate", 1), ("stream", 2), ("chat", 3)] {
         // A fresh server each time: the raw routes' line lives as long as
         // the server.

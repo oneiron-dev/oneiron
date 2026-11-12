@@ -6,8 +6,8 @@ use oneiron::{ClaimApprovalStatus, EntityId, TimeRange};
 use oneiron_driver::SessionHint;
 
 use super::test_support::{
-    capture_user_turn, eventually, extraction_reply, models, models_toml, name_claims,
-    pin_every_role, rooted_vault, route_extraction, saved_agent, seed_named_person,
+    capture_user_turn, eventually, extraction_reply, metered_models, models, models_toml,
+    name_claims, pin_every_role, rooted_vault, route_extraction, saved_agent, seed_named_person,
 };
 use super::*;
 use crate::fake_llm::FakeLlm;
@@ -563,14 +563,6 @@ async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
         assert_eq!(before.state, AttemptState::Leased);
     }
     host.shutdown().await;
-}
-
-/// Keep the configured own-server routes, but meter their simulated account work.
-fn metered_models(mut config: ModelsConfig) -> ModelsConfig {
-    for provider in config.providers.values_mut() {
-        provider.payer = oneiron::llm::run_admission::Payer::CustomerAccount;
-    }
-    config
 }
 
 fn workflow_is_held_for_budget(vault: &Vault) -> bool {
