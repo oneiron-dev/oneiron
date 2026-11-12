@@ -89,6 +89,12 @@ const PATHS = {
 export type IconName = keyof typeof PATHS
 export const ICON_NAMES = Object.keys(PATHS) as IconName[]
 
+/* One markup object per icon, made once. React DOM writes innerHTML again
+   whenever this object differs from the last render's, which replaces the
+   paths: a control that renders between pointer down and pointer up would
+   lose the element the press began on, and with it the click. */
+const MARKUP = Object.fromEntries(ICON_NAMES.map((name) => [name, { __html: PATHS[name] }])) as Record<IconName, { __html: string }>
+
 export interface IconProps extends Omit<React.ComponentPropsWithRef<'svg'>, 'children'> {
   name: IconName
   /* Rendered size in CSS pixels. */
@@ -111,7 +117,7 @@ export function Icon({ name, size = 16, className, ...props }: IconProps) {
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
-      dangerouslySetInnerHTML={{ __html: PATHS[name] }}
+      dangerouslySetInnerHTML={MARKUP[name]}
       {...props}
     />
   )

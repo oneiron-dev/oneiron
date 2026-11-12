@@ -13,8 +13,9 @@
 //! failures as one entry with their first and latest instant and count.
 
 use crate::attempt_queue::encoding::{decode_record, ready_at, ready_key};
+use crate::attempt_queue::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
-use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState};
+use crate::attempt_queue::types::{AttemptId, AttemptRecord};
 use crate::attempt_queue::validate::{
     validate_failure_reason, validate_lease_owner, validate_transition_lease,
 };
@@ -43,6 +44,8 @@ impl AttemptQueue<'_> {
     /// joins the row's history, the lease ends and the row waits in
     /// [`AttemptState::Scheduled`] until `due_at`. Fenced by owner and exact
     /// lease generation, so a stale or repeated answer changes nothing.
+    ///
+    /// [`AttemptState::Scheduled`]: crate::attempt_queue::AttemptState::Scheduled
     pub fn requeue(&self, input: RequeueAttempt) -> Result<AttemptRecord> {
         self.requeue_with_history(input, false)
     }
@@ -84,7 +87,10 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("requeue", "missing"));
         };
         let mut row = decode_record(&raw, input.id)?;
-        if row.state != AttemptState::Leased {
+        if !matches!(
+            RunLifecycle::step(RunRow::of(&row), RunEvent::Requeue),
+            RunStep::Move { .. }
+        ) {
             return Err(invalid_transition("requeue", row.state.as_str()));
         }
         validate_lease_owner(&input.lease_owner)?;
@@ -129,9 +135,7 @@ impl AttemptQueue<'_> {
             });
         }
         row.last_error = Some(input.reason);
-        row.state = AttemptState::Scheduled;
-        row.lease_owner = None;
-        row.scheduled_at = Some(input.due_at);
+        let _ = RunLifecycle::requeue(&mut row, input.due_at);
         row.backoff_until = None;
         row.updated_at = now;
 

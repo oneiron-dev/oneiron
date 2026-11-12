@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { Icon } from '../primitives/Icon'
 import { ProgressDonut } from '../marks/ProgressDonut'
-import type { DonutArc } from '../marks/donut-segments'
+import { arcsDone, type DonutArc } from '../marks/donut-segments'
 import { soundPress } from '../lib/press'
 import { cx, mergeRefs, useIsomorphicLayoutEffect } from '../lib/react-utils'
 
@@ -53,7 +53,8 @@ function TaskFlowRoot({ ref, onOpen, className, 'aria-label': ariaLabel = 'tasks
 
 export interface TaskFlowTaskProps extends Omit<React.ComponentPropsWithRef<'button'>, 'id'> {
   id: string
-  /* Done: a check. Otherwise the progress donut of `arcs`. */
+  /* Done: a plain check. A task whose arcs are all done is done too.
+     Otherwise the progress donut of `arcs`. */
   done?: boolean
   /* The task's steps for its donut, in order. */
   arcs?: readonly DonutArc[]
@@ -67,13 +68,14 @@ export interface TaskFlowTaskProps extends Omit<React.ComponentPropsWithRef<'but
    who has it. A chip that opens the task. */
 function TaskFlowTask({ id, done = false, arcs = [], needsYou = false, who, className, onClick, type = 'button', children, ...props }: TaskFlowTaskProps) {
   const flow = React.useContext(FlowContext)
+  const finished = done || (!needsYou && arcsDone(arcs))
   return (
     <li className="sl-task-flow-item">
       <button
         type={type}
         className={cx('sl-task-flow-task', className)}
         data-task-id={id}
-        data-state={done ? 'done' : needsYou ? 'waiting' : 'open'}
+        data-state={finished ? 'done' : needsYou ? 'waiting' : 'open'}
         onClick={(event) => {
           onClick?.(event)
           if (event.defaultPrevented) return
@@ -83,8 +85,8 @@ function TaskFlowTask({ id, done = false, arcs = [], needsYou = false, who, clas
         {...props}
       >
         <span className="sl-task-flow-mark">
-          {done ? (
-            <Icon name="check" size={15} role="img" aria-label="done" aria-hidden={undefined} />
+          {finished ? (
+            <Icon name="check" size={15} className="sl-task-flow-check" role="img" aria-label="done" aria-hidden={undefined} />
           ) : (
             <ProgressDonut arcs={arcs} needsYou={needsYou} />
           )}

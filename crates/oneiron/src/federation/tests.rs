@@ -300,10 +300,10 @@ fn delegate_minting_never_self_widens() {
     assert!(!FederationGrantRole::Delegate.is_admin());
     for role in [
         FederationGrantRole::Owner,
+        FederationGrantRole::Deputy,
         FederationGrantRole::Admin,
         FederationGrantRole::Member,
         FederationGrantRole::Viewer,
-        FederationGrantRole::Auditor,
         FederationGrantRole::Delegate,
         FederationGrantRole::Guest,
     ] {
@@ -311,9 +311,11 @@ fn delegate_minting_never_self_widens() {
             role.is_admin(),
             matches!(
                 role,
-                FederationGrantRole::Owner | FederationGrantRole::Admin
+                FederationGrantRole::Owner
+                    | FederationGrantRole::Deputy
+                    | FederationGrantRole::Admin
             ),
-            "{role:?}: is_admin must stay Owner/Admin only"
+            "{role:?}: is_admin must stay Owner/Deputy/Admin only"
         );
     }
 
@@ -325,6 +327,10 @@ fn delegate_minting_never_self_widens() {
         (
             "admin",
             non_delegate_grant(FederationGrantRole::Admin, FederationGrantPreset::Admin),
+        ),
+        (
+            "deputy",
+            non_delegate_grant(FederationGrantRole::Deputy, FederationGrantPreset::Admin),
         ),
     ] {
         FederationGrant::attenuated_delegate(
@@ -344,10 +350,6 @@ fn delegate_minting_never_self_widens() {
         (
             "viewer",
             non_delegate_grant(FederationGrantRole::Viewer, FederationGrantPreset::ReadOnly),
-        ),
-        (
-            "auditor",
-            non_delegate_grant(FederationGrantRole::Auditor, FederationGrantPreset::Audit),
         ),
         // One hop, not a chain.
         ("delegate", delegate),
@@ -376,14 +378,13 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
         FederationGrantPreset::Admin,
         FederationGrantPreset::Member,
         FederationGrantPreset::ReadOnly,
-        FederationGrantPreset::Audit,
     ];
     let non_delegate_roles = [
         FederationGrantRole::Owner,
+        FederationGrantRole::Deputy,
         FederationGrantRole::Admin,
         FederationGrantRole::Member,
         FederationGrantRole::Viewer,
-        FederationGrantRole::Auditor,
     ];
 
     for preset in non_delegate_presets {
@@ -431,19 +432,14 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
     for preset in non_delegate_presets {
         for role in non_delegate_roles {
             let expected = match preset {
-                FederationGrantPreset::Owner => true,
+                // A Deputy rides only the Admin envelope.
+                FederationGrantPreset::Owner => !matches!(role, FederationGrantRole::Deputy),
                 FederationGrantPreset::Admin => !matches!(role, FederationGrantRole::Owner),
                 FederationGrantPreset::Member => matches!(
                     role,
-                    FederationGrantRole::Member
-                        | FederationGrantRole::Viewer
-                        | FederationGrantRole::Auditor
+                    FederationGrantRole::Member | FederationGrantRole::Viewer
                 ),
-                FederationGrantPreset::ReadOnly => matches!(
-                    role,
-                    FederationGrantRole::Viewer | FederationGrantRole::Auditor
-                ),
-                FederationGrantPreset::Audit => matches!(role, FederationGrantRole::Auditor),
+                FederationGrantPreset::ReadOnly => matches!(role, FederationGrantRole::Viewer),
                 FederationGrantPreset::Delegate | FederationGrantPreset::Guest => {
                     unreachable!("non-delegate presets only")
                 }
@@ -499,9 +495,9 @@ fn role_conditional_fields_are_required_and_forbidden() {
             FederationGrantPreset::ReadOnly,
         ),
         (
-            "auditor",
-            FederationGrantRole::Auditor,
-            FederationGrantPreset::Audit,
+            "deputy",
+            FederationGrantRole::Deputy,
+            FederationGrantPreset::Admin,
         ),
     ] {
         let grant = non_delegate_grant(role, preset);

@@ -9,11 +9,16 @@ export interface Resident {
   name: string
   glyph: GlyphName
   ink: string
+  /* The face as a picture, by day and at night; a resident without one
+     shows its glyph. */
+  picture?: { day: string; night: string }
 }
 
-export const EIRI: Resident = { name: 'Eiri', glyph: 'wing', ink: 'light-dark(#3D7499, #6FA3C7)' }
-export const TORY: Resident = { name: 'Tory', glyph: 'owl', ink: 'light-dark(#A2475A, #BE687A)' }
-export const ANTEVON: Resident = { name: 'Antevon', glyph: 'laurel', ink: 'light-dark(#5F559A, #857BB8)' }
+const picture = (id: string) => ({ day: `/art/faces/${id}-A-day.png`, night: `/art/faces/${id}-A-night.png` })
+
+export const EIRI: Resident = { name: 'Eiri', glyph: 'wing', ink: 'light-dark(#3D7499, #6FA3C7)', picture: picture('eiri') }
+export const TORY: Resident = { name: 'Tory', glyph: 'owl', ink: 'light-dark(#A2475A, #BE687A)', picture: picture('tory') }
+export const ANTEVON: Resident = { name: 'Antevon', glyph: 'laurel', ink: 'light-dark(#5F559A, #857BB8)', picture: picture('antevon') }
 export const METRYON: Resident = { name: 'Metryon', glyph: 'ruler', ink: 'light-dark(#55697A, #93A6B5)' }
 
 export const RESIDENTS: Resident[] = [EIRI, TORY, ANTEVON, METRYON]

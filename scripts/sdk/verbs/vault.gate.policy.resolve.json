@@ -1,0 +1,20 @@
+{
+  "name": "vault.gate.policy.resolve",
+  "description": "These are the policy rows the caller may read, not the policy in force.",
+  "input": "EmptyRequest",
+  "output": "crate::claim::ScopedReadResult<crate::task_verb::sdk::ReadablePolicyManifestRows>",
+  "call": "crate::task_verb::sdk::vault_gate_policy_resolve_embedded(memory)?",
+  "scope": "Read",
+  "act_class": "read",
+  "grant_class": "vault.gate.policy.resolve grant + caller read lane",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}
