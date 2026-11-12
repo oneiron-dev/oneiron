@@ -48,12 +48,12 @@ pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, Und
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
 pub use mode::CheckInMode;
-pub(crate) use pending::erase_pending_check_in_actor_in_txn;
 pub use pending::{
     CapturedWait, DelayWindow, DelayWindowOpen, Extension, HolderAnswer, HolderKind, HolderReply,
     Objection, OpenPendingCheckIn, PendingCheckIn, PendingState, Rung, RungEntry, RungHolder,
     RungMembers,
 };
+pub(crate) use pending::{erase_pending_check_in_actor_in_txn, pending_check_in_in_txn};
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use pending::{
