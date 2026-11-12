@@ -52,7 +52,7 @@ crate::side_table::side_tables! {
     /// id16(attempt) + be64(lease generation) + be64(call index). Side-table
     /// evidence only: never an entity, BM25/vector/Dreamer input.
     CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
-        [restore: content] [family: unregistered] [tier: canonical]
+        [restore: content] [family: unclassified] [tier: canonical]
         => crate::code_run::erase_model_call_actor_in_txn;
     /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
     /// commit: the head (the pinned program it replays, the record position and state hash its
@@ -73,7 +73,7 @@ crate::side_table::side_tables! {
     /// The last actual parent entry's full destination, route, actor and loaded install
     /// machine (JSON), qualified again on recovery. Key: id16(parent run).
     CODE_RUN_READER_CALLER: VaultMeta b"code_run:reader_caller:v1:" Raw Engine
-        [restore: content] [family: unregistered] [tier: canonical]
+        [restore: content] [family: unclassified] [tier: canonical]
         => crate::code_run::erase_reader_caller_actor_in_txn;
     /// A code run's fold receipt (ARCH-0079 #reader-forks): the source and range a fold read,
     /// the jobs it named, the ranges read, unread and read short, its cutoff, recipe, summary
@@ -118,7 +118,7 @@ crate::side_table::side_tables! {
     /// The owner's value-free dismissal of one code-run secret lift proposal. The
     /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
     CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine
-        [restore: content] [family: unregistered] [tier: canonical];
+        [restore: content] [family: structure] [tier: canonical];
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored [accepts: crate::code_run::code_run_summary_memo_accepts_masked]

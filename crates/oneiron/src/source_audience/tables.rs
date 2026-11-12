@@ -8,10 +8,8 @@ crate::side_table::side_tables! {
     /// transaction here. Key: id16(row).
     SOURCE_AUDIENCE_BIRTH: VaultMeta b"source_audience:birth:v1:" Named
         // Restore class: A source landing's birth mark lives inside its own write and never commits
-        // (fix list row 16256): a restore keeps the live vault's.
-        // Payload family: A landing's birth marks and a changed policy's wakes and windows are live
-        // working state.
-        [restore: live] [family: not_imaged] [tier: canonical];
+        // (fix list row 16256): runtime working state, which no image carries.
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The policies a row written from source-bound rows reads under beside its own lineage, the
     /// union of every set a full-window carrier brought (fix list row 17207). It only grows.
     /// Key: id16(row).
@@ -25,7 +23,7 @@ crate::side_table::side_tables! {
         // denies never reads the row again. The floor of a row made after the checkpoint leaves
         // with the row.
         [restore: refuse_image_entities "a derived row's carried policies"]
-        [family: unregistered]
+        [family: unclassified]
         [tier: canonical];
     /// One change to a source audience's readers, its receipt (FIX 12559); the policy entry's
     /// scrub forgets an erased actor here too. Key: id16(policy) + u64be revision.
@@ -47,7 +45,7 @@ crate::side_table::side_tables! {
     /// once. Key: ().
     SOURCE_AUDIENCE_LANDED: VaultMeta b"source_audience:landed:v1:seen" Named
         // Restore class: Whether a source landed a row stands with the rows the image holds.
-        [restore: content] [family: unregistered] [tier: canonical];
+        [restore: content] [family: structure] [tier: canonical];
     /// One source audience: a mail or calendar source's readers, or one thread's shares (FIX
     /// 12559). An actor's scrub takes it out of every policy and event. Key: id16(policy).
     SOURCE_AUDIENCE_POLICY: VaultMeta b"source_audience:policy:v1:" Named
@@ -60,15 +58,15 @@ crate::side_table::side_tables! {
     SOURCE_AUDIENCE_POLICY_WAKE: VaultMeta b"source_audience:policy_wake:v1:" Named
         // Restore class: A policy's pending wake and the windows it rides are this vault's own work
         // over its live policies and stored windows (fix list row 17203).
-        // Payload family: A landing's birth marks and a changed policy's wakes and windows are live
-        // working state.
-        [restore: live] [family: not_imaged] [tier: canonical];
+        // Payload family: A changed policy's wake and the windows it rides are a generation, a
+        // window position and a window label: markers with no payload of their own.
+        [restore: live] [family: structure] [tier: canonical];
     /// A window that carries a source audience policy, as its last export or persist found it
     /// (fix list row 17203): the window's label. Key: id16(policy) + blake3 (32) of the label.
     SOURCE_AUDIENCE_POLICY_WINDOW: VaultMeta b"source_audience:policy_window:v1:" Named
-        // Payload family: A landing's birth marks and a changed policy's wakes and windows are live
-        // working state.
-        [restore: live] [family: not_imaged] [tier: canonical];
+        // Payload family: A changed policy's wake and the windows it rides are a generation, a
+        // window position and a window label: markers with no payload of their own.
+        [restore: live] [family: structure] [tier: canonical];
     /// The source audience a row was born under; it never moves (FIX 12559). Key: id16(row).
     SOURCE_AUDIENCE_RECORD: VaultMeta b"source_audience:record:v1:" Named
         // Restore class: A row's birth binding stands with the row as the image holds it.

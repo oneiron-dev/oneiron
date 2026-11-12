@@ -7,6 +7,7 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
 use crate::entity_id::EntityId;
 use crate::model_step_record::TrapRef;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::write_envelope::WriteActor;
 use oneiron_model::llm::{DreamerFailureDecision, LlmResponse};
 
@@ -24,6 +25,8 @@ pub struct DurableStepContext<'a> {
     /// envelope on finished outcomes. Admitted calls may finish after expiry.
     pub deadline: Option<&'a WakePassDeadline>,
     pub now_ms: u64,
+    /// The spend scope whose `guard_for_scope` guard the step runs under, when its host built one.
+    pub spend_scope: Option<SpendScopeId>,
 }
 
 impl DurableStepContext<'_> {

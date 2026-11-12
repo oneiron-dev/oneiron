@@ -4,6 +4,9 @@ mod conversion;
 pub use conversion::MessageHangs;
 mod deletion;
 mod edges;
+mod extra_room_index;
+pub(crate) mod extra_room_redaction;
+mod extra_rooms;
 mod goal;
 mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
@@ -55,6 +58,10 @@ pub(crate) use capture::{
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
+};
+pub(crate) use extra_room_index::index_extra_room;
+pub use extra_rooms::{
+    ProjectRoomLink, ProjectRoomLinkRequest, ProjectRoomRow, ProjectRoomsPage, ProjectRoomsRequest,
 };
 pub use fold::{
     ProjectDisposition, ProjectEffective, ProjectForkConflict, ProjectFrontier, ProjectRank,
@@ -139,6 +146,11 @@ const ROOT_SEED_LEADER: &str = "sys.team_lead";
 /// home-room id).
 pub(super) const ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::PROJECT_ROOM_OWNER);
+
+/// Index from an extra room to the project that groups it, rebuilt from the room body's
+/// `project_group` key at every CONVERSATION put. Key: id16 (room).
+pub(super) const EXTRA_ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::PROJECT_EXTRA_ROOM);
 
 /// A signed project row that replay replaced with an unsigned one. Key: id16.
 const STRIPPED_PROOF: SideTable<EntityId, [u8; 1], Raw> =

@@ -80,6 +80,10 @@ crate::side_table::side_tables! {
     /// home-room id).
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Index from an extra room to the project that groups it, rebuilt from the room body's
+    /// `project_group` key at every CONVERSATION put. Key: id16 (room).
+    PROJECT_EXTRA_ROOM: VaultMeta b"project.extra_room.v1/" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The root project's entity id, seeded once at first boot. Key: ().
     PROJECT_ROOT: VaultMeta b"project.root.v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];

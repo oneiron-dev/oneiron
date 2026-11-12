@@ -53,6 +53,7 @@ pub fn project_goal_intake_complete_as_owner(
     })
 }
 
+/// `vault.projects.goal.get` for the owner, under his proof.
 pub fn project_goal_get_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -60,15 +61,64 @@ pub fn project_goal_get_as_owner(
 ) -> MemoryResult<ProjectGoalView> {
     owner.revalidate(vault)?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    let (goal_claim, record) = match vault.project_intake_goal_in_txn(&txn, project)? {
+    Ok(goal_view(
+        project,
+        vault.project_intake_goal_in_txn(&txn, project)?,
+    ))
+}
+
+/// `vault.projects.goal.get` for the caller `memory` binds when it holds a
+/// live Steward grant naming `read` (untangle 6.6d, F4), checked at this
+/// read; a base agent reads through its own grant and scoped read.
+///
+/// # Errors
+///
+/// A caller who holds no such grant; storage errors.
+pub fn project_goal_get_as_reader(
+    memory: &crate::memory::Memory<'_>,
+    project: EntityId,
+) -> MemoryResult<ProjectGoalView> {
+    let vault = memory.vault();
+    let reader = crate::WriteActor::new(memory.actor(), memory.actor_class());
+    crate::federation::admit_substrate_read_by(
+        vault,
+        reader,
+        "vault.projects.goal.get",
+        crate::federation::SubstrateRead::Goal,
+    )?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    Ok(goal_view(
+        project,
+        vault.project_intake_goal_as_in_txn(&txn, reader, project)?,
+    ))
+}
+
+/// `vault.projects.goal.get` on a bound handle: the embedded owner reads
+/// under its own proof, any other caller as a reader.
+///
+/// # Errors
+///
+/// As [`project_goal_get_as_owner`] and [`project_goal_get_as_reader`].
+pub fn project_goal_get_embedded(
+    memory: &crate::memory::Memory<'_>,
+    project: EntityId,
+) -> MemoryResult<ProjectGoalView> {
+    match memory.embedded_owner("vault.projects.goal.get") {
+        Ok(owner) => project_goal_get_as_owner(memory.vault(), &owner, project),
+        Err(_) => project_goal_get_as_reader(memory, project),
+    }
+}
+
+fn goal_view(project: EntityId, goal: Option<(EntityId, GoalRecord)>) -> ProjectGoalView {
+    let (goal_claim, record) = match goal {
         Some((claim, record)) => (Some(claim), Some(record)),
         None => (None, None),
     };
-    Ok(ProjectGoalView {
+    ProjectGoalView {
         project_ref: project,
         goal_claim,
         record,
-    })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

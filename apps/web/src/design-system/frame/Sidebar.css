@@ -1,0 +1,487 @@
+/* The sidebar: places only, in the sheet's inks. It has no surface of its
+   own: the frame's column gives it the sidebar's tone, a peek the
+   popover's. Scroll anchoring is off, so a group folding never shifts the
+   list under the pointer (see Sidebar.Group). */
+.sl-sidebar {
+  --sl-sidebar-ink: var(--sl-ink-2);
+  --sl-sidebar-ink-on: var(--sl-ink-1);
+  --sl-sidebar-quiet: var(--sl-ink-3);
+  --sl-sidebar-hover: var(--sl-hover);
+  --sl-sidebar-lit: var(--sl-lit);
+  --sl-sidebar-badge: var(--sl-ink-1);
+  --sl-sidebar-badge-ink: var(--sl-on-primary);
+  --sl-sidebar-rule: var(--sl-rule);
+  /* One icon step: a row's symbol and the gap after it. A child row sits
+     this far in, its symbol under the parent's label. */
+  --sl-sidebar-child-indent: 29px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: var(--sl-sidebar-width, 248px);
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 6px 14px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-anchor: none;
+  scrollbar-width: none;
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar[data-child-indent="none"] {
+  --sl-sidebar-child-indent: 0px;
+}
+
+@media (max-width: 1180px) {
+  .sl-sidebar {
+    --sl-sidebar-width: 220px;
+  }
+}
+
+/* ── head ─────────────────────────────────────────────────────────────── */
+
+.sl-sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px 2px 0 6px;
+}
+
+.sl-sidebar-head > .sl-vault-switch {
+  margin-right: auto;
+}
+
+.sl-sidebar .sl-icon-action {
+  color: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar .sl-icon-action:hover,
+.sl-sidebar .sl-icon-action:focus-visible,
+.sl-sidebar .sl-icon-action[aria-expanded="true"] {
+  color: var(--sl-sidebar-ink-on);
+  background: var(--sl-sidebar-hover);
+}
+
+.sl-sidebar .sl-vault-switch {
+  color: var(--sl-sidebar-ink-on);
+}
+
+.sl-sidebar .sl-vault-switch:hover,
+.sl-sidebar .sl-vault-switch[aria-expanded="true"] {
+  background: var(--sl-sidebar-hover);
+}
+
+.sl-sidebar .sl-vault-switch-chevron {
+  color: var(--sl-sidebar-ink);
+}
+
+/* ── groups ───────────────────────────────────────────────────────────── */
+
+.sl-sidebar-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.sl-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* A group's label is quiet: the figure size, the quiet ink, regular
+   weight. The rows under it carry the weight of the list. */
+.sl-sidebar-group-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  padding: 2px 10px 4px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-figure);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--sl-sidebar-quiet);
+  transition: color 120ms ease;
+}
+
+.sl-sidebar-group-label:hover,
+.sl-sidebar-group-label:focus-visible {
+  color: var(--sl-sidebar-ink-on);
+}
+
+.sl-sidebar-group-chevron {
+  display: block;
+  transition: transform 160ms var(--sl-ease-out);
+}
+
+.sl-sidebar-group-label[aria-expanded="false"] .sl-sidebar-group-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Folds in place: rows 1fr to 0fr on the house curve. */
+.sl-sidebar-group-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms var(--sl-ease-out);
+}
+
+.sl-sidebar-group-fold[data-state="closed"] {
+  grid-template-rows: 0fr;
+}
+
+.sl-sidebar-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── rows ─────────────────────────────────────────────────────────────── */
+
+.sl-sidebar-item {
+  position: relative;
+  --sl-sidebar-indent: 0px;
+}
+
+.sl-sidebar-item[data-level="1"] {
+  --sl-sidebar-indent: var(--sl-sidebar-child-indent);
+}
+
+/* A row's own line: the row and its pin action. */
+.sl-sidebar-line {
+  position: relative;
+}
+
+/* Marks and the count sit on the first line, so a caption that wraps
+   under the label leaves them where they were. Words at the say size on a
+   21 px line and the padding make the 30 px row; with the 1 px gap between
+   rows the pitch is 31 px. */
+.sl-sidebar-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4.5px 10px 4.5px calc(10px + var(--sl-sidebar-indent));
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-say);
+  line-height: 1.4;
+  color: var(--sl-sidebar-ink);
+  text-align: left;
+  text-decoration: none;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+/* The fold clips its rows, so the focus ring sits inside the row. */
+.sl-sidebar-row:focus-visible {
+  outline-offset: -1.5px;
+}
+
+.sl-sidebar-row:hover {
+  color: var(--sl-sidebar-ink-on);
+  background: var(--sl-sidebar-hover);
+}
+
+.sl-sidebar-row[aria-current="page"] {
+  color: var(--sl-sidebar-ink-on);
+  background: var(--sl-sidebar-lit);
+}
+
+.sl-sidebar-item[data-pinnable] > .sl-sidebar-line > .sl-sidebar-row {
+  padding-right: 34px;
+}
+
+/* The symbol box, centred on the first 21 px line; a symbol is 17 px at
+   both levels of the tree. */
+.sl-sidebar-row-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1.5px;
+  color: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar-row-mark > .sl-icon {
+  width: 17px;
+  height: 17px;
+}
+
+/* The words: the name (the label and the shared mark) and then the
+   caption at the right. When both do not fit on one line, the caption
+   wraps under the label; only a label too long for a line of its own
+   truncates, and a caption truncates only on its own line. */
+.sl-sidebar-row-words {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 11px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sl-sidebar-row-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 0 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sl-sidebar-row-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-sidebar-row-shared {
+  display: block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  overflow: visible;
+  color: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar-row-shared path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+
+.sl-sidebar-row-caption {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sl-sidebar-quiet);
+}
+
+.sl-sidebar-row-count {
+  flex: none;
+  min-width: 22px;
+  height: 20px;
+  margin-top: 0.5px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-sidebar-badge);
+  color: var(--sl-sidebar-badge-ink);
+  line-height: 20px;
+  text-align: center;
+}
+
+.sl-sidebar-row-words:has(> .sl-sidebar-row-caption) + .sl-sidebar-row-count {
+  margin-left: 8px;
+}
+
+.sl-sidebar-row-pin {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.sl-sidebar-line:hover > .sl-sidebar-row-pin,
+.sl-sidebar-line:focus-within > .sl-sidebar-row-pin {
+  opacity: 1;
+}
+
+/* ── child rows: one level under a row ─────────────────────────────────── */
+
+.sl-sidebar-children,
+.sl-sidebar-rest-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sl-sidebar-children {
+  margin-top: 1px;
+}
+
+/* Child rows past the first five fold in place, 0fr to 1fr. */
+.sl-sidebar-rest {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 220ms var(--sl-ease-out);
+}
+
+.sl-sidebar-rest[data-state="closed"] {
+  grid-template-rows: 0fr;
+}
+
+.sl-sidebar-rest-rows {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* `show more` sits where a child row's label starts; the folded count
+   ends the line as a figure. */
+.sl-sidebar-more {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 10px 3px calc(10px + var(--sl-sidebar-child-indent) + 18px + 11px);
+}
+
+.sl-sidebar .sl-sidebar-more .sl-verb {
+  color: var(--sl-sidebar-ink);
+}
+
+.sl-sidebar .sl-sidebar-more .sl-verb:hover,
+.sl-sidebar .sl-sidebar-more .sl-verb:focus-visible {
+  color: var(--sl-sidebar-ink-on);
+}
+
+.sl-sidebar-more .sl-figure {
+  color: var(--sl-sidebar-quiet);
+}
+
+/* ── reordering ───────────────────────────────────────────────────────── */
+
+/* While a drag is on, the neighbours slide to open the gap. */
+.sl-sidebar-groups[data-reorder-active] > .sl-sidebar-group:not([data-dragging]),
+.sl-sidebar-group-list[data-reorder-active] > .sl-sidebar-item:not([data-dragging]) {
+  transition: transform 150ms var(--sl-ease-out);
+}
+
+.sl-sidebar-group[data-dragging],
+.sl-sidebar-item[data-dragging] {
+  position: relative;
+  z-index: 1;
+  cursor: grabbing;
+}
+
+.sl-sidebar-item[data-dragging] > .sl-sidebar-line > .sl-sidebar-row {
+  color: var(--sl-sidebar-ink-on);
+  background: var(--sl-sidebar-lit);
+}
+
+.sl-sidebar-group[data-dragging] > .sl-sidebar-group-label {
+  color: var(--sl-sidebar-ink-on);
+}
+
+/* Moves said in words for a screen reader. */
+.sl-sidebar-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── collapsed to icons: symbols only, names on hover and focus ────────────── */
+
+.sl-sidebar[data-collapsed] {
+  --sl-sidebar-width: 60px;
+  align-items: center;
+  padding: 14px 6px 14px 10px;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-head {
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 0 0;
+}
+
+.sl-sidebar[data-collapsed] .sl-vault-switch,
+.sl-sidebar[data-collapsed] .sl-sidebar-row-shared,
+.sl-sidebar[data-collapsed] .sl-sidebar-row-caption,
+.sl-sidebar[data-collapsed] .sl-sidebar-row-pin,
+.sl-sidebar[data-collapsed] .sl-sidebar-children {
+  display: none;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-groups,
+.sl-sidebar[data-collapsed] .sl-sidebar-group {
+  align-items: center;
+  width: 100%;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-group-label {
+  align-self: center;
+  width: 18px;
+  height: 1px;
+  margin: 2px auto 6px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--sl-sidebar-rule);
+  color: transparent;
+  pointer-events: none;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-group-chevron {
+  display: none;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-group-list {
+  align-items: center;
+  overflow: visible;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-row {
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  padding: 3px 0;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-row-mark {
+  margin-top: 0;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-row-words,
+.sl-sidebar[data-collapsed] .sl-sidebar-row-name {
+  display: contents;
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-row-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.sl-sidebar[data-collapsed] .sl-sidebar-row-count {
+  position: absolute;
+  top: -3px;
+  right: -2px;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 4px;
+  line-height: 17px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-sidebar-group-fold,
+  .sl-sidebar-rest,
+  .sl-sidebar-group-chevron,
+  .sl-sidebar-row,
+  .sl-sidebar-row-pin,
+  .sl-sidebar-group-label,
+  .sl-sidebar-groups[data-reorder-active] > .sl-sidebar-group:not([data-dragging]),
+  .sl-sidebar-group-list[data-reorder-active] > .sl-sidebar-item:not([data-dragging]) {
+    transition: none;
+  }
+}

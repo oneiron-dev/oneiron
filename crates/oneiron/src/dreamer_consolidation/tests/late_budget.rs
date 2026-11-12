@@ -57,7 +57,7 @@ fn run_case(case: LateCall) -> Result<()> {
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x7a, 1);
     let turns = [
-        seed_turn(&vault, &conversation, "user", "call me Oleksii", 10),
+        seed_turn(&vault, &conversation, "user", "call me Owen", 10),
         seed_turn(&vault, &conversation, "user", "or Alex", 11),
     ];
     let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
