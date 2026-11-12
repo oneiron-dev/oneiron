@@ -177,7 +177,8 @@ fn journal_member_in_txn(
         };
         let vault = memory.vault();
         let id = EntityId::from_hex(claim_ref)?;
-        let body = if vault.store.port_deletion_state(txn, &id)?.deleted {
+        let state = crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?;
+        let body = if state.deleted {
             None
         } else {
             vault.get_claim_in_txn(txn, &id)?
