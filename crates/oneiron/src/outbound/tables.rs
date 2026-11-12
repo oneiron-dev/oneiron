@@ -12,8 +12,8 @@ crate::side_table::side_tables! {
     UNDO_SEND_FIRST_AGENT_SEND: VaultMeta b"outbound:undo_send_first_agent_send:v1:" Named Engine
         [restore: content] [family: unclassified] [tier: canonical];
     /// One send in its undo-send window (DEC-0006 #undo-send): the attempt the window holds
-    /// Scheduled and the instant it goes. Dropped by the owner's undo, and once the window has
-    /// closed. Key: id16 (the connector-send TASK).
+    /// Scheduled and the instant it goes. Dropped by an undo, and once the window has closed.
+    /// Key: id16 (the connector-send TASK).
     UNDO_SEND_HELD: VaultMeta b"outbound:undo_send_held:v1:" Named Engine
         [restore: content] [family: unclassified] [tier: canonical];
     /// The owner's override of where one reader's weave digest is sent (FIX 1262): off, or
