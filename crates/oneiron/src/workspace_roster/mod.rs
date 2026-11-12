@@ -263,6 +263,7 @@ pub(crate) use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{
     ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
 };
