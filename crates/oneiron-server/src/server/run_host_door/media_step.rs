@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use oneiron::attempt_queue::AttemptRecord;
-use oneiron::llm::DurableStepContext;
+use oneiron::llm::{DurableStepContext, StepSpendScope};
 use oneiron::{EntityId, Vault, WriteActor};
 
 #[derive(Clone)]
@@ -14,6 +14,9 @@ pub(crate) struct RunMediaStep {
     run_id: Option<String>,
     actor: WriteActor,
     subject: EntityId,
+    /// The run's spend scope, read before its meter's guard: a spent media
+    /// step parks on the scope whose top-up gives it room, or refuses typed.
+    spend_scope: Option<StepSpendScope>,
     trapped: Arc<AtomicBool>,
 }
 
@@ -23,6 +26,7 @@ impl RunMediaStep {
         attempt: &AttemptRecord,
         actor: WriteActor,
         subject: EntityId,
+        spend_scope: Option<StepSpendScope>,
     ) -> Self {
         Self {
             vault: Arc::clone(vault),
@@ -30,6 +34,7 @@ impl RunMediaStep {
             run_id: attempt.run_id.clone(),
             actor,
             subject,
+            spend_scope,
             trapped: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -43,7 +48,7 @@ impl RunMediaStep {
             subject: self.subject,
             deadline: None,
             now_ms: self.vault.now_recorded_at().saturating_mul(1_000),
-            spend_scope: None,
+            spend_scope: self.spend_scope.clone(),
             wake_pass_bound: false,
         }
     }

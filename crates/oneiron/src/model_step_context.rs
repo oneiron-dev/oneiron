@@ -27,8 +27,9 @@ pub struct DurableStepContext<'a> {
     /// envelope on finished outcomes. Admitted calls may finish after expiry.
     pub deadline: Option<&'a WakePassDeadline>,
     pub now_ms: u64,
-    /// The spend scope whose `guard_for_scope` guard the step runs under, when its host built one,
-    /// with the cap generation its host read before it built that guard.
+    /// The spend scope the step spends under, when its host bound one (a run step's or a media
+    /// step's `guard_for_scope` guard, a free-time item's scope under its pass), with the cap
+    /// generation its host read before it built the step's guards.
     pub spend_scope: Option<StepSpendScope>,
     /// Whether the step's guard is its wake pass's guard, or a meter lent under it: the host
     /// rebuilds that guard each pass, so a spent budget parks the step for a later pass with room.

@@ -433,10 +433,7 @@ impl ConsolidationExecutor<'_> {
                     return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
                 }
                 Err(error) => {
-                    return Ok(charges.park_for(
-                        &error.to_string(),
-                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-                    ));
+                    return Ok(charges.end_on_step_error(&error.to_string(), &error));
                 }
             };
             if ctx.deadline.expired() {

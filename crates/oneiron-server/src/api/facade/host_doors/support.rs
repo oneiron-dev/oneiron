@@ -95,9 +95,24 @@ pub(super) async fn rendered_in_step(
             Some(step) => {
                 let ctx = step.context();
                 let admitted = std::sync::atomic::AtomicBool::new(false);
-                match oneiron::llm::call_media_as_step(&ctx, request, &admitted, |request| {
-                    media.run_admitted_for_step(run, request, voices.as_ref(), replay, &admitted)
-                })
+                // What the run's line reserves for one call, in the tokens
+                // its scope's meter counts: what a spent line refused.
+                let asked_units = Some(run.declaration().budget().reserve_units);
+                match oneiron::llm::call_media_as_step(
+                    &ctx,
+                    request,
+                    asked_units,
+                    &admitted,
+                    |request| {
+                        media.run_admitted_for_step(
+                            run,
+                            request,
+                            voices.as_ref(),
+                            replay,
+                            &admitted,
+                        )
+                    },
+                )
                 .await
                 {
                     Ok(oneiron::llm::MediaStepOutcome::Finished(response)) => Ok(response),
@@ -108,6 +123,16 @@ pub(super) async fn rendered_in_step(
                     Err(oneiron::llm::DurableStepError::Llm(error)) => Err(error),
                     Err(oneiron::llm::DurableStepError::Engine(error)) => {
                         return Err(MemoryError::from(error));
+                    }
+                    // The run's spend scope refused the call for good (a
+                    // closed boundary, a ceiling), or no write refills its
+                    // line: the line is spent, typed, and nothing parked.
+                    Err(refused @ oneiron::llm::DurableStepError::BudgetRefused(_)) => {
+                        return Err(MemoryError::new(
+                            MEMORY_CODE_BUDGET_SPENT,
+                            refused.to_string(),
+                            &[RUN_LINE_SPENT],
+                        ));
                     }
                     Err(_) => {
                         return Err(MemoryError::new(

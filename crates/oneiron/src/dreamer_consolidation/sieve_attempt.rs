@@ -235,10 +235,7 @@ impl ConsolidationExecutor<'_> {
                     {
                         charges.record_usage(usage);
                     }
-                    return Ok(charges.park_for(
-                        &error.to_string(),
-                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-                    ));
+                    return Ok(charges.end_on_step_error(&error.to_string(), &error));
                 }
             };
             // A question the decision clock cut keeps its memo: the attempt

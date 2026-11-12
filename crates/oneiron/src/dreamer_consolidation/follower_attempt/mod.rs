@@ -359,10 +359,9 @@ impl ConsolidationExecutor<'_> {
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
             Err(error) => {
-                return Ok(Some(charges.park_for(
-                    "sieve follower step failed",
-                    crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-                )));
+                return Ok(Some(
+                    charges.end_on_step_error("sieve follower step failed", &error),
+                ));
             }
         };
         let Ok(readings) = output::decode(&response, &labels, &candidates) else {
@@ -546,10 +545,9 @@ impl ConsolidationExecutor<'_> {
                 hand_back_owed(leg, charges)
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => Err(error),
-            Err(error) => Ok(Some(charges.park_for(
-                "sieve follower keyframe step failed",
-                crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-            ))),
+            Err(error) => Ok(Some(
+                charges.end_on_step_error("sieve follower keyframe step failed", &error),
+            )),
         }
     }
 }

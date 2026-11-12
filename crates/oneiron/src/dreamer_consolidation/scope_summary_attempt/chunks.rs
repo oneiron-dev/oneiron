@@ -216,7 +216,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                                 continue 'layouts;
                             }
                             return Ok(
-                                charges.park_for(&other.to_string(), crate::dreamer_runner::dreamer_park_cause_of_step(&other))
+                                charges.end_on_step_error(&other.to_string(), &other)
                             );
                         }
                     };

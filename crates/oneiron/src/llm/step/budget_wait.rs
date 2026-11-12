@@ -14,7 +14,8 @@ use super::trap_binding::trap_binding_read_in_txn;
 use super::types::{DreamerTrapKind, TrapRef};
 
 /// Signals and consumes budget traps whose named scope now covers the units their reservation
-/// asked of it.
+/// asked of it: a spend scope's `Budget` wait, and a `PassBudget` wait that names the scope (a
+/// free-time item's step, whose pass also wakes it).
 pub(crate) fn wake_budget_traps_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -29,12 +30,13 @@ pub(crate) fn wake_budget_traps_in_txn(
         let Some(wait) = &record.wait else {
             continue;
         };
-        let DreamerParkWait::Budget {
-            scope: waiting_scope,
-            asked_units,
-        } = &wait.wait
-        else {
-            continue;
+        let (waiting_scope, asked_units) = match &wait.wait {
+            DreamerParkWait::Budget { scope, asked_units }
+            | DreamerParkWait::PassBudget {
+                scope: Some(scope),
+                asked_units,
+            } => (scope, asked_units),
+            _ => continue,
         };
         if waiting_scope != scope {
             continue;
@@ -109,7 +111,7 @@ fn wake_pass_budget_traps_in_txn(
         let Some(wait) = &record.wait else {
             continue;
         };
-        let DreamerParkWait::PassBudget { asked_units } = &wait.wait else {
+        let DreamerParkWait::PassBudget { asked_units, .. } = &wait.wait else {
             continue;
         };
         parks.push((*asked_units, wait.lease_generation, record));
