@@ -5,6 +5,7 @@
   "output": "crate::memory::code_doors::CodeProposalSubmitted",
   "call": "memory.code_proposal_resolve_as(&memory.embedded_owner(\"vault.code.proposal_resolve\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

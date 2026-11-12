@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::ProjectGoalRevisionsView",
   "call": "memory.projects_goal_revisions(crate::EntityId::from_hex(&input.project_ref)?)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

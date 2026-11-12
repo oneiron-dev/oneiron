@@ -5,6 +5,7 @@
   "output": "crate::note::NoteEditorClosed",
   "call": "memory.close_note_editor(&input)?",
   "scope": "Read",
+  "act_class": "reversible_work",
   "admission": {
     "lane_record_scope": true
   },

@@ -5,6 +5,7 @@
   "output": "crate::memory::identity_doors::PersonCreated",
   "call": "memory.people_create_as_owner(&memory.embedded_owner(\"vault.people.create\")?, &input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "host_door": true,
   "host_door_caller": true,
   "host_door_lists": true,

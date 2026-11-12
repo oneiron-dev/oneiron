@@ -3,6 +3,7 @@
   "input": "crate::code_run::LeaderSplitInput",
   "output": "crate::code_run::LeaderSplitOutput",
   "scope": "Write",
+  "act_class": "spawn",
   "context": "run",
   "effect": "LeaderSplit",
   "host": {

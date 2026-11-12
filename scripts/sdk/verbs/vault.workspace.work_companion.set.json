@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::WorkCompanionPolicy",
   "call": "memory.workspace_work_companion_set(&input.workspace_ref, input.policy)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

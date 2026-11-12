@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::merge_queue_doors::CodeCheckReceiptView>",
   "call": "memory.merge_queue_check_receipt_as(&memory.embedded_owner(\"vault.code.checks.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
