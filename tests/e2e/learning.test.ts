@@ -175,6 +175,10 @@ suite.todo(test, "LEARNING-03", "waits on its arming PR: the OF-366 authoring bi
 // completion/trigger. The Coach seal checker IS wired; do not call it absent.
 // A public tasks.update DONE through a host-bound run stamps that run's executor
 // model on the held try (LEARN-CRITIC Q2), so a public completion can be sealed.
+// vault.critic.outcome records an owner verdict, or a completed directed recheck an
+// agent names for its own review, as a critique's anchored outcome; and
+// vault.critic.findings reads the review with its outcomes and its critics' cells,
+// provenance cut to the review (LEARN-CRITIC Q3).
 // Existing vault.critic.review takes CriticReviewSubmit and returns triage,
 // critique artifacts and decision receipts. Learned-setting seed/pin is public.
 // Set up two independently anchored critic histories, same task type and axis.
