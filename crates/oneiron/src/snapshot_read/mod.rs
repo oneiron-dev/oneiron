@@ -19,6 +19,7 @@ mod settings_doors;
 pub(crate) mod skill_reader;
 mod snapshot;
 mod source_version;
+mod strength_observations;
 pub(crate) mod tables;
 
 pub use evidence_spans::{
@@ -47,6 +48,10 @@ pub use snapshot::{
     SnapshotPageRequest, SnapshotRow, snapshot_open, snapshot_page, validate_snapshot_open,
 };
 pub use source_version::{SourceVersion, SourceVersionCheck};
+pub use strength_observations::{
+    ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource, StrengthObservationsPage,
+    StrengthObservationsPageRequest, strength_observations_page,
+};
 // The integration tests' doors name a cited source's version as a caller's
 // read serves it (untangle 6.7a).
 #[cfg(oneiron_test_support)]
