@@ -31,7 +31,7 @@ use oneiron::channel_identity_provider::native_mail::{
 use oneiron::channel_identity_provider::stalwart::{
     NativeMailReputationReport, NativeMailSignalSource, StalwartConfig,
 };
-use oneiron::channel_identity_provider::{LINE_CHANNEL, LineChat, LineChatKind};
+use oneiron::channel_identity_provider::{LineChat, LineChatKind};
 use oneiron::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF;
 use oneiron::code_revision::CodeSessionRun;
 use oneiron::consent::AuthenticatedOwner;
@@ -45,10 +45,11 @@ use oneiron::federation::Scope;
 use oneiron::git_wire::{GitOid, GitRefName, GitWireRepo, GitWireRepoIdentity};
 use oneiron::origin::publication::OriginPublicationRequest;
 use oneiron::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::surface_event::PROVIDER_EVENT_REF_PREFIX;
 use oneiron::task_verb::HostBinding;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::claim_facet_birth as door;
@@ -68,6 +69,11 @@ use serde_json::json;
 
 /// The shipped default policy pack, whose rules a fixture extends.
 const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
+
+/// The provider-inbound MACHINE's derivation domain, the engine's
+/// `derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR`, spelled out as
+/// `tests/summary_as_record_permit.rs` spells its landing writer's.
+const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inbound-actor:v1";
 
 /// The rooted vault's fixed clock: no wall time, no sleeps.
 const ROOTED_T0: u64 = 1_780_000_000;
@@ -338,22 +344,33 @@ fn line_chat_observation_is_born_in_a_stored_facet() {
     let (_directory, vault) = fresh_vault();
     let destination = format!("U{}", "2".repeat(32));
     let chat = LineChat::new(LineChatKind::Group, format!("C{}", "1".repeat(32)));
-    // As the LINE webhook does: the join event is archived first, which
-    // stores the provider-inbound MACHINE the observation is about.
-    let event = json!({
-        "destination": destination,
-        "event": { "type": "join", "webhookEventId": "line-join-1" },
-    });
-    let archive = vault
-        .archive_provider_event_with_receipt(
-            LINE_CHANNEL,
-            "line-join-1",
-            &serde_json::to_vec(&event).expect("LINE event encode"),
+    // The provider-inbound MACHINE the observation is about, stored with the
+    // body `archive_provider_event` gives it. The archive call itself is
+    // refused on this rooted vault: its blob version write as that MACHINE
+    // carries no signature (FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED]).
+    let inbound =
+        EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[]).expect("provider-inbound id");
+    let mut machine_body = Vec::new();
+    rmpv::encode::write_value(
+        &mut machine_body,
+        &Value::Map(vec![(
+            Value::from("name"),
+            Value::from("provider event inbound"),
+        )]),
+    )
+    .expect("MACHINE body encode");
+    vault
+        .put_entity(
+            &inbound,
+            ENTITY_TYPE_MACHINE,
+            TimeRange { start: 14, end: 14 },
             14,
+            &machine_body,
         )
-        .expect("the LINE join event is archived");
+        .expect("the provider-inbound MACHINE is stored");
+    let payload_ref = format!("{PROVIDER_EVENT_REF_PREFIX}{}@1", EntityId::now().to_hex());
     let claim = vault
-        .observe_line_chat_from_archive(&destination, &chat, &archive, true, 14)
+        .observe_line_chat(&destination, &chat, &payload_ref, 14)
         .expect("a LINE chat is observed");
     claim_in_stored_facet(&vault, &claim);
 }
