@@ -4,7 +4,11 @@
 //! under an id its bytes do not derive, stored with the write door's scan off and
 //! holding a token, answers none, while its clean twin is served its stored bytes
 //! unchanged. An unmarked container whose member holds a token answers none too,
-//! as a withheld row does. Only public doors are used, so the file builds on main.
+//! as a withheld row does. The seam every masked serve door reads through, the
+//! public `Vault::sighted_asset_bytes`, withholds unmarked plain bytes that hold a
+//! token from a masked reader, as it withholds a container's live key, while the
+//! owner reads them as stored. Only public doors are used, so the file builds on
+//! main.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test native_raw_entity_body_release_scan`
 #![cfg(oneiron_test_support)]
@@ -20,11 +24,12 @@ use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{Memory, MemoryError};
 use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_ASSET;
+use oneiron::secret_custody::SecretSight;
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange,
-    Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, ErrorKind,
+    TimeRange, Vault, VaultConfig,
 };
 
 const RAW_BODY_TEST_NOW: u64 = 1_700_000_000;
@@ -222,5 +227,45 @@ fn native_raw_entity_body_withholds_an_unmarked_container_whose_member_holds_a_k
     assert!(
         matches!(served, Ok(None)),
         "an unmarked container whose member holds a token answers none, as a withheld row does; got {shown:?} (Ok(Some(n)) is the served length)",
+    );
+}
+
+/// The seam itself, through the public `Vault::sighted_asset_bytes` that the
+/// hosted serve, the artifact exports and reads, the organ lend and graph-fs
+/// all read through: plain bytes that hold a token and carry no mark are
+/// withheld from a masked reader as `MaskedCopyWithheld`, as a container's live
+/// key is. The owner reads them as stored, and clean plain bytes pass unchanged.
+#[test]
+fn sighted_asset_bytes_withholds_unmarked_plain_bytes_that_hold_a_key() {
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
+    let token = raw_body_token();
+    let keyed = format!("deploy token {token}\n").into_bytes();
+    let clean = b"deploy notes with no key\n".to_vec();
+    assert_eq!(
+        vault
+            .sighted_asset_bytes(keyed.clone(), SecretSight::Owner)
+            .expect("the owner reads"),
+        keyed,
+        "the owner reads the stored bytes",
+    );
+    assert_eq!(
+        vault
+            .sighted_asset_bytes(clean.clone(), SecretSight::Masked)
+            .expect("clean bytes read"),
+        clean,
+        "clean plain bytes pass unchanged",
+    );
+    let masked = vault.sighted_asset_bytes(keyed, SecretSight::Masked);
+    assert!(
+        !masked
+            .as_ref()
+            .is_ok_and(|bytes| raw_body_holds(bytes, token.as_bytes())),
+        "FAILBEFORE NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS: a masked reader is served no unmarked plain bytes that hold the token",
+    );
+    let shown = masked.as_ref().map(Vec::len).map_err(|error| error.kind());
+    assert!(
+        matches!(shown, Err(ErrorKind::MaskedCopyWithheld)),
+        "unmarked plain bytes that hold a token are withheld as MaskedCopyWithheld; got {shown:?} (Ok(n) is the served length)",
     );
 }
