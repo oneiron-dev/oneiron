@@ -101,7 +101,8 @@ use codec::*;
 use companion_bind::*;
 use steps::*;
 
-pub use self::house_link::parse_house_role;
+pub(crate) use self::codec::companion_principal_in_txn;
+pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
 pub(crate) use self::house_link::{
     erase_house_link_actor_in_txn, house_link_receipts, house_role_lines_in_txn,
     is_house_link_grant_in_txn,
@@ -263,6 +264,7 @@ pub(crate) use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{
     ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
 };
@@ -271,6 +273,7 @@ pub use rooms::{
     OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
+pub use rooms::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
@@ -287,6 +290,8 @@ pub(crate) use rooms::room_group_project_in;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
 pub(crate) use rooms::task_binding_turns_in;
+pub(crate) use rooms::task_thread_room_in;
+pub(crate) use rooms::turn_room_in;
 pub use rooms::{ACTOR_ERASE_OFFER_BINDING, ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(crate) use rooms::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,

@@ -5,6 +5,7 @@
   "output": "crate::consent_graduation::api::GraduationChanged",
   "call": "crate::consent_graduation::api::demote_own(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "section": false,
   "openapi": true
 }

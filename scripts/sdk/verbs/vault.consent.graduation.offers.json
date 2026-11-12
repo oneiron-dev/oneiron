@@ -5,6 +5,7 @@
   "output": "Vec<crate::consent_graduation::api::GraduationOffer>",
   "call": "crate::consent_graduation::api::offers(memory.vault(), &memory.embedded_owner(\"vault.consent.graduation.offers\")?)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::DreamerWakeView>",
   "call": "memory_requests::dreamer_wake_status(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

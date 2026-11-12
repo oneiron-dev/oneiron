@@ -17,7 +17,7 @@ use std::time::Instant;
 pub(super) type Res<T> = Result<T, String>;
 
 /// The run manifest's schema; `deck_gate.py` refuses any other.
-pub(super) const RUN_SCHEMA: &str = "oneiron.deck-gate-run/1";
+pub(super) const RUN_SCHEMA: &str = "oneiron.deck-gate-run/2";
 /// The run manifest's name inside the run directory.
 pub(super) const MANIFEST: &str = "manifest.json";
 
@@ -239,12 +239,13 @@ pub(super) struct Excluded {
     pub(super) reason: String,
 }
 
+/// The Office half's pins. The run names no account: the roles that may
+/// render, and their font approvals, are in the pinned `environment.json`.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct OfficeRef {
     pub(super) scripts: Vec<FileRef>,
     pub(super) timeout_seconds: u64,
     pub(super) observer: String,
-    pub(super) owner_accounts: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -404,7 +405,6 @@ impl Run {
                 scripts,
                 timeout_seconds: cases.office.timeout_seconds,
                 observer: cases.office.observer.clone(),
-                owner_accounts: cases.office.owner_accounts.clone(),
             },
         };
         self.journal = Some(Journal::create(&self.out, header)?);

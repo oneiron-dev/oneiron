@@ -376,6 +376,9 @@ pub struct NapiEntityRefReceipt {
     pub id_hex: String,
     /// Facade write marker.
     pub receipt_ref: String,
+    /// For an agent's AGENT_DEF put, what its author writer made of it
+    /// (ARCH-0053:20): `active` or `proposed`.
+    pub agent_definition_disposition: Option<String>,
 }
 
 /// One habit check-in append.

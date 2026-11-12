@@ -4,6 +4,7 @@
   "input": "crate::memory::consolidation::ConsolidationEvidenceRequest",
   "output": "crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>",
   "scope": "Read",
+  "act_class": "read",
   "call": "memory.consolidation_evidence_as_owner(&memory.embedded_owner(\"vault.consolidation.evidence\")?, &input)?",
   "host_door": true,
   "host_door_lists": true,

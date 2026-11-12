@@ -5,6 +5,7 @@
   "output": "Option<crate::llm::manifest::ModelManifest>",
   "call": "crate::task_verb::sdk::read_model_manifest(memory)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,

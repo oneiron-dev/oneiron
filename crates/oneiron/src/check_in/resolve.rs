@@ -1,6 +1,8 @@
 //! One check-in: power, mode and rung 0, then the unsure test (ARCH-0082
 //! #composing and #ladder).
 
+use serde::{Deserialize, Serialize};
+
 use super::act_class::{ActClass, ModelCheck};
 use super::mode::CheckInMode;
 use super::role_preset::{RoleDefault, RolePreset};
@@ -80,7 +82,8 @@ pub enum GoReason {
 }
 
 /// Why an act waits for a proof from the ladder.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WaitReason {
     /// The mode is `AlwaysAsk`.
     AlwaysAsk,
@@ -92,12 +95,26 @@ pub enum WaitReason {
     ModelNotAllowed,
 }
 
+impl WaitReason {
+    /// The receipt token.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AlwaysAsk => "always_ask",
+            Self::Unsure => "unsure",
+            Self::UnsureTestFailed => "unsure_test_failed",
+            Self::ModelNotAllowed => "model_not_allowed",
+        }
+    }
+}
+
 /// The answer to one check-in.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CheckInAnswer {
     Go(GoReason),
-    /// The act waits. The ladder above rung 1 and the proposal handle are a
-    /// later build; until then the caller holds the act on its own surface.
+    /// The act waits for a proof from the ladder above rung 1. This answer is
+    /// pure; the caller opens the durable pending check-in, which holds the
+    /// handle, the rungs and the waits (`open_pending_check_in_in_txn`).
     Wait(WaitReason),
     Propose,
     Absent,

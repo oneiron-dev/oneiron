@@ -1,11 +1,13 @@
 //! ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster in
 //! its owning record's order (FIX 10567), then the rules the caller reads in
-//! it by claim id.
+//! it by claim id, then the room's shared pins the caller sees by target id
+//! (ROOM-SCOPED-PINS P2).
 //!
 //! Every read takes the whole room again under the caller's current read:
 //! the whole roster gives the terms, every admitted rule folds into the
-//! posture, and only then is a page cut, so a later restrictive rule is never
-//! hidden behind an earlier page. Stretches, scope, posture, host and offers ride every
+//! posture, every pin's target is admitted, and only then is a page cut, so a
+//! later restrictive rule is never hidden behind an earlier page, and no page
+//! or count reflects a withheld pin. Stretches, scope, posture, host and offers ride every
 //! page whole. No count of members or rules refuses a room. The page sizes
 //! pace the output and the rule scan, and a caller asking for more gets it by
 //! continuing (CALLS "256-row room pages, 1000-row loop pages, continuing to
@@ -24,7 +26,7 @@ use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
-/// Rows one ROOM page emits, roster members and rules together.
+/// Rows one ROOM page emits, roster members, rules and pins together.
 const ROOM_PAGE_ROWS: usize = 256;
 
 /// Rule ids one step of a room's rule scan reads; the scan steps on to the
@@ -34,9 +36,10 @@ const ROOM_SCAN_PAGE: usize = 1000;
 /// The page kind a ROOM cursor is bound to.
 const ROOM_PAGE_KIND: &str = "context_board.room";
 
-/// The cursor phase of a roster member and of a rule.
+/// The cursor phase of a roster member, of a rule and of a pin.
 const PHASE_ROSTER: u8 = 0;
 const PHASE_RULES: u8 = 1;
+const PHASE_PINS: u8 = 2;
 
 /// One page of a room's ROOM section.
 #[derive(Debug, Clone)]
@@ -48,6 +51,9 @@ pub struct RoomSectionPage {
     pub roster_total: u64,
     /// Rules the caller reads in the room, on every page together.
     pub rules_total: u64,
+    /// The room's shared pins the caller sees, on every page together; a
+    /// withheld pin is not counted.
+    pub pins_total: u64,
     /// Continues the stream past this page; `None` once `end`.
     pub next_cursor: Option<String>,
     /// No row of the room is past this page.
@@ -87,8 +93,15 @@ impl RoomSectionPage {
         people: &PeopleView<'_>,
         invite_cap: usize,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
+        // A room with no pin the caller sees keeps the row it had before
+        // pins.
+        let pins = if self.pins_total > 0 {
+            format!(" pins={}", self.pins_total)
+        } else {
+            String::new()
+        };
         let mut page = format!(
-            "page: members={} rules={} end={}",
+            "page: members={} rules={}{pins} end={}",
             self.roster_total, self.rules_total, self.end
         );
         if let Some(cursor) = &self.next_cursor {
@@ -100,7 +113,8 @@ impl RoomSectionPage {
     }
 }
 
-/// Where a page starts: past the roster's first members, or past this rule.
+/// Where a page starts: past the roster's first members, past this rule,
+/// or past the pin of this target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoomPageAfter {
     /// Past the first `emitted` members in the room's record order, which
@@ -110,6 +124,7 @@ enum RoomPageAfter {
         fence: u64,
     },
     Rule(EntityId),
+    Pin(EntityId),
 }
 
 /// The rules a room's scan admitted, with the posture all of them fold into.
@@ -129,6 +144,11 @@ impl Memory<'_> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let rules = self.scan_room_rules(room, &roster, &terms, &read)?;
         let invitable = self.room_invitable(room, &read)?;
+        let pins = self
+            .admitted_room_pins(room, &roster, &terms, None)?
+            .into_iter()
+            .map(|(pin, _)| pin)
+            .collect();
         Ok(RoomSection {
             room,
             stretches: self
@@ -146,6 +166,7 @@ impl Memory<'_> {
             scope,
             posture: rules.posture,
             claims: rules.claims,
+            pins,
             offers: self.rooms_open_offers(room)?,
             receipt: rules.receipt,
             host: None,
@@ -174,7 +195,8 @@ impl Memory<'_> {
 
     /// One page of [`Self::rooms_render_hosted`]: up to 256 (`ROOM_PAGE_ROWS`)
     /// rows of the room's stream past `cursor`, the roster in the room's
-    /// record order and then the rules by claim id. The whole room is read
+    /// record order, then the rules by claim id, then the pins the caller
+    /// sees by target id. The whole room is read
     /// again for every page under the caller's read now; the cursor only says
     /// where the last page stopped. A member cursor names how many members
     /// the stream passed, and holds only while those members still open the
@@ -199,6 +221,8 @@ impl Memory<'_> {
             .map(|claim| Ok((EntityId::from_hex(&claim.claim_ref)?, claim)))
             .collect::<crate::Result<Vec<_>>>()?;
         rules.sort_by_key(|(id, _)| *id);
+        let mut pins = std::mem::take(&mut section.pins);
+        pins.sort_by_key(|pin| pin.target);
         let roster_from = match after {
             None => 0,
             Some(RoomPageAfter::Members { emitted, fence }) => {
@@ -210,17 +234,26 @@ impl Memory<'_> {
                 }
                 emitted
             }
-            Some(RoomPageAfter::Rule(_)) => members.len(),
+            Some(RoomPageAfter::Rule(_) | RoomPageAfter::Pin(_)) => members.len(),
         };
         let rules_from = match after {
             Some(RoomPageAfter::Rule(last)) => rules.partition_point(|(id, _)| *id <= last),
+            Some(RoomPageAfter::Pin(_)) => rules.len(),
+            _ => 0,
+        };
+        let pins_from = match after {
+            Some(RoomPageAfter::Pin(last)) => pins.partition_point(|pin| pin.target <= last),
             _ => 0,
         };
         let roster_to = roster_from + (members.len() - roster_from).min(ROOM_PAGE_ROWS);
         let left = ROOM_PAGE_ROWS - (roster_to - roster_from);
         let rules_to = rules_from + (rules.len() - rules_from).min(left);
-        let end = roster_to == members.len() && rules_to == rules.len();
-        let last = if rules_to > rules_from {
+        let left = left - (rules_to - rules_from);
+        let pins_to = pins_from + (pins.len() - pins_from).min(left);
+        let end = roster_to == members.len() && rules_to == rules.len() && pins_to == pins.len();
+        let last = if pins_to > pins_from {
+            Some(RoomPageAfter::Pin(pins[pins_to - 1].target))
+        } else if rules_to > rules_from {
             Some(RoomPageAfter::Rule(rules[rules_to - 1].0))
         } else if roster_to > roster_from {
             Some(RoomPageAfter::Members {
@@ -235,15 +268,18 @@ impl Memory<'_> {
             .map(|last| encode_room_cursor(&binding, last));
         let roster_total = u64::try_from(members.len()).unwrap_or(u64::MAX);
         let rules_total = u64::try_from(rules.len()).unwrap_or(u64::MAX);
+        let pins_total = u64::try_from(pins.len()).unwrap_or(u64::MAX);
         section.roster = members[roster_from..roster_to].to_vec();
         section.claims = rules
             .drain(rules_from..rules_to)
             .map(|(_, claim)| claim)
             .collect();
+        section.pins = pins.drain(pins_from..pins_to).collect();
         Ok(RoomSectionPage {
             section,
             roster_total,
             rules_total,
+            pins_total,
             next_cursor,
             end,
             members,
@@ -469,7 +505,7 @@ fn fold_receipt(receipt: &mut Option<ScopedReadReceipt>, later: ScopedReadReceip
 }
 
 /// The page a ROOM cursor names, when it was minted under `binding`: a
-/// member cursor carries its roster fence, a rule cursor none.
+/// member cursor carries its roster fence, a rule or pin cursor none.
 fn decode_room_cursor(binding: &[u8; 32], token: &str) -> Option<RoomPageAfter> {
     let cursor = decode_page_cursor(binding, token)?;
     let (&phase, key) = cursor.after.split_first()?;
@@ -482,6 +518,9 @@ fn decode_room_cursor(binding: &[u8; 32], token: &str) -> Option<RoomPageAfter> 
             })
         }
         (PHASE_RULES, None) => Some(RoomPageAfter::Rule(
+            EntityId::from_bytes(<[u8; 16]>::try_from(key).ok()?).ok()?,
+        )),
+        (PHASE_PINS, None) => Some(RoomPageAfter::Pin(
             EntityId::from_bytes(<[u8; 16]>::try_from(key).ok()?).ok()?,
         )),
         _ => None,
@@ -503,6 +542,12 @@ fn encode_room_cursor(binding: &[u8; 32], after: RoomPageAfter) -> String {
         RoomPageAfter::Rule(key) => (
             None,
             std::iter::once(PHASE_RULES)
+                .chain(key.as_bytes().iter().copied())
+                .collect(),
+        ),
+        RoomPageAfter::Pin(key) => (
+            None,
+            std::iter::once(PHASE_PINS)
                 .chain(key.as_bytes().iter().copied())
                 .collect(),
         ),

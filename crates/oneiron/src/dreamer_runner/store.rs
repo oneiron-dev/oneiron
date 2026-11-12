@@ -867,6 +867,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 wtxn,
                 record,
                 super::FreeTimeItemOutcome::Cancelled,
+                None,
                 input.now,
             )?;
             Ok(outcome)
@@ -944,6 +945,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 crate::task_verb::highway_runner::RunnerSettle::Failed {
                     error: input.last_error.as_deref().unwrap_or_default(),
                     retryable: true,
+                    budget_refusal: None,
                 },
                 turn,
             )?;
@@ -995,10 +997,12 @@ impl<'a> DreamerRunnerStore<'a> {
                     crate::task_verb::highway_runner::RunnerSettle::Failed {
                         error: &input.reason,
                         retryable: false,
+                        budget_refusal: input.budget_refusal.as_ref(),
                     },
                     turn.as_ref(),
                 )?;
-                let outcome = crate::ports::JobQueue::port_job_fail(
+                // The typed refusal rides the failed row beside its reason.
+                let outcome = crate::ports::JobQueue::port_job_fail_with_refusal(
                     self.vault,
                     wtxn,
                     FailAttempt {
@@ -1008,6 +1012,7 @@ impl<'a> DreamerRunnerStore<'a> {
                         reason: input.reason,
                         now: input.now,
                     },
+                    input.budget_refusal.clone(),
                 )?;
                 // FIX 1554: as at completion, a failed Coach Issues run's
                 // successor is queued in the commit that settles it.
@@ -1019,6 +1024,7 @@ impl<'a> DreamerRunnerStore<'a> {
                     wtxn,
                     &record,
                     super::FreeTimeItemOutcome::Failed,
+                    input.budget_refusal.as_ref(),
                     input.now,
                 )?;
                 self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
@@ -1311,6 +1317,7 @@ impl<'a> DreamerRunnerStore<'a> {
             wtxn,
             record,
             super::FreeTimeItemOutcome::Cancelled,
+            None,
             now,
         )?;
         self.cleanup_step_receipts_in_txn(wtxn, record.id)
@@ -1366,16 +1373,6 @@ impl<'a> DreamerRunnerStore<'a> {
         attempt_id: AttemptId,
     ) -> Result<bool> {
         Ok(PARKED.get(&self.vault.store, txn, &attempt_id)?.is_some())
-    }
-
-    /// Every attempt that holds a parked row: each keeps its lease until the
-    /// signal it waits on resumes it, so a lease reclaim holds them all.
-    pub(crate) fn parked_ids(&self) -> Result<std::collections::HashSet<AttemptId>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        Ok(PARKED
-            .scan_keys(&self.vault.store, &rtxn, &[])?
-            .into_iter()
-            .collect())
     }
 
     /// The working attempts that hold a parked row, in creation order, each

@@ -753,7 +753,14 @@ pub(crate) fn search_response_with_revisions(
         let mut value = if matches!(view, View::Standard) {
             json!({"id": result.id.to_hex(), "score": result.score})
         } else if decoded {
-            projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
+            projection::project_entity_parts(
+                scoped_read.vault(),
+                &result.id,
+                entity_type,
+                learned_at,
+                &body,
+                view,
+            )
         } else {
             bodies.omitted(&result.id, entity_type, learned_at, &body, view, mode)
         };

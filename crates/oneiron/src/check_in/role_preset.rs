@@ -145,6 +145,7 @@ const UNSURE: RoleDefault = RoleDefault::Mode(CheckInMode::AskWhenUnsure);
 const ASK: RoleDefault = RoleDefault::Mode(CheckInMode::AlwaysAsk);
 const NAMED_GO: RoleDefault = RoleDefault::IfNamed(CheckInMode::NeverAsk);
 const NAMED_ASK: RoleDefault = RoleDefault::IfNamed(CheckInMode::AlwaysAsk);
+const NAMED_UNSURE: RoleDefault = RoleDefault::IfNamed(CheckInMode::AskWhenUnsure);
 const OWN: RoleDefault = RoleDefault::OwnProof;
 const OWN_VETO: RoleDefault = RoleDefault::OwnProofWithVetoWindow;
 const PROPOSE: RoleDefault = RoleDefault::Propose;
@@ -157,21 +158,25 @@ const NA: RoleDefault = RoleDefault::NotApplicable;
 /// only") are grant-scope and proof facts, not modes.
 ///
 /// Rows canon leaves out: `Spawn` carries the shipped fan-out default (ask
-/// when unsure) for every role but Guest; the four floor rows outside the
-/// main table follow the C rule (`AlwaysAsk` for every role but Owner).
+/// when unsure) for every role but Guest; `RoomAdd` is ask when unsure for
+/// every role that adds to rooms, as canon says of an agent's add (a Delegate
+/// only when its Grant names it; a closed room's own ask is a room rule, not
+/// a default); the four floor rows outside the main table follow the C rule
+/// (`AlwaysAsk` for every role but Owner).
 #[rustfmt::skip]
-static ROLE_DEFAULTS: [[RoleDefault; 7]; 19] = [
+static ROLE_DEFAULTS: [[RoleDefault; 7]; 20] = [
     // Columns: Owner, Deputy, Admin, Steward, Member, Delegate, Guest.
     [GO, GO, GO, GO, GO, GO, PROPOSE],                    // ReversibleWork
     [UNSURE, UNSURE, UNSURE, UNSURE, UNSURE, UNSURE, NO_VERB], // Spawn
-    [GO, UNSURE, PROPOSE, PROPOSE, PROPOSE, PROPOSE, NO_VERB], // SpendAboveCap
+    [GO, UNSURE, PROPOSE, PROPOSE, PROPOSE, PROPOSE, NO_VERB], // SpendOverCap
     [GO, UNSURE, ASK, NO_VERB, ASK, NAMED_ASK, NO_VERB],  // OutboundSend
-    [GO, UNSURE, GO, PROPOSE, NO_VERB, NO_VERB, NO_VERB], // AddOrRaiseMember
-    [GO, ASK, GO, PROPOSE, NO_VERB, NO_VERB, NO_VERB],    // RemoveOrDemoteMember
-    [GO, UNSURE, PROPOSE, NO_VERB, NO_VERB, NAMED_ASK, NO_VERB], // LegalPrepareAndSend
+    [UNSURE, UNSURE, UNSURE, UNSURE, UNSURE, NAMED_UNSURE, NO_VERB], // RoomAdd
+    [GO, UNSURE, GO, PROPOSE, NO_VERB, NO_VERB, NO_VERB], // MemberAdd
+    [GO, ASK, GO, PROPOSE, NO_VERB, NO_VERB, NO_VERB],    // MemberRemove
+    [GO, UNSURE, PROPOSE, NO_VERB, NO_VERB, NAMED_ASK, NO_VERB], // LegalSend
     [OWN, ASK, NO_VERB, NO_VERB, NO_VERB, NO_VERB, NO_VERB], // Sign
     [GO, UNSURE, PROPOSE, NO_VERB, NO_VERB, NO_VERB, NO_VERB], // Billing
-    [GO, UNSURE, GO, PROPOSE, GO, NAMED_GO, NO_VERB],     // DeleteItems
+    [GO, UNSURE, GO, PROPOSE, GO, NAMED_GO, NO_VERB],     // Delete
     [OWN_VETO, ASK, NO_VERB, NO_VERB, NO_VERB, NO_VERB, NO_VERB], // VaultDelete
     [OWN_VETO, ASK, PROPOSE, PROPOSE, PROPOSE, PROPOSE, PROPOSE], // Erase
     [OWN, ASK, NO_VERB, NO_VERB, NO_VERB, NO_VERB, NO_VERB], // OwnershipTransfer
@@ -179,6 +184,6 @@ static ROLE_DEFAULTS: [[RoleDefault; 7]; 19] = [
     [OWN, ASK, ASK, ASK, ASK, ASK, ASK],                  // SecurityControlDisable
     [OWN, ASK, ASK, ASK, ASK, ASK, ASK],                  // MassSecretExport
     [OWN, ASK, ASK, ASK, ASK, ASK, ASK],                  // WorldWiden
-    [GO, UNSURE, GO, PROPOSE, PROPOSE, NO_VERB, NO_VERB], // WidenAnothersGrant
-    [NA, ASK, ASK, ASK, ASK, NO_VERB, NO_VERB],           // WidenOwnGrant
+    [GO, UNSURE, GO, PROPOSE, PROPOSE, NO_VERB, NO_VERB], // GrantWiden
+    [NA, ASK, ASK, ASK, ASK, NO_VERB, NO_VERB],           // GrantWidenOwn
 ];

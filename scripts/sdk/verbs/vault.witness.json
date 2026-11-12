@@ -5,6 +5,7 @@
   "output": "crate::memory::WitnessReceipt",
   "call": "memory.witness(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "lands_turn": true,
   "admission": {
     "validate": "crate::memory::caps::check_witness_turn(&input)?;"
