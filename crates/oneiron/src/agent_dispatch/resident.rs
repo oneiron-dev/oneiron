@@ -23,11 +23,13 @@ use std::collections::HashSet;
 
 use self::validation::validate;
 
+mod message_class;
 mod message_wake;
 mod result;
 mod room_wake;
 mod validation;
 
+pub use self::message_class::{MESSAGE_CLASS_ASK_QUEUE, ResidentMessageClassifier};
 pub(super) use self::room_wake::resident_attempt_room_wake_turn;
 pub use self::room_wake::resident_attempt_wakes_for_room;
 
@@ -37,6 +39,11 @@ const PREDICATE: &str = "agent.resident";
 /// (AGM-4 = C). Messages that reach a sleeping resident within it join one
 /// wake.
 pub const RESIDENT_WAKE_HOLD_DEFAULT_SECS: u32 = 3;
+
+/// The digest delay a resident takes when its owner names none: an hour
+/// (AGM-2 = C). A digest message no other landing or wake carries wakes the
+/// resident once it has waited this long.
+pub const RESIDENT_DIGEST_DELAY_DEFAULT_SECS: u32 = 3_600;
 
 /// The most messages, or room turns of one room, one held wake carries. The
 /// rest wake it next, so a burst cannot push a wake's ids past its briefing.
@@ -72,6 +79,11 @@ pub struct ResidentAgentSpec {
     /// ends joins one wake. Room turns hold the same way, room by room. Zero
     /// wakes at the next pass. Scheduling only; it conveys no scope.
     pub wake_hold_secs: u32,
+    /// The digest delay, in seconds (AGM-2 = C): a message classed digest
+    /// while the resident was busy folds into the next landing or wake, and
+    /// wakes the resident itself once its oldest has waited this long. The
+    /// owner sets it on the binding. Scheduling only; it conveys no scope.
+    pub digest_delay_secs: u32,
 }
 
 /// What one inbox pass of a resident did: the wakes it dispatched, and the
@@ -569,7 +581,7 @@ pub(super) fn resident_run_input(
 
 fn encode(spec: &ResidentAgentSpec) -> Value {
     Value::Array(vec![
-        Value::from(2),
+        Value::from(3),
         Value::from(spec.inbox_identity_ref.to_hex()),
         Value::from(spec.home_conversation_ref.to_hex()),
         Value::from(spec.home_message_ref.to_hex()),
@@ -588,14 +600,15 @@ fn encode(spec: &ResidentAgentSpec) -> Value {
             ResidentWakeMode::Manual => "manual",
         }),
         Value::from(spec.wake_hold_secs),
+        Value::from(spec.digest_delay_secs),
     ])
 }
 fn decode(agent: EntityId, value: &Value) -> Result<ResidentAgentSpec> {
     let a = value
         .as_array()
-        .filter(|a| a.len() == 9)
+        .filter(|a| a.len() == 10)
         .ok_or_else(invalid)?;
-    if a[0].as_u64() != Some(2) {
+    if a[0].as_u64() != Some(3) {
         return Err(invalid());
     }
     let text = |index: usize| a[index].as_str().ok_or_else(invalid);
@@ -615,10 +628,14 @@ fn decode(agent: EntityId, value: &Value) -> Result<ResidentAgentSpec> {
         "manual" => ResidentWakeMode::Manual,
         _ => return Err(invalid()),
     };
-    let wake_hold_secs = a[8]
-        .as_u64()
-        .and_then(|secs| u32::try_from(secs).ok())
-        .ok_or_else(invalid)?;
+    let secs = |index: usize| {
+        a[index]
+            .as_u64()
+            .and_then(|secs| u32::try_from(secs).ok())
+            .ok_or_else(invalid)
+    };
+    let wake_hold_secs = secs(8)?;
+    let digest_delay_secs = secs(9)?;
     Ok(ResidentAgentSpec {
         agent_def_ref: agent,
         inbox_identity_ref: entity(1)?,
@@ -636,5 +653,6 @@ fn decode(agent: EntityId, value: &Value) -> Result<ResidentAgentSpec> {
         },
         wake,
         wake_hold_secs,
+        digest_delay_secs,
     })
 }

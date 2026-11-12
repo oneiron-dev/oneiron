@@ -446,9 +446,14 @@ pub const EXECUTOR_FOLD_REQUEST: &[u8] = b"oneiron:executor-fold-request:v1";
 /// (u64 little-endian).
 pub const EXECUTOR_CONTINUATION_CHECKPOINT: &[u8] = b"oneiron:executor-continuation-checkpoint:v1";
 
+/// The message one unsure-interrupt ask decides (`agent_dispatch::resident::message_class`,
+/// AGM-2 = C): its correlation, so each message's ask stands apart. Parts: the message's wake
+/// key.
+pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_message_ask.v1\0";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 68] = [
+pub(crate) const ALL: [&[u8]; 69] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -517,4 +522,5 @@ pub(crate) const ALL: [&[u8]; 68] = [
     REMOVAL_ARCHIVE_OWNER,
     REPO_SECRET_MARK,
     VAD_ANNOTATION_CLAIM,
+    RESIDENT_MESSAGE_ASK,
 ];

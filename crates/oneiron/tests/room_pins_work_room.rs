@@ -292,6 +292,7 @@ fn room_wake_run_works_in_the_waking_room() -> TestResult {
         },
         wake: ResidentWakeMode::AllAddressed,
         wake_hold_secs: 0,
+        digest_delay_secs: oneiron::agent_dispatch::RESIDENT_DIGEST_DELAY_DEFAULT_SECS,
     };
     declare_resident_binding_normal(&vault, &proof)?;
     vault
