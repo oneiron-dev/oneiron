@@ -19,8 +19,11 @@ use crate::registry::{
 pub(crate) struct EngineSeedCensus {
     /// Every seeded (entity type, id) row: policy, machines, owner and
     /// substrate, system agents with their model people, substrates and
-    /// subject claims, bootstrap and pack skills with their content anchors,
-    /// whole-pack sources, hub and descriptors.
+    /// subject claims, bootstrap and pack skills with their content anchors
+    /// and per-SKILL source carriers, whole-pack sources, hub and
+    /// descriptors. A carrier exists only for a clean tree, so the census
+    /// accepts it when present and never requires it. The root project and
+    /// its home room are minted per vault and known by the root pointer.
     pub rows: BTreeSet<(u8, EntityId)>,
     /// Every seeded SKILL id, so a minted provenance claim is known by its
     /// subject and predicate.
@@ -159,8 +162,8 @@ impl EngineSeedIdentities {
     }
 }
 
-/// One seeded skill's rows: the SKILL, its content anchor, and the
-/// structural sets its random-id claims are known by.
+/// One seeded skill's rows: the SKILL, its source carrier, its content
+/// anchor, and the structural sets its random-id claims are known by.
 fn seed_skill(
     seed: &mut BTreeSet<(u8, EntityId)>,
     skills: &mut BTreeSet<EntityId>,
@@ -170,6 +173,10 @@ fn seed_skill(
 ) -> Result<()> {
     seed.insert((ENTITY_TYPE_SKILL, id));
     skills.insert(id);
+    seed.insert((
+        ENTITY_TYPE_ASSET,
+        crate::store::skill_source_carrier::source_carrier_id(&id, &hash)?,
+    ));
     let anchor = crate::skill_hub::skill_content_anchor_entity_id(hash)?;
     seed.insert((ENTITY_TYPE_SKILL_CONTENT_ANCHOR, anchor));
     anchors.insert(anchor);
