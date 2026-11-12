@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub(crate) use crate::gate::fanout_mode::FanoutApprovalMode as ConsultFanOutMode;
+use crate::check_in::CheckInMode;
 
 /// Vault-owned approval knobs. There is no per-peer budget by default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -8,7 +8,7 @@ pub struct ConsultFanOutPolicy {
     /// The exceptional-width check threshold. It only marks the check, which
     /// never holds; `mode` gates every fan-out at any width.
     pub approval_threshold: u32,
-    pub mode: ConsultFanOutMode,
+    pub mode: CheckInMode,
     /// Optional anomaly detector, not a spend cap. Crossings pause visibly.
     pub peer_rate: Option<ConsultFanOutRate>,
     /// The owner-authored actor request rate. Past it a fan-out still lands,

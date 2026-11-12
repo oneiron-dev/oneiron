@@ -139,7 +139,7 @@ fn install_event_type(vault: &Vault, page: EntityId, claim_byte: u8, key: &str) 
         page_ref: page,
         config: event_type_config(key, seeded_id(0xB1), seeded_id(0xB2)),
     };
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         BOOKING_EVENT_TYPE_PREDICATE,
         ClaimSubject::Entity(page),
         encode_event_type_claim_value(&value).unwrap(),
@@ -148,6 +148,11 @@ fn install_event_type(vault: &Vault, page: EntityId, claim_byte: u8, key: &str) 
         ClaimLifecycleStatus::Active,
     )
     .expect("fixture");
+    // FIX 7757: a CLAIM is born under its body's scope facet, which must be a
+    // stored FACET. The constructor's subject-substrate id is a derived id no
+    // PERSON write materialized for this ASSET page, so stamp the vault
+    // default, as the engine's own booking fixtures do.
+    body.scope_facet = vault.default_facet().unwrap();
     vault
         .put_claim(&seeded_id(claim_byte), &body, at(1), 1)
         .unwrap();

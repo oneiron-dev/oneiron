@@ -4,7 +4,7 @@
 crate::side_table::side_tables! {
     /// Native host allocation selection, balances and original holds. Key: ().
     BUDGET_HOST_ACCOUNT: VaultMeta b"budget.host.account.v1\0" Named Engine
-        [restore: live] [family: not_imaged] [tier: canonical]
+        [restore: live] [family: unclassified] [tier: canonical]
         => crate::llm::run_admission::allocation::erase_actor_in_txn;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson
