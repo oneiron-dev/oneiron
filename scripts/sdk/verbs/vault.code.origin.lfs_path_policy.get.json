@@ -5,6 +5,7 @@
   "output": "crate::memory::origin_doors::OriginLfsPathPolicyView",
   "call": "memory.origin_lfs_path_policy_get_as(&memory.embedded_owner(\"vault.code.origin.lfs_path_policy.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
