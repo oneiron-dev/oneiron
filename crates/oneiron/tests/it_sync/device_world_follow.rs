@@ -161,8 +161,10 @@ fn negotiated_world_windows(client: &mut SyncClient, root: &[u8]) -> Vec<WindowK
     worlds
 }
 
-/// The windows `frames` ask the home to promote.
-fn promotion_requests(frames: &[Vec<u8>]) -> Vec<WindowKey> {
+/// The world windows `frames` ask the home to promote. The embedding setup
+/// window's request (OF-370) goes out whatever the device follows, so it is
+/// not counted.
+fn world_promotion_requests(frames: &[Vec<u8>]) -> Vec<WindowKey> {
     let mut keys: Vec<WindowKey> = frames
         .iter()
         .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
@@ -171,6 +173,7 @@ fn promotion_requests(frames: &[Vec<u8>]) -> Vec<WindowKey> {
                 transport::decode_window_sync(&frame[1..]).expect("decode window frame");
             (sub_tag == window_sub_tags::PROMOTION_REQUEST).then(|| WindowKey::new(key))
         })
+        .filter(|key| key.world().is_some())
         .collect();
     keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     keys.dedup();
@@ -270,7 +273,7 @@ fn a_picked_world_syncs_its_full_windows_when_opened() {
     frames.extend(client.handle_server_message(&root).expect("root update"));
     let founder = WindowKey::for_world(at, device.founder);
     assert_eq!(
-        promotion_requests(&frames),
+        world_promotion_requests(&frames),
         vec![founder.clone()],
         "only the picked world's window is asked in full, not the readable \
          world nobody picked nor the world kept on the owner's machines",
@@ -288,7 +291,7 @@ fn a_picked_world_syncs_its_full_windows_when_opened() {
     // The next connect asks for it in its first frames, the root now held.
     let reconnected = selected(&device);
     assert_eq!(
-        promotion_requests(&reconnected.generate_initial_sync()),
+        world_promotion_requests(&reconnected.generate_initial_sync()),
         vec![founder],
         "a reconnect asks again for the followed window's promotion",
     );
