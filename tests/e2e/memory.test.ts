@@ -297,25 +297,20 @@ async function closeWorld(w: World): Promise<void> {
   try { await w.providers.close(); } catch (error) { errors.push(text(error)); }
   if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
 }
-async function setup(id: string): Promise<World> {
+async function setup(id: string, projectRefs: readonly string[] = ["@project-north"]): Promise<World> {
   const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
   const providers = await ScriptedProviders.start({ id: `memory-projects-${id}`, origins: ["decider", "drafter"], steps: [] });
   const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers),
     serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
   await installProjectProposal(engine);
-  // DEFECT (2026-11-12, FIX GOAL-INTAKE-NEVER-DISPATCHED): the house's project question, its drafted
-  // card and the owner's confirm all work on this engine (fleet job 1112-100207-3a74, set bd95597c8afc).
-  // The confirm then dispatches the new project's leader with no parent attempt, and the depth check
-  // refuses that spawn before it is queued (agent_dispatch/dispatch/depth.rs:82-85; the server only
-  // warns "goal-intake interview not dispatched"). MEMORY-01, -02, -05, -07 and -08 stay red at the
-  // project-intake barrier until that fix lands.
-  // DEFECT (2026-11-12, FIX PROJECT-KIND-READS-TYPE-103): with the intake step answered, the minted
-  // project reads back as kind TYPE_103, not PROJECT (fleet job 1112-130158-e1f6, set bd95597c8afc,
-  // diagnostic head e9b312e5d41 without the intake step). The same five cases stay red there next.
+  // Each minted project costs the house three agent runs (decide, draft, goal intake), about 8.5 s
+  // on the fleet: each run starts about 4 s after the call that queues it (job 1112-193055-add3).
+  // A case therefore mints only the projects it names; a case that names an unminted one fails at ref().
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
   const projects = new Map<string, string>();
   for (const [index, row] of data.fixture.projects.entries()) {
+    if (!projectRefs.includes(row.ref)) continue;
     projects.set(row.ref, await mintProject(engine, providers, row, index, occurred));
   }
   // Every later witness stages a project question on its own conversation:
@@ -470,7 +465,11 @@ suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a propos
       .toEqual(c.expected.recallAfterAuthorizedApprovalAndSupersession);
     // Retraction keeps history: the author withdraws its approved claim, nothing stands in its
     // place, and the superseded original does not come back.
-    const retracted = await outsider.client.call("vault.claims.retract", { claim_ref: newId });
+    const retraction = await outsider.client.raw<FacadeResult<"vault.claims.retract">>("POST",
+      "/v1/core/facade/vault.claims.retract", { claim_ref: newId } satisfies FacadeInput<"vault.claims.retract">);
+    if (retraction.status !== 200)
+      throw new Error(`The authoring agent's retract of its approved claim was refused: HTTP ${retraction.status} ${retraction.raw}`);
+    const retracted = retraction.body;
     expect(values(await recalled(w, "Morgan name"), c.current.predicate)).toEqual(c.expected.recallAfterRetraction);
     const history = (await w.engine.client.call("vault.claims.history", { claim_ref: newId })).value;
     const old = history.find(row => row.claim_ref === oldId);
@@ -529,7 +528,7 @@ suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a propos
  * preserved, batch per-element outcomes (never blanket rollback).
  */
 suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should work", async () => {
-  const w = await setup("MEMORY-02");
+  const w = await setup("MEMORY-02", ["@project-north", "@project-south"]);
   const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
   let primaryFailed = false;
   let primary: unknown;
@@ -1059,8 +1058,9 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
       const pack = (await w.engine.client.request<TimedPackReply>("POST", "/v1/core/context-pack", request)).body;
       const returned = await Promise.all(pack.results.map(item => entity(w.engine.client, item.id)));
       const matched = returned.filter(item => item.kind === "CLAIM").map(item => item.id_hex).sort();
+      windows.push({ request, pack, returned: returned.map(item => ({ id: item.id_hex, kind: item.kind })) });
+      await w.engine.artifacts.json("bitemporal-windows.json", windows);
       expect(matched).toEqual(window.expected.map(role => ref(w, role)).sort());
-      windows.push({ request, pack });
     }
     expect([...rows].sort((a, b) => a.view.occurred_start - b.view.occurred_start).map(row => row.role))
       .toEqual(c.expected.occurredOrder);
@@ -1214,8 +1214,15 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
       const resolution = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, role) });
       expect(resolution.heads).toEqual([ref(w, role)]); expect(resolution.state).toBe("active");
     }
-    for (const operation of [merged, split])
-      expect(await w.engine.client.call("vault.identity.events.get", { event: operation.receipt.event })).toEqual(operation.receipt);
+    // The undos are counter-events: every logged field of both events reads back unchanged. `seen` is the
+    // topology seal revision, computed at read time over the live deciding rows (verbs/identity_topology/
+    // ops.rs:136), so the undo rows move it.
+    for (const operation of [merged, split]) {
+      const { seen: before, ...logged } = operation.receipt;
+      const { seen: now, ...stored } = await w.engine.client.call("vault.identity.events.get", { event: operation.receipt.event });
+      expect(stored).toEqual(logged);
+      for (const revision of [before, now]) expect(revision).toMatch(/^[0-9a-f]{64}$/);
+    }
     for (const original of originals) expect(await claim(w, original.id)).toEqual(original.before);
     const distinct = applied(await w.engine.client.call("vault.identity.assert_distinct", {
       a: ref(w, "@person-a"), b: ref(w, "@person-b"), reason: c.expected.distinct.reason,
@@ -1246,7 +1253,7 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
 // ARCH-0022 four explicit axes; ARCH-0004 labelled world partitions;
 // ARCH-0043 grant axes are distinct from requested axes.
 suite.test(test, "MEMORY-08", "World and project separation should work", async () => {
-  const w = await setup("MEMORY-08");
+  const w = await setup("MEMORY-08", ["@project-north", "@project-south"]);
   try {
     const c = scenario(w, "MEMORY-08");
     const ids: string[] = [];
@@ -1311,8 +1318,17 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     const query: FacadeInput<"vault.recall"> = { query: "Glass keeper north south name", effort: "light",
       limit: 100, token_budget: 8192, scope: { worlds: { kind: "all" }, facet: ref(w, "@facet-work"), kinds: ["CLAIM"] } };
     const readable = await positive.call("vault.recall", query);
-    expect(values(readable, c.claims[0]!.predicate)).toEqual(c.claims.filter(row => row.worldId === "@dream")
-      .map(row => row.value.value).sort());
+    // The world ceiling admits exactly the two @dream rows, one per project. A guest connection reads at
+    // the Public band, so each name-class value prints as the subject's handle, never a fake and never a
+    // drop (ARCH-0069 S9; disclosure/model_channel.rs claim_handle_in).
+    const dream = c.claims.filter(row => row.worldId === "@dream");
+    const guestNames = readable.items.filter(item => item.predicate === c.claims[0]!.predicate);
+    expect(guestNames.map(item => item.world)).toEqual(dream.map(() => ref(w, "@dream")));
+    expect(guestNames.map(item => item.project_ref).sort()).toEqual(dream.map(row => ref(w, row.scopeProjectId)).sort());
+    for (const item of guestNames) {
+      expect(item.value_text.length).toBeGreaterThan(0);
+      expect(c.claims.map(row => row.value.value)).not.toContain(item.value_text);
+    }
     const receipts = [];
     for (const input of c.expected.guestCeilingCases) {
       const scope: Facade.Scope = { ...topRest,
