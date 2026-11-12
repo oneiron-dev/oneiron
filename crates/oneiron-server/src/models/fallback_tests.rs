@@ -82,6 +82,25 @@ async fn ask(seat: &Seat) -> LlmResult<LlmResponse> {
         .await
 }
 
+/// One wait's budget, on paused test time (Engine ruling on R58.2, (b)).
+/// Since 520329287c0 (#1613, OF-305) a call retries every offer back until
+/// its waits pass the vault's longest wait (60 s). `CallDeadline::wait_secs`
+/// counts whole seconds, so 1.5 s lets one 1 s wait fit and not a second.
+pub(super) const ONE_WAIT_BUDGET: Duration = Duration::from_millis(1500);
+
+/// [`ask`] within [`ONE_WAIT_BUDGET`].
+async fn ask_within_one_wait(seat: &Seat) -> LlmResult<LlmResponse> {
+    seat.ladder
+        .generate_within(
+            &test_run(),
+            request(&seat.model, "check this"),
+            None,
+            &|| true,
+            ONE_WAIT_BUDGET,
+        )
+        .await
+}
+
 /// A world this vault holds, at its default settings: readable everywhere.
 pub(super) fn portable_world(vault: &Vault) -> EntityId {
     let world = EntityId::now();
@@ -219,10 +238,21 @@ async fn a_quota_refusal_answers_from_the_next_offer_which_serves_until_the_rese
 
 /// Done means: the reset comes from the ISO time in the error; failing
 /// that, from Retry-After (or the body's `reset_seconds`); failing that,
-/// from the default row. A time already past is history, not a reset, and a
-/// 403 or a 5xx that reads as a limit rests its offer like a 429.
+/// from the default row, doubled for each refusal in a row (a backoff with
+/// jitter, #1613). A time already past is history, not a reset, and a 403 or
+/// a 5xx that reads as a limit rests its offer like a 429.
 #[tokio::test]
 async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_default() {
+    /// Where a case's rest ends: at a time it names, or after a backoff.
+    enum Until {
+        At(u64),
+        /// 520329287c0 (#1613, OF-305): with no time and no wait named, the
+        /// `strikes`-th refusal in a row rests the default rest doubled
+        /// `strikes` times, plus a jitter of up to a quarter of that, keyed by
+        /// the offer's origin (a random port here), so the end is a window.
+        Backoff { strikes: u32 },
+    }
+    // Each case runs at the end of the rest before it.
     let cases = [
         (
             refusal(
@@ -231,8 +261,7 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
                 json!({"error": {"message":
                     "limit since 2026-10-14T00:00:00Z; your window resets at 2026-10-19T00:00:00Z"}}),
             ),
-            T0,
-            OCT_19,
+            Until::At(OCT_19),
             "error_time",
         ),
         (
@@ -241,8 +270,7 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
                 &[("retry-after", "120")],
                 json!({"error": {"message": "Too many requests"}}),
             ),
-            OCT_19,
-            OCT_19 + 120,
+            Until::At(OCT_19 + 120),
             "retry_after",
         ),
         (
@@ -251,8 +279,7 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
                 &[],
                 json!({"error": {"message": "usage limit reached", "reset_seconds": 45}}),
             ),
-            OCT_19 + 120,
-            OCT_19 + 165,
+            Until::At(OCT_19 + 165),
             "retry_after",
         ),
         (
@@ -261,9 +288,8 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
                 &[],
                 json!({"error": {"message": "You have used this month's quota"}}),
             ),
-            OCT_19 + 165,
-            OCT_19 + 165 + DEFAULT_REST,
-            "default",
+            Until::Backoff { strikes: 3 },
+            "backoff",
         ),
         (
             refusal(
@@ -271,9 +297,8 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
                 &[],
                 json!({"error": {"message": "resets at 2026-10-15T09:00:00+09:00"}}),
             ),
-            OCT_19 + 165 + DEFAULT_REST,
-            OCT_19 + 165 + 2 * DEFAULT_REST,
-            "default",
+            Until::Backoff { strikes: 4 },
+            "backoff",
         ),
     ];
     let first = FakeLlm::start(
@@ -286,20 +311,32 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
     let vault = clocked_vault(dir.path(), &clock);
     let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
-    for (number, (_, now, until, reset)) in cases.iter().enumerate() {
-        clock.set(*now);
+    let mut now = T0;
+    for (number, (_, until, reset)) in cases.iter().enumerate() {
+        clock.set(now);
         let answer = ask(seat).await.expect("the next offer answers");
         assert_eq!(text_of(&answer.message), "from second", "case {number}");
         let passed = &answer.usage.raw_provider["passed_over"][0];
         assert_eq!(passed["passed"], json!("refused"), "case {number}");
-        assert_eq!(passed["cooldown_until"], json!(until), "case {number}");
+        let end = passed["cooldown_until"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("case {number}: {passed}"));
+        let window = match until {
+            Until::At(at) => *at..=*at,
+            Until::Backoff { strikes } => {
+                let backoff = DEFAULT_REST << strikes;
+                (now + backoff)..=(now + backoff + backoff / 4)
+            }
+        };
+        assert!(window.contains(&end), "case {number}: {end} not in {window:?}");
         assert_eq!(passed["reset"], json!(reset), "case {number}");
+        now = end;
     }
     assert_eq!(first.seen().len(), cases.len());
 
     // A 403 that is no limit is the offer's key: the call goes on, and
     // nothing rests.
-    clock.set(OCT_19 + 165 + 2 * DEFAULT_REST);
+    clock.set(now);
     first.push(refusal(
         403,
         &[],
@@ -397,10 +434,15 @@ async fn a_quota_error_as_the_first_stream_event_hands_the_stream_to_the_next_of
         assert_eq!(text, "from second");
         let receipt = receipt.expect("the stream finished");
         assert_eq!(receipt["passed_over"][0]["passed"], json!(passed));
+        // 520329287c0 (#1613, OF-305): `insufficient_quota` is spent credit,
+        // parked with no end until the owner clears it.
         assert_eq!(
             receipt["passed_over"][0]["cooldown_until"],
-            json!(T0 + DEFAULT_REST)
+            json!(u64::MAX)
         );
+        if passed == "refused" {
+            assert_eq!(receipt["passed_over"][0]["reset"], json!("parked"));
+        }
     }
     assert_eq!(first.seen().len(), 1, "the refused offer rests");
 }
@@ -426,9 +468,17 @@ async fn a_bad_request_passes_through_unchanged_and_rests_nothing() {
     let vault = clocked_vault(dir.path(), &clock);
     let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
+    // 556025b6f5f (#4160, FIX 10404): an OpenAI-compatible 400 keeps the
+    // worker's message, and its structured code when it names one.
+    let detail = |code: Option<&str>| {
+        LlmError::Fatal(FatalLlmError::InvalidRequestDetail {
+            message: "max_tokens is past this model's output quota".to_owned(),
+            code: code.map(str::to_owned),
+        })
+    };
     for _ in 0..2 {
         let error = ask(seat).await.expect_err("a request error ends the call");
-        assert_eq!(error, LlmError::Fatal(FatalLlmError::InvalidRequest));
+        assert_eq!(error, detail(None));
     }
     let mut events = seat
         .ladder
@@ -439,7 +489,7 @@ async fn a_bad_request_passes_through_unchanged_and_rests_nothing() {
         .await
         .expect("an event")
         .expect_err("a request error ends the stream");
-    assert_eq!(error, LlmError::Fatal(FatalLlmError::InvalidRequest));
+    assert_eq!(error, detail(None));
     assert_eq!(
         first.seen().len(),
         3,
@@ -494,7 +544,8 @@ rungs = [{{ model = "anthropic:small" }}, {{ model = "second:big" }}]
     ));
     let runtime = kept(&models, &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
-    for _ in 0..2 {
+    // The first event names its type only; the second names its code.
+    for code in [None, Some("invalid_request_error")] {
         let mut events = seat
             .ladder
             .stream(&test_run(), request(&seat.model, "stream this"), None)
@@ -504,10 +555,11 @@ rungs = [{{ model = "anthropic:small" }}, {{ model = "second:big" }}]
             .await
             .expect("an event")
             .expect_err("an in-stream request error ends the stream");
-        assert_eq!(error, LlmError::Fatal(FatalLlmError::InvalidRequest));
+        assert_eq!(error, detail(code));
     }
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let error = ask(seat).await.expect_err("an Anthropic 400 ends the call");
+    // The Anthropic classifier keeps the bare refusal for a 400.
     assert_eq!(error, LlmError::Fatal(FatalLlmError::InvalidRequest));
     assert!(second.seen().is_empty(), "a request error never falls back");
 }
@@ -780,8 +832,9 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
 /// Review repro (Sol R2 P2): after its one wait a call tries every offer
 /// back, not only the one it waited for, in a stream too, and a refusal
 /// then names each offer's current end: a later refusal supersedes the
-/// reset the call waited for.
-#[tokio::test]
+/// reset the call waited for. The calls that must end after one wait run
+/// within [`ONE_WAIT_BUDGET`], on paused time.
+#[tokio::test(start_paused = true)]
 async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_end() {
     let wait = |seconds: &str| {
         refusal(
@@ -820,7 +873,9 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
         first.push(wait("1"));
         second.push(wait("1"));
     }
-    let error = ask(seat).await.expect_err("each refused twice");
+    let error = ask_within_one_wait(seat)
+        .await
+        .expect_err("each refused twice");
     assert_eq!(error, limited(1, T0 + 402));
     first.push(wait("120"));
     assert_eq!(streamed(seat).await, "second after the wait");
@@ -833,7 +888,9 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
         first.push(reply);
     }
     second.push(wait("2"));
-    let error = ask(seat).await.expect_err("nothing is back");
+    let error = ask_within_one_wait(seat)
+        .await
+        .expect_err("nothing is back");
     assert_eq!(error, limited(1, T0 + 602));
     assert_eq!((first.seen().len(), second.seen().len()), (9, 8));
 }

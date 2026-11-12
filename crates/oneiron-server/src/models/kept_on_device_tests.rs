@@ -16,7 +16,8 @@ use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, LlmStreamEvent, Vau
 use serde_json::json;
 
 use super::fallback_tests::{
-    T0, about, clocked_vault, kept, kept_here, portable_world, private_world, refusal, two_offers,
+    ONE_WAIT_BUDGET, T0, about, clocked_vault, kept, kept_here, portable_world, private_world,
+    refusal, two_offers,
 };
 use super::tests::{config, request, test_run, text_of};
 use super::*;
@@ -47,7 +48,7 @@ fn holds(rows: &[RunReceipt]) -> Vec<String> {
 /// fails. It waits within its one wait for that offer, else returns the
 /// typed hold with a receipt. In a vault with no private world the same call
 /// falls back as before.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
     let first = FakeLlm::start(
         vec![Reply::Status(500)],
@@ -68,11 +69,24 @@ async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
     assert_eq!(text_of(&answer.message), "from the cloud");
 
     private_world(&vault);
+    // A 500 rests the device offer for its health (5-6 s, #1778), longer
+    // than one wait's budget, so the call is held at once (R58.2 (b)).
     first.push(Reply::Status(500));
-    let error = seat.ladder.generate(&run, call(), None).await;
+    let error = seat
+        .ladder
+        .generate_within(&run, call(), None, &|| true, ONE_WAIT_BUDGET)
+        .await;
     assert_eq!(error.expect_err("held"), kept_here(None));
     first.push(Reply::Status(500));
-    let mut events = seat.ladder.stream(&run, call(), None).expect("a stream");
+    let mut events = seat
+        .ladder
+        .stream_by(
+            &run,
+            call(),
+            None,
+            CallDeadline::waits_within(ONE_WAIT_BUDGET),
+        )
+        .expect("a stream");
     let error = events.next().await.expect("an event").expect_err("held");
     assert_eq!(error, kept_here(None));
     assert_eq!(second.seen().len(), 1, "no held call reached the cloud");
@@ -228,7 +242,7 @@ async fn a_world_made_private_while_its_fallback_is_admitted_never_goes_out() {
 /// admission sees the world kept on the device, every rung is judged again,
 /// so the one wait goes past both cloud offers to the offer on the device,
 /// which then answers.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_stream_spends_its_one_wait_on_an_offer_its_world_may_use() {
     let limit = |seconds: &str| {
         refusal(
@@ -265,7 +279,13 @@ rungs = [{{ model = "local:small" }}, {{ model = "cloud:big" }}, {{ model = "oth
     // again. The local offer rests until T0 + 3, both cloud ones until T0 + 2.
     let error = seat
         .ladder
-        .generate(&test_run(), about(seat, other), None)
+        .generate_within(
+            &test_run(),
+            about(seat, other),
+            None,
+            &|| true,
+            ONE_WAIT_BUDGET,
+        )
         .await;
     assert!(error.is_err(), "every offer rests");
 
@@ -413,7 +433,7 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
 /// request ends the call with its decode error on any world; an empty reply
 /// hands the call on, so it is held with the typed outcome; an unfinished
 /// answer is the device's answer.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
     let body = |body: serde_json::Value| Reply::Error {
         status: 200,
@@ -438,7 +458,12 @@ async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
     let error = seat.ladder.generate(&run, call(), None).await;
     let decode = oneiron::LlmError::from(oneiron::FatalLlmError::InvalidRequest);
     assert_eq!(error.expect_err("an unreadable tool request"), decode);
-    let error = seat.ladder.generate(&run, call(), None).await;
+    // An empty reply rests the device offer for its health, longer than one
+    // wait's budget, so this call is held at once (R58.2 (b)).
+    let error = seat
+        .ladder
+        .generate_within(&run, call(), None, &|| true, ONE_WAIT_BUDGET)
+        .await;
     assert_eq!(error.expect_err("an empty reply"), kept_here(None));
     let answer = seat.ladder.generate(&run, call(), None).await;
     let answer = answer.expect("the device's unfinished answer");
