@@ -163,6 +163,18 @@ impl PinnedBody {
     }
 }
 
+/// The pins `room`'s stored body holds, in their stored order, as `txn`
+/// reads them (ROOM-SCOPED-PINS P2). Only the room's admitted projection
+/// reads them, and it serves a pin only when the reader admits its target;
+/// the list itself is never served.
+pub(crate) fn stored_room_pins_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Vec<RoomPin>> {
+    Ok(PinnedBody::read_in(vault, txn, room)?.pins().to_vec())
+}
+
 /// Whether `person` runs `room`: Owner or Admin in an ordinary room
 /// ([`crate::conversation::person_role_in`]), a seated project leader or
 /// board member in a home room. `human`: whether the PERSON acts as a human.
