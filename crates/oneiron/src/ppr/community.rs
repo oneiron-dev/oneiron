@@ -88,6 +88,81 @@ pub(crate) fn ppr_expand_in_txn_with_community_diagnostics(
         output.diversity,
     ))
 }
+/// A narrowed Uniform expansion's community prior (RETRIEVAL-09 = A). The
+/// walk stays the compute-only scoped walk. Its prior comes from the admitted
+/// scope alone: the reached rows and readable seeds, and the edges between
+/// them (`Store::compute_admitted_ppr_communities_in_txn`), so community
+/// sizes and the graph-size denominator are that local graph's. No shared
+/// snapshot, cache row or deferred write is read or made. The caller drops
+/// unreadable seeds from `request` first, so a hidden seed holds no dominance
+/// or top-five place in the evidence order; an unreadable seed here is
+/// refused.
+pub(crate) fn ppr_expand_scoped_in_txn_with_community_diagnostics(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    request: CommunityPprRequest<'_>,
+    visibility: &dyn super::PprNodeVisibility,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
+) -> Result<(PprQueryResult, Option<CommunityPprDiversity>)> {
+    use crate::ppr_community::{CommunityQueryView, boost_community_scores};
+    let config = &request.config.ppr_community;
+    let mut result = super::query::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
+        store,
+        txn,
+        request.seeds,
+        request.depth,
+        request.teleport_alpha,
+        request.config.ppr_vad_alpha,
+        SeedWeighting::Uniform,
+        visibility,
+        deadline,
+    )?;
+    if config.beta == 0.0 || result.scores.is_empty() {
+        return Ok((result, None));
+    }
+    crate::config::validate_ppr_community(config)?;
+    let evidence_ids: HashSet<_> = request
+        .context
+        .ordered_seeds
+        .iter()
+        .map(|seed| seed.id)
+        .collect();
+    if evidence_ids.len() != request.context.ordered_seeds.len()
+        || evidence_ids != request.seeds.iter().copied().collect::<HashSet<EntityId>>()
+    {
+        return Err(Error::InvalidConfig(
+            "community seed evidence must match the PPR seed set".to_owned(),
+        ));
+    }
+    for seed in request.seeds {
+        if !visibility.ppr_node_visible(txn, seed)? {
+            return Err(Error::InvalidConfig(
+                "a narrowed community prior takes readable seeds only".to_owned(),
+            ));
+        }
+    }
+    let admitted: std::collections::BTreeSet<EntityId> = request
+        .seeds
+        .iter()
+        .copied()
+        .chain(result.scores.iter().map(|row| row.id))
+        .collect();
+    let snapshot = store.compute_admitted_ppr_communities_in_txn(
+        txn,
+        &admitted,
+        store.clock.now_recorded_at(),
+        config,
+        deadline,
+    )?;
+    let view = CommunityQueryView::from_snapshot(&snapshot, &admitted)
+        .map_err(|_| Error::CorruptedIndex("scoped ppr community view"))?;
+    let (report, boosted) =
+        boost_community_scores(&mut result.scores, &view.cache(), request.context, config)
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    let diversity =
+        (report.activated_communities > 0).then_some(CommunityPprDiversity { view, boosted });
+    Ok((result, diversity))
+}
 struct CommunityPprOutput {
     cache: PprCacheOutcome,
     scores: Vec<ScoredEntity>,
