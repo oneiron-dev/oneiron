@@ -7,7 +7,10 @@
 //! The ruled tests: an agent spawns a child and a watcher, and the owner's
 //! switch-off lists both; `vault.agents.made_by.get` lists what an agent
 //! made, a definition it saved and what that one made included, and leaves
-//! out what another agent made.
+//! out what another agent made; `vault.agents.pause_tree` pauses what waits
+//! in one act with one receipt, a running branch listed and not paused, and
+//! `vault.agents.resume_tree` restores exactly what it paused; the
+//! switch-off answer offers the pause with its count.
 //!
 //! The owner's calls go through the verbs by name on the embedded owner's
 //! handle, as the facade does. The agent's spawn and save go through the
@@ -27,7 +30,8 @@ use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
 use oneiron::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
+    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt,
+    ClaimOutcome, InterveneAttempt,
 };
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::code_run::{
@@ -35,6 +39,7 @@ use oneiron::code_run::{
     SelfDispatcher, parse_agent_put_request,
 };
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -51,6 +56,12 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const GET: &str = "vault.agents.get";
 const UPDATE: &str = "vault.agents.update";
 const MADE_BY: &str = "vault.agents.made_by.get";
+const PAUSE_TREE: &str = "vault.agents.pause_tree";
+const RESUME_TREE: &str = "vault.agents.resume_tree";
+
+/// The reason codes of a tree pause's and a resume's gate decisions.
+const PAUSE_REASON: &str = "gate.allow.owner_agent_tree_pause";
+const RESUME_REASON: &str = "gate.allow.owner_agent_tree_resume";
 
 /// The lease owner this test claims rows as.
 const WORKER: &str = "agent-blast-radius";
@@ -232,13 +243,23 @@ fn save_agent(f: &Fixture, id: EntityId, name: &str) -> TestResult {
 /// A watch TASK `owner_ref` owns, ticking `WATCH_AHEAD` from now; `None` is
 /// the vault owner's own.
 fn watcher(f: &Fixture, owner_ref: Option<EntityId>, title: &str) -> TestResult<EntityId> {
+    watcher_due_in(f, owner_ref, title, WATCH_AHEAD)
+}
+
+/// [`watcher`], ticking `ahead` seconds from now.
+fn watcher_due_in(
+    f: &Fixture,
+    owner_ref: Option<EntityId>,
+    title: &str,
+    ahead: u64,
+) -> TestResult<EntityId> {
     let now = f.vault.now_recorded_at();
     let receipt = f
         .vault
         .memory(f.owner, EdgeActorClass::Human)
         .tasks_create(
             &TaskCreateSpec::new(RmpValue::from(title), None, owner_ref, Some(now))
-                .with_due_at(now + WATCH_AHEAD)
+                .with_due_at(now + ahead)
                 .with_watch(true),
         )?;
     receipt
@@ -401,6 +422,242 @@ fn made_by_get_leaves_out_what_another_agent_made() -> TestResult {
         keys(&worker, "watchers", "task_ref"),
         vec![&id_json(workers)],
         "{worker}"
+    );
+    Ok(())
+}
+
+fn state(f: &Fixture, id: AttemptId) -> TestResult<AttemptState> {
+    Ok(AttemptQueue::new(&f.vault)
+        .get(id)?
+        .ok_or("the branch's row reads back")?
+        .state)
+}
+
+fn enabled(f: &Fixture, id: EntityId) -> TestResult<bool> {
+    Ok(f.vault
+        .get_agent_definition(&id)?
+        .ok_or("the definition reads back")?
+        .enabled)
+}
+
+/// The owner's own pause or resume of one branch, as the queue's door takes it.
+fn owner_intervene(f: &Fixture, id: AttemptId, kind: AttemptInterventionKind) -> TestResult {
+    AttemptQueue::new(&f.vault).intervene(InterveneAttempt {
+        id,
+        kind,
+        actor: f.owner.to_hex(),
+        note: None,
+        now: f.vault.now_recorded_at(),
+    })?;
+    Ok(())
+}
+
+/// How many tree-pause gate decisions with `reason` the vault holds.
+fn tree_receipts(f: &Fixture, reason: &str) -> TestResult<usize> {
+    Ok(f.vault
+        .gate_decisions(4096)?
+        .iter()
+        .filter(|receipt| {
+            receipt.content_kind == "agent_tree_pause"
+                && receipt.reason_codes.iter().any(|code| code == reason)
+        })
+        .count())
+}
+
+fn no_members() -> Value {
+    json!({"agents": [], "branches": [], "watchers": [], "hooks": []})
+}
+
+/// The ruled test: the author spawns a child that waits and one that runs,
+/// owns a watcher and saved an agent. The owner's pause_tree switches the
+/// saved agent off, pauses the waiting child and holds the watcher's tick
+/// in one act with one receipt; the running child is listed, not paused.
+/// resume_tree restores each, and a repeat answers that resume.
+#[test]
+fn pause_tree_pauses_the_child_and_the_watcher_and_resume_tree_restores_them() -> TestResult {
+    let f = fixture()?;
+    let running = spawn_child(&f, "blast-running")?;
+    claim(&f.vault, running)?;
+    let child = spawn_child(&f, "blast-child")?;
+    let task = watcher(&f, Some(f.agent), "watch the inbox for the author")?;
+    let saved = EntityId::from_bytes([0x97; 16])?;
+    save_agent(&f, saved, "fixture.blast.saved")?;
+
+    let before = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        before["pause_offer"],
+        json!({"verb": PAUSE_TREE, "pausable": 3}),
+        "the saved agent, the waiting child and the watcher: {before}"
+    );
+
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(paused["agent_def_ref"], id_json(f.agent), "{paused}");
+    assert_eq!(paused["count"], json!(3), "{paused}");
+    assert_eq!(
+        paused["paused"]["agents"],
+        json!([saved.to_hex()]),
+        "{paused}"
+    );
+    assert_eq!(
+        paused["paused"]["branches"],
+        json!([hex(child)]),
+        "{paused}"
+    );
+    assert_eq!(
+        paused["paused"]["watchers"],
+        json!([task.to_hex()]),
+        "{paused}"
+    );
+    assert_eq!(paused["paused"]["hooks"], json!([]), "{paused}");
+    assert_eq!(
+        paused["running"],
+        json!([hex(running)]),
+        "a running branch is listed, not paused: {paused}"
+    );
+    assert!(paused["running_cancel_door"].as_str().is_some(), "{paused}");
+    assert!(
+        paused["receipt_ref"]
+            .as_str()
+            .is_some_and(|receipt| receipt.starts_with("gate:")),
+        "{paused}"
+    );
+    assert_eq!(tree_receipts(&f, PAUSE_REASON)?, 1, "one receipt");
+    assert_eq!(state(&f, child)?, AttemptState::Paused);
+    assert_eq!(state(&f, running)?, AttemptState::Leased);
+    assert!(!enabled(&f, saved)?, "the saved agent is switched off");
+    let held = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(held["watchers"][0]["held"], json!(true), "{held}");
+    assert!(held["pause_offer"].is_null(), "nothing waits: {held}");
+
+    let pause_ref = paused["pause_ref"].clone();
+    let resumed = as_owner(&f, RESUME_TREE, json!({"pause_ref": pause_ref}))?;
+    assert_eq!(resumed["already_resumed"], json!(false), "{resumed}");
+    assert_eq!(resumed["resumed"], paused["paused"], "{resumed}");
+    assert_eq!(resumed["left_as_found"], no_members(), "{resumed}");
+    assert_eq!(tree_receipts(&f, RESUME_REASON)?, 1, "one receipt");
+    assert_eq!(state(&f, child)?, AttemptState::Queued);
+    assert!(enabled(&f, saved)?, "the saved agent is back on");
+    let restored = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(restored["watchers"][0]["held"], json!(false), "{restored}");
+    assert_eq!(restored["pause_offer"], before["pause_offer"], "{restored}");
+
+    let again = as_owner(&f, RESUME_TREE, json!({"pause_ref": pause_ref}))?;
+    assert_eq!(again["already_resumed"], json!(true), "{again}");
+    assert_eq!(again["receipt_ref"], resumed["receipt_ref"], "{again}");
+    assert_eq!(
+        tree_receipts(&f, RESUME_REASON)?,
+        1,
+        "a repeat writes nothing"
+    );
+    Ok(())
+}
+
+/// What was off or paused before the pause stays as it was after the
+/// resume, and a member the owner moved since is left as found.
+#[test]
+fn resume_tree_leaves_paused_what_was_paused_before() -> TestResult {
+    let f = fixture()?;
+    let paused_before = spawn_child(&f, "blast-paused-before")?;
+    owner_intervene(&f, paused_before, AttemptInterventionKind::Pause)?;
+    let child = spawn_child(&f, "blast-child")?;
+    let off_before = EntityId::from_bytes([0x98; 16])?;
+    save_agent(&f, off_before, "fixture.blast.off")?;
+    owner_update(&f, off_before, "1", "2", |definition| {
+        definition.insert("enabled".to_owned(), json!(false));
+    })?;
+    let saved = EntityId::from_bytes([0x97; 16])?;
+    save_agent(&f, saved, "fixture.blast.saved")?;
+
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        paused["paused"]["branches"],
+        json!([hex(child)]),
+        "{paused}"
+    );
+    assert_eq!(
+        paused["paused"]["agents"],
+        json!([saved.to_hex()]),
+        "{paused}"
+    );
+
+    // The owner resumes the child by hand before the tree resume.
+    owner_intervene(&f, child, AttemptInterventionKind::Resume)?;
+    let resumed = as_owner(
+        &f,
+        RESUME_TREE,
+        json!({"pause_ref": paused["pause_ref"].clone()}),
+    )?;
+    assert_eq!(
+        resumed["resumed"]["agents"],
+        json!([saved.to_hex()]),
+        "{resumed}"
+    );
+    assert_eq!(resumed["resumed"]["branches"], json!([]), "{resumed}");
+    assert_eq!(
+        resumed["left_as_found"]["branches"],
+        json!([hex(child)]),
+        "{resumed}"
+    );
+    assert_eq!(state(&f, paused_before)?, AttemptState::Paused);
+    assert_eq!(state(&f, child)?, AttemptState::Queued);
+    assert!(!enabled(&f, off_before)?, "what was off before stays off");
+    assert!(enabled(&f, saved)?);
+    Ok(())
+}
+
+/// The owner's switch-off offers the pause: the verb and how many entries
+/// it would pause.
+#[test]
+fn the_switch_off_answer_offers_pause_tree_with_the_count() -> TestResult {
+    let f = fixture()?;
+    spawn_child(&f, "blast-child")?;
+    watcher(&f, Some(f.agent), "watch the inbox for the author")?;
+
+    let switched_off = owner_update(&f, f.agent, "1", "2", |definition| {
+        definition.insert("enabled".to_owned(), json!(false));
+    })?;
+    assert_eq!(
+        switched_off["made_by"]["pause_offer"],
+        json!({"verb": PAUSE_TREE, "pausable": 2}),
+        "{switched_off}"
+    );
+    Ok(())
+}
+
+/// A held watcher does not tick when its due time passes; after the
+/// resume it ticks once, late, and its watch TASK settles.
+#[test]
+fn a_held_watcher_ticks_only_after_resume_tree() -> TestResult {
+    let f = fixture()?;
+    let task = watcher_due_in(&f, Some(f.agent), "watch the build in a moment", 2)?;
+    let paused = as_owner(&f, PAUSE_TREE, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        paused["paused"]["watchers"],
+        json!([task.to_hex()]),
+        "{paused}"
+    );
+
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    f.vault.housekeeping(HousekeepingBudget::unbounded())?;
+    let held = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        keys(&held, "watchers", "task_ref"),
+        vec![&id_json(task)],
+        "a held tick does not release: {held}"
+    );
+    assert_eq!(held["watchers"][0]["held"], json!(true), "{held}");
+
+    as_owner(
+        &f,
+        RESUME_TREE,
+        json!({"pause_ref": paused["pause_ref"].clone()}),
+    )?;
+    f.vault.housekeeping(HousekeepingBudget::unbounded())?;
+    let ticked = as_owner(&f, MADE_BY, json!({"agent_def_ref": f.agent}))?;
+    assert_eq!(
+        ticked["watchers"],
+        json!([]),
+        "after the resume the tick releases, late, and settles the watch TASK: {ticked}"
     );
     Ok(())
 }
