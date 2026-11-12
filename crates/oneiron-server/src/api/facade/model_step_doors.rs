@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::response::Response;
 use oneiron::agent_dispatch::AgentDispatcher;
-use oneiron::llm::BudgetDenied;
 use oneiron::llm::model_step::{
     self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
     ModelStepSubmitRequest, RunStepCaller,
 };
 use oneiron::llm::run_admission::{RunAdmission, WorkPhysical};
+use oneiron::llm::{BudgetDenied, StepSpendScope};
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
     MemoryResult,
@@ -201,6 +201,9 @@ struct StepLine {
     guard: BudgetGuard,
     /// The live lease of the physical calls' meter on the run's scope.
     lease: Option<LeaseLine>,
+    /// The run's scope, with the cap generation read before the meter and
+    /// the guard read their room.
+    spend: Option<StepSpendScope>,
 }
 
 impl RunStep {
@@ -281,7 +284,7 @@ impl RunStep {
             input,
             &backend,
             &line.guard,
-            self.held.spend_scope(),
+            line.spend.as_ref(),
         ));
         // What the step's calls spent and no look booked goes on the scope
         // whatever the step answered. A booking that fails is an error of
@@ -325,10 +328,15 @@ impl RunStep {
                 run,
                 guard: raw_step_guard(&self.server)?,
                 lease: None,
+                spend: None,
             });
         };
         let (payer, _) = scope_run_funding(vault, Some(scope), false).map_err(|_| unopened())?;
         let dispatcher = AgentDispatcher::new(vault);
+        // The cap generation first: a top-up after the two guards read their
+        // room then moves it, and the step's budget park wakes itself.
+        let spend =
+            StepSpendScope::read_before_guards(vault, scope.clone()).map_err(|_| unopened())?;
         // The physical calls' meter, and beside it the step's own logical
         // allowance, so the engine's logical lease does not charge the
         // meter twice. Only the meter's spend is booked on the scope.
@@ -338,6 +346,7 @@ impl RunStep {
             run: models.grant_funded_run(MODEL_STEP_RUN, meter.clone(), payer, funding),
             guard,
             lease: Some(LeaseLine::new(scope.clone(), meter)),
+            spend: Some(spend),
         })
     }
 

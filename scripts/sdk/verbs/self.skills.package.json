@@ -1,0 +1,20 @@
+{
+  "name": "self.skills.package",
+  "description": "Reads one loadable skill package the caller may read, with its record, files, capabilities and format; a missing, withheld or unloadable skill answers none.",
+  "input": "HubSkillRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::task_verb::sdk::SkillPackageView>>",
+  "call": "crate::task_verb::sdk::self_skills_package_embedded(memory, input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "grant_class": "self.skills.package grant + caller read lane",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}
