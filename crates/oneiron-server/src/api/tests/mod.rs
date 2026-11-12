@@ -756,6 +756,9 @@ fn seed_disclosure_claim_in_world(
     )
     .unwrap();
     claim.world = Some(world);
+    // A TURN subject has no stored FACET of its own, and a CLAIM birth needs
+    // one: the claim takes the vault's default facet.
+    claim.scope_facet = server.vault.default_facet().expect("default facet");
     // Tier B is required here: otherwise the tier check rejects this claim
     // before the test can exercise the contact's world clearance.
     claim.scope = Some(rmpv::Value::Map(vec![(
