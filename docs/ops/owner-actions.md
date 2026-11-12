@@ -463,7 +463,8 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
 (`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
-Credentials inside records are nulled by the serializer. Result bodies go through the release
+The Owner's whole-vault export keeps credentials, those in skill source files and in JSON bodies
+included; scoped and contact exports null them. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
 `epoch_floor.jsonl` has a row `{session, conversation, epoch, turn_end}` for each epoch lineage
@@ -481,6 +482,16 @@ a re-import lists those as `missing_secrets` to re-enter. A caller off this devi
 only for portable records (device-bound ones go as handles); suspended records always go as
 handles; an export-first removal's archive, like any export to a contact or share, carries no
 custody record.
+
+`oneiron import archive vault.zip` (with `serve` stopped) uses the owner door whenever this
+vault's bound owner authenticates, and the actorless door otherwise. An archive without expression
+preferences needs no owner. Only an archive with expression preferences needs the owner through
+this CLI; its refusal says that the owner could not authenticate and how to bind the owner.
+Every owner restore records an owner-act receipt whose `owner_restore_receipt` is `gate:<id>`
+(content kind `owner_archive_restore`) naming the archive by its full-manifest digest. Expression
+preferences carry a permit for that restore only. No policy changes, and no later write gains
+the permit. The actorless path has no owner restore receipt and still refuses expression
+preferences; the actor engine door still needs its existing local Imported-source Auto grant.
 
 `oneiron export --format okf --out vault-okf.zip` is "Export to OKF": the vault as an Open
 Knowledge Format v0.1 bundle (Google's markdown-plus-YAML-frontmatter format) for importing into

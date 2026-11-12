@@ -302,6 +302,7 @@ pub(super) fn dispatch_put_type(
             &*wtxn,
             &fixed.id,
             &decoded,
+            data,
             fixed.hub_sync_imported,
             fixed.hub_admission,
         )?;

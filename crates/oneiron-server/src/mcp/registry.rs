@@ -420,6 +420,14 @@ impl McpConnectorActorRegistry {
         Ok(McpConnectorActorRevokeStatus::Revoked)
     }
 
+    /// The record registered for `credential`, a revoked or expired one too,
+    /// without resolving it; `None` when this process holds none.
+    #[must_use]
+    pub fn registered_record(&self, credential: &str) -> Option<&McpConnectorActorRecord> {
+        let fingerprint = self.fingerprint_lookup_credential(credential)?;
+        self.records.get(&fingerprint)
+    }
+
     pub fn resolve(
         &self,
         credential: &str,
