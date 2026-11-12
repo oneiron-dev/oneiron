@@ -10,12 +10,12 @@ use super::constants::{
     POLICY_CONSULT_FANOUT_PRECEDENCE_KEY,
 };
 use crate::EntityId;
+use crate::check_in::CheckInMode;
 use crate::error::{Error, Result};
 use crate::gate::consult_fanout_values::ConsultFanOutPolicy;
 use crate::gate::consult_fanout_values::ConsultFanOutRate;
 use crate::gate::consult_fanout_values::ConsultFanOutScope;
 use crate::gate::consult_fanout_values::TaskCreateRateLimit;
-use crate::gate::fanout_mode::FanoutApprovalMode;
 
 /// The precedence row is itself vault policy. The stricter option ignores
 /// holder overrides; neither option permits a child to exceed the vault.
@@ -39,7 +39,7 @@ impl FanoutPrecedence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FanoutControls {
-    pub(crate) mode: FanoutApprovalMode,
+    pub(crate) mode: CheckInMode,
     pub(crate) peer_rate: Option<ConsultFanOutRate>,
     pub(crate) create_rate: TaskCreateRateLimit,
 }
@@ -169,15 +169,6 @@ impl ConsultFanOutScope {
     }
 }
 
-fn stricter_mode(a: FanoutApprovalMode, b: FanoutApprovalMode) -> FanoutApprovalMode {
-    use FanoutApprovalMode::{Auto, FullAccess, Manual};
-    match (a, b) {
-        (Manual, _) | (_, Manual) => Manual,
-        (Auto, _) | (_, Auto) => Auto,
-        (FullAccess, FullAccess) => FullAccess,
-    }
-}
-
 fn narrow_rate(
     a: Option<ConsultFanOutRate>,
     b: Option<ConsultFanOutRate>,
@@ -201,7 +192,7 @@ fn narrow_quota(a: TaskCreateRateLimit, b: TaskCreateRateLimit) -> TaskCreateRat
 pub(crate) fn narrow(a: &ConsultFanOutPolicy, b: &ConsultFanOutPolicy) -> ConsultFanOutPolicy {
     ConsultFanOutPolicy {
         approval_threshold: a.approval_threshold.min(b.approval_threshold),
-        mode: stricter_mode(a.mode, b.mode),
+        mode: a.mode.stricter(b.mode),
         peer_rate: narrow_rate(a.peer_rate.clone(), b.peer_rate.clone()),
         create_rate: narrow_quota(a.create_rate, b.create_rate),
     }
@@ -273,7 +264,7 @@ pub(crate) fn resolve(
 
 pub(crate) fn merge_controls(a: &FanoutControls, b: &FanoutControls) -> FanoutControls {
     FanoutControls {
-        mode: stricter_mode(a.mode, b.mode),
+        mode: a.mode.stricter(b.mode),
         peer_rate: narrow_rate(a.peer_rate.clone(), b.peer_rate.clone()),
         create_rate: narrow_quota(a.create_rate, b.create_rate),
     }

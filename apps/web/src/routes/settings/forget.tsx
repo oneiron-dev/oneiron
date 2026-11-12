@@ -16,7 +16,7 @@ const ERASED: Erased[] = [
     what: 'A supplier rumor and the thread under it.',
     why: 'Retracted at source.',
     seal: 'y',
-    sealTip: 'y · Yuki · member',
+    sealTip: 'y · yuki · member',
     sweep: 'due',
   },
   {
@@ -24,7 +24,7 @@ const ERASED: Erased[] = [
     what: "Mika Tanaka's home address, and the two claims that carried it.",
     why: 'Asked for by the contact.',
     seal: 'o',
-    sealTip: 'o · Owen · owner',
+    sealTip: 'o · owen · owner',
     sweep: 'swept 08-12 03:12',
   },
   {
@@ -32,7 +32,7 @@ const ERASED: Erased[] = [
     what: 'The 2025 payroll import, all 402 rows.',
     why: 'Landed in the wrong vault.',
     seal: 'o',
-    sealTip: 'o · Owen · owner',
+    sealTip: 'o · owen · owner',
     sweep: 'swept 07-30 03:12',
   },
 ]
@@ -49,7 +49,7 @@ function ForgetPage() {
         what: reason.trim(),
         why: '',
         seal: 'o',
-        sealTip: 'o · Owen · owner',
+        sealTip: 'o · owen · owner',
         sweep: 'due',
       },
       ...rows,
