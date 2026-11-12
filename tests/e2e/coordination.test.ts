@@ -3171,7 +3171,9 @@ suite.test(test, "MUSE-LOOP-03", "An unsure agent asks the owner up through ask,
 // c3fc89a5421 (Thu 12 Nov 2026) the refresh answered and the case reached the
 // outcome claim read-back, which named the upsert's input keys instead of the
 // stored body's (a test bug, fixed here). The agent-propose leg has its door
-// since #7178.
+// since #7178; E2E job 14 (Thu 12 Nov 2026, set 2ca9ae16f25) reached it and got
+// 403 at the scope check, because the case minted a propose-only agent for a
+// Write-scope verb (a test bug, fixed here: the agent is full-access).
 
 type MuseLoop04Binding = FacadeResult<"vault.models.bindings.read">;
 type MuseLoop04TrialView = FacadeResult<"vault.models.trials.get">;
@@ -3715,10 +3717,15 @@ suite.test(
       .toBe(museLoop04IncumbentId);
 
     // The agent proposes; the owner approves or refuses. Before any grant,
-    // the paired agent cannot propose the switch.
+    // the paired agent cannot propose the switch. vault.models.bindings.propose
+    // is a Write-scope verb, so the agent's credential carries core:write
+    // (full-access tier); a propose-only credential (core:read, core:propose)
+    // is refused at the scope check and never reaches the Grant check. The
+    // tier's own Grant lists read/propose/write and names no act, so only the
+    // owner's Grant below lets the agent propose.
     const agent = await engine.mintAgentToken({
       name: "muse-loop-04-agent",
-      tier: "propose-only",
+      tier: "full-access",
     });
     expect((await owner.call("vault.get", { entity_ref: agent.principalRef })).value)
       .toMatchObject({ kind: "PERSON", body: { name: "muse-loop-04-agent" } });
