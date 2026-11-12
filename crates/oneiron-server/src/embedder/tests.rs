@@ -1409,6 +1409,13 @@ fn claim_body(text: &str) -> Vec<u8> {
             ),
             (rmpv::Value::from("val"), rmpv::Value::from(text)),
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
+            // D18 (FIX 7761): the band and basis beside conf; 0.9 is `certain`
+            // under the house mapping.
+            (rmpv::Value::from("confBand"), rmpv::Value::from("certain")),
+            (
+                rmpv::Value::from("confBasis"),
+                rmpv::Value::from("deterministic_fallback"),
+            ),
             (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
             (
