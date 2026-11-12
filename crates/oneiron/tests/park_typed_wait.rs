@@ -1,6 +1,10 @@
 //! 6.5d-1 (budget typed wait): a step refused by its spend scope's hard cap parks typed on that
 //! scope, and only that scope's room-leaving top-up wakes it.
 //!
+//! [PARK-BUDGET-SIGNAL-BEFORE-PARK]: a top-up that lands after a step's guard read its room and
+//! before the step parks moves the cap generation the host read first; the park sees it in its
+//! own write and resumes at once.
+//!
 //! Tries A and B run under `guard_for_scope` guards of two hard root scopes whose caps sit well
 //! below the guards' reserve; try C runs scopeless under a zero-limit guard. Each step goes through
 //! the public `call_as_step` with a paid request and a backend that must not be called. Trap head
@@ -22,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState};
+use oneiron::agent_dispatch::{AgentDispatcher, SpendCapGeneration, SpendScopeId, SpendState};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use oneiron::code_run::{WaitDeliveries, WaitKey, park_and_bind_wait_trap};
 use oneiron::dreamer_runner::{
@@ -267,6 +271,16 @@ fn a_soft_childs_budget_wait_asks_its_hard_root_only_for_the_deficit()
         hold + sliver,
         "the child may spend its hold and the root's sliver"
     );
+    // The host reads the cap generation before it builds the step's guard.
+    let spend = llm::StepSpendScope::read_before_guards(&vault, child.scope.clone())?;
+    assert_eq!(
+        spend.cap_generation,
+        Some(SpendCapGeneration {
+            scope: root.clone(),
+            cap_units: hold + sliver,
+        }),
+        "the child's cap generation is its hard root's cap"
+    );
     let guard = dispatcher.guard_for_scope(&child.scope)?;
     assert_eq!(
         guard.reserve_units(),
@@ -283,7 +297,7 @@ fn a_soft_childs_budget_wait_asks_its_hard_root_only_for_the_deficit()
         subject: owner,
         deadline: None,
         now_ms: 43_000,
-        spend_scope: Some(child.scope.clone()),
+        spend_scope: Some(spend),
     };
     let backend = NeverBackend::new();
     let outcome = block_on_ready(llm::call_as_step(
@@ -445,6 +459,9 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
     assert_eq!(opened_b.state, SpendState::Open, "scope B opens open");
     assert_eq!(opened_b.cap_units, CAP_B, "scope B opens under its cap");
 
+    // The host reads each cap generation before it builds the guards.
+    let spend_a = llm::StepSpendScope::read_before_guards(&vault, scope_a.clone())?;
+    let spend_b = llm::StepSpendScope::read_before_guards(&vault, scope_b.clone())?;
     // Each scoped step runs under its scope's guard; the scopeless step runs under a zero-limit
     // guard. Every cap sits below its guard's reserve, so every admission refuses exhausted.
     let guard_a = dispatcher.guard_for_scope(&scope_a)?;
@@ -494,7 +511,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         subject: owner,
         deadline: None,
         now_ms: 40_000,
-        spend_scope: Some(scope_a.clone()),
+        spend_scope: Some(spend_a),
     };
     let ctx_b = llm::DurableStepContext {
         vault: &vault,
@@ -504,7 +521,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         subject: owner,
         deadline: None,
         now_ms: 41_000,
-        spend_scope: Some(scope_b.clone()),
+        spend_scope: Some(spend_b),
     };
     let ctx_c = llm::DurableStepContext {
         vault: &vault,
@@ -825,6 +842,177 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         "the untyped try's trap still waits"
     );
     assert_eq!(backend.calls(), 0, "no exhausted step called its backend");
+    Ok(())
+}
+
+/// [PARK-BUDGET-SIGNAL-BEFORE-PARK]: the owner tops up scope A after its step's guard read its
+/// room and before the step runs, so the top-up finds no park to wake. The step's stale guard
+/// still refuses, and its park reads the moved cap generation in its own write and resumes at
+/// once: the same try queues again with its trap consumed. Try B, whose cap did not move, parks
+/// typed and stays parked.
+#[test]
+fn a_top_up_between_the_guards_read_and_the_park_resumes_the_park_at_once()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, vault) = open_vault()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let proof = embedded_owner_proof(&vault);
+    let dispatcher = AgentDispatcher::new(&vault);
+    let store = DreamerRunnerStore::new(&vault);
+
+    // Two open hard root scopes with caps well below any guard reserve.
+    let scope_a = SpendScopeId::launch("owen-raised")?;
+    let scope_b = SpendScopeId::launch("yuki-unraised")?;
+    for (scope, cap, at) in [(&scope_a, CAP_A, 13), (&scope_b, CAP_B, 14)] {
+        let opened = dispatcher
+            .open_root_spend_scope(
+                scope.clone(),
+                DeclaredMaximum {
+                    units: cap,
+                    unit: LeaseUnit::tokens(),
+                },
+                Some(MaximumShown { at_ms: at * 1_000 }),
+                at,
+            )
+            .expect("a hard root opens");
+        assert!(opened.hard, "each root is a hard cap");
+        assert_eq!(opened.cap_units, cap, "each root opens under its cap");
+    }
+
+    // The host reads each cap generation, then builds each step's guard.
+    let spend_a = llm::StepSpendScope::read_before_guards(&vault, scope_a.clone())?;
+    let spend_b = llm::StepSpendScope::read_before_guards(&vault, scope_b.clone())?;
+    assert_eq!(
+        spend_a.cap_generation,
+        Some(SpendCapGeneration {
+            scope: scope_a.clone(),
+            cap_units: CAP_A,
+        }),
+        "scope A's cap generation is its own cap"
+    );
+    let guard_a = dispatcher.guard_for_scope(&scope_a)?;
+    let guard_b = dispatcher.guard_for_scope(&scope_b)?;
+    let asked_a = guard_a.reserve_units();
+    let asked_b = guard_b.reserve_units();
+    assert!(
+        CAP_A < asked_a && CAP_B < asked_b,
+        "each cap sits below its guard's reserve"
+    );
+
+    let row_a = leased_try(&vault, "park-cap-moved-a", 25)?;
+    let row_b = leased_try(&vault, "park-cap-held-b", 26)?;
+
+    // The owner raises A's cap past the reservation before A's step runs. No park exists yet, so
+    // the top-up wakes nothing; A's guard keeps the room it read.
+    let room_cap = asked_a + 1_000;
+    let raised = dispatcher.top_up_spend_scope_as_owner(
+        &proof,
+        &scope_a,
+        CAP_A,
+        DeclaredMaximum {
+            units: room_cap,
+            unit: LeaseUnit::tokens(),
+        },
+        MaximumShown { at_ms: 30_000 },
+    )?;
+    assert_eq!(raised.cap_units, room_cap, "scope A's top-up lands");
+    assert_eq!(
+        dispatcher.spend_cap_generation(&scope_a)?,
+        Some(SpendCapGeneration {
+            scope: scope_a.clone(),
+            cap_units: room_cap,
+        }),
+        "the top-up moves scope A's cap generation"
+    );
+    assert!(
+        asked_a <= dispatcher.available_units(&scope_a)?,
+        "scope A now has room for the refused reservation"
+    );
+
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let ctx_a = llm::DurableStepContext {
+        vault: &vault,
+        attempt_id: row_a.id,
+        run_id: None,
+        envelope_actor: actor,
+        subject: owner,
+        deadline: None,
+        now_ms: 44_000,
+        spend_scope: Some(spend_a),
+    };
+    let ctx_b = llm::DurableStepContext {
+        vault: &vault,
+        attempt_id: row_b.id,
+        run_id: None,
+        envelope_actor: actor,
+        subject: owner,
+        deadline: None,
+        now_ms: 45_000,
+        spend_scope: Some(spend_b),
+    };
+    let backend = NeverBackend::new();
+
+    let outcome_a = block_on_ready(llm::call_as_step(
+        &ctx_a,
+        &backend,
+        &guard_a,
+        paid_step_request("park cap moved a"),
+    ))
+    .expect("try A's step answers");
+    let llm::StepOutcome::Trapped { trap: trap_a, .. } = outcome_a else {
+        panic!("try A's guard refuses on the room it read");
+    };
+    assert_eq!(
+        trap_a.kind,
+        llm::DreamerTrapKind::Budget,
+        "try A's trap is a budget trap"
+    );
+    assert!(
+        store.parked_attempt(row_a.id)?.is_none(),
+        "the moved cap resumes try A's park in its own write"
+    );
+    assert_eq!(
+        doors::trap_state(&vault, &trap_a)?,
+        llm::DreamerTrapState::Consumed,
+        "try A's trap is consumed in the park's write"
+    );
+    let status_a = store.status(row_a.id)?.expect("try A's row after the park");
+    assert_eq!(
+        status_a.attempt.state.as_str(),
+        "queued",
+        "try A queues again"
+    );
+    assert_eq!(
+        status_a.attempt.attempt_count, row_a.attempt_count,
+        "try A stays the same try"
+    );
+
+    let outcome_b = block_on_ready(llm::call_as_step(
+        &ctx_b,
+        &backend,
+        &guard_b,
+        paid_step_request("park cap held b"),
+    ))
+    .expect("try B's step answers");
+    let llm::StepOutcome::Trapped { trap: trap_b, .. } = outcome_b else {
+        panic!("try B's spent budget traps its step");
+    };
+    assert_eq!(
+        llm::register_wait(&vault, &trap_b, 55_000)?,
+        llm::DreamerTrapState::Waiting,
+        "try B's trap waits for its signal"
+    );
+    let park_b = store
+        .parked_attempt(row_b.id)?
+        .expect("try B, whose cap did not move, stays parked");
+    assert_eq!(
+        park_b.wait.map(|wait| wait.wait),
+        Some(DreamerParkWait::Budget {
+            scope: scope_b.clone(),
+            asked_units: asked_b,
+        }),
+        "try B parks typed on its own scope"
+    );
+    assert_eq!(backend.calls(), 0, "no refused step called its backend");
     Ok(())
 }
 

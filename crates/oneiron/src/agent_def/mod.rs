@@ -108,7 +108,7 @@ pub(crate) use portable::{
 };
 pub(crate) use portable_binding::{
     PreparedAgentDefinitionBirth, agent_fork_hash_in_txn, bind_agent_birth_in_txn,
-    import_agent_fork_hash_in_txn,
+    import_agent_fork_hash_in_txn, restore_seed_agent_fork_hash_in_txn,
 };
 pub(crate) use portable_knowledge::{KnowledgeFormat, decode_agent_knowledge};
 

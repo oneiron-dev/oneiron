@@ -148,6 +148,12 @@ pub enum ReceiptKind {
     /// transaction to its own store; the vault owner's override and the
     /// engine's internal resumes alike.
     RunHoldOverride,
+    /// One send of an inquiry, on the asking vault (federation.md #inquiry,
+    /// INQUIRE-1): the asker, the task, the question, the time and the
+    /// outcome (answered, no_answer, pending or unavailable), never answer
+    /// text. Written in the send's own transaction to its own store, whatever
+    /// the vault's `inquiry_keep`.
+    Inquiry,
 }
 
 impl ReceiptKind {
@@ -169,6 +175,7 @@ impl ReceiptKind {
             Self::ReferenceRefusal => "reference_refusal",
             Self::TaskLifecycle => "task_lifecycle",
             Self::RunHoldOverride => "run_hold_override",
+            Self::Inquiry => "inquiry",
         }
     }
 
@@ -190,6 +197,7 @@ impl ReceiptKind {
             "reference_refusal" => Some(Self::ReferenceRefusal),
             "task_lifecycle" => Some(Self::TaskLifecycle),
             "run_hold_override" => Some(Self::RunHoldOverride),
+            "inquiry" => Some(Self::Inquiry),
             _ => None,
         }
     }
