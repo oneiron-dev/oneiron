@@ -17,6 +17,7 @@ pub(crate) use self::cache_store::{
 };
 pub(crate) use self::community::{
     CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
+    ppr_expand_scoped_in_txn_with_community_diagnostics,
     ppr_query_in_txn_with_community_deferred_cache,
 };
 #[cfg(test)]
