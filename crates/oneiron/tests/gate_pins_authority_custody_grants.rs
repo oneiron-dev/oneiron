@@ -30,7 +30,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{
-    ActSurface, AuthorityVaultId, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole,
+    ActSurface, AuthorityVaultId, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineOwnership,
+    MachineRole,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind};
@@ -160,7 +161,24 @@ const CUSTODY_AT: u64 = 1_780_000_000;
 fn g161_g200_the_owners_rewrap_of_a_live_portable_secret_lands() -> TestResult {
     let carrier = carrier()?;
     let vault = &carrier.vault;
-    // Registered after this install's profile, so the value is portable.
+    // A serving install enrols unanswered and is no custody candidate until
+    // the owner answers that it is his, as the owner's machine route
+    // (machine_routes.rs) does with `set_machine_role`.
+    let this_install = vault
+        .local_machine()
+        .map_err(at("read this install"))?
+        .ok_or("fixture: this install has no machine id")?
+        .id;
+    vault
+        .set_machine_role(
+            &carrier.owner,
+            ActSurface::ThisInstall,
+            this_install,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .map_err(at("the owner answers this install is his"))?;
+    // Registered after that answer, so the value is portable.
     vault
         .register_secret_as_owner(
             &carrier.owner,
@@ -189,6 +207,7 @@ fn g161_g200_the_owners_rewrap_of_a_live_portable_secret_lands() -> TestResult {
         .find(|candidate| candidate.this_install)
         .map(|candidate| candidate.permit.machine)
         .ok_or("fixture: this install is no custody candidate")?;
+    assert_eq!(machine, this_install);
     // The owner route's rewrap (owner/secrets.rs): this install holds it,
     // and the plan permits this install.
     let work = vault
