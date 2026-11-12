@@ -64,16 +64,15 @@ pub struct CodeSymbolsReleased {
 }
 
 /// Stages one ordinary file change of a repository as a proposal. Nothing
-/// lands; review and the existing landing gate decide that later.
+/// lands; review and the existing landing gate decide that later. The
+/// engine binds the proposal's session (the owner's sitting on this
+/// install) and its `repo.provenance` claim (the `owner_request` form, on
+/// that sitting); the caller names neither.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeProposalSubmitRequest {
     /// An existing CODE_ARTIFACT, whose stored repo_ref pins the base commit.
     pub repo: EntityId,
-    /// An existing SESSION. Attribution, not authority.
-    pub session: EntityId,
-    /// An existing active `repo.provenance` CLAIM.
-    pub provenance_claim: EntityId,
     /// Repository-relative path of the one file.
     pub path: String,
     /// The new file bytes.
@@ -98,7 +97,8 @@ pub struct CodeProposalSubmitRequest {
 }
 
 /// A fresh review of an approved ordinary file proposal. The nested change
-/// supplies current attribution and policy; its content is filled by the engine.
+/// supplies the message and policy; its content is filled by the engine,
+/// and its attribution is the engine's, bound to that content.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeProposalRereviewRequest {
