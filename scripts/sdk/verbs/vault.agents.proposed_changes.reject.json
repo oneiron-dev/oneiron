@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.proposed_changes.reject",
+  "description": "The owner rejects an agent's proposed change to a stored agent definition: the stored definition stays as it is, the proposal row is deleted, and one gate decision records the answer.",
+  "input": "crate::task_verb::sdk::ProposedAgentDefinitionChangeRejectRequest",
+  "output": "crate::task_verb::sdk::ProposedAgentDefinitionChangeSettlementView",
+  "call": "crate::task_verb::sdk::reject_proposed_agent_definition_change_as(memory.vault(), &memory.embedded_owner(\"vault.agents.proposed_changes.reject\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner",
+  "act_class": "unstated"
+}
