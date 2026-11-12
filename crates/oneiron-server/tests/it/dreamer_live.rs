@@ -590,8 +590,12 @@ fn witness(vault: &Vault, person: EntityId, conversation: EntityId, text: &str) 
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: vault.now_recorded_at() + 1,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .unwrap();
     turn

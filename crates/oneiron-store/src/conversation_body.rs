@@ -142,7 +142,24 @@ impl ConversationBody {
     pub fn shares_history(&self) -> bool {
         self.history_visible.unwrap_or(self.kind.history_default())
     }
+    /// The project that groups this room as an extra room, from its door-owned `project_group`
+    /// key: absent reads as unlinked; a canonical 32-hex id reads as linked; any other value is
+    /// refused, so a malformed key never encodes or decodes.
+    pub fn project_group(&self) -> Result<Option<EntityId>> {
+        let Some(value) = self.extra.get(ROOM_PROJECT_GROUP_KEY) else {
+            return Ok(None);
+        };
+        let Some(id) = value.as_str() else {
+            return Err(invalid("invalid project_group"));
+        };
+        let project = EntityId::from_hex(id).map_err(|_| invalid("invalid project_group"))?;
+        if project.to_hex() != id {
+            return Err(invalid("invalid project_group"));
+        }
+        Ok(Some(project))
+    }
     fn validate(&self) -> Result<()> {
+        self.project_group()?;
         for person in self.roles.keys() {
             let id = EntityId::from_hex(person).map_err(|_| invalid("invalid role PERSON id"))?;
             if id.to_hex() != *person || !self.member_ids.contains(&id) {
@@ -189,6 +206,10 @@ pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 
 /// The door-owned TURN body key a thread binding rides under.
 pub const ROOM_THREAD_KEY: &str = "room_thread";
+
+/// The door-owned CONVERSATION body key naming the project that groups this ordinary room as an
+/// extra room; only vault.projects.rooms.link and .unlink stamp it.
+pub const ROOM_PROJECT_GROUP_KEY: &str = "project_group";
 
 /// A thread TURN's birth binding: its thread's root, the room whose
 /// membership it reads under, the trunk turn the thread hangs off and, on

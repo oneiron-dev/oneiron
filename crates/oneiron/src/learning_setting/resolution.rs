@@ -54,10 +54,14 @@ pub(crate) fn setting_value_scoped_in_txn(
 }
 
 /// The value in force for `spec` over `scopes`, narrowest first, beside the
-/// row that decided it: the narrowest pin; else, scope by scope, its fit at
+/// row that decided it: the narrowest pin the owner set, else the narrowest
+/// pin a holder of `engine.controls` set; else, scope by scope, its fit at
 /// the type, then its own fit, then its seed; else the vault fit, the vault's
-/// seed, the catalog seed. The read's project is the project scope among
-/// `scopes` (FIX 6038): a project's fit, and its goal's, are keyed by it.
+/// seed, the catalog seed. An owner's pin fixes the value until the owner
+/// changes it, so no holder's pin at a narrower scope stands over it,
+/// whichever of the two was set first. The read's project is the project
+/// scope among `scopes` (FIX 6038): a project's fit, and its goal's, are
+/// keyed by it.
 ///
 /// # Errors
 ///
@@ -69,15 +73,29 @@ pub(super) fn resolve_in_txn(
     scopes: &[SettingScope],
     type_ref: Option<&TypeRef>,
 ) -> Result<(f64, Decided)> {
+    let mut holder_pin = None;
     for scope in scopes {
         if let Some(row) = scoped_row(store, txn, spec, SettingMode::Pin, scope)? {
-            return Ok((
-                row.value,
-                Decided::Owner {
-                    witness: row.witness,
-                },
-            ));
+            if !row.by_holder {
+                return Ok((
+                    row.value,
+                    Decided::Owner {
+                        witness: row.witness,
+                    },
+                ));
+            }
+            if holder_pin.is_none() {
+                holder_pin = Some(row);
+            }
         }
+    }
+    if let Some(row) = holder_pin {
+        return Ok((
+            row.value,
+            Decided::Owner {
+                witness: row.witness,
+            },
+        ));
     }
     let project = scopes.iter().find_map(|scope| match scope {
         SettingScope::Project(project) => Some(*project),

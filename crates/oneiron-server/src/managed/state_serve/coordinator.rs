@@ -602,6 +602,10 @@ async fn serve_with_handles(
     handles
         .ladder_workers
         .extend(sync_server.spawn_resident_pump_admitted(admitted(), admit_run));
+    // Due model-seat resets release their parks under the same admission.
+    handles
+        .ladder_workers
+        .push(sync_server.spawn_model_seat_watcher_admitted(admitted()));
     // Held and answered connector calls settle (ONE-2510).
     handles
         .ladder_workers
