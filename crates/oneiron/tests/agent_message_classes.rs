@@ -438,6 +438,71 @@ fn a_persons_message_to_a_resident_whose_wake_is_parked_wakes_it() -> TestResult
     Ok(())
 }
 
+/// A message that landed on a running wake which then parked on a durable
+/// wait before a step took it is not stranded there (#7339 review round 1).
+/// The parked wake runs no step, so the next pass withdraws the message
+/// from its branch and wakes the resident for it. Once the parked wake
+/// resumes, it does not take the message again.
+#[test]
+fn a_message_on_a_wake_that_then_parks_wakes_the_resident() -> TestResult {
+    let clock = FakeClock::default();
+    let dir = tempfile::tempdir()?;
+    let (vault, fixture, wake, leased) = busy_resident(&clock, &dir)?;
+
+    admit_person_message(
+        &vault,
+        fixture.inbox,
+        fixture.yuki,
+        fixture.owen,
+        "stranded-1",
+    )?;
+    clock.advance(u64::from(HOLD_SECS) + 1);
+    inbox_pass(&vault, fixture.yuki, clock.now())?;
+    let landed = signals(&vault, fixture.yuki, wake.attempt.id)?;
+    assert_eq!(
+        landed.len(),
+        1,
+        "the steer lands on the running wake: {landed:?}"
+    );
+    assert_eq!(landed[0].state, RunSignalState::Pending);
+
+    let store = DreamerRunnerStore::new(&vault);
+    store.park_attempt(ParkDreamerAttempt {
+        attempt_id: leased.id,
+        reason: "waiting on a person's answer".to_owned(),
+        cause: DreamerParkCause::Signal,
+        park_owner: WORKER.to_owned(),
+        carried_spend: None,
+        now: clock.now(),
+    })?;
+    clock.advance(1);
+    let next = the_wake(&inbox_pass(&vault, fixture.yuki, clock.now())?)?;
+    assert_eq!(
+        next.attempt.dedupe_key.as_deref(),
+        Some(format!("agent.dispatch:{}", message_key(&fixture, "stranded-1")).as_str()),
+        "the parked wake takes nothing, so the message wakes the resident"
+    );
+    assert_eq!(wakes(&vault, fixture.yuki)?, 2);
+    assert!(
+        signals(&vault, fixture.yuki, wake.attempt.id)?.is_empty(),
+        "the message left the parked wake's branch"
+    );
+
+    store.resume_parked(leased.id, WORKER, clock.now())?;
+    clock.advance(1);
+    let again = inbox_pass(&vault, fixture.yuki, clock.now())?;
+    assert!(
+        again.outcomes.is_empty(),
+        "the message is taken once: {again:?}"
+    );
+    assert!(
+        signals(&vault, fixture.yuki, wake.attempt.id)?.is_empty(),
+        "the resumed wake does not take it again"
+    );
+    assert_eq!(wakes(&vault, fixture.yuki)?, 2);
+    Ok(())
+}
+
 /// AGM-2: a steer that landed on a wake which then ended without taking it
 /// is not lost. It is not counted as woken, so it wakes the next run.
 #[test]
