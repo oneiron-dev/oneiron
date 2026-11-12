@@ -395,7 +395,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
             SealProfile::BaselineB,
             url
         ),
-        Err(EsignSealError::Verification)
+        Err(EsignSealError::Verification { .. })
     ));
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Pending);
     assert!(vault.sealed_esign_document(id)?.is_none());

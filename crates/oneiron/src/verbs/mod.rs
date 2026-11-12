@@ -1,4 +1,8 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
+mod asset_masked_read;
+mod connector_source_rows_read;
+mod skill_package_read;
+
 mod act_answer;
 mod agent_grant;
 mod agent_run_effect;
@@ -30,8 +34,10 @@ mod credential;
 mod custody_drain;
 mod describe;
 mod diary;
+mod diary_pinned;
 mod disclosure;
 mod embedding_space;
+mod engine_controls;
 mod eval_cohort;
 mod explain;
 mod fanout_launch;
@@ -42,6 +48,8 @@ mod feedback;
 mod files;
 mod follower_keyframe;
 mod free_time_policy;
+mod gate_decision_read;
+mod gate_policy_read;
 mod git_push_grant;
 mod goal_optimize;
 mod grants;
@@ -78,9 +86,11 @@ mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
+mod research_root;
 mod reservoir_sources;
 mod residence;
 mod retrieval;
+mod revisions_read;
 mod root_requests;
 mod scratchpad;
 mod secret;
@@ -88,6 +98,7 @@ mod secret_custody;
 mod secret_grant;
 mod secret_use;
 mod self_actor;
+mod self_model_read;
 mod self_verbs;
 mod share;
 mod shared;
@@ -449,6 +460,10 @@ pub use crate::memory::RecallRequest;
 
 pub use crate::memory::affect::QueryAffect;
 
+pub use self::asset_masked_read::*;
+pub use self::connector_source_rows_read::*;
+pub use self::skill_package_read::*;
+
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agent_run_effect::*;
@@ -482,8 +497,10 @@ pub use self::credential::*;
 pub use self::custody_drain::*;
 pub use self::describe::*;
 pub use self::diary::*;
+pub use self::diary_pinned::*;
 pub use self::disclosure::*;
 pub use self::embedding_space::*;
+pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
 pub use self::fanout_launch::*;
@@ -494,6 +511,8 @@ pub use self::feedback::*;
 pub use self::files::*;
 pub use self::follower_keyframe::*;
 pub use self::free_time_policy::*;
+pub use self::gate_decision_read::*;
+pub use self::gate_policy_read::*;
 pub use self::git_push_grant::*;
 pub use self::goal_optimize::*;
 pub use self::grants::*;
@@ -527,9 +546,11 @@ pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
+pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
 pub use self::retrieval::*;
+pub use self::revisions_read::*;
 pub use self::root_requests::*;
 pub use self::scratchpad::*;
 pub use self::secret::*;
@@ -537,6 +558,7 @@ pub use self::secret_custody::*;
 pub use self::secret_grant::*;
 pub use self::secret_use::*;
 pub use self::self_actor::*;
+pub use self::self_model_read::*;
 pub use self::self_verbs::*;
 pub use self::share::*;
 pub use self::shared::*;
@@ -729,7 +751,7 @@ fn verb_leaves(name: &str, written: bool) -> Vec<&str> {
 /// `describe`) with its typed input and reply, one overload first for each
 /// input field that selects its own reply (`describe({fold})`,
 /// `tasks.update({resultRef})`), and every type they reach in one namespace.
-/// `scripts/sdk/generate.py` writes that one text from the table to both
+/// The SDK generator (`crates/oneiron-sdk-generator`) writes that one text from the table to both
 /// `catalog_fragment.d.ts` and `code-mode.d.ts`, so the methods a model is
 /// shown are exactly the rows the host serves.
 #[must_use]
@@ -902,7 +924,7 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let short = serde_json::json!({
         "who": {"responder": {"human": {"actor_ref": actor}}},
@@ -1030,8 +1052,8 @@ fn short_ask_retry_identity_includes_recipient_deadline_and_branch() {
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let other = crate::EntityId::from_bytes([0xE2; 16]).unwrap();
-    super::tests::support::put_person(&vault, other);
-    let question = super::tests::support::consult_turn(&vault, 0x81);
+    crate::task_verb::tests::support::put_person(&vault, other);
+    let question = crate::task_verb::tests::support::consult_turn(&vault, 0x81);
     let memory = vault.memory(actor, crate::EdgeActorClass::Human);
     let base = serde_json::json!({
         "who": {"people": [actor]},

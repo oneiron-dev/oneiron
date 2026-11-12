@@ -6,6 +6,8 @@ import { createHash } from "node:crypto";
 import { Artifacts, BlockedDoor, DeadlineError, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline, recordStart, assertFlowActive } from "./run.ts";
 import { loadBuildManifest, requireAsset } from "./fixtures.ts";
 import type { BuildManifest, Profile } from "./fixtures.ts";
+import { ScriptedProviders } from "./providers.ts";
+import type { SeenFixtureCall } from "./providers.ts";
 import { CliClient, CliError, PublicHttpClient, McpClient, SdkProcessDriver, WsClient, credentialParts } from "./clients.ts";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 
@@ -33,6 +35,8 @@ export interface EngineOptions {
   readonly id?:string;
   /** Host configuration only. Read current public config before supplying TOML. */
   readonly serverConfig?:string;
+  /** Preview-only destination. Any outbound request fails fixture cleanup. */
+  readonly feedbackDestination?:"local-collector";
   readonly initArgs?:readonly string[];
   /** MRL prefix width; serialized at config root before [keystore] so init first-opens with it. Engine owns the 1 <= fd < dimensions check at open. */
   readonly fastDims?:number;
@@ -109,6 +113,7 @@ export class EngineFixture {
   client!:PublicHttpClient;
   mcp!:McpClient;
   private server:ManagedProcess|undefined;
+  private feedbackCollector:ScriptedProviders|undefined;
   /** Every server process this fixture launched, restarts included, for serverOutputHas. */
   private readonly launches:ManagedProcess[]=[];
   private schema:Schema|undefined;
@@ -150,8 +155,13 @@ export class EngineFixture {
       if(options.serverConfig&&/^\s*(host|port|vault_path|auth_secret|allow_unauthenticated)\s*=/m.test(options.serverConfig))
         throw new TypeError("EngineFixture owns isolation/auth fields; use an explicit unauthenticated case outside the default fixture");
       if(options.serverConfig?.trim()&&!options.serverConfig.trim().startsWith("[")) throw new TypeError("serverConfig is additional public TOML tables, not root keys");
+      if(options.feedbackDestination==="local-collector") {
+        await stage("feedback-collector");
+        engine.feedbackCollector=await ScriptedProviders.start({id:`${options.id??"engine"}-feedback`,steps:[],origins:["feedback"],artifacts:engine.artifacts});
+      }
+      const feedbackConfig=engine.feedbackCollector?`\n[feedback]\ndestination = "collector"\nendpoint = ${JSON.stringify(`${engine.feedbackCollector.urls.feedback}/feedback`)}\n`:"";
       await stage("write-config");
-      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}`,{mode:0o600});
+      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}${feedbackConfig}`,{mode:0o600});
       await stage("cli-init");
       const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...providerInitArgs(options),...(options.initArgs??[])],undefined,LIMITS.readyMs,true,true);
       if(init.exitCode!==0) throw new CliError(init,"vault-init");
@@ -204,6 +214,8 @@ export class EngineFixture {
       await engine.close().catch(()=>{});throw error;
     }
   }
+  /** In-memory collector snapshot; empty when feedbackDestination was not requested. */
+  get feedbackRequests():readonly SeenFixtureCall[] {return this.feedbackCollector?.seenFixtureCalls??[]}
   private actor(principalRef:string,actorClass:PairedActor["actorClass"],paired:{credential:string;pin:unknown}):PairedActor {
     const client=new PublicHttpClient(this.url,{credential:paired.credential,artifacts:this.artifacts,label:`${actorClass}:${principalRef}`});
     const {bearer,seed}=credentialParts(paired.credential);
@@ -307,6 +319,7 @@ export class EngineFixture {
     if(this.closed) return;this.closed=true;this.disown();
     const results=await Promise.allSettled([...this.devicePeers.map(peer=>peer.close()),...this.peers.map(peer=>peer.close(options))]);
     await this.server?.stop();this.mcp?.close();
+    if(this.feedbackCollector) results.push(...await Promise.allSettled([this.feedbackCollector.close()]));
     if(!options.retainVault) await rm(this.root,{recursive:true,force:true});
     else if(process.env.E2E_TEMP_ROOT) await writeFile(resolve(process.env.E2E_TEMP_ROOT,"retain-vaults"),"explicit local retention\n",{mode:0o600});
     const failure=results.find(result=>result.status==="rejected");if(failure?.status==="rejected") throw failure.reason;

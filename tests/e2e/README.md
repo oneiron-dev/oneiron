@@ -24,7 +24,7 @@ Schema artifacts retain only SHA-256, byte length and path count, not the full b
 
 ## Files and ownership
 
-Under `/Users/olety/.claude/worktrees/solq-e2e-support/tests/e2e/`:
+Under `tests/e2e/`:
 
 - `support/engine.ts`: real init/bootstrap/pair/serve, fresh roots, peers, restarts.
 - `support/clients.ts`: signed HTTP, MCP JSON-RPC, WS app protocol, CLI, SDK processes.
@@ -114,10 +114,11 @@ const engine = await EngineFixture.start({
 | `pairedActor` | `{principalRef, actorClass, credential, pin, client, mcp, cli}`. Never print it. |
 | `sdk` | `SdkProcessDriver` using the prepared Node package or Python venv. |
 | `peers` | Additional fresh independent fixtures; no automatic sync or authority. |
+| `feedbackRequests` | In-memory snapshot of local feedback collector requests, with the same fields as `ScriptedProviders.seenFixtureCalls`; empty when not opted in. |
 | `awaitReceipt(ref, timeoutMs?)` | Resolves `call:` refs through `vault.receipts.get` and other refs only as rows of the `vault.receipts` page (gate-ledger receipts), never a job drain; `witness:` and `put:` refs are write markers, not receipt rows, so they never resolve here: read the written entity back through `vault.get` instead. |
 | `restart()` | Stop and re-serve only this fixture's vault, using the same credential. |
 | `kill()` | SIGKILL the owned server group. First observe a public receipt/ACK/provider barrier. |
-| `close({retainVault?})` | Close peers/server and remove the private root unless explicit local retention. |
+| `close({retainVault?})` | Close peers/server, then the feedback collector if opted in, and remove the private root unless explicit local retention. Unexpected collector requests fail cleanup. |
 | `serverOutputHas(values)` | After `close()`: `{found, truncated}` for the raw stdout/stderr of every server launch, restarts included. In memory only; never persisted or returned. A leak case asserts `{found:false,truncated:false}`. |
 | `artifacts` | Redacting JSON writer; never uploads anything. |
 
@@ -143,6 +144,19 @@ header). For example, configure `[models.providers.fixture]` with
 `[models.roles.<role>]` tables to their declared wire models. This does not
 silently authorize inference or egress. Apply required owner policy separately.
 The fixture owns host, port, vault path, issuer secret and authentication.
+
+`feedbackDestination: "local-collector"` opts a preview-only case into a
+`[feedback]` table with `destination = "collector"` and an HTTP endpoint on an
+ephemeral `127.0.0.1` listener. No feedback table or listener is added by default.
+Do not also supply `[feedback]` in `serverConfig` when using this option.
+The collector needs no token or vault secret. It uses `ScriptedProviders` with
+an empty script: every request is unexpected, receives HTTP 500, and fails
+fixture/flow cleanup even if the engine hides the delivery error. Assert
+`expect(engine.feedbackRequests).toHaveLength(0)` after preview. The collector
+stays active across `restart()` and closes only after the engine stops; cleanup
+also catches requests arriving after that assertion. Its redacted provider
+artifact records requests and violations. This option does not authorize a send
+or change any disclosure checks.
 
 For the public embedding/tagger adapters, use typed options:
 
@@ -380,8 +394,12 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 4
 `E2E_REPORT_DIR` optionally selects a protected absolute output directory.
 Otherwise the runner allocates one. The runner starts one child Bun process per
 selected case ID. Each case runs alone; there is no concurrency inside a process.
-The scheduler starts the longest per-case estimate first (file estimate divided
-by its planned case count), then sorts by file name and case plan order.
+The scheduler starts the longest per-case estimate first, then sorts by file name
+and case plan order. A case's estimate is its own `estimatedSeconds` in
+`fixtures/suite-plan.json` when the plan has one (the measured child wall, rounded
+up to whole seconds), else its file's estimate divided by its planned case count.
+The boot, gate and privacy cases carry the child walls of fleet job
+1111-175510-86ee (shared set bd95597c8afc, four workers).
 Each child uses its file's slots. Up to six slots fit 12 CPU credits and 24 GiB.
 The default remains four slots, 8 CPU credits and 16 GiB. `--workers` accepts one
 through six slots and must fit the heaviest selected file.

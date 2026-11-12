@@ -1,0 +1,89 @@
+.sl-menu {
+  min-width: 200px;
+  padding: 6px;
+}
+
+.sl-menu[data-width="wide"] {
+  width: 300px;
+}
+
+.sl-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  line-height: 1.4;
+  color: var(--sl-ink-2);
+  text-align: left;
+}
+
+.sl-menu-item:hover,
+.sl-menu-item:focus-visible {
+  background: var(--sl-hover);
+  color: var(--sl-ink-1);
+  outline: none;
+}
+
+.sl-menu-item:disabled {
+  color: var(--sl-ink-2);
+  background: none;
+  cursor: default;
+}
+
+.sl-menu-item[aria-checked="true"] {
+  color: var(--sl-ink-1);
+}
+
+.sl-menu-item-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  color: var(--sl-ink-2);
+}
+
+.sl-menu-item > .sl-figure,
+.sl-menu-line > .sl-figure,
+.sl-menu-line > .sl-status-dot {
+  margin-left: auto;
+}
+
+.sl-menu-item > .sl-menu-item-pick {
+  margin-left: auto;
+  color: var(--sl-ink-2);
+}
+
+.sl-menu-item[aria-checked="true"] > .sl-menu-item-pick {
+  color: var(--sl-ink-1);
+}
+
+.sl-menu-heading {
+  display: block;
+  padding: 8px 8px 4px;
+  font-size: var(--sl-t-do);
+  font-weight: 600;
+  color: var(--sl-ink-2);
+}
+
+.sl-menu-heading:first-child {
+  padding-top: 4px;
+}
+
+.sl-menu-separator {
+  display: block;
+  height: 8px;
+}
+
+.sl-menu-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: var(--sl-t-do);
+  line-height: 1.4;
+  color: var(--sl-ink-2);
+}

@@ -398,6 +398,7 @@ async fn ask_judge(
         subject,
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
+        spend_scope: None,
     };
     let outcome = call_as_step(&step_ctx, model.backend, model.guard, request).await;
     let (response, memoized, binding) = match step_answer(outcome)? {

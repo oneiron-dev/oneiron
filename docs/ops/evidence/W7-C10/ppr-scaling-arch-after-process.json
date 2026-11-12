@@ -2,13 +2,13 @@
   "schema": "oneiron-fleet-process-v1",
   "terminal": true,
   "command": [
-    "/home/lexi/w7-build/wt/W7-C10/target/release/oneiron-bench",
+    "target/release/oneiron-bench",
     "fleet",
     "ppr-scaling",
     "--plan",
-    "/home/lexi/w7-build/wt/W7-C10/.w7/fleet-arch-plan-retry.json",
+    ".w7/fleet-arch-plan-retry.json",
     "--out",
-    "/home/lexi/w7-build/wt/W7-C10/target/fleet-evidence/ppr-arch-after.json"
+    "target/fleet-evidence/ppr-arch-after.json"
   ],
   "pid": 1762419,
   "exit_code": 0,
