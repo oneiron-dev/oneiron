@@ -3,6 +3,11 @@
 //! wins). The approval read only projected STOPs: it cleared the slot at the
 //! ruling, and the recorded STOP's own projection then landed behind that
 //! boundary and was retracted for good.
+//!
+//! The vault is unseeded, as the effect-spine oracle's comm legs open it
+//! (`tests/it/effect_spine_oracle.rs` `open_comm_vault`), so the
+//! unseeded opener needs the test-support feature.
+#![cfg(feature = "test-support")]
 
 use oneiron::comm::{
     CommClearOptOutOutcome, CommError, PREDICATE_COMM_OPT_OUT, approve_pending_opt_out_clear,
@@ -14,14 +19,17 @@ use oneiron::{EdgeActorClass, Vault, VaultConfig, WriteActor};
 const PARTY: &str = "unprojected-stop@example.com";
 const CHANNEL: &str = "email";
 
-/// A vault opened the production way: the default policy manifest stays.
+/// An unseeded vault. The shipped default manifest has no `comm.` rule, so
+/// there the human approval pends at the criticality floor
+/// (`gate.pending.criticality_floor`) before the STOP rule is ever read, on
+/// main and on the fix alike, and the pair proves nothing about the rule.
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let directory = tempfile::tempdir().expect("vault dir");
     let mut config = VaultConfig::device();
     config.map_size = 64 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    let vault = Vault::open(directory.path(), config).expect("open vault");
+    let vault = Vault::open_unseeded_for_test(directory.path(), config).expect("open vault");
     (directory, vault)
 }
 
