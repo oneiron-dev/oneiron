@@ -287,6 +287,7 @@ pub(super) fn append_inspected(
     // Refuse unrenderable input before any event or Completed recipient state
     // commits. Signed rechecks all of that recipient's saved values as a backstop.
     super::field_admission::validate_event_fields(vault, txn, &state, &event, inspected)?;
+    super::commitments::admit(&rows, &event)?;
     let row = EsignEventRow {
         sequence: rows.len() as u64,
         previous_sha256: rows.last().map(hash).transpose()?.unwrap_or([0; 32]),
@@ -329,9 +330,10 @@ pub(super) fn append_inspected(
     if let Some(project) = state.document.project {
         body.scope_project = project;
     }
+    let claim = vault.new_entity_id()?;
     vault.put_reserved_claim_in_txn(
         txn,
-        &vault.new_entity_id()?,
+        &claim,
         &body,
         TimeRange {
             start: now,
@@ -340,6 +342,18 @@ pub(super) fn append_inspected(
         now,
     )?;
     AUDIT.put(&vault.store, txn, &(document, row.sequence), &row)?;
+    // The commitments the draft names move with the event that lands here:
+    // born inert with the draft, opened by `esign.completed`, released by a
+    // decline, void or expiry (ARCH-0064 §3).
+    super::commitments::apply_in(
+        vault,
+        txn,
+        document,
+        &state.document,
+        &row.event,
+        claim,
+        now,
+    )?;
     Ok(state)
 }
 

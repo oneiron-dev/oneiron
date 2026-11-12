@@ -277,6 +277,9 @@ fn put_hygiene_claim_in_txn(
     )?;
     body.source = Some(ClaimSource::Observed);
     body.evidence = Some(evidence_value(input.evidence_ref));
+    // Only a PERSON subject has a substrate FACET; any other subject takes
+    // the vault default facet (a birth gate refusal otherwise, #4389).
+    body.scope_facet = vault.claim_put_facet_keeping_in_txn(wtxn, &id, body.scope_facet)?;
     vault.put_reserved_claim_in_txn(
         wtxn,
         &id,

@@ -23,7 +23,7 @@ use super::group_labels::group_key;
 use super::json_format::{json_rows, section_object};
 use super::markdown_plaintext_format::{write_markdown_groups, write_plaintext_groups};
 use super::pack_preparation::prepare_pack;
-use super::token_budget::{append_stats_line, json_stats};
+use super::token_budget::{WorldSectionOrder, append_stats_line, json_stats, world_section_label};
 use super::toon_format::encode_toon_section;
 use super::types::GroupKey;
 use super::yaml_format::write_yaml_groups;
@@ -59,6 +59,10 @@ pub(super) struct PreparedEntity {
     pub(super) source_id: [u8; 16],
     pub(super) id: String,
     pub(super) fields: Vec<(String, Value)>,
+    /// The row's world section label (`context_pack::WORLD_SECTION_FIELD`),
+    /// read from its hydrated fields before any field cut. Rows sort by its
+    /// section first, so a partitioned pack keeps the base section first.
+    pub(super) world_section: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,23 +192,31 @@ fn apply_projected_json_rows(
     entities: Vec<ContextEntity>,
     mut projected_rows: HashMap<[u8; 16], Vec<(String, Value)>>,
 ) -> Vec<ContextEntity> {
+    // A partitioned pack's rows keep their world sections in order, base
+    // first (ARCH-0004 #world-scope); the rank is 0 for every row of an
+    // unpartitioned pack, which sorts as before.
+    let sections = WorldSectionOrder::of_rows(&entities, |entity| {
+        world_section_label(entity.fields.as_ref())
+    });
     let mut projected: Vec<_> = entities
         .into_iter()
         .filter_map(|mut entity| {
             let fields = projected_rows.remove(entity.id.as_bytes())?;
+            let section = sections.rank(world_section_label(entity.fields.as_ref()));
             if entity.fields.is_some() {
                 entity.fields = Some(HashMap::from_iter(fields));
             }
-            Some(entity)
+            Some((section, entity))
         })
         .collect();
-    projected.sort_by(|a, b| {
-        b.critical
-            .cmp(&a.critical)
+    projected.sort_by(|(a_section, a), (b_section, b)| {
+        a_section
+            .cmp(b_section)
+            .then_with(|| b.critical.cmp(&a.critical))
             .then_with(|| b.score.total_cmp(&a.score))
             .then_with(|| a.id.cmp(&b.id))
     });
-    projected
+    projected.into_iter().map(|(_, entity)| entity).collect()
 }
 
 pub(super) fn serialize_prepared_pack(
