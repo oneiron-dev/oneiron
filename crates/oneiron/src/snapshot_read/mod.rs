@@ -54,6 +54,7 @@ pub use strength_observations::{
 };
 pub(crate) use strength_observations::{
     classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
+    strength_observations_page_bound,
 };
 // The integration tests' doors name a cited source's version as a caller's
 // read serves it (untangle 6.7a).
