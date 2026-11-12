@@ -5,6 +5,7 @@
   "output": "crate::blob_artifact::esign::EsignSigningPreviewView",
   "call": "memory.esign_signing_preview(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

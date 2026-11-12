@@ -3,6 +3,8 @@
 //! Shared report vocabulary stays in `highway_report`.
 
 use super::*;
+use crate::task_verb::highway_runner::runner_report_actor_in;
+use crate::task_verb::highway_runner::workflow_try::WORKFLOW_TRY_OWNER;
 use crate::task_verb::host_done_confession::{
     FIELD_CONFESSION_STRUCTURED, FIELD_HOST_ATTEMPT_COUNT,
 };
@@ -103,6 +105,7 @@ impl Memory<'_> {
                     None,
                     now,
                     |queue, wtxn, body, held| {
+                        self.stamp_host_executor_in(queue, wtxn, via, held_try(held))?;
                         land_done_in(queue, wtxn, body, held_try(held), result_ref, now)?;
                         Ok(true)
                     },
@@ -451,5 +454,51 @@ impl Memory<'_> {
             super::highway_block::block_question_label(brief, &continuation.purpose, None)
         });
         self.report_ask(rt, &spec, continuation.zip(label.as_deref()))
+    }
+
+    /// A met Done that settles a held external try stamps it with the
+    /// executor model of the authenticated host run the report came
+    /// through (LEARN-CRITIC Q2), in the write that completes it, before
+    /// its result and completion, so the completed try can be sealed. The
+    /// source is the host binding's own try, read in this snapshot: its
+    /// lease still held by the binding's owner at its generation, not a
+    /// saved workflow's wrapper, and its run writing as this reporting
+    /// actor. Its stamp is what the host ran; the report's text names no
+    /// model. A wire report, a lapsed or rebound binding, another actor's
+    /// run or an unstamped run lends nothing, and a try already stamped or
+    /// no longer `Leased` keeps what it holds: the Done lands as before.
+    fn stamp_host_executor_in(
+        &self,
+        queue: &AttemptQueue<'_>,
+        wtxn: &mut heed::RwTxn<'_>,
+        via: &TaskVia,
+        held: Option<(&AttemptRecord, &str)>,
+    ) -> MemoryResult<()> {
+        let (TaskVia::Host(binding), Some((record, lease_owner))) = (via, held) else {
+            return Ok(());
+        };
+        if record.executor_model.is_some()
+            || record.state != AttemptState::Leased
+            || binding.lease_owner() == WORKFLOW_TRY_OWNER
+        {
+            return Ok(());
+        }
+        let Some(run) = binding.leased_record_in_txn(self.vault(), &*wtxn)? else {
+            return Ok(());
+        };
+        if runner_report_actor_in(self.vault(), &*wtxn, &run)? != Some(self.actor()) {
+            return Ok(());
+        }
+        let Some(model) = run.executor_model.as_deref() else {
+            return Ok(());
+        };
+        queue.set_executor_model_in_txn(
+            wtxn,
+            record.id,
+            lease_owner,
+            record.attempt_count,
+            model,
+        )?;
+        Ok(())
     }
 }

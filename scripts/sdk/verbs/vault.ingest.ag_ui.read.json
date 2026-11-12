@@ -5,6 +5,7 @@
   "output": "crate::ingest::AgUiFileRead",
   "call": "memory.read_ag_ui_file(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "refs": [
     "/claim_ref"
   ],

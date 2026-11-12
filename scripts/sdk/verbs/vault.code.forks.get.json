@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::origin_doors::CodeForkView>",
   "call": "memory.code_fork_get_as(&memory.embedded_owner(\"vault.code.forks.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

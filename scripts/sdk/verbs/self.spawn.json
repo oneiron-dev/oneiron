@@ -3,6 +3,7 @@
   "input": "crate::code_run::ReaderSpawnInput",
   "output": "crate::code_run::ReaderSpawnReceipt",
   "scope": "Write",
+  "act_class": "spawn",
   "context": "run",
   "effect": "ReaderSpawn",
   "grant_class": "parent's slice and spend cap (ARCH-0079)",

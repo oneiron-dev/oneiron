@@ -5,6 +5,7 @@
   "output": "Option<Vec<crate::attempt_queue::ManifestEntry>>",
   "call": "memory.craft_reply_manifest(&input.receipt_ref)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

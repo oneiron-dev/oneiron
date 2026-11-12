@@ -5,6 +5,7 @@
   "output": "crate::board_verb::BoardVerbOutput",
   "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Subscribe { scopes: input.scopes })?",
   "scope": "Read",
+  "act_class": "reversible_work",
   "context": "board",
   "mcp_fields": {
     "scopes": "scopes"

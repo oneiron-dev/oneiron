@@ -257,7 +257,45 @@ pub(crate) fn core_verb_names(
     text += "/// The member of custody row `verb`'s input that holds the secret's value or its sealed input; `None`\n/// for any other row.\n";
     text += "#[must_use]\npub fn custody_member(verb: &str) -> Option<&'static str> {\n";
     text += "    CUSTODY_VALUE_ROWS.iter().position(|row| *row == verb).map(|at| CUSTODY_VALUE_MEMBERS[at])\n}\n";
+    text += &verb_act_classes(generator)?;
     Ok(text)
+}
+
+/// The `crate::check_in::VerbActClass` value of an `act_class` token; a token with no variant fails the build.
+fn verb_act_class_value(token: &str) -> String {
+    match token {
+        "read" => "crate::check_in::VerbActClass::Read".to_owned(),
+        "unstated" => "crate::check_in::VerbActClass::Unstated".to_owned(),
+        _ => format!(
+            "crate::check_in::VerbActClass::Act(crate::check_in::ActClass::{})",
+            super::row_access::variant_name(token)
+        ),
+    }
+}
+
+/// Every verb row's `act_class`, in verb-name order, for `crate::check_in::verb_act_class`.
+fn verb_act_classes(generator: &Generator) -> Result<String, GenerateError> {
+    let mut rows: Vec<(&str, &Dict)> = generator
+        .rows
+        .select(&generator.manifest)
+        .into_iter()
+        .map(|row| Ok((concat(item(row, "name")?)?, row)))
+        .collect::<Result<_, GenerateError>>()?;
+    rows.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let mut text = "/// Every verb row's `act_class` (ARCH-0082 #act-table), in verb-name order: `crate::check_in::verb_act_class`\n".to_owned();
+    text += "/// looks a verb up here.\n";
+    text += &format!(
+        "pub const VERB_ACT_CLASSES: [(&str, crate::check_in::VerbActClass); {}] = [\n",
+        rows.len()
+    );
+    for (name, row) in rows {
+        text += &format!(
+            "    ({}, {}),\n",
+            dumps_str(name),
+            verb_act_class_value(concat(item(row, "act_class")?)?)
+        );
+    }
+    Ok(text + "];\n")
 }
 
 /// The catalog's compile-time check that core's table (`crate::verb_names`) holds its own rows.
@@ -852,7 +890,7 @@ mod tests {
         fs::write(root.join("scripts/sdk/type_names.json"), "{}\n").expect("type_names.json");
         for (name, extra) in rows {
             let text = format!(
-                r#"{{"name": "{name}", "input": "In", "output": "Out", "call": "call(memory, &input)?", "scope": "Read", "section": false{extra}}}"#
+                r#"{{"name": "{name}", "input": "In", "output": "Out", "call": "call(memory, &input)?", "scope": "Read", "act_class": "read", "section": false{extra}}}"#
             );
             fs::write(verbs.join(format!("{name}.json")), text).expect("a verb file");
         }

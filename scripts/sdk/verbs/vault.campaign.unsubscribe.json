@@ -5,6 +5,7 @@
   "output": "crate::campaign::surface::CampaignUnsubscribeReceipt",
   "call": "memory.campaign_unsubscribe(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
