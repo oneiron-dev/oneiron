@@ -6,9 +6,15 @@
 //! bills the vault owner's default. A run no room binds keeps the owner's
 //! default, as before.
 //!
-//! Reaches the meter a live run's entry opens through
-//! `oneiron_server::test_doors::live_run_payer`, and the erase's spend-scope
-//! hook through `oneiron::test_doors::spend`:
+//! [LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK] (the Engine's task of 13 Nov 00:40):
+//! the Fill writer of the run's browser door is one of those model doors. The
+//! door lives as long as the lease, and its writer reads the payer at each
+//! call: a payer erased after the door's first call is never billed again,
+//! and a room-bound run's next writer call is refused typed.
+//!
+//! Reaches the meter a live run's entry opens, and the payer source its
+//! browser door keeps, through `oneiron_server::test_doors::live_run_payer`,
+//! and the erase's spend-scope hook through `oneiron::test_doors::spend`:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --all-features --features oneiron/test-support --test live_run_payer_erased`.
 #![cfg(oneiron_test_support)]
@@ -28,7 +34,7 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::spend::erase_actor_from_spend_scopes;
 use oneiron::workspace_roster::RoomWork;
 use oneiron::{AttemptQueue, EntityId, Vault, VaultConfig};
-use oneiron_server::test_doors::live_run_payer::entry_meter_payer;
+use oneiron_server::test_doors::live_run_payer::{FillWriterPayer, entry_meter_payer};
 
 type TestError = Box<dyn std::error::Error>;
 type TestResult = Result<(), TestError>;
@@ -193,6 +199,60 @@ fn a_run_no_room_binds_keeps_the_owner_default_once_the_payer_is_erased() -> Tes
         entry_meter_payer(&vault, &leased, &root),
         Ok(None),
         "a run no room or member binds keeps the vault owner's default"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_room_bound_runs_next_fill_writer_call_is_refused_once_its_payer_is_erased() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = open_vault(dir.path())?;
+    let payer = payer_person(&vault)?;
+    let root = paid_root(&vault, "fill-writer-payer-room", payer)?;
+    let leased = in_room(&leased_run(&vault, "run-fill-payer-room")?, EntityId::now())?;
+    let door = FillWriterPayer::of_run(&leased, &root);
+
+    assert_eq!(
+        door.next_call(&vault),
+        Ok(Some(payer)),
+        "the run's first Fill writer call bills the payer who funds its root"
+    );
+
+    erase_payer(&vault, payer, &root)?;
+
+    let next = door.next_call(&vault);
+    assert!(
+        next.as_ref()
+            .is_err_and(|refusal| refusal.starts_with("payer_missing")),
+        "a room-bound run's next Fill writer call after its payer is erased is refused typed, \
+         neither billed to the payer its door read first nor to the vault owner's default: \
+         {next:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fill_writer_never_bills_a_payer_erased_after_its_door_opened() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = open_vault(dir.path())?;
+    let payer = payer_person(&vault)?;
+    let root = paid_root(&vault, "fill-writer-payer-unbound", payer)?;
+    let leased = leased_run(&vault, "run-fill-payer-unbound")?;
+    let door = FillWriterPayer::of_run(&leased, &root);
+
+    assert_eq!(
+        door.next_call(&vault),
+        Ok(Some(payer)),
+        "while its root names a payer, an unbound run's Fill writer bills that payer"
+    );
+
+    erase_payer(&vault, payer, &root)?;
+
+    assert_eq!(
+        door.next_call(&vault),
+        Ok(None),
+        "the door keeps no payer: once the payer is erased, an unbound run's next Fill \
+         writer call keeps the vault owner's default"
     );
     Ok(())
 }
