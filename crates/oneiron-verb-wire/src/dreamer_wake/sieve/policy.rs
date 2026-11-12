@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub fn invalid() -> Error {
     Error::InvalidConfig("invalid dreamer sieve policy row".into())

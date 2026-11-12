@@ -1,5 +1,4 @@
 pub use crate::deletion::coop_delivery::types::CooperativeDeletionDispositionKind;
-pub use crate::deletion::legal_hold::confirmation::ShownCustomerHold;
 pub use crate::deletion::legal_hold::types::ErasePendingReason;
 pub use crate::deletion::legal_hold::types::EraseWithdrawal;
 pub use crate::deletion::legal_hold::types::LIFT_AND_ERASE_PROMPT;

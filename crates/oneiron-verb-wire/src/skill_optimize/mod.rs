@@ -54,7 +54,6 @@ pub use crate::skill_optimize::offer::snapshot::ComputeDestination;
 pub use crate::skill_optimize::offer::snapshot::OfferAnswer;
 pub use crate::skill_optimize::offer::snapshot::OfferCheck;
 pub use crate::skill_optimize::offer::snapshot::OfferCheckOutcome;
-pub use crate::skill_optimize::offer::snapshot::OfferCost;
 pub use crate::skill_optimize::offer::snapshot::SeatWorkload;
 pub use crate::skill_optimize::offer_switch::SwitchOwner;
 pub use crate::skill_optimize::response_pair::ResponsePairPick;

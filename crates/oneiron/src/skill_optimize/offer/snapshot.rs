@@ -12,7 +12,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::offer::snapshot::{
-    ComputeDestination, OfferAnswer, OfferCheck, OfferCheckOutcome, OfferCost, SeatWorkload,
+    ComputeDestination, OfferAnswer, OfferCheck, OfferCheckOutcome, SeatWorkload,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::skill_optimize::offer::snapshot::{MAX_REF_BYTES, bounded};
@@ -46,6 +46,18 @@ pub enum OfferCandidate {
         recipe_ref: String,
         licence: String,
     },
+}
+
+/// One option priced on the same projected workload. `None` is unknown.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfferCost {
+    pub currency: String,
+    pub monthly_before: Option<f64>,
+    pub monthly_after: Option<f64>,
+    /// Pilot, migration or re-embed cost, paid once.
+    pub one_off: Option<f64>,
+    pub payback_months: Option<f64>,
 }
 
 /// A comparison row: the baseline, the cheapest local option or an outside
@@ -195,6 +207,21 @@ impl OfferModelPin {
         named(&self.revision, "an offered model names its revision")?;
         if let Some(hash) = &self.content_hash {
             named(hash, "an offered model hash is not blank")?;
+        }
+        Ok(())
+    }
+}
+
+impl OfferCost {
+    fn validate(&self) -> Result<()> {
+        bounded(&self.currency, 16, "an offer cost names its currency")?;
+        for value in [
+            self.monthly_before,
+            self.monthly_after,
+            self.one_off,
+            self.payback_months,
+        ] {
+            amount(value)?;
         }
         Ok(())
     }

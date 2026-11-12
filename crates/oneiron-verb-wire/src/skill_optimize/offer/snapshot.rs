@@ -18,18 +18,6 @@ pub enum ComputeDestination {
     Hosted { provider: String, rows_leaving: u64 },
 }
 
-/// One option priced on the same projected workload. `None` is unknown.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OfferCost {
-    pub currency: String,
-    pub monthly_before: Option<f64>,
-    pub monthly_after: Option<f64>,
-    /// Pilot, migration or re-embed cost, paid once.
-    pub one_off: Option<f64>,
-    pub payback_months: Option<f64>,
-}
-
 /// The seat's dated workload the prices are projected from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -153,19 +141,4 @@ pub fn amount(value: Option<f64>) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-impl OfferCost {
-    fn validate(&self) -> Result<()> {
-        bounded(&self.currency, 16, "an offer cost names its currency")?;
-        for value in [
-            self.monthly_before,
-            self.monthly_after,
-            self.one_off,
-            self.payback_months,
-        ] {
-            amount(value)?;
-        }
-        Ok(())
-    }
 }

@@ -235,7 +235,6 @@ pub struct BranchScopeSchema {
 #[derive(schemars::JsonSchema)]
 #[schemars(rename = "BranchScopeResource")]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-#[expect(dead_code, reason = "schema mirror of the model crate's ScopeResource")]
 pub enum BranchScopeResourceSchema {
     Bucket { key: String },
     DocumentVersion { document: String, version: String },

@@ -5,8 +5,6 @@ pub use crate::runtime_hooks::regen::history::HookRegenActor;
 pub use crate::runtime_hooks::regen::history::HookRegenDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Where a regen stopped. Every phase keeps the last good body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
