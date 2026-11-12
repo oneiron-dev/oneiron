@@ -72,6 +72,8 @@ impl Vault {
         body.source = Some(crate::claim::ClaimSource::Observed);
         let id = EntityId::now();
         self.with_write_txn_grouped(|txn| {
+            // The subject is the code session, which has no FACET of its own.
+            body.scope_facet = self.claim_put_facet_in_txn(txn, &id)?;
             self.put_reserved_claim_in_txn(
                 txn,
                 &id,

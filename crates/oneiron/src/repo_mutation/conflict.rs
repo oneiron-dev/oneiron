@@ -716,3 +716,67 @@ fn path_exists_in_tree(repo_root: &Path, tree_hash: &str, path: &str) -> Result<
     let spec = format!("{tree_hash}:{path}");
     git_status_success(repo_root, &["cat-file".to_owned(), "-e".to_owned(), spec])
 }
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// The open conflict claim [`record_repo_conflict_checked`] writes, with
+    /// its trees given instead of read from git, for
+    /// `test_doors::claim_facet_birth`.
+    pub(crate) fn record_open_repo_conflict_for_test(
+        &self,
+        repo_ref: &RepoRef,
+        branch_subject: EntityId,
+        branch: &str,
+        trees: [&str; 3],
+        paths: Vec<String>,
+    ) -> Result<EntityId> {
+        let [base_tree, ours_tree, theirs_tree] = trees;
+        let value = RepoConflictOpenValue {
+            repo_ref: repo_ref.clone(),
+            branch: branch.to_owned(),
+            base_tree: base_tree.to_owned(),
+            ours_tree: ours_tree.to_owned(),
+            theirs_tree: theirs_tree.to_owned(),
+            conflicted_paths: normalize_repo_conflict_paths(paths)?,
+            proposals: Vec::new(),
+        };
+        let body = open_conflict_body(branch_subject, &value)?;
+        let claim_id = self.store.clock.entity_id()?;
+        put_engine_repo_conflict_claim_checked(
+            self,
+            claim_id,
+            branch_subject,
+            &body,
+            now_secs(),
+            None,
+            &[],
+        )
+    }
+
+    /// The resolution claim of the open conflict `open_conflict_claim_id`,
+    /// with no git, for `test_doors::claim_facet_birth`.
+    pub(crate) fn put_repo_conflict_resolution_for_test(
+        &self,
+        repo_ref: &RepoRef,
+        branch_subject: EntityId,
+        branch: &str,
+        open_conflict_claim_id: EntityId,
+        resolved_tree: &str,
+        paths: Vec<String>,
+    ) -> Result<EntityId> {
+        let claim_id = self.store.clock.entity_id()?;
+        put_repo_conflict_resolution_claim(
+            self,
+            claim_id,
+            branch_subject,
+            RepoConflictResolutionValue {
+                repo_ref: repo_ref.clone(),
+                branch: branch.to_owned(),
+                open_conflict_claim_id,
+                resolved_tree: resolved_tree.to_owned(),
+                resolved_paths: normalize_repo_conflict_paths(paths)?,
+            },
+        )?;
+        Ok(claim_id)
+    }
+}
