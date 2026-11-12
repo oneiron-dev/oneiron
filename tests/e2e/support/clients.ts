@@ -270,7 +270,8 @@ export class CliClient {
     return this.json(["api","call",verb,"--data","-"],input);
   }
 }
-type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`;
+type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`
+  | "device-peer-init" | "device-pair-link" | "device-enrol";
 export class CliError extends Error {
   override name = "CliError";
   constructor(readonly result: ProcessResult, readonly stage: CliStage = "cli") {
