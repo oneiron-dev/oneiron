@@ -478,17 +478,18 @@ fn validate_open(request: &OpenPendingCheckIn, now: u64) -> Result<()> {
 
 /// A holder's answer to a pending check-in, in `txn` at `now`. The person is
 /// revalidated in `txn`; the answer lands only while the ask is open, before
-/// `until`, before the current rung's wait ends, from a person pinned on the
-/// current rung who `chain` says may still answer (their live grant and own
-/// check-in, P22-SHAPE Q9), over the exact effect digest. The first valid
-/// answer lands and every other holder reads who gave it. The public answer
-/// verb is 2l.
+/// `until`, before its delay window's end, before the current rung's wait
+/// ends, from a person pinned on the current rung who `chain` says may still
+/// answer (their live grant and own check-in, P22-SHAPE Q9), over the exact
+/// effect digest. The first valid answer lands and every other holder reads
+/// who gave it. The public answer verb is 2l.
 ///
 /// # Errors
 ///
-/// A dead or foreign proof; no such row; a final state; `until` or the
-/// rung's wait passed; a mismatched digest; a person not pinned on the
-/// current rung, or one who may no longer answer; storage errors.
+/// A dead or foreign proof; no such row; a final state; `until`, the delay
+/// window's end or the rung's wait passed; a mismatched digest; a person not
+/// pinned on the current rung, or one who may no longer answer; storage
+/// errors.
 #[cfg_attr(
     not(oneiron_test_support),
     allow(
@@ -542,10 +543,10 @@ pub(crate) fn answer_pending_check_in_in_txn(
 ///
 /// # Errors
 ///
-/// A dead or foreign proof; no such row; a final state; `until` or the
-/// rung's wait passed; a person not pinned on the current rung, or one who
-/// may no longer answer; an extension that does not lengthen the wait or
-/// passes the asker's `until`; storage errors.
+/// A dead or foreign proof; no such row; a final state; `until`, the delay
+/// window's end or the rung's wait passed; a person not pinned on the
+/// current rung, or one who may no longer answer; an extension that does not
+/// lengthen the wait or passes the asker's `until`; storage errors.
 #[cfg_attr(
     not(oneiron_test_support),
     allow(
@@ -633,7 +634,11 @@ pub(crate) fn record_objection_in_txn(
     Ok(row)
 }
 
-/// The row `id`, open at `now`: not final, and its `until` not passed.
+/// The row `id`, open at `now`: not final, its `until` not passed and its
+/// delay window not ended. From either instant on, only the tick
+/// (`advance_pending_check_in_in_txn`) moves the row, in its order: let-go
+/// at `until`, then the window's end (an objection holds the act, silence is
+/// the proof). No answer, extension or objection lands there.
 fn open_row_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -646,6 +651,15 @@ fn open_row_in_txn(
     }
     if row.until.is_some_and(|until| now >= until) {
         return Err(refuse("the asker's until has passed: the ask let go"));
+    }
+    if row
+        .delay_window
+        .as_ref()
+        .is_some_and(|window| now >= window.ends_at)
+    {
+        return Err(refuse(
+            "the delay window has ended: its end settles the ask",
+        ));
     }
     Ok(row)
 }
@@ -695,9 +709,11 @@ fn require_may_answer(
 /// The table's actor scrub (an actor's erase, and a restore's rerun of it):
 /// a pending check-in the actor asked is removed, since no act of theirs
 /// waits any more; every other row drops the actor from its pinned holders
-/// and names nobody where it named the actor as the one who answered,
-/// extended or objected. The answer, the extension and the objection stand.
-/// The receipts stand, scrubbed by their own table's scrub.
+/// and from a skipped rung's missing link, and names nobody where it named
+/// the actor as the one who answered, extended or objected. The answer, the
+/// extension, the objection and the skip stand. The receipts stand,
+/// scrubbed by their own table's scrub, which takes the actor out of the
+/// same `missing_link` value the same way.
 ///
 /// # Errors
 ///
@@ -748,10 +764,21 @@ fn scrub_row(row: &mut PendingCheckIn, actor: &EntityId) -> bool {
             scrub(&mut objection.by);
         }
     }
+    let hex = actor.to_hex();
     for entry in &mut row.rungs {
         let before = entry.holders.len();
         entry.holders.retain(|holder| holder.principal != *actor);
         changed |= entry.holders.len() != before;
+        if let Some(link) = entry.skipped.as_mut()
+            && link.split(',').any(|part| part == hex)
+        {
+            *link = link
+                .split(',')
+                .filter(|part| *part != hex)
+                .collect::<Vec<_>>()
+                .join(",");
+            changed = true;
+        }
     }
     changed
 }

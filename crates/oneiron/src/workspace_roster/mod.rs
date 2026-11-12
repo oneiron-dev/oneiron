@@ -127,9 +127,10 @@ pub use self::work_companion::WorkCompanionPolicy;
 #[cfg(test)]
 mod tests;
 
-mod project;
+pub(crate) mod project;
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use project::create_project_signed_for_test;
+pub(crate) use project::index_extra_room;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
@@ -177,6 +178,9 @@ pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
     capture_project_put, check_revision_put, projects_touched_by_put,
     rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
+};
+pub use project::{
+    ProjectRoomLink, ProjectRoomLinkRequest, ProjectRoomRow, ProjectRoomsPage, ProjectRoomsRequest,
 };
 #[cfg(feature = "sync")]
 pub(crate) use project::{
@@ -235,7 +239,9 @@ pub(crate) use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
-pub use rooms::{ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, RoomHostHand, RoomHostPin};
+pub use rooms::{
+    ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
+};
 pub use rooms::{
     OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
     OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
@@ -250,6 +256,7 @@ pub(crate) use rooms::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]
 pub(crate) use rooms::erased_side_row_here;
+pub(crate) use rooms::room_group_project_in;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
 pub(crate) use rooms::task_binding_turns_in;
@@ -265,6 +272,7 @@ pub(crate) use rooms::{
     erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
 };
 pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
+pub(crate) use rooms::{record_room_message_in_txn, record_thread_reply_in_txn};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};

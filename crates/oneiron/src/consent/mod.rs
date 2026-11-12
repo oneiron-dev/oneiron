@@ -135,7 +135,7 @@ pub use self::owner_reason::{
 pub use self::registry::{
     AGENT_GRANT_CLASS, CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryAgentGrant,
     ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRegrantAction,
-    ConsentRevokeAction, SUPPORT_GRANT_CLASS,
+    ConsentRevokeAction, GrantlessAgentConvertAction, GrantlessAgentRow, SUPPORT_GRANT_CLASS,
 };
 /// FIX 6424 part 2a: the approve-once digest an owner's press on one
 /// campaign enrollment's outbound leg names, by the Gate's own composer over
