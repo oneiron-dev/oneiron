@@ -15,8 +15,9 @@
 //! door supplies the same descriptor so this file compiles on both trees.
 
 use std::future::Future;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::llm::decision::HeldLadder;
 use oneiron::model_decision::{AnswerContract, DecisionAnswer, DecisionBandPolicy};
 use oneiron::test_doors::claim_source_recheck as doors;
@@ -171,6 +172,15 @@ fn claim_recheck_verdict_is_decided_on_the_ladder() -> TestResult {
     // owner, whose proof needs the vault's writer lease: open it owned.
     let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
     let _owner = vault.ensure_embedded_owner_actor()?;
+    // The host's start, as a self-hosted server's: the process keystore,
+    // the vault rooted under the host, this install profiled, and the
+    // engine's MACHINE writers (the Dreamer among them) enrolled with
+    // host-held keys, so the re-check's finding lands signed.
+    let issuer = HostSlipIssuer::from_secret(b"claim source recheck test host")?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+    vault.provision_engine_machine_identities(&issuer)?;
     let now_ms = u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
