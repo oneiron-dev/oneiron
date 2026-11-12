@@ -147,7 +147,7 @@ impl Vault {
     /// Imported-source Auto permit for this synchronous call only, recorded as an owner-act
     /// receipt naming the archive in `owner_restore_receipt_ref`. No policy is changed and
     /// no later write gains a permit. In a destination proved fresh before any import write,
-    /// owner-edited census AGENT_DEF and PERSON seeds replace their fresh rows with the
+    /// owner-edited census AGENT_DEF, PERSON and SKILL seeds replace their fresh rows with the
     /// archive's native bodies and header times, through the owner's own edit writers; they
     /// keep the destination's birth metadata and are counted in `replaced_seed_entities`.
     pub fn import_whole_vault_archive_from_as_owner<R: Read + Seek>(
@@ -281,6 +281,14 @@ impl Vault {
             }
             let row = imported_row(self, &wtxn, &archive, &at, projects.as_ref(), secrets)?;
             let existing = match &row.body {
+                // Seed restore may have already created this ASSET from its
+                // archived carrier. Queue its ordinary replay in either id
+                // order, including archived birth and door-minted facet edges.
+                ExportBody::HubSource(_)
+                    if archive.index.contains(Tag::Inserted, id.as_bytes())? =>
+                {
+                    None
+                }
                 // OF-222, FIX 3677: a file body meets no lossy form and no
                 // copy of the row stored under its id.
                 ExportBody::File(file) => {
@@ -353,6 +361,9 @@ impl Vault {
                         &seeds,
                         &row,
                         &row.body.to_bytes_in_with(&archive.files, secrets)?,
+                        &mut archive,
+                        &at,
+                        secrets,
                     )?
                 {
                     replaced_seed_entities += 1;
