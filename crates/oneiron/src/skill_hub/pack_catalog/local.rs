@@ -279,6 +279,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
             kinds: Vec::new(),
             skills: Vec::new(),
             agent: None,
+            agent_author: None,
             installed_at: 0,
             notices: Vec::new(),
             owner_activated: Vec::new(),

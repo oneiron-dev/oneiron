@@ -8,11 +8,15 @@
 //! each piece of selected knowledge becomes a local claim about the new
 //! agent. A World scope that binds nowhere holds the install as a Candidate
 //! until the owner picks the world or creates it
-//! ([`Vault::place_pack_agent_world`]). A Candidate mints nothing. A native
-//! pack is the owner's backup, restored by the archive importer, not here.
+//! ([`Vault::place_pack_agent_world`]). A Candidate mints nothing; an agent's
+//! own local pack held so keeps its author, and the owner door that completes
+//! it mints through the author writer under that agent, verified again. A
+//! native pack is the owner's backup, restored by the archive importer, not
+//! here.
 use super::admission::{PACK_CANDIDATE, PackCommit};
 use super::{
-    HookAuthor, PackCandidateReason, PackFitVerdict, PackInstallDisposition, PackSource, invalid,
+    HookAuthor, PackCandidateReason, PackFitVerdict, PackInstallDisposition, PackInstallReceipt,
+    PackSource, invalid,
 };
 use crate::agent_def::AgentAuthoring;
 use crate::claim::{
@@ -139,11 +143,32 @@ impl Vault {
         Ok(agent)
     }
 
+    /// The agent writer an owner door completes the held install `candidate`
+    /// under: the author an agent's own local pack put stored on it, verified
+    /// again on this snapshot, so the pack's travelling agent goes through the
+    /// author writer as it would have at the put (ARCH-0053:20). `None` for
+    /// the owner's and the hub's installs, whose agents stay inert.
+    pub(super) fn candidate_agent_author_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        candidate: &PackInstallReceipt,
+    ) -> Result<Option<crate::WriteActor>> {
+        let Some(author) = &candidate.agent_author else {
+            return Ok(None);
+        };
+        let author = crate::WriteActor::new(
+            EntityId::from_hex(author)?,
+            crate::edge::EdgeActorClass::Agent,
+        );
+        Ok(Some(self.observed_write_actor_in_txn(txn, author)?))
+    }
+
     /// The owner's answer to a travelling AgentPack held for its world
     /// (OF-491): `world` is the live local world its agent runs in, or, when
     /// unset, the one its scope names, as the owner created it since. The
     /// install then completes in one writer, screened again, as the hub ask
-    /// or the owner's put would have.
+    /// or the put would have; an agent's own local pack completes under its
+    /// author, verified again ([`Self::candidate_agent_author_in_txn`]).
     pub fn place_pack_agent_world(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -180,6 +205,7 @@ impl Vault {
             {
                 return Err(invalid("the picked world is not a live local world"));
             }
+            let agent_author = self.candidate_agent_author_in_txn(&*txn, &candidate)?;
             let publisher = match self.hook_author_in_txn(&*txn, &candidate)? {
                 HookAuthor::ForeignActor {
                     identity,
@@ -208,7 +234,7 @@ impl Vault {
                     source_id,
                     hub: &hub,
                     publisher: &candidate.publisher,
-                    agent_author: None,
+                    agent_author,
                     foreign: publisher.as_ref(),
                     verdict: PackFitVerdict {
                         fits: true,
