@@ -67,6 +67,7 @@ pub(super) fn runner(
         || !funds_a_start(
             server.vault(),
             provider.as_ref(),
+            &entry.leased,
             entry.spend_scope.as_ref(),
         )
     {
@@ -93,10 +94,11 @@ pub(super) fn runner(
 fn funds_a_start(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    leased: &AttemptRecord,
     spend: Option<&SpendScopeId>,
 ) -> bool {
     let line = match spend {
-        Some(scope) => ScopeMeter::open(vault, scope)
+        Some(scope) => ScopeMeter::open(vault, leased, scope)
             .ok()
             .map(|meter| (meter.guard, meter.payer)),
         None => provider.host_meter().map(|guard| (guard, None)),
@@ -130,8 +132,8 @@ impl PatternLaunchRunner for ActionPatternRunner {
         // The open's own error can name the payer the scope bills, who may
         // not be the caller: the host log keeps it, the refusal names the
         // bound.
-        let ScopeMeter { guard, payer, .. } =
-            ScopeMeter::open(&self.vault, scope).map_err(|error| {
+        let ScopeMeter { guard, payer, .. } = ScopeMeter::open(&self.vault, &self.leased, scope)
+            .map_err(|error| {
                 tracing::warn!(
                     agent = %self.actor.entity_ref().to_hex(),
                     error = %error,

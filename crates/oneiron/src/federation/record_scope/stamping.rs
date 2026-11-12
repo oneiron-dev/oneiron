@@ -385,6 +385,12 @@ pub(crate) fn restrict_stamp_in_txn(
 /// the mask that spoke stamps the record (ARCH-0022 "Every record carries a
 /// facet").
 ///
+/// A TASK born here already carries its facet as its birth edge, written by
+/// its put under the writer's facet as the batch mask (UNBUILT item 10), so
+/// this door then moves only its world, and a writer's facet other than that
+/// edge's is refused. A TASK with no birth edge moves from its own substrate
+/// facet, as before the edge existed.
+///
 /// The birth position is immutable (see `stamp_put`): like
 /// `stamp_leader_project`, this door only moves the record's own default
 /// birth stamp, or confirms the position it already carries. Any other prior
@@ -405,15 +411,20 @@ pub(crate) fn stamp_task_birth(
         return Err(Error::InvalidEntityType(kind));
     }
     let substrate = crate::claim::substrate_facet_id(id)?;
-    let facet = position.facet.unwrap_or(substrate);
+    let born = birth_facet(store, txn, id)?;
+    let facet = position.facet.or(born).unwrap_or(substrate);
+    if born.is_some_and(|born| born != facet) {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
+    }
+    let default_facet = born.unwrap_or(substrate);
     let mut scope = default_stamp(kind, facet);
     if let Some(world) = position.world {
         scope.worlds = singleton(ScopeId(world));
     }
     if let Some(prior) = SCOPE_RECORD.get(store, txn, &id)? {
         let settled = prior.birth_facet == *facet.as_bytes() && prior.scope == scope;
-        let birth = prior.birth_facet == *substrate.as_bytes()
-            && prior.scope == default_stamp(kind, substrate);
+        let birth = prior.birth_facet == *default_facet.as_bytes()
+            && prior.scope == default_stamp(kind, default_facet);
         if prior.version != 2 || prior.kind != kind || !(settled || birth) {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
