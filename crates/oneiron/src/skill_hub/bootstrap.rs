@@ -416,8 +416,9 @@ impl Vault {
     /// skills from the bytes embedded in this engine build. An unchanged
     /// default is left alone. Restored skills get new IDs and enter as
     /// Candidates through the ordinary scanner/import door; unlike first-open
-    /// seeding, this verb never grants activation authority.
-    pub(super) fn restore_bootstrap_skills(
+    /// seeding, this verb never grants activation authority. Crate-visible for
+    /// the test door `test_doors::skill_hub_restore` (G99 pin).
+    pub(crate) fn restore_bootstrap_skills(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         occurred: TimeRange,

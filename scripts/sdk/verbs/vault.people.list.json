@@ -5,6 +5,7 @@
   "output": "crate::memory::PeoplePage",
   "call": "memory.people_list(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

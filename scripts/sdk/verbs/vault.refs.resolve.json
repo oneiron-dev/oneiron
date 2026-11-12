@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::lens::RecordRefPreview>",
   "call": "memory.resolve_record_ref(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

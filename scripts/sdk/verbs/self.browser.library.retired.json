@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserLibraryRetiredOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.library_retired(input)?)",
   "scope": "Read",
+  "act_class": "read",
   "context": "browser",
   "mcp": "none",
   "section": false,

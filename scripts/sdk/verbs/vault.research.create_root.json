@@ -1,0 +1,15 @@
+{
+  "name": "vault.research.create_root",
+  "description": "The owner, or an agent whose live owner Grant lists this verb, enqueues one parentless research root with a fresh run through ordinary agent dispatch; bind it with research.bind.",
+  "input": "crate::task_verb::sdk::ResearchRootWire",
+  "output": "crate::task_verb::sdk::ResearchRootReceipt",
+  "call": "crate::task_verb::sdk::research_create_root(memory, input)?",
+  "scope": "Write",
+  "grant_class": "vault.research.create_root grant or the vault owner",
+  "act_class": "spawn",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

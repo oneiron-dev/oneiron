@@ -3,6 +3,7 @@
   "input": "crate::team::TeamRecordInput",
   "output": "crate::team::TeamRunAnswer",
   "scope": "Write",
+  "act_class": "reversible_work",
   "context": "run",
   "effect": "Team",
   "run_surface": "live"

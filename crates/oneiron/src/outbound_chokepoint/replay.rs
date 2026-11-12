@@ -92,10 +92,14 @@ pub(super) fn replay_record<T: OutboundTransport>(
             // reached no provider retries it as a definite non-delivery.
             // FIX 8814 follow-up: so does one whose provider's own record
             // reads back that it never sent; one that reads back the send
-            // completes it, never sending it twice.
+            // completes it, never sending it twice. FIX 22347: a transport
+            // that looks such a call up asks its provider once per pass, by
+            // that lookup below, and not by a read-back first.
             let call = FrozenOutboundCall::from_record(&record);
             let read_back = if transport.known_non_delivery(&call) {
                 DeliveryReadBack::NotDelivered
+            } else if transport.looks_up_uncertain_sends() {
+                DeliveryReadBack::Unknown
             } else {
                 transport.read_back_delivery(&call)
             };
@@ -140,10 +144,15 @@ pub(super) fn replay_record<T: OutboundTransport>(
             }
             // FIX 9379 and the FIX 8814 follow-up: as above, a proven or
             // read-back non-delivery is retried as one, and a read-back
-            // delivery completes.
+            // delivery completes. FIX 22347: as above, a call the lookup
+            // below settles is not read back first.
             let call = FrozenOutboundCall::from_record(&record);
+            let settled_by_lookup = transport.looks_up_uncertain_sends()
+                && transport.idempotent_resend_is_time_bounded(&call);
             let read_back = if transport.known_non_delivery(&call) {
                 DeliveryReadBack::NotDelivered
+            } else if settled_by_lookup {
+                DeliveryReadBack::Unknown
             } else {
                 transport.read_back_delivery(&call)
             };
@@ -161,10 +170,7 @@ pub(super) fn replay_record<T: OutboundTransport>(
             // retry key) deduplicates this resend only inside it, so the lookup
             // decides, and the owner is asked once the window may have lapsed
             // (review #6555).
-            if transport.looks_up_uncertain_sends()
-                && transport
-                    .idempotent_resend_is_time_bounded(&FrozenOutboundCall::from_record(&record))
-            {
+            if settled_by_lookup {
                 return step_uncertain_send(vault, authority, record, prepared, now_ms, transport);
             }
             // This row was committed before a prior transport attempt. A crash

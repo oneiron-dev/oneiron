@@ -1359,6 +1359,17 @@ fn default_gate_decision_retention_entry() -> (Value, Value) {
     )
 }
 
+/// The verbs an Admin's and a Deputy's membership grant start with.
+const ADMIN_DEFAULT_VERBS: [&str; 7] = [
+    "read",
+    "write",
+    "admin",
+    "org:add-member",
+    "org:remove-member",
+    "org:assign-role",
+    "org:reset-shared-project-access",
+];
+
 fn federation_grant_default_rows() -> Value {
     use crate::federation::FederationGrantRole as Role;
     use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
@@ -1377,15 +1388,13 @@ fn federation_grant_default_rows() -> Value {
             },
             Row::RoleDefault {
                 role: Role::Admin,
-                scope: scope(&[
-                    "read",
-                    "write",
-                    "admin",
-                    "org:add-member",
-                    "org:remove-member",
-                    "org:assign-role",
-                    "org:reset-shared-project-access",
-                ]),
+                scope: scope(&ADMIN_DEFAULT_VERBS),
+            },
+            // A Deputy starts with Admin's powers; its delegated Owner powers
+            // are a separate Grant (ARCH-0082 #roles).
+            Row::RoleDefault {
+                role: Role::Deputy,
+                scope: scope(&ADMIN_DEFAULT_VERBS),
             },
             // The Steward reads and derives across the vault root, archives
             // inside its grant and deletes in scope; never an admin power.
@@ -1406,13 +1415,14 @@ fn federation_grant_default_rows() -> Value {
                 scope: scope(&["read"]),
             },
             // FIX 3016: a Connect peer reads and proposes, at most private
-            // content. The mint names its worlds; this row names none.
+            // content. The mint names its worlds; this row names none. An
+            // inquiry edge's class `inquire` confers no read (INQUIRE-1).
             Row::ConnectGuestCeiling {
                 scope: Scope {
                     sensitivity: oneiron_authority::federation::SensitivityCeiling::AtMost(
                         oneiron_authority::federation::Sensitivity::Private,
                     ),
-                    ..scope(&["read", "propose"])
+                    ..scope(&["read", "propose", crate::federation::INQUIRE_VERB_CLASS])
                 },
             },
         ]

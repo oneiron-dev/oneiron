@@ -59,11 +59,29 @@ fn deleted_vault_refusal(server: &SyncServer, path: &str) -> Option<Response> {
         },
         [suggestion],
     );
-    Some(if path.starts_with("/v1/") {
+    Some(door_refusal(path, error))
+}
+
+/// Whether the door behind `path` answers its own refusals in the typed
+/// `{"error": ...}` envelope: every `/v1/` door, and every git-LFS door
+/// (`/git/{repo}/info/lfs/...`, whose handlers return `EnvelopedApiError`).
+fn door_answers_in_envelope(path: &str) -> bool {
+    path.starts_with("/v1/")
+        || path
+            .strip_prefix("/git/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(_, tail)| tail.starts_with("info/lfs/"))
+}
+
+/// A refusal this middleware gives before any route runs, in the shape the
+/// door behind `path` gives its own: a revoked or replayed slip on the LFS
+/// batch door reads as the same envelope as that door's scope refusal.
+fn door_refusal(path: &str, error: ApiError) -> Response {
+    if door_answers_in_envelope(path) {
         crate::error::EnvelopedApiError::from(error).into_response()
     } else {
         error.into_response()
-    })
+    }
 }
 
 /// The refusal a managed vault gives a forwarded caller's slip this door
@@ -128,11 +146,8 @@ pub(crate) async fn admit_http_binding(
             match admit_binding(&server, request.uri().path(), request.headers()) {
                 Ok(binding) => binding,
                 Err(error) => {
-                    // Keep the /v1 envelope when the transport door refuses first.
-                    if request.uri().path().starts_with("/v1/") {
-                        return crate::error::EnvelopedApiError::from(error).into_response();
-                    }
-                    return error.into_response();
+                    // Keep the door's envelope when the transport door refuses first.
+                    return door_refusal(request.uri().path(), error);
                 }
             }
         }
@@ -146,11 +161,7 @@ pub(crate) async fn admit_http_binding(
         .copied()
         && matches!(machine, PeerMachine::Proven { machine: proved, .. } if proved != mesh.0)
     {
-        let error = crate::error::ApiError::unauthorized();
-        if request.uri().path().starts_with("/v1/") {
-            return crate::error::EnvelopedApiError::from(error).into_response();
-        }
-        return error.into_response();
+        return door_refusal(request.uri().path(), ApiError::unauthorized());
     }
     // Every admitted request carries the machine it proved, or Unknown.
     request.extensions_mut().insert(machine);

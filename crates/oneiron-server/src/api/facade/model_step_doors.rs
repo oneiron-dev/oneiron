@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::response::Response;
 use oneiron::agent_dispatch::AgentDispatcher;
-use oneiron::llm::BudgetDenied;
 use oneiron::llm::model_step::{
     self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
     ModelStepSubmitRequest, RunStepCaller,
 };
 use oneiron::llm::run_admission::{RunAdmission, WorkPhysical};
+use oneiron::llm::{BudgetDenied, StepSpendScope};
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
     MemoryResult,
@@ -201,6 +201,9 @@ struct StepLine {
     guard: BudgetGuard,
     /// The live lease of the physical calls' meter on the run's scope.
     lease: Option<LeaseLine>,
+    /// The run's scope, with the cap generation read before the meter and
+    /// the guard read their room.
+    spend: Option<StepSpendScope>,
 }
 
 impl RunStep {
@@ -261,6 +264,10 @@ impl RunStep {
             &input,
         ));
         if let Ok(Some(receipt)) = saved {
+            // A saved answer's spend was staged before it was saved: what a
+            // booking that failed, or a process that died, left staged on
+            // the run's scope books now, once.
+            self.drain_staged_spend()?;
             return self.answer(receipt);
         }
         // The vault's inference policy for the model the step names, and its
@@ -275,12 +282,13 @@ impl RunStep {
             attached: self.attached.as_ref(),
             detached: AtomicBool::new(false),
         };
-        let receipt = runtime.block_on(model_step::submit_as_run_actor(
+        let receipt = runtime.block_on(model_step::submit_as_run_actor_on_scope(
             vault,
             self.caller(),
             input,
             &backend,
             &line.guard,
+            line.spend.as_ref(),
         ));
         // What the step's calls spent and no look booked goes on the scope
         // whatever the step answered. A booking that fails is an error of
@@ -289,6 +297,17 @@ impl RunStep {
         let receipt = receipt?;
         booked?;
         self.answer(receipt)
+    }
+
+    /// Books on the run's scope what its leases staged and no drain booked
+    /// ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]). A booking that fails is an
+    /// error of the call, as at a fresh call's end; the rows stay staged.
+    fn drain_staged_spend(&self) -> MemoryResult<()> {
+        let Some(scope) = self.held.spend_scope() else {
+            return Ok(());
+        };
+        AgentDispatcher::new(self.server.vault()).drain_lease_spend(scope)?;
+        Ok(())
     }
 
     fn receipt(&self, input: &ModelStepReceiptRequest) -> MemoryResult<ModelStepReceipt> {
@@ -324,10 +343,15 @@ impl RunStep {
                 run,
                 guard: raw_step_guard(&self.server)?,
                 lease: None,
+                spend: None,
             });
         };
         let (payer, _) = scope_run_funding(vault, Some(scope), false).map_err(|_| unopened())?;
         let dispatcher = AgentDispatcher::new(vault);
+        // The cap generation first: a top-up after the two guards read their
+        // room then moves it, and the step's budget park wakes itself.
+        let spend =
+            StepSpendScope::read_before_guards(vault, scope.clone()).map_err(|_| unopened())?;
         // The physical calls' meter, and beside it the step's own logical
         // allowance, so the engine's logical lease does not charge the
         // meter twice. Only the meter's spend is booked on the scope.
@@ -337,6 +361,7 @@ impl RunStep {
             run: models.grant_funded_run(MODEL_STEP_RUN, meter.clone(), payer, funding),
             guard,
             lease: Some(LeaseLine::new(scope.clone(), meter)),
+            spend: Some(spend),
         })
     }
 
@@ -483,6 +508,15 @@ impl RunStepBackend<'_> {
         }
     }
 
+    /// The look after a call answered: it stages the call's spend before
+    /// the engine may save the answer.
+    fn stage_answer(&self) -> oneiron::Result<()> {
+        match &self.lease {
+            Some(lease) => lease.stage_and_revise(),
+            None => Ok(()),
+        }
+    }
+
     /// Books on the scope what the step's calls spent and no look booked.
     fn book_rest(&self) -> oneiron::Result<()> {
         let Some(lease) = &self.lease else {
@@ -514,13 +548,27 @@ impl LlmBackend for RunStepBackend<'_> {
                 .ladder
                 .generate_step_attempt_while(&self.step.run, request, &may_send)
                 .await;
-            self.look();
+            let staged = self.stage_answer();
             // An attempt stopped for its attachment is an admission the
             // host denied, never a model failure: the step neither retries
             // it nor answers it with its deterministic fallback, and the
             // engine saves no result for a run its host no longer holds
             // attached. The key's next call asks the model again.
             if self.detached.load(Ordering::Relaxed) {
+                return Err(BudgetDenied::AdmissionDenied.into());
+            }
+            // An answer whose spend did not stage is refused the same way,
+            // so the engine never saves an answer on a charge that lives
+            // only in memory. The paid answer is lost: a failed local commit
+            // is rare, and a charge that is not durable is worse (the
+            // Engine, 12 Nov 19:40).
+            if let Err(error) = staged
+                && answer.is_ok()
+            {
+                tracing::error!(
+                    kind = ?error.kind(),
+                    "a run step's answer was refused: its spend did not stage"
+                );
                 return Err(BudgetDenied::AdmissionDenied.into());
             }
             answer

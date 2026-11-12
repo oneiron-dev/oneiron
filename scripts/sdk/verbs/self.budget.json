@@ -5,6 +5,7 @@
   "output": "crate::agent_dispatch::budget_doors::AgentBudgetView",
   "call": "crate::agent_dispatch::budget_doors::self_budget(memory, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

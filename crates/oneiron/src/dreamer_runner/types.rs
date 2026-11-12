@@ -6,6 +6,7 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::dreamer_wake::WakeTrigger;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
@@ -18,7 +19,7 @@ mod park;
 mod retry_policy;
 
 pub use crate::store::dreamer_attempt_payload::DreamerAttemptPayload;
-pub use park::ParkDreamerAttempt;
+pub use park::{DreamerParkWait, DreamerParkedWait, ModelSeatId, ParkDreamerAttempt};
 
 use super::constants::DEFAULT_DREAMER_CHILD_RESERVE_UNITS;
 
@@ -408,6 +409,9 @@ pub struct FailDreamerAttempt {
     pub lease_owner: String,
     pub attempt_count: u32,
     pub reason: String,
+    /// The typed refusal when a spend scope refused the try's step for good;
+    /// the failed row keeps it beside `reason`. `None` for every other failure.
+    pub budget_refusal: Option<StepBudgetRefusal>,
     pub now: u64,
 }
 
@@ -628,6 +632,8 @@ pub struct DreamerRunTreeRecord {
 }
 
 #[doc(hidden)]
+pub use oneiron_wake_contract::dreamer_runner::park_wait::DreamerParkWaitClass;
+#[doc(hidden)]
 pub use oneiron_wake_contract::dreamer_runner::types::DreamerParkCause;
 
 /// The cause of a park a failed model call made (FIX 7382, Engine
@@ -694,6 +700,29 @@ pub fn dreamer_park_cause_of_step(
     }
 }
 
+/// The end of a try whose durable step a spend scope refused for good: `Failed`, with the step
+/// error's text as its reason and the typed refusal beside it, settling `completed_units` the
+/// try already spent with the receipts of its paid `step_bindings`. Nothing parks: no write
+/// refills a closed boundary or a ceiling, and an unbound step has no write to wait for
+/// (BUDGET-TRAP-UNTYPED-NO-SENDER). `None` for every other step error, which parks as
+/// [`dreamer_park_cause_of_step`] says.
+#[must_use]
+pub fn dreamer_failed_on_refused_step(
+    error: &crate::model_step_error::DurableStepError,
+    completed_units: u64,
+    step_bindings: &[crate::model_step_context::StepEffectBinding],
+) -> Option<crate::dreamer_wake::DreamerAttemptExecution> {
+    let crate::model_step_error::DurableStepError::BudgetRefused(refusal) = error else {
+        return None;
+    };
+    Some(crate::dreamer_wake::DreamerAttemptExecution::Failed {
+        reason: error.to_string(),
+        completed_units,
+        budget_refusal: Some(refusal.clone()),
+        step_bindings: step_bindings.to_vec(),
+    })
+}
+
 /// Private parked-attempt row keyed by attempt id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerParkedAttemptRecord {
@@ -703,4 +732,6 @@ pub struct DreamerParkedAttemptRecord {
     pub park_owner: String,
     pub carried_spend: Option<u64>,
     pub parked_at: u64,
+    /// The typed refill that resumes this park, with its lease fence; `None` for an untyped park.
+    pub wait: Option<DreamerParkedWait>,
 }

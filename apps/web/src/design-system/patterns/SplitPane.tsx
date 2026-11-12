@@ -2,8 +2,8 @@ import * as React from 'react'
 import { Icon } from '../primitives/Icon'
 import { IconAction } from '../primitives/IconAction'
 import { cx, mergeRefs, useControllableState, useIsomorphicLayoutEffect } from '../lib/react-utils'
-import { Composer } from './Composer'
-import { paneBounds, paneTrack, paneWidth, thingPlaceholder, type PaneKind } from './pane-width'
+import { Composer, type ComposerTools } from './Composer'
+import { paneBounds, paneLiesOver, paneOverWidth, paneTrack, paneWidth, thingPlaceholder, type PaneKind } from './pane-width'
 import { SPLIT_MAGNETS, SPLIT_MAGNET_PULL_PX, snapToMagnet } from './snap-to-magnet'
 
 /* Keyboard steps in CSS pixels; Shift takes the long step. */
@@ -26,6 +26,9 @@ interface SplitContextValue {
   reset: () => void
   setDragging: (dragging: boolean) => void
   rootRef: React.RefObject<HTMLDivElement | null>
+  /* The pane lies over the room (the work area is too narrow for the
+     column and the pane side by side). */
+  over: boolean
 }
 
 const SplitContext = React.createContext<SplitContextValue | null>(null)
@@ -73,7 +76,9 @@ export interface SplitPaneProps extends Omit<React.ComponentPropsWithRef<'div'>,
   magnetPull?: number
   /* A pane beside the room: the second pane is sized in pixels by the
      width rule (`list` 340 px; `thing` what the messages column leaves,
-     380 to 680 px), and the edge drags inside those bounds. */
+     380 to 680 px), and the edge drags inside those bounds. In a work area
+     too narrow for the column and the pane's floor, either pane lies over
+     the room from the right edge instead. */
   pane?: PaneKind
   /* The second pane's width once dragged, in pixels; null keeps the rule. */
   paneWidth?: number | null
@@ -91,8 +96,8 @@ export interface SplitPaneProps extends Omit<React.ComponentPropsWithRef<'div'>,
    the width: the edge drags free inside min and max, leans softly toward
    the magnets and shows the magnet's percentage while it is on one. A
    pane beside the room (`pane`): the room keeps the rest, the pane keeps
-   its width rule until dragged. Double-click resets; arrow keys move the
-   focused edge. */
+   its width rule until dragged, and in a narrow work area it lies over the
+   room. Double-click resets; arrow keys move the focused edge. */
 function SplitPaneRoot({
   ref,
   value: valueProp,
@@ -122,6 +127,10 @@ function SplitPaneRoot({
   const bounds = pane ? paneBounds(pane) : null
   const current = React.useRef({ value, dragged })
   current.current = { value, dragged }
+
+  /* Too narrow for the column beside the pane: the pane lies over the
+     room, from the right edge, and the edge does not drag. */
+  const over = !!pane && rootWidth > 0 && paneLiesOver(pane, rootWidth, sidebarWidth)
 
   /* The pane's width now: the dragged width, else the rule on the
      measured width (the CSS track draws the same rule before measuring). */
@@ -230,13 +239,16 @@ function SplitPaneRoot({
   )
 
   const ctx = React.useMemo(
-    () => ({ position, moveTo, nudge, toLimit, commit, reset, setDragging, rootRef }),
-    [position, moveTo, nudge, toLimit, commit, reset],
+    () => ({ position, moveTo, nudge, toLimit, commit, reset, setDragging, rootRef, over }),
+    [position, moveTo, nudge, toLimit, commit, reset, over],
   )
   const height = rootRef.current?.clientHeight ?? 0
-  const columns = pane
-    ? `minmax(0, 1fr) 1px ${dragged === null ? paneTrack(pane, sidebarWidth) : `${width}px`}`
-    : `minmax(0, ${value}fr) 1px minmax(0, ${1 - value}fr)`
+  const columns = over
+    ? 'minmax(0, 1fr)'
+    : pane
+      ? `minmax(0, 1fr) 1px ${dragged === null ? paneTrack(pane, sidebarWidth) : `${width}px`}`
+      : `minmax(0, ${value}fr) 1px minmax(0, ${1 - value}fr)`
+  const overStyle = over && pane ? ({ '--sl-pane-over-width': `${paneOverWidth(pane, rootWidth, sidebarWidth)}px` } as React.CSSProperties) : undefined
 
   return (
     <SplitContext.Provider value={ctx}>
@@ -244,8 +256,9 @@ function SplitPaneRoot({
         ref={mergeRefs(ref, rootRef)}
         className={cx('sl-split-pane', className)}
         data-pane={pane}
+        data-over={over ? '' : undefined}
         data-dragging={dragging ? '' : undefined}
-        style={{ gridTemplateColumns: columns, ...style }}
+        style={{ gridTemplateColumns: columns, ...overStyle, ...style }}
         {...props}
       >
         {children}
@@ -366,10 +379,14 @@ function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabe
     latest.current = onClose
   })
   const closes = !!onClose
+  const split = React.useContext(SplitContext)
+  const over = !!split?.over
 
   React.useEffect(() => {
     const head = headRef.current
-    const pane = head?.closest<HTMLElement>('.sl-split-pane-pane') ?? head?.parentElement
+    /* Over the room, Escape anywhere in the split closes the pane; beside
+       it, Escape in the pane does. */
+    const pane = (over ? head?.closest<HTMLElement>('.sl-split-pane') : null) ?? head?.closest<HTMLElement>('.sl-split-pane-pane') ?? head?.parentElement
     if (!closes || !pane) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
@@ -380,7 +397,7 @@ function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabe
     }
     pane.addEventListener('keydown', onKeyDown)
     return () => pane.removeEventListener('keydown', onKeyDown)
-  }, [closes])
+  }, [closes, over])
 
   return (
     <div ref={mergeRefs(ref, headRef)} className={cx('sl-split-head', className)} data-lines={titleLines} {...props}>
@@ -399,6 +416,18 @@ function SplitPaneHead({ ref, title, titleLines = 1, actions, onClose, closeLabe
   )
 }
 
+/* What the small write box at the foot of the pane carries besides its
+   field and send button. */
+export interface SplitPaneThingWriteBox {
+  /* When the add action and dictation show: `on focus` (the default) or
+     `always`. */
+  tools?: ComposerTools
+  /* The add action: one Composer.Add element with its menu items. */
+  add?: React.ReactNode
+  /* Shows the dictate action. */
+  onDictate?: () => void
+}
+
 export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'div'>, 'title'> {
   /* The thing's title: up to two lines at the section size. */
   title: React.ReactNode
@@ -411,6 +440,9 @@ export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'d
   thread?: React.ReactNode
   /* The text written at the foot; the caller starts or continues the thread. */
   onSend?: (text: string) => void
+  /* The write box's tools, add action and dictation. Without it the box is
+     the field and the send button alone. */
+  writeBox?: SplitPaneThingWriteBox
   /* Further head actions before close. */
   actions?: React.ReactNode
 }
@@ -418,8 +450,10 @@ export interface SplitPaneThingProps extends Omit<React.ComponentPropsWithRef<'d
 /* The pane for one thing, opened beside the room: the head (the title and
    close), a scrolling body (the thing itself with no card frame, its note,
    then its thread under a hairline), and at the foot, outside the scroll,
-   the small write box. Place it second in a SplitPane with pane="thing". */
-function SplitPaneThing({ title, onClose, note, thread, onSend, actions, className, children, ...props }: SplitPaneThingProps) {
+   the small write box. Place it second in a SplitPane with pane="thing".
+   In a work area too narrow for the column and the pane side by side it
+   lies over the room from the right edge instead. */
+function SplitPaneThing({ title, onClose, note, thread, onSend, writeBox, actions, className, children, ...props }: SplitPaneThingProps) {
   const hasThread = React.Children.toArray(thread).length > 0
   const placeholder = thingPlaceholder(hasThread)
   return (
@@ -430,7 +464,16 @@ function SplitPaneThing({ title, onClose, note, thread, onSend, actions, classNa
         {note !== undefined ? <div className="sl-split-thing-note">{note}</div> : null}
         {hasThread ? <div className="sl-split-thing-thread">{thread}</div> : null}
       </div>
-      <Composer size="small" className="sl-split-thing-write" placeholder={placeholder} onSend={(text) => onSend?.(text)} />
+      <Composer
+        size="small"
+        className="sl-split-thing-write"
+        placeholder={placeholder}
+        tools={writeBox?.tools}
+        onDictate={writeBox?.onDictate}
+        onSend={(text) => onSend?.(text)}
+      >
+        {writeBox?.add}
+      </Composer>
     </div>
   )
 }

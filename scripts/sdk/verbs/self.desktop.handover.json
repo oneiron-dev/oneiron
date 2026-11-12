@@ -5,6 +5,7 @@
   "output": "oneiron_browser::DesktopAnswer<oneiron_browser::HandoverOutput>",
   "call": "oneiron_browser::DesktopAnswer::of(driver.handover(input)?)",
   "scope": "Write",
+  "act_class": "reversible_work",
   "context": "browser",
   "mcp": "none",
   "section": false

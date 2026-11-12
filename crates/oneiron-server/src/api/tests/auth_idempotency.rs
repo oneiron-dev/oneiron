@@ -460,7 +460,7 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
             .companion_profile_access_grant(
                 &oneiron::EntityId::from_hex(&principal_ref).expect("principal id"),
                 &oneiron::EntityId::from_hex(&person_ref).expect("person id"),
-                &oneiron::EntityId::from_hex(&persona_ref).expect("persona id"),
+                Some(&oneiron::EntityId::from_hex(&persona_ref).expect("persona id")),
             )
             .expect("grant lookup"),
         Some(grant_id)

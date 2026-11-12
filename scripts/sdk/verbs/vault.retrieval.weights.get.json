@@ -5,6 +5,7 @@
   "output": "crate::policy_manifest_doors::RetrievalWeightsView",
   "call": "crate::policy_manifest_doors::retrieval_weights_as_owner(memory.vault(), &memory.embedded_owner(\"vault.retrieval.weights.get\")?).map_err(crate::memory::MemoryError::from)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

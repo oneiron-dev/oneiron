@@ -8,21 +8,23 @@ use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key,
 };
 use crate::attempt_queue::engine::AttemptQueue;
+use crate::attempt_queue::lifecycle::{
+    NewAttempt, PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit,
+};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState};
 use crate::attempt_queue::validate::{
     CancelReceiptDraft, ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_LEASE_TIMEOUT_ZERO,
-    append_cancel_receipt, validate_cancel_actor, validate_intervention_actor,
-    validate_lease_owner, validate_optional_failure_reason, validate_transition_lease,
+    validate_cancel_actor, validate_intervention_actor, validate_lease_owner,
+    validate_optional_failure_reason, validate_transition_lease,
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::LimitWatch;
 
 use super::ops::SoftRequestAuthorship;
 use super::types::{
-    ATTEMPT_RUNTIME_ACTOR, AttemptCancelReceiptKind, AttemptCancelState, AttemptCancellation,
-    AttemptLandingReserve, CancelMode, ForceCancelAuthority, ForceCancelGrounds,
-    LEASE_LANDING_WARNING_PERCENT, LandingTrigger,
+    ATTEMPT_RUNTIME_ACTOR, AttemptCancelReceiptKind, AttemptCancellation, CancelMode,
+    ForceCancelAuthority, ForceCancelGrounds, LEASE_LANDING_WARNING_PERCENT, LandingTrigger,
 };
 use super::verbs::{
     AttemptLeaseWarningReport, FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel,
@@ -64,7 +66,10 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("finish_landing", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        if record.state != AttemptState::Landing {
+        if !matches!(
+            RunLifecycle::step(RunRow::of(&record), RunEvent::FinishLanding),
+            RunStep::Move { .. }
+        ) {
             return Err(invalid_transition("finish_landing", record.state.as_str()));
         }
         let lease_owner = input.lease_owner.clone();
@@ -87,14 +92,7 @@ impl AttemptQueue<'_> {
         };
 
         let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
-        record.state = AttemptState::Cancelled;
-        record.lease_owner = None;
-        record.scheduled_at = None;
-        record.backoff_until = None;
-        record.last_error = None;
-        record.updated_at = input.now;
-        record.settled_at = Some(input.now);
-        record.cancel_state.cancellation = Some(AttemptCancellation {
+        let cancellation = AttemptCancellation {
             mode: CancelMode::Landed,
             grounds: None,
             actor: lease_owner.clone(),
@@ -103,10 +101,11 @@ impl AttemptQueue<'_> {
             trigger,
             reserve_units: record.cancel_state.reserve.reserve_units,
             reserve_spent_units: record.cancel_state.reserve.spent_units,
-        });
+        };
+        let _ = RunLifecycle::finish_landing(&mut record, input.now, cancellation);
         let landed_resume_point = record.cancel_state.resume_point.clone();
         let landed_reserve_spent = record.cancel_state.reserve.spent_units;
-        append_cancel_receipt(
+        RunLifecycle::append_cancel_receipt(
             &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::Landed,
@@ -120,25 +119,17 @@ impl AttemptQueue<'_> {
             input.now,
         )?;
 
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
         // Landing is a terminal attempt door too: preserve the existing PACK
         // receipt invariant when the live attempt accumulated a manifest.
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-            self.store,
+        self.commit_terminal_in_txn(
             wtxn,
-            &record,
-            record
-                .cancel_state
-                .cancellation
-                .as_ref()
-                .map_or(ATTEMPT_RUNTIME_ACTOR, |cancellation| {
-                    cancellation.actor.as_str()
-                }),
+            &mut record,
+            TerminalCommit {
+                last_error: None,
+                now: input.now,
+                receipt_actor: PackReceiptActor::StoredCancellation,
+            },
         )?;
-        self.delete_dedupe_entry_for_record(wtxn, &record)?;
 
         // A landing that hands off is not the end of the work: its successor
         // surfaces when it settles.
@@ -249,12 +240,13 @@ impl AttemptQueue<'_> {
             return Err(invalid_transition("cancel_force", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Cancelled => return Ok(ForceCancelOutcome::AlreadyCancelled(record)),
-            AttemptState::Completed | AttemptState::Failed | AttemptState::Abandoned => {
-                return Ok(ForceCancelOutcome::AlreadySettled(record));
+        match RunLifecycle::step(RunRow::of(&record), RunEvent::ForceCancel) {
+            RunStep::Replay => return Ok(ForceCancelOutcome::AlreadyCancelled(record)),
+            RunStep::Keep => return Ok(ForceCancelOutcome::AlreadySettled(record)),
+            RunStep::Move { .. } => {}
+            RunStep::Note { .. } | RunStep::Refuse => {
+                return Err(invalid_transition("cancel_force", record.state.as_str()));
             }
-            _ => {}
         }
 
         if record.state.is_ready_indexed() {
@@ -268,19 +260,20 @@ impl AttemptQueue<'_> {
             input.reason,
             input.now,
         )?;
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
+        // The cleared pause takes its annotation-hold mark with it, as the
+        // operator's Cancel does.
+        crate::attempt_queue::index::delete_annotation_hold_in_txn(self.store, wtxn, record.id)?;
         // A hard cancellation is a terminal queue door, so a PACK loaded by
         // the attempt still receives the same atomic receipt as complete/fail.
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-            self.store,
+        self.commit_terminal_in_txn(
             wtxn,
-            &record,
-            input.authority.actor(),
+            &mut record,
+            TerminalCommit {
+                last_error: None,
+                now: input.now,
+                receipt_actor: PackReceiptActor::Caller(input.authority.actor()),
+            },
         )?;
-        self.delete_dedupe_entry_for_record(wtxn, &record)?;
         self.notify_settled_in_txn(wtxn, &record)?;
         // FIX 900: a force-cancelled child settles its spend lease in the
         // same write (OF-532); idempotent, a no-op when unmetered.
@@ -346,7 +339,8 @@ impl AttemptQueue<'_> {
     /// — that row belongs to cleanup's hard rung. Per-row it applies exactly
     /// [`Self::warn_lease_expiry`]'s rule, through the same private
     /// `lease_warning_step` decision, so the sweep and the single-row door
-    /// cannot drift.
+    /// cannot drift. A run parked on its signal keeps its lease and has no
+    /// work to land, so it is counted, never warned (FIX RUN-LEASE).
     pub fn warn_expiring_leases(
         &self,
         input: WarnExpiringAttemptLeases,
@@ -385,7 +379,9 @@ impl AttemptQueue<'_> {
                 continue;
             }
             report.scanned += 1;
-            match lease_warning_step(&record, input.now, input.lease_timeout_secs) {
+            let parked = self.parked_in_txn(&wtxn, id)?;
+            match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+                LeaseWarningStep::Parked => report.parked += 1,
                 LeaseWarningStep::Expired => report.expired += 1,
                 LeaseWarningStep::NotDue => report.not_due += 1,
                 LeaseWarningStep::AlreadyRequested => report.already_requested += 1,
@@ -412,6 +408,8 @@ impl AttemptQueue<'_> {
     /// the whole point of the distinction: expiry can only reclaim or force,
     /// and by then the worker's unlanded work is already lost. The request is
     /// idempotent per outstanding ask, so repeated polling records one row.
+    /// A run parked on its signal is answered [`LeaseWarningOutcome::Parked`]
+    /// and nothing is recorded (FIX RUN-LEASE).
     pub fn warn_lease_expiry(&self, input: WarnAttemptLeaseExpiry) -> Result<LeaseWarningOutcome> {
         if input.lease_timeout_secs == 0 {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
@@ -429,7 +427,9 @@ impl AttemptQueue<'_> {
             AttemptState::Leased => {}
             state => return Err(invalid_transition("lease_warning", state.as_str())),
         }
-        match lease_warning_step(&record, input.now, input.lease_timeout_secs) {
+        let parked = self.parked_in_txn(&wtxn, input.id)?;
+        match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+            LeaseWarningStep::Parked => return Ok(LeaseWarningOutcome::Parked(record)),
             LeaseWarningStep::Expired => return Ok(LeaseWarningOutcome::Expired(record)),
             LeaseWarningStep::NotDue => return Ok(LeaseWarningOutcome::NotDue(record)),
             LeaseWarningStep::AlreadyRequested => {
@@ -465,6 +465,9 @@ fn runtime_landing_request(trigger: LandingTrigger) -> SoftRequestAuthorship {
 /// sweep and the single-attempt door so both rungs read the same clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LeaseWarningStep {
+    /// The run is parked on its signal: it keeps its lease, which cleanup
+    /// never reclaims, and has no work to land.
+    Parked,
     /// Already past expiry: cleanup's hard rung owns it, never a warning.
     Expired,
     /// Inside the lease and before the warning window.
@@ -477,9 +480,13 @@ enum LeaseWarningStep {
 
 fn lease_warning_step(
     record: &AttemptRecord,
+    parked: bool,
     now: u64,
     lease_timeout_secs: u64,
 ) -> LeaseWarningStep {
+    if parked {
+        return LeaseWarningStep::Parked;
+    }
     if lease_expired(record, now, lease_timeout_secs) {
         return LeaseWarningStep::Expired;
     }
@@ -525,7 +532,9 @@ pub(in crate::attempt_queue) fn validate_force_authority(
 /// `actor` comes from the [`ForceCancelAuthority`], never from request text,
 /// and the reason rides the cancellation receipt rather than `last_error` — a
 /// cancelled row is not a failed one. `watch` is the store's, which the
-/// receipt append measures against its `[limits]` row.
+/// receipt append measures against its `[limits]` row. Each caller then ends
+/// through [`AttemptQueue::commit_terminal_in_txn`] with no error text, which
+/// writes the row's backoff, error and settle instant.
 pub(in crate::attempt_queue) fn force_cancel_record(
     watch: &LimitWatch,
     record: &mut AttemptRecord,
@@ -535,15 +544,7 @@ pub(in crate::attempt_queue) fn force_cancel_record(
     now: u64,
 ) -> Result<()> {
     let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
-    record.state = AttemptState::Cancelled;
-    record.lease_owner = None;
-    record.scheduled_at = None;
-    record.backoff_until = None;
-    record.last_error = None;
-    record.updated_at = now;
-    record.settled_at = Some(now);
-    record.cancel_state.pressure.pending = 0;
-    record.cancel_state.cancellation = Some(AttemptCancellation {
+    let cancellation = AttemptCancellation {
         mode: CancelMode::Forced,
         grounds: Some(grounds),
         actor: actor.clone(),
@@ -552,10 +553,16 @@ pub(in crate::attempt_queue) fn force_cancel_record(
         trigger,
         reserve_units: record.cancel_state.reserve.reserve_units,
         reserve_spent_units: record.cancel_state.reserve.spent_units,
-    });
+    };
+    if !matches!(
+        RunLifecycle::force_cancel(record, now, cancellation),
+        RunStep::Move { .. }
+    ) {
+        return Err(invalid_transition("cancel_force", record.state.as_str()));
+    }
     let resume_point = record.cancel_state.resume_point.clone();
     let reserve_spent_units = record.cancel_state.reserve.spent_units;
-    append_cancel_receipt(
+    RunLifecycle::append_cancel_receipt(
         watch,
         record,
         AttemptCancelReceiptKind::ForceCancelled,
@@ -584,67 +591,46 @@ fn landing_successor(
     scheduled_at: Option<u64>,
     now: u64,
 ) -> AttemptRecord {
-    AttemptRecord {
-        id,
-        kind: source.kind.clone(),
-        payload: source.payload.clone(),
-        state: if scheduled_at.is_some() {
-            AttemptState::Scheduled
-        } else {
-            AttemptState::Queued
+    RunLifecycle::landing_successor_row(
+        NewAttempt {
+            id,
+            kind: source.kind.clone(),
+            payload: source.payload.clone(),
+            lease_expirations: Vec::new(),
+            claimed_at: None,
+            retry_of: Some(source.id),
+            folded_retries: 0,
+            backoff_until: None,
+            last_error: None,
+            task_ref: source.task_ref.clone(),
+            run_id: source.run_id.clone(),
+            dedupe_key: source.dedupe_key.clone(),
+            dedupe_actor_ref: source.dedupe_actor_ref.clone(),
+            created_at: now,
+            updated_at: now,
+            events: Vec::new(),
+            manifest: Vec::new(),
+            executor_model: None,
+            executor_seat: None,
+            executor_role: None,
+            planned_binding: None,
+            read_set: None,
+            signals: Vec::new(),
+            asks: Vec::new(),
+            placement: source.placement.as_ref().map(|placement| {
+                crate::attempt_queue::AttemptPlacement {
+                    worker: placement.worker.clone(),
+                    // Keep the new try below its predecessor, not beside it. A later
+                    // explicit redirect can still select another effective parent.
+                    parent: Some(source.id),
+                }
+            }),
+            result_ref: None,
+            history: Vec::new(),
+            terminal_exhaust: None,
+            signal_intents: Vec::new(),
         },
-        lease_owner: None,
-        attempt_count: 0,
-        lease_expirations: Vec::new(),
-        claimed_at: None,
         scheduled_at,
-        retry_of: Some(source.id),
-        folded_retries: 0,
-        backoff_until: None,
-        last_error: None,
-        task_ref: source.task_ref.clone(),
-        run_id: source.run_id.clone(),
-        dedupe_key: source.dedupe_key.clone(),
-        dedupe_actor_ref: source.dedupe_actor_ref.clone(),
-        created_at: now,
-        updated_at: now,
-        settled_at: None,
-        events: Vec::new(),
-        manifest: Vec::new(),
-        executor_model: None,
-        executor_seat: None,
-        executor_role: None,
-        planned_binding: None,
-        read_set: None,
-        cancel_state: AttemptCancelState {
-            // The whole point of a designed landing: the successor starts from
-            // the exact recorded point, with a fresh reserve on the same dial.
-            resume_point: source.cancel_state.resume_point.clone(),
-            reserve: AttemptLandingReserve {
-                spent_units: 0,
-                // A NEW row inherits the dial's VALUES as its starting
-                // accounting but not its one-shot mark: the successor's own
-                // admission dials it against the successor's own generation,
-                // and until then nothing has been told what it may spend.
-                dial_generation: None,
-                ..source.cancel_state.reserve
-            },
-            ..AttemptCancelState::default()
-        },
-        signals: Vec::new(),
-        asks: Vec::new(),
-        placement: source.placement.as_ref().map(|placement| {
-            crate::attempt_queue::AttemptPlacement {
-                worker: placement.worker.clone(),
-                // Keep the new try below its predecessor, not beside it. A later
-                // explicit redirect can still select another effective parent.
-                parent: Some(source.id),
-            }
-        }),
-        result_ref: None,
-        history: Vec::new(),
-        active_pause: None,
-        terminal_exhaust: None,
-        signal_intents: Vec::new(),
-    }
+        source,
+    )
 }

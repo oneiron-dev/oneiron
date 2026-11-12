@@ -60,6 +60,18 @@ pub(super) const KEY_PARK_OWNER: &str = "park_owner";
 pub(super) const KEY_PARKED_AT: &str = "parked_at";
 pub(super) const KEY_CAUSE: &str = "cause";
 pub(super) const KEY_CARRIED_SPEND: &str = "carried_spend";
+pub(super) const KEY_WAIT: &str = "wait";
+pub(super) const KEY_WAIT_SCOPE: &str = "scope";
+pub(super) const KEY_WAIT_ASKED_UNITS: &str = "asked_units";
+pub(super) const KEY_WAIT_LEASE_GENERATION: &str = "lease_generation";
+pub(super) const KEY_WAIT_RUN: &str = "wait_run";
+pub(super) const KEY_WAIT_ID: &str = "wait_id";
+pub(super) const KEY_WAIT_GENERATION: &str = "wait_generation";
+pub(super) const KEY_WAIT_SEAT: &str = "seat";
+pub(super) const KEY_WAIT_SEAT_GENERATION: &str = "seat_generation";
+pub(super) const KEY_WAIT_RESET_AT_S: &str = "reset_at_s";
+pub(super) const KEY_WAIT_RESIDENT: &str = "resident";
+pub(super) const KEY_WAIT_NEEDED_UNITS: &str = "needed_units";
 
 // v2 adds the mandatory overdraft and owed keys (FIX 8702, 8728, 9015).
 pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 2;
@@ -68,7 +80,14 @@ pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // v2 adds the mandatory `park_owner` token; v1 rows (no owner) fail closed.
 // The typed `cause` key is mandatory too: a row without one fails closed.
 // v3 adds the mandatory `carried_spend` key (`None` encodes as nil).
-pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 3;
+// v4 adds the mandatory `wait` key (nil, or the pinned wait map); v3 rows fail closed.
+// The wait map's class is Budget (`scope`, `asked_units`), PassBudget (`asked_units`, and
+// `scope` only when the step's spend scope named one), one
+// answer class (Consent, Peer, Human: `wait_run`, `wait_id`, `wait_generation`) or Seat (`seat`,
+// `seat_generation`, `reset_at_s` only when the refusal named one) or ResidentShare (`resident`,
+// `needed_units`); every map carries `lease_generation`. A new class value, or a key only a new
+// class carries, keeps the schema at 4: an older binary refuses the unknown class either way.
+pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 4;
 pub(super) const DREAMER_BUDGET_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
     KEY_BUDGET_ID,
@@ -94,7 +113,7 @@ pub(super) const DREAMER_RUN_TREE_KEYS: [&str; 4] = [
     KEY_PARENT_ATTEMPT,
     KEY_CREATED_AT,
 ];
-pub(super) const DREAMER_PARKED_KEYS: [&str; 7] = [
+pub(super) const DREAMER_PARKED_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
     KEY_ATTEMPT_ID,
     KEY_REASON,
@@ -102,6 +121,21 @@ pub(super) const DREAMER_PARKED_KEYS: [&str; 7] = [
     KEY_PARK_OWNER,
     KEY_CARRIED_SPEND,
     KEY_PARKED_AT,
+    KEY_WAIT,
+];
+pub(super) const DREAMER_PARKED_WAIT_KEYS: [&str; 12] = [
+    KEY_CLASS,
+    KEY_WAIT_SCOPE,
+    KEY_WAIT_ASKED_UNITS,
+    KEY_WAIT_LEASE_GENERATION,
+    KEY_WAIT_RUN,
+    KEY_WAIT_ID,
+    KEY_WAIT_GENERATION,
+    KEY_WAIT_SEAT,
+    KEY_WAIT_SEAT_GENERATION,
+    KEY_WAIT_RESET_AT_S,
+    KEY_WAIT_RESIDENT,
+    KEY_WAIT_NEEDED_UNITS,
 ];
 
 pub(super) const MIN_DREAMER_TOURNAMENT_SAMPLE_COUNT: u32 = 3;

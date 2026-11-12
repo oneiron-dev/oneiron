@@ -2,9 +2,11 @@
 
 use crate::error::Result;
 use crate::store::Rows;
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 use super::AttemptQueue;
 use super::encoding::decode_record;
+use super::lifecycle::{PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit};
 use super::telemetry::invalid_transition;
 use super::types::{AttemptState, CompleteAttempt, CompleteOutcome, FailAttempt, FailOutcome};
 use super::validate::{validate_failure_reason, validate_lease_owner, validate_transition_lease};
@@ -99,13 +101,25 @@ impl AttemptQueue<'_> {
         wtxn: &mut heed::RwTxn<'_>,
         input: FailAttempt,
     ) -> Result<FailOutcome> {
+        self.fail_storage_with_refusal_in_txn(wtxn, input, None)
+    }
+
+    /// [`Self::fail_storage_in_txn`] keeping `budget_refusal` on the failed
+    /// row beside its reason, so the row's receipt, run tree and owner views
+    /// read it typed (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    pub(crate) fn fail_storage_with_refusal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: FailAttempt,
+        budget_refusal: Option<StepBudgetRefusal>,
+    ) -> Result<FailOutcome> {
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("fail", "missing"));
         };
         let mut record = decode_record(&raw_record, input.id)?;
-        match record.state {
-            AttemptState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
-            AttemptState::Leased => {
+        match RunLifecycle::step(RunRow::of(&record), RunEvent::Fail) {
+            RunStep::Replay => Ok(FailOutcome::AlreadyFailed(record)),
+            RunStep::Move { .. } => {
                 validate_lease_owner(&input.lease_owner)?;
                 validate_transition_lease(
                     &record,
@@ -114,27 +128,23 @@ impl AttemptQueue<'_> {
                     "fail",
                 )?;
                 validate_failure_reason(&input.reason)?;
-                record.state = AttemptState::Failed;
-                record.lease_owner = None;
-                record.backoff_until = None;
-                record.last_error = Some(input.reason);
-                record.updated_at = input.now;
-                record.settled_at = Some(input.now);
-                self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                let encoded = self.encode_in_txn(wtxn, &mut record)?;
-                self.store
-                    .attempt_records
-                    .put(wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
+                let _ = RunLifecycle::fail(&mut record, input.now);
+                record.budget_refusal = budget_refusal;
+                self.commit_terminal_in_txn(
                     wtxn,
-                    &record,
-                    &input.lease_owner,
+                    &mut record,
+                    TerminalCommit {
+                        last_error: Some(input.reason),
+                        now: input.now,
+                        receipt_actor: PackReceiptActor::Caller(&input.lease_owner),
+                    },
                 )?;
                 self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(FailOutcome::Failed(record))
             }
-            state => Err(invalid_transition("fail", state.as_str())),
+            RunStep::Note { .. } | RunStep::Keep | RunStep::Refuse => {
+                Err(invalid_transition("fail", record.state.as_str()))
+            }
         }
     }
 }
@@ -146,6 +156,16 @@ impl AttemptQueue<'_> {
         input: FailAttempt,
     ) -> Result<FailOutcome> {
         crate::ports::JobQueue::port_job_fail(self, txn, input)
+    }
+
+    /// [`Self::fail_in_txn`] keeping `budget_refusal` on the failed row.
+    pub(crate) fn fail_with_refusal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: FailAttempt,
+        budget_refusal: Option<StepBudgetRefusal>,
+    ) -> Result<FailOutcome> {
+        crate::ports::JobQueue::port_job_fail_with_refusal(self, txn, input, budget_refusal)
     }
 }
 

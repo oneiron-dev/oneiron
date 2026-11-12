@@ -22,18 +22,18 @@ use oneiron::test_doors::steward::{
 use oneiron::{EdgeActorClass, EntityId, Vault};
 
 const READER: &str = "reader";
-const LINE: &str = "Oleksii is a person on the roster.";
+const LINE: &str = "Owen is a person on the roster.";
 
 /// The model's reply: one new person, named in T1, and its name.
 fn reply() -> String {
     serde_json::json!({
-        "persons": [{"id": "new:P1", "name": "Oleksii", "evidence_turn_refs": ["T1"]}],
+        "persons": [{"id": "new:P1", "name": "Owen", "evidence_turn_refs": ["T1"]}],
         "candidates": [{
             "subject": "new:P1",
             "predicate": "profile.name",
-            "value": "Oleksii",
+            "value": "Owen",
             "confidence": 0.8,
-            "evidence_refs": [{"source": "T1", "quote": "Oleksii"}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         }],
     })
     .to_string()
@@ -60,7 +60,7 @@ fn fixture_before_any_wake() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
     let dreamer = dreamer(&vault).expect("the Dreamer");
-    let pass = consolidate_unbound_turn(&vault, "call me Oleksii", None, None, &reply())
+    let pass = consolidate_unbound_turn(&vault, "call me Owen", None, None, &reply())
         .expect("one consolidation pass");
     let [claim] = pass.landed.as_slice() else {
         panic!("one landed claim, found {}", pass.landed.len());

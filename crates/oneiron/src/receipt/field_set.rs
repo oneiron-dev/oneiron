@@ -18,6 +18,7 @@ use crate::error::{ClaimError, Error, Result};
 use crate::receipt::prompt_stamp::PromptRecompileStamp;
 use crate::store::attempt_manifest::ManifestEntry;
 use crate::store::attempt_manifest::ManifestKind;
+use crate::store::model_step_submission::StepBudgetRefusal;
 
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
@@ -37,6 +38,11 @@ pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
 /// FIX 12306: the calling principal of an agent-dispatch or turn-program
 /// attempt, frozen on its pack receipt as canonical 32-lowercase-hex.
 pub(crate) const FIELD_ATTEMPT_CALLER: &str = "attempt.caller";
+/// BUDGET-TRAP-UNTYPED-NO-SENDER: the typed refusal a spend scope gave a try
+/// it refused for good, as the refusal's own serde JSON (tag `reason`),
+/// stamped by the engine from the failed row or its runner's settle. Absent on
+/// every other receipt; [`ReceiptRecord::budget_refusal`] reads it typed.
+pub const FIELD_BUDGET_REFUSAL: &str = "budget_refusal";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).
@@ -244,6 +250,39 @@ pub fn append_pack_manifest_fields(
         encode_wire_forms(&actor_claims)?,
     );
     Ok(())
+}
+
+/// Stamps `refusal` under [`FIELD_BUDGET_REFUSAL`]: the typed reason a failed
+/// try's receipt carries beside its text (BUDGET-TRAP-UNTYPED-NO-SENDER).
+pub fn append_budget_refusal_field(
+    fields: &mut BTreeMap<String, String>,
+    refusal: &StepBudgetRefusal,
+) -> Result<()> {
+    fields.insert(
+        FIELD_BUDGET_REFUSAL.to_owned(),
+        budget_refusal_field_value(refusal)?,
+    );
+    Ok(())
+}
+
+/// The value [`FIELD_BUDGET_REFUSAL`] holds for `refusal`: its serde JSON.
+pub(crate) fn budget_refusal_field_value(refusal: &StepBudgetRefusal) -> Result<String> {
+    serde_json::to_string(refusal).map_err(|_| Error::InvariantViolation("budget refusal encode"))
+}
+
+impl ReceiptRecord {
+    /// The typed refusal this receipt's try failed on, from
+    /// [`FIELD_BUDGET_REFUSAL`]; `None` when it carries none. A value that does
+    /// not decode as a refusal is refused, never read as absent.
+    pub fn budget_refusal(&self) -> Result<Option<StepBudgetRefusal>> {
+        self.fields
+            .get(FIELD_BUDGET_REFUSAL)
+            .map(|encoded| {
+                serde_json::from_str(encoded)
+                    .map_err(|_| Error::InvalidClaimBody("receipt budget refusal does not decode"))
+            })
+            .transpose()
+    }
 }
 
 /// Freezes the task type, model revisions, team and actual-use evidence.

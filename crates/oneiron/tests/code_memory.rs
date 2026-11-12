@@ -9,12 +9,13 @@
 
 use oneiron::authority::{HostSlipIssuer, SlipCaveat};
 use oneiron::claim::{ScopedReadActorKey, base_world_id};
+use oneiron::code_document::CodeSpanAnchor;
 use oneiron::code_memory::{
     AlwaysOnCodeMemoryContract, AnchorTransfer, AnchorTransferKind, AttachCodeMemory,
     BlocksWriteContext, CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS, CODE_MEMORY_MAX_VALUES_PER_SLOT,
     CodeMemoryAnchor, CodeMemoryContractKind, CodeMemoryLocator, CodeMemoryPayloadRef,
-    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemoryRevision, CodeMemorySlotName,
-    CodeMemorySlotValue, ProvenanceMaterialKind, SlotInsertOutcome,
+    CodeMemoryPullRequest, CodeMemoryPullResult, CodeMemorySlotName, CodeMemorySlotValue,
+    ProvenanceMaterialKind, SlotInsertOutcome,
 };
 use oneiron::deletion::DeleteReason;
 use oneiron::error::{CodeError, RegistryError};
@@ -41,6 +42,11 @@ const NOTE_SUBJECT: u8 = 0x12;
 fn vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    // The host installs this device's keystore after each open; the deletion
+    // and signing doors load this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     (dir, vault)
 }
 
@@ -158,10 +164,18 @@ fn other_slot() -> CodeMemorySlotName {
     CodeMemorySlotName::new("policy.contract").expect("valid slot name")
 }
 
+/// A locator is a cursor-anchored span on the symbol's file document at one
+/// version (FIX 7810, 029b5966b0a, replaced the path-at-revision locator).
+/// Each `path` gets its own cursors, so two paths never share a locator.
 fn locator(path: &str) -> CodeMemoryLocator {
     CodeMemoryLocator {
-        path_at_revision: path.to_owned(),
-        revision: CodeMemoryRevision::Commit("9d561405a81ffbf2".to_owned()),
+        span: CodeSpanAnchor {
+            document_id: [0xD0; 32],
+            start: path.as_bytes().to_vec(),
+            end: path.as_bytes().to_vec(),
+            content_hash: [0xD1; 32],
+        },
+        version: vec![(1, 0)],
         validity: range(1_780_000_000),
     }
 }
@@ -240,10 +254,14 @@ fn transfer(
     }
 }
 
-/// The `path_at_revision` STORED on `symbol_id`'s attachment row for
-/// `payload` — the locator half of the dual anchor as it actually persists,
-/// read back through the public attachment door.
-fn attachment_path(vault: &Vault, symbol_id: EntityId, payload: CodeMemoryPayloadRef) -> String {
+/// The locator STORED on `symbol_id`'s attachment row for `payload` — the
+/// locator half of the dual anchor as it actually persists, read back
+/// through the public attachment door.
+fn attachment_locator(
+    vault: &Vault,
+    symbol_id: EntityId,
+    payload: CodeMemoryPayloadRef,
+) -> CodeMemoryLocator {
     let rows = vault
         .code_memory_attachments(symbol_id)
         .expect("attachment rows");
@@ -251,7 +269,7 @@ fn attachment_path(vault: &Vault, symbol_id: EntityId, payload: CodeMemoryPayloa
         .into_iter()
         .find(|attachment| attachment.payload == payload)
         .expect("the surviving payload keeps an attachment row");
-    row.anchor.locator.path_at_revision
+    row.anchor.locator
 }
 
 fn human(vault: &Vault, byte: u8) -> WriteActor {
@@ -519,8 +537,7 @@ fn transfer_is_atomic() {
     let filler_payload = note(&vault);
     for index in 0..CODE_MEMORY_MAX_VALUES_PER_SLOT {
         let mut filler = value(filler_payload, id(0x39), 0x59, 2_000);
-        filler.content_hash[0] = u8::try_from(index % 251).expect("byte");
-        filler.content_hash[1] = u8::try_from(index / 251).expect("byte");
+        filler.content_hash[..std::mem::size_of::<usize>()].copy_from_slice(&index.to_le_bytes());
         attach(&vault, to, "src/after.rs", slot(), filler).expect("destination fills to the bound");
     }
     let before_destination = vault.code_memory_slots(to).expect("destination");
@@ -582,7 +599,7 @@ fn invalid_anchor_transfers_are_typed() {
 /// The LOCATOR IS PER PAYLOAD, never per operation.
 ///
 /// A second attach into the same slot may not restamp the first payload's
-/// `path_at_revision`, and a transfer relabels only what it actually moved:
+/// locator, and a transfer relabels only what it actually moved:
 /// a destination-only payload keeps the locator it was attached under even
 /// though the merged slot is rewritten around it.
 #[test]
@@ -613,11 +630,14 @@ fn locators_survive_later_attaches_and_untouched_transfers() {
     .expect("a second attach into the SAME slot");
 
     assert_eq!(
-        attachment_path(&vault, from, first),
-        "src/first.rs",
+        attachment_locator(&vault, from, first),
+        locator("src/first.rs"),
         "the older payload keeps the locator it was attached under"
     );
-    assert_eq!(attachment_path(&vault, from, second), "src/second.rs");
+    assert_eq!(
+        attachment_locator(&vault, from, second),
+        locator("src/second.rs")
+    );
 
     // The destination already holds an unrelated payload in the same slot.
     attach(
@@ -634,24 +654,27 @@ fn locators_survive_later_attaches_and_untouched_transfers() {
         .expect("explicit copy");
 
     assert_eq!(
-        attachment_path(&vault, to, destination_only),
-        "src/destination.rs",
+        attachment_locator(&vault, to, destination_only),
+        locator("src/destination.rs"),
         "a payload this transfer never moved is not relabelled by `to_locator`"
     );
     for moved in [first, second] {
         assert_eq!(
-            attachment_path(&vault, to, moved),
-            "src/after.rs",
+            attachment_locator(&vault, to, moved),
+            locator("src/after.rs"),
             "a payload that DID move carries the transfer's own locator"
         );
     }
 
     assert_eq!(
-        attachment_path(&vault, from, first),
-        "src/first.rs",
+        attachment_locator(&vault, from, first),
+        locator("src/first.rs"),
         "a copy leaves the source locators untouched too"
     );
-    assert_eq!(attachment_path(&vault, from, second), "src/second.rs");
+    assert_eq!(
+        attachment_locator(&vault, from, second),
+        locator("src/second.rs")
+    );
 }
 
 /// Contract collisions resolve exactly like slot collisions: the destination
@@ -844,7 +867,7 @@ fn blocks_discriminant_is_24() {
     assert_eq!(EdgeKind::try_from_u8(25), Some(EdgeKind::Fulfills));
     assert_eq!(EdgeKind::DischargedBy as u8, 26);
     assert_eq!(EdgeKind::try_from_u8(26), Some(EdgeKind::DischargedBy));
-    assert!(EdgeKind::try_from_u8(31).is_none());
+    assert_eq!(EdgeKind::try_from_u8(31), Some(EdgeKind::Regenerates));
     assert!(EdgeKind::try_from_u8(u8::MAX).is_none());
 }
 
@@ -1406,10 +1429,11 @@ fn deleting_a_symbol_clears_every_code_memory_row() {
 /// Deleting a PAYLOAD takes every reference to it with it, under any symbol.
 ///
 /// The always-on bound is eight LIVE contracts per symbol, but registration
-/// counts KEYS: without this sweep eight deleted NOTEs would hold a live
-/// symbol at capacity forever while the readers went on publishing refs to
-/// material that no longer exists. The surviving note is the control — the
-/// sweep removes references, not slots.
+/// counts KEYS: without this sweep eight deleted NOTEs would count against a
+/// live symbol forever while the readers went on publishing refs to
+/// material that no longer exists. The bound is observed, never refused
+/// (rule 5, FIX 8562): a ninth live registration is kept. The surviving
+/// note is the control — the sweep removes references, not slots.
 #[test]
 fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
     let (_dir, vault) = vault();
@@ -1450,7 +1474,9 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
     }
 
     let ninth = note(&vault);
-    let refused = vault
+    // Rule 5 (f8b2b9107a0, FIX 8562): eight live registrations reach the
+    // bound, which is observed and never refuses; the ninth is kept.
+    vault
         .register_always_on_contract(contract(
             anchor_symbol,
             slot(),
@@ -1458,14 +1484,15 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
             CodeMemoryContractKind::Interface,
             actor,
         ))
-        .expect_err("eight live registrations fill the symbol");
-    assert!(matches!(
-        refused,
-        Error::Code(CodeError::CodeMemoryLimitExceeded {
-            kind: "always-on contracts per symbol",
-            limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS
-        })
-    ));
+        .expect("a ninth live registration is kept past the bound");
+    assert_eq!(
+        vault
+            .code_memory_always_on_contracts(anchor_symbol)
+            .expect("read")
+            .len(),
+        CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS + 1,
+        "the bound keeps every contract"
+    );
 
     for payload in &payloads {
         vault
@@ -1475,11 +1502,15 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
             .expect("hard-delete the NOTE payload");
     }
 
-    let contracts = vault
+    let contracts: Vec<CodeMemoryPayloadRef> = vault
         .code_memory_always_on_contracts(anchor_symbol)
-        .expect("read");
-    assert!(
-        contracts.is_empty(),
+        .expect("read")
+        .into_iter()
+        .map(|contract| contract.payload)
+        .collect();
+    assert_eq!(
+        contracts,
+        vec![ninth],
         "no reader publishes a contract whose NOTE was deleted"
     );
     let payload_refs: Vec<CodeMemoryPayloadRef> = vault
@@ -1513,7 +1544,7 @@ fn deleting_a_payload_clears_its_refs_and_frees_the_always_on_bound() {
             CodeMemoryContractKind::Interface,
             actor,
         ))
-        .expect("the bound counts live registrations, so a ninth NOTE fits now");
+        .expect("re-registering the live ninth is an idempotent upsert");
     let after = vault
         .code_memory_always_on_contracts(anchor_symbol)
         .expect("read");

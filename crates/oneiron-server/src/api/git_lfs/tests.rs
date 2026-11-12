@@ -46,7 +46,9 @@ fn test_server(config: SyncServerConfig) -> (tempfile::TempDir, Arc<SyncServer>)
     let vault = Arc::new(
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("open vault"),
     );
-    let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
+    let server = Arc::new(
+        crate::test_credentials::server_with_fixture_keystore(vault, config).expect("sync server"),
+    );
     (dir, server)
 }
 
@@ -426,11 +428,14 @@ async fn lfs_unauthenticated_write_fails_including_loopback() {
     // the gate reads no address, so there is no loopback branch to take.
     let (_hatch_dir, hatch) = test_server(hatch_config());
     assert!(
-        authorize(&HeaderMap::new(), &hatch, LfsAccess::Read).is_ok(),
+        authorize(&HeaderMap::new(), &hatch, LfsAccess::Read)
+            .await
+            .is_ok(),
         "the dev hatch still serves LFS reads"
     );
     assert_eq!(
         authorize(&HeaderMap::new(), &hatch, LfsAccess::Write)
+            .await
             .expect_err("the dev hatch can never store an object")
             .status(),
         StatusCode::FORBIDDEN
@@ -730,6 +735,9 @@ fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneir
                     .map(|chunk| chunk.hash)
                     .collect(),
             ),
+            request: 1,
+            cursor: None,
+            read: None,
         })
         .unwrap();
     let token = format!(

@@ -339,20 +339,20 @@ fn owner_host_server_with(
     let dir = oneiron::test_support::restore_tempdir();
     let backups = oneiron::test_support::restore_tempdir();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let host = OwnerHost {
-        vault_path: dir.path().to_path_buf(),
-        vault_config: oneiron::VaultConfig::device(),
-        backups: crate::owner::backup::BackupPlan::new(dir.path(), backups.path().to_path_buf(), 2),
-        every: None,
-        backup_lock: std::sync::Mutex::new(()),
+    // The owner host is built from its config since #3229 (fields private);
+    // `[backup]` off by default, as `every: None` was.
+    let mut config = crate::config::ServeConfig::default();
+    config.vault_path = dir.path().to_path_buf();
+    config.backup.dir = Some(backups.path().to_path_buf());
+    config.backup.keep = 2;
+    let host = OwnerHost::from_config(&config, oneiron::VaultConfig::device())
         // Rehearsals go under the temp directory `restore_tempdir` chose.
-        rehearse_temp: dir.path().parent().map(std::path::Path::to_path_buf),
-    };
+        .with_rehearsal_dir(dir.path().parent().expect("temp parent").to_path_buf());
     let config = SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     };
-    let server = SyncServer::new(vault, config)
+    let server = crate::test_credentials::server_with_fixture_keystore(vault, config)
         .unwrap()
         .with_owner_host(host)
         .with_embedder(embedder);
@@ -507,10 +507,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
     // Admitted at the door, then revoked before any act reaches the writer.
     let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
     let (slip, _) = slip_credentials::credential(&server, &recipe);
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
-        server.config.auth_secret.as_deref().unwrap().as_bytes(),
-    )
-    .unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     vault
         .revoke_capability_slip(&issuer, slip.claims.slip_id)
         .unwrap();
@@ -602,6 +599,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         stamp: card.stamp,
         strike: Vec::new(),
         unstrike: Vec::new(),
+        travel: None,
     };
     refused_owner(
         persona::export(
@@ -633,7 +631,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
                                  "is_visible": true, "order": 0 }] },
     }))
     .unwrap();
-    let receipt = off_record::witness(vault, &unbound, &turn).unwrap();
+    let receipt = off_record::witness(vault, &unbound, &turn, None).unwrap();
     let turn =
         oneiron::EntityId::from_hex(receipt.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
     let session = vault
@@ -694,7 +692,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         .unwrap();
     let error = vault
         .memory(owner_id, oneiron::edge::EdgeActorClass::Human)
-        .witness_into_session_as(&admitted, &session, &said.turn, None)
+        .witness_into_session_as(&admitted, &session, &said.turn, None, None)
         .unwrap_err();
     assert_eq!(
         error.code,
@@ -702,7 +700,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         "{error:?}"
     );
     assert!(vault.get(&message).unwrap().is_none(), "nothing landed");
-    off_record::witness(vault, &unbound, &said).unwrap();
+    off_record::witness(vault, &unbound, &said, None).unwrap();
     assert!(
         vault.get(&message).unwrap().is_some(),
         "the live proof lands it"
@@ -899,10 +897,7 @@ async fn a_backup_queued_behind_a_slip_revocation_takes_and_prunes_nothing() {
     let before = crate::owner::backup::list(&host.backups).unwrap();
 
     let (slip, _) = slip_credentials::credential(&server, &recipe);
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
-        server.config.auth_secret.as_deref().unwrap().as_bytes(),
-    )
-    .unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     vault
         .revoke_capability_slip(&issuer, slip.claims.slip_id)
         .unwrap();

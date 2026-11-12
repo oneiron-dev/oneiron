@@ -118,6 +118,13 @@ impl BatchBuilder<'_> {
             return Err(error);
         }
         let vault = self.vault;
+        // An agent's batch: each definition it creates is the one its author
+        // writer gives it (ARCH-0053:20), before anything stages.
+        vault.bound_agent_authored_puts_in_txn(
+            &*wtxn,
+            self.agent_authoring.as_ref(),
+            &mut self.ops,
+        )?;
         #[cfg(feature = "sync")]
         admit_federated_puts(vault, wtxn, &mut self.ops, &self.federated_puts)?;
         // A batch inside an actor-bound transaction cannot silently choose the
@@ -186,6 +193,7 @@ impl BatchBuilder<'_> {
             .with_replicated_puts(std::mem::take(&mut self.replicated_puts))
             .with_marked_carriers(std::mem::take(&mut self.marked_carriers))
             .with_caller_envelopes(std::mem::take(&mut self.caller_envelopes))
+            .with_owner_authored(self.owner_authored.take())
             .with_prepared_person_substrate(self.prepared_person_substrate.take())
             .with_prepared_agent_birth(self.prepared_agent_birth.take());
         let deferred =
@@ -201,6 +209,7 @@ impl BatchBuilder<'_> {
                     None,
                     self.origin,
                     &gate_mode.caller_envelopes,
+                    gate_mode.owner_authored.as_ref(),
                     &gate_mode.births,
                     true,
                 )?;

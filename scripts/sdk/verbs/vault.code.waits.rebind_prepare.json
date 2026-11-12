@@ -5,6 +5,7 @@
   "output": "crate::memory::code_wait_doors::CodeWaitRebindPrepared",
   "call": "memory.code_wait_rebind_prepare(input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

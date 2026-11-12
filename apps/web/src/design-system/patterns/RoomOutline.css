@@ -1,0 +1,75 @@
+/* The outline of a room: quiet group labels, one 34 px row per thing. */
+.sl-room-outline {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-room-outline-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-room-outline-label {
+  padding: 18px 8px 4px;
+  font-size: var(--sl-t-figure);
+  line-height: 1.4;
+  color: var(--sl-ink-3);
+}
+
+.sl-room-outline-group:first-child > .sl-room-outline-label {
+  padding-top: 8px;
+}
+
+/* The mark in a 20 px column, the words, the time at the right. */
+.sl-room-outline-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: var(--sl-radius);
+  font-size: var(--sl-t-do);
+  line-height: 1.5;
+  color: var(--sl-ink-2);
+  text-align: left;
+  transition: transform 120ms var(--sl-ease-out);
+}
+
+.sl-room-outline-row:hover,
+.sl-room-outline-row:focus-visible {
+  background: var(--sl-lit);
+  outline: none;
+}
+
+.sl-room-outline-row:active {
+  transform: scale(0.98);
+}
+
+.sl-room-outline-mark {
+  display: grid;
+  place-items: center;
+  color: var(--sl-ink-3);
+}
+
+.sl-room-outline-words {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-room-outline-who {
+  font-weight: 600;
+  color: var(--sl-ink-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-room-outline-row {
+    transition: none;
+  }
+  .sl-room-outline-row:active {
+    transform: none;
+  }
+}

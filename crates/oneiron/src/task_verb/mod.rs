@@ -48,6 +48,7 @@ mod consult_ladder_facade;
 mod consult_payload;
 mod consult_result;
 mod create_facade;
+mod create_from_message;
 mod create_origin;
 pub(crate) use create_origin::message_dispatch_in_txn;
 mod create_spec;
@@ -162,8 +163,8 @@ pub(crate) mod tests;
 
 pub use consts::TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED;
 pub use consult_fanout_types::{
-    ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutMode,
-    ConsultFanOutPause, ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
+    ConsultFanOutChoice, ConsultFanOutEstimate, ConsultFanOutMeter, ConsultFanOutPause,
+    ConsultFanOutPolicy, ConsultFanOutRate, ConsultFanOutScope, FanoutMeterRow,
 };
 pub use consult_ladder_facade::{
     CrossActorRoute, LadderTransitionReceipt, project_consult_ladder_state,
@@ -184,8 +185,8 @@ pub use follow_up::{decode_consult_expiry_recovery, task_follow_up_dedupe_key};
 pub use refusal::{SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord};
 pub(crate) use room_thread::{
     context_refs as room_thread_context_refs, open_thread_tasks_in as room_open_thread_tasks_in,
-    task_ids_in as room_thread_task_ids_in, task_roster_in as room_thread_task_roster_in,
-    thread_tasks as room_thread_tasks,
+    task_ids_in as room_thread_task_ids_in, task_room_standing_in as room_thread_task_standing_in,
+    task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
 };
 pub use route_receipts::{
     DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
@@ -491,6 +492,7 @@ pub use ask_types::{
     TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };
 
+use crate::check_in::CheckInMode;
 use crate::memory::{MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 

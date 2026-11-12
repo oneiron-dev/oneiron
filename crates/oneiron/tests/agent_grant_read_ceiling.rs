@@ -205,6 +205,7 @@ fn fixture(grants: GrantWorlds) -> Fixture {
                 repo_bounds: None,
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
+                working_view_bounds: None,
             },
         )
         .expect("owner mints the agent a read Grant");

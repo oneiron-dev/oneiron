@@ -477,12 +477,15 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
             .code,
         oneiron::memory::MEMORY_CODE_FORBIDDEN
     );
-    assert_eq!(
-        agent
-            .commit(std::slice::from_ref(&input))
-            .expect("per-claim receipt")[0]
-            .approval,
-        "rejected"
+    // A batch element answers CommitOutcome since OF-063 (aa8ed36cfb1, FIX
+    // 1221): no receipt carries approval "rejected"; the refused arm is the
+    // rejected element (rule D).
+    let outcomes = agent
+        .commit(std::slice::from_ref(&input))
+        .expect("per-claim outcome");
+    assert!(
+        matches!(outcomes[0], oneiron::memory::CommitOutcome::Refused { .. }),
+        "{outcomes:?}"
     );
     let path = format!("/public/booking/{}", fixture.token);
     assert_eq!(
@@ -682,6 +685,7 @@ async fn public_booking_render_admits_once_and_ignores_spoofed_source_ip() {
         };
         apply_rule_amendment(
             &fixture.server.vault,
+            &crate::test_credentials::embedded_owner(&fixture.server.vault),
             0,
             BookingAntiAbuseRuleRow {
                 row_id: booking_rule_row_id(&scope, &rule),

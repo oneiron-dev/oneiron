@@ -128,7 +128,7 @@ pub(crate) mod tests {
                 flex_windows: Vec::new(),
             },
         };
-        let body = ClaimBody::new(
+        let mut body = ClaimBody::new(
             BOOKING_EVENT_TYPE_PREDICATE,
             ClaimSubject::Entity(page()),
             encode_event_type_claim_value(&config).expect("config value"),
@@ -137,6 +137,10 @@ pub(crate) mod tests {
             ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        // A CLAIM birth stamps its body's facet, and the page is not a
+        // PERSON, so the constructor's derived substrate names no stored
+        // FACET. The live configuration takes the vault default instead.
+        body.scope_facet = server.vault.default_facet().expect("default facet");
         server
             .vault
             .put_claim(
@@ -166,7 +170,14 @@ pub(crate) mod tests {
         let rows = default_booking_anti_abuse_rows(page(), event_type, &owner_config())
             .expect("seed rows");
         for row in rows {
-            apply_rule_amendment(&server.vault, 0, row, None).expect("install row");
+            apply_rule_amendment(
+                &server.vault,
+                &crate::test_credentials::embedded_owner(&server.vault),
+                0,
+                row,
+                None,
+            )
+            .expect("install row");
         }
     }
 

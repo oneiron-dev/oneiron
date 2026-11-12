@@ -5,6 +5,7 @@
   "output": "Option<crate::task_verb::sdk::ConnectorView>",
   "call": "crate::task_verb::sdk::connector_description(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

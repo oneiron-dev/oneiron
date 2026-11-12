@@ -139,6 +139,8 @@ pub(crate) struct QuestionHead {
     tokenizer: QuestionTokenizer,
     backbone: Backbone,
     head: Linear,
+    /// The longest window the rotary tables were sized for.
+    cap: usize,
 }
 
 impl QuestionHead {
@@ -235,7 +237,23 @@ impl QuestionHead {
             tokenizer,
             backbone,
             head,
+            cap,
         })
+    }
+
+    /// The longest window `input` needs. A head loaded for shorter windows
+    /// is loaded again before it reads `input` (FIX 3864): its rotary tables
+    /// cover only the windows it was loaded for.
+    pub(crate) fn window_need(&self, input: &Value) -> anyhow::Result<usize> {
+        let windows = self
+            .tokenizer
+            .windows(&self.question.render_target_text(input)?)?;
+        Ok(windows.iter().map(Vec::len).max().unwrap_or(0))
+    }
+
+    /// The longest window this load covers.
+    pub(crate) const fn cap(&self) -> usize {
+        self.cap
     }
 
     /// Position means include specials; windows have equal weight, as trained.
