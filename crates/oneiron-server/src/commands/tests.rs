@@ -256,7 +256,26 @@ fn token_revoke_with_slip_id_revokes_subtree_and_preserves_sibling() {
     cfg.dimensions = 32;
     cfg.map_size = 64 * 1024 * 1024;
     let vault = oneiron::Vault::open(&path, cfg.clone()).unwrap();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"cli-revoke").unwrap();
+    // The configured secret admits the caller; the key is this install's own
+    // issuer seed in its keystore (FIX-LIST 3018): root the vault with the seed
+    // the command's keystore holds, in a key directory outside the vault.
+    let serve = ServeArgs {
+        vault_path: Some(path.clone()),
+        dimensions: Some(32),
+        map_size: Some(64 * 1024 * 1024),
+        dict_search_paths: Some(Vec::new()),
+        auth_secret: Some("cli-revoke".into()),
+        keystore_dir: Some(dir.path().join("keys")),
+        ..Default::default()
+    };
+    assert!(
+        crate::config::resolve_serve_config(&serve)
+            .unwrap()
+            .keystore
+            .install_on(&vault, &path),
+        "the fixture's keystore installs"
+    );
+    let issuer = vault.bootstrap_host_slip_issuer().unwrap();
     let root = vault.ensure_host_root_slip(&issuer).unwrap();
     for (id, parent) in [
         ([71; 32], root.claims.slip_id),
@@ -271,18 +290,7 @@ fn token_revoke_with_slip_id_revokes_subtree_and_preserves_sibling() {
     }
     drop(vault);
     let id: String = [71u8; 32].iter().map(|b| format!("{b:02x}")).collect();
-    token_revoke(TokenRevokeArgs {
-        jti: id,
-        serve: ServeArgs {
-            vault_path: Some(path.clone()),
-            dimensions: Some(32),
-            map_size: Some(64 * 1024 * 1024),
-            dict_search_paths: Some(Vec::new()),
-            auth_secret: Some("cli-revoke".into()),
-            ..Default::default()
-        },
-    })
-    .unwrap();
+    token_revoke(TokenRevokeArgs { jti: id, serve }).unwrap();
     let vault = oneiron::Vault::open(path, cfg).unwrap();
     assert!(!vault.capability_slip_id_is_live(&[71; 32]).unwrap());
     assert!(!vault.capability_slip_id_is_live(&[73; 32]).unwrap());
