@@ -8,6 +8,7 @@
 //! its fixture must carry an owner act (an install machine profile), as the
 //! owner's agent-grant door does.
 use super::*;
+use crate::federation::SystemAgentGrantState;
 use crate::federation::grant_scope::{STEWARD_READ_VERB, STEWARD_VERBS};
 
 fn verbs(names: &[&str]) -> BTreeSet<String> {
