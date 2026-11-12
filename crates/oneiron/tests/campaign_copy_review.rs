@@ -153,6 +153,8 @@ struct Leg {
     program: EntityId,
     step: EntityId,
     attempt: AttemptRecord,
+    /// The drive's wall instant, milliseconds, after every fixture write.
+    drive_at_ms: u64,
 }
 
 /// Builds the leg. `review` gives the campaign's copy-review keys, from the
@@ -204,6 +206,10 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
     let version = created["definition"]["definition_version"]
         .as_u64()
         .unwrap();
+    // The JSON door stamps the campaign with the vault's clock (Unix
+    // seconds); every later write is dated at or after it, or the launch
+    // refuses an `updated_at` before `created_at`.
+    let now = vault.now_recorded_at();
     let step = EntityId::now();
     let program = create_campaign_program(
         &vault,
@@ -227,7 +233,7 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
             }],
             audience: None,
         },
-        1,
+        now,
     )
     .unwrap()
     .program
@@ -241,14 +247,14 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
             CALL_SEQ,
             BODY,
             WriteActor::new(owner, EdgeActorClass::Human),
-            1,
+            now,
         )
         .unwrap();
-    launch_campaign(&vault, owner, EdgeActorClass::Human, campaign, version, 1).unwrap();
+    launch_campaign(&vault, owner, EdgeActorClass::Human, campaign, version, now).unwrap();
     elect_campaign_home_node_designation(
         &vault,
         &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],
-        1,
+        now,
     )
     .unwrap();
     let read = sweep_owner_read(&vault, owner, EdgeActorClass::Human)
@@ -268,7 +274,7 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
             query_ref: query.query_ref,
             campaign_ref: campaign,
             entity_ref: member,
-            now: 2,
+            now: now + 1,
         },
     ))
     .unwrap()
@@ -285,7 +291,7 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
                 program_step_ref: step,
             },
             None,
-            3,
+            now + 2,
         )
         .unwrap()
     {
@@ -293,7 +299,7 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
         other => panic!("unexpected enqueue outcome: {other:?}"),
     }
     let attempt = match runner
-        .claim_if_home(HOME_NODE, format!("worker:{HOME_NODE}"), 4)
+        .claim_if_home(HOME_NODE, format!("worker:{HOME_NODE}"), now + 3)
         .unwrap()
     {
         CampaignEnrollmentClaim::Queue(ClaimOutcome::Claimed(record)) => record,
@@ -306,6 +312,7 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
         program,
         step,
         attempt,
+        drive_at_ms: (now + 4) * 1000,
     }
 }
 
@@ -350,7 +357,7 @@ impl OutboundResultSender for NoSend {
 fn drive_held(leg: &Leg) {
     let drive = leg
         .vault
-        .drive_enrollment_outbound_leg(HOME_NODE, &leg.attempt, &mut NoSend, 10_000)
+        .drive_enrollment_outbound_leg(HOME_NODE, &leg.attempt, &mut NoSend, leg.drive_at_ms)
         .unwrap();
     assert!(
         matches!(drive, EnrollmentLegDrive::AwaitingApproval { .. }),
