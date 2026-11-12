@@ -1067,6 +1067,14 @@ fn an_agent_settles_its_critiques_from_a_completed_recheck_that_found_a_flaw() -
         success_json(false),
         "{missed}"
     );
+    assert_eq!(
+        missed["evidence"]["judge"], JUDGE_MODEL,
+        "the evidence carries the recheck's judge: {missed}"
+    );
+    assert_eq!(
+        missed["evidence"]["at"], asked_at,
+        "the evidence is dated when the recheck checked: {missed}"
+    );
 
     let caught = outcome_call(&memory, &own, result, &revising, seal_recheck(attempt))?;
     assert_eq!(
