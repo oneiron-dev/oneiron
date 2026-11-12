@@ -111,4 +111,4 @@ pub use crate::model_step_record::{
 
 pub(crate) use crate::model_step_effect::StepEffectBinding;
 
-pub use crate::model_step_context::{DurableStepContext, StepOutcome};
+pub use crate::model_step_context::{DurableStepContext, StepOutcome, StepSpendScope};
