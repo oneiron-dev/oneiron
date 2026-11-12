@@ -280,6 +280,7 @@ impl SyncServer {
                 continue;
             };
             let server = Arc::clone(&self);
+            let pass_started = std::time::Instant::now();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
                 server.resident_pass(unix_now())
@@ -289,6 +290,7 @@ impl SyncServer {
                 ready: Vec::new(),
                 faults: BTreeMap::from([("pass".to_owned(), error.to_string())]),
             });
+            tracing::debug!(target: "oneiron::run_start", stage = "resident_pass_done", elapsed_us = u64::try_from(pass_started.elapsed().as_micros()).unwrap_or(u64::MAX), ready = pass.ready.len(), faults = pass.faults.len(), "run start");
             for (what, reason) in &pass.faults {
                 if failing.get(what) != Some(reason) {
                     tracing::warn!(%what, %reason, "the resident pump cannot serve this; it retries");
@@ -305,6 +307,7 @@ impl SyncServer {
                 if !held(&running).insert(id) {
                     continue;
                 }
+                tracing::debug!(target: "oneiron::run_start", stage = "run_dispatched", attempt = ?id, "run start");
                 let server = Arc::clone(&self);
                 let running = Arc::clone(&running);
                 let admit = Arc::clone(&admit_run);
@@ -321,7 +324,9 @@ impl SyncServer {
             if !woke {
                 return;
             }
+            tracing::debug!(target: "oneiron::run_start", stage = "pump_woke", "run start");
             tokio::time::sleep(PASS_SPACING).await;
+            tracing::debug!(target: "oneiron::run_start", stage = "pump_spaced", "run start");
             // One pass serves the burst of commits that woke it.
             while let Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_)) = wake.try_recv() {}
         }
@@ -417,6 +422,7 @@ impl SyncServer {
         admit: &HousekeepingAdmission,
     ) -> bool {
         let key = of.key();
+        let permit_started = std::time::Instant::now();
         let permit = loop {
             let wait = match self
                 .code_execution_host()
@@ -431,6 +437,7 @@ impl SyncServer {
                 break permit;
             }
         };
+        tracing::debug!(target: "oneiron::run_start", stage = "permit_held", attempt = ?id, waited_us = u64::try_from(permit_started.elapsed().as_micros()).unwrap_or(u64::MAX), "run start");
         // Admitted with its permit in hand and before its claim. A refused
         // run (a vault frozen for reap) stays unclaimed, and a later pass
         // reads it again.
@@ -446,6 +453,7 @@ impl SyncServer {
         // The admission goes with it, held through its claim, its run and
         // its settlement.
         let spawned = crate::engine_thread("oneiron-agent-run".to_owned()).spawn(move || {
+            tracing::debug!(target: "oneiron::run_start", stage = "run_thread_started", attempt = ?id, "run start");
             let leave = server.run_agent_blocking(id, of, &key, runtime);
             drop(admission);
             drop(permit);
@@ -472,14 +480,19 @@ impl SyncServer {
             return false;
         };
         let vault = self.vault();
+        let claim_started = std::time::Instant::now();
         let claimed = match claim(vault, id, of, self.ai.confession_instruction()) {
-            Ok(Some(claimed)) => claimed,
+            Ok(Some(claimed)) => {
+                tracing::debug!(target: "oneiron::run_start", stage = "claimed", attempt = ?id, claim_us = u64::try_from(claim_started.elapsed().as_micros()).unwrap_or(u64::MAX), "run start");
+                claimed
+            }
             Ok(None) => return false,
             Err(error) => {
                 tracing::warn!(%error, attempt = ?id, "an agent run cannot be claimed; it waits for a restart");
                 return true;
             }
         };
+        let bound_started = std::time::Instant::now();
         let ran = run_bound(
             self,
             host.provider().as_ref(),
@@ -488,6 +501,7 @@ impl SyncServer {
             &self.reader_runner.seats(),
             runtime,
         );
+        tracing::debug!(target: "oneiron::run_start", stage = "run_bound_returned", attempt = ?id, elapsed_us = u64::try_from(bound_started.elapsed().as_micros()).unwrap_or(u64::MAX), "run start");
         // OF-181: the run settles under its live-run guard, and leaves the
         // host's live runs unless it parked on a durable wait or a provider
         // outage (FIX 3194).
