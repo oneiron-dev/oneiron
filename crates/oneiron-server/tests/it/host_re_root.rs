@@ -79,7 +79,7 @@ fn serve(config: &Path, secret: &str, port: u16, log: &Path) -> Server {
         .stderr(File::create(log).expect("server log file"));
     let mut server = Server(command.spawn().expect("spawn oneiron serve"));
     let probe = reqwest::blocking::Client::new();
-    let url = format!("http://127.0.0.1:{port}/v1/core/facade/receipts");
+    let url = format!("http://127.0.0.1:{port}/v1/core/facade/vault.receipts");
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         if let Some(status) = server.0.try_wait().expect("poll oneiron serve") {
@@ -121,11 +121,16 @@ fn sigterm(mut server: Server) {
 
 fn recall(client: &OneironClient) -> Result<bool, String> {
     client
-        .recall(
+        .vault_recall(
             "Varnholt orchard ladder",
             RecallEffort::Medium,
             &RecallScope::default(),
             10,
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -172,10 +177,10 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     let vault_id = json(oneiron(&["whoami", vault_arg], &config, OLD))["vault_id"].clone();
     assert!(vault_id.is_string(), "rooted: {vault_id}");
     let first = serve(&config, OLD, port, &dir.path().join("serve-1.log"));
-    let (url, owner_credential) = OneironClient::pair(link.as_str().unwrap()).unwrap();
+    let (url, owner_credential, _comm) = OneironClient::pair(link.as_str().unwrap()).unwrap();
     let owner = OneironClient::connect(&url, &owner_credential).unwrap();
     owner
-        .witness(&WitnessTurn {
+        .vault_witness(&WitnessTurn {
             conversation_ref: "55555555555555555555555555555555".into(),
             turn_ref: None,
             messages: vec![WitnessMessage {
@@ -186,8 +191,12 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: unix_seconds_now(),
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .unwrap();
     assert_eq!(recall(&owner), Ok(true));
@@ -257,7 +266,10 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     );
     let moved: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(moved["vault_id"], vault_id, "{moved:#}");
-    assert_eq!(moved["engine_writers_enrolled"], 6, "{moved:#}");
+    // OF-455 (#1367): re-root carries every engine writer that was live. The
+    // engine has eight since the Coach's runner (#1579) and the verified
+    // seal machine (baed1e252976) joined the first six.
+    assert_eq!(moved["engine_writers_enrolled"], 8, "{moved:#}");
     let agent_slip = agent["slip_id"].as_str().unwrap();
     assert!(
         moved["retired_credentials"]
@@ -319,7 +331,7 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
         NEW,
     ));
     let _second = serve(&config, NEW, port, &dir.path().join("serve-2.log"));
-    let (url, owner_credential) = OneironClient::pair(link.as_str().unwrap()).unwrap();
+    let (url, owner_credential, _comm) = OneironClient::pair(link.as_str().unwrap()).unwrap();
     let owner = OneironClient::connect(&url, &owner_credential).unwrap();
     assert_eq!(recall(&owner), Ok(true), "what was saved is still found");
     let new_agent = OneironClient::connect(&origin, agent["credential"].as_str().unwrap()).unwrap();

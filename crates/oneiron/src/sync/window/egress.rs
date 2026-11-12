@@ -546,6 +546,9 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
     // FIX 1794: an erased room's or thread's side rows leave it too.
     crate::sync::room_facts::scrub_room_facts(vault, doc, Some(key))?;
+    // FIX 5266: and an erased actor's turn-program rows, with the wakes
+    // admitted here.
+    crate::sync::turn_programs::scrub_turn_programs(vault, doc, Some(key))?;
     // FIX 853: and the document quote pins of an erased message or reply,
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
