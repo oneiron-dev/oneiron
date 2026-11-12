@@ -433,12 +433,12 @@ where
                 .get_or_insert_with(|| spent.reason().to_owned());
         }
         let now = capture.now;
-        let outcome = self.vault.try_with_write_txn_grouped(
-            |wtxn| -> ByoaResult<Result<SeatRoute, AttemptRecord>> {
+        let (outcome, login_restored) = self.vault.try_with_write_txn_grouped(
+            |wtxn| -> ByoaResult<(Result<SeatRoute, AttemptRecord>, bool)> {
                 let receipt = match self.capture_terminal_exhaust_in_txn(wtxn, capture)? {
                     terminal::TerminalCapture::Captured(receipt) => receipt,
                     terminal::TerminalCapture::Erased(attempt) => {
-                        record_runner_quota_in_txn(
+                        let (_, restored) = record_runner_quota_in_txn(
                             self.vault,
                             wtxn,
                             policy,
@@ -446,7 +446,7 @@ where
                             seat,
                             spent.as_ref(),
                         )?;
-                        return Ok(Err(attempt));
+                        return Ok((Err(attempt), restored));
                     }
                 };
                 // A replayed spend of a bound work that moved past it (FIX 7450)
@@ -454,9 +454,9 @@ where
                 if let Some(route) =
                     moved_on_in_txn(self.vault, wtxn, policy, &receipt, spent.as_ref())?
                 {
-                    return Ok(Ok(route));
+                    return Ok((Ok(route), false));
                 }
-                let seat = record_runner_quota_in_txn(
+                let (seat, restored) = record_runner_quota_in_txn(
                     self.vault,
                     wtxn,
                     policy,
@@ -465,7 +465,7 @@ where
                     spent.as_ref(),
                 )?;
                 let Some(spent) = spent else {
-                    return Ok(Ok(SeatRoute::Settled(receipt)));
+                    return Ok((Ok(SeatRoute::Settled(receipt)), restored));
                 };
                 let route = match policy.on_spent {
                     OnSeatSpent::Stop => SeatRoute::Park {
@@ -501,9 +501,15 @@ where
                     };
                     note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, quota, &spent)?;
                 }
-                Ok(Ok(route))
+                Ok((Ok(route), restored))
             },
         )?;
+        if login_restored {
+            // A Completed capture restored the seat's login and resumed its
+            // parks in the commit above; the available-write cannot notify
+            // from inside the write.
+            self.vault.store.notify_attempt_observers();
+        }
         match outcome {
             Ok(route) => Ok(route),
             Err(attempt) => Err(terminal::erased_capture_error(self.vault, &attempt)),

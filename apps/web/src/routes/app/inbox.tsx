@@ -438,7 +438,7 @@ function Inbox() {
     },
     b2: {
       crumb: 'Eiri · asks · linkedin',
-      title: 'Reach the Hokuei COO through Yurii’s account?',
+      title: 'Reach the Hokuei COO through Yuki’s account?',
       by: (
         <span className="aname" data-agent="eiri" title="Eiri · outbound">
           Eiri
@@ -451,7 +451,7 @@ function Inbox() {
             a human click.
           </span>
           <span className="bd-msg-meta" title="Proposed scope only · the preview creates no grant">
-            proposed grant: LinkedIn · Hokuei people · through Yurii’s account
+            proposed grant: LinkedIn · Hokuei people · through Yuki’s account
           </span>
           <span className="bd-acts">
             {!b2.settled && (
@@ -473,7 +473,7 @@ function Inbox() {
       ),
       acts: (
         <>
-          <button type="button" className="act" title="LinkedIn grant · Yurii’s account" onClick={explain('b2', 'This LinkedIn grant is not included in the preview. No grant was created.')}>
+          <button type="button" className="act" title="LinkedIn grant · Yuki’s account" onClick={explain('b2', 'This LinkedIn grant is not included in the preview. No grant was created.')}>
             the grant
           </button>
           <a className="act" href="/app/orgs" title="Hokuei · the org dossier">
@@ -546,13 +546,13 @@ function Inbox() {
       title: 'DM to the Hokuei COO, sent',
       by: (
         <>
-          <span className="seal seal-human" title="y · yurii">
+          <span className="seal seal-human" title="y · yuki">
             y
           </span>
-          <span className="meta-line">yurii</span>
+          <span className="meta-line">yuki</span>
         </>
       ),
-      body: "Sent from Yurii's account under the outreach grant.",
+      body: "Sent from Yuki's account under the outreach grant.",
       acts: (
         <>
           <button type="button" className="act" onClick={explain('w2', 'The LinkedIn thread is not included in this preview.')}>
@@ -927,7 +927,7 @@ function Inbox() {
                 className={claimClass(b2.settled, 'claim conf-2')}
                 title="a new audience for the linkedin grant"
               >
-                <span className="aname" data-agent="eiri" title="Eiri · outbound · every send waits for your click">Eiri</span> asks: reach the Hokuei COO through Yurii’s account?
+                <span className="aname" data-agent="eiri" title="Eiri · outbound · every send waits for your click">Eiri</span> asks: reach the Hokuei COO through Yuki’s account?
               </button>
               <span className="rverbs" role="status" aria-atomic="true">
                 {b2.settled ? (
@@ -959,13 +959,13 @@ function Inbox() {
                   stays a human click.
                 </span>
                 <span className="bd-msg-meta" title="Proposed scope only · the preview creates no grant">
-                  proposed grant: LinkedIn · Hokuei people · through Yurii’s account
+                  proposed grant: LinkedIn · Hokuei people · through Yuki’s account
                 </span>
                 <ReplyInput row={b2} placeholder="or answer Eiri in your words…" />
                 <span className="bd-acts">
                   <button type="button"
                     className="act"
-                    title="LinkedIn grant · Yurii’s account"
+                    title="LinkedIn grant · Yuki’s account"
                     onClick={explain('b2', 'This LinkedIn grant is not included in the preview. No grant was created.')}
                   >
                     the grant
@@ -1122,7 +1122,7 @@ function Inbox() {
             <span className="w-chan" title="linkedin">
               <ChanLinkedin />
             </span>
-            <span className="seal seal-human" title="y · yurii">
+            <span className="seal seal-human" title="y · yuki">
               y
             </span>
             <span className="t-msg conf-3">DM to Hokuei COO sent · verifying</span>
