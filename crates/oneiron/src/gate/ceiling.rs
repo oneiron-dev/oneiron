@@ -472,6 +472,26 @@ impl SourceTrustCeiling {
         }
     }
 
+    /// Replaces exactly one actor's row rather than merging overlapping bound/unbound scopes
+    /// into a denial. `row_for_actor` then answers this actor with `row`, every other actor as
+    /// before. A malformed manifest remains fail-closed.
+    pub(super) fn bind_actor_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
+        debug_assert!(row.actor_ref.is_some());
+        let Some(actor) = row.actor_ref else {
+            return;
+        };
+        if self.malformed_manifest_seen {
+            return;
+        }
+        match self.row(source) {
+            None => *self.slot_mut(source) = Some(row),
+            Some(first) if first.actor_ref == Some(actor) => *self.slot_mut(source) = Some(row),
+            Some(_) => {
+                self.additional_bound_rows.insert((source, actor), row);
+            }
+        }
+    }
+
     pub(super) fn set_row(&mut self, source: ClaimSource, row: SourceTrustRow) {
         match (self.row(source), row.actor_ref) {
             (Some(first), Some(actor)) if first.actor_ref.is_some_and(|id| id != actor) => {

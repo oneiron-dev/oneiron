@@ -4,16 +4,11 @@
 
 use std::collections::BTreeSet;
 
-use super::embedded_owner_actor_id;
+use super::engine_seed_identities::EngineSeedIdentities;
 use crate::EntityId;
 use crate::claim::ClaimSubject;
 use crate::error::Result;
-use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL, ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
-    ENTITY_TYPE_SKILL_HUB,
-};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION};
 use crate::vault::{LiveEntityRow, Vault, live_entity_row_in_txn};
 
 /// Whether a CLAIM body is a seed import's bookkeeping: provenance on a
@@ -32,101 +27,67 @@ fn seeded_claim(body: &[u8], skills: &BTreeSet<EntityId>, anchors: &BTreeSet<Ent
             && anchors.contains(&subject))
 }
 
-/// One seeded skill's rows: the SKILL, its content anchor, and the
-/// structural sets its random-id claims are known by.
-fn seed_skill(
-    seed: &mut BTreeSet<(u8, EntityId)>,
-    skills: &mut BTreeSet<EntityId>,
-    anchors: &mut BTreeSet<EntityId>,
-    id: EntityId,
-    hash: crate::skill::SkillContentHash,
-) -> Result<()> {
-    seed.insert((ENTITY_TYPE_SKILL, id));
-    skills.insert(id);
-    let anchor = crate::skill_hub::skill_content_anchor_entity_id(hash)?;
-    seed.insert((ENTITY_TYPE_SKILL_CONTENT_ANCHOR, anchor));
-    anchors.insert(anchor);
-    Ok(())
-}
-
 impl Vault {
     /// The first live row this vault holds that its own seeded open did
     /// not write, as (entity type, id); `None` when every live row is one
     /// open seeds. Seeds whose ids are minted at import (skill provenance
-    /// and scan claims, the root project) are recognized by subject and
-    /// predicate or by the root pointer, never by stamp: the pack seeds
-    /// stamp wall-clock. Deleted shells are not live rows.
+    /// and scan claims, the root project and its home room) are recognized
+    /// by subject and predicate or by the root pointer, never by stamp: the
+    /// pack seeds stamp wall-clock. The home room counts only while it holds
+    /// its exact seeded body. Deleted shells are not live rows.
     pub fn first_non_bootstrap_row(&self) -> Result<Option<(u8, EntityId)>> {
-        let mut seed: BTreeSet<(u8, EntityId)> = BTreeSet::new();
-        seed.insert((
-            ENTITY_TYPE_POLICY_MANIFEST,
-            crate::gate::default_policy_manifest_id()?,
-        ));
-        seed.insert((
-            ENTITY_TYPE_MACHINE,
-            crate::dreamer_runner::authority::dreamer_actor_id()?,
-        ));
-        seed.insert((
-            ENTITY_TYPE_MACHINE,
-            crate::dreamer_runner::authority::coach_actor_id()?,
-        ));
-        let owner = embedded_owner_actor_id()?;
-        seed.insert((ENTITY_TYPE_PERSON, owner));
-        seed.insert((ENTITY_TYPE_FACET, crate::claim::substrate_facet_id(owner)?));
-        for agent in crate::agent_def::seeded_system_agent_ids()? {
-            seed.insert((ENTITY_TYPE_AGENT_DEF, agent));
-            let (person, substrate, anchor) = crate::context_board::seeded_agent_person_ids(agent)?;
-            seed.insert((ENTITY_TYPE_PERSON, person));
-            seed.insert((ENTITY_TYPE_FACET, crate::claim::substrate_facet_id(person)?));
-            seed.insert((ENTITY_TYPE_CLAIM, substrate));
-            seed.insert((ENTITY_TYPE_CLAIM, anchor));
-        }
-        let mut skills: BTreeSet<EntityId> = BTreeSet::new();
-        let mut anchors: BTreeSet<EntityId> = BTreeSet::new();
-        for (id, hash) in crate::skill_hub::bootstrap_skill_ids_and_hashes()? {
-            seed_skill(&mut seed, &mut skills, &mut anchors, id, hash)?;
-        }
-        for (source, pack_skills) in crate::skill_hub::pack_catalog::builtin_pack_seed_ids()? {
-            seed.insert((ENTITY_TYPE_ASSET, source));
-            for (id, hash) in pack_skills {
-                seed_skill(&mut seed, &mut skills, &mut anchors, id, hash)?;
-            }
-        }
-        seed.insert((
-            ENTITY_TYPE_SKILL_HUB,
-            crate::skill_hub::default_skill_hub_id()?,
-        ));
-        for row in crate::comm::claim_class_descriptors() {
-            seed.insert((
-                ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
-                crate::comm::claim_class_descriptor_id(row.predicate)?,
-            ));
-        }
-        let root = match (self.project_type_byte(), self.root_project()) {
-            (Ok(byte), Ok(id)) => Some((byte, id)),
-            _ => None,
-        };
-        const PAGE: usize = 1024;
         let txn = self.store.env.read_txn()?;
+        self.first_non_bootstrap_row_in_txn(&txn)
+    }
+
+    /// [`Self::first_non_bootstrap_row`] in a caller-owned snapshot: every
+    /// page, row and the root pointer are read in `txn`, so a writer can
+    /// take the census before its first write.
+    pub(crate) fn first_non_bootstrap_row_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<(u8, EntityId)>> {
+        let census = EngineSeedIdentities::load()?.census;
+        let root = crate::workspace_roster::root_project_in(&self.store, txn)?;
+        let root_row = root
+            .zip(self.project_type_byte().ok())
+            .map(|(id, byte)| (byte, id));
+        // Root seeding projects one home room. Only its exact seeded body is
+        // bootstrap: a room whose roster, scope or origin changed is real
+        // content, and a join must not set that vault aside.
+        let home_room = root
+            .map(crate::workspace_roster::seeded_root_home_room)
+            .transpose()?
+            .flatten();
+        const PAGE: usize = 1024;
         for byte in 0..=u8::MAX {
             let mut after: Option<EntityId> = None;
             loop {
-                let page = self.entities_by_type_page(byte, after.as_ref(), PAGE)?;
+                let page = self.entities_by_type_page_in_txn(txn, byte, after.as_ref(), PAGE)?;
                 let full = page.len() == PAGE;
                 after = page.last().copied();
                 for id in page {
                     let LiveEntityRow::Live { entity_type, body } =
-                        live_entity_row_in_txn(&self.store, &txn, &id)?
+                        live_entity_row_in_txn(&self.store, txn, &id)?
                     else {
                         continue;
                     };
-                    let seeded = seed.contains(&(entity_type, id))
+                    let seeded = census.contains(entity_type, &id)
                         && (entity_type != ENTITY_TYPE_AGENT_DEF
                             || crate::agent_def::seeded_row_matches_manifest(&id, &body));
-                    if seeded || root == Some((entity_type, id)) {
+                    if seeded || Some((entity_type, id)) == root_row {
                         continue;
                     }
-                    if entity_type == ENTITY_TYPE_CLAIM && seeded_claim(&body, &skills, &anchors) {
+                    if entity_type == ENTITY_TYPE_CONVERSATION
+                        && home_room
+                            .as_ref()
+                            .is_some_and(|(room, seeded_body)| id == *room && body == *seeded_body)
+                    {
+                        continue;
+                    }
+                    if entity_type == ENTITY_TYPE_CLAIM
+                        && seeded_claim(&body, &census.skills, &census.anchors)
+                    {
                         continue;
                     }
                     return Ok(Some((entity_type, id)));
