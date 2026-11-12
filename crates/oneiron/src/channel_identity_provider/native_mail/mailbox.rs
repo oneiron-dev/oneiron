@@ -95,3 +95,16 @@ impl Vault {
         Ok(())
     }
 }
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// [`Self::record_native_mailbox`] for `test_doors::claim_facet_birth`.
+    pub(crate) fn record_native_mailbox_for_test(
+        &self,
+        identity_ref: EntityId,
+        address: &str,
+        now: u64,
+    ) -> Result<()> {
+        self.record_native_mailbox(identity_ref, address, now)
+    }
+}
