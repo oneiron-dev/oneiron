@@ -11,6 +11,7 @@ mod audience_find;
 mod audience_history;
 mod audience_notices;
 mod audience_overlay;
+mod backfill;
 mod carrier_erase;
 mod fact_subject;
 mod history;
@@ -84,6 +85,9 @@ pub(crate) use audience_notices::{
     notify_thread_members_in_txn,
 };
 pub(crate) use audience_overlay::overlay_thread_binding_in;
+pub(crate) use backfill::backfill_room_turns_on_open;
+#[cfg(oneiron_test_support)]
+pub(crate) use backfill::doors as backfill_doors;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
 pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
