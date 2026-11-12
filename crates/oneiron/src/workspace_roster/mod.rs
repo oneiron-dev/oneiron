@@ -283,6 +283,9 @@ pub(crate) use rooms::erased_side_row_here;
 pub(crate) use rooms::room_group_project_in;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
+pub(crate) use rooms::task_binding_turns_in;
+pub(crate) use rooms::task_thread_room_in;
+pub(crate) use rooms::turn_room_in;
 pub use rooms::{ACTOR_ERASE_OFFER_BINDING, ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(crate) use rooms::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
@@ -296,7 +299,6 @@ pub(crate) use rooms::{
 };
 pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
 pub(crate) use rooms::{record_room_message_in_txn, record_thread_reply_in_txn};
-pub(crate) use rooms::{task_binding_turns_in, task_thread_room_in, turn_room_in};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
