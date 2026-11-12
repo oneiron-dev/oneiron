@@ -54,6 +54,11 @@ const OWNER_REQUEST_KEYS: [&str; 6] = [
 ];
 const OWNER_REQUEST_ENVELOPE_KEYS: [&str; 2] = ["content_hash", "version"];
 const OWNER_REQUEST_LINEAGE_KEYS: [&str; 3] = ["repo", "path", "base_commit"];
+/// A native bundle's lineage names its files in place of one path, and
+/// each file holds exactly its path and its new bytes' BLAKE3 (nil for a
+/// removal).
+const OWNER_REQUEST_BUNDLE_LINEAGE_KEYS: [&str; 3] = ["repo", "files", "base_commit"];
+const OWNER_REQUEST_BUNDLE_FILE_KEYS: [&str; 2] = ["path", "content_hash"];
 
 pub(super) use crate::store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_PREFIX;
 const REPO_PROVENANCE_GIT_AUTHOR_NAME: &str = "Oneiron";
@@ -204,10 +209,50 @@ fn validate_owner_request_value(body: &ClaimBody, entries: &[(Value, Value)]) ->
         ));
     }
     let lineage = require_msgpack_map(entries, "diff_lineage_receipt")?;
-    require_closed_keys(lineage, &OWNER_REQUEST_LINEAGE_KEYS)?;
+    if lineage.iter().any(|(key, _)| key.as_str() == Some("files")) {
+        require_closed_keys(lineage, &OWNER_REQUEST_BUNDLE_LINEAGE_KEYS)?;
+        require_owner_request_bundle_files(lineage)?;
+    } else {
+        require_closed_keys(lineage, &OWNER_REQUEST_LINEAGE_KEYS)?;
+        require_nonblank_msgpack_string(lineage, "path")?;
+    }
     require_entity_hex(lineage, "repo")?;
-    require_nonblank_msgpack_string(lineage, "path")?;
     require_lower_hex(lineage, "base_commit", 40)?;
+    Ok(())
+}
+
+/// A bundle lineage's `files`: at least one, paths in strictly ascending
+/// byte order (so each once), each with exactly its path and a BLAKE3 of
+/// its new bytes or nil for a removal.
+fn require_owner_request_bundle_files(lineage: &[(Value, Value)]) -> Result<()> {
+    let Value::Array(files) = require_unique_msgpack_key(lineage, "files")? else {
+        return Err(invalid_value(
+            "an owner request's bundle lineage lists its files",
+        ));
+    };
+    if files.is_empty() {
+        return Err(invalid_value(
+            "an owner request's bundle lineage lists its files",
+        ));
+    }
+    let mut previous: Option<&str> = None;
+    for file in files {
+        let file = msgpack_map_entries(file, "an owner request's bundle file is a map")?;
+        require_closed_keys(file, &OWNER_REQUEST_BUNDLE_FILE_KEYS)?;
+        require_nonblank_msgpack_string(file, "path")?;
+        let path = require_unique_msgpack_key(file, "path")?
+            .as_str()
+            .unwrap_or_default();
+        if previous.is_some_and(|previous| previous >= path) {
+            return Err(invalid_value(
+                "an owner request's bundle lists each path once, in byte order",
+            ));
+        }
+        previous = Some(path);
+        if !require_unique_msgpack_key(file, "content_hash")?.is_nil() {
+            require_lower_hex(file, "content_hash", 64)?;
+        }
+    }
     Ok(())
 }
 
