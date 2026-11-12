@@ -7,7 +7,7 @@
 use super::batch::CoreWriteLane;
 use super::shape::{
     AnnouncementAuthority, core_body_for_write, core_text_pairs, core_write_times,
-    encode_core_body, entity_id, stage_core_put, text_pairs, write_id,
+    encode_core_body, entity_id, stage_core_put, text_pairs, verify_project_group_carry, write_id,
 };
 use super::{ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt};
 use crate::authority::VerifiedSlip;
@@ -36,16 +36,43 @@ impl Vault {
         actor: Option<WriteActor>,
         lane: &CoreWriteLane<'_>,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
-        let body: ConversationBody = serde_json::from_value(input.body.clone())
-            .map_err(|_| MemoryError::bad_request("invalid conversation body"))?;
+        // An extra-room link is its link doors' to stamp: a generic create never carries one.
+        if input
+            .body
+            .get(crate::store::conversation_body::ROOM_PROJECT_GROUP_KEY)
+            .is_some()
+        {
+            return Err(MemoryError::bad_request(
+                "a CONVERSATION's project_group is stamped by vault.projects.rooms.link and .unlink",
+            ));
+        }
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
-        let admitted = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
-            if lane.admits_puts_in(txn, &[id])? {
-                return Ok(());
+        // A generic door never drops the link: a create over a linked room's id carries its
+        // `project_group` over unchanged. The memberful path below stages no carry (it refuses
+        // an existing id in its write transaction); the memberless put overwrites, so it stages
+        // the carried key, and the `admitted` guard refuses the write when the live link no
+        // longer matches what was staged.
+        let mut body_value = input.body.clone();
+        let mut expected = None;
+        if let Ok(existing) = self.conversation_body(id)
+            && let Some(project) = existing.project_group()?
+            && let Some(object) = body_value.as_object_mut()
+        {
+            object.insert(
+                crate::store::conversation_body::ROOM_PROJECT_GROUP_KEY.to_owned(),
+                serde_json::Value::String(project.to_hex()),
+            );
+            expected = Some(project);
+        }
+        let body: ConversationBody = serde_json::from_value(input.body.clone())
+            .map_err(|_| MemoryError::bad_request("invalid conversation body"))?;
+        let admitted = |txn: &heed::RoTxn<'_>, expected: Option<EntityId>| -> crate::Result<()> {
+            if !lane.admits_puts_in(txn, &[id])? {
+                // As missing: the row's kind, body and scope stay unsaid.
+                return Err(crate::Error::EntityNotFound);
             }
-            // As missing: the row's kind, body and scope stay unsaid.
-            Err(crate::Error::EntityNotFound)
+            verify_project_group_carry(self, txn, &id, expected)
         };
         if !body.member_ids.is_empty() {
             let actor = actor.ok_or_else(|| {
@@ -59,7 +86,7 @@ impl Vault {
             // `Vault::create_conversation_with_text`, its id judged first in
             // the same transaction.
             self.with_write_txn_grouped(|txn| {
-                admitted(txn)?;
+                admitted(txn, None)?;
                 self.store.core_write_operations.create_conversation_in_txn(
                     self,
                     txn,
@@ -84,11 +111,13 @@ impl Vault {
             &id,
             ENTITY_TYPE_CONVERSATION,
             times,
-            &input.body,
+            &body_value,
             AnnouncementAuthority::Writer,
             input.text.as_deref().map(text_pairs),
         )?
-        .commit_with_target_guard(admitted)?;
+        .commit_with_target_guard(|txn| admitted(txn, expected))?;
+        // The receipt echoes what the caller wrote, never the stored carry: a caller who may
+        // overwrite the room but not read the project must not learn the link from the receipt.
         Ok(CoreEntityWriteReceipt::new(
             id,
             ENTITY_TYPE_CONVERSATION,

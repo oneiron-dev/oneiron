@@ -27,12 +27,17 @@
 //! with no definition of its own lends the slice its grant gives it, and one
 //! with no grant at all lends none. A definition that names a skill its
 //! author can load is inside the slice; one that names a skill or a
-//! connector its author cannot use is a proposal.
+//! connector its author cannot use is a proposal. A grant lends no model
+//! choice: a definition from an agent with no definition of its own that
+//! names a model is a proposal (FIX 4472: the models a definition runs on
+//! are the owner's).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
+use oneiron::agent_def::{
+    AgentCeiling, AgentDefinition, AgentModel, AgentScope, encode_agent_definition,
+};
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
@@ -47,7 +52,9 @@ use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use oneiron::skill::{SkillDependency, SkillLifecycle, SkillRecord};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentGrantMintRequest, CanRequest};
-use oneiron::{EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig};
+use oneiron::{
+    EdgeActorClass, EntityId, ModelId, ModelTierRef, RawEntityPut, TimeRange, Vault, VaultConfig,
+};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 
@@ -868,6 +875,50 @@ fn named_agent_with_no_grant_stores_a_new_definition_as_a_proposal() {
     );
     assert_lands(
         "grantless-agent-memory/vault.batch/new/narrowest",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
+}
+
+/// A grant lends its agent no model choice. No definition lists the models
+/// an agent with no definition of its own may run on, and the models a
+/// definition runs on are the owner's (FIX 4472), so the definition that
+/// lands active inside the grant is a proposal once it names one model.
+#[test]
+fn agent_with_a_grant_and_no_definition_stores_a_definition_naming_a_model_as_a_proposal() {
+    let fixture = fixture();
+    let writer = named_agent(&fixture, "conformance.granted-author");
+    grant_base_reach(&fixture, writer);
+    let id = EntityId::from_bytes([0x84; 16]).expect("candidate id");
+    let listed = candidate(Slice::Within).with_models(vec![AgentModel {
+        model_ref: ModelId::new("conformance/listed@r1").expect("model id"),
+        when: "Every run.".to_owned(),
+    }]);
+    let write = put(&fixture.vault, writer, Door::Batch, id, &listed, NOW + 1);
+    assert_lands(
+        "granted-agent-memory/vault.batch/new/names-a-model",
+        &write,
+        &fixture.vault,
+        id,
+        Lands::Proposal,
+    );
+}
+
+/// The same holds for a single model choice: a definition that names a model
+/// tier and no model list is a proposal too.
+#[test]
+fn agent_with_a_grant_and_no_definition_stores_a_definition_naming_a_model_tier_as_a_proposal() {
+    let fixture = fixture();
+    let writer = named_agent(&fixture, "conformance.granted-author");
+    grant_base_reach(&fixture, writer);
+    let id = EntityId::from_bytes([0x85; 16]).expect("candidate id");
+    let mut tiered = candidate(Slice::Within);
+    tiered.model_tier = Some(ModelTierRef("conformance-tier".to_owned()));
+    let write = put(&fixture.vault, writer, Door::Batch, id, &tiered, NOW + 1);
+    assert_lands(
+        "granted-agent-memory/vault.batch/new/names-a-model-tier",
         &write,
         &fixture.vault,
         id,
