@@ -17,7 +17,7 @@ side_tables! {
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Actual in-flight native hard purges, emptied before commit. Key: entity16.
     BYOA_EXHAUST_ACTIVE_PURGE: VaultMeta b"byoa:exhaust_active_purge:v1:" Named
-        [restore: live] [family: not_imaged] [tier: canonical];
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// An accepted exhaust erase's sources, inventory and owed retirements. Key: attempt16.
     BYOA_EXHAUST_ERASE: VaultMeta b"byoa:exhaust_erase:v1:" Named
         [restore: live] [family: structure] [tier: canonical];

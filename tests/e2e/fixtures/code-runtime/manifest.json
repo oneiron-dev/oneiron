@@ -7,10 +7,10 @@
       "path": "scenarios.json",
       "source": {
         "uri": "independent-oracle:owner-code-runtime-e2e-20261018",
-        "revision": "78adb5f1d4720aeff5b1304d8e3d4e39c129ad4142ffa9e173c8e50f29825f4b"
+        "revision": "490d02012edc239c2634494ea9154e37e8d71d5de6be39503c383395f1627ab9"
       },
       "licence": "Apache-2.0",
-      "sha256": "78adb5f1d4720aeff5b1304d8e3d4e39c129ad4142ffa9e173c8e50f29825f4b",
+      "sha256": "490d02012edc239c2634494ea9154e37e8d71d5de6be39503c383395f1627ab9",
       "expectedFacts": {
         "scenarioCount": 8,
         "authoredContent": true,

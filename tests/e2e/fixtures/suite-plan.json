@@ -73,6 +73,7 @@
         {
           "id": "BOOT-01",
           "name": "Model-free serve and restart should work",
+          "estimatedSeconds": 9,
           "rows": [
             "OF-001",
             "OF-018",
@@ -93,6 +94,7 @@
         {
           "id": "BOOT-02",
           "name": "TypeScript remote memory journey should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-237",
             "OF-364",
@@ -108,6 +110,7 @@
         {
           "id": "BOOT-03",
           "name": "Python remote memory journey should work",
+          "estimatedSeconds": 11,
           "rows": [
             "OF-237",
             "OF-324"
@@ -122,6 +125,7 @@
         {
           "id": "BOOT-04",
           "name": "Native addon memory persistence should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-012",
             "OF-021"
@@ -136,6 +140,7 @@
         {
           "id": "BOOT-05",
           "name": "CLI memory access should work",
+          "estimatedSeconds": 8,
           "rows": [
             "OF-181",
             "OF-237"
@@ -165,6 +170,7 @@
         {
           "id": "BOOT-07",
           "name": "MCP tool-first operator registration should work",
+          "estimatedSeconds": 19,
           "rows": [
             "OF-246",
             "OF-199"
@@ -178,6 +184,7 @@
         {
           "id": "BOOT-08",
           "name": "Vault and client isolation should work",
+          "estimatedSeconds": 12,
           "rows": [
             "OF-034",
             "OF-302",
@@ -459,6 +466,7 @@
         {
           "id": "PRIVACY-01",
           "name": "Archive restoration without erasure should work",
+          "estimatedSeconds": 13,
           "rows": [
             "OF-449",
             "OF-045"
@@ -473,6 +481,7 @@
         {
           "id": "PRIVACY-02",
           "name": "Hard erase across public reads should work",
+          "estimatedSeconds": 12,
           "rows": [
             "OF-013",
             "OF-044",
@@ -504,6 +513,7 @@
         {
           "id": "PRIVACY-04",
           "name": "Shared blobs survive one record erasure should work",
+          "estimatedSeconds": 9,
           "rows": [
             "OF-468",
             "OF-270"
@@ -518,6 +528,7 @@
         {
           "id": "PRIVACY-05",
           "name": "Legal hold narrows delete should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-470"
           ],
@@ -558,6 +569,7 @@
         {
           "id": "PRIVACY-08",
           "name": "Anonymous chat has no memory should work",
+          "estimatedSeconds": 14,
           "rows": [
             "OF-500"
           ],
@@ -697,6 +709,7 @@
         {
           "id": "GATE-01",
           "name": "Three-axis write decisions should work",
+          "estimatedSeconds": 11,
           "rows": [
             "OF-038",
             "OF-054",
@@ -738,6 +751,7 @@
         {
           "id": "GATE-03",
           "name": "Policy manifest defaults and owner control should work",
+          "estimatedSeconds": 13,
           "rows": [
             "OF-051",
             "OF-070",
@@ -754,6 +768,7 @@
         {
           "id": "GATE-04",
           "name": "Standing consent lifecycle should work",
+          "estimatedSeconds": 10,
           "rows": [
             "OF-050",
             "OF-367",
@@ -789,6 +804,7 @@
         {
           "id": "GATE-06",
           "name": "Catastrophe floor scoped bypass should work",
+          "estimatedSeconds": 10,
           "rows": [
             "OF-465"
           ],
@@ -802,6 +818,7 @@
         {
           "id": "GATE-07",
           "name": "Review bundle accept and undo should work",
+          "estimatedSeconds": 11,
           "rows": [
             "OF-062",
             "OF-211",
@@ -822,6 +839,7 @@
         {
           "id": "GATE-08",
           "name": "Critical confirmation and read floors should work",
+          "estimatedSeconds": 7,
           "rows": [
             "OF-011",
             "OF-279"
@@ -837,6 +855,7 @@
         {
           "id": "GATE-09",
           "name": "No fixed burst refusal should work",
+          "estimatedSeconds": 25,
           "rows": [
             "OF-294",
             "OF-487",

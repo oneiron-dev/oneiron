@@ -59,16 +59,17 @@ mod step;
 pub use step::public as model_step;
 pub mod tagger;
 
+pub(crate) use step::wake_budget_traps_in_txn;
 pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
     DurableStepContext, DurableStepError, DurableStepResult, MediaStepOutcome,
-    PeerResultWaitBinding, ReplyCheck, StepOutcome, StepProgression, TrapRef, call_as_step,
-    call_as_step_checked, call_as_step_with_fallbacks, call_media_as_step, consume_trap_signal,
-    open_trap, reconcile_peer_result_signals, register_peer_result_wait, register_wait,
-    send_peer_result_signal, send_trap_signal, trap_for_durable_wait, trap_park_owner,
-    validate_json_schema,
+    PeerResultWaitBinding, ReplyCheck, StepOutcome, StepProgression, StepSpendScope, TrapRef,
+    call_as_step, call_as_step_checked, call_as_step_with_fallbacks, call_media_as_step,
+    consume_trap_signal, open_trap, reconcile_peer_result_signals, register_peer_result_wait,
+    register_wait, send_peer_result_signal, send_trap_signal, trap_for_durable_wait,
+    trap_park_owner, validate_json_schema,
 };
 pub(crate) use step::{
     StepEffectBinding, TrapBrokenPark, TrapConsumePrecheck,
@@ -169,7 +170,8 @@ pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
-    settled_step_usage_in_txn, terminal_step_identity,
+    settled_step_for_reader, settled_step_target, settled_step_usage_in_txn,
+    terminal_step_identity,
 };
 pub use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;

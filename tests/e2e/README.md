@@ -372,8 +372,12 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 4
 `E2E_REPORT_DIR` optionally selects a protected absolute output directory.
 Otherwise the runner allocates one. The runner starts one child Bun process per
 selected case ID. Each case runs alone; there is no concurrency inside a process.
-The scheduler starts the longest per-case estimate first (file estimate divided
-by its planned case count), then sorts by file name and case plan order.
+The scheduler starts the longest per-case estimate first, then sorts by file name
+and case plan order. A case's estimate is its own `estimatedSeconds` in
+`fixtures/suite-plan.json` when the plan has one (the measured child wall, rounded
+up to whole seconds), else its file's estimate divided by its planned case count.
+The boot, gate and privacy cases carry the child walls of fleet job
+1111-175510-86ee (shared set bd95597c8afc, four workers).
 Each child uses its file's slots. Up to six slots fit 12 CPU credits and 24 GiB.
 The default remains four slots, 8 CPU credits and 16 GiB. `--workers` accepts one
 through six slots and must fit the heaviest selected file.

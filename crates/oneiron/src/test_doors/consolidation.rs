@@ -142,7 +142,21 @@ fn allow_own_server_extraction(vault: &Vault) -> Result<()> {
 
 /// The shipped policy (the Dreamer's rows included) plus a `core:read`
 /// grant for actor `reader`, so a test reads as a member would.
-fn shipped_policy_with_reader(vault: &Vault, reader: &str) -> Result<()> {
+pub(super) fn shipped_policy_with_reader(vault: &Vault, reader: &str) -> Result<()> {
+    shipped_policy_with_read_scope(
+        vault,
+        reader,
+        &crate::federation::scope_codec::read_preset(),
+    )
+}
+
+/// The shipped policy (the Dreamer's rows included) plus a `core:read`
+/// grant of `scope` for actor `reader`.
+pub(super) fn shipped_policy_with_read_scope(
+    vault: &Vault,
+    reader: &str,
+    scope: &crate::federation::Scope,
+) -> Result<()> {
     let rmpv::Value::Map(mut entries) =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
             .map_err(|_| Error::InvalidConfig("default policy".into()))?
@@ -157,9 +171,7 @@ fn shipped_policy_with_reader(vault: &Vault, reader: &str) -> Result<()> {
         ),
         (
             rmpv::Value::from("scope"),
-            crate::federation::scope_codec::encode_scope_value(
-                &crate::federation::scope_codec::read_preset(),
-            )?,
+            crate::federation::scope_codec::encode_scope_value(scope)?,
         ),
         (
             rmpv::Value::from("receipt_required"),
@@ -179,7 +191,7 @@ fn shipped_policy_with_reader(vault: &Vault, reader: &str) -> Result<()> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
         .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
-    crate::test_support::put_policy_manifest_bytes(
+    crate::test_fixtures::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
         &bytes,
@@ -195,7 +207,7 @@ fn shipped_policy_with_reader(vault: &Vault, reader: &str) -> Result<()> {
 /// The vault's.
 pub fn open_dreamer_vault(path: &std::path::Path, reader: &str) -> Result<Vault> {
     let vault = Vault::open(path, crate::VaultConfig::device())?;
-    crate::test_support::provision_engine_machines(&vault);
+    crate::test_fixtures::provision_engine_machines(&vault);
     allow_own_server_extraction(&vault)?;
     shipped_policy_with_reader(&vault, reader)?;
     Ok(vault)

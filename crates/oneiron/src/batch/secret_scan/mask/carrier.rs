@@ -15,6 +15,7 @@
 use std::ops::Range;
 
 use heed::{RoTxn, RwTxn};
+use zeroize::Zeroizing;
 
 use super::super::shapes::HANDLE_OPEN;
 use super::super::write_payload_hit;
@@ -294,7 +295,13 @@ pub(crate) fn mark_carrier_texts_in_txn(
 /// The keys a carrier's lifted texts hold: each value, and the handle that
 /// stands for it (`[secret sc12]`), longest value first.
 #[derive(Debug, Default)]
-pub(crate) struct LiftedKeys(Vec<(String, String)>);
+pub(crate) struct LiftedKeys {
+    keys: Vec<(String, String)>,
+    /// The handles that stand for several values: a recovery phrase's words,
+    /// one record marking each word (LABEL-04). A writer's copy keeps them as
+    /// written ([`Self::resolved`]).
+    several: Vec<String>,
+}
 
 impl LiftedKeys {
     /// The keys the marks of `texts` name, each text a carrier's stored text.
@@ -329,7 +336,8 @@ impl LiftedKeys {
             }
         }
         keys.sort_by_key(|(value, _)| std::cmp::Reverse(value.len()));
-        Ok(Self(keys))
+        let several = handles_of_several_values(&keys);
+        Ok(Self { keys, several })
     }
 
     /// The keys the marks of the strings in `value` name: a record body
@@ -345,7 +353,7 @@ impl LiftedKeys {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.keys.is_empty()
     }
 
     /// Whether `text` names any handle, so a writer's text may need
@@ -357,18 +365,44 @@ impl LiftedKeys {
     /// `text` as a reader other than the owner reads it: each value as its
     /// handle. `None` when it holds none.
     pub(crate) fn masked(&self, text: &str) -> Option<String> {
-        swapped(text, self.0.iter().map(|(value, tag)| (value, tag)))
+        swapped(text, self.keys.iter().map(|(value, tag)| (value, tag)))
+    }
+
+    /// Where a handle of these keys reads in `shown`, a text as
+    /// [`Self::masked`] reads it: byte ranges, in order. A selection of
+    /// `shown` that splits none of them names no part of a value.
+    pub(crate) fn handle_ranges(&self, shown: &str) -> Vec<Range<usize>> {
+        let mut ranges: Vec<Range<usize>> = self
+            .keys
+            .iter()
+            .flat_map(|(_, handle)| {
+                shown
+                    .match_indices(handle.as_str())
+                    .map(|(at, found)| at..at + found.len())
+            })
+            .collect();
+        ranges.sort_by_key(|range| (range.start, range.end));
+        ranges.dedup();
+        ranges
     }
 
     /// `text`, a writer's new text for the carrier, with each handle back as
     /// the value it stands for: an edit that kept a handle writes the value
     /// again, one that deleted it removed the secret. A handle of any other
-    /// record stays as written. `None` when it carries none.
+    /// record stays as written, and so does one that stands for several
+    /// values (a recovery phrase's words, LABEL-04): no one of them is the
+    /// value at each of its places. `None` when it carries none.
     pub(crate) fn resolved(&self, text: &str) -> Option<String> {
         if !text.contains(HANDLE_OPEN) {
             return None;
         }
-        swapped(text, self.0.iter().map(|(value, tag)| (tag, value)))
+        swapped(
+            text,
+            self.keys
+                .iter()
+                .filter(|(_, tag)| !self.several.contains(tag))
+                .map(|(value, tag)| (tag, value)),
+        )
     }
 
     /// Each string in `value` masked as [`Self::masked`] masks it; `true`
@@ -393,7 +427,7 @@ impl LiftedKeys {
             source: 0..text.chars().count(),
             handle: false,
         }];
-        for (value, handle) in self.0.iter().filter(|(value, _)| !value.is_empty()) {
+        for (value, handle) in self.keys.iter().filter(|(value, _)| !value.is_empty()) {
             let current: String = runs.iter().map(|run| run.text.as_str()).collect();
             // Right to left, so each earlier match keeps its position.
             for at in char_matches(&current, value).into_iter().rev() {
@@ -616,6 +650,36 @@ fn each_string(value: &mut serde_json::Value, swap: &dyn Fn(&str) -> Option<Stri
 
 /// `text` with each `from` replaced by its `to`, in order; `None` when none
 /// was there.
+/// The handles in `keys` that stand for more than one value.
+fn handles_of_several_values(keys: &[(String, String)]) -> Vec<String> {
+    let mut several: Vec<String> = Vec::new();
+    for (at, (value, handle)) in keys.iter().enumerate() {
+        if several.contains(handle) {
+            continue;
+        }
+        if keys
+            .iter()
+            .skip(at + 1)
+            .any(|(other, held)| held == handle && !one_value(value, other))
+        {
+            several.push(handle.clone());
+        }
+    }
+    several
+}
+
+/// Whether `a` and `b` are one value: equal, or one of them the other as
+/// the door places a value's JSON-escaped form (FIX 1369).
+fn one_value(a: &str, b: &str) -> bool {
+    let escapes = |raw: &str, escaped: &str| {
+        escaped.contains('\\')
+            && serde_json::to_string(raw)
+                .map(Zeroizing::new)
+                .is_ok_and(|quoted| quoted.get(1..quoted.len() - 1) == Some(escaped))
+    };
+    a == b || escapes(a, b) || escapes(b, a)
+}
+
 fn swapped<'a>(
     text: &str,
     pairs: impl Iterator<Item = (&'a String, &'a String)>,

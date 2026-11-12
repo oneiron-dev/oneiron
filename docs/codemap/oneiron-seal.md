@@ -59,14 +59,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/mod.rs` | src | s | 3 crate-vis | — | Native verifier and profile classifier (§7.7) |
 | `src/native/verify/review_1842_tests.rs` | test | m | — | — | SGN-05 public verifier regressions retained across the ONE-1941 report merge |
 | `src/native/verify/timestamp_evidence.rs` | src | s | 7 crate-vis | — | Total private RFC 3161 outcomes; one projection emits crypto and TSA trust |
-| `src/native/verify/verify_chain_gates.rs` | src | m | 11 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
-| `src/native/verify/verify_dss_core.rs` | src | m | 11 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
+| `src/native/verify/verify_chain_gates.rs` | src | m | 12 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
+| `src/native/verify/verify_dss_core.rs` | src | L | 14 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
 | `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |
-| `src/native/verify/verify_revocation.rs` | src | m | 8 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
+| `src/native/verify/verify_revocation.rs` | src | m | 11 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
 | `src/native/verify/verify_sig_pipeline.rs` | src | m | 17 crate-vis | — | Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and… |
 | `src/native/verify/verify_tests_dss_b.rs` | src | m | 2 crate-vis | — | Verifier tests B: remaining DSS coverage and binding tests, KU gates, OCSP delegate and TSP token tests |
+| `src/native/verify/verify_tests_dss_shadow.rs` | src | m | — | — | Verifier tests: same-subject shadow CRL signers (lead rulings SEAL-SHADOW-ETSI, 10 Nov 05:38, and F, 06:50) |
+| `src/native/verify/verify_tests_dss_tampering.rs` | src | m | — | — | Verifier tests: how presented DSS material that is not usable reports (lead ruling F, SEAL-SHADOW-ETSI, 10… |
+| `src/native/verify/verify_tests_dss_unknown.rs` | src | m | — | — | Verifier tests: which authenticated OCSP `unknown` statuses count (Engine call… |
 | `src/native/verify/verify_tests_fixtures_dss_a.rs` | src | m | 24 crate-vis | — | Verifier tests A: rcgen fixtures, CRL/OCSP builders, DSS harness and first DSS revocation tests |
 | `src/native/verify/verify_tests_lta_probes.rs` | src | m | 5 crate-vis | — | Verifier tests D: span-craft and probe archival tests, flate CRL, object limit, typeless and orphan… |
 | `src/native/verify/verify_tests_review.rs` | src | m | — | — | Regression probes for per-signature report and revision admission |

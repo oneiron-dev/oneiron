@@ -16,7 +16,7 @@
 //! origins its settler froze with it, at the position of the call parked on
 //! the wait, or, with none, marks the ledger unknown (FIX 7083).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::code_run::ResultOrigins;
@@ -24,7 +24,8 @@ use crate::code_run::storage::{ReadWorldSeal, ReadWorldUnknown};
 use crate::code_run::types::{AgentVerbAnswer, SelfDispatchOutcome};
 use crate::federation::Scope;
 use crate::memory::read_capture::CapturedRead;
-use crate::{EntityId, ScoredEntity, Vault};
+use crate::task_verb::run_rows::search::ServedRows;
+use crate::{EntityId, ScoredEntity};
 
 /// The capture epoch a dispatcher holds for one run.
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,16 +40,6 @@ pub(super) struct ReadWorldLive {
     /// The last call's own capture noted its answer's worlds.
     covered: bool,
 }
-
-/// A served row's worlds and scope as the read that served it proves them;
-/// either is `None` when that read cannot prove it.
-pub(super) struct ServedRow {
-    worlds: Option<BTreeSet<EntityId>>,
-    scope: Option<Scope>,
-}
-
-/// Each served row's proof, or `None` where the row itself did not read.
-pub(super) type ServedRows = HashMap<EntityId, Option<ServedRow>>;
 
 /// One entry's capture epoch, closed as the entry ends when every ledger
 /// write of it landed. An entry that unwinds leaves it open.
@@ -410,33 +401,6 @@ impl HostSelfDispatcher<'_> {
         }
         noted
     }
-}
-
-/// The worlds and scope of the row `id` as the read `txn` serves it, base
-/// reality by its own id; either is `None` where that read cannot prove it
-/// (FIX 6130, FIX 7162). A NOTE in several worlds outside base notes every
-/// one (FIX-LIST 9433).
-pub(super) fn served_row_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-) -> Option<ServedRow> {
-    use crate::ports::EntityStore;
-    let row = vault.port_entity_get(txn, &id).ok()??;
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id).ok()??;
-    let worlds = crate::federation::record_scope::note_world::served_worlds_in(
-        &vault.store,
-        txn,
-        id,
-        row.entity_type,
-        &row.body,
-    )
-    .ok()
-    .flatten();
-    let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, id, &raw)
-        .ok()
-        .flatten();
-    Some(ServedRow { worlds, scope })
 }
 
 /// Whether `outcome` carries no row of the vault (FIX 6130): a speech

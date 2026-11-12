@@ -39,7 +39,7 @@ const STAGES: { key: Stage; name: string; n: number; tip: string }[] = [
 ]
 const BY_STAGE = Object.fromEntries(STAGES.map((s) => [s.key, s])) as Record<Stage, (typeof STAGES)[number]>
 
-const HUMANS: Record<Human, string> = { o: 'o · Owen · owner', y: 'y · Yuki · member' }
+const HUMANS: Record<Human, string> = { o: 'o · owen · owner', y: 'y · yuki · member' }
 const AGENTS: Record<Agent, string> = { eiri: 'Eiri', tory: 'Tory', antevon: 'Antevon' }
 const CHAN_TIP: Record<Chan, string> = { line: 'LINE', mail: 'email', slack: 'slack', linkedin: 'linkedin' }
 
@@ -87,10 +87,10 @@ const ORGS: Org[] = [
     who: 'y', chan: 'mail', last: '08-12', lastTip: 'last touch · 08-12 09:20 · Sato Rie confirmed the room', age: '2d', since: '08-11',
     tail: [
       { by: { seal: 's', name: 'Sato Rie · procurement', contact: true }, when: '08-12 09:20', chan: 'mail', lang: 'ja', msg: '月曜10時、会議室Cで承知しました。データは金曜までに送ります。' },
-      { by: { seal: 'y', name: 'Yuki' }, when: '08-11 17:40', chan: 'mail', msg: 'Deposit received, thank you. The kickoff checklist follows.', state: { text: 'delivered · receipted' } },
+      { by: { seal: 'y', name: 'yuki' }, when: '08-11 17:40', chan: 'mail', msg: 'Deposit received, thank you. The kickoff checklist follows.', state: { text: 'delivered · receipted' } },
     ],
     claims: [
-      { id: 'cl_7a10', text: 'Kickoff is Monday 10:00, on their site', conf: 0.96, dot: 'approved', when: 'occurred 08-12', tip: 'approved by Yuki' },
+      { id: 'cl_7a10', text: 'Kickoff is Monday 10:00, on their site', conf: 0.96, dot: 'approved', when: 'occurred 08-12', tip: 'approved by yuki' },
       { id: 'cl_7a11', text: 'Two years of order history arrive by Friday', conf: 0.88, dot: 'auto', when: 'occurred 08-12' },
     ],
     acts: ['draft', 'org', 'thread', 'watch'],
@@ -103,10 +103,10 @@ const ORGS: Org[] = [
     who: 'o', chan: 'mail', last: '08-11', lastTip: 'last touch · 08-11 16:04 · acknowledged, nothing since', age: '5d', since: '08-08',
     tail: [
       { by: { seal: 'i', name: 'Ide Kazuo · CFO', contact: true }, when: '08-11 16:04', chan: 'mail', msg: 'Received. I will read it with the board pack next week.' },
-      { by: { seal: 'o', name: 'Owen' }, when: '08-08 11:12', chan: 'mail', msg: 'Proposal attached: eight weeks, store level, weekly re-fit.', state: { text: 'delivered · receipted' } },
+      { by: { seal: 'o', name: 'owen' }, when: '08-08 11:12', chan: 'mail', msg: 'Proposal attached: eight weeks, store level, weekly re-fit.', state: { text: 'delivered · receipted' } },
     ],
     claims: [
-      { id: 'cl_62c0', text: 'Their board pack is read on Mondays', conf: 0.92, dot: 'approved', when: 'occurred 08-11', tip: 'approved by Owen' },
+      { id: 'cl_62c0', text: 'Their board pack is read on Mondays', conf: 0.92, dot: 'approved', when: 'occurred 08-11', tip: 'approved by owen' },
       { id: 'cl_62c4', text: 'May be running a second quote from a Tokyo firm', conf: 0.61, dot: 'proposed', when: 'learned 08-12', tip: 'proposed by Tory · one filing mention · waits in the inbox' },
     ],
     acts: ['draft', 'book', 'org', 'thread', 'watch'],
@@ -119,11 +119,11 @@ const ORGS: Org[] = [
     who: 'y', chan: 'line', last: '08-12', lastTip: 'last touch · 08-12 21:10 · Mika confirmed the room', age: '8d', since: '08-05',
     tail: [
       { by: { seal: 'm', name: 'Mika Tanaka · procurement lead', contact: true }, when: '08-12 21:10', chan: 'line', lang: 'ja', msg: '木曜10時、会議室Bで大丈夫です。COOも顔を出します。' },
-      { by: { seal: 'y', name: 'Yuki' }, when: '08-11 18:02', chan: 'line', msg: 'Thursday 10:00 works. I will bring the summer numbers.', state: { text: 'verified in thread' } },
+      { by: { seal: 'y', name: 'yuki' }, when: '08-11 18:02', chan: 'line', msg: 'Thursday 10:00 works. I will bring the summer numbers.', state: { text: 'verified in thread' } },
       { by: { agent: 'antevon' }, when: '08-08 15:30', chan: 'meeting', msg: 'Transcribed the pilot call. 41 minutes, nine claims.', door: { label: 'what it minted', href: '/app/vault', tip: 'the claims this call minted, in the ledger' } },
     ],
     claims: [
-      { id: 'cl_31a0', text: 'The pilot runs six weeks from the first week of September', conf: 0.94, dot: 'approved', when: 'occurred 08-08', tip: 'approved by Yuki' },
+      { id: 'cl_31a0', text: 'The pilot runs six weeks from the first week of September', conf: 0.94, dot: 'approved', when: 'occurred 08-08', tip: 'approved by yuki' },
       { id: 'cl_2be7', text: 'Mika leads procurement and prefers LINE for quick questions', conf: 0.86, dot: 'auto', when: 'occurred 06-27' },
     ],
     acts: ['draft', 'brief', 'org', 'thread', 'watch'],
@@ -139,7 +139,7 @@ const ORGS: Org[] = [
       { by: { seal: 'u', name: 'Ueda Hiroshi · plant manager', contact: true }, when: '08-09 11:02', chan: 'mail', msg: 'Our systems team will pull the export this week.' },
     ],
     claims: [
-      { id: 'cl_44f2', text: 'The audit cannot close without three months of order lines', conf: 0.91, dot: 'approved', when: 'occurred 08-01', tip: 'approved by Owen' },
+      { id: 'cl_44f2', text: 'The audit cannot close without three months of order lines', conf: 0.91, dot: 'approved', when: 'occurred 08-01', tip: 'approved by owen' },
       { id: 'cl_44a9', text: 'Their systems team pulls exports on Fridays', conf: 0.79, dot: 'auto', when: 'learned 07-28', tip: '0.79 · superseded on 08-09', superseded: true },
     ],
     acts: ['inboxdraft', 'org', 'thread', 'watch'],
@@ -152,10 +152,10 @@ const ORGS: Org[] = [
     who: 'o', chan: 'line', last: '08-13', lastTip: 'last touch · 08-13 07:55 · she moved the slot', age: '1d', since: '08-12',
     tail: [
       { by: { seal: 'h', name: 'Hoshino Mai · director', contact: true }, when: '08-13 07:55', chan: 'line', lang: 'ja', msg: '火曜15時に変更できますか。あと、進め方の紙を先にいただけますか。' },
-      { by: { seal: 'o', name: 'Owen' }, when: '08-12 19:20', chan: 'line', msg: 'Tuesday works. I will send a one-pager the day before.', state: { text: 'verified in thread' } },
+      { by: { seal: 'o', name: 'owen' }, when: '08-12 19:20', chan: 'line', msg: 'Tuesday works. I will send a one-pager the day before.', state: { text: 'verified in thread' } },
     ],
     claims: [
-      { id: 'cl_51d3', text: 'She reads on paper before any call', conf: 0.93, dot: 'approved', when: 'occurred 08-13', tip: 'approved by Owen' },
+      { id: 'cl_51d3', text: 'She reads on paper before any call', conf: 0.93, dot: 'approved', when: 'occurred 08-13', tip: 'approved by owen' },
       { id: 'cl_51d8', text: 'Their trucks run out of Kawasaki, three depots', conf: 0.82, dot: 'auto', when: 'occurred 08-04' },
     ],
     acts: ['pager', 'draft', 'org', 'thread', 'watch'],
@@ -167,10 +167,10 @@ const ORGS: Org[] = [
     who: 'o', chan: 'mail', last: '08-10', lastTip: 'last touch · 08-10 18:31 · accepted the invite', age: '3d', since: '08-10',
     tail: [
       { by: { seal: 'l', name: 'Lena Brandt · operations', contact: true }, when: '08-10 18:31', chan: 'mail', msg: 'The 20th works. Send anything with real numbers in it beforehand.' },
-      { by: { agent: 'eiri' }, when: '08-06 10:14', chan: 'mail', tip: 'sent by Owen’s click', msg: 'First touch: what we do, one client outcome, a question about their spares stock.', state: { text: 'delivered · receipted' } },
+      { by: { agent: 'eiri' }, when: '08-06 10:14', chan: 'mail', tip: 'sent by owen’s click', msg: 'First touch: what we do, one client outcome, a question about their spares stock.', state: { text: 'delivered · receipted' } },
     ],
     claims: [
-      { id: 'cl_70b1', text: 'Their spares stock is counted monthly, by hand', conf: 0.9, dot: 'approved', when: 'occurred 08-10', tip: 'approved by Owen' },
+      { id: 'cl_70b1', text: 'Their spares stock is counted monthly, by hand', conf: 0.9, dot: 'approved', when: 'occurred 08-10', tip: 'approved by owen' },
       { id: 'cl_70b5', text: 'Decisions there need two signatures, ops and finance', conf: 0.8, dot: 'auto', when: 'learned 08-10' },
     ],
     acts: ['draft', 'org', 'thread', 'watch'],
@@ -213,10 +213,10 @@ const ORGS: Org[] = [
     who: 'y', chan: 'mail', last: '08-11', lastTip: 'last touch · 08-11 09:48 · asked for a reference', age: '2d', since: '08-11',
     tail: [
       { by: { seal: 'h', name: 'Hara Daisuke · COO', contact: true }, when: '08-11 09:48', chan: 'mail', msg: 'Before we go further, could we speak to a client of yours?' },
-      { by: { seal: 'y', name: 'Yuki' }, when: '08-07 14:20', chan: 'mail', msg: 'Sharing what the summer forecast pilot returned for a food client.', state: { text: 'delivered · receipted' } },
+      { by: { seal: 'y', name: 'yuki' }, when: '08-07 14:20', chan: 'mail', msg: 'Sharing what the summer forecast pilot returned for a food client.', state: { text: 'delivered · receipted' } },
     ],
     claims: [
-      { id: 'cl_a1e0', text: 'They want a reference before a call', conf: 0.9, dot: 'approved', when: 'occurred 08-11', tip: 'approved by Yuki' },
+      { id: 'cl_a1e0', text: 'They want a reference before a call', conf: 0.9, dot: 'approved', when: 'occurred 08-11', tip: 'approved by yuki' },
       { id: 'cl_a1e6', text: 'Runs three plants in Aichi, one on night shifts', conf: 0.74, dot: 'auto', when: 'learned 08-02' },
     ],
     acts: ['draft', 'book', 'org', 'thread', 'watch'],
@@ -243,7 +243,7 @@ const ORGS: Org[] = [
     who: 'o', chan: 'mail', last: '08-05', lastTip: 'last touch · 08-05 15:22 · replied under the March subject line', age: '8d', since: '08-05',
     tail: [
       { by: { seal: 's', name: 'Sasaki · planning', contact: true }, when: '08-05 15:22', chan: 'mail', tip: 'landed under a March subject line · two threads, one org', msg: 'Is this forecasting thing something we could try on one prefecture?' },
-      { by: { seal: 'o', name: 'Owen' }, when: '03-19 10:00', chan: 'mail', msg: 'The original intro, from the spring list.' },
+      { by: { seal: 'o', name: 'owen' }, when: '03-19 10:00', chan: 'mail', msg: 'The original intro, from the spring list.' },
     ],
     claims: [
       { id: 'cl_c3d0', text: 'Sasaki runs planning for the northern prefectures', conf: 0.84, dot: 'auto', when: 'learned 08-05', tip: '0.84 · occurred 03-19, learned 08-05 when the mail archive arrived' },
@@ -260,7 +260,7 @@ const ORGS: Org[] = [
       { by: { seal: 'n', name: 'Nakamura · director', contact: true }, when: '07-30 11:15', chan: 'mail', msg: 'Not before October, our season is on. Please write again then.' },
     ],
     claims: [
-      { id: 'cl_d4a1', text: 'Their season runs to the end of September', conf: 0.9, dot: 'approved', when: 'occurred 07-30', tip: 'approved by Yuki' },
+      { id: 'cl_d4a1', text: 'Their season runs to the end of September', conf: 0.9, dot: 'approved', when: 'occurred 07-30', tip: 'approved by yuki' },
     ],
     acts: ['org', 'thread', 'watch'],
   },
@@ -284,7 +284,7 @@ const ORGS: Org[] = [
     next: 'First touch went out Monday. Wait a week before the second.',
     who: 'o', chan: 'mail', last: '08-11', lastTip: 'last touch · 08-11 08:30 · first touch, no reply', age: '2d', since: '08-11',
     tail: [
-      { by: { agent: 'eiri' }, when: '08-11 08:30', chan: 'mail', tip: 'sent by Owen’s click', msg: 'First touch: seasonal demand for their store kitchens, one question.', state: { text: 'delivered · no reply' } },
+      { by: { agent: 'eiri' }, when: '08-11 08:30', chan: 'mail', tip: 'sent by owen’s click', msg: 'First touch: seasonal demand for their store kitchens, one question.', state: { text: 'delivered · no reply' } },
       { by: { agent: 'tory' }, when: '08-05 22:10', chan: 'linkedin', tip: 'research · read-only scope', msg: 'Their planning lead is listed publicly. Reachable by name.' },
     ],
     claims: [
@@ -299,7 +299,7 @@ const ORGS: Org[] = [
     next: 'Second touch is due. The first went to a shared inbox, which rarely works.',
     who: 'o', chan: 'mail', last: '08-04', lastTip: 'last touch · 08-04 08:30 · first touch, no reply', age: '9d', since: '08-04',
     tail: [
-      { by: { agent: 'eiri' }, when: '08-04 08:30', chan: 'mail', tip: 'sent by Owen’s click', msg: 'First touch to their shared inbox, asking who owns production planning.', state: { text: 'delivered · no reply' } },
+      { by: { agent: 'eiri' }, when: '08-04 08:30', chan: 'mail', tip: 'sent by owen’s click', msg: 'First touch to their shared inbox, asking who owns production planning.', state: { text: 'delivered · no reply' } },
       { by: { agent: 'tory' }, when: '07-30 21:00', chan: 'linkedin', tip: 'research · read-only scope', msg: 'Two plant managers are listed publicly. Neither is reachable by name.' },
     ],
     claims: [
@@ -314,12 +314,12 @@ const ORGS: Org[] = [
     next: 'Two touches, no answer. One more, then park it.',
     who: 'y', chan: 'linkedin', last: '08-06', lastTip: 'last touch · 08-06 10:12 · second touch, no reply', age: '20d', since: '07-24',
     tail: [
-      { by: { agent: 'eiri' }, when: '08-06 10:12', chan: 'linkedin', tip: 'sent through Yuki’s account, his click', msg: 'Second touch: one sentence, one question, nothing attached.', state: { text: 'delivered · no reply' } },
-      { by: { agent: 'eiri' }, when: '07-24 09:00', chan: 'mail', tip: 'sent by Yuki’s click', msg: 'First touch: seasonal demand for their sports line.', state: { text: 'delivered · no reply' } },
+      { by: { agent: 'eiri' }, when: '08-06 10:12', chan: 'linkedin', tip: 'sent through yuki’s account, his click', msg: 'Second touch: one sentence, one question, nothing attached.', state: { text: 'delivered · no reply' } },
+      { by: { agent: 'eiri' }, when: '07-24 09:00', chan: 'mail', tip: 'sent by yuki’s click', msg: 'First touch: seasonal demand for their sports line.', state: { text: 'delivered · no reply' } },
     ],
     claims: [
       { id: 'cl_1b80', text: 'Their planning sits with a Stockholm team, not here', conf: 0.58, dot: 'auto', when: 'learned 07-24' },
-      { id: 'cl_1b84', text: 'Runs a Japanese distributor in Kobe', conf: 0.29, dot: 'rejected', when: 'learned 07-22', tip: 'rejected by Owen 08-01 · the source was a stale directory · kept, struck' },
+      { id: 'cl_1b84', text: 'Runs a Japanese distributor in Kobe', conf: 0.29, dot: 'rejected', when: 'learned 07-22', tip: 'rejected by owen 08-01 · the source was a stale directory · kept, struck' },
     ],
     acts: ['draft', 'park', 'org', 'thread', 'watch'],
   },
@@ -336,7 +336,7 @@ const ORGS: Org[] = [
     id, name, stage: 'outreach', more: true, next, who, chan, last, age, since: last, step: 'second touch · next week',
     lastTip: `last touch · ${last} · first touch, no reply`,
     tail: [
-      { by: { agent: 'eiri' }, when: `${last} 09:00`, chan, tip: `sent by ${who === 'o' ? 'Owen' : 'Yuki'}’s click`, msg: 'First touch: what we do, one client outcome, one question.', state: { text: 'delivered · no reply' } },
+      { by: { agent: 'eiri' }, when: `${last} 09:00`, chan, tip: `sent by ${who === 'o' ? 'owen' : 'yuki'}’s click`, msg: 'First touch: what we do, one client outcome, one question.', state: { text: 'delivered · no reply' } },
     ],
     claims: [
       { id: `cl_${id.slice(0, 2)}90`, text: 'Fits the forecasting work by size and season', conf: 0.7, dot: 'auto', when: 'learned 07-28' },
