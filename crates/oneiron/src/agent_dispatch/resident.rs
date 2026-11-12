@@ -26,8 +26,8 @@ mod result;
 mod room_wake;
 mod validation;
 
-pub use self::room_wake::resident_attempt_wakes_for_room;
 pub(super) use self::room_wake::resident_attempt_room_wake_turn;
+pub use self::room_wake::resident_attempt_wakes_for_room;
 
 const PREDICATE: &str = "agent.resident";
 
