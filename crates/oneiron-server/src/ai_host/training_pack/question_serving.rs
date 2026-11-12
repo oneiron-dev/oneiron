@@ -264,7 +264,7 @@ impl QuestionHeadRung {
 
 /// `checkpoint`'s load set from custody, each file's hash rechecked as its
 /// bytes are read.
-fn checkpoint_upload(
+pub(super) fn checkpoint_upload(
     vault: &Vault,
     checkpoint: &PinnedCheckpoint,
 ) -> oneiron::Result<CheckpointUpload> {

@@ -69,6 +69,12 @@ pub(crate) fn erase_question_source_in_txn(
     }
     // A trained head bound to this version goes with it (FIX 3864).
     crate::training_pack::drop_question_heads_in_txn(store, wtxn, question, Some(version.version))?;
+    crate::training_pack::drop_question_trials_in_txn(
+        store,
+        wtxn,
+        question,
+        Some(version.version),
+    )?;
     unwatch(store, wtxn, &record)
 }
 
@@ -117,6 +123,7 @@ pub(crate) fn erase_standing_question_in_txn(
     }
     // A trained head bound to any of its versions goes with it (FIX 3864).
     crate::training_pack::drop_question_heads_in_txn(store, wtxn, question, None)?;
+    crate::training_pack::drop_question_trials_in_txn(store, wtxn, question, None)?;
     Ok(answers)
 }
 

@@ -19,9 +19,12 @@
 //! needs the run's checks and a won paired held-out trial against the
 //! question's current answerer (quality not worse within its noise, cost
 //! and latency both lower); without one only an explicit choice with the
-//! owner's reason binds it. A bound head answers that question on this
-//! host's Local rung; `question-head/unbind` gives the question back its
-//! model call.
+//! owner's reason binds it. `question-head/trial` measures that trial on
+//! the run's sealed held-out rows, one counted serving: the head reads each
+//! row once and the question's current answerer twice, through the host's
+//! ladder at the question's dial, never past the Big rung. A bound head
+//! answers that question on this host's Local rung; `question-head/unbind`
+//! gives the question back its model call.
 
 use std::sync::Arc;
 
@@ -92,6 +95,16 @@ pub(super) fn owner_table() -> OwnerTable {
         (
             OwnerRoute {
                 method: "post",
+                path: "/coach/training-runs/question-head/trial",
+                summary: "Tries a scored question run's head against a standing typed question's current answerer on the run's sealed held-out rows (one counted serving): quality with its noise, cost and latency of both.",
+                row: None,
+                shape: None,
+            },
+            post(trial_question_head),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
                 path: "/coach/training-runs/question-head/unbind",
                 summary: "Takes the head off a typed question; the question keeps its model call.",
                 row: None,
@@ -125,13 +138,16 @@ struct TrainingRunView {
     /// (FIX 3864).
     #[serde(skip_serializing_if = "Option::is_none")]
     question_head: Option<QuestionHeadBinding>,
-    /// A question run's paired held-out trial against the question's
-    /// current answerer, once measured; an unmeasured trial blocks an
-    /// evaluated bind.
+    /// A question run's latest paired held-out trial against a typed
+    /// question's current answerer (`question-head/trial`), open or
+    /// recorded; only a recorded trial against the question bound can let
+    /// an evaluated bind pass.
     #[serde(skip_serializing_if = "Option::is_none")]
     question_trial: Option<QuestionHeadTrial>,
-    /// Whether an evaluated bind of a question run's head passes: its checks
-    /// and a won trial; otherwise only an explicit choice binds it.
+    /// Whether an evaluated bind of a question run's head to the typed
+    /// question its latest trial was against passes: its checks and that won
+    /// trial. A bind to any other question needs a trial against that one, or
+    /// an explicit choice.
     can_bind_question_head: bool,
     state: TrainingState,
     /// The run's spec hash (64 hex), which `swap` names back.
@@ -209,6 +225,17 @@ struct BindQuestionHead {
     question: String,
     question_version: u32,
     choice: SwapChoice,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrialQuestionHead {
+    /// A question run id, as 32 hex.
+    run: String,
+    /// The standing typed question whose current answerer the head is tried
+    /// against, as 32 hex.
+    question: String,
+    question_version: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,6 +424,7 @@ async fn bind_question_head(
             question,
             request.question_version,
             request.choice,
+            &crate::ai_host::training_pack::answerer_pins(&server),
         )?;
         // The head this binding replaced frees its encoder now.
         server.decision_host().forget_unbound_question_heads();
@@ -404,6 +432,32 @@ async fn bind_question_head(
     })
     .await?;
     Ok(Json(binding))
+}
+
+/// `POST /v1/owner/coach/training-runs/question-head/trial`: measures a
+/// question run's head against a typed question's current answerer on the
+/// run's sealed held-out rows, and answers the recorded trial. It runs to
+/// the end of every row before it answers.
+async fn trial_question_head(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<TrialQuestionHead>,
+) -> OwnerReply<QuestionHeadTrial> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let trial = blocking(move || -> OwnerResult<QuestionHeadTrial> {
+        let id = entity_id("run", &request.run)?;
+        let question = entity_id("question", &request.question)?;
+        Ok(crate::ai_host::training_pack::run_question_head_trial(
+            &server,
+            &owner,
+            &id,
+            question,
+            request.question_version,
+        )?)
+    })
+    .await?;
+    Ok(Json(trial))
 }
 
 /// `POST /v1/owner/coach/training-runs/question-head/unbind`: takes the

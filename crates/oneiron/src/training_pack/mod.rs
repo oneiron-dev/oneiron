@@ -13,6 +13,7 @@ mod embedder_runtime;
 mod export;
 mod promotion;
 mod question_heads;
+mod question_trials;
 pub(crate) mod tables;
 mod target;
 mod types;
@@ -37,8 +38,12 @@ pub(crate) use promotion::{
     bind_staged_role_swap_in_txn, role_swap_receipt_in, training_run_in, training_runs_in,
     undo_training_role_swap_in_txn,
 };
-pub use question_heads::{QuestionHeadBinding, QuestionHeadTrial};
+pub use question_heads::QuestionHeadBinding;
 pub(crate) use question_heads::{drop_question_heads_in_txn, erase_question_head_in_txn};
+pub use question_trials::{
+    QuestionHeadTrial, QuestionTrialCase, QuestionTrialInput, QuestionTrialMeasure,
+};
+pub(crate) use question_trials::{drop_question_trials_in_txn, erase_question_trial_in_txn};
 pub use target::{QUESTION_LABEL_SCHEMA, QUESTION_RENDERER, QuestionTarget, TrainingTarget};
 pub use types::*;
 

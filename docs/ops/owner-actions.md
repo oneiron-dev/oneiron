@@ -1880,7 +1880,19 @@ A scored head answers one standing typed question once you bind it. `POST
 question's current answerer won: quality not worse within the measured noise, and cost and
 latency both lower. The trial's numbers go in the binding. Until a trial is measured, an
 evaluated bind is refused. `{"kind": "explicit_override", "reason"}` binds with your reason
-instead. A head bound to the question before goes back to scored, and the binding names its run.
+instead.
+
+`POST /v1/owner/coach/training-runs/question-head/trial` with `{"run", "question",
+"question_version"}` measures that trial on the run's sealed held-out rows. It counts as one
+more serving of the sealed cohort. The head reads each row once, and the question's current
+answerer reads it twice: the server's decision ladder at the question's own dial, never past
+the model rungs, so no ask reaches you. Each read scores `1 - (P(yes) - label)^2`. The trial
+reports the head-minus-answerer interval over source families (at least 10), the answerer's
+disagreement with its own second read as the noise, the mean cost per thousand calls (the head
+bills nothing) and the mean time per read. The head wins when the interval's low end is not
+below minus the noise and its cost and time are both lower. A missing read, fewer than 10
+families or an answerer with no known cost leaves the trial unknown, and an unknown trial never
+wins. The answer is the recorded trial; the run view shows it as `question_trial`. A head bound to the question before goes back to scored, and the binding names its run.
 
 A bound head answers its question on the server's Local rung, from the next call on, for calls
 whose state carries the head's input (`target` and a `context` list). It loads once from
