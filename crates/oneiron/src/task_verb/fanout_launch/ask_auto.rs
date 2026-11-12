@@ -52,7 +52,7 @@ impl AskAutoGate {
         let (governed, recipients) = {
             let txn = vault.store.env.read_txn().ok()?;
             let governed = policy_in(vault, &txn, &ConsultFanOutScope::default()).ok()?;
-            if governed.policy.mode != ConsultFanOutMode::Auto {
+            if governed.policy.mode != CheckInMode::AskWhenUnsure {
                 return None;
             }
             let recipients = memory.ask_holders_in_txn(&txn, input).ok()?;

@@ -46,6 +46,13 @@ fn provision_test_engine_machines(vault: &oneiron::Vault) {
         .expect("engine machine identities");
 }
 
+/// The shipped `session_idle_floor_seconds` vault row, 1,200 s. The idle
+/// floor is the vault owner's policy row (FIX 8600) and the driver keeps no
+/// constant of its own; the tests size push-channel coalescing and a host's
+/// narrowing by the shipped value.
+#[cfg(test)]
+const TEST_SESSION_IDLE_FLOOR_SECS: u64 = 1_200;
+
 pub use session::{
     DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, SessionHint, SessionHintEffect, SessionLifecycleConfig,
     SessionLifecycleDriver, SessionTicks,

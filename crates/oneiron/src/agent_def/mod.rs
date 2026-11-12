@@ -23,8 +23,8 @@ mod widening;
 pub mod workflow;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
-pub(crate) use self::doors::AgentAuthorLease;
 pub use self::doors::AgentDefinitionPutDisposition;
+pub(crate) use self::doors::{AgentAuthorLease, AgentAuthoring};
 pub use self::models::{
     AgentModel, UNBOUND_LIST_KEEPS_ROUTE, birth_under_inherited_list, ensure_inherited_model_list,
     ensure_listed, note_stale_listed_models, note_unbound_listed_run, resolve_compaction_model,
@@ -108,7 +108,7 @@ pub(crate) use portable::{
 };
 pub(crate) use portable_binding::{
     PreparedAgentDefinitionBirth, agent_fork_hash_in_txn, bind_agent_birth_in_txn,
-    import_agent_fork_hash_in_txn,
+    import_agent_fork_hash_in_txn, restore_seed_agent_fork_hash_in_txn,
 };
 pub(crate) use portable_knowledge::{KnowledgeFormat, decode_agent_knowledge};
 

@@ -24,13 +24,14 @@ use crate::{
 /// its own put transaction alongside the rest of the entity write.
 const ORIGIN: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::SKILL_HUB_ORIGIN);
 
-/// An exact-body activation authorization. Post-fit proof alone may suppress
-/// the advisory scan's independent approval rewrite; other doors keep it.
+/// An exact-body authorization. Post-fit admission and native owner seed
+/// restoration may suppress the advisory scan's independent approval rewrite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HubAdmissionKind {
     MarketplacePostFit(crate::skill::SkillContentHash),
     PackPostFit(crate::skill::SkillContentHash),
     OwnerConsent,
+    OwnerSeedRestore,
     HeldOut,
     Bootstrap,
     Optimized,
@@ -51,6 +52,18 @@ impl HubAdmissionProof {
             binding: blake3::hash(data),
             kind,
         }
+    }
+    /// Minted only by the whole-vault seed replacement seam after owner
+    /// revalidation, the transaction-local fresh proof and census SKILL check.
+    pub(crate) fn owner_seed_restore(
+        _owner: &crate::consent::AuthenticatedOwner,
+        id: EntityId,
+        data: &[u8],
+    ) -> Self {
+        Self::new(id, data, HubAdmissionKind::OwnerSeedRestore)
+    }
+    pub(crate) fn owner_seed_restore_binds(&self, id: &EntityId, data: &[u8]) -> bool {
+        self.kind == HubAdmissionKind::OwnerSeedRestore && self.binds(id, data)
     }
     pub(in crate::skill_hub) fn marketplace(
         id: EntityId,
@@ -100,14 +113,19 @@ impl HubAdmissionProof {
         crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
         Ok(Self::new(id, data, HubAdmissionKind::OwnerConsent))
     }
+    /// A held-out win's activation. It spends the owner's answer where the
+    /// candidate asked for a permission; a candidate that asks for none has
+    /// no answer to spend.
     pub(in crate::skill_hub) fn held_out(
         store: &Store,
         txn: &mut heed::RwTxn<'_>,
         id: EntityId,
         data: &[u8],
-        authorization: &crate::consent::ApproveOnceAuthorization,
+        authorization: Option<&crate::consent::ApproveOnceAuthorization>,
     ) -> Result<Self> {
-        crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        if let Some(authorization) = authorization {
+            crate::consent::spend_approve_once_in_txn(store, txn, authorization)?;
+        }
         Ok(Self::new(id, data, HubAdmissionKind::HeldOut))
     }
     pub(in crate::skill_hub) fn id(&self) -> EntityId {
@@ -136,17 +154,20 @@ impl HubAdmissionProof {
     }
 }
 
-/// Post-fit proof has already resolved advisory signals; all other writes
-/// retain the existing scan consent escalation at the batch chokepoint.
+/// Post-fit admission resolved advisory signals; owner seed restoration keeps
+/// the archived endpoint. Other writes retain the scan consent escalation.
 pub(crate) fn scan_skill_admission(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     record: &mut SkillRecord,
+    data: &[u8],
     proof: Option<&HubAdmissionProof>,
 ) -> Result<bool> {
     let encoded = crate::skill::encode_skill_record(record)?;
-    if proof.is_some_and(|proof| proof.resolved_post_fit(id, &encoded, record)) {
+    if proof.is_some_and(|proof| {
+        proof.owner_seed_restore_binds(id, data) || proof.resolved_post_fit(id, &encoded, record)
+    }) {
         Ok(false)
     } else {
         crate::skill_scan::escalate_activation_approval_in_txn(store, txn, id, record)
@@ -468,10 +489,20 @@ pub(crate) fn check_hub_skill_put(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     record: &SkillRecord,
+    data: &[u8],
     replaces_source: bool,
     proof: Option<&HubAdmissionProof>,
 ) -> Result<Option<StagedRow>> {
-    super::package_codec::check_source_binding_update(store, txn, id, record, replaces_source)?;
+    let owner_seed_restore = proof.is_some_and(|proof| proof.owner_seed_restore_binds(id, data));
+    // This owning restore validated the archived source before materialization,
+    // including same-tree Native metadata, just as hub sync owns its source.
+    super::package_codec::check_source_binding_update(
+        store,
+        txn,
+        id,
+        record,
+        replaces_source || owner_seed_restore,
+    )?;
     let marked = ORIGIN.get(store, txn, id)?;
     let current_origin = origin(record);
     if let Some(marked) = &marked
@@ -527,7 +558,7 @@ pub(crate) fn check_hub_skill_put(
             invalid("hub or fork activation requires local consent and held-out replay")
         })?;
         let encoded = crate::skill::encode_skill_record(record)?;
-        if !proof.binds(id, &encoded) {
+        if !owner_seed_restore && !proof.binds(id, &encoded) {
             return Err(invalid(
                 "hub admission proof does not bind this exact record",
             ));

@@ -80,13 +80,13 @@ an Office oracle run.
   ```
 
   The first command prints the rows and the digest; check them. The second
-  records only this account's digest. Do it for `owen` (over ssh) and for
+  records only this account's digest. Do it for the owner account (over ssh) and for
   `decktest` (in its own logged-in Terminal), then commit `environment.json`
   and start a new run: a run directory pins its copy of the script, so
   approving inside a run invalidates it.
 - The account running the Office half needs a console (Aqua) session on vel:
   it owns `/dev/console`, or `who` lists its `console` login. Without one the
-  pass refuses before opening anything with "log owen into vel's desktop (use
+  pass refuses before opening anything with "log `<account>` into vel's desktop (use
   fast user switching for decktest)", not with osascript's -10810.
 - `scripts/office/README.md` "Safe Mac setup" applies: Automation and
   Accessibility granted once, no Grant File Access, no other open presentation.
@@ -110,17 +110,17 @@ Throughout, `$sha` is the full origin/main commit under test and `$run` names th
 run:
 
 ```sh
-sha=$(git -C <workspace>/Desktop/code/oneiron ls-remote origin refs/heads/main | cut -f1)
+sha=$(git -C <workspace>/oneiron ls-remote origin refs/heads/main | cut -f1)
 run=deck-gate-$(date +%Y%m%d)-${sha:0:12}
-mkdir -p <workspace>/Desktop/temp/deck-gate/job
-git -C <workspace>/Desktop/code/oneiron fetch -q origin
-git -C <workspace>/Desktop/code/oneiron show "$sha:scripts/office/deck_gate_linux.sh" > <workspace>/Desktop/temp/deck-gate/job/deck_gate_linux.sh
+mkdir -p <workspace>/deck-gate/job
+git -C <workspace>/oneiron fetch -q origin
+git -C <workspace>/oneiron show "$sha:scripts/office/deck_gate_linux.sh" > <workspace>/deck-gate/job/deck_gate_linux.sh
 ```
 
 ## 1. Engine half (Linux fleet host)
 
 ```sh
-cd <workspace>/Desktop/temp/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate engine half $run" --need rust-1.96 --host nelly --mem 32G --no-mem-floor --threads 6 --disk 30 --timeout 3h --sync <workspace>/Desktop/temp/deck-gate/job -- bash deck_gate_linux.sh "$sha" "$run" > <workspace>/Desktop/temp/deck-gate/$run-engine.log 2>&1
+cd <workspace>/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate engine half $run" --need rust-1.96 --host nelly --mem 32G --no-mem-floor --threads 6 --disk 30 --timeout 3h --sync <workspace>/deck-gate/job -- bash deck_gate_linux.sh "$sha" "$run" > <workspace>/deck-gate/$run-engine.log 2>&1
 ```
 
 The job clones oneiron at `$sha`, runs `deck_gate.py acquire` for the PPTArena
@@ -166,8 +166,8 @@ new `$run`.
 ## 2. Bring the run to the Mac and check it
 
 ```sh
-rsync -az nelly:<out path from the DECK-GATE-ENGINE line>/ <workspace>/Desktop/temp/deck-gate/$run/
-python3 -B <workspace>/Desktop/temp/deck-gate/$run/office/deck_gate.py plan <workspace>/Desktop/temp/deck-gate/$run
+rsync -az nelly:<out path from the DECK-GATE-ENGINE line>/ <workspace>/deck-gate/$run/
+python3 -B <workspace>/deck-gate/$run/office/deck_gate.py plan <workspace>/deck-gate/$run
 ```
 
 `plan` checks every pinned file and prints the engine outcome of each step. It
@@ -177,10 +177,10 @@ the journal's finished cases and refuses (exit 2).
 ## 3. Office half on the Mac mini (owner account, through the fleet)
 
 ```sh
-cd <workspace>/Desktop/temp/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate Office half $run" --need macos --host vel --mem 4G --threads 1 --no-mem-floor --timeout 6h --sync <workspace>/Desktop/temp/deck-gate/$run -- python3 -B office/deck_gate.py office . > <workspace>/Desktop/temp/deck-gate/$run-office.log 2>&1
+cd <workspace>/deck-gate && fleet run --who deck-gate --goal "OF-510 deck gate Office half $run" --need macos --host vel --mem 4G --threads 1 --no-mem-floor --timeout 6h --sync <workspace>/deck-gate/$run -- python3 -B office/deck_gate.py office . > <workspace>/deck-gate/$run-office.log 2>&1
 ```
 
-The fleet syncs the run to `<workspace>/fleet-work/sync/deck-gate/$run` on vel and
+The fleet syncs the run to `<host-home>/fleet-work/sync/deck-gate/$run` on vel and
 runs inside it. The pass opens every fixture candidate, then the calibration
 fixtures, one PowerPoint session at a time. Results go to
 `office-results/<candidate>/` there. A pass that stops early (unsupported
@@ -225,7 +225,7 @@ Copy the run where the test account can read and write it, then run the same
 script there:
 
 ```sh
-ssh vel "mkdir -p /Users/Shared/deck-gate && cp -R <workspace>/fleet-work/sync/deck-gate/$run /Users/Shared/deck-gate/ && chmod -R a+rwX /Users/Shared/deck-gate/$run"
+ssh vel "mkdir -p /Users/Shared/deck-gate && cp -R <host-home>/fleet-work/sync/deck-gate/$run /Users/Shared/deck-gate/ && chmod -R a+rwX /Users/Shared/deck-gate/$run"
 ```
 
 In the test account's own logged-in Terminal on the Mac mini:
@@ -245,13 +245,13 @@ Each pass ends by assembling the receipt and printing
 `## DECK-GATE open=<true|false> ... request=<path>` and a
 `## DECK-GATE-REQUEST {...}` line. `office-results/oracle-request.json` is exactly
 the body the door takes (`{"receipt": OracleReceipt}`). Fetch it from the last
-pass (`<workspace>/fleet-work/sync/deck-gate/$run/office-results/` when step 4
+pass (`<host-home>/fleet-work/sync/deck-gate/$run/office-results/` when step 4
 did not run) and record it against the vault, with the owner's `ONEIRON_SECRET` and
 `ONEIRON_BINDING_KEY` (Write scope) in the environment:
 
 ```sh
-scp vel:/Users/Shared/deck-gate/$run/office-results/oracle-request.json <workspace>/Desktop/temp/deck-gate/$run-request.json
-oneiron api call vault.artifacts.body.deck.oracle --data @<workspace>/Desktop/temp/deck-gate/$run-request.json
+scp vel:/Users/Shared/deck-gate/$run/office-results/oracle-request.json <workspace>/deck-gate/$run-request.json
+oneiron api call vault.artifacts.body.deck.oracle --data @<workspace>/deck-gate/$run-request.json
 ```
 
 Use `--base-url` (or `ONEIRON_URL`) for a server that is not the local

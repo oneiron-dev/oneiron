@@ -250,7 +250,7 @@ impl Vault {
         let host_holds = super::host_holds::export_in_txn(self, &txn);
         // Where each row the image takes goes, read in this same transaction
         // (KS7-5): none while CHECKPOINT_PAYLOADS_ENABLED is off.
-        let projected = payload::project_image(self, &txn, &filter)?;
+        let mut projected = payload::project_image(self, &txn, &filter)?;
         drop(txn);
         super::window_pad_refs::warn_kept_window_pads(kept_windows);
         tracing::info!(
@@ -278,6 +278,11 @@ impl Vault {
             );
             return Ok(None);
         };
+        // A body descriptor is sealed only as the image holds it (FIX
+        // [PROVENANCE-BODY-OWNER-FAMILY-READ-BEFORE-LANDING]).
+        if let Some(projected) = &mut projected {
+            projected.keep_imaged_body_descriptors(&databases);
+        }
         // Each owner's rows go sealed under its own compartment, out of the
         // image (KS7-5); the rows no compartment holds stay, named.
         let payload = match &projected {

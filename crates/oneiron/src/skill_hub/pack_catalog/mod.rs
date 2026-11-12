@@ -64,12 +64,27 @@ pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_tx
 pub use slack_install::{SlackInstallHold, SlackInstallRedeemed};
 pub use source::{PackSection, PackSource};
 
+/// A pack source as its archived ASSET body under
+/// [`crate::serialize::ExportSecrets::Nulled`]: every export but the Owner's
+/// whole-vault archive with secrets included.
 pub(crate) fn export_source_body(
     source: &PackSource,
 ) -> crate::error::Result<crate::serialize::ExportBody> {
-    Ok(crate::serialize::ExportBody::from_bytes(
+    export_source_body_with(source, crate::serialize::ExportSecrets::Nulled)
+}
+
+/// A pack source as its archived ASSET body under `secrets`: the reader's
+/// re-derivation of the writer's pack-source facet, so both use the archive's
+/// policy. Under [`crate::serialize::ExportSecrets::Included`] credential bytes
+/// are kept.
+pub(crate) fn export_source_body_with(
+    source: &PackSource,
+    secrets: crate::serialize::ExportSecrets,
+) -> crate::error::Result<crate::serialize::ExportBody> {
+    Ok(crate::serialize::ExportBody::from_bytes_with(
         &codec::encode(source)?,
         crate::registry::ENTITY_TYPE_ASSET,
+        secrets,
     ))
 }
 
