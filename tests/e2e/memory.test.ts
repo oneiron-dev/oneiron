@@ -177,6 +177,8 @@ wording = "You answer one typed question about the state you are given."
 reply = "json"
 [models.code_mode]
 prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+[models.code_mode.check]
+mode = "off"
 [models.dreamer]
 enabled = false
 `;
