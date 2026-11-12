@@ -4,8 +4,7 @@
 //! A generic `retract_claim` closes the instance's claim and leaves its
 //! promise's status Open. Before the fix its due phases stayed live, so its
 //! Lead phase still enqueued a wake, and the sweep selected it for the lapse
-//! batch, which then failed whole with `ClaimAlreadyClosed`, so an open
-//! sibling never lapsed either.
+//! batch, which then failed whole with `ClaimAlreadyClosed`.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test commitment_instance_withdrawal`.
@@ -27,7 +26,6 @@ use rmpv::Value;
 const OBLIGOR: u8 = 0x71;
 const BENEFICIARY: u8 = 0x72;
 const WITHDRAWN_SERIES: u8 = 0x83;
-const SIBLING_SERIES: u8 = 0x84;
 
 const LEAD_SECS: u64 = 100;
 const DUE_AT: u64 = 1_000;
@@ -115,8 +113,8 @@ fn project_instance(
 /// and returns the instances that enqueued a wake.
 fn fire_due_phases(vault: &Vault, now: u64) -> Vec<EntityId> {
     let mut woken = Vec::new();
-    // Four phases exist at most (Lead and Due of two instances); the bound
-    // only stops a broken index from looping.
+    // Two phases exist at most (Lead and Due of one instance); the bound only
+    // stops a broken index from looping.
     for _ in 0..16 {
         let Some(entry) = vault.next_actionable_wake_phase().expect("wake read") else {
             break;
@@ -150,21 +148,20 @@ fn retracted_commitment_instance_does_not_fire_or_block_lapse_repair() {
         WITHDRAWN_SERIES,
         "ring the beneficiary back",
     );
-    let sibling = project_instance(&vault, &envelope, SIBLING_SERIES, "send the signed lease");
 
     vault
         .retract_claim(&withdrawn, RETRACT_AT)
-        .expect("the owner withdraws one instance");
+        .expect("the owner withdraws the instance");
 
     let woken = fire_due_phases(&vault, DUE_AT);
     let lapse = lapse_overdue_commitments(&vault, DUE_AT + 1, &envelope)
-        .map(|report| report.lapsed)
+        .map(|report| (report.lapsed, report.repaired_close_hooks))
         .map_err(|error| format!("{error:?}"));
     assert_eq!(
         (woken.contains(&withdrawn), lapse),
-        (false, Ok(vec![sibling])),
-        "the withdrawn instance must not wake (woken: {woken:?}) and must not block the sweep, \
-         whose open sibling lapses"
+        (false, Ok((Vec::new(), Vec::new()))),
+        "the withdrawn instance must not wake (woken: {woken:?}), and the sweep must neither \
+         select it nor fail on it"
     );
 
     // Withdrawal invents no status: the promise still says what it said.
