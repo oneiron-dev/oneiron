@@ -4,6 +4,7 @@ use super::super::{
     BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
     LlmResponse, LlmUsage,
 };
+use super::budget_wait::wake_budget_trap_in_txn;
 use super::source::StepSource;
 use super::step_claim::{
     decode_step_claim_value, load_step_response_in_txn, log_terminal_step, step_index_lookup_in_txn,
@@ -679,10 +680,10 @@ pub(super) fn budget_trap(
     let failure_policy =
         resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
     let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-    let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
+    let parked = ctx.vault.with_write_txn_grouped(|wtxn| {
         let refusal = match (&ctx.spend_scope, asked_units) {
-            (Some(scope), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
-                .hard_cap_refusal_in_txn(wtxn, scope, units)?,
+            (Some(spend), Some(units)) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .hard_cap_refusal_in_txn(wtxn, &spend.scope, units)?,
             _ => None,
         };
         let wait = match budget_wait(refusal) {
@@ -710,9 +711,31 @@ pub(super) fn budget_trap(
             },
             wait,
         )?;
-        Ok(Ok(trap))
+        // A top-up that moved the cap after the step's guards read their room
+        // found no park to wake: a spent budget's park wakes itself in its own
+        // write (FIX PARK-BUDGET-SIGNAL-BEFORE-PARK). The retry reads the cap
+        // again, so only a later top-up wakes it again.
+        let generation = match (&ctx.spend_scope, asked_units) {
+            (Some(spend), Some(_)) => spend.cap_generation.as_ref(),
+            _ => None,
+        };
+        let cap_moved = match generation {
+            Some(generation) => crate::agent_dispatch::AgentDispatcher::new(ctx.vault)
+                .spend_cap_moved_in_txn(wtxn, generation)?,
+            None => false,
+        };
+        let resumed = if cap_moved {
+            wake_budget_trap_in_txn(ctx.vault, wtxn, &trap, ctx.now_ms)?
+        } else {
+            None
+        };
+        Ok(Ok((trap, resumed)))
     })?;
-    let trap = trap.map_err(DurableStepError::BudgetRefused)?;
+    let (trap, resumed) = parked.map_err(DurableStepError::BudgetRefused)?;
+    if resumed.is_some() {
+        ctx.vault.store.notify_attempt_observers();
+        ctx.vault.store.notify_proactivity_changes();
+    }
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
     Ok(StepOutcome::Trapped {
         trap,

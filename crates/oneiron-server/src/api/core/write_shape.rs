@@ -87,27 +87,6 @@ pub(crate) fn core_entity_timestamps(
     shape::core_write_times(occurred_start, occurred_end, learned_at).map_err(core_write_refusal)
 }
 
-pub(crate) fn stage_core_entity_put<'a>(
-    batch: oneiron::BatchBuilder<'a>,
-    id: &oneiron::EntityId,
-    entity_type: u8,
-    timestamps: CoreEntityTimestamps,
-    body: &Value,
-    announcement: AnnouncementAuthority,
-    text: Option<&[CoreTextField]>,
-) -> Result<oneiron::BatchBuilder<'a>, ApiError> {
-    shape::stage_core_put(
-        batch,
-        id,
-        entity_type,
-        timestamps,
-        body,
-        announcement,
-        text.map(text_pairs),
-    )
-    .map_err(core_write_refusal)
-}
-
 /// The announcement authority `auth` writes a TURN at (FIX 5968), from the
 /// credential and never from the body: an owner-grade one is the owner's,
 /// and a host root or the dev mode is the owner's only while its host action
@@ -126,39 +105,6 @@ pub(crate) fn announcement_authority(
     } else {
         AnnouncementAuthority::Writer
     }
-}
-
-/// Commits `batch` as `auth` wrote it, held to `lane` (OF-063, FIX 1216):
-/// the batch door's lane rule for a raw single-put write. Below owner grade,
-/// a put that turns an agent definition back on is refused
-/// ([`oneiron::BatchBuilder::commit_below_owner`]). A raw write is an owner
-/// act, admitted before anything commits (FIX 2222): a hosted operator's
-/// root writes nothing, and a self-hosted root or the dev mode writes only
-/// while its host action holds. The lane is built before the write opens, so
-/// no read snapshot opens inside the writer.
-pub(crate) fn commit_core_batch_in_lane(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    batch: oneiron::BatchBuilder<'_>,
-    lane: &oneiron::core_write::CoreWriteLane<'_>,
-    door: &'static str,
-) -> oneiron::Result<()> {
-    if let Some(action) = crate::api::host_action::host_action_of(server.vault(), auth) {
-        action?;
-    }
-    let commit = if auth.is_owner_grade() {
-        oneiron::core_write::CoreBatchCommit::Owner
-    } else {
-        oneiron::core_write::CoreBatchCommit::BelowOwner
-    };
-    // The actor `auth` binds is the batch's writer, as it is for the served
-    // `vault.batch`: an agent's credential holds each AGENT_DEF the batch
-    // puts to that agent's own slice (ARCH-0053:20).
-    let batch = match crate::api::facade::host_doors::credential_writer(server, auth) {
-        Some(writer) => batch.authored_through(&writer, door, lane.actor_key()),
-        None => batch,
-    };
-    batch.commit_in_core_lane(lane, commit)
 }
 
 pub(crate) fn core_text_fields(

@@ -236,21 +236,37 @@ pub(crate) async fn vault_models_bindings_propose(
     auth: &CoreAuth,
     input: ModelBindingPropose,
 ) -> Listed<ModelBindingProposal> {
+    const VERB: &str = "vault.models.bindings.propose";
     let locality = auth.locality();
-    naming(
-        as_owner(
-            server,
-            auth,
-            "vault.models.bindings.propose",
-            move |server, owner| {
+    let answer = match owner_proof(auth, server, VERB) {
+        Ok(owner) => {
+            let server = Arc::clone(server);
+            super::clock_ingress::run_blocking(move || {
                 server
                     .vault()
-                    .propose_model_binding_as_owner(owner, input, locality)
-            },
-        )
-        .await,
-        proposal_rows,
-    )
+                    .propose_model_binding_as_owner(&owner, input, locality)
+                    .map_err(MemoryError::from)
+            })
+            .await
+        }
+        Err(refusal) => {
+            let (actor, _class) =
+                match super::owner_binding::facade_caller_or(server, auth, || refusal) {
+                    Ok(caller) => caller,
+                    Err(error) => return (Err(error), Vec::new()),
+                };
+            let server = Arc::clone(server);
+            super::clock_ingress::run_blocking(move || {
+                server
+                    .vault()
+                    .propose_model_binding_as_granted_agent(actor, input, locality)
+                    .map_err(MemoryError::from)
+            })
+            .await
+        }
+    }
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    naming(answer, proposal_rows)
 }
 
 pub(crate) async fn vault_models_bindings_get(
