@@ -42,6 +42,7 @@ pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
+pub mod resident_wake_hold;
 pub mod retrieval_policy_default_floor;
 pub mod room_turn_backfill;
 pub mod run_hold;
