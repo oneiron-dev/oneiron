@@ -800,8 +800,13 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
     assert_eq!(filtered_body["meta"]["total"], Value::from(2));
 }
 
+/// Since f361f49c755 (#5076) a re-create of a stored core TURN into another
+/// conversation is no exact retry: it is a local put on an append-only DAG
+/// record, refused 400 before the ChildOf check (Engine ruling 19:00 Thu on
+/// R60.1; the ChildOf to INVALID_STATE map is FIX row
+/// [T0I-CHILDOF-INVALID-STATE-UNREACHED]).
 #[tokio::test]
-async fn v1_core_turn_create_maps_childof_constraints_to_invalid_state() {
+async fn v1_core_turn_recreate_into_another_conversation_is_refused_as_an_append_only_rewrite() {
     let (_dir, server) = test_server();
 
     let create_conversation = |name: &str| {
@@ -850,8 +855,12 @@ async fn v1_core_turn_create_maps_childof_constraints_to_invalid_state() {
         ),
     )
     .await;
-    assert_eq!(conflict_status, StatusCode::CONFLICT);
-    assert_error_envelope(&conflict_body, "INVALID_STATE");
+    assert_eq!(conflict_status, StatusCode::BAD_REQUEST, "{conflict_body}");
+    assert_error_envelope(&conflict_body, "BAD_REQUEST");
+    assert_eq!(
+        conflict_body["error"]["message"],
+        Value::from("invalid conversation DAG: DAG records are append-only")
+    );
 }
 
 #[tokio::test]
