@@ -68,7 +68,7 @@ pub(crate) struct RoomTurnBackfill {
     /// TURNs whose body or DAG parent does not decode: no row.
     pub(crate) skipped_undecodable: u64,
     /// Thread replies whose DAG parent keeps no row, such as one under an
-    /// erased reply: no row.
+    /// erased reply: no row, as the native writer keeps none for them.
     pub(crate) skipped_unrowed_parent: u64,
 }
 

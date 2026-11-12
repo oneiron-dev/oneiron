@@ -79,7 +79,12 @@ pub(super) fn put_room_turn_projection_in_txn(
 /// recipient the witness lets a turn name there: one with a seat, or an
 /// agent that speaks as a persona; any other recipient keeps its DAG
 /// address and is named on no row. A thread TURN whose binding names no
-/// anchor, or that has no parent, keeps no row; the append stands.
+/// anchor, or that has no parent, keeps no row. Nor does one whose parent
+/// is neither the anchor nor a turn of this thread that keeps a row, such
+/// as a reply under an imported or erased reply the open's backfill left
+/// with none: every reader of a room's threads walks `reply_to` through
+/// rows, so such a row would break the whole thread. It wakes no one, and
+/// the append stands.
 pub(crate) fn record_native_room_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -104,6 +109,14 @@ pub(crate) fn record_native_room_turn_in_txn(
             let (Some(parent), Some(anchor)) = (appended.parent, binding.anchor) else {
                 return Ok(());
             };
+            if parent != anchor {
+                let linked = TURNS.get(&vault.store, txn, &parent)?.is_some_and(|row| {
+                    row.room_id == room.to_hex() && row.thread_of == Some(anchor.to_hex())
+                });
+                if !linked {
+                    return Ok(());
+                }
+            }
             (Some(binding.root), Some(parent), Some(anchor))
         }
     };
