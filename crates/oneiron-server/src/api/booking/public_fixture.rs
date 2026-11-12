@@ -122,6 +122,15 @@ impl Fixture {
         fixture
     }
 
+    /// The vault's embedded owner: the person the rule amendment door
+    /// authenticates, so the one an installed rule row names as `amended_by`.
+    pub(super) fn owner_actor(&self) -> EntityId {
+        self.server
+            .vault
+            .ensure_embedded_owner_actor()
+            .expect("embedded owner")
+    }
+
     pub(super) fn configure_page(&self, page: EntityId, claim_id: EntityId) {
         self.server
             .vault
