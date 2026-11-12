@@ -168,6 +168,9 @@ fn sent_request() -> (
     let vault = Arc::new(
         Vault::open(dir.path(), VaultConfig::server()).expect("open signing fixture vault"),
     );
+    // `oneiron serve` installs the install's keystore at open; the dispatch
+    // below signs its request with the keys it holds.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("create embedded owner actor");
