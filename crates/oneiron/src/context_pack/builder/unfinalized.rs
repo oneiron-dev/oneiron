@@ -73,7 +73,7 @@ impl<'a> ContextPackBuilder<'a> {
         })
     }
 
-    pub(in crate::context_pack) fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
+    pub(in crate::context_pack) fn run_unfinalized(mut self) -> Result<ContextPackRun<'a>> {
         if self.skip_optional_recall {
             return Ok(ContextPackRun {
                 embedding_matches: Default::default(),
@@ -93,6 +93,15 @@ impl<'a> ContextPackBuilder<'a> {
                 world_share: None,
             });
         }
+        // ARCH-0004 #world-scope: the vault owner sets the non-base world
+        // share; a caller that names its own keeps it. Read once, so the
+        // selection, both partition passes and the replay record hold the
+        // same share.
+        let non_base_world_fraction = match self.non_base_world_fraction {
+            Some(fraction) => fraction,
+            None => self.vault.non_base_world_claim_fraction()?.fraction,
+        };
+        self.non_base_world_fraction = Some(non_base_world_fraction);
         let started = Instant::now();
         let retrieval_budget = self.retrieval_budget.unwrap_or_else(|| {
             ContextPackRetrievalBudget::from_limit(
@@ -187,7 +196,7 @@ impl<'a> ContextPackBuilder<'a> {
         // selected, so neither leaves the pack short of rows it could carry.
         let partitioned = partitions_by_world(&self.world_scope);
         if partitioned {
-            pipeline = pipeline.context_pack_world_share(self.non_base_world_fraction);
+            pipeline = pipeline.context_pack_world_share(non_base_world_fraction);
         }
         if let Some(ctx) = self
             .disclosure
@@ -331,7 +340,7 @@ impl<'a> ContextPackBuilder<'a> {
                     &rtxn,
                     &mut results,
                     &mut Vec::new(),
-                    self.non_base_world_fraction,
+                    non_base_world_fraction,
                     &claim_bodies,
                 )?;
                 critical.budget_omitted_ids.extend(cut);
@@ -502,12 +511,12 @@ impl<'a> ContextPackBuilder<'a> {
                     &rtxn,
                     &mut results,
                     &mut neighbors,
-                    self.non_base_world_fraction,
+                    non_base_world_fraction,
                     &claim_bodies,
                 )?;
                 critical.budget_omitted_ids.extend(cut);
                 Some(PackWorldShare {
-                    fraction: self.non_base_world_fraction,
+                    fraction: non_base_world_fraction,
                     non_base_claims,
                 })
             } else {
