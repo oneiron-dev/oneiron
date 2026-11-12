@@ -204,6 +204,16 @@ fn a_section_install_claim_restores_without_its_fit_receipt() {
     let skill =
         oneiron::test_doors::skill_package::land_active_skill_with_files(&source, &record, files)
             .expect("an active skill");
+    // The fit install's claims are born in the SKILL's substrate facet, which
+    // main does not store (#7205 stores it); store it here so this test reads
+    // the import, not the facet gate.
+    let skill_facet = oneiron::claim::substrate_facet_id(skill).expect("the skill's facet id");
+    put_named(
+        &source,
+        &skill_facet,
+        ENTITY_TYPE_FACET,
+        "sectioned skill facet",
+    );
     let (install, receipt) =
         land_section_install_with_fit_receipt(&source, skill, source.now_recorded_at())
             .expect("the install claim and its fit receipt");
