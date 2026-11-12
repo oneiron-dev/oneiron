@@ -308,8 +308,8 @@ pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
     WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
     check_source_bound_witness_message_ceiling, check_witness_message_ceiling,
-    check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
-    validate_own_device_witness_message_body,
+    check_witness_message_ceiling_with_permit, check_witness_turn_ceiling,
+    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it
