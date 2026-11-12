@@ -20,9 +20,9 @@ afterAll(suite.flush);
  * are translated to the current snake_case facade, never sent as app DTOs.
  * Fresh real server per ID. No engine defaults or harness deadlines change.
  * MEMORY-03 and MEMORY-06 are pending doors (Engine CORE-FOUR-SKIPS = A) and keep their full journeys.
- * MEMORY-01 and MEMORY-07 are E2E-PARTIAL subsets (Engine 23:01), named for what they prove:
- * an approved proposal does not supersede the original, and a split reads only the split person's
- * own claims; each case says what stays unproved, with a FIX row filed at READY.
+ * MEMORY-01 asserts the fixture's full lifecycle: an approved proposal supersedes the head on its
+ * conflict set (#6930). MEMORY-07 asserts the fixture's full split promise: split membership reads
+ * through merged_into (#6924).
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -417,7 +417,7 @@ async function timeline(w: World, id: string): Promise<Timeline> {
 }
 
 // ARCH-0003 lifecycle; ARCH-0040 settlement and holder authority.
-suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a proposal, the owner's correction supersedes and retraction keeps history", async () => {
+suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a proposal, its approval supersedes the original and retraction keeps history", async () => {
   const w = await setup("MEMORY-01");
   try {
     const c = scenario(w, "MEMORY-01");
@@ -457,49 +457,47 @@ suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a propos
     expect(settled.reason).toBe("gate.claim.settle.approved");
     expect(settled.revert?.claim_ref).toBe(newId);
     await w.engine.awaitReceipt(settled.receipt_ref);
-    // E2E-PARTIAL: settlement changes approval, never authorship, and an approved proposal does not
-    // supersede the original (FIX row filed with the READY). The settled row stays the agent's: its
-    // author withdraws it, and the owner's own correction of the original (FIX 22041) lands at once
-    // and closes the original in the same write. No proposal opens, so nothing is settled twice.
-    expect((await claim(w, newId)).approval).toBe("approved");
-    await outsider.client.call("vault.claims.retract", { claim_ref: newId });
-    const supersession = await w.engine.client.call("vault.claims.upsert", { ...claimInput(w, c.alternative), valid_from: w.occurred });
-    const correctionId = (await entity(w.engine.client, supersession.claim_short_id)).id_hex;
-    expect(correctionId).not.toBe(newId);
-    expect(supersession.approval).toBe("auto");
-    expect(supersession.superseded_short_id).toBe(original.claim_short_id);
-    expect(supersession.superseded?.id).toBe(oldId);
-    await w.engine.awaitReceipt(supersession.receipt_ref);
-    expect((await claim(w, correctionId)).approval).toBe("auto");
+    // The approval closes the supersession the proposal proposed (#6930; ARCH-0040): the agent's
+    // approved claim supersedes the owner's original on its conflict set, so one head stands.
+    // Settlement changes approval, never authorship: the settled row stays the agent's.
+    const approved = await claim(w, newId);
+    expect(approved.approval).toBe("approved"); expect(approved.lifecycle).toBe("active");
+    const closed = await claim(w, oldId);
+    expect(closed.approval).toBe("auto"); expect(closed.lifecycle).toBe("superseded");
+    const standing = (await claims(w)).filter(row => row.predicate === c.current.predicate && row.lifecycle === "active");
+    expect(standing.map(row => row.claim_ref)).toEqual([newId]);
     expect(values(await recalled(w, "Morgan name"), c.current.predicate))
       .toEqual(c.expected.recallAfterAuthorizedApprovalAndSupersession);
-    const retracted = await w.engine.client.call("vault.claims.retract", { claim_ref: correctionId });
+    // Retraction keeps history: the author withdraws its approved claim, nothing stands in its
+    // place, and the superseded original does not come back.
+    const retracted = await outsider.client.call("vault.claims.retract", { claim_ref: newId });
     expect(values(await recalled(w, "Morgan name"), c.current.predicate)).toEqual(c.expected.recallAfterRetraction);
-    const history = (await w.engine.client.call("vault.claims.history", { claim_ref: correctionId })).value;
+    const history = (await w.engine.client.call("vault.claims.history", { claim_ref: newId })).value;
     const old = history.find(row => row.claim_ref === oldId);
-    const current = history.find(row => row.claim_ref === correctionId);
+    const current = history.find(row => row.claim_ref === newId);
     if (!old || !current) throw new Error("History lost a lifecycle row");
     expect(old.value).toBe(c.current.value.value);
     expect(old.lifecycle).toBe("superseded"); expect(old.approval).toBe("auto");
     expect(current.value).toBe(c.alternative.value.value);
-    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("auto");
-    for (const [row, evidence] of [[old, ref(w, "@name-statement")], [current, ref(w, "@name-correction")]] as const) {
-      expect(row.valid_from).toBe(w.occurred); expect(row.valid_to).not.toBeNull();
+    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("approved");
+    // Validity closes without deleting: each row keeps its start and gains an end.
+    expect(old.valid_from).toBe(w.occurred);
+    for (const row of [old, current]) {
+      expect(row.valid_to).not.toBeNull();
       expect(row.valid_to!).toBeGreaterThanOrEqual(row.valid_from!);
-      expect(row.source).toBe("user_stated"); birth(row, w.engine.pairedActor.principalRef, [evidence]);
     }
-    // The settled proposal keeps its own record: the agent's, approved, then withdrawn by its author.
-    const proposalRow = await claim(w, newId);
-    expect(proposalRow.approval).toBe("approved"); expect(proposalRow.lifecycle).toBe("retracted");
-    birth(proposalRow, ref(w, "@agent-a"), [ref(w, "@name-correction")]);
-    const full = await timeline(w, correctionId);
-    expect(full.records.map(row => row.id).sort()).toEqual([oldId, correctionId].sort());
+    expect(old.source).toBe("user_stated");
+    birth(old, w.engine.pairedActor.principalRef, [ref(w, "@name-statement")]);
+    birth(current, ref(w, "@agent-a"), [ref(w, "@name-correction")]);
+    // The Supersedes edge runs from the approved alternative to the original.
+    const full = await timeline(w, newId);
+    expect(full.records.map(row => row.id).sort()).toEqual([oldId, newId].sort());
     expect(full.records.find(row => row.id === oldId)?.state).toBe("superseded");
-    const newer = full.records.find(row => row.id === correctionId)!;
+    const newer = full.records.find(row => row.id === newId)!;
     expect(newer.state).toBe("retracted"); expect(newer.supersedes).toContain(oldId);
-    expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(correctionId);
+    expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(newId);
     await w.engine.artifacts.json("lifecycle.json", { original, alternative, review, refusal: refused.body,
-      settled, correctionId, supersession, retracted, history, proposalRow, timeline: full });
+      settled, approved, closed, standing, retracted, history, timeline: full });
   } finally { await closeWorld(w) }
 });
 
@@ -1111,7 +1109,7 @@ suite.pendingDoor(test, "MEMORY-06",
   { fix: "FIX 22509", deadline: "2026-12-01" });
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
-suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evidence with named residue, and undo keep original claim subjects", async () => {
+suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
   const w = await setup("MEMORY-07");
   try {
     const c = scenario(w, "MEMORY-07");
@@ -1142,24 +1140,34 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
       survivorship_plan: "read_through",
     };
     const merged = applied(await w.engine.client.call("vault.identity.merge", mergeSpec));
+    // Read through the merge: the survivor's remaining claims include the merged source's, which keep their subject.
+    const survivor = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, "@person-a") });
+    for (const role of ["@evidence-a", "@evidence-b", "@ambiguous-evidence"]) expect(survivor.remaining_claims).toContain(ref(w, role));
     const bMerged = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, "@person-b") });
     expect(bMerged.state).toBe("merged"); expect(bMerged.heads).toEqual([ref(w, "@person-a")]);
     expect(bMerged.merged_into).toEqual([ref(w, "@person-a")]);
     expect((await entity(w.engine.client, ref(w, "@person-b"))).kind).toBe("PERSON");
     for (const role of c.split.heads) await person(w, role, role === "@head-north" ? "Morgan North head" : "Morgan South head");
-    const splitMap = c.split.reassignment_map.filter(item =>
-      c.evidence.find(row => row.ref === item.evidence)?.subject === c.split.entity);
-    expect(splitMap.map(item => item.evidence)).toEqual(["@evidence-a"]);
+    // A claim of a person never merged into the survivor: a split map entry naming it is dropped.
+    const outsiderId = await person(w, "@person-outsider", "Morgan Outsider");
+    const outsiderTurn = await witnessed(w, "@outsider-turn", "Morgan Outsider made no observatory report.");
+    const outsiderReceipt = await w.engine.client.call("vault.claims.upsert", {
+      subject_ref: outsiderId, predicate: "profile.name", value: "Morgan Outsider",
+      confidence: 1, source: "user_stated", scope: w.scope, evidence_turn_refs: [outsiderTurn],
+    });
+    const outsiderClaim = (await entity(w.engine.client, outsiderReceipt.claim_short_id)).id_hex;
+    const outsiderBefore = await claim(w, outsiderClaim);
+    const splitMap = c.split.reassignment_map;
     const splitSpec: FacadeInput<"vault.identity.split"> = {
       entity: ref(w, c.split.entity), heads: c.split.heads.map(role => ref(w, role)),
-      // Only the split person's own claims are mapped: the engine reads a split's claim membership
-      // through the direct claim_of edge, so a merged source's claim (@evidence-b) is not reassigned
-      // (E2E-PARTIAL; FIX row filed with the READY). The ambiguous claim is named as residue.
+      // The fixture's map (the survivor's own claim to North, the merged source's claim to South), the
+      // ambiguous claim named as residue, and the never-merged outsider's claim, which the split drops.
       reassignment_map: [
         ...splitMap.map(item => ({
           item: { kind: "claim" as const, claim: ref(w, item.evidence) }, target: { kind: "head" as const, head: ref(w, item.head) },
         })),
         { item: { kind: "claim" as const, claim: ref(w, "@ambiguous-evidence") }, target: { kind: "residue" as const } },
+        { item: { kind: "claim" as const, claim: outsiderClaim }, target: { kind: "head" as const, head: ref(w, "@head-south") } },
       ],
       evidence: { refs: c.split.evidence.map(role => ref(w, role)), rationale: "North and South evidence identify separate people." },
     };
@@ -1173,7 +1181,11 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
     for (const mapping of splitMap) {
       const head = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, mapping.head) });
       expect(head.assigned_claims).toContain(ref(w, mapping.evidence));
+      expect(head.assigned_claims).not.toContain(outsiderClaim);
     }
+    // The merged source's claim is assigned away from the survivor; the outsider's claim is untouched.
+    expect(shell.remaining_claims).not.toContain(ref(w, "@evidence-b"));
+    expect(await claim(w, outsiderClaim)).toEqual(outsiderBefore);
     for (const original of originals) {
       const current = await claim(w, original.id);
       expect(current.subject_ref).toBe(original.subject);
