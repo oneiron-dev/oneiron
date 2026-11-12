@@ -5,6 +5,7 @@
   "output": "crate::board_verb::BoardVerbOutput",
   "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Refresh { frame_epoch: input.frame_epoch })?",
   "scope": "Read",
+  "act_class": "read",
   "context": "board",
   "mcp_fields": {
     "frame_epoch": "frame_epoch"

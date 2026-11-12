@@ -5,6 +5,7 @@
   "output": "crate::policy_model::PolicyRowReceipt",
   "call": "crate::policy_model::doors::change_owner_policy_row(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.row.change\")?, input).map_err(crate::memory::MemoryError::from)?",
   "scope": "Write",
+  "act_class": "security_control_disable",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

@@ -53,12 +53,16 @@ impl JobQueue for AttemptQueue<'_> {
         input.now = crate::ports::recorded_at_in_txn(self.store, txn)?;
         self.complete_storage_in_txn(txn, input)
     }
-    fn port_job_fail(
+    fn port_job_fail(&self, txn: &mut heed::RwTxn<'_>, input: FailAttempt) -> Result<FailOutcome> {
+        self.port_job_fail_with_refusal(txn, input, None)
+    }
+    fn port_job_fail_with_refusal(
         &self,
         txn: &mut heed::RwTxn<'_>,
         mut input: FailAttempt,
+        budget_refusal: Option<crate::store::model_step_submission::StepBudgetRefusal>,
     ) -> Result<FailOutcome> {
         input.now = crate::ports::recorded_at_in_txn(self.store, txn)?;
-        self.fail_storage_in_txn(txn, input)
+        self.fail_storage_with_refusal_in_txn(txn, input, budget_refusal)
     }
 }

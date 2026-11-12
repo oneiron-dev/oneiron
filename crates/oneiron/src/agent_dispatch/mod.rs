@@ -155,7 +155,7 @@ pub use self::spend_calibration::{
     AgentSpendCalibration, DollarBasis, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, LaunchUsdPrices,
     SpendBasis, UsdPriceTarget, UsdUnitPrice,
 };
-pub(crate) use self::spend_lease::payer_binds_in_txn;
+pub(crate) use self::spend_lease::{SpendCapRefusal, payer_binds_in_txn};
 pub(crate) use self::spend_record::erase_spend_scope_actor_in_txn;
 pub use self::spend_record::{
     ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendCapGeneration, SpendPayer,
