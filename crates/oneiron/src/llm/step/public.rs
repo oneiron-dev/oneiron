@@ -518,6 +518,7 @@ async fn submit(
         deadline: None,
         now_ms: vault.now_recorded_at().saturating_mul(1000),
         spend_scope,
+        wake_pass_bound: false,
     };
     let outcome = if let Some((backend, guard, _)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(

@@ -346,16 +346,17 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         .expect("durable milestone");
     assert_eq!(milestone.kind, DreamerMilestoneKind::CheckpointReached);
 
-    // Queue-lease cleanup: the cut attempt's stale lease is reclaimable through
-    // the normal path, so the attempt re-queues for the next pass.
+    // Queue-lease cleanup: the cut attempt is parked, so it keeps its lease
+    // however old (FIX RUN-LEASE); a later pass resumes its park.
     let queue = AttemptQueue::new(&vault);
     let cleaned = queue.cleanup_leases(CleanupAttemptLeases {
         now: 200,
         lease_timeout_secs: 10,
     })?;
-    assert_eq!(cleaned.stale_requeued, 1, "hard-cut lease reclaimed");
+    assert_eq!(cleaned.stale_requeued, 0, "a parked lease is not reclaimed");
     let status = store.status(queued.attempt.id)?.expect("attempt status");
-    assert_eq!(status.attempt.state, AttemptState::Queued);
+    assert_eq!(status.attempt.state, AttemptState::Leased);
+    assert!(store.parked_attempt(queued.attempt.id)?.is_some());
     Ok(())
 }
 

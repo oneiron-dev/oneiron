@@ -101,6 +101,7 @@ pub(crate) use self::stop_hold::{
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use self::opt_out_slots::stop_supersedes_clear_request;
 use self::projector::ProjectorAction;
 use self::records::{CommEventKind, CommRecord, read_comm_record_in_txn};
 use self::thread_membership::{canonical_member_ref, equivalent_thread_keys};
@@ -263,7 +264,7 @@ impl CommProjectorIndex {
         gates
             .iter()
             .copied()
-            .filter(|gate| gate.created_at <= stop_at)
+            .filter(|gate| stop_supersedes_clear_request(stop_at, gate.created_at))
             .collect()
     }
 

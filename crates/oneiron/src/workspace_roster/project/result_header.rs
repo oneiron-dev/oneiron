@@ -44,15 +44,26 @@ impl Memory<'_> {
         self.vault().backfill_tasks_by_owner()?;
         let (members, project_tasks, local_tasks) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            let record = rooms::require_member(self.vault(), &txn, room, self.actor())?;
-            if origin.is_some_and(|origin| record.origin.as_ref() != Some(origin)) {
+            let access = rooms::require_member(self.vault(), &txn, room, self.actor())?;
+            let home = access.home.as_ref();
+            if origin
+                .is_some_and(|origin| home.and_then(|home| home.origin.as_ref()) != Some(origin))
+            {
                 return Err(invalid().into());
             }
-            let project = self
-                .vault()
-                .visible_project_in_txn(&txn, EntityId::from_hex(&record.project_id)?)?
-                .ok_or_else(invalid)?;
-            let members = record.member_ids.into_iter().collect();
+            // A home room's project lists its tasks too; any other room's
+            // trunk heads only the tasks its threads bind
+            // (THREAD-TASK-EVERY-ROOM).
+            let project_tasks = match home {
+                Some(home) => {
+                    self.vault()
+                        .visible_project_in_txn(&txn, EntityId::from_hex(&home.project_id)?)?
+                        .ok_or_else(invalid)?
+                        .tasks
+                }
+                None => Vec::new(),
+            };
+            let members = access.member_ids.into_iter().collect();
             let local_tasks = crate::task_verb::room_thread_task_ids_in(
                 self.vault(),
                 &txn,
@@ -60,7 +71,7 @@ impl Memory<'_> {
                 &bindings,
                 &members,
             )?;
-            (members, project.tasks, local_tasks)
+            (members, project_tasks, local_tasks)
         };
         if let Some(origin) = origin
             && self.admitted_room_origin(room, origin)?

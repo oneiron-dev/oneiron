@@ -1212,6 +1212,19 @@ fn relationship_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+/// The vault owner's proof a member binding is written under.
+fn binding_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 #[test]
 fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()> {
     let (_dir, vault) = relationship_vault();
@@ -1219,9 +1232,16 @@ fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()
     let ghost = entity(GHOST_PERSON_SEED);
 
     assert_eq!(
-        bind_member_person(&vault, member, ghost, relationship_time(), 1)
-            .expect_err("nonexistent person must be refused")
-            .kind(),
+        bind_member_person(
+            &vault,
+            &binding_owner(&vault),
+            member,
+            ghost,
+            relationship_time(),
+            1
+        )
+        .expect_err("nonexistent person must be refused")
+        .kind(),
         ErrorKind::EntityNotFound
     );
     // Refusal precedes the write: no claim landed on the member.
@@ -1232,7 +1252,14 @@ fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()
     );
 
     let person = entity(PERSON_SEED);
-    let claim = bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    let claim = bind_member_person(
+        &vault,
+        &binding_owner(&vault),
+        member,
+        person,
+        relationship_time(),
+        1,
+    )?;
     let body = vault.get_claim(&claim)?.expect("bound claim body");
     assert_eq!(body.predicate, PREDICATE_RELATIONSHIP_PERSON_REF);
     assert_eq!(body.subject, ClaimSubject::Entity(member));
@@ -3325,7 +3352,14 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
         Ok(id)
     };
     let shared = relationship(0xB1)?;
-    let binding = bind_member_person(&vault, shared, person, relationship_time(), 1)?;
+    let binding = bind_member_person(
+        &vault,
+        &binding_owner(&vault),
+        shared,
+        person,
+        relationship_time(),
+        1,
+    )?;
     let backups = crate::test_support::restore_tempdir();
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
@@ -3353,7 +3387,14 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
     let before_binding = backups.path().join("before-binding");
     vault.snapshot_checkpoint(&before_binding, 110)?;
     let later = relationship(0xB2)?;
-    bind_member_person(&vault, later, person, relationship_time(), 2)?;
+    bind_member_person(
+        &vault,
+        &binding_owner(&vault),
+        later,
+        person,
+        relationship_time(),
+        2,
+    )?;
     refused(&before_binding, "after-binding");
     Ok(())
 }

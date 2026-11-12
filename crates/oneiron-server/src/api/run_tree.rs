@@ -241,9 +241,10 @@ pub(crate) struct CoreRunTreeFailure {
     budget_refusal: Option<CoreStepBudgetRefusal>,
 }
 
-/// Why a spend scope refused a try's step for good, so nothing parked and the
-/// try failed: a closed boundary or a scope's ceiling had less room than the
-/// step's reservation asked. `scope` is the refusing spend scope's id.
+/// Why a try's step was refused for good, so nothing parked and the try
+/// failed: a closed boundary or a scope's ceiling had less room than the
+/// step's reservation asked (`scope` is the refusing spend scope's id), or the
+/// step's guard was spent with no wake pass or spend scope to refill it.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub(crate) enum CoreStepBudgetRefusal {
@@ -258,6 +259,11 @@ pub(crate) enum CoreStepBudgetRefusal {
         scope: String,
         available_units: u64,
         asked_units: u64,
+    },
+    /// A spent guard bound to no wake pass and no spend scope.
+    Unbound {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        asked_units: Option<u64>,
     },
 }
 

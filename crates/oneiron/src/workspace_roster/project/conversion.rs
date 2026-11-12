@@ -59,7 +59,9 @@ fn room_thread_in(
     room: EntityId,
     thread: EntityId,
 ) -> Result<rooms::RoomTurn> {
-    rooms::room_in(vault, txn, room)?;
+    // Any room's thread binds (THREAD-TASK-EVERY-ROOM); converting it to a
+    // project reads its home room on its own.
+    rooms::room_access_in(vault, txn, room)?;
     let row = rooms::turn_in(vault, txn, thread)?;
     if row.room_id != room.to_hex() || row.thread_of.is_none() {
         return Err(invalid());

@@ -1,0 +1,18 @@
+{
+  "name": "vault.settings.non_base_world_claim_fraction.set",
+  "description": "The owner sets the most of a context pack's claims that worlds other than base may hold, from 0 (base alone) to 1 (no cap), under the owner proof; a change records the owner's act, and the next pack reads it.",
+  "input": "crate::settings::non_base_world_claim_fraction::NonBaseWorldClaimFraction",
+  "output": "crate::settings::non_base_world_claim_fraction::NonBaseWorldClaimFraction",
+  "call": "crate::settings::non_base_world_claim_fraction::set_non_base_world_claim_fraction_embedded(memory, input)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

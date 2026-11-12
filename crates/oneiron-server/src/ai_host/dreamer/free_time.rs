@@ -13,7 +13,7 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::dreamer_runner::{DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND, FreeTimeItemBinding};
 use oneiron::llm::run_admission::RunAttribution;
-use oneiron::llm::{HostInferenceContext, WorkClass, WorkContext};
+use oneiron::llm::{HostInferenceContext, StepSpendScope, WorkClass, WorkContext};
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContext, WriteActor};
 
 use super::super::policy::extraction_egress;
@@ -34,6 +34,11 @@ impl ResidentLend<'_> {
         binding: FreeTimeItemBinding,
     ) -> oneiron::Result<DreamerAttemptExecution> {
         let resident = binding.agent;
+        // The step's scope is read before its room and its guards: a top-up
+        // before this read is in their room, and one after it moves the
+        // generation the step's park compares (BUDGET-TRAP-UNTYPED-NO-SENDER).
+        let spend_scope =
+            StepSpendScope::read_before_guards(self.vault, binding.spend_scope.clone())?;
         let available = AgentDispatcher::new(self.vault).available_units(&binding.spend_scope)?;
         if available == 0 {
             return Ok(DreamerAttemptExecution::Completed {
@@ -130,6 +135,7 @@ impl ResidentLend<'_> {
             instruction: self.instruction,
             window_tokens,
             sourced: Some(&backend),
+            spend_scope: Some(spend_scope),
         };
         if attempt.status.payload.attempt_type == DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND {
             run_free_time_for_human(attempt, ctx, lent).await

@@ -6,6 +6,9 @@
 pub enum DreamerParkWaitClass {
     /// A spend scope's top-up: the scope's own refill wakes the park's trap.
     Budget,
+    /// A wake pass's guard: a later pass whose guard has room for the parked
+    /// reservation wakes the park's trap at its start.
+    PassBudget,
     /// A held effect's consent answer or an outbound call's settled reply delivered on the wait.
     Consent,
     /// A peer's or child's result delivered on the wait: a TASK, child, reader, summary or hook ask group.
@@ -22,6 +25,7 @@ impl DreamerParkWaitClass {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Budget => "budget",
+            Self::PassBudget => "pass_budget",
             Self::Consent => "consent",
             Self::Peer => "peer",
             Self::Human => "human",
@@ -33,6 +37,7 @@ impl DreamerParkWaitClass {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "budget" => Some(Self::Budget),
+            "pass_budget" => Some(Self::PassBudget),
             "consent" => Some(Self::Consent),
             "peer" => Some(Self::Peer),
             "human" => Some(Self::Human),
