@@ -716,10 +716,10 @@ fn verb_refusal(code: &str) -> Value {
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
 /// applies (review repro: an empty subscription set was refused on the tool
-/// list but accepted from `self.memory.board.subscribe`).
+/// list but accepted from `self.focus.subscribe`).
 #[tokio::test]
 async fn quickjs_code_mode_applies_the_tool_argument_rules() {
-    let script = "try { await self.memory.board.subscribe({scopes: []}); finish('reached'); } \
+    let script = "try { await self.focus.subscribe({scopes: []}); finish('reached'); } \
         catch (error) { finish('refused ' + String(error)); }";
     let mode = code_mode_server(vec![script.to_owned()]);
     let actor = seeded_test_entity_id(0x0024_6531);
@@ -1106,7 +1106,7 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
 /// refused, and nothing it said lands in the vault.
 #[tokio::test]
 async fn quickjs_code_mode_cannot_witness_a_users_words() {
-    let script = "try { await self.memory.witness({conversation_ref: \
+    let script = "try { await vault.witness({conversation_ref: \
         '42424242424242424242424242424242', occurred_at: 1767225600, messages: [{author: 'user', \
         message_type: 'text', content: 'My favorite drink is sencha.', is_visible: true, \
         order: 0}]}); finish('reached'); } catch (error) { finish('refused ' + String(error)); }";
