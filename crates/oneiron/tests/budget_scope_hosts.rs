@@ -324,9 +324,10 @@ impl DreamerAttemptExecutor for ItemHost<'_> {
 #[test]
 fn a_free_time_item_its_carves_ceiling_refuses_ends_failed_typed_on_its_row_and_receipt()
 -> TestResult {
+    // A pinned split gives each kind a share and sums to the policy's total.
     let fixture = FreeTime::open(Some(FreeTimeSplit {
-        for_human_units: 4 * STEP_RESERVE,
-        own_time_units: 4 * STEP_RESERVE,
+        for_human_units: FREE_TIME_TOTAL / 2,
+        own_time_units: FREE_TIME_TOTAL / 2,
     }))?;
     let item = fixture.open_cycle()?;
     let dispatcher = AgentDispatcher::new(&fixture.vault);
