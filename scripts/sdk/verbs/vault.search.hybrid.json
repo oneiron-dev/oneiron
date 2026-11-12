@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>",
   "call": "memory.query_hybrid(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true,
     "validate": "input.validate()?;"

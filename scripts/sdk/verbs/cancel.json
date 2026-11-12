@@ -9,6 +9,7 @@
   "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
   "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
   "scope": "Write",
+  "act_class": "unstated",
   "proposes": true,
   "mcp_scope": "addressed",
   "mcp_fields": {

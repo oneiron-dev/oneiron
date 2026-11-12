@@ -8,6 +8,7 @@
   "output": "crate::blob_artifact::esign::EsignLinksView",
   "call": "memory.esign_links_issue(&input)?",
   "scope": "Write",
+  "act_class": "grant_widen",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

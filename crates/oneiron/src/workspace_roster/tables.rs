@@ -41,6 +41,11 @@ crate::side_table::side_tables! {
     /// body hash32. Key: id16 (project).
     PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A full goal revision proposal (LEARNING-01): the proposed record, the goal claim and
+    /// generation it revises, its proposer, reasons, evidence, diff and any dismissal. Never the
+    /// goal in force. Key: id16 (project) + id16 (proposal).
+    PROJECT_GOAL_PROPOSAL: VaultMeta b"project.goal_proposal.v1/" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The vault's per-project history budget, set by the owner. Key: ().
     PROJECT_HISTORY_POLICY: VaultMeta b"project.history_policy.v1" Named
         [restore: live] [family: unclassified] [tier: canonical];

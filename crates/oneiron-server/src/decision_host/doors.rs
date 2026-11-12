@@ -13,9 +13,10 @@ use super::{
     PLACEMENT_BUDGET, PLACEMENT_WORDING, PLANNER_BUDGET, PLANNER_WORDING, PlacementDecisions,
     PolicyDecisions, REVIEW_DIAL, REVIEW_HARD_CHECK_WORDING, REVIEW_LENS_BUDGET,
     REVIEW_OUT_OF_SCOPE_WORDING, REVIEW_SEVERITY_WORDING, REVIEW_VERDICT_WORDING,
-    RetrievalDeadline, ReviewDecisions, ReviewWording, SeatDecisions, SeatPickSettings,
-    TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING, TASK_SURFACE,
-    TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions, Vault, WAVE_FANOUT_WORDING,
+    RetrievalDeadline, ReviewDecisions, ReviewStateNotes, ReviewWording, SeatDecisions,
+    SeatPickSettings, TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING,
+    TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions, Vault,
+    WAVE_FANOUT_WORDING,
 };
 use oneiron::dreamer_runner::maintenance::attribution_labels::UnclearPatternDecisions;
 
@@ -383,15 +384,23 @@ impl DecisionHost {
         }
     }
 
+    /// This host's notes for one critic review over `state`, the target as
+    /// the caller reads it (FIX 3040).
+    #[must_use]
+    pub(crate) fn review_notes<'a>(&'a self, state: &'a serde_json::Value) -> ReviewStateNotes<'a> {
+        ReviewStateNotes::new(&self.notes, state)
+    }
+
     /// A critic review's questions through this ladder for `principal`, the
     /// caller, over `state`, the target as the caller reads it: the engine's
     /// review dial, this host's bands and wording, one clock per lens, and
-    /// this host's notes (FIX 3040).
+    /// `notes`, this host's notes over the same state ([`Self::review_notes`]).
     #[must_use]
     pub(crate) fn review_decisions<'a>(
         &'a self,
         principal: EntityId,
         state: &'a serde_json::Value,
+        notes: &'a ReviewStateNotes<'a>,
         vault: &Vault,
     ) -> oneiron::Result<ReviewDecisions<'a>> {
         Ok(ReviewDecisions {
@@ -411,7 +420,7 @@ impl DecisionHost {
                 hard_check: REVIEW_HARD_CHECK_WORDING.to_owned(),
                 out_of_scope: REVIEW_OUT_OF_SCOPE_WORDING.to_owned(),
             },
-            notes: Some(&self.notes),
+            notes: Some(notes),
         })
     }
 

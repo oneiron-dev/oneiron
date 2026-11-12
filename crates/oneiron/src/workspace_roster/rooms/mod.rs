@@ -24,6 +24,7 @@ mod offer_settle;
 mod offers;
 mod participants;
 mod participation;
+mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
@@ -34,6 +35,7 @@ mod thread_history;
 mod thread_join;
 mod thread_projection;
 mod thread_reads;
+mod thread_task_source;
 mod turn_record;
 mod upkeep;
 mod upkeep_voice;
@@ -122,6 +124,8 @@ pub(crate) use participation::{
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
+pub(crate) use pins::stored_room_pins_in;
+pub use pins::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
@@ -142,6 +146,7 @@ pub use thread_join::{
 };
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
+pub(crate) use thread_task_source::room_thread_source_in;
 pub(crate) use turn_record::{record_room_message_in_txn, record_thread_reply_in_txn};
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use upkeep::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
@@ -202,6 +207,9 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
+    // The view never carries the room's shared pins: a reader gets them only
+    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    room.pins.clear();
     Ok(room)
 }
 pub(in crate::workspace_roster) fn require_member(

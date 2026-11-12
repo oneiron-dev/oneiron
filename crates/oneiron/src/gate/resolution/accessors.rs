@@ -820,6 +820,20 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// The inquiry row (federation.md #inquiry-keep) this resolution
+    /// carries. A loaded manifest that fails closed reads as unreadable; a
+    /// vault with no manifest has no row.
+    #[must_use]
+    pub(crate) fn inquiry_policy(&self) -> crate::inquiry::InquiryPolicyRead {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return crate::inquiry::InquiryPolicyRead::Unreadable;
+        }
+        match self.inquiry_policy {
+            Some(policy) => crate::inquiry::InquiryPolicyRead::Row(policy),
+            None => crate::inquiry::InquiryPolicyRead::NoRow,
+        }
+    }
+
     #[must_use]
     /// The catastrophe floor row this resolution carries, or the pinned
     /// floor when no trusted manifest names one (DEC-0006 invariant 7). A
@@ -828,6 +842,20 @@ impl PolicyManifestResolution {
         self.catastrophe_floor
             .clone()
             .unwrap_or_else(crate::consent::CatastropheFloor::pinned)
+    }
+
+    /// The check-in row (ARCH-0082 #waits) this resolution carries. A
+    /// loaded manifest that fails closed reads as unreadable, which the
+    /// check-in receipts name; a vault with no manifest has no row.
+    #[must_use]
+    pub(crate) fn check_in_policy(&self) -> crate::check_in::CheckInPolicyRead<'_> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return crate::check_in::CheckInPolicyRead::Unreadable;
+        }
+        match &self.check_in_policy {
+            Some(policy) => crate::check_in::CheckInPolicyRead::Row(policy),
+            None => crate::check_in::CheckInPolicyRead::NoRow,
+        }
     }
 
     pub(crate) fn scoped_grants(&self) -> &[PolicyScopedGrant] {

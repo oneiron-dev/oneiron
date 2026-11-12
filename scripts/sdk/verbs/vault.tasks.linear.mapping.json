@@ -8,6 +8,7 @@
   "output": "crate::linear_sync::LinearMappingView",
   "call": "memory.linear_mapping(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [
