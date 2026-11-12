@@ -4929,9 +4929,12 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
     }
 
     // A read-scoped agent reads the same record back over HTTP before it
-    // loses that scope below.
+    // loses that scope below. It queries the entry's own token: a light pack
+    // at limit 10 keeps at most two TURNs (ContextPackRetrievalBudget::from_limit
+    // plus one surplus slot), so after four entries share the common word the
+    // first one is cut for any caller.
     stage = "read-scoped agent HTTP recall read-back";
-    expect(await museRecall06RecallMentions(reader.client, common, alphaToken)).toBe(true);
+    expect(await museRecall06RecallMentions(reader.client, alphaToken, alphaToken)).toBe(true);
 
     // Wrong actor kind: a write-only agent is refused the read. The HTTP
     // refusal carries the standard typed error envelope and no record text.
