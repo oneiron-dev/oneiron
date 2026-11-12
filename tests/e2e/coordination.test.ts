@@ -220,15 +220,13 @@ async function coordination01HouseCard(engine: EngineFixture, providers: Scripte
  *   binds the tap to the card's principal, consent_eval.rs:158-186, so board-human binds to the owner);
  *   a claims scope distinct from the parent (fixture error: the record inherits the root's scope at every
  *   birth, and the per-project memory scope is the project id itself, see the report).
- * DEFECT (red since the first fleet run, Tue 10 Nov 2026; FIX row HOUSE-SOURCE-READ-DENIED): the decider is never asked. The
- *   house reads the source MESSAGE through a key with no proof, authority or explicit scope
- *   (agent_dispatch/project_proposal.rs:159-166); require_relationship_grants grants nothing on its own
- *   (claim/scoped_read/actor_key.rs:691-709). With no scoped grant for that actor, a non-owner's read floor is
- *   deny_all (gate/retrieval_filter.rs:205-214). The shipped manifest carries read rows only for the Dreamer
- *   and the Coach, none for the house (gate/default_manifest.rs:1054-1060). So the message is refused
- *   (claim/scoped_read/visibility.rs:629), and the question settles Unread before the ladder
- *   (project_proposal.rs:91-94). PR #6857 relaxed the relationship conjunct only. Not worked around: an owner
- *   read grant for the house through vault.gate.policy.put would hide it.
+ * DEFECT (red since E2E job 12b, Thu 12 Nov 2026; FIX row GOAL-INTAKE-NEVER-DISPATCHED): the person's confirm
+ *   mints the project (200), but the leader's goal-intake run is never dispatched, so the
+ *   coordination01-intake barrier is never consumed. Vault::confirm_project_card's dispatch_goal_intake
+ *   (workspace_roster/project/proposal.rs) asks for the card's leader with no parent attempt and the new child
+ *   project; project_depth_limit_in_txn refuses it before enqueue ("a project spawn requires a real parent in
+ *   its ancestor project", agent_dispatch/dispatch/depth.rs), and the confirm only logs a warning. The earlier
+ *   red at the house's source read (HOUSE-SOURCE-READ-DENIED) was fixed by #7028.
  */
 suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an agent's card mints nothing until its person confirms, and a dismissed card never mints", async () => {
   const scenario = await coordination01Scenario();
@@ -508,12 +506,9 @@ suite.test(test, "COORDINATION-02", "A thread reply never moves the trunk HEAD a
   };
   const content = new Map<string, string>();
 
-  // DEFECT (fleet: HTTP 403 at the first trunk append): every DAG append runs check_append_policy
-  // (conversation_dag/writes.rs:417), which labels the caller's record ClaimSource::Generated whoever writes it
-  // (conversation_dag/policy.rs:247-300). Generated needs an explicit actor-bound source-trust permit
-  // (oneiron-contracts claim/status.rs:137-141, gate/ceiling.rs:579-609), and the shipped manifest grants one only
-  // to the commitment projector and the seal actor (gate/default_manifest.rs:676-737). So on a default vault no
-  // person, the owner included, appends a trunk record or a thread reply: 403 "gate.pending.source_trust".
+  // Guards a fixed defect: before #6997 every DAG append was labelled Generated whoever wrote it, so on a
+  // default vault no person, the owner included, could append a trunk record or a thread reply (403
+  // "gate.pending.source_trust" at the first trunk append). #6997 labels an append by who composed its words.
   // The owner already holds the room's Owner role without a seat (conversation/roles.rs:33-44).
   const conversation = (await client.call("vault.conversations.create", {
     body: {}, occurred_start: COORDINATION02_AT, occurred_end: COORDINATION02_AT, learned_at: COORDINATION02_AT })).id;
@@ -687,12 +682,13 @@ async function coordination03Room(client: PublicHttpClient, room: string): Promi
  * Doors: typed HTTP facade vault.conversations.create / vault.agents.create / vault.rooms.offer /
  *   vault.rooms.offers / vault.rooms.consent / vault.rooms.offer.answer / vault.rooms.participants /
  *   vault.neighbors / vault.get; pairActor for both agents.
- * DEFECT (expected FAIL today, at the first offer; FIX [AGENT-PERSON-ANCHOR-ROOM-OFFER]): vault.agents.create
- *   anchors every custom AGENT_DEF to a model PERSON (agent_def/doors.rs:313-334, context_board/people.rs:491-521),
- *   the join subject then reads it as a person's pen (join_consent.rs:439-453, rooms/participation.rs:268-275),
- *   and the mint refuses it: 400 "a person's pen joins by writing as its person, not by an offer card"
- *   (rooms/offers.rs:434-442). The fix also gives the agent vault-owned-agent standing, so the host's
- *   admission alone settles the card (no membership need).
+ * DEFECT (red since E2E job 12b, Thu 12 Nov 2026; FIX row ROOM-OFFER-PAIRED-AGENT-UNBOUND): the agent's first
+ *   vault.rooms.offer gets 403. rooms_offer mints through rooms_join_in_txn, which checks
+ *   verify_write_actor_in_txn (workspace_roster/join_door.rs) before the principal admission; an AGENT_DEF made
+ *   by vault.agents.create and paired by slip has no active authority binding, so the write is refused "writer
+ *   has no active authority binding". Neither agent-create nor slip redeem installs a binding, and no public door
+ *   does. The earlier 400 (a custom agent read as a person's pen, AGENT-PERSON-ANCHOR-ROOM-OFFER) was fixed by
+ *   #6978.
  * Unproved: thread cards and the human "wrote" cause (vault.rooms.speak threads need a project home room,
  *   rooms/mod.rs:185-201); mention and TASK causes (no public bind door); paid offers and payer consent;
  *   companion membership; nearest-leader hosting and Dreamer never hosting; not_now's diary record.
@@ -1756,6 +1752,10 @@ async function coordination08ParkedRun(
  *   owner diary.read standing grant whose envelope literals are not verified.
  * Unproved: the in-run return values are not public; the scripts throw unless they match, so a
  *   mismatch surfaces as an unsettled TASK or an unscripted extra model call.
+ * DEFECT (red since E2E job 12b, Thu 12 Nov 2026; FIX row AGENT-DEF-DIAL-REVERTS-ON-RESTART): the owner's
+ *   vault.agents.update of the dial to none/full answers 200, reads back none/full and applies live, but after a
+ *   clean server restart vault.agents.get returns the v1 dial (bond voice, logistics voice). No second update
+ *   was sent. The writer that reverts the AGENT_DEF row is not yet localised.
  */
 suite.test(test, "COORDINATION-08", "An agent's refusal dial decides its own refusal of its TASK: voice objects once and proceeds, bond veto declines, none and full apply live, and the owner cannot refuse in her place on her live run", async () => {
   const c = await coordination08Scenario();
@@ -1978,6 +1978,13 @@ suite.todo(test, "COORDINATION-09", "waits on typed Linear webhook intake and ta
  *   approve/reject and carries no amended/final claim. The separate
  *   vault.skills.attribution.settle/read delta does not settle a pending
  *   claim or link that claim's proposal, so it is not used as a substitute.
+ *
+ * DEFECT (red since E2E job 6, Wed 11 Nov 2026; FIX row
+ * OWNER-APPROVAL-CRITICALITY-FLOOR, joined with
+ * CLAIM-SETTLE-APPROVED-FALLBACK-CRITICALITY-PENDS): the owner's
+ * vault.claims.settle (approve) of the agent's proposed claim is refused 403
+ * "gate.pending.criticality_floor": the owner's approve write reaches the
+ * gate with no consent context and pends on the fallback criticality floor.
  */
 
 type museLoop01ReceiptRow = FacadeResult<"vault.receipts">["receipts"][number];
@@ -3151,6 +3158,11 @@ suite.test(test, "MUSE-LOOP-03", "An unsure agent asks the owner up through ask,
 // auto-approve setting (the case proves the off-by-default behaviour on a fresh
 // vault and the on-behaviour only through ModelTrialPolicy.auto_approve), and
 // the notice/one-click-undo and 30-day check that follow an approved switch.
+// DEFECT (red since E2E job 10, Wed 11 Nov 2026; FIX row
+// STANDING-GRAPH-OWNER-CENTRE-READ, fixed on main by #7114, which the bd95597c8afc
+// artifact set does not hold): the owner's manual vault.questions.refresh of a
+// standing graph question returns no answers (length 0, expected 3). The later
+// agent-propose leg waits on FIX row NO-DOOR AGENT-MODEL-BINDING-PROPOSE (#7178).
 
 type MuseLoop04Binding = FacadeResult<"vault.models.bindings.read">;
 type MuseLoop04TrialView = FacadeResult<"vault.models.trials.get">;
@@ -4603,6 +4615,10 @@ async function museLoop08AuditRows(client: PublicHttpClient): Promise<MuseLoop08
 // discovery and cross-kind undo stay unproved: canon says only the owner
 // reviewing *named* changes and reverting all or some is built in part, and
 // this case exercises claims only.
+// DEFECT (red since E2E job 6, Wed 11 Nov 2026; FIX row
+// OWNER-APPROVAL-CRITICALITY-FLOOR, as in MUSE-LOOP-01): the owner's
+// vault.runs.settle of the agent's proposed claims is refused 403 on the
+// fallback criticality floor.
 suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a chosen subset then the rest where unblocked, and reports the blocked change (P-LOOP-030 subset)", async () => {
   const engine = await EngineFixture.start({ id: "MUSE-LOOP-08", profile });
   try {
