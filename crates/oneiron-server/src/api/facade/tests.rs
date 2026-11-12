@@ -81,18 +81,18 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
     });
     let requests = [
         (
-            "witness",
+            "vault.witness",
             json!({"conversation_ref": conversation, "occurred_at": 1, "messages": [large_message]}),
             "message content",
         ),
         (
-            "witness",
+            "vault.witness",
             json!({"conversation_ref": conversation, "occurred_at": 1, "messages": vec![message; MAX_BATCH_ENTITIES + 1]}),
             "messages",
         ),
-        ("claim_upsert", claim, "claim payload"),
+        ("vault.claims.upsert", claim, "claim payload"),
         (
-            "recall",
+            "vault.recall",
             json!({"query": "x".repeat(REMOVED_QUERY_CAP + 1)}),
             "query",
         ),
@@ -410,14 +410,14 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
         )
         .unwrap(),
     );
-    let (status, rooms) = post(&server, &addressed_token, "rooms.list", json!({})).await;
+    let (status, rooms) = post(&server, &addressed_token, "vault.rooms.list", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{rooms}");
     assert_eq!(rooms.as_array().unwrap().len(), 1);
     let turn = EntityId::now().to_hex();
     let incoming = json!({"conversation_ref":room.to_hex(),"turn_ref":turn,"occurred_at":2,
         "messages":[{"author":"user","message_type":"text","content":"@addressed respond",
         "metadata":{"room_mentions":["@addressed"]},"is_visible":true,"order":0}]});
-    let (status, receipt) = post(&server, &owner_token, "rooms.speak", incoming).await;
+    let (status, receipt) = post(&server, &owner_token, "vault.rooms.speak", incoming).await;
     assert_eq!(status, StatusCode::OK, "{receipt}");
     assert!(
         receipt["receipt_ref"]
@@ -428,7 +428,13 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     let reply = json!({"conversation_ref":room.to_hex(),"turn_ref":EntityId::now().to_hex(),"occurred_at":3,
         "messages":[{"author":"companion","message_type":"text","content":"Answer",
         "metadata":{"room_reply_to":turn},"is_visible":true,"order":0}]});
-    let (status, _) = post(&server, &addressed_token, "rooms.speak", reply.clone()).await;
+    let (status, _) = post(
+        &server,
+        &addressed_token,
+        "vault.rooms.speak",
+        reply.clone(),
+    )
+    .await;
     assert_ne!(status, StatusCode::OK);
     let claim = json!({"room_ref":room.to_hex(),"turn_ref":turn});
     let (status, outcome) = post(&server, &other_token, "rooms.claim", claim.clone()).await;
@@ -449,14 +455,14 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
             .1,
         claimed
     );
-    let (status, _) = post(&server, &other_token, "rooms.speak", reply.clone()).await;
+    let (status, _) = post(&server, &other_token, "vault.rooms.speak", reply.clone()).await;
     assert_ne!(status, StatusCode::OK);
-    let (status, spoken) = post(&server, &addressed_token, "rooms.speak", reply).await;
+    let (status, spoken) = post(&server, &addressed_token, "vault.rooms.speak", reply).await;
     assert_eq!(status, StatusCode::OK, "{spoken}");
     let (status, messages) = post(
         &server,
         &owner_token,
-        "rooms.messages",
+        "vault.rooms.messages",
         json!({"room_ref":room.to_hex()}),
     )
     .await;
@@ -515,11 +521,16 @@ async fn rooms_http_history_reads_inside_the_rosters_scope() {
     let spoken = json!({"conversation_ref":room.to_hex(),"turn_ref":EntityId::now().to_hex(),
         "occurred_at":2,"messages":[{"author":"user","message_type":"text","content":"hello room",
         "is_visible":true,"order":0}]});
-    let (status, body) = post_room_verb(&server, &owner_token, "rooms.speak", spoken).await;
+    let (status, body) = post_room_verb(&server, &owner_token, "vault.rooms.speak", spoken).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let history = json!({"room_ref":room.to_hex()});
-    let (status, page) =
-        post_room_verb(&server, &agent_token, "rooms.messages", history.clone()).await;
+    let (status, page) = post_room_verb(
+        &server,
+        &agent_token,
+        "vault.rooms.messages",
+        history.clone(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     let roster = vault
@@ -539,7 +550,7 @@ async fn rooms_http_history_reads_inside_the_rosters_scope() {
         let mut supplied = history.clone();
         supplied[field] = json!([{"actor": agent.to_hex(), "present": false}]);
         let (status, body) =
-            post_room_verb(&server, &agent_token, "rooms.messages", supplied).await;
+            post_room_verb(&server, &agent_token, "vault.rooms.messages", supplied).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {body}");
     }
 }
@@ -614,18 +625,18 @@ async fn http_room_turn_header_keeps_ordinary_reads_inside_the_room() {
             .count()
     };
     let (status, open) =
-        post_in_room_turn(&server, &owner_token, "recall", recall.clone(), None).await;
+        post_in_room_turn(&server, &owner_token, "vault.recall", recall.clone(), None).await;
     assert_eq!(status, StatusCode::OK, "{open}");
     assert_eq!(fiction_items(&open), 1, "outside a room the owner reads it");
     let (status, inside) =
-        post_in_room_turn(&server, &owner_token, "recall", recall, Some(room)).await;
+        post_in_room_turn(&server, &owner_token, "vault.recall", recall, Some(room)).await;
     assert_eq!(status, StatusCode::OK, "{inside}");
     assert_eq!(
         fiction_items(&inside),
         0,
         "the room's Scope holds no fiction"
     );
-    for verb in ["export", "key_value_get", "receipts", "describe"] {
+    for verb in ["vault.export", "vault.kv.get", "vault.receipts", "describe"] {
         let (status, body) =
             post_in_room_turn(&server, &owner_token, verb, json!({}), Some(room)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{verb}: {body}");
@@ -650,8 +661,14 @@ async fn http_room_turn_header_keeps_ordinary_reads_inside_the_room() {
         );
     }
     // A turn opens only in a room the caller belongs to.
-    let (status, body) =
-        post_in_room_turn(&server, &owner_token, "rooms.list", json!({}), Some(lone)).await;
+    let (status, body) = post_in_room_turn(
+        &server,
+        &owner_token,
+        "vault.rooms.list",
+        json!({}),
+        Some(lone),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
@@ -694,57 +711,57 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     let put = json!({"namespace":["prefs"],"key":"theme","value":{"name":"dark"},"request_id":"http-one","source":"user_stated"});
     let cases = [
         (
-            "key_value_put",
+            "vault.kv.put",
             put.clone(),
             &readonly,
             StatusCode::FORBIDDEN,
         ),
         (
-            "key_value_get",
+            "vault.kv.get",
             address.clone(),
             &unbound,
             StatusCode::FORBIDDEN,
         ),
-        ("key_value_put", put, &full, StatusCode::OK),
-        ("key_value_get", address.clone(), &full, StatusCode::OK),
+        ("vault.kv.put", put, &full, StatusCode::OK),
+        ("vault.kv.get", address.clone(), &full, StatusCode::OK),
         (
-            "key_value_search",
+            "vault.kv.search",
             json!({"namespace_prefix":["prefs"],"limit":1}),
             &full,
             StatusCode::OK,
         ),
         (
-            "key_value_namespaces",
+            "vault.kv.namespaces",
             json!({"prefix":["prefs"]}),
             &full,
             StatusCode::OK,
         ),
         (
-            "key_value_get",
+            "vault.kv.get",
             address.clone(),
             &narrowed,
             StatusCode::FORBIDDEN,
         ),
         (
-            "key_value_search",
+            "vault.kv.search",
             json!({"namespace_prefix":["prefs"],"limit":1}),
             &narrowed,
             StatusCode::FORBIDDEN,
         ),
         (
-            "key_value_namespaces",
+            "vault.kv.namespaces",
             json!({"prefix":["prefs"]}),
             &narrowed,
             StatusCode::FORBIDDEN,
         ),
         (
-            "key_value_delete",
+            "vault.kv.delete",
             address.clone(),
             &readonly,
             StatusCode::FORBIDDEN,
         ),
-        ("key_value_delete", address.clone(), &full, StatusCode::OK),
-        ("key_value_get", address, &full, StatusCode::OK),
+        ("vault.kv.delete", address.clone(), &full, StatusCode::OK),
+        ("vault.kv.get", address, &full, StatusCode::OK),
     ];
     let mut bodies = Vec::new();
     for (verb, payload, token, status) in cases {
@@ -818,7 +835,7 @@ pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission:
     };
     let put = json!({"namespace":["notes"],"key":"theme","value":{"name":"dark"},"request_id":"filter-row","source":"user_stated"});
     assert_eq!(
-        post("key_value_put", put).await.unwrap().status(),
+        post("vault.kv.put", put).await.unwrap().status(),
         StatusCode::OK
     );
     let mut refused = 0;
@@ -826,7 +843,7 @@ pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission:
         let filter =
             json!({"name": "dark", "note": format!("{n}{}", "x".repeat(MAX_ENTITY_PAYLOAD_BYTES))});
         let search = json!({"namespace_prefix":["notes"],"filter":filter,"limit":10});
-        let response = post("key_value_search", search).await.unwrap();
+        let response = post("vault.kv.search", search).await.unwrap();
         if response.status() != StatusCode::OK {
             refused += 1;
             continue;
@@ -888,17 +905,17 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
         .unwrap();
     let app = crate::build_app(Arc::clone(&server));
     for (credential, verb, input, status) in [
-        (&slip, "receipts", json!({}), StatusCode::OK),
+        (&slip, "vault.receipts", json!({}), StatusCode::OK),
         (
             &slip,
-            "receipts",
+            "vault.receipts",
             json!({"limit": 0}),
             StatusCode::BAD_REQUEST,
         ),
-        (&narrow, "receipts", json!({}), StatusCode::FORBIDDEN),
+        (&narrow, "vault.receipts", json!({}), StatusCode::FORBIDDEN),
         (
             &narrow,
-            "recall",
+            "vault.recall",
             json!({"query": "hello"}),
             StatusCode::FORBIDDEN,
         ),
@@ -917,7 +934,7 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
             json!({"group_ref": actor.to_hex()}),
             StatusCode::FORBIDDEN,
         ),
-        (&slip, "witness", json!({}), StatusCode::FORBIDDEN),
+        (&slip, "vault.witness", json!({}), StatusCode::FORBIDDEN),
     ] {
         let request = Request::builder()
             .method("POST")
@@ -1004,14 +1021,14 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
         .unwrap();
     let app = crate::build_app(Arc::clone(&server));
     for (verb, payload) in [
-        ("rooms.render", json!({"room_ref":room.to_hex()})),
-        ("rooms.find", json!({"room_ref":room.to_hex()})),
+        ("vault.rooms.render", json!({"room_ref":room.to_hex()})),
+        ("vault.rooms.find", json!({"room_ref":room.to_hex()})),
         (
-            "rooms.get",
+            "vault.rooms.get",
             json!({"room_ref":room.to_hex(),"turn_ref":actor.to_hex()}),
         ),
         (
-            "rooms.trunk",
+            "vault.rooms.trunk",
             json!({"room_ref":room.to_hex(),"turn_ref":actor.to_hex()}),
         ),
     ] {
@@ -1031,7 +1048,7 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::FORBIDDEN, "{verb}");
         }
-        if matches!(verb, "rooms.render" | "rooms.find") {
+        if matches!(verb, "vault.rooms.render" | "vault.rooms.find") {
             let request = Request::builder()
                 .method("POST")
                 .uri(format!("/v1/core/facade/{verb}"))
@@ -1320,7 +1337,7 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
     for format in ["toon", "md", "json", "yaml", "txt"] {
         let request = Request::builder()
             .method("POST")
-            .uri("/v1/core/facade/export")
+            .uri("/v1/core/facade/vault.export")
             .header("Content-Type", "application/json")
             .body(Body::from(json!({"format":format}).to_string()))
             .unwrap();
@@ -1355,7 +1372,7 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
         crate::test_credentials::credential(&server, "jti=facade-export-host-root");
     let host = Request::builder()
         .method("POST")
-        .uri("/v1/core/facade/export")
+        .uri("/v1/core/facade/vault.export")
         .header("Content-Type", "application/json")
         .body(Body::from(json!({"format":"json"}).to_string()))
         .unwrap();
@@ -1387,7 +1404,7 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
     ] {
         let request = Request::builder()
             .method("POST")
-            .uri("/v1/core/facade/export")
+            .uri("/v1/core/facade/vault.export")
             .header("Content-Type", "application/json")
             .body(Body::from(json!({"format":format}).to_string()))
             .unwrap();
@@ -1407,7 +1424,7 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
     crate::test_credentials::revoke(&server, &owner_recipe);
     let request = Request::builder()
         .method("POST")
-        .uri("/v1/core/facade/export")
+        .uri("/v1/core/facade/vault.export")
         .header("Content-Type", "application/json")
         .body(Body::from("{\"format\":\"json\"}"))
         .unwrap();
@@ -1493,7 +1510,7 @@ impl OwnerFacade {
         for (at, content) in messages {
             let (status, receipt) = self
                 .post(
-                    "witness",
+                    "vault.witness",
                     json!({"conversation_ref": conversation, "occurred_at": at, "messages": [{
                         "author": "user", "message_type": "text", "content": content,
                         "is_visible": true, "order": 0
@@ -1512,7 +1529,7 @@ impl OwnerFacade {
 
     /// Recalls, returning each item's `(short_id, kind)` and the time hints.
     async fn recall(&self, request: Value) -> (Vec<(String, String)>, Vec<(String, String)>) {
-        let (status, pack) = self.post("recall", request.clone()).await;
+        let (status, pack) = self.post("vault.recall", request.clone()).await;
         assert_eq!(status, StatusCode::OK, "{request}: {pack}");
         let field = |value: &Value, name: &str| value[name].as_str().unwrap_or_default().to_owned();
         let items = pack["items"]
@@ -1636,7 +1653,7 @@ async fn recall_returns_witness_short_ids_and_limit_counts_content() {
 
     let (status, pack) = facade
         .post(
-            "recall",
+            "vault.recall",
             json!({"query": "tide table spring tide", "limit": 5}),
         )
         .await;
