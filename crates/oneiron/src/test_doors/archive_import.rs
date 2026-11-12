@@ -10,7 +10,7 @@ use crate::claim::{
 };
 use crate::context_board::{PREDICATE_PLUGIN_SECTION_INSTALL, PREDICATE_SKILL_SECTION_FIT};
 use crate::edge::EdgeActorClass;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, TimeRange, Vault};
 
@@ -71,7 +71,9 @@ pub fn land_section_install_with_fit_receipt(
         start: now,
         end: now,
     };
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| Error::InvariantViolation("embedded owner"))?;
     let envelope = WriteEnvelope::new(
         WriteActor::new(owner, EdgeActorClass::Human),
         ClaimSource::Generated,
