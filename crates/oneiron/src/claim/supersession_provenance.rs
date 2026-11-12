@@ -298,7 +298,9 @@ pub(super) fn settle_coaching_in_txn(
     }
 }
 
-pub(super) fn write_coaching(
+/// Writes the signed conflict marker for `new` and `old` in `txn`.
+/// A replay of the same pair keeps the marker already stored.
+pub(crate) fn write_coaching(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     new: &EntityId,
