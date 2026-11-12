@@ -60,3 +60,14 @@ impl TypeRef {
         }
     }
 }
+
+/// A draft's recorded task type (FIX 10508): the browser crate's wire form
+/// of a task type, read as this one.
+impl From<oneiron_browser::DraftTypeRef> for TypeRef {
+    fn from(draft: oneiron_browser::DraftTypeRef) -> Self {
+        Self {
+            node_id: draft.node_id,
+            tree_version: draft.tree_version,
+        }
+    }
+}

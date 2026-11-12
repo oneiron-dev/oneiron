@@ -71,6 +71,9 @@ pub(crate) use self::guests::count_hook_decisions;
 // A code-mode run's self brief states its budget from the run's line (FIX
 // 17594 D5).
 pub(crate) use self::dispatch::code_mode_line;
+// The integration tests' door to a draft's solved-run span (FIX 10508).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::solved_runs::draft_checked_span;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
