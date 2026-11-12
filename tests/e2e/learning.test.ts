@@ -178,6 +178,8 @@ suite.todo(test, "LEARNING-03", "waits on its arming PR: the OF-366 authoring bi
 // Set up two independently anchored critic histories, same task type and axis.
 // Merge duplicate findings with their evidence/attribution; a real hard-check
 // veto cannot be outvoted by a reliable critic's unsupported reassurance.
+// Duplicates merge on the flaw identity a critic's note names (target, kind,
+// location; LEARN-CRITIC Q1 = B): give both fixture duplicates one flaw.
 // Read default audit_rate = .05, nonzero. Publicly pin it to 1 for this fixture:
 // the hidden-flaw audit is guaranteed, NOT a probabilistic test or private seed.
 // A confession schedules a directed recheck and changes NO score by itself.
