@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import type { DevicePeer } from "./support/engine.ts";
-import { PublicHttpError } from "./support/clients.ts";
+import { PublicHttpError, credentialParts } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile } from "./support/run.ts";
 import { SyncLinkProxy } from "./support/sync_link.ts";
@@ -1018,3 +1018,49 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
  *   path receipts, across restart) is an absence check: excluded.
  */
 suite.todo(test, "SYNC-08", "waits on an EngineFixture opt-in that binds the mesh listener on loopback peers (ONEIRON_MESH_BIND is environment-only and the fixture strips ONEIRON_*) and an enrolled same-vault device syncing over oneiron/sync/1");
+
+/* SYNC-09 — decision: WRITTEN (partial). The ID is a placeholder until
+ *   OPUS-E2E-1 names the plan row (Engine RULING 12 Nov 2026 22:00).
+ * Promise: a freshly enrolled device keeps its paired credential fresh. Its
+ *   renewal at start comes before its first sync lands the vault's authority
+ *   log, so it cannot sign a machine proof yet; once that log lands the device
+ *   renews at once, keeps its holder key, and goes on syncing on the renewed
+ *   credential.
+ * Doors: EngineFixture.startDevicePeer (DevicePeer.enrolledCredential, read
+ *   before the first launch, and readCredential: the credential file that
+ *   `device enrol` names and the renewal replaces); on the home
+ *   vault.notes.create; on the device vault.residence.index.
+ * Unproved and why: the home's record of the renewal (no public read of slip
+ *   mints or of the `renews` lineage; the slip doors are renew and revoke
+ *   only); a refusal that stays a refusal (a work_school or rented device is
+ *   refused by the home for good, and its proof is an absence read); a
+ *   renewal after a restart (30 s flow); the retry wait alone, when a
+ *   catch-up takes no rows and signals nothing (no fixture serves a pinned
+ *   checkpoint that holds every entry, and the first retry is 30 s).
+ * DEFECT (FIX row DEVICE-RENEWAL-REFUSED-BEFORE-FIRST-SYNC, Thu 12 Nov 2026):
+ *   the renewal at start found "this install is not a machine of the vault
+ *   yet" (machine_connection_proof reads no vault id from the empty local
+ *   authority log) and refused for the life of the process, so the enrolled
+ *   credential was never renewed and the device stopped syncing once it ran
+ *   out.
+ */
+suite.test(test, "SYNC-09", "A freshly enrolled device renews its paired credential once its first sync lands the vault's authority, keeps its holder key, and goes on syncing on the renewed credential", async () => {
+  const home = await EngineFixture.start({ id: "SYNC-09", profile });
+  const device = await home.startDevicePeer({ id: "SYNC-09-device" });
+  const machine = sync01DeviceMachine(device);
+  const enrolled = credentialParts(device.enrolledCredential);
+
+  const renewed = await awaitPublic(() => device.readCredential(), credential => credential !== device.enrolledCredential,
+    { label: "the device renews its enrolled credential", timeoutMs: 15_000 });
+  const fresh = credentialParts(renewed);
+  expect(fresh.seed).toBe(enrolled.seed);
+  expect(fresh.bearer).not.toBe(enrolled.bearer);
+
+  // Second door: the device syncs on the renewed credential. A note the home
+  // creates after the renewal reaches the device's residence index.
+  const note = await home.client.call("vault.notes.create", { kind: "research", markdown: "SYNC-09 written after the device renewed its credential" });
+  await awaitPublic(() => device.client.call("vault.residence.index", { machine }),
+    answer => answer.state === "applied" && answer.windows.some(slot => slot.items.some(item => item.entity_id === note.id_hex)),
+    { label: "a home note made after the renewal reaches the device", timeoutMs: 15_000 });
+  expect(await device.readCredential()).toBe(renewed);
+});
