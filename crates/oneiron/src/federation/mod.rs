@@ -31,12 +31,12 @@ pub(crate) use archive_delete::{
 #[allow(unused_imports)]
 pub(crate) use archive_delete::ArchiveDeleteRole;
 mod connect_grant;
-pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent};
-pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
+pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent, INQUIRE_VERB_CLASS};
 pub(crate) use connect_grant::{
-    grant_serves_selector, is_guest_slice, pact_admits_grant, require_connect_grant_in_txn,
-    require_one_connect_per_peer,
+    ConnectGrantRequest, connect_direction_projection, grant_serves_selector, is_guest_slice,
+    pact_admits_grant, require_connect_grant_in_txn, require_one_connect_per_peer,
 };
+pub(crate) use connect_grant::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
 mod connect_proposal;
 pub(crate) use connect_proposal::{
     drop_pending_connect_proposals_in_txn, erase_connect_proposer_in_txn,
@@ -111,6 +111,7 @@ pub use shared_act::{
 };
 pub(crate) use shared_act::{DetachOutcome, SharedMemberDeparture};
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
+pub(crate) use shared_creation::role_preset;
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
 pub use shared_creation::{
     InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,

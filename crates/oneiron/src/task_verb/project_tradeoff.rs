@@ -28,9 +28,8 @@ use crate::memory::{
     WitnessTurn, verify_actor_binding,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::skill_optimize::{
-    HeldOutVerdict, ProjectGoalRevisionProposal, SkillTradeoffAsk, TradeoffChoice, TradeoffRole,
-};
+use crate::skill_optimize::{HeldOutVerdict, SkillTradeoffAsk, TradeoffChoice, TradeoffRole};
+use crate::workspace_roster::ProjectGoalRevisionsView;
 use serde::{Deserialize, Serialize};
 
 /// The home-room TURN one question was witnessed as. Its ids are reserved
@@ -409,14 +408,16 @@ impl Memory<'_> {
         Ok(route)
     }
 
-    /// The learned preferences proposed for `project`'s goal in force and
-    /// not dismissed, oldest first, read in one snapshot with the project's
+    /// The goal in force for `project`, the learned preferences proposed
+    /// under it and not dismissed, and every full goal proposal with its
+    /// status, oldest first, read in one snapshot with the project's
     /// authority. Only a member the project's folded authority seats reads
-    /// them, as it reads the project's asks.
+    /// them, as it reads the project's asks; full proposals carry goal
+    /// records, so only a member that reads the goal gets those.
     pub fn projects_goal_revisions(
         &self,
         project: EntityId,
-    ) -> MemoryResult<Vec<ProjectGoalRevisionProposal>> {
+    ) -> MemoryResult<ProjectGoalRevisionsView> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -434,8 +435,55 @@ impl Memory<'_> {
                 "Read the goal revisions of a project you sit in.",
             ));
         }
-        crate::skill_optimize::project_goal_revision_proposals_in_txn(vault, &txn, project)
-            .map_err(MemoryError::from)
+        let base = crate::workspace_roster::project_goal_base_in_txn(vault, &txn, project)?;
+        let proposals = if crate::workspace_roster::reads_goal_proposals_in_txn(self, &txn)? {
+            crate::workspace_roster::project_goal_proposals_in_txn(vault, &txn, project)?
+                .into_iter()
+                .map(|row| row.view(base.as_ref()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(ProjectGoalRevisionsView {
+            project_ref: project,
+            base,
+            preferences: crate::skill_optimize::project_goal_revision_proposals_in_txn(
+                vault, &txn, project,
+            )?,
+            proposals,
+        })
+    }
+
+    /// A vault owner dismisses the full goal proposal `proposal` of
+    /// `project` with `reason`; the row stays as history with the outcome.
+    /// The owner is the host's: this caller, authenticated as a recorded
+    /// owner of the vault, never a field of the request. Returns `false`
+    /// when the proposal was already dismissed.
+    pub fn projects_goal_proposal_dismiss(
+        &self,
+        project: EntityId,
+        proposal: EntityId,
+        reason: &str,
+    ) -> MemoryResult<bool> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let vault = self.vault();
+        let owner = vault
+            .authenticate_recorded_owner(
+                self.actor(),
+                &self.actor().to_hex(),
+                crate::store::GateDecisionId::now(),
+            )?
+            .ok_or_else(|| {
+                consult_refusal(
+                    MEMORY_CODE_FORBIDDEN,
+                    "a goal proposal is dismissed by a vault owner",
+                    "Ask a vault owner to dismiss it.",
+                )
+            })?;
+        let at = vault.store.clock.now_recorded_at();
+        crate::workspace_roster::dismiss_project_goal_proposal(
+            vault, &owner, project, proposal, reason, at,
+        )
     }
 
     /// Dismiss the proposal one tradeoff question made for `project`'s goal

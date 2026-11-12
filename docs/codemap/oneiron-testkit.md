@@ -14,12 +14,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-testkit-pending-door.rs` | src | s | — | — | The nightly pending-door filter for a nightly job: `oneiron-testkit-pending-door <YYYY-MM-DD>` reads the… |
 | `src/bin/oneiron-testkit-probe-server.rs` | src | s | — | — | A socket-activated HTTP server for the testkit's own tests of `ServerProcess` |
 | `src/bin/oneiron-testkit-seed.rs` | src | s | — | — | Builds a fixture vault from a JSONL seed, for the E2E runner's snapshot fixtures (Fable's verdict, section… |
+| `src/canary.rs` | src | L | 6 struct · 3 enum · 26 fn · 6 const | Canary, CanaryActor, CanaryClass, CanaryScan, CanarySighting, CanaryVault, ClaimBand, PendingClass +1 | The canary leak detector, step 1 (Fable's review of verdict 52, 2026-11-10, section 4 idea 1) |
 | `src/clock.rs` | src | s | 1 struct · 7 fn · 1 const | FakeClock | The fake clock: time that moves only when the test moves it |
 | `src/door.rs` | src | s | 2 fn | — | The in-process verb door: a public verb, by name, with JSON in and JSON out, through… |
+| `src/dreamer.rs` | src | L | 6 struct · 2 enum · 15 fn · 3 const | DreamerAttemptRun, DreamerPass, DreamerPassError, DreamerPassFailure, DreamerPassReport, PassBudget, QueueRow, WakeKind | One in-process Dreamer wake pass on the kit's fake clock, its model calls answered by a [`ScriptedBackend`]… |
 | `src/embedder.rs` | src | s | 1 struct · 5 fn · 1 const | HashingEmbedder | The hashing embedder: stable pseudo-vectors with no model |
 | `src/fault.rs` | src | s | 5 fn | — | Fault injection through doors the engine already has |
 | `src/fixture.rs` | src | m | 4 struct · 1 enum · 19 fn · 1 type | FixtureCache, FixtureError, FixtureVault, SeedRecord, TestVault | Fixture vaults: seed a vault once, copy it for every test |
-| `src/lib.rs` | src | s | 11 mod · 5 re-export | — | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… |
+| `src/lib.rs` | src | s | 13 mod · 7 re-export | — | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… |
 | `src/lint.rs` | src | L | 3 struct · 1 enum · 13 fn · 1 const | Baseline, Finding, LintReport, Rule | The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3… |
 | `src/pending_door.rs` | src | s | 2 struct · 7 fn · 1 const | PendingDoors, WaitingTest | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
 | `src/provider/backend.rs` | src | s | 1 struct · 5 fn | ScriptedBackend | [`ScriptedBackend`]: the script as an in-process [`LlmBackend`], for door tests that hand the engine a… |
@@ -31,7 +33,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/quarantine.rs` | src | s | 2 struct · 5 fn · 3 const | Date, Entry | The flaky-test quarantine and the three nextest tiers |
 | `src/receipt.rs` | src | s | 1 struct · 4 fn | ReceiptReader | The receipt reader: governance receipts read back through the public `vault.receipts` verb, newest first, as… |
 | `src/server.rs` | src | s | 2 struct · 12 fn · 1 const | ServerProcess, ServerSpec | A server process on a free port, started and stopped by the test |
+| `tests/canary.rs` | test | m | — | — | The canary leak detector, step 1: each audience class seeded through public verbs reaches the readers in its… |
 | `tests/door.rs` | test | s | — | — | A verb run through the in-process door leaves a receipt the receipt reader reads back through `vault.receipts` |
+| `tests/dreamer.rs` | test | s | — | — | In-process Dreamer wake passes over a small seeded vault, every model call answered by the scripted backend |
 | `tests/kit.rs` | test | s | — | — | The hashing embedder, the fake clock and fixture copies keep their promises |
 | `tests/lint_rules.rs` | test | s | — | — | The test lint finds sleeps, wall-clock reads, network, fixed ports and real models in test code, and nothing… |
 | `tests/pending_door.rs` | test | s | — | — | A test that waits on a product door runs nightly without failing it until its deadline; past the deadline… |
