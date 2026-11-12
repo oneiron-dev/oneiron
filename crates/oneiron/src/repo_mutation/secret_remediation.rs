@@ -55,7 +55,7 @@ pub use self::view::{
     RepoSecretMarkEntry, RepoSecretMarkSeen, RepoSecretMarks, RepoSecretRemediationLinkEntry,
 };
 use super::git::{canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root};
-use super::proposal::{ProposalBase, RepoProposalReview, invalid};
+use super::proposal::{OwnerRequestAttribution, ProposalBase, RepoProposalReview, invalid};
 use super::snapshot::SnapshotCustody;
 use super::types::{RepoBundleFile, RepoMutationOperation, RepoMutationRequest};
 use crate::Vault;
@@ -82,9 +82,12 @@ pub struct RepoSecretRemediationRequest {
     /// builder reads the current HEAD.
     pub repo_ref: RepoRef,
     pub actor_id: EntityId,
-    pub session_id: EntityId,
-    /// The CLAIM the proposal's provenance names.
-    pub provenance_claim_id: EntityId,
+    /// The SESSION the proposal is attributed to. An owner door names none:
+    /// the engine binds the owner's sitting (`owner_request`).
+    pub session_id: Option<EntityId>,
+    /// The CLAIM the proposal's provenance names. An owner door names none:
+    /// the engine records it once the bundle and its base are final.
+    pub provenance_claim_id: Option<EntityId>,
     pub op_provenance: CodeOpProvenance,
     pub actor_class: Option<EdgeActorClass>,
     /// The review the one proposal is held to.
@@ -209,23 +212,39 @@ impl Vault {
     /// [`Self::propose_repo_secret_remediation`] for an owner door (FIX 7608
     /// slice 8): `owner`'s proof is checked again inside the bundle's own
     /// writing transaction, so a credential revoked while the bundle was
-    /// built stages nothing, and its actor must be the request's.
+    /// built stages nothing, and its actor must be the request's. The
+    /// request names no session or provenance claim: once the bundle and
+    /// its base are final, the engine binds the owner's sitting and an
+    /// `owner_request` claim naming every staged path, attributed to the
+    /// door's request `attribution` on the CODE_ARTIFACT `repository`
+    /// (NO-DOOR CODE-PROPOSAL-ATTRIBUTION). A clean or unresolved
+    /// remediation stages nothing and records no claim.
     ///
     /// # Errors
-    /// As [`Self::propose_repo_secret_remediation`], and a proof no longer
-    /// live, or one naming another actor, at the write.
-    pub fn propose_repo_secret_remediation_as_owner(
+    /// As [`Self::propose_repo_secret_remediation`]; a request that names a
+    /// source; and a proof no longer live, or one naming another actor, at
+    /// the write.
+    pub(crate) fn propose_repo_secret_remediation_as_owner(
         &self,
         owner: &AuthenticatedOwner,
+        repository: EntityId,
         request: RepoSecretRemediationRequest,
+        attribution: &OwnerRequestAttribution,
     ) -> Result<RepoSecretRemediation> {
-        self.propose_repo_secret_remediation_with(request, Some(owner))
+        self.propose_repo_secret_remediation_with(
+            request,
+            Some(OwnerRemediation {
+                owner,
+                repository,
+                attribution,
+            }),
+        )
     }
 
     fn propose_repo_secret_remediation_with(
         &self,
         request: RepoSecretRemediationRequest,
-        owner: Option<&AuthenticatedOwner>,
+        by_owner: Option<OwnerRemediation<'_>>,
     ) -> Result<RepoSecretRemediation> {
         let root = resolve_mutable_repo_root(&request.repo_ref)?;
         let canonical = canonical_repo_ref_for_root(&request.repo_ref, &root)?;
@@ -290,21 +309,31 @@ impl Vault {
             .map(|(path, staged)| RepoBundleFile::new(path.clone(), staged.content.clone(), None))
             .collect();
         let request_actor = request.actor_id;
-        let mutation = RepoMutationRequest {
+        let mut mutation = RepoMutationRequest {
             repo_ref: RepoRef::LocalFolder {
                 path: folder,
                 commit: base_commit.clone(),
             },
             actor_id: Some(request.actor_id),
             actor_class: request.actor_class,
-            session_id: Some(request.session_id),
-            provenance_claim_id: Some(request.provenance_claim_id),
+            session_id: request.session_id,
+            provenance_claim_id: request.provenance_claim_id,
             op_provenance: request.op_provenance,
             operation: RepoMutationOperation::CommitFiles {
                 files: bundle,
                 message: REMEDIATION_MESSAGE.to_owned(),
             },
         };
+        if let Some(by_owner) = &by_owner {
+            // The base is pinned and the bundle is final: bind the sources.
+            self.attribute_owner_request(
+                by_owner.owner,
+                by_owner.attribution,
+                by_owner.repository,
+                &mut mutation,
+            )?;
+        }
+        let owner = by_owner.map(|by_owner| by_owner.owner);
         let staged = self.propose_repo_bundle_checked::<std::convert::Infallible>(
             mutation,
             request.review,
@@ -335,6 +364,15 @@ impl Vault {
             Some(row.id),
         ))
     }
+}
+
+/// An owner door's remediation: the proof judged again at the write, the
+/// CODE_ARTIFACT the remediation is of, and the door's request the engine
+/// attributes the bundle to.
+struct OwnerRemediation<'a> {
+    owner: &'a AuthenticatedOwner,
+    repository: EntityId,
+    attribution: &'a OwnerRequestAttribution,
 }
 
 /// One file of a commit, as its tree holds it.
