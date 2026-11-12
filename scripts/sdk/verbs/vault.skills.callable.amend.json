@@ -5,6 +5,7 @@
   "output": "crate::skill::helper::CallableAmendReceipt",
   "call": "crate::skill::helper::amend_callable_case(memory.vault(), &crate::WriteActor::new(memory.actor(), memory.actor_class()), &input).map_err(crate::memory::MemoryError::from)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_scope": "unrestricted",
   "section": false
 }

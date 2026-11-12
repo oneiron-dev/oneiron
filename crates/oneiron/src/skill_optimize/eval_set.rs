@@ -92,6 +92,7 @@ pub use measurement::{
     JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
     ScoreDirection, eval_seat_canary,
 };
+pub(crate) use measurement::{PairedScores, estimate_paired};
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,

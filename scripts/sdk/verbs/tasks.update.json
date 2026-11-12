@@ -12,6 +12,7 @@
   "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
   "call": "memory.tasks_update_request(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "task_decisions": true,
   "mcp_scope": "addressed",
   "mcp_fields": {

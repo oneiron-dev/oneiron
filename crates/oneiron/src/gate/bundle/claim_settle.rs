@@ -55,7 +55,7 @@ impl Vault {
         id: EntityId,
         action: GateConsentBundleAction,
         actor: WriteActor,
-        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_answer: Option<crate::consent::OwnerAuthoredWrite>,
         now: u64,
     ) -> Result<SettledProposal> {
         self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, None, now, false)
@@ -92,7 +92,7 @@ impl Vault {
         id: EntityId,
         action: GateConsentBundleAction,
         actor: WriteActor,
-        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_answer: Option<crate::consent::OwnerAuthoredWrite>,
         now: u64,
     ) -> Result<SettledProposal> {
         self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
@@ -117,7 +117,7 @@ impl Vault {
         id: EntityId,
         action: GateConsentBundleAction,
         actor: WriteActor,
-        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_answer: Option<crate::consent::OwnerAuthoredWrite>,
         approval_caller: Option<crate::WriteEnvelope>,
         now: u64,
         vetting: bool,
@@ -147,8 +147,14 @@ impl Vault {
             GateConsentBundleAction::Approve => {
                 // Closed before the approval lands, so the row leaves its own
                 // resolution receipt; a refused approval rolls it back.
-                let tray_receipt =
-                    close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer, action, now)?;
+                let tray_receipt = close_settled_tray_row_in_txn(
+                    self,
+                    wtxn,
+                    &id,
+                    owner_answer.as_ref(),
+                    action,
+                    now,
+                )?;
                 let mut approved = body.clone();
                 approved.approval = ClaimApprovalStatus::Approved;
                 let put = BatchOp::Put {
@@ -169,12 +175,16 @@ impl Vault {
                     Some(caller) => crate::batch::ClaimMaterialization::apply_approval_with_caller(
                         self, wtxn, put, true, caller,
                     ),
-                    None => crate::batch::ClaimMaterialization::apply_approval(
+                    // The owner's proof answers the obligation above and
+                    // confirms this approval at the Gate: an owner's
+                    // approval is never parked on the criticality floor.
+                    None => crate::batch::ClaimMaterialization::apply_owner_approval(
                         self,
                         wtxn,
                         put,
                         true,
-                        Some(actor),
+                        actor,
+                        owner_answer,
                     ),
                 }?;
                 self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
@@ -264,8 +274,14 @@ impl Vault {
                 } else {
                     crate::batch::VerifiedClaimTransition::after_consent(&self.store, wtxn, &put)?
                 };
-                let tray_receipt =
-                    close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer, action, now)?;
+                let tray_receipt = close_settled_tray_row_in_txn(
+                    self,
+                    wtxn,
+                    &id,
+                    owner_answer.as_ref(),
+                    action,
+                    now,
+                )?;
                 crate::batch::apply_session_bundle_claim_puts_with_transitions(
                     &self.store,
                     &self.config,

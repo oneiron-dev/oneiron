@@ -23,7 +23,7 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
         Some(AgentDispatchTarget::Workflow(id)) => (Value::from("workflow"), entity_id_value(id)),
         None => (Value::Nil, Value::Nil),
     };
-    Ok(request_map(vec![
+    let mut entries = vec![
         ("target_kind", kind),
         ("target", target),
         ("intent_key", Value::from(call.intent_key.as_str())),
@@ -115,7 +115,20 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
                 .comm
                 .map_or(Value::Nil, |comm| Value::from(comm.as_str())),
         ),
-    ]))
+    ];
+    // SPAWN-KNOB: the powers asked for the child, only when the spawn names
+    // them, so a recorded spawn without them reads as it did; another
+    // request is another spawn.
+    if let Some(powers) = &call.context.powers {
+        entries.push((
+            "powers",
+            Value::from(
+                serde_json::to_string(powers)
+                    .map_err(|_| invalid_code_run_replay("spawn powers encode"))?,
+            ),
+        ));
+    }
+    Ok(request_map(entries))
 }
 
 pub(super) fn ask_request(call: &TaskAskSpec) -> Result<Value> {

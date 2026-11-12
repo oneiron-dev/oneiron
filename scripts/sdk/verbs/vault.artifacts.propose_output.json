@@ -13,6 +13,7 @@
   "call": "memory.artifacts_propose_output(&input)?",
   "file_call": "memory.artifacts_propose_output_file(&input, body)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {},
   "section": false,
   "binding": {

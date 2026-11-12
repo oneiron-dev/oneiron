@@ -5,6 +5,7 @@
   "output": "crate::vault_shape::ShapeRead",
   "call": "memory.shape_read()?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

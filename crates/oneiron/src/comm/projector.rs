@@ -8,6 +8,7 @@ use super::claims::{
 };
 use super::consent::{OPT_OUT_REASON_STOP, rematerialize_party_channel_contact_cache_in_txn};
 use super::head_admission::HeadAdmission;
+use super::opt_out_slots::stop_supersedes_clear_request;
 use super::parties::{
     reconcile_comm_party_twins, resolve_actor_party_in_txn, resolve_or_create_party_in_txn,
 };
@@ -801,7 +802,7 @@ fn apply_projector_rule_in_txn(
                         || normalize_channel_class(&gate_channel)
                             != normalize_channel_class(channel)
                         || claim_ref != candidate.claim_ref
-                        || created_at > occurred_at
+                        || !stop_supersedes_clear_request(occurred_at, created_at)
                     {
                         continue;
                     }

@@ -5,6 +5,7 @@
   "output": "Vec<crate::workspace_roster::RoomUpkeepNudge>",
   "call": "memory.rooms_upkeep_pending(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

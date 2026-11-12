@@ -90,6 +90,17 @@ impl ContextPackBudgetCounts {
     fn increment(&mut self, kind: ContextPackBudgetKind) {
         self.add(kind, 1);
     }
+
+    /// Each kind's larger count.
+    fn max_per_kind(self, other: Self) -> Self {
+        Self {
+            claims: self.claims.max(other.claims),
+            turns: self.turns.max(other.turns),
+            summaries: self.summaries.max(other.summaries),
+            facets: self.facets.max(other.facets),
+            other: self.other.max(other.other),
+        }
+    }
 }
 
 /// Whether `non_base` non-base CLAIMs may stand beside `base` base CLAIMs in
@@ -143,6 +154,20 @@ impl WorldShare<'_> {
 
 /// Returns whether the world share kept a claim out; a kind's zero cap
 /// is not the share's. The `critical` claims take each cap first.
+///
+/// `matched` holds the rows the query matched itself (the channels'
+/// `direct_query_match`). A kind's cap is the larger of two shares of the
+/// room other kinds leave unused: one counted over every candidate, as
+/// before, and one counted over the matched rows alone. So a row only the
+/// effort's now anchor or graph mass found still fills the room it filled
+/// before, but never takes the room a matched row of another kind needs
+/// (RECALL-NOW-ANCHOR-UNGATED-FILLS-SLOTS). The caps may then add up past
+/// the pack's limit; the limit's own cut, after this one, keeps the matched
+/// rows, which the ranker put first. With no match the caps are as before.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the budget reads the pack's caps, share, critical and matched rows"
+)]
 pub(super) fn apply_context_pack_retrieval_budget(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -151,36 +176,35 @@ pub(super) fn apply_context_pack_retrieval_budget(
     budget: ContextPackRetrievalBudget,
     world_share: Option<WorldShare<'_>>,
     critical: &HashSet<EntityId>,
+    matched: &HashSet<EntityId>,
 ) -> Result<bool> {
     if scores.is_empty() {
         return Ok(false);
     }
 
     let mut candidates = Vec::with_capacity(scores.len());
-    let mut available = ContextPackBudgetCounts::default();
-    let (mut base_claims, mut non_base_claims) = (0_usize, 0_usize);
     for scored in scores.iter().copied() {
         let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
             continue;
         };
         let kind = ContextPackBudgetKind::from_entity_type(meta.entity_type);
         let role = world_share.map_or(ShareRole::Free, |share| share.role(kind, &scored.id));
-        match role {
-            ShareRole::Free => available.increment(kind),
-            ShareRole::BaseClaim => base_claims += 1,
-            ShareRole::NonBaseClaim => non_base_claims += 1,
-        }
         candidates.push((scored, kind, role));
     }
-    // Claims the world share can never emit leave their room to other kinds.
     let fraction = world_share.map_or(1.0, |share| share.fraction);
-    available.add(
-        ContextPackBudgetKind::Claim,
-        base_claims + non_base_claim_cap(base_claims, non_base_claims, fraction),
-    );
-
-    let caps =
-        redistribute_context_pack_budget(ContextPackBudgetCounts::from_budget(budget), available);
+    let every_available = available_by_kind(&candidates, fraction, |_| true);
+    let budget_caps = ContextPackBudgetCounts::from_budget(budget);
+    let mut caps = redistribute_context_pack_budget(budget_caps, every_available);
+    if candidates
+        .iter()
+        .any(|(scored, _, _)| matched.contains(&scored.id))
+    {
+        let matched_available = available_by_kind(&candidates, fraction, |id| matched.contains(id));
+        caps = caps.max_per_kind(redistribute_context_pack_budget(
+            budget_caps,
+            matched_available,
+        ));
+    }
     let (rows, share_held_back) = selection::select_rows_critical_first(
         &candidates,
         critical,
@@ -190,6 +214,32 @@ pub(super) fn apply_context_pack_retrieval_budget(
     );
     *scores = rows;
     Ok(share_held_back)
+}
+
+/// Each kind's candidates among the rows `counts` keeps. Claims the world
+/// share can never emit leave their room to other kinds.
+fn available_by_kind(
+    candidates: &[(ScoredEntity, ContextPackBudgetKind, ShareRole)],
+    fraction: f32,
+    counts: impl Fn(&EntityId) -> bool,
+) -> ContextPackBudgetCounts {
+    let mut available = ContextPackBudgetCounts::default();
+    let (mut base_claims, mut non_base_claims) = (0_usize, 0_usize);
+    for (scored, kind, role) in candidates {
+        if !counts(&scored.id) {
+            continue;
+        }
+        match role {
+            ShareRole::Free => available.increment(*kind),
+            ShareRole::BaseClaim => base_claims += 1,
+            ShareRole::NonBaseClaim => non_base_claims += 1,
+        }
+    }
+    available.add(
+        ContextPackBudgetKind::Claim,
+        base_claims + non_base_claim_cap(base_claims, non_base_claims, fraction),
+    );
+    available
 }
 
 /// Cuts an `All`-world pack's scored rows to `limit` under its world share

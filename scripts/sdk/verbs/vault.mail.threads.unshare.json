@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailThreadShareReceipt",
   "call": "memory.mail_threads_unshare(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

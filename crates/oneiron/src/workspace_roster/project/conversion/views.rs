@@ -6,8 +6,9 @@ use super::*;
 
 impl Vault {
     /// Bind an existing typed TASK to its room thread before conversion, as
-    /// `actor`'s act. The binding is stored on the room turn, not inferred
-    /// from task prose. A private thread (FIX 2951) is bound only from its
+    /// `actor`'s act, in any room (THREAD-TASK-EVERY-ROOM). The binding is
+    /// stored on the room turn, not inferred from task prose. `actor` reads
+    /// the thread now; a private thread (FIX 2951) is bound only from its
     /// audience (FIX 3125); to anyone else it is an unknown thread.
     pub fn bind_room_thread_task(
         &self,
@@ -43,13 +44,25 @@ impl Vault {
                 .project_conversion_policy()
                 .unwrap_or_default();
         let mut row = room_thread_in(self, txn, room, thread)?;
-        rooms::require_thread_audience_in(self, txn, room, thread, actor)?;
+        // The binder reads the thread now, in any room: a private thread's
+        // audience first (FIX 3125), then a seat, a Ready join or the room's
+        // host (THREAD-TASK-EVERY-ROOM).
+        let access = rooms::require_thread_reader(self, txn, room, thread, actor)?;
         // Its census counts the turns `actor` reads alone (FIX 5654).
         let all = rooms::thread_turns_in(self, txn, room, thread)?;
         let (turns, _) = readable_turns_in(self, txn, all, actor)?;
-        let source = rooms::room_in(self, txn, room)?;
-        let members = source.member_ids.into_iter().collect();
-        crate::task_verb::room_thread_task_roster_in(self, txn, task, &members)?;
+        let members = access.member_ids.into_iter().collect();
+        // A home room keeps its project's roster rule. In any other room the
+        // TASK's owner sits on the room's roster and an assignee off it
+        // stands in this thread now, on a live Ready join.
+        if access.home.is_some() {
+            crate::task_verb::room_thread_task_roster_in(self, txn, task, &members)?;
+        } else {
+            let read: &heed::RoTxn<'_> = txn;
+            crate::task_verb::room_thread_task_standing_in(self, read, task, &members, |holder| {
+                rooms::stands_in_thread_in(self, read, room, thread, holder)
+            })?;
+        }
         if self.get_entity_type_in_txn(txn, &task)? != Some(ENTITY_TYPE_TASK)
             || !crate::task_verb::thread_task_is_open_in(self, txn, task)?
             || row.converted_project.is_some()

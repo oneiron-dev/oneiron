@@ -282,5 +282,25 @@ pub(crate) fn erase_questions_for_actor_in_txn(
     for seq in &unit_asks {
         UNIT_ASKS.delete(&vault.store, wtxn, seq)?;
     }
+    // A trained head bound to an erased question version goes with it, its
+    // run back to scored (FIX 3864).
+    for question in &doomed {
+        crate::training_pack::drop_question_heads_in_txn(&vault.store, wtxn, *question, None)?;
+        crate::training_pack::drop_question_trials_in_txn(&vault.store, wtxn, *question, None)?;
+    }
+    for version in &cascades {
+        crate::training_pack::drop_question_heads_in_txn(
+            &vault.store,
+            wtxn,
+            version.id,
+            Some(version.version),
+        )?;
+        crate::training_pack::drop_question_trials_in_txn(
+            &vault.store,
+            wtxn,
+            version.id,
+            Some(version.version),
+        )?;
+    }
     Ok(())
 }

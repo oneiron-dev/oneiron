@@ -22,7 +22,6 @@ use oneiron::booking::EventTypeKey;
 use oneiron::booking::anti_abuse::{
     BookingRequestFacts, booking_ip_hash, quarantine_borderline_submission,
 };
-use oneiron::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression};
 use oneiron::channel_identity::{ChannelIdentity, ChannelIdentityBinding, SelfHeldShape};
 use oneiron::channel_identity_provider::native_mail::{
@@ -32,7 +31,7 @@ use oneiron::channel_identity_provider::stalwart::{
     NativeMailReputationReport, NativeMailSignalSource, StalwartConfig,
 };
 use oneiron::channel_identity_provider::{LineChat, LineChatKind};
-use oneiron::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF;
+use oneiron::claim::relationship_predicates::PREDICATE_RELATIONSHIP_LABEL;
 use oneiron::code_revision::CodeSessionRun;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::context_board::{BoardSelection, BoardTurn};
@@ -300,42 +299,47 @@ fn turn_vad_annotation_is_born_in_a_stored_facet() {
     );
 }
 
+/// S99: a relationship label on a subject that is no PERSON is born in the
+/// vault default facet. The label writer is the one caller of
+/// `put_relationship_claim` left: `bind_member_person` writes through the
+/// candidate door since 1af296ab311, whose birth takes the vault default
+/// facet.
 #[test]
-fn member_binding_on_a_non_person_member_is_born_in_the_default_facet() {
+fn relationship_label_on_a_non_person_subject_is_born_in_the_default_facet() {
     let (_directory, vault) = fresh_vault();
-    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_PERSON_REF, true)]);
-    let member = stored_row(&vault, ENTITY_TYPE_ASSET, b"member");
-    let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"person");
-    let claim = oneiron::federation::bind_member_person(
+    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_LABEL, true)]);
+    let subject = stored_row(&vault, ENTITY_TYPE_ASSET, b"labelled");
+    let claim = oneiron::federation::put_member_relationship_label(
         &vault,
-        member,
-        person,
+        subject,
+        "client",
+        ClaimApprovalStatus::Approved,
         TimeRange { start: 13, end: 13 },
         13,
     )
-    .expect("a non-PERSON member is bound");
+    .expect("a non-PERSON subject is labelled");
     let body = claim_in_stored_facet(&vault, &claim);
     assert_eq!(body.scope_facet, default_facet(&vault));
 }
 
 #[test]
-fn member_binding_on_a_person_member_keeps_its_substrate() {
+fn relationship_label_on_a_person_keeps_its_substrate() {
     let (_directory, vault) = fresh_vault();
-    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_PERSON_REF, true)]);
-    let member = stored_row(&vault, ENTITY_TYPE_PERSON, b"member");
-    let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"person");
-    let claim = oneiron::federation::bind_member_person(
+    declare_predicates_normal(&vault, &[(PREDICATE_RELATIONSHIP_LABEL, true)]);
+    let person = stored_row(&vault, ENTITY_TYPE_PERSON, b"labelled");
+    let claim = oneiron::federation::put_member_relationship_label(
         &vault,
-        member,
         person,
+        "client",
+        ClaimApprovalStatus::Approved,
         TimeRange { start: 13, end: 13 },
         13,
     )
-    .expect("a PERSON member is bound");
+    .expect("a PERSON is labelled");
     let body = claim_in_stored_facet(&vault, &claim);
     assert_eq!(
         body.scope_facet,
-        oneiron::claim::substrate_facet_id(member).expect("substrate id")
+        oneiron::claim::substrate_facet_id(person).expect("substrate id")
     );
 }
 
@@ -588,7 +592,6 @@ fn board_turn_of_an_agent_definition_owner_is_born_in_a_stored_facet() {
 #[test]
 fn do_not_contact_on_an_agent_definition_is_born_in_a_stored_facet() {
     let (_directory, vault, _owner) = rooted_vault();
-    declare_predicates_normal(&vault, &[(PREDICATE_COMM_DO_NOT_CONTACT, true)]);
     let subject = define_agent(&vault, "claim-facet-suppressed").expect("agent definition");
     let evidence = stored_row(&vault, ENTITY_TYPE_TURN, b"unsubscribe");
     let receipt = apply_suppression(

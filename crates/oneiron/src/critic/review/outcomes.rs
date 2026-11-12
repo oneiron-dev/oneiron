@@ -147,6 +147,7 @@ pub(super) fn record_review_outcome_in_txn(
         id,
         anchor,
         accepted,
+        recheck: source_recheck_in_txn(vault, txn, source)?,
     };
     if !record_outcome_evidence_in_txn(vault, txn, verdict_claim, &artifact, &outcome, at)?
         && replaced
@@ -169,6 +170,40 @@ struct StandingOutcome {
     id: EntityId,
     anchor: crate::learning::Anchor,
     accepted: bool,
+    /// The completed directed recheck a seal recheck outcome rests on.
+    recheck: Option<RecheckFacts>,
+}
+
+/// What a completed directed recheck lends its critique's evidence, as the
+/// seal engine records a directed check's finding: its judge and the time it
+/// checked (ruling LEARN-CRITIC-ANCHOR Q2).
+struct RecheckFacts {
+    judge: String,
+    checked_at: u64,
+}
+
+/// The completed directed recheck `source` names: a seal recheck's; none for
+/// any other source.
+fn source_recheck_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: ReliabilityOutcomeSource,
+) -> Result<Option<RecheckFacts>> {
+    let ReliabilityOutcomeSource::SealRecheck { attempt } = source else {
+        return Ok(None);
+    };
+    Ok(vault
+        .sealed_attempt_receipt_in_txn(txn, attempt)?
+        .and_then(|receipt| {
+            receipt.checks.into_iter().find(|check| {
+                check.request.kind == crate::self_heal::audit::SealCheckKind::ConfessionRecheck
+            })
+        })
+        .and_then(|check| check.outcome)
+        .map(|outcome| RecheckFacts {
+            judge: outcome.judge_revision,
+            checked_at: outcome.checked_at,
+        }))
 }
 
 /// The `review.outcome` key of `artifact`, a critique of the review `verdict`.
@@ -179,7 +214,7 @@ fn outcome_key(verdict: &EntityId, artifact: &str) -> String {
 /// The trusted, surfaceable `review.outcome` of the critique `artifact` of
 /// the review `verdict` in `session`: the one that stands, since a later
 /// outcome supersedes it (FIX 12160).
-fn standing_outcome_in_txn(
+pub(super) fn standing_outcome_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     session: &EntityId,
@@ -241,18 +276,23 @@ fn record_outcome_evidence_in_txn(
         .ok_or(Error::EntityNotFound)?
         .occurred
         .start;
-    crate::learning::record_evidence_in_txn(
-        vault,
-        txn,
-        &artifact.calibration,
-        &LearningEvidence::anchored(
-            receipt,
-            evidence_at,
-            outcome.anchor,
-            Observation::Success(outcome.accepted),
-        ),
-        at,
-    )?;
+    // A recheck's evidence is dated when it checked, as the seal engine dates
+    // its own finding, never when a critique cited it.
+    let evidence_at = outcome
+        .recheck
+        .as_ref()
+        .map_or(evidence_at, |recheck| recheck.checked_at);
+    let mut evidence = LearningEvidence::anchored(
+        receipt,
+        evidence_at,
+        outcome.anchor,
+        Observation::Success(outcome.accepted),
+    );
+    evidence.judge = outcome
+        .recheck
+        .as_ref()
+        .map(|recheck| recheck.judge.clone());
+    crate::learning::record_evidence_in_txn(vault, txn, &artifact.calibration, &evidence, at)?;
     Ok(true)
 }
 
@@ -302,16 +342,50 @@ fn owed_outcome_in_txn(
         id: *id,
         anchor: source.anchor()?,
         accepted,
+        recheck: source_recheck_in_txn(vault, txn, source)?,
     };
     Ok(Some((verdict, artifact, outcome)))
 }
 
 /// The source and acceptance a `review.outcome` value records.
-fn outcome_of(value: &Value) -> Result<(ReliabilityOutcomeSource, bool)> {
+pub(super) fn outcome_of(value: &Value) -> Result<(ReliabilityOutcomeSource, bool)> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid_critic_config("review outcome value"))?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid_critic_config("review outcome value"))
+}
+
+/// The critiques a standing `review.outcome` settles from the directed seal
+/// recheck of the sealed try `attempt`: each one's review verdict and critique.
+pub(super) fn standing_recheck_outcomes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Vec<(EntityId, String)>> {
+    let mut settled = Vec::new();
+    for id in crate::claim::claim_ids_for_predicate_in_txn(&vault.store, txn, "review.outcome")? {
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+            continue;
+        };
+        if !crate::claim::claim_surfaceable(&body) || !trusted_claim(vault, txn, &id, &body)? {
+            continue;
+        }
+        let Ok((ReliabilityOutcomeSource::SealRecheck { attempt: judged }, _)) =
+            outcome_of(&body.value)
+        else {
+            continue;
+        };
+        let Some((verdict, artifact)) = candidate_evidence(&body)
+            .and_then(Value::as_str)
+            .and_then(|key| key.split_once(':'))
+        else {
+            continue;
+        };
+        if judged == attempt {
+            settled.push((EntityId::from_hex(verdict)?, artifact.to_owned()));
+        }
+    }
+    Ok(settled)
 }
 
 /// Records the calibration evidence every standing critique outcome still

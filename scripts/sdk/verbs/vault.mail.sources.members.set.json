@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailSourceView",
   "call": "memory.mail_sources_members_set(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

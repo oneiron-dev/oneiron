@@ -5,6 +5,7 @@
   "output": "crate::memory::code_doors::CodeConflictView",
   "call": "memory.code_conflict_record_as(&memory.embedded_owner(\"vault.code.conflict_record\")?, input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

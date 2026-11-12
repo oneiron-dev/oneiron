@@ -22,11 +22,9 @@ use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, ModelId, ModelLocality, Vault,
 };
 use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
-use oneiron_agent_runtime::code_sandbox::wasmtime_runtime::{
-    ComponentBudget, WasmtimeComponentRuntime,
-};
+use oneiron_agent_runtime::code_sandbox::wasmtime_runtime::ComponentBudget;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use crate::ai_host::browser_planner::BrowserPlannerRuns;
 use crate::models::{InjectedRuns, LoggedReceipts, ModelRouter};
@@ -117,9 +115,6 @@ pub struct McpQuickJsProvider {
     /// the reader children of a run that spends under no scope; none runs
     /// no such child.
     host_meter: Option<BudgetGuard>,
-    /// The runtime reader children are made fresh from, compiled once at
-    /// the first child.
-    reader_template: Mutex<Option<WasmtimeComponentRuntime>>,
     /// The input window of the model reader children and summaries run
     /// on, in tokens, when the host knows it.
     reader_window_tokens: Option<u64>,
@@ -246,7 +241,6 @@ impl McpQuickJsProvider {
             code_check: None,
             reader_meter: None,
             host_meter: None,
-            reader_template: Mutex::new(None),
             reader_window_tokens: None,
             planned_route: None,
             planned_meter: None,
@@ -499,20 +493,10 @@ impl McpCodeModeProvider for McpQuickJsProvider {
             Err(_) => Box::new(UnavailableRuntime),
         }
     }
-    /// A child shares the template's compiled code and nothing else: each
+    /// A child shares the factory's compiled code and nothing else: each
     /// is fresh, with no store, capability or adapter of another run's.
     fn reader_runtime(&self) -> Box<dyn JsCodeModeRuntime + Send> {
-        let mut template = self
-            .reader_template
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if template.is_none() {
-            *template = self.runtime.runtime().ok();
-        }
-        match template.as_ref() {
-            Some(template) => Box::new(template.fresh()),
-            None => Box::new(UnavailableRuntime),
-        }
+        self.runtime()
     }
     fn reader_backend(
         &self,

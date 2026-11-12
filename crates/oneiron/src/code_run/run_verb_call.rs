@@ -152,6 +152,7 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                 ask: args.ask,
                 intent_key: args.intent_key,
                 bound: None,
+                powers: args.powers,
             }))
         }
         RunVerb::Summarize => {

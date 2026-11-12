@@ -120,6 +120,7 @@ fn put_indexed_claim(
             occurred_at: Some(1),
             learned_at: Some(1),
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     vault

@@ -368,6 +368,9 @@ pub struct SelfReaderSpawnCall {
     pub ask: String,
     pub intent_key: String,
     pub bound: Option<DelegatedSource>,
+    /// The powers the reader child holds (SPAWN-KNOB), narrower than its
+    /// parent's; absent, the parent's.
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
 }
 
 /// `tasks.update({task_ref, resultRef})` from a reader child: its task and
