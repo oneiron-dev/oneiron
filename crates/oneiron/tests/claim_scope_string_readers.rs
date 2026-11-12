@@ -5,8 +5,10 @@
 //! all" (oneiron-store write_envelope/claim_body/scope.rs). Readers that took
 //! only a map refused such a claim with `scope must be a map`, so the owner's
 //! demotion, an ask answered about it and a SameAs derive naming it all
-//! failed. Each test drives a public door on a real critic outcome claim,
-//! made by the critic's own producer (`record_review_outcome`).
+//! failed. The demotion and ask tests drive a public door on a real critic
+//! outcome claim, made by the critic's own producer (`record_review_outcome`);
+//! the SameAs test needs the Dreamer's landing policy, so it puts two claims
+//! of the same shape in a Dreamer vault (see its doc).
 //!
 //! The review fixture is the one of `tests/verb_vault_critic_review.rs`: the
 //! public `CriticReviewSubmit::bind` and `review_artifact`, with a scripted
@@ -553,21 +555,74 @@ fn an_ask_about_a_critic_outcome_claim_binds_its_answer() -> TestResult {
     Ok(())
 }
 
+/// A claim with the critic outcome's shape (critic/review/outcomes.rs:114-125:
+/// `review.outcome` about the review SESSION, Observed, Auto, the finding key
+/// as a String scope), put through the public `Vault::put_claim` door.
+#[cfg(oneiron_test_support)]
+fn put_outcome_shaped_claim(
+    vault: &Vault,
+    session: EntityId,
+    finding_key: &str,
+) -> Result<EntityId, Box<dyn std::error::Error>> {
+    use oneiron::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
+    let mut body = ClaimBody::new(
+        "review.outcome",
+        ClaimSubject::Entity(session),
+        rmpv::Value::Array(vec![
+            rmpv::Value::from("owner_verdict"),
+            rmpv::Value::Boolean(true),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::Observed);
+    body.scope = Some(rmpv::Value::from(finding_key));
+    let id = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_claim(&id, &body, TimeRange { start: at, end: at }, at)?;
+    Ok(id)
+}
+
 /// G71 (with_evidence_taint) on the derive SameAs: a SameAs between two
-/// critic outcome claims copies the anchor's scope onto its proposed status
-/// claim, then stamps the evidence taint. On main the whole derive commit
-/// aborts with `scope must be a map`.
+/// claims with the critic outcome's String scope copies the anchor's scope
+/// onto its proposed status claim, then stamps the evidence taint. On main
+/// the whole derive commit aborts with `scope must be a map`.
+///
+/// The derive verdict runs before any scope read (derive/link.rs:60-67) and
+/// lands nothing for an actor with no Generated Auto row, so the owner's
+/// SameAs stops at `gate.deny.derive.no_landing_rows` on main and on the
+/// head alike. The Dreamer of a vault with the shipped policy
+/// (`open_dreamer_vault`, as tests/derive_links.rs) is the actor that reaches
+/// the scope read; that vault does not host the critic review fixture, so
+/// its two claims are put with the critic outcome's shape.
 #[cfg(oneiron_test_support)]
 #[test]
-fn a_same_as_between_critic_outcome_claims_commits() -> TestResult {
+fn a_same_as_between_critic_outcome_shaped_claims_commits() -> TestResult {
+    use oneiron::test_doors::consolidation::open_dreamer_vault;
     use oneiron::test_doors::derive::{Derived, Named, SameAs, commit};
+    use oneiron::test_doors::steward::dreamer;
 
-    let fx = fixture()?;
-    let [first, second] = outcome_claims(&fx)?;
+    let dir = tempfile::tempdir()?;
+    let vault = open_dreamer_vault(dir.path(), "reader")?;
+    let dreamer = dreamer(&vault)?;
+    let session = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_entity(
+        &session,
+        ENTITY_TYPE_SESSION,
+        TimeRange { start: at, end: at },
+        at,
+        &rmp_serde::to_vec_named(&json!({"title": "critic review fixture"}))?,
+    )?;
+    let first = put_outcome_shaped_claim(&vault, session, "flaw:missing_guard")?;
+    let second = put_outcome_shaped_claim(&vault, session, "flaw:invalid_bound")?;
     let committed = commit(
-        &fx.vault,
-        fx.owner,
-        EdgeActorClass::Human,
+        &vault,
+        dreamer,
+        EdgeActorClass::System,
         "run-links",
         &[Derived::SameAs(SameAs {
             local: "same_as",
@@ -575,7 +630,7 @@ fn a_same_as_between_critic_outcome_claims_commits() -> TestResult {
             target: Named::Stored(second),
         })],
     )
-    .map_err(|error| format!("the derive commit naming two critic outcomes: {error:?}"))?;
+    .map_err(|error| format!("the derive commit naming two outcome claims: {error:?}"))?;
     let [item] = committed.items.as_slice() else {
         return Err(format!("one item: {:?}", committed.items).into());
     };
@@ -583,8 +638,7 @@ fn a_same_as_between_critic_outcome_claims_commits() -> TestResult {
     let [status] = item.rows.as_slice() else {
         return Err(format!("one status claim: {:?}", item.rows).into());
     };
-    let body = fx
-        .vault
+    let body = vault
         .get_claim(status)?
         .ok_or("the proposed status claim is stored")?;
     let Some(rmpv::Value::Map(scope)) = &body.scope else {
