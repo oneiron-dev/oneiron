@@ -703,24 +703,35 @@ impl QueueTaskBrief {
 }
 
 impl Memory<'_> {
-    /// Refuses `brief` when it pins a plan-doc the owner has not approved at
-    /// the pinned revision (plan mode; Engine ruling Fri 13 Nov 03:05): an
+    /// Plan mode's admission of a TASK for `assignee` under `brief` (Engine
+    /// ruling Fri 13 Nov 03:05, RUN = A and SETTING = A). Refuses a brief that
+    /// pins a plan-doc the owner has not approved at the pinned revision: an
     /// agent's run starts from a plan only once the owner approved the text
-    /// it pins. The vault owner's own brief is never refused.
-    pub(super) fn require_approved_plan_pins_in(
+    /// it pins. Refuses a TASK for an agent whose plan mode is `required`
+    /// unless its brief pins such an approved plan; a brief-less create
+    /// (`brief` `None`) pins none. The vault owner's own TASK is never
+    /// refused.
+    pub(super) fn require_plan_admission_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        brief: &QueueTaskBrief,
+        assignee: Option<TaskAssignee>,
+        brief: Option<&QueueTaskBrief>,
     ) -> MemoryResult<()> {
         let vault = self.vault();
         if crate::memory::actor_is_vault_owner_in_txn(vault, txn, self.actor(), self.actor_class())?
         {
             return Ok(());
         }
-        for pin in &brief.context.read_first {
+        let mut pins_approved_plan = false;
+        for pin in brief
+            .into_iter()
+            .flat_map(|brief| &brief.context.read_first)
+        {
             match crate::note::plan_doc_pin_in_txn(vault, txn, pin.target)? {
                 None => {}
-                Some((revision, PlanDocState::Approved)) if revision == pin.digest => {}
+                Some((revision, PlanDocState::Approved)) if revision == pin.digest => {
+                    pins_approved_plan = true;
+                }
                 Some(_) => {
                     return Err(super::highway::invalid_state(
                         "gate.plan_not_approved: the brief pins a plan-doc the owner has not approved at the pinned revision",
@@ -728,6 +739,9 @@ impl Memory<'_> {
                     ));
                 }
             }
+        }
+        if !pins_approved_plan && let Some(TaskAssignee::AgentDef { agent_def_ref }) = assignee {
+            crate::agent_def::refuse_unplanned_run_in_txn(&vault.store, txn, agent_def_ref)?;
         }
         Ok(())
     }

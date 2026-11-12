@@ -414,16 +414,21 @@ impl Memory<'_> {
     ///
     /// # Errors
     ///
-    /// A body that is no plan ([`PlanDocBody`]'s rules), and the refusals
+    /// A body that is no plan ([`PlanDocBody`]'s rules); an actor whose plan
+    /// mode is `off` (`gate.deny.plan_mode.off`); and the refusals
     /// `vault.notes.create` meets.
     pub fn propose_plan_doc(&self, input: &PlanDocProposeRequest) -> MemoryResult<PlanDocView> {
         input.plan.validate()?;
         let vault = self.vault();
+        let proposer = self.actor();
         let proposed_at = crate::unix_seconds_now();
         let (_, view): (EntityRefReceipt, PlanDocView) = self.create_note_then(
             PLAN_DOC_NOTE_KIND,
             &input.plan.to_markdown(),
             |txn, plan| {
+                // Plan mode `off` (SETTING = A): the owner switched this
+                // agent's plans off, so it proposes none.
+                crate::agent_def::refuse_plan_from_off_agent_in_txn(&vault.store, txn, proposer)?;
                 if let Some(agent_def_ref) = input.agent_def_ref {
                     crate::task_verb::TaskAssignee::AgentDef { agent_def_ref }
                         .validate_in(vault, txn)?;

@@ -102,6 +102,11 @@ pub enum GateDenialReason {
     DenyAgentPowerSaveAgentOff,
     /// SPAWN-KNOB: a parent asked its child for a power the parent does not hold.
     DenyAgentPowerAboveParent,
+    /// Plan mode: a run of an agent whose plan mode is `required` pins no plan
+    /// the owner approved.
+    DenyPlanModeRequired,
+    /// Plan mode: an agent whose plan mode is `off` proposed a plan.
+    DenyPlanModeOff,
 }
 
 impl GateDenialReason {
@@ -138,6 +143,8 @@ impl GateDenialReason {
             Self::DenyAgentPowerSpawnOff => "gate.deny.agent_power.spawn_off",
             Self::DenyAgentPowerSaveAgentOff => "gate.deny.agent_power.save_agent_off",
             Self::DenyAgentPowerAboveParent => "gate.deny.agent_power.above_parent",
+            Self::DenyPlanModeRequired => "gate.deny.plan_mode.required",
+            Self::DenyPlanModeOff => "gate.deny.plan_mode.off",
         }
     }
 
@@ -176,6 +183,8 @@ impl GateDenialReason {
             "gate.deny.agent_power.spawn_off" => Some(Self::DenyAgentPowerSpawnOff),
             "gate.deny.agent_power.save_agent_off" => Some(Self::DenyAgentPowerSaveAgentOff),
             "gate.deny.agent_power.above_parent" => Some(Self::DenyAgentPowerAboveParent),
+            "gate.deny.plan_mode.required" => Some(Self::DenyPlanModeRequired),
+            "gate.deny.plan_mode.off" => Some(Self::DenyPlanModeOff),
             _ => None,
         }
     }
@@ -197,7 +206,9 @@ impl GateDenialReason {
             | Self::DenyUnresolvedRecordReference
             | Self::DenyAgentPowerSpawnOff
             | Self::DenyAgentPowerSaveAgentOff
-            | Self::DenyAgentPowerAboveParent => GateDenialOutcome::Deny,
+            | Self::DenyAgentPowerAboveParent
+            | Self::DenyPlanModeRequired
+            | Self::DenyPlanModeOff => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor
