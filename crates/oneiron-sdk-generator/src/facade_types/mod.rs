@@ -64,6 +64,8 @@ pub const CRATES: &[(&str, &str)] = &[
     ("oneiron_guest", "crates/oneiron-guest/src"),
     ("oneiron_wake_contract", "crates/oneiron-wake-contract/src"),
     ("oneiron_remote", "crates/oneiron-remote/src"),
+    ("oneiron_verb_wire", "crates/oneiron-verb-wire/src"),
+    ("oneiron_records", "crates/oneiron-records/src"),
 ];
 
 /// The source directory `CRATES` gives a crate name (`CRATES[crate]`), or `None` for a name it does not hold.
@@ -81,6 +83,7 @@ pub(crate) const EAGER: &[&str] = &[
     "oneiron_authority",
     "oneiron_model",
     "oneiron_retrieval",
+    "oneiron_verb_wire",
 ];
 
 /// A bare row type is named from the SDK module, as its generated fn names it.
