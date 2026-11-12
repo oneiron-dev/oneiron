@@ -600,20 +600,27 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
     let facet = EntityId::now();
     vault
         .put_entity(
-            &id,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"turn",
-        )
-        .unwrap();
-    vault
-        .put_entity(
             &facet,
             oneiron::registry::ENTITY_TYPE_FACET,
             TimeRange { start: 1, end: 1 },
             1,
             b"turn facet",
+        )
+        .unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    vault
+        .set_default_facet(
+            facet,
+            oneiron::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"turn",
         )
         .unwrap();
     vault
@@ -635,6 +642,7 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
     );
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let server = SyncServer::new(
         vault.clone(),
         SyncServerConfig {

@@ -76,6 +76,7 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
             )
             .unwrap();
     }
+    crate::test_credentials::install_fixture_keystore(&server_vault, b"residence-phone-root");
     let server = Arc::new(
         SyncServer::new(
             server_vault.clone(),
@@ -307,6 +308,7 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
         &original,
     )
     .unwrap();
+    crate::test_credentials::install_fixture_keystore(&home, b"residence-causal-root");
     let server = Arc::new(
         SyncServer::new(
             home.clone(),
@@ -489,8 +491,16 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
             > 0,
         "first edit must carry a local Loro op"
     );
-    let mut persisted_update = 1u64.to_be_bytes().to_vec();
-    persisted_update.extend_from_slice(&direct_delta);
+    let persisted_update = transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::ResidenceUpdate,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: Some(1),
+        payload: direct_delta.clone(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap();
     socket
         .send(Message::Binary(
             transport::encode_window_sync(
@@ -710,6 +720,7 @@ impl WorldResidence {
         .unwrap();
         body.world = Some(world);
         home.put_claim(&claim, &body, at, now).unwrap();
+        crate::test_credentials::install_fixture_keystore(&home, b"residence-world-root");
         let server = Arc::new(
             SyncServer::new(
                 home.clone(),

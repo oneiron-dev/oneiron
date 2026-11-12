@@ -109,6 +109,7 @@ fn restore_retains_money_facts_rebuilds_rollups_and_resets_host_budget() {
     ledger
         .vault
         .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    ledger.vault.ensure_vault_key().unwrap();
     ledger.vault.snapshot_checkpoint(&snapshot, 200).unwrap();
     let (restored, _) = oneiron::Vault::restore_checkpoint(
         &snapshot,
