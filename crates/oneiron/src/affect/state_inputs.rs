@@ -268,6 +268,9 @@ fn put_signal_in_txn(
     let id =
         crate::codebase::entity_id_from_hash_material(b"oneiron:state-index-signal:v1", &[&bytes])?;
     if vault.get_claim_in_txn(txn, &id)?.is_none() {
+        // Only a PERSON subject has a substrate FACET; any other subject takes
+        // the vault default facet (a birth gate refusal otherwise, #4389).
+        body.scope_facet = vault.claim_put_facet_keeping_in_txn(txn, &id, body.scope_facet)?;
         vault.put_claim_in_txn(txn, &id, &body, window, window.end)?;
     }
     Ok(id)

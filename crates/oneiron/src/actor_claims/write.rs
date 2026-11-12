@@ -237,7 +237,7 @@ pub(super) fn write_born_actor_claim_in_txn(
 /// The `actor.*` constructor facet: PERSON derives its own substrate FACET,
 /// every other actor reuses its stored birth FACET when one names a FACET,
 /// else the vault default — the same rule as provenance.
-pub(super) fn actor_claim_facet_in_txn(
+pub(crate) fn actor_claim_facet_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,

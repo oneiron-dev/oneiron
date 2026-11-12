@@ -41,7 +41,10 @@ impl Vault {
     ) -> Result<VadAnnotation> {
         annotation.vad.validate()?;
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
-        let claim_body = vad_annotation_claim_body(id, &annotation)?;
+        let mut claim_body = vad_annotation_claim_body(id, &annotation)?;
+        // The subject is a TURN or MESSAGE, which has no substrate FACET: the
+        // annotation is born in the facet its row was born under.
+        claim_body.scope_facet = self.claim_put_facet_of_record_in_txn(wtxn, &claim_id, *id)?;
         let data = encode_claim_body(&claim_body)?;
         validate_claim_body_bytes(&data, false)?;
 

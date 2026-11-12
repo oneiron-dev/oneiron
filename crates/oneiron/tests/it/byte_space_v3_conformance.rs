@@ -93,8 +93,9 @@ const CANON_RESERVED_UNREGISTERED: &[(u8, &str)] = &[
     // registering it is what that state was in flight TOWARDS, so the reserve
     // is dropped rather than the registration being hidden from conformance.
     // SKILL_HUB (92) now has C02's live substrate; it is no longer unregistered.
+    // CLAIM_CLASS_DESCRIPTOR (91) is registered, and canon assigns it since
+    // docs bed8401c1c4 (oneiron-docs#1027).
     (75, "SUSPICIOUS_WAKE"),
-    (91, "CLAIM_CLASS_DESCRIPTOR"),
 ];
 
 fn fixture_path() -> PathBuf {
@@ -266,20 +267,6 @@ fn byte_space_v3_matches_vendored_canon() {
             kind.id
         );
     }
-
-    // ONE-2060 explicitly adds WORKFLOW in this cluster. The read-only docs
-    // snapshot predates that contract. Keep its provenance/hash intact and pin
-    // this one allocation separately until canon incorporates it; never accept
-    // arbitrary extra registry rows. See impl-notes/W7-C02.md.
-    assert!(
-        canon_bytes.insert(18, "WORKFLOW").is_none(),
-        "canon now owns WORKFLOW; remove the ticket overlay"
-    );
-    let workflow = entity_type_registry_entry(18).expect("WORKFLOW registration");
-    assert_eq!(workflow.kind, "WORKFLOW");
-    assert_eq!(workflow.short_id_prefix, Some("wf"));
-    assert_eq!(workflow.classification, EntityClassification::Core);
-    assert_eq!(workflow.zone, TypeByteZone::Core);
 
     // Every reserve named above must actually appear in canon — a reserve that
     // canon dropped would otherwise sit here forever unnoticed.

@@ -427,6 +427,7 @@ pub(super) fn run_board_sections(
         people
     };
     rows.attach_people(
+        &server.vault,
         &oneiron::context_board::PeopleView::new(&people, resident),
         &children,
     );

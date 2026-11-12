@@ -21,9 +21,21 @@ pub(crate) struct DeletionGateContext {
     read_frontier_hash: [u8; 32],
     room_role: Option<crate::store::conversation_body::RoomRole>,
     room: Option<EntityId>,
-    /// The role and Grant an archive delete was admitted under (OF-449 L4),
-    /// in place of the owner binding; `None` on every other delete.
-    archive: Option<crate::federation::ArchiveDeleteAuthority>,
+    /// The role and Grant the delete authority admitted a non-owner's
+    /// delete under, in place of the owner binding, and the door it came
+    /// through; `None` on every other delete.
+    admitted: Option<(crate::federation::DeleteAuthority, AdmittedDeleteDoor)>,
+}
+
+/// The door a delete the delete authority admitted came through: the
+/// cleanup archive's (OF-449 L4) or a record's own (ARCH-0043 DEL-2). Its
+/// decision record names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdmittedDeleteDoor {
+    /// `Memory::confirm_archive_delete`.
+    Archive,
+    /// `Memory::safe_delete` once the owner predicate refused the caller.
+    Record,
 }
 
 /// The facade's gated-deletion carrier: the evaluated decision record PLUS the
@@ -114,7 +126,7 @@ impl<'a> GatedDeletion<'a> {
         Some((self.context.room?, self.context.room_role?))
     }
 
-    /// Who a legal-hold refusal of this delete names. An archive delete is
+    /// Who a legal-hold refusal of this delete names. An admitted delete is
     /// its admitted role's; a room delete is a member's; a human's delete
     /// with no room passed the owner binding this gate carries.
     pub(super) fn hold_actor(&self) -> crate::store::legal_hold::HoldActor {
@@ -128,8 +140,8 @@ impl<'a> GatedDeletion<'a> {
         };
         let kind = self
             .context
-            .archive
-            .map_or(kind, |archive| match archive.role() {
+            .admitted
+            .map_or(kind, |(admitted, _)| match admitted.role() {
                 Role::Owner => Kind::Owner,
                 Role::Admin | Role::Steward | Role::Member => Kind::Member,
                 Role::Agent => Kind::Agent,
@@ -345,21 +357,23 @@ impl DeletionGateContext {
             read_frontier_hash,
             room_role: None,
             room: None,
-            archive: None,
+            admitted: None,
         }
     }
 
-    /// An archive delete's evidence: the role and Grant `authority`
-    /// admitted, which its decision record states.
-    pub(crate) fn new_archive(
+    /// An admitted delete's evidence: the role and Grant `authority`
+    /// admitted and the door it came through, which its decision record
+    /// states.
+    pub(crate) fn new_admitted(
         actor: EntityId,
         actor_class: EdgeActorClass,
         policy_manifest_version: String,
         read_frontier_hash: [u8; 32],
-        authority: crate::federation::ArchiveDeleteAuthority,
+        authority: crate::federation::DeleteAuthority,
+        door: AdmittedDeleteDoor,
     ) -> Self {
         Self {
-            archive: Some(authority),
+            admitted: Some((authority, door)),
             ..Self::new(
                 actor,
                 actor_class,
@@ -384,7 +398,7 @@ impl DeletionGateContext {
             read_frontier_hash,
             room_role: Some(role),
             room: Some(room),
-            archive: None,
+            admitted: None,
         }
     }
 
@@ -410,11 +424,14 @@ impl DeletionGateContext {
             decision_id: GateDecisionId::from_bytes(request_id),
             created_at,
             outcome: "allow".to_owned(),
-            reason_codes: match self.archive {
-                Some(archive) => vec![format!(
+            reason_codes: match self.admitted {
+                Some((admitted, AdmittedDeleteDoor::Archive)) => vec![format!(
                     "gate.allow.archive_delete_{}",
-                    archive.role().as_str()
+                    admitted.role().as_str()
                 )],
+                Some((admitted, AdmittedDeleteDoor::Record)) => {
+                    vec![format!("gate.allow.delete_{}", admitted.role().as_str())]
+                }
                 None => self.room_role.map_or_else(
                     || vec!["gate.allow.owner_delete".to_owned()],
                     |role| vec![format!("gate.allow.room_{role:?}").to_lowercase()],
@@ -428,8 +445,8 @@ impl DeletionGateContext {
             policy_manifest_version: self.policy_manifest_version.clone(),
             claim_id: None,
             grant_ref: self
-                .archive
-                .and_then(|archive| archive.grant())
+                .admitted
+                .and_then(|(admitted, _)| admitted.grant())
                 .map(|grant| grant.to_hex()),
             diff_handle: diff.finalize().to_vec(),
             read_frontier_hash: self.read_frontier_hash,
