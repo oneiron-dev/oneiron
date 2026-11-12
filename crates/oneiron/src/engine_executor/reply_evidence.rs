@@ -4,8 +4,9 @@
 //! evidence: a model's words, never executed and never authority, and every
 //! view says so. The read is ranged by bytes, and each read checks, before
 //! any metadata or byte, the reader's live grant and scope, every row the
-//! run's answers were served from (as hydrate re-checks them), and the
-//! reply's own taint sidecar (eiri-arch-0002, "Every read
+//! run's answers were served from (as hydrate re-checks them) and every row
+//! the reply's own bytes were derived from (its skills' rows among them),
+//! and the reply's own taint sidecar (eiri-arch-0002, "Every read
 //! checks three things"). Only a reply the run's replay record retained is
 //! read; any other is absent.
 
@@ -108,8 +109,8 @@ pub struct ReplyEvidenceView {
 /// # Errors
 ///
 /// A malformed request (`BAD_REQUEST`); an owner proof that no longer holds;
-/// a source that does not read on `memory`'s credential (`FORBIDDEN`); and
-/// storage errors. An unknown run or a step with no kept reply reads as
+/// a source that does not read on `memory`'s credential, or a reply whose
+/// sources were never recorded (`FORBIDDEN`); and storage errors. An unknown run or a step with no kept reply reads as
 /// absent.
 pub fn reply_evidence_as_owner(
     memory: &Memory<'_>,
@@ -176,7 +177,35 @@ pub(crate) fn reply_evidence_projection(
     // The rows the run's answers were served from, its folds' sources and
     // its compaction epochs' summaries, as step evidence and checkpoints
     // re-check them; a withdrawn fold or epoch covering this step refuses.
-    let sources = owner_read_sources(&storage, &record, [input.step], "reply evidence")?;
+    let mut sources = owner_read_sources(&storage, &record, [input.step], "reply evidence")?;
+    // Then the rows the reply's own bytes were derived from, as its
+    // occurrence recorded them when it was published
+    // (`code_run::resident_tool_answer_rows`): each stored skill the run's
+    // callables loaded and each other run's result they read, its
+    // memory-search hits, its delivered replies' rows and its fold answers'
+    // word sources; and the skill rows the run's record holds now. Unknown
+    // provenance of either refuses before any byte is read, as a context
+    // body's does (`code_run_context_body_in_txn`). The run's own id names
+    // its replay record, which the reader's admission already read.
+    let (Some(derived), Some(callable)) = (
+        output.input_rows.as_deref(),
+        record.callable_rows.as_deref(),
+    ) else {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "the run's reply has no recorded sources",
+            &[],
+        ));
+    };
+    sources.extend(
+        derived
+            .iter()
+            .chain(callable)
+            .copied()
+            .filter(|row| *row != record.run_id),
+    );
+    sources.sort_unstable();
+    sources.dedup();
     for source in sources {
         if memory.get_entity(&source.to_hex())?.value.is_none() {
             return Err(MemoryError::new(
