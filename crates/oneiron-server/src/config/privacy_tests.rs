@@ -140,9 +140,11 @@ fn self_host_privacy_keeps_its_key_reference_as_kms_custody() {
     use HostingPrivacyPosture::SelfHostLocal;
 
     let key_ref = "kms://example/owner-ref";
-    let resolved =
-        resolve_privacy_layers([Some(SelfHostLocal), None, None], [Some(key_ref), None, None])
-            .unwrap();
+    let resolved = resolve_privacy_layers(
+        [Some(SelfHostLocal), None, None],
+        [Some(key_ref), None, None],
+    )
+    .unwrap();
     assert_eq!(resolved.hosted_kms_key_ref.as_deref(), Some(key_ref));
     assert_eq!(
         resolved.vault_config().privacy.data_key_custody,

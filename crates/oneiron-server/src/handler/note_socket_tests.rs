@@ -486,7 +486,8 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         // #4298), each after a big-endian u32 length, then the document.
         let document = {
             let (seal_len, rest) = state_frame.payload[16 + 8..].split_at(4);
-            let seal_len = usize::try_from(u32::from_be_bytes(seal_len.try_into().unwrap())).unwrap();
+            let seal_len =
+                usize::try_from(u32::from_be_bytes(seal_len.try_into().unwrap())).unwrap();
             let (overrides_len, rest) = rest[seal_len..].split_at(4);
             let overrides_len =
                 usize::try_from(u32::from_be_bytes(overrides_len.try_into().unwrap())).unwrap();

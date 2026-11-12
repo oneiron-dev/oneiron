@@ -2303,7 +2303,11 @@ fn assert_wire_is_pong_then_revocation_close(socket: &CapturingSocket) {
     let wire = socket.wire();
     assert_eq!(
         wire,
-        [SERVER_PONG_BYTES.as_slice(), SERVER_REVOKED_CLOSE_BYTES.as_slice()].concat(),
+        [
+            SERVER_PONG_BYTES.as_slice(),
+            SERVER_REVOKED_CLOSE_BYTES.as_slice()
+        ]
+        .concat(),
         "the wire must hold the automatic Pong and the revocation Close and NOTHING else; \
          extra bytes are application-frame bytes (whole or partial) that escaped before \
          the consult"
