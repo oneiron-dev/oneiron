@@ -149,6 +149,15 @@ async function sync01Facts(client: Sync01Client, predicates: readonly string[]):
  *   counts whole messages per direction across sockets, so it cannot select
  *   an update over a session hello or a residence RPC; Sol review, 10 Nov);
  *   in-socket drop and reorder (no recovery promise).
+ * DEFECT (red since E2E job 12b, Thu 12 Nov 2026; FIX row
+ *   DEVICE-JOIN-CENSUS-MISSES-CARRIERS-AND-HOME-ROOM, fixed by #7172): the
+ *   CLI `device enrol` into the device's empty vault exits 1 with "storage
+ *   error: MDB_BAD_RSLOT". The empty-vault join guard ensure_joinable
+ *   (device_sync/enrolment/join.rs) calls Vault::first_non_bootstrap_row,
+ *   which opens a second read transaction beside its own. With that read on
+ *   one snapshot, the census still refuses a fresh vault on its seeded root
+ *   home-room CONVERSATION. Not worked around: a pre-seeded device would not
+ *   be a fresh second machine.
  */
 suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchored note edits and on a claim written on each side, once each and authored by the owner, after a partition and a reconnect", async () => {
   const scenario = await sync01Scenario();
@@ -403,6 +412,10 @@ async function sync04Search(device: DevicePeer, query: string): Promise<Sync04Se
  *   carries only the owner's credential (a narrow reader paired on the home
  *   and a public own-device grant revocation are not set up); the exact hit
  *   set of "opal lantern" (lexical search may also rank other "lantern" items).
+ * DEFECT (red since E2E job 12b, Thu 12 Nov 2026; FIX row
+ *   DEVICE-JOIN-CENSUS-MISSES-CARRIERS-AND-HOME-ROOM, fixed by #7172): the
+ *   device never joins. `device enrol` exits 1 with MDB_BAD_RSLOT at the
+ *   empty-vault join guard, as in SYNC-01.
  */
 suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens one item from home that stays readable offline and across a restart while its unopened neighbour stays remote, and searches unopened text through home", async () => {
   const scenario = await sync04Scenario();
@@ -563,6 +576,12 @@ async function sync05Standing(client: EngineFixture["client"], predicate: string
  *   authenticated authority" (note/operations.rs:493-495); the private canary
  *   for a narrow reader (the device carries only the owner credential);
  *   repeated reconnects adding nothing (not proved anywhere yet: SYNC-01 has one partition and one heal).
+ * DEFECT (red since E2E job 2, Tue 10 Nov 2026; FIX row
+ *   NOTE-SUBJECT-REFERENCE, fixed by #7177): the home's vault.claims.upsert
+ *   whose subject_ref names the owner's own live NOTE is refused 422
+ *   INVENTED_REFERENCE. Reference admission (claim/scoped_read/versions.rs
+ *   admitted_raw_in) rechecks the projected four-key NOTE body against the
+ *   strict three-key core codec.
  */
 suite.test(test, "SYNC-05", "Switching a device to sync-all makes every authorized body local, readable with the home link cut and after a crash, leaves claim source and approval unchanged, and receives the home's offline-time edit on rejoin", async () => {
   const scenario = await sync05Scenario();
