@@ -20,9 +20,9 @@ afterAll(suite.flush);
  * are translated to the current snake_case facade, never sent as app DTOs.
  * Fresh real server per ID. No engine defaults or harness deadlines change.
  * MEMORY-03 and MEMORY-06 are pending doors (Engine CORE-FOUR-SKIPS = A) and keep their full journeys.
- * MEMORY-01 and MEMORY-07 are E2E-PARTIAL subsets (Engine 23:01), named for what they prove:
- * an approved proposal does not supersede the original, and a split reads only the split person's
- * own claims; each case says what stays unproved, with a FIX row filed at READY.
+ * MEMORY-01 asserts the fixture's full lifecycle: an approved proposal supersedes the head on its
+ * conflict set (#6930). MEMORY-07 asserts the fixture's full split promise: split membership reads
+ * through merged_into (#6924).
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -297,25 +297,20 @@ async function closeWorld(w: World): Promise<void> {
   try { await w.providers.close(); } catch (error) { errors.push(text(error)); }
   if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
 }
-async function setup(id: string): Promise<World> {
+async function setup(id: string, projectRefs: readonly string[] = ["@project-north"]): Promise<World> {
   const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
   const providers = await ScriptedProviders.start({ id: `memory-projects-${id}`, origins: ["decider", "drafter"], steps: [] });
   const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers),
     serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
   await installProjectProposal(engine);
-  // DEFECT (2026-11-12, FIX GOAL-INTAKE-NEVER-DISPATCHED): the house's project question, its drafted
-  // card and the owner's confirm all work on this engine (fleet job 1112-100207-3a74, set bd95597c8afc).
-  // The confirm then dispatches the new project's leader with no parent attempt, and the depth check
-  // refuses that spawn before it is queued (agent_dispatch/dispatch/depth.rs:82-85; the server only
-  // warns "goal-intake interview not dispatched"). MEMORY-01, -02, -05, -07 and -08 stay red at the
-  // project-intake barrier until that fix lands.
-  // DEFECT (2026-11-12, FIX PROJECT-KIND-READS-TYPE-103): with the intake step answered, the minted
-  // project reads back as kind TYPE_103, not PROJECT (fleet job 1112-130158-e1f6, set bd95597c8afc,
-  // diagnostic head e9b312e5d41 without the intake step). The same five cases stay red there next.
+  // Each minted project costs the house three agent runs (decide, draft, goal intake), about 8.5 s
+  // on the fleet: each run starts about 4 s after the call that queues it (job 1112-193055-add3).
+  // A case therefore mints only the projects it names; a case that names an unminted one fails at ref().
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
   const projects = new Map<string, string>();
   for (const [index, row] of data.fixture.projects.entries()) {
+    if (!projectRefs.includes(row.ref)) continue;
     projects.set(row.ref, await mintProject(engine, providers, row, index, occurred));
   }
   // Every later witness stages a project question on its own conversation:
@@ -417,7 +412,7 @@ async function timeline(w: World, id: string): Promise<Timeline> {
 }
 
 // ARCH-0003 lifecycle; ARCH-0040 settlement and holder authority.
-suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a proposal, the owner's correction supersedes and retraction keeps history", async () => {
+suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a proposal, its approval supersedes the original and retraction keeps history", async () => {
   const w = await setup("MEMORY-01");
   try {
     const c = scenario(w, "MEMORY-01");
@@ -457,49 +452,51 @@ suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a propos
     expect(settled.reason).toBe("gate.claim.settle.approved");
     expect(settled.revert?.claim_ref).toBe(newId);
     await w.engine.awaitReceipt(settled.receipt_ref);
-    // E2E-PARTIAL: settlement changes approval, never authorship, and an approved proposal does not
-    // supersede the original (FIX row filed with the READY). The settled row stays the agent's: its
-    // author withdraws it, and the owner's own correction of the original (FIX 22041) lands at once
-    // and closes the original in the same write. No proposal opens, so nothing is settled twice.
-    expect((await claim(w, newId)).approval).toBe("approved");
-    await outsider.client.call("vault.claims.retract", { claim_ref: newId });
-    const supersession = await w.engine.client.call("vault.claims.upsert", { ...claimInput(w, c.alternative), valid_from: w.occurred });
-    const correctionId = (await entity(w.engine.client, supersession.claim_short_id)).id_hex;
-    expect(correctionId).not.toBe(newId);
-    expect(supersession.approval).toBe("auto");
-    expect(supersession.superseded_short_id).toBe(original.claim_short_id);
-    expect(supersession.superseded?.id).toBe(oldId);
-    await w.engine.awaitReceipt(supersession.receipt_ref);
-    expect((await claim(w, correctionId)).approval).toBe("auto");
+    // The approval closes the supersession the proposal proposed (#6930; ARCH-0040): the agent's
+    // approved claim supersedes the owner's original on its conflict set, so one head stands.
+    // Settlement changes approval, never authorship: the settled row stays the agent's.
+    const approved = await claim(w, newId);
+    expect(approved.approval).toBe("approved"); expect(approved.lifecycle).toBe("active");
+    const closed = await claim(w, oldId);
+    expect(closed.approval).toBe("auto"); expect(closed.lifecycle).toBe("superseded");
+    const standing = (await claims(w)).filter(row => row.predicate === c.current.predicate && row.lifecycle === "active");
+    expect(standing.map(row => row.claim_ref)).toEqual([newId]);
     expect(values(await recalled(w, "Morgan name"), c.current.predicate))
       .toEqual(c.expected.recallAfterAuthorizedApprovalAndSupersession);
-    const retracted = await w.engine.client.call("vault.claims.retract", { claim_ref: correctionId });
+    // Retraction keeps history: the author withdraws its approved claim, nothing stands in its
+    // place, and the superseded original does not come back.
+    const retraction = await outsider.client.raw<FacadeResult<"vault.claims.retract">>("POST",
+      "/v1/core/facade/vault.claims.retract", { claim_ref: newId } satisfies FacadeInput<"vault.claims.retract">);
+    if (retraction.status !== 200)
+      throw new Error(`The authoring agent's retract of its approved claim was refused: HTTP ${retraction.status} ${retraction.raw}`);
+    const retracted = retraction.body;
     expect(values(await recalled(w, "Morgan name"), c.current.predicate)).toEqual(c.expected.recallAfterRetraction);
-    const history = (await w.engine.client.call("vault.claims.history", { claim_ref: correctionId })).value;
+    const history = (await w.engine.client.call("vault.claims.history", { claim_ref: newId })).value;
     const old = history.find(row => row.claim_ref === oldId);
-    const current = history.find(row => row.claim_ref === correctionId);
+    const current = history.find(row => row.claim_ref === newId);
     if (!old || !current) throw new Error("History lost a lifecycle row");
     expect(old.value).toBe(c.current.value.value);
     expect(old.lifecycle).toBe("superseded"); expect(old.approval).toBe("auto");
     expect(current.value).toBe(c.alternative.value.value);
-    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("auto");
-    for (const [row, evidence] of [[old, ref(w, "@name-statement")], [current, ref(w, "@name-correction")]] as const) {
-      expect(row.valid_from).toBe(w.occurred); expect(row.valid_to).not.toBeNull();
+    expect(current.lifecycle).toBe("retracted"); expect(current.approval).toBe("approved");
+    // Validity closes without deleting: each row keeps its start and gains an end.
+    expect(old.valid_from).toBe(w.occurred);
+    for (const row of [old, current]) {
+      expect(row.valid_to).not.toBeNull();
       expect(row.valid_to!).toBeGreaterThanOrEqual(row.valid_from!);
-      expect(row.source).toBe("user_stated"); birth(row, w.engine.pairedActor.principalRef, [evidence]);
     }
-    // The settled proposal keeps its own record: the agent's, approved, then withdrawn by its author.
-    const proposalRow = await claim(w, newId);
-    expect(proposalRow.approval).toBe("approved"); expect(proposalRow.lifecycle).toBe("retracted");
-    birth(proposalRow, ref(w, "@agent-a"), [ref(w, "@name-correction")]);
-    const full = await timeline(w, correctionId);
-    expect(full.records.map(row => row.id).sort()).toEqual([oldId, correctionId].sort());
+    expect(old.source).toBe("user_stated");
+    birth(old, w.engine.pairedActor.principalRef, [ref(w, "@name-statement")]);
+    birth(current, ref(w, "@agent-a"), [ref(w, "@name-correction")]);
+    // The Supersedes edge runs from the approved alternative to the original.
+    const full = await timeline(w, newId);
+    expect(full.records.map(row => row.id).sort()).toEqual([oldId, newId].sort());
     expect(full.records.find(row => row.id === oldId)?.state).toBe("superseded");
-    const newer = full.records.find(row => row.id === correctionId)!;
+    const newer = full.records.find(row => row.id === newId)!;
     expect(newer.state).toBe("retracted"); expect(newer.supersedes).toContain(oldId);
-    expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(correctionId);
+    expect(full.records.find(row => row.id === oldId)?.superseded_by).toContain(newId);
     await w.engine.artifacts.json("lifecycle.json", { original, alternative, review, refusal: refused.body,
-      settled, correctionId, supersession, retracted, history, proposalRow, timeline: full });
+      settled, approved, closed, standing, retracted, history, timeline: full });
   } finally { await closeWorld(w) }
 });
 
@@ -531,7 +528,7 @@ suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a propos
  * preserved, batch per-element outcomes (never blanket rollback).
  */
 suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should work", async () => {
-  const w = await setup("MEMORY-02");
+  const w = await setup("MEMORY-02", ["@project-north", "@project-south"]);
   const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
   let primaryFailed = false;
   let primary: unknown;
@@ -909,7 +906,7 @@ suite.test(test, "MEMORY-02", "Claim admission rejects malformed scope should wo
     }
     if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
-});
+}, 60_000); // DIAGNOSTIC PIN ONLY: measures the two-project case past the 30 s cap (ASK E2E-MEMORY-TWO-PROJECT-BUDGET).
 
 /* ARCH-0003 observed/stated disagreement; ARCH-0040 source trust.
  * The extraction and run-bound supersession doors NOW EXIST:
@@ -1061,8 +1058,9 @@ suite.test(test, "MEMORY-05", "Bitemporal entity history should work", async () 
       const pack = (await w.engine.client.request<TimedPackReply>("POST", "/v1/core/context-pack", request)).body;
       const returned = await Promise.all(pack.results.map(item => entity(w.engine.client, item.id)));
       const matched = returned.filter(item => item.kind === "CLAIM").map(item => item.id_hex).sort();
+      windows.push({ request, pack, returned: returned.map(item => ({ id: item.id_hex, kind: item.kind })) });
+      await w.engine.artifacts.json("bitemporal-windows.json", windows);
       expect(matched).toEqual(window.expected.map(role => ref(w, role)).sort());
-      windows.push({ request, pack });
     }
     expect([...rows].sort((a, b) => a.view.occurred_start - b.view.occurred_start).map(row => row.role))
       .toEqual(c.expected.occurredOrder);
@@ -1111,7 +1109,7 @@ suite.pendingDoor(test, "MEMORY-06",
   { fix: "FIX 22509", deadline: "2026-12-01" });
 
 // ARCH-0055 redirect shells, evidence-guided split, masks and counter-events.
-suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evidence with named residue, and undo keep original claim subjects", async () => {
+suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async () => {
   const w = await setup("MEMORY-07");
   try {
     const c = scenario(w, "MEMORY-07");
@@ -1142,24 +1140,34 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
       survivorship_plan: "read_through",
     };
     const merged = applied(await w.engine.client.call("vault.identity.merge", mergeSpec));
+    // Read through the merge: the survivor's remaining claims include the merged source's, which keep their subject.
+    const survivor = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, "@person-a") });
+    for (const role of ["@evidence-a", "@evidence-b", "@ambiguous-evidence"]) expect(survivor.remaining_claims).toContain(ref(w, role));
     const bMerged = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, "@person-b") });
     expect(bMerged.state).toBe("merged"); expect(bMerged.heads).toEqual([ref(w, "@person-a")]);
     expect(bMerged.merged_into).toEqual([ref(w, "@person-a")]);
     expect((await entity(w.engine.client, ref(w, "@person-b"))).kind).toBe("PERSON");
     for (const role of c.split.heads) await person(w, role, role === "@head-north" ? "Morgan North head" : "Morgan South head");
-    const splitMap = c.split.reassignment_map.filter(item =>
-      c.evidence.find(row => row.ref === item.evidence)?.subject === c.split.entity);
-    expect(splitMap.map(item => item.evidence)).toEqual(["@evidence-a"]);
+    // A claim of a person never merged into the survivor: a split map entry naming it is dropped.
+    const outsiderId = await person(w, "@person-outsider", "Morgan Outsider");
+    const outsiderTurn = await witnessed(w, "@outsider-turn", "Morgan Outsider made no observatory report.");
+    const outsiderReceipt = await w.engine.client.call("vault.claims.upsert", {
+      subject_ref: outsiderId, predicate: "profile.name", value: "Morgan Outsider",
+      confidence: 1, source: "user_stated", scope: w.scope, evidence_turn_refs: [outsiderTurn],
+    });
+    const outsiderClaim = (await entity(w.engine.client, outsiderReceipt.claim_short_id)).id_hex;
+    const outsiderBefore = await claim(w, outsiderClaim);
+    const splitMap = c.split.reassignment_map;
     const splitSpec: FacadeInput<"vault.identity.split"> = {
       entity: ref(w, c.split.entity), heads: c.split.heads.map(role => ref(w, role)),
-      // Only the split person's own claims are mapped: the engine reads a split's claim membership
-      // through the direct claim_of edge, so a merged source's claim (@evidence-b) is not reassigned
-      // (E2E-PARTIAL; FIX row filed with the READY). The ambiguous claim is named as residue.
+      // The fixture's map (the survivor's own claim to North, the merged source's claim to South), the
+      // ambiguous claim named as residue, and the never-merged outsider's claim, which the split drops.
       reassignment_map: [
         ...splitMap.map(item => ({
           item: { kind: "claim" as const, claim: ref(w, item.evidence) }, target: { kind: "head" as const, head: ref(w, item.head) },
         })),
         { item: { kind: "claim" as const, claim: ref(w, "@ambiguous-evidence") }, target: { kind: "residue" as const } },
+        { item: { kind: "claim" as const, claim: outsiderClaim }, target: { kind: "head" as const, head: ref(w, "@head-south") } },
       ],
       evidence: { refs: c.split.evidence.map(role => ref(w, role)), rationale: "North and South evidence identify separate people." },
     };
@@ -1173,7 +1181,11 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
     for (const mapping of splitMap) {
       const head = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, mapping.head) });
       expect(head.assigned_claims).toContain(ref(w, mapping.evidence));
+      expect(head.assigned_claims).not.toContain(outsiderClaim);
     }
+    // The merged source's claim is assigned away from the survivor; the outsider's claim is untouched.
+    expect(shell.remaining_claims).not.toContain(ref(w, "@evidence-b"));
+    expect(await claim(w, outsiderClaim)).toEqual(outsiderBefore);
     for (const original of originals) {
       const current = await claim(w, original.id);
       expect(current.subject_ref).toBe(original.subject);
@@ -1202,8 +1214,15 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
       const resolution = await w.engine.client.call("vault.identity.resolve", { entity: ref(w, role) });
       expect(resolution.heads).toEqual([ref(w, role)]); expect(resolution.state).toBe("active");
     }
-    for (const operation of [merged, split])
-      expect(await w.engine.client.call("vault.identity.events.get", { event: operation.receipt.event })).toEqual(operation.receipt);
+    // The undos are counter-events: every logged field of both events reads back unchanged. `seen` is the
+    // topology seal revision, computed at read time over the live deciding rows (verbs/identity_topology/
+    // ops.rs:136), so the undo rows move it.
+    for (const operation of [merged, split]) {
+      const { seen: before, ...logged } = operation.receipt;
+      const { seen: now, ...stored } = await w.engine.client.call("vault.identity.events.get", { event: operation.receipt.event });
+      expect(stored).toEqual(logged);
+      for (const revision of [before, now]) expect(revision).toMatch(/^[0-9a-f]{64}$/);
+    }
     for (const original of originals) expect(await claim(w, original.id)).toEqual(original.before);
     const distinct = applied(await w.engine.client.call("vault.identity.assert_distinct", {
       a: ref(w, "@person-a"), b: ref(w, "@person-b"), reason: c.expected.distinct.reason,
@@ -1234,7 +1253,7 @@ suite.test(test, "MEMORY-07", "Identity merge, split of the survivor's own evide
 // ARCH-0022 four explicit axes; ARCH-0004 labelled world partitions;
 // ARCH-0043 grant axes are distinct from requested axes.
 suite.test(test, "MEMORY-08", "World and project separation should work", async () => {
-  const w = await setup("MEMORY-08");
+  const w = await setup("MEMORY-08", ["@project-north", "@project-south"]);
   try {
     const c = scenario(w, "MEMORY-08");
     const ids: string[] = [];
@@ -1299,8 +1318,17 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     const query: FacadeInput<"vault.recall"> = { query: "Glass keeper north south name", effort: "light",
       limit: 100, token_budget: 8192, scope: { worlds: { kind: "all" }, facet: ref(w, "@facet-work"), kinds: ["CLAIM"] } };
     const readable = await positive.call("vault.recall", query);
-    expect(values(readable, c.claims[0]!.predicate)).toEqual(c.claims.filter(row => row.worldId === "@dream")
-      .map(row => row.value.value).sort());
+    // The world ceiling admits exactly the two @dream rows, one per project. A guest connection reads at
+    // the Public band, so each name-class value prints as the subject's handle, never a fake and never a
+    // drop (ARCH-0069 S9; disclosure/model_channel.rs claim_handle_in).
+    const dream = c.claims.filter(row => row.worldId === "@dream");
+    const guestNames = readable.items.filter(item => item.predicate === c.claims[0]!.predicate);
+    expect(guestNames.map(item => item.world)).toEqual(dream.map(() => ref(w, "@dream")));
+    expect(guestNames.map(item => item.project_ref).sort()).toEqual(dream.map(row => ref(w, row.scopeProjectId)).sort());
+    for (const item of guestNames) {
+      expect(item.value_text.length).toBeGreaterThan(0);
+      expect(c.claims.map(row => row.value.value)).not.toContain(item.value_text);
+    }
     const receipts = [];
     for (const input of c.expected.guestCeilingCases) {
       const scope: Facade.Scope = { ...topRest,
@@ -1335,4 +1363,4 @@ suite.test(test, "MEMORY-08", "World and project separation should work", async 
     expect((await claims(w)).filter(row => row.predicate === c.claims[0]!.predicate)).toHaveLength(6);
     await w.engine.artifacts.json("world-project-scopes.json", { ids, all, positive: readable, receipts, refusal: rejected.body });
   } finally { await closeWorld(w) }
-});
+}, 60_000); // DIAGNOSTIC PIN ONLY: measures the two-project case past the 30 s cap (ASK E2E-MEMORY-TWO-PROJECT-BUDGET).
