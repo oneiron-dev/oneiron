@@ -1,14 +1,14 @@
 //! A recovery phrase split over a file's parts (LABEL-04; ARCH-0038
-//! #promise-label-04): one word per MessagePack item or JSON byte array, or
-//! between the bytes that frame those items. The door reads it whole, in the
-//! leaf's decoded parts joined or in its lossy text, where no run of valid
-//! text holds it, so no text span places it. Each word is found at its bytes
-//! in the leaf: one custody record holds the phrase, and the file's mark
-//! covers each word (owner ruling G04 binary = C2). In a body that is no
-//! file, [`ArrayText`] and [`encoded_phrase_part`] name the smallest value
-//! that reads as the phrase, which takes the handle whole; in a value that
-//! reads as more than that phrase, the items that read as it take the handle
-//! and the rest stay as written (REVIEW-7060 P1).
+//! #promise-label-04): one word per MessagePack item or JSON byte array, at
+//! any depth, or between the bytes that frame those items. The door reads it
+//! whole, in the leaf's decoded parts joined or in its lossy text, where no
+//! run of valid text holds it, so no text span places it. Each word is found
+//! at its bytes in the leaf: one custody record holds the phrase, and the
+//! file's mark covers each word (owner ruling G04 binary = C2). In a body
+//! that is no file, [`ArrayText`] and [`Spread::smallest_part`] name the
+//! smallest value that reads as the phrase, which takes the handle whole; in
+//! a value that reads as more than that phrase, the items that read as it
+//! take the handle and the rest stay as written (REVIEW-7060 P1).
 
 use std::ops::Range;
 
@@ -35,6 +35,11 @@ pub(super) fn split_phrases(leaf: &[u8]) -> Vec<SplitPhrase> {
     let mut phrases = Vec::new();
     if let Some((tree, node)) = decoded(leaf) {
         read_part(&tree.0, &node, &mut phrases);
+        // The whole read: every text the leaf carries, one per line.
+        read_text(&mut phrases, |text| {
+            text.push_leaves(&tree.0, &node);
+            true
+        });
     }
     // Valid UTF-8 is one run of text to the text rules, which placed what
     // it holds.
@@ -287,97 +292,130 @@ fn byte_offset(bytes: &[u8], at: usize) -> Option<usize> {
     (at == text).then_some(byte)
 }
 
-/// The smallest part of `value` whose MessagePack encoding holds, in its
-/// lossy text, a recovery phrase `places` takes, as the text rules read a
-/// body's raw bytes: its path (an array item by its index, a map's key at
-/// `2i` and its member at `2i + 1`), and the phrase's words, one space
-/// between them. A phrase `places` refuses is read past (REVIEW-7060 P1).
-pub(super) fn encoded_phrase_part(
-    value: &Value,
-    places: impl Fn(&[u8]) -> bool,
-) -> Option<(Vec<usize>, Zeroizing<Vec<u8>>)> {
-    let placed = |part: &Value| {
-        encoded_phrases(std::slice::from_ref(part))
-            .into_iter()
-            .find(|phrase| places(phrase))
-    };
-    let mut phrase = placed(value)?;
-    let mut path = Vec::new();
-    let mut part = value;
-    'descend: loop {
-        let children: Vec<&Value> = match part {
-            Value::Array(items) => items.iter().collect(),
-            Value::Map(fields) => fields
-                .iter()
-                .flat_map(|(key, member)| [key, member])
-                .collect(),
-            _ => break,
+/// How the door reads a body's parts for a recovery phrase spread over them
+/// once each part is masked.
+#[derive(Clone, Copy)]
+pub(super) enum Spread {
+    /// Its texts, one per line at any depth, as the door's whole read reads
+    /// a body (one word per nested item).
+    Leaves,
+    /// Its MessagePack encoding's lossy text, as the text rules read a body's
+    /// raw bytes (one word per 64-bit number, or between nested arrays'
+    /// headers).
+    Encoded,
+}
+
+impl Spread {
+    /// Each recovery phrase `parts`, one after another, hold in this reading,
+    /// in order: its words, one space between them.
+    pub(super) fn phrases(self, parts: &[Value]) -> Vec<Zeroizing<Vec<u8>>> {
+        let text = match self {
+            Self::Leaves => {
+                let mut text = Zeroizing::new(String::new());
+                for part in parts {
+                    super::super::whole_read::messagepack_leaves(part, &mut text);
+                }
+                text
+            }
+            Self::Encoded => {
+                let mut bytes = Zeroizing::new(Vec::new());
+                for part in parts {
+                    if rmpv::encode::write_value(&mut *bytes, part).is_err() {
+                        return Vec::new();
+                    }
+                }
+                lossy(&bytes)
+            }
         };
-        for (at, child) in children.into_iter().enumerate() {
-            if let Some(found) = placed(child) {
-                phrase = found;
-                path.push(at);
-                part = child;
-                continue 'descend;
+        phrases_in(&text)
+            .into_iter()
+            .map(|(phrase, _)| phrase)
+            .collect()
+    }
+
+    /// The smallest part of `value` that holds, in this reading, a recovery
+    /// phrase `places` takes: its path (an array item by its index, a map's
+    /// key at `2i` and its member at `2i + 1`), and the phrase. A phrase
+    /// `places` refuses is read past (REVIEW-7060 P1).
+    pub(super) fn smallest_part(
+        self,
+        value: &Value,
+        places: impl Fn(&[u8]) -> bool,
+    ) -> Option<(Vec<usize>, Zeroizing<Vec<u8>>)> {
+        let placed = |part: &Value| {
+            self.phrases(std::slice::from_ref(part))
+                .into_iter()
+                .find(|phrase| places(phrase))
+        };
+        let mut phrase = placed(value)?;
+        let mut path = Vec::new();
+        let mut part = value;
+        'descend: loop {
+            let children: Vec<&Value> = match part {
+                Value::Array(items) => items.iter().collect(),
+                Value::Map(fields) => fields
+                    .iter()
+                    .flat_map(|(key, member)| [key, member])
+                    .collect(),
+                _ => break,
+            };
+            for (at, child) in children.into_iter().enumerate() {
+                if let Some(found) = placed(child) {
+                    phrase = found;
+                    path.push(at);
+                    part = child;
+                    continue 'descend;
+                }
+            }
+            break;
+        }
+        Some((path, phrase))
+    }
+
+    /// The smallest run of `items` that holds `phrase` in this reading and
+    /// no other phrase: the items that take its handle, the rest kept as
+    /// written (REVIEW-7060 P1). `None` when no run holds it alone. Each end
+    /// is found by halving (speed).
+    pub(super) fn run(self, items: &[Value], phrase: &[u8]) -> Option<Range<usize>> {
+        let holds = |run: Range<usize>| {
+            items.get(run).is_some_and(|run| {
+                self.phrases(run)
+                    .iter()
+                    .any(|found| found.as_slice() == phrase)
+            })
+        };
+        if !holds(0..items.len()) {
+            return None;
+        }
+        // A run to the end holds it from `start`, and from `past` no more.
+        let (mut start, mut past) = (0, items.len());
+        while past - start > 1 {
+            let mid = start + (past - start) / 2;
+            if holds(mid..items.len()) {
+                start = mid;
+            } else {
+                past = mid;
             }
         }
-        break;
+        // A run from `start` holds it to `end`, and to `short` not yet.
+        let (mut short, mut end) = (start, items.len());
+        while end - short > 1 {
+            let mid = short + (end - short) / 2;
+            if holds(start..mid) {
+                end = mid;
+            } else {
+                short = mid;
+            }
+        }
+        self.holds_alone(items.get(start..end)?, phrase)
+            .then_some(start..end)
     }
-    Some((path, phrase))
-}
 
-/// Each recovery phrase the MessagePack encodings of `parts`, one after
-/// another, hold in their lossy text, in order.
-pub(super) fn encoded_phrases(parts: &[Value]) -> Vec<Zeroizing<Vec<u8>>> {
-    let mut bytes = Zeroizing::new(Vec::new());
-    for part in parts {
-        if rmpv::encode::write_value(&mut *bytes, part).is_err() {
-            return Vec::new();
-        }
+    /// Whether `parts`, one after another, hold `phrase` in this reading and
+    /// no other phrase.
+    pub(super) fn holds_alone(self, parts: &[Value], phrase: &[u8]) -> bool {
+        matches!(self.phrases(parts).as_slice(), [only] if only.as_slice() == phrase)
     }
-    phrases_in(&lossy(&bytes))
-        .into_iter()
-        .map(|(phrase, _)| phrase)
-        .collect()
-}
-
-/// The smallest run of `items` whose encodings, one after another, hold
-/// `phrase` in their lossy text and no other phrase: the items that take its
-/// handle, the rest kept as written (REVIEW-7060 P1). `None` when no run
-/// holds it alone. Each end is found by halving (speed).
-pub(super) fn encoded_run(items: &[Value], phrase: &[u8]) -> Option<Range<usize>> {
-    let holds = |run: Range<usize>| {
-        items.get(run).is_some_and(|run| {
-            encoded_phrases(run)
-                .iter()
-                .any(|found| found.as_slice() == phrase)
-        })
-    };
-    if !holds(0..items.len()) {
-        return None;
-    }
-    // A run to the end holds it from `start`, and from `past` no more.
-    let (mut start, mut past) = (0, items.len());
-    while past - start > 1 {
-        let mid = start + (past - start) / 2;
-        if holds(mid..items.len()) {
-            start = mid;
-        } else {
-            past = mid;
-        }
-    }
-    // A run from `start` holds it to `end`, and to `short` not yet.
-    let (mut short, mut end) = (start, items.len());
-    while end - short > 1 {
-        let mid = short + (end - short) / 2;
-        if holds(start..mid) {
-            end = mid;
-        } else {
-            short = mid;
-        }
-    }
-    let found = encoded_phrases(items.get(start..end)?);
-    matches!(found.as_slice(), [only] if only.as_slice() == phrase).then_some(start..end)
 }
 
 /// The bytes an array item's text reads, as the field walk joins it: a
@@ -648,6 +686,34 @@ impl MappedText {
             self.push_part(item, node);
         }
         true
+    }
+
+    /// Every text `value` carries, each on a line of its own, in order, at
+    /// any depth, as the door's whole read joins them
+    /// (`whole_read::messagepack_leaves`).
+    fn push_leaves(&mut self, value: &Value, node: &Node) {
+        match (value, node) {
+            (Value::String(_) | Value::Binary(_) | Value::Ext(..), Node::Bytes { .. }) => {
+                self.push_part(value, node);
+                self.text.push('\n');
+            }
+            (Value::Array(items), Node::Array(nodes)) if items.len() == nodes.len() => {
+                if !items.is_empty() && self.push_byte_values(items, nodes) {
+                    self.text.push('\n');
+                    return;
+                }
+                for (item, node) in items.iter().zip(nodes) {
+                    self.push_leaves(item, node);
+                }
+            }
+            (Value::Map(fields), Node::Map(nodes)) if fields.len() == nodes.len() => {
+                for ((key, member), (key_node, member_node)) in fields.iter().zip(nodes) {
+                    self.push_leaves(key, key_node);
+                    self.push_leaves(member, member_node);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// An array of byte values as the text those bytes read as, each

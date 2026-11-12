@@ -259,6 +259,75 @@ fn a_split_phrase_in_a_body_lands_with_its_handle() -> TestResult {
     Ok(())
 }
 
+/// LABEL-04 J8: each word's byte values wrapped in an array of its own, in
+/// JSON. No array's own items join into the phrase; the door's whole read
+/// (every text one per line, at any depth) does. A file lands with each
+/// word's digits marked; a body lands with the handle. A body that merely
+/// holds numbers stays clean and is stored as written.
+#[test]
+fn a_phrase_one_wrapped_word_per_item_is_read_whole() -> TestResult {
+    let wrapped: Vec<Vec<&[u8]>> = PHRASE
+        .split(' ')
+        .map(|word| vec![word.as_bytes()])
+        .collect();
+    let body = serde_json::to_vec(&serde_json::json!(wrapped))?;
+    assert!(carries_a_word(&body), "the fixture holds the phrase");
+
+    let (_dir, vault) = open_vault()?;
+    let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+    let id = put_asset(&vault, &body)?;
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+        before + 1,
+        "one custody record holds the phrase"
+    );
+    let stored = vault.get(&id)?.expect("stored file");
+    assert_eq!(stored, body, "the stored bytes stay as written");
+    let served = vault.sighted_asset_bytes(stored, SecretSight::Masked)?;
+    assert!(
+        !carries_a_word(&served),
+        "a masked reader is served no word of the phrase: {}",
+        String::from_utf8_lossy(&served)
+    );
+
+    let (_dir, vault) = open_vault()?;
+    let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+    let id = put(&vault, ENTITY_TYPE_PERSON, &body)?;
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+        before + 1,
+        "a body's phrase is held in one record"
+    );
+    let stored = vault.get(&id)?.expect("stored body");
+    assert!(!carries_a_word(&stored), "stored body: {stored:?}");
+    assert!(carries_handle(&stored), "stored body: {stored:?}");
+
+    // The control: numbers wrapped the same way, no text among them.
+    let numbers = serde_json::to_vec(&serde_json::json!({
+        "readings": [[[1, 2, 3]], [[40, 50]], [[600, 7000]], [[8, 9]]],
+    }))?;
+    for entity_type in [ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON] {
+        let (_dir, vault) = open_vault()?;
+        let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+        let id = put(&vault, entity_type, &numbers)?;
+        assert_eq!(
+            vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+            before,
+            "type {entity_type}: numbers mint no record"
+        );
+        let stored = vault.get(&id)?.expect("stored control");
+        assert_eq!(stored, numbers, "type {entity_type}: stored as written");
+        if entity_type == ENTITY_TYPE_ASSET {
+            assert_eq!(
+                vault.sighted_asset_bytes(stored, SecretSight::Masked)?,
+                numbers,
+                "an unmarked file is served as stored"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// With the owner's switch off the door seeks no new secret, but a value
 /// custody already holds keeps its handle wherever it comes back (OF-560 C,
 /// FIX 8644): a phrase custody holds, put again split over a file's parts,
