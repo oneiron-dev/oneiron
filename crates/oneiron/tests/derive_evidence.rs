@@ -21,13 +21,13 @@ const READER: &str = "reader";
 /// The model's reply: one new person, named in T1, and its name.
 fn reply() -> String {
     serde_json::json!({
-        "persons": [{"id": "new:P1", "name": "Oleksii", "evidence_turn_refs": ["T1"]}],
+        "persons": [{"id": "new:P1", "name": "Owen", "evidence_turn_refs": ["T1"]}],
         "candidates": [{
             "subject": "new:P1",
             "predicate": "profile.name",
-            "value": "Oleksii",
+            "value": "Owen",
             "confidence": 0.8,
-            "evidence_refs": [{"source": "T1", "quote": "Oleksii"}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         }],
     })
     .to_string()
@@ -45,7 +45,7 @@ fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("vault");
     let dreamer = dreamer(&vault).expect("the Dreamer");
-    let pass = consolidate_unbound_turn(&vault, "call me Oleksii", None, None, &reply())
+    let pass = consolidate_unbound_turn(&vault, "call me Owen", None, None, &reply())
         .expect("one consolidation pass");
     let [claim] = pass.landed.as_slice() else {
         panic!("one landed claim, found {}", pass.landed.len());
@@ -80,7 +80,7 @@ fn attach(fixture: &Fixture, head: EntityId, source: EntityId) -> (bool, Vec<Str
 #[test]
 fn the_dreamer_attaches_a_turn_it_reads_to_its_claim() {
     let fixture = fixture();
-    let turn = witness_turn(&fixture.vault, "my name is Oleksii").expect("a TURN");
+    let turn = witness_turn(&fixture.vault, "my name is Owen").expect("a TURN");
     let before = fixture.vault.get(&fixture.claim).expect("read");
     let (landed, reasons) = attach(&fixture, fixture.claim, turn);
     assert!(landed, "the evidence lands: {reasons:?}");
@@ -123,7 +123,7 @@ fn evidence_from_a_row_the_actor_does_not_read_is_refused() {
 #[test]
 fn evidence_for_a_row_that_is_no_claim_is_refused() {
     let fixture = fixture();
-    let turn = witness_turn(&fixture.vault, "my name is Oleksii").expect("a TURN");
+    let turn = witness_turn(&fixture.vault, "my name is Owen").expect("a TURN");
     let other = witness_turn(&fixture.vault, "I live in Tokyo").expect("a TURN");
     assert_eq!(
         attach(&fixture, turn, other),
@@ -137,7 +137,7 @@ fn evidence_for_a_row_that_is_no_claim_is_refused() {
 #[test]
 fn reverting_a_repeated_evidence_item_leaves_the_first_batchs_support() {
     let fixture = fixture();
-    let turn = witness_turn(&fixture.vault, "my name is Oleksii").expect("a TURN");
+    let turn = witness_turn(&fixture.vault, "my name is Owen").expect("a TURN");
     let attach_as = |run: &str, local: &'static str| {
         commit(
             &fixture.vault,
