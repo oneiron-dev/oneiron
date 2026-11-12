@@ -1,4 +1,4 @@
-//! OPUS-T0-F gate pins, PR 1 (Engine task 12 Nov 19:38): green pins for nine
+//! OPUS-T0-F gate pins, PR 1 (Engine task 12 Nov 19:38): green pins for ten
 //! write gates of OPUS-GATECENSUS's DEEP list (census/GATE-CENSUS.md, class
 //! GAP-PASSES: real callers pass the gate today, and no running test drove
 //! it from a door). Each test drives the door a real caller uses, with that
