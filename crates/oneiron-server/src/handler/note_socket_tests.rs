@@ -597,36 +597,43 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
     use super::{conn_state::ConnState, documents::handle_document};
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    // The remote side: a client vault holding the same TURN row, so its lazy
+    // birth is the server's (FIX 11794, FIX 11795) and its edits arrive as
+    // updates on that birth.
+    let client_dir = tempfile::tempdir().unwrap();
+    let client_vault = Arc::new(Vault::open(client_dir.path(), VaultConfig::device()).unwrap());
     let id = EntityId::now();
     let facet = EntityId::now();
-    vault
-        .put_entity(
-            &facet,
-            oneiron::registry::ENTITY_TYPE_FACET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"turn facet",
-        )
-        .unwrap();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    vault
-        .set_default_facet(
-            facet,
-            oneiron::WriteActor::new(owner, EdgeActorClass::Human),
-        )
-        .unwrap();
-    vault
-        .put_entity(
-            &id,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"turn",
-        )
-        .unwrap();
-    vault
-        .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
-        .unwrap();
+    for vault in [vault.as_ref(), client_vault.as_ref()] {
+        vault
+            .put_entity(
+                &facet,
+                oneiron::registry::ENTITY_TYPE_FACET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"turn facet",
+            )
+            .unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        vault
+            .set_default_facet(
+                facet,
+                oneiron::WriteActor::new(owner, EdgeActorClass::Human),
+            )
+            .unwrap();
+        vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &rmp_serde::to_vec_named(&serde_json::json!({"txt": ""})).unwrap(),
+            )
+            .unwrap();
+        vault
+            .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
+            .unwrap();
+    }
     let member = EntityId::now();
     let grant_id = EntityId::now();
     let mut grant = oneiron::federation::FederationGrant::new(
@@ -674,10 +681,23 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
         &mut state,
     )
     .unwrap();
-    let remote = loro::LoroDoc::new();
-    remote.get_text("body").insert(0, "first").unwrap();
-    remote.commit();
-    let update = remote.export(loro::ExportMode::all_updates()).unwrap();
+    let client = WindowManager::new(
+        client_vault.clone(),
+        Arc::new(oneiron::sync::bridge::Materializer::new()),
+        "client",
+    );
+    let remote = client.documents().open(id).unwrap();
+    let client_owner = oneiron::WriteActor::new(
+        client_vault.ensure_embedded_owner_actor().unwrap(),
+        EdgeActorClass::Human,
+    );
+    let frame = remote
+        .edit_text(client_owner, client_vault.now_recorded_at(), 0, 0, "first")
+        .unwrap();
+    let update = transport::decode_document(&frame[1..])
+        .unwrap()
+        .payload
+        .to_vec();
     handle_document(
         &server,
         1,
@@ -688,10 +708,19 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
         &mut state,
     )
     .unwrap();
-    let before = remote.oplog_vv();
-    remote.get_text("body").insert(5, " forbidden").unwrap();
-    remote.commit();
-    let update = remote.export(loro::ExportMode::updates(&before)).unwrap();
+    let frame = remote
+        .edit_text(
+            client_owner,
+            client_vault.now_recorded_at(),
+            5,
+            0,
+            " forbidden",
+        )
+        .unwrap();
+    let update = transport::decode_document(&frame[1..])
+        .unwrap()
+        .payload
+        .to_vec();
     grant.role = oneiron::federation::FederationGrantRole::Viewer;
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 2).unwrap();
     assert!(
