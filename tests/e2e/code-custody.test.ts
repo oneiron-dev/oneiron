@@ -612,8 +612,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const bytesA = Buffer.from(readA.content_base64, "base64");
     expect(bytesA.length).toBe(size);
     expect(codeCustody06Sha256(bytesA)).toBe(oid);
-    const putB = await codeCustody06ExpectedSuccess("owner B put vault.artifacts.put", () =>
-      engine.client.call("vault.artifacts.put", {
+    // Owner B's put queues behind owner A's 16 MiB landing (3.3 s and 3.6 s in two
+    // runs on set bd95597c, over 10 s on a loaded host), so it takes the transfer budget.
+    const putB = await codeCustody06Transfer("owner B put vault.artifacts.put", () =>
+      transfers.call("vault.artifacts.put", {
         name: "custody-06-owner-b", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
       }));
     const appendB = await codeCustody06Transfer(`owner B append vault.artifacts.append ${transferBytes}`, () =>
