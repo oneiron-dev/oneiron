@@ -264,7 +264,20 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
       { inputTokens: 512, outputTokens: 16 }) });
   const minted = await client.call("vault.projects.confirm", { card_id, action_id: "mint_project", occurred_at: occurred });
   expect(minted.card_id).toBe(card_id);
-  await providers.awaitBarrier(intake);
+  try {
+    await providers.awaitBarrier(intake);
+  } catch (error) {
+    await engine.artifacts.json(`diagnostic-project-intake-${index}-timeout.json`, {
+      project_ref: minted.project_id, card_id,
+      seenFixtureCalls: providers.seenFixtureCalls.map(call => ({
+        origin: call.origin, fixtureId: call.fixtureId, path: call.path,
+        model: (call.body as {model?:unknown})?.model,
+      })),
+    });
+    throw new Error(`ENGINE DEFECT 2026-11-12: the owner's confirm minted project ${minted.project_id}, but its leader's `
+      + `goal-intake run never called the drafter (FIX GOAL-INTAKE-NEVER-DISPATCHED). ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error });
+  }
   providers.releaseBarrier(intake);
   expect((await entity(client, minted.project_id)).kind).toBe("PROJECT");
   return minted.project_id;
@@ -283,11 +296,12 @@ async function setup(id: string): Promise<World> {
     serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
   await installProjectProposal(engine);
-  // DEFECT (2026-11-10, FIX HOUSE-SOURCE-READ-DENIED, being fixed by OPUS-E2E-3): on a fresh vault
-  // the house (the seeded sys.team_lead) has no scoped read row for the unscoped source MESSAGE, as
-  // the Dreamer and the Coach have (project_proposal.rs:159-166), so its project question settles
-  // unread and never reaches the decider. MEMORY-01, -02, -05, -07 and -08 stay red here until that
-  // fix lands. No owner grant works around it (Engine 07:00).
+  // DEFECT (2026-11-12, FIX GOAL-INTAKE-NEVER-DISPATCHED): the house's project question, its drafted
+  // card and the owner's confirm all work on this engine (fleet job 1112-100207-3a74, set bd95597c8afc).
+  // The confirm then dispatches the new project's leader with no parent attempt, and the depth check
+  // refuses that spawn before it is queued (agent_dispatch/dispatch/depth.rs:82-85; the server only
+  // warns "goal-intake interview not dispatched"). MEMORY-01, -02, -05, -07 and -08 stay red at the
+  // project-intake barrier until that fix lands.
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
   const projects = new Map<string, string>();
   for (const [index, row] of data.fixture.projects.entries()) {
