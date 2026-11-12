@@ -211,8 +211,9 @@ impl ResidenceRpc {
             opening_messages += 1;
             match frame.first() {
                 Some(&TAG_RPC) => {
-                    super::super::note_session::accept_bind_reply(&frame[1..])
+                    let receipt = super::super::note_session::accept_bind_reply(&frame[1..])
                         .map_err(RpcFault::Remote)?;
+                    tracing::debug!(?receipt, "the home answered the residence lane's bind");
                     return Ok(Some(Self {
                         socket,
                         next_id: 1,
