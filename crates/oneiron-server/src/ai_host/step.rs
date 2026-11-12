@@ -808,7 +808,14 @@ impl StepRunner {
         };
         let budget = |denied: oneiron::llm::BudgetDenied| StepFault {
             retryable: false,
-            exhausted: matches!(denied, oneiron::llm::BudgetDenied::Exhausted),
+            // A host-paid call nothing funds, or a resident's spent share,
+            // holds the run at its cap as the spent meter it read as before D3.
+            exhausted: matches!(
+                denied,
+                oneiron::llm::BudgetDenied::Exhausted
+                    | oneiron::llm::BudgetDenied::Unfunded
+                    | oneiron::llm::BudgetDenied::ResidentShareSpent { .. }
+            ),
             payer: None,
             hook_wait: false,
             error: Error::InvalidConfig(format!("workflow step budget: {denied:?}")),
