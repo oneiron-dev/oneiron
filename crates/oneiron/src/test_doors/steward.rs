@@ -61,6 +61,38 @@ pub fn owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
     )
 }
 
+/// Records verified sources for a Dreamer claim through the strength writer.
+/// Verification and observation share one writer transaction.
+///
+/// # Errors
+///
+/// The vault's, an unreadable source, or evidence of an inadmissible kind.
+pub fn record_strength_observations(
+    vault: &Vault,
+    claim: EntityId,
+    sources: &[EntityId],
+    now_ms: u64,
+) -> Result<()> {
+    use crate::claim::{ClaimSource, ScopedReadActorKey};
+    use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
+
+    let key = ScopedReadActorKey::for_engine_actor(vault.dreamer_authority()?)
+        .ok_or(Error::InvalidClaimBody("an actor with no read"))?;
+    let read = vault.scoped_read(key);
+    vault.with_write_txn_grouped(|txn| {
+        let evidence = VerifiedEvidenceSet::verify_whole_in_txn(
+            vault,
+            &read,
+            txn,
+            sources,
+            ClaimSource::Generated,
+        )?;
+        crate::dreamer_consolidation::strength::record_verified_in_txn(
+            vault, txn, claim, &evidence, now_ms,
+        )
+    })
+}
+
 /// Stands `agent`'s Steward grant with `verbs` as the one row that stands,
 /// as a first mint leaves it; a later call stands a fresh grant that
 /// replaces it.

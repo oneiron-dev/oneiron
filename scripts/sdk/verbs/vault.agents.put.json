@@ -5,5 +5,6 @@
   "scope": "Write",
   "context": "run",
   "effect": "AgentsPut",
-  "grant_class": "author's slice (ARCH-0053:20)"
+  "grant_class": "author's slice (ARCH-0053:20)",
+  "act_class": "unstated"
 }

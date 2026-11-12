@@ -619,7 +619,7 @@ impl SessionStoreView<'_> {
 /// target can drift from the structs: a database renamed in `Store` or
 /// `SessionStoreView` and not here fails to compile.
 macro_rules! manifest_dbs {
-    ($($name:ident: $ty:ty),+ $(,)?) => {
+    ($($name:ident: $ty:ty => $manifest_index:literal),+ $(,)?) => {
         /// The content a reader reads: the 28 accessors of [`Store`] or of one
         /// [`SessionStoreView`], borrowed (ARCH-0052 §2: reads compose overlay
         /// ∪ base at the storage-accessor layer). A reader that takes
@@ -794,7 +794,10 @@ macro_rules! manifest_dbs {
             pub(crate) fn canonical_dbs(&self) -> CoreDbs<'_> {
                 CoreDbs {
                     core: self,
-                    $($name: <$ty>::canonical(self.raw.$name),)+
+                    $($name: <$ty>::canonical_named(
+                        self.raw.$name,
+                        super::DB_MANIFEST[$manifest_index].name,
+                    ),)+
                 }
             }
         }
@@ -818,34 +821,34 @@ macro_rules! manifest_dbs {
 }
 
 manifest_dbs! {
-    entities: OverlayDb,
-    type_index: OverlayDb,
-    short_ids: OverlayDb,
-    short_ids_reverse: OverlayDb,
-    vault_meta: OverlayDb,
-    vectors: OverlayDb,
-    hnsw_neighbors: OverlayDb,
-    hnsw_meta: OverlayDb,
-    text_postings: OverlayDb,
-    text_meta: OverlayDb,
-    text_forward: OverlayDb,
-    text_bm25_field_stats: OverlayDb,
-    text_doc_field_lengths: OverlayDb,
-    edges_out: OverlayDb,
-    edges_in: OverlayDb,
-    ppr_cache: OverlayDb,
-    ppr_cache_deps: OverlayDb,
-    temporal_occurred_start: OverlayDb,
-    temporal_occurred_end: OverlayDb,
-    temporal_learned: OverlayDb,
-    temporal_long_intervals: OverlayDb,
-    phonetic_index: OverlayDb,
-    phonetic_forward: OverlayDb,
-    sync_state: OverlayStrDb,
-    sync_queue: OverlayDb,
-    attempt_records: OverlayDb,
-    attempt_ready: OverlayDb,
-    attempt_dedupe: OverlayDb,
+    entities: OverlayDb => 0,
+    type_index: OverlayDb => 1,
+    short_ids: OverlayDb => 2,
+    short_ids_reverse: OverlayDb => 3,
+    vault_meta: OverlayDb => 4,
+    vectors: OverlayDb => 5,
+    hnsw_neighbors: OverlayDb => 6,
+    hnsw_meta: OverlayDb => 7,
+    text_postings: OverlayDb => 8,
+    text_meta: OverlayDb => 9,
+    text_forward: OverlayDb => 10,
+    text_bm25_field_stats: OverlayDb => 11,
+    text_doc_field_lengths: OverlayDb => 12,
+    edges_out: OverlayDb => 13,
+    edges_in: OverlayDb => 14,
+    ppr_cache: OverlayDb => 15,
+    ppr_cache_deps: OverlayDb => 16,
+    temporal_occurred_start: OverlayDb => 17,
+    temporal_occurred_end: OverlayDb => 18,
+    temporal_learned: OverlayDb => 19,
+    temporal_long_intervals: OverlayDb => 20,
+    phonetic_index: OverlayDb => 21,
+    phonetic_forward: OverlayDb => 22,
+    sync_state: OverlayStrDb => 23,
+    sync_queue: OverlayDb => 24,
+    attempt_records: OverlayDb => 25,
+    attempt_ready: OverlayDb => 26,
+    attempt_dedupe: OverlayDb => 27,
 }
 
 impl std::ops::Deref for Store {

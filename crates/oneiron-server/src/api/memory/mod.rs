@@ -336,6 +336,7 @@ pub(crate) async fn core_memory_verb(
                 entity: Some(CoreBatchEntityResult {
                     id: written.id,
                     entity_type: written.entity_type,
+                    agent_definition: written.agent_definition,
                 }),
                 delete: None,
             }))

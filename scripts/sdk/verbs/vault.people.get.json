@@ -5,6 +5,7 @@
   "output": "crate::context_board::PersonRow",
   "call": "memory.people_get(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

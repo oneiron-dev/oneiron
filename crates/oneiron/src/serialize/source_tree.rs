@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 
 use super::ExportBodyFile;
+use super::ExportSecrets;
 use super::credential_nulling::{credential_key, null_credentials};
 use crate::batch::export::{
     ArchiveFiles, ExportFileTree, ExportSourceContent, ExportSourceFile, FileSpool,
@@ -69,18 +70,30 @@ fn source_digest(bytes: &[u8]) -> String {
     SkillContentHash::from_bytes(Sha256::digest(bytes).into()).to_hex()
 }
 
-/// A tree's members: a clean UTF-8 file as its text, any other clean file as
-/// the archive file its bytes are, by BLAKE3 and length, and a file the scan
-/// reads a credential in as redacted.
+/// A tree's members under the Nulled policy: a clean UTF-8 file as its text,
+/// any other clean file as the archive file its bytes are, by BLAKE3 and
+/// length, and a file the scan reads a credential in as redacted.
 pub(crate) fn export_source_tree(files: &[HubFile]) -> Result<ExportFileTree> {
+    export_source_tree_for(files, ExportSecrets::Nulled)
+}
+
+/// A tree's members under `secrets`: under Included every member keeps its
+/// bytes (UTF-8 as text, any other bytes as the archive file they are), each
+/// with its SHA-256, and the tree keeps its canonical hash; no path aliasing
+/// and no safety scan. Under Nulled as [`export_source_tree`].
+pub(crate) fn export_source_tree_for(
+    files: &[HubFile],
+    secrets: ExportSecrets,
+) -> Result<ExportFileTree> {
     let original_hash = canonical_skill_tree_hash(
         files
             .iter()
             .map(|f| (f.path.as_str(), f.content.as_slice())),
     )?;
-    if files
-        .iter()
-        .any(|file| scan_file_content("", file.path.as_bytes()).is_some())
+    if secrets == ExportSecrets::Nulled
+        && files
+            .iter()
+            .any(|file| scan_file_content("", file.path.as_bytes()).is_some())
     {
         // Path names are source bytes too. Hide the whole tree's names rather
         // than leak a credential or mint aliases when replacing just one path.
@@ -103,7 +116,8 @@ pub(crate) fn export_source_tree(files: &[HubFile]) -> Result<ExportFileTree> {
     let members = sorted
         .into_iter()
         .map(|f| {
-            let safe = source_file_is_safe(&f.path, &f.content);
+            let safe =
+                secrets == ExportSecrets::Included || source_file_is_safe(&f.path, &f.content);
             complete &= safe;
             ExportSourceFile {
                 path: f.path.clone(),
@@ -120,19 +134,21 @@ pub(crate) fn export_source_tree(files: &[HubFile]) -> Result<ExportFileTree> {
         content_hash: complete.then(|| original_hash.to_hex()),
         files: members,
     };
-    tree.validate_in(&HeldFiles::of(files, &tree)?)?;
+    tree.validate_in_with(&HeldFiles::of(files, &tree)?, secrets)?;
     Ok(tree)
 }
 
-/// [`export_source_tree`] for an archive row: each member it names as a file
-/// is spooled once, as the bytes the credential scan read. A tainted row's
-/// tree carries no content and claims no identity, and spools nothing.
+/// [`export_source_tree_for`] for an archive row: each member it names as a
+/// file is spooled once, as the bytes the credential scan read (under Nulled)
+/// or as stored (under Included). A tainted row's tree carries no content and
+/// claims no identity, and spools nothing, under either policy.
 pub(crate) fn export_source_tree_with_files(
     files: &[HubFile],
     spool: &mut FileSpool,
     tainted: bool,
+    secrets: ExportSecrets,
 ) -> Result<ExportFileTree> {
-    let mut tree = export_source_tree(files)?;
+    let mut tree = export_source_tree_for(files, secrets)?;
     if tainted {
         tree.strip();
     } else {
@@ -210,12 +226,25 @@ impl ExportFileTree {
         self.validate_in(&HeldFiles::default())
     }
 
-    /// Every member's proof: sorted credential-free paths, each clean
-    /// member's exact bytes (a file member's read from `files`) scanned again
-    /// and matching its SHA-256, and the tree hash exactly when no member is
-    /// redacted. No byte count refuses a member or a tree (FIX 8202).
+    /// Every member's proof under the Nulled policy: sorted credential-free
+    /// paths, each clean member's exact bytes (a file member's read from
+    /// `files`) scanned again and matching its SHA-256, and the tree hash
+    /// exactly when no member is redacted. No byte count refuses a member or
+    /// a tree (FIX 8202).
     pub(crate) fn validate_in(&self, files: &dyn ArchiveFiles) -> Result<()> {
-        self.members_in(files).map(drop)
+        self.validate_in_with(files, ExportSecrets::Nulled)
+    }
+
+    /// [`Self::validate_in`] under `secrets`: under Included the paths and
+    /// bytes keep credentials, so the credential-path and safety proofs are
+    /// skipped; sorted-unique paths, Text/File+SHA pairing, SHA equality and
+    /// the tree-hash proof still hold.
+    pub(crate) fn validate_in_with(
+        &self,
+        files: &dyn ArchiveFiles,
+        secrets: ExportSecrets,
+    ) -> Result<()> {
+        self.members_in(files, secrets).map(drop)
     }
 
     /// [`Self::import_files_in`] with no archive files.
@@ -223,10 +252,21 @@ impl ExportFileTree {
         self.import_files_in(&HeldFiles::default())
     }
 
-    /// The tree's files as their exact bytes, a file member's read from
-    /// `files` and checked as [`Self::validate_in`] checks it.
+    /// The tree's files as their exact bytes under the Nulled policy, a file
+    /// member's read from `files` and checked as [`Self::validate_in`]
+    /// checks it.
     pub(crate) fn import_files_in(&self, files: &dyn ArchiveFiles) -> Result<Vec<HubFile>> {
-        let members = self.members_in(files)?;
+        self.import_files_in_with(files, ExportSecrets::Nulled)
+    }
+
+    /// [`Self::import_files_in`] under `secrets`: the proofs are those of
+    /// [`Self::validate_in_with`].
+    pub(crate) fn import_files_in_with(
+        &self,
+        files: &dyn ArchiveFiles,
+        secrets: ExportSecrets,
+    ) -> Result<Vec<HubFile>> {
+        let members = self.members_in(files, secrets)?;
         if self.content_hash.is_none() {
             return Err(invalid("redacted source tree is not importable"));
         }
@@ -246,13 +286,21 @@ impl ExportFileTree {
     }
 
     /// Each member's path and exact bytes, its proof checked; a redacted
-    /// member holds none.
-    fn members_in<'t>(&'t self, files: &dyn ArchiveFiles) -> Result<Vec<(&'t str, Cow<'t, [u8]>)>> {
+    /// member holds none. Under Included the credential-path and safety proofs
+    /// are skipped (the tree keeps credentials); every other proof holds as
+    /// under Nulled.
+    fn members_in<'t>(
+        &'t self,
+        files: &dyn ArchiveFiles,
+        secrets: ExportSecrets,
+    ) -> Result<Vec<(&'t str, Cow<'t, [u8]>)>> {
         let mut prior: Option<&str> = None;
         let mut complete = true;
         let mut members = Vec::new();
         for file in &self.files {
-            if scan_file_content("", file.path.as_bytes()).is_some() {
+            if secrets == ExportSecrets::Nulled
+                && scan_file_content("", file.path.as_bytes()).is_some()
+            {
                 return Err(invalid("source path contains credential material"));
             }
             if prior.is_some_and(|p| p >= file.path.as_str()) {
@@ -273,7 +321,9 @@ impl ExportFileTree {
                 _ => return Err(invalid("source file proof is invalid")),
             };
             if let Some(hash) = &file.sha256
-                && (!source_file_is_safe(&file.path, &content) || source_digest(&content) != *hash)
+                && ((secrets == ExportSecrets::Nulled
+                    && !source_file_is_safe(&file.path, &content))
+                    || source_digest(&content) != *hash)
             {
                 return Err(invalid("source file proof is invalid"));
             }

@@ -73,8 +73,16 @@ pub(super) fn relationship_reads() -> Result<Case> {
         1,
         &body,
     )?;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
     crate::federation::bind_member_person(
         &vault,
+        &owner,
         relationship,
         member,
         TimeRange { start: 1, end: 1 },

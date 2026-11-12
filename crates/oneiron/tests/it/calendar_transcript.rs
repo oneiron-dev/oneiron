@@ -25,6 +25,19 @@ fn file_drop_actor(vault: &Vault, at: u64) -> EntityId {
     seed_file_drop_machine_fixture(vault, at).unwrap()
 }
 
+/// The sitting the file-drop import opens and reads: its deterministic MACHINE
+/// actor on this install (a session is keyed by actor and machine). The
+/// actor's id is derived as the importer derives it; nothing is seeded.
+fn file_drop_session_key(vault: &Vault) -> oneiron::session_lifecycle::SessionKey {
+    let actor = EntityId::from_bytes(
+        sha2::Sha256::digest(b"oneiron:calendar:file-drop-import-machine:v1")[..16]
+            .try_into()
+            .unwrap(),
+    )
+    .unwrap();
+    vault.local_session_key(actor).unwrap()
+}
+
 fn uploaded_blob(vault: &Vault, at: u64) -> EntityId {
     let blob = EntityId::now();
     vault
@@ -192,16 +205,21 @@ fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
         Some(oneiron::registry::ENTITY_TYPE_TURN)
     );
 }
-/// MIXED state (the case the deleted empty-only fallback could never serve): a
-/// pre-existing admissible dirty turn AND a named-speaker import in one ingest
-/// land in the SAME round — both planned, one attempt per partition, watermark
-/// settled at the max `learned_at` of the planned prefix.
+/// OF-536 sitting scope: ending the file-drop sitting plans ONLY the turns
+/// witnessed in that sitting. A pre-existing admissible dirty turn of NO
+/// current sitting (no SESSION_TURNS row) is never swept into the round.
 #[test]
-fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
+fn session_end_plans_only_its_sitting_imported_turns_excludes_sessionless_dirty_turn() {
     let (_dir, vault) = vault();
     let conversation = seed_conversation(&vault, 100);
     let pre_existing = seed_dirty_turn(&vault, &conversation, 100);
     let before = meso_partition_attempt_count(&vault);
+    let watermark_before = oneiron::dreamer_consolidation::read_watermark(
+        &vault,
+        oneiron::dreamer_runner::DreamerConsolidationScope::Meso,
+    )
+    .unwrap()
+    .last_learned_at;
 
     let TranscriptIngestOutcome::Session {
         turn_refs,
@@ -221,20 +239,25 @@ fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
         panic!()
     };
 
-    let mut expected = vec![pre_existing];
-    expected.extend(turn_refs.iter().copied());
     assert_eq!(
-        wake_turn_refs, expected,
-        "the round plans the pre-existing dirty turn AND the import, in temporal order"
+        wake_turn_refs, turn_refs,
+        "the round plans the sitting's imported turns, in temporal order"
+    );
+    assert!(
+        !wake_turn_refs.contains(&pre_existing),
+        "a pre-existing dirty turn of no current sitting is never swept into another sitting's close"
     );
     assert!(extraction_enqueued);
     assert_eq!(
         meso_partition_attempt_count(&vault),
-        before + 2,
-        "one attempt per partition: the pre-existing conversation and the import's own"
+        before + 1,
+        "one attempt: the import's own partition only, not the pre-existing conversation's"
     );
     assert!(
-        vault.open_session().unwrap().is_none(),
+        vault
+            .open_session(file_drop_session_key(&vault))
+            .unwrap()
+            .is_none(),
         "the import closes its own sitting exactly once"
     );
     assert_eq!(
@@ -244,8 +267,8 @@ fn mixed_state_ingest_plans_pre_existing_and_imported_turns_in_one_round() {
         )
         .unwrap()
         .last_learned_at,
-        200,
-        "the watermark settles at the max learned_at of the planned prefix"
+        watermark_before,
+        "a sitting's close never advances the global Meso watermark, so the unplanned sessionless dirty turn stays in the next global sweep"
     );
 }
 #[test]
@@ -273,7 +296,7 @@ fn session_end_enqueues_existing_extraction_path_once() {
         before + 1,
         "first close must enqueue exactly one Meso partition attempt"
     );
-    let wake = vault.plan_session_end_wake().unwrap();
+    let wake = vault.plan_session_end_wake(&session_ref).unwrap();
     assert!(
         vault
             .end_session_with_wake(
@@ -294,7 +317,9 @@ fn session_end_enqueues_existing_extraction_path_once() {
 #[test]
 fn open_interactive_session_causes_retry_without_partial_turn_writes() {
     let (_dir, vault) = vault();
-    vault.mint_session(8).unwrap();
+    vault
+        .mint_session(file_drop_session_key(&vault), 8)
+        .unwrap();
     let outcome = ingest_file_drop_transcript(
         &vault,
         TranscriptFileDropRequest {
@@ -456,7 +481,12 @@ fn injected_failure_rolls_back_session_turns_close_and_wake() {
     )
     .expect_err("injected failure must abort the outer transaction");
     assert!(matches!(err, oneiron::Error::InvariantViolation(_)));
-    assert!(vault.open_session().unwrap().is_none());
+    assert!(
+        vault
+            .open_session(file_drop_session_key(&vault))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(
         vault
             .entities_by_type(oneiron::registry::ENTITY_TYPE_SESSION)
@@ -477,7 +507,10 @@ fn injected_failure_rolls_back_session_turns_close_and_wake() {
         "close+wake queue writes roll back"
     );
     assert!(
-        vault.open_session().unwrap().is_none(),
+        vault
+            .open_session(file_drop_session_key(&vault))
+            .unwrap()
+            .is_none(),
         "lifecycle open-session state rolls back"
     );
 }

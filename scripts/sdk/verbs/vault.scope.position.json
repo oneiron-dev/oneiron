@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::memory::RecordPosition>>",
   "call": "memory.scope_position(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "credential_record_scope": true
   },

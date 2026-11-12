@@ -593,6 +593,13 @@ fn enter_run(
         ))
         // FIX 7181: the operator's own Git door base wins over the run's.
         .with_git_door_base(door.git_door_base());
+    // The media step's spend scope is read before the meter's guard: a
+    // top-up after this read moves the generation its park compares
+    // (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    let media_scope = spend
+        .map(|scope| oneiron::llm::StepSpendScope::read_before_guards(vault, scope.clone()))
+        .transpose()
+        .map_err(text)?;
     let meter = spend
         .map(|scope| ScopeMeter::open(vault, scope))
         .transpose()?;
@@ -658,6 +665,7 @@ fn enter_run(
         &status.attempt,
         actor,
         config.run_id,
+        media_scope,
     ));
     // FIX 17594 D3: the run's self brief, resolved from what this entry
     // bound and installed under the run's connection, and the port its

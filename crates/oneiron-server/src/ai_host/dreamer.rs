@@ -1245,6 +1245,8 @@ impl ResidentLend<'_> {
                     instruction: self.instruction,
                     window_tokens,
                     sourced: Some(&backend),
+                    // A resident's own dreaming outside free time binds no scope.
+                    spend_scope: None,
                 },
             )
             .await;
@@ -1292,6 +1294,7 @@ impl ResidentLend<'_> {
                 instruction: self.instruction,
                 window_tokens: self.windows.get(&self.weaver.model).copied(),
                 sourced,
+                spend_scope: None,
             },
         )
         .await

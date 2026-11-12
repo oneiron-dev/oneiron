@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::snapshot_read::SnapshotPage>",
   "call": "crate::snapshot_read::snapshot_page(memory, &input)?",
   "scope": "Read",
+  "act_class": "reversible_work",
   "admission": {
     "lane_record_scope": true
   },

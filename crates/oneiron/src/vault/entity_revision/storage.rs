@@ -705,6 +705,55 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     raw_for_revision(store, txn, id, &raw, Some(target)).map(admit)
 }
 
+/// Moves `id`'s short-id rows to the content hash a live read issues its
+/// short reference with, in the writer's transaction (FIX
+/// SUMMARY-SHORT-REF-INDEX). A live read hashes the row it serves
+/// ([`raw_for_revision`]): a document-backed row's document projection.
+/// A document birth may reorder its fields (the text field follows the
+/// record's other fields) and an edit changes its text, while the batch
+/// writer indexed the body the row was put with. A row with no short id or
+/// no live document is left as it is, and so is a NOTE: its live read
+/// hashes its stored core.
+///
+/// # Errors
+///
+/// Storage and corruption errors reading the row or its document.
+pub(crate) fn refresh_live_short_id_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some((short_id, old_content_hash)) =
+        crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, id)?
+    else {
+        return Ok(());
+    };
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(());
+    };
+    if raw.first() == Some(&crate::registry::ENTITY_TYPE_NOTE) {
+        return Ok(());
+    }
+    // A row no live read serves (its document is not live) issues no ref.
+    let live = match raw_for_revision(store, txn, id, &raw, None) {
+        Ok(live) => live,
+        Err(Error::EntityNotFound) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let content_hash = crate::store::revision_content_hash_in_txn(store, txn, id, &live)?;
+    if content_hash == old_content_hash {
+        return Ok(());
+    }
+    crate::batch::refresh_short_id_hash_in_txn(
+        store,
+        txn,
+        id,
+        short_id,
+        old_content_hash,
+        content_hash,
+    )
+}
+
 pub(crate) fn ensure_document(
     vault: &Vault,
     txn: &mut RwTxn<'_>,

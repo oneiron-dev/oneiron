@@ -41,14 +41,33 @@ fn room_wake_key(agent: EntityId, turn: EntityId) -> String {
 /// keeps its source's key.
 #[must_use]
 pub fn resident_attempt_wakes_for_room(attempt: &AttemptRecord, agent: EntityId) -> bool {
-    let prefix = format!(
-        "{AGENT_DISPATCH_ATTEMPT_TYPE}:resident:{}:{ROOM_WAKE_KEY}:",
-        agent.to_hex()
-    );
     attempt
         .dedupe_key
         .as_deref()
-        .is_some_and(|key| key.starts_with(&prefix))
+        .is_some_and(|key| key.starts_with(&room_wake_attempt_key_prefix(agent)))
+}
+
+/// The room turn whose wake dispatched `attempt`, a run of resident `agent`
+/// (ROOM-SCOPED-PINS P2c): read from its engine-minted dedupe key, never its
+/// briefing. `None` for any other run. A retry keeps its source's key.
+pub(crate) fn resident_attempt_room_wake_turn(
+    attempt: &AttemptRecord,
+    agent: EntityId,
+) -> Option<EntityId> {
+    let turn = attempt
+        .dedupe_key
+        .as_deref()?
+        .strip_prefix(&room_wake_attempt_key_prefix(agent))?;
+    EntityId::from_hex(turn).ok()
+}
+
+/// What every room wake attempt key of resident `agent` starts with; the
+/// waking turn follows it.
+fn room_wake_attempt_key_prefix(agent: EntityId) -> String {
+    format!(
+        "{AGENT_DISPATCH_ATTEMPT_TYPE}:resident:{}:{ROOM_WAKE_KEY}:",
+        agent.to_hex()
+    )
 }
 
 /// The briefing a room wake's run reads: the room and the turn, by ref.

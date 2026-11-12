@@ -10,8 +10,8 @@ mod dag;
 pub mod shape;
 
 pub use batch::{
-    CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput,
-    CoreBatchWriteReceipt,
+    AgentDefinitionWriteDisposition, AgentDefinitionWriteReceipt, CoreBatchCommit,
+    CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt,
 };
 pub use conversations::{
     ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt,

@@ -5,6 +5,7 @@
   "output": "crate::snapshot_read::SnapshotHandle",
   "call": "crate::snapshot_read::snapshot_open(memory, &input)?",
   "scope": "Read",
+  "act_class": "reversible_work",
   "admission": {
     "lane_record_scope": true,
     "validate": "crate::snapshot_read::validate_snapshot_open(&input)?;"

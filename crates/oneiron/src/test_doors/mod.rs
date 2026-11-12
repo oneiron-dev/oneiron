@@ -4,9 +4,11 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod agent_definition_scans;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
+pub mod check_in;
 pub mod checkpoint_registry;
 pub mod claim_source_recheck;
 pub mod coach;
@@ -23,14 +25,19 @@ pub mod feeds;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 pub mod house_link;
+pub mod inquiry;
 pub mod label_writers;
 pub mod learning_claim_value;
 pub mod lifted_text;
 pub mod live_run_claim_put;
+pub mod mail_landing;
 pub mod membership;
 pub mod model_binding_proposer;
+pub mod note_bm25f_repair;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
+pub mod repo_base_manifest;
+pub mod repo_secret_marks;
 pub mod retrieval_policy_default_floor;
 pub mod run_hold;
 pub mod run_lifecycle;
@@ -44,6 +51,7 @@ pub mod split_phrase_carrier;
 pub mod steward;
 pub mod substrate_reads;
 pub mod turn_programs;
+pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod wake_d1_park_release;
 

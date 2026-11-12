@@ -506,6 +506,15 @@ impl NoVouch {
                 &self.fold.world_privacy(*world),
             );
         }
+        // A view that holds some agent world edits refused reads their worlds
+        // under the same cap, with those edits undone in both folds (FIX 23218).
+        let fresh_edits = fold
+            .agent_world_undo
+            .edits()
+            .filter(|edit| self.fresh(fold, edit))
+            .copied()
+            .collect();
+        fold.agent_world_undo.cap(&self.fold, fresh_edits);
         let fresh_grants: BTreeSet<_> = fold
             .grant_travel
             .iter()
@@ -532,6 +541,26 @@ impl NoVouch {
             fold.install.vouch_only_owner_work = Some(vouch_only);
         }
     }
+}
+
+/// [`NoVouch::cap`] of `fold`, with `no_vouch` standing for the fold with no
+/// vouch and `after` for the rows the candidate handoffs `handoffs` precede:
+/// the authority-internal half of the FIX 23218 integration-test door.
+#[cfg(oneiron_test_support)]
+pub(super) fn cap_by_no_vouch_fold(
+    fold: &mut AuthorityFold,
+    no_vouch: AuthorityFold,
+    handoffs: BTreeSet<AuthorityEntryHash>,
+    after: BTreeSet<AuthorityEntryHash>,
+) {
+    NoVouch {
+        fold: no_vouch,
+        handoffs,
+        after,
+        held: BTreeSet::new(),
+        deadline: None,
+    }
+    .cap(fold);
 }
 
 /// The rows a handoff in `handoffs` precedes.

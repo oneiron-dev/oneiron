@@ -5,6 +5,7 @@
   "output": "crate::memory::KeyValuePutReceipt",
   "call": "memory.key_value_put(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {},
   "section": false,
   "binding": {
