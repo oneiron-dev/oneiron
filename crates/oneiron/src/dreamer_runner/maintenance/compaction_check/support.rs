@@ -260,6 +260,7 @@ pub(super) async fn verdict(
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
         spend_scope: None,
+        wake_pass_bound: true,
     };
     // Keyed by the landing's kind and the rubric the judge reads by: a new
     // rubric is a new question with its own bands.

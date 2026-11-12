@@ -644,6 +644,7 @@ fn run_ask_step_wait_wakes_only_bound_step_and_survives_reopen() -> Result<()> {
         deadline: None,
         now_ms: 5_000,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let other_ctx = DurableStepContext {
         vault: &vault,
@@ -654,6 +655,7 @@ fn run_ask_step_wait_wakes_only_bound_step_and_survives_reopen() -> Result<()> {
         deadline: None,
         now_ms: 5_000,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let adapter = RunTreeAdapter::new(&vault);
     let questions = vec![
@@ -730,6 +732,7 @@ fn run_ask_step_wait_wakes_only_bound_step_and_survives_reopen() -> Result<()> {
         deadline: None,
         now_ms: 6_000,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let adapter = RunTreeAdapter::new(&vault);
     assert_eq!(

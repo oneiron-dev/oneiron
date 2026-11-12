@@ -298,6 +298,7 @@ fn a_soft_childs_budget_wait_asks_its_hard_root_only_for_the_deficit()
         deadline: None,
         now_ms: 43_000,
         spend_scope: Some(spend),
+        wake_pass_bound: false,
     };
     let backend = NeverBackend::new();
     let outcome = block_on_ready(llm::call_as_step(
@@ -416,8 +417,8 @@ fn a_soft_childs_budget_wait_asks_its_hard_root_only_for_the_deficit()
 }
 
 /// 6.5d-1: the two scoped tries park typed on their own scopes with their queue generation, the
-/// scopeless try parks untyped, a short top-up wakes nothing, and a room-leaving top-up of A wakes
-/// only A, as the same queued try with its trap consumed.
+/// scopeless pass try parks on its pass (no top-up wakes it), a short top-up wakes nothing, and a
+/// room-leaving top-up of A wakes only A, as the same queued try with its trap consumed.
 #[test]
 fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -463,7 +464,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
     let spend_a = llm::StepSpendScope::read_before_guards(&vault, scope_a.clone())?;
     let spend_b = llm::StepSpendScope::read_before_guards(&vault, scope_b.clone())?;
     // Each scoped step runs under its scope's guard; the scopeless step runs under a zero-limit
-    // guard. Every cap sits below its guard's reserve, so every admission refuses exhausted.
+    // guard, as a step of its wake pass. Every cap sits below its guard's reserve, so every admission refuses exhausted.
     let guard_a = dispatcher.guard_for_scope(&scope_a)?;
     let guard_b = dispatcher.guard_for_scope(&scope_b)?;
     let asked_a = guard_a.reserve_units();
@@ -512,6 +513,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         deadline: None,
         now_ms: 40_000,
         spend_scope: Some(spend_a),
+        wake_pass_bound: false,
     };
     let ctx_b = llm::DurableStepContext {
         vault: &vault,
@@ -522,6 +524,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         deadline: None,
         now_ms: 41_000,
         spend_scope: Some(spend_b),
+        wake_pass_bound: false,
     };
     let ctx_c = llm::DurableStepContext {
         vault: &vault,
@@ -532,6 +535,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         deadline: None,
         now_ms: 42_000,
         spend_scope: None,
+        wake_pass_bound: true,
     };
 
     let backend = NeverBackend::new();
@@ -613,8 +617,8 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         "try C's trap waits for its signal"
     );
 
-    // Each scoped try parks typed on its own scope with its queue generation; the scopeless try
-    // parks untyped.
+    // Each scoped try parks typed on its own scope with its queue generation; the scopeless try,
+    // bound to its wake pass, parks typed on its pass.
     let park_a = store.parked_attempt(row_a.id)?.expect("try A's park");
     assert_eq!(
         park_a.cause,
@@ -700,9 +704,15 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
         llm::trap_park_owner(&trap_c.trap_claim_id),
         "try C's park sits under its trap's owner"
     );
-    assert!(
-        park_c.wait.is_none(),
-        "the scopeless try parks without a typed wait"
+    assert_eq!(
+        park_c.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::PassBudget {
+                asked_units: guard_c.reserve_units(),
+            },
+            lease_generation: row_c.attempt_count,
+        }),
+        "the scopeless pass step parks on its pass, asking its guard's reserve"
     );
 
     // Only a top-up resumes a budget wait, and only the wait's own scope; the blind resumers stay
@@ -717,7 +727,7 @@ fn a_budget_typed_wait_wakes_only_on_its_own_scopes_room() -> Result<(), Box<dyn
     );
     assert!(
         !park_c.resumable_by(ParkResumer::BudgetTopUp),
-        "no top-up resumes the untyped park"
+        "no top-up resumes the pass budget park"
     );
     assert!(
         !park_a.resumable_by(ParkResumer::LaterPass),
@@ -938,6 +948,7 @@ fn a_top_up_between_the_guards_read_and_the_park_resumes_the_park_at_once()
         deadline: None,
         now_ms: 44_000,
         spend_scope: Some(spend_a),
+        wake_pass_bound: false,
     };
     let ctx_b = llm::DurableStepContext {
         vault: &vault,
@@ -948,6 +959,7 @@ fn a_top_up_between_the_guards_read_and_the_park_resumes_the_park_at_once()
         deadline: None,
         now_ms: 45_000,
         spend_scope: Some(spend_b),
+        wake_pass_bound: false,
     };
     let backend = NeverBackend::new();
 
@@ -1174,6 +1186,7 @@ fn consent_peer_and_human_parks_wake_only_on_their_own_delivery()
         deadline: None,
         now_ms: 40_000,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let ctx_b = llm::DurableStepContext {
         vault: &vault,
@@ -1184,6 +1197,7 @@ fn consent_peer_and_human_parks_wake_only_on_their_own_delivery()
         deadline: None,
         now_ms: 40_001,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let ctx_p1 = llm::DurableStepContext {
         vault: &vault,
@@ -1194,6 +1208,7 @@ fn consent_peer_and_human_parks_wake_only_on_their_own_delivery()
         deadline: None,
         now_ms: 40_002,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let ctx_p2 = llm::DurableStepContext {
         vault: &vault,
@@ -1204,6 +1219,7 @@ fn consent_peer_and_human_parks_wake_only_on_their_own_delivery()
         deadline: None,
         now_ms: 40_003,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let ctx_h = llm::DurableStepContext {
         vault: &vault,
@@ -1214,6 +1230,7 @@ fn consent_peer_and_human_parks_wake_only_on_their_own_delivery()
         deadline: None,
         now_ms: 40_004,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let step_a = [0xC1; 32];
     let step_b = [0xC2; 32];
@@ -2389,6 +2406,7 @@ fn seat_parks_wake_only_on_their_own_seat_available_write() -> Result<(), Box<dy
     let other_waits = [
         None,
         Some(DreamerParkWaitClass::Budget),
+        Some(DreamerParkWaitClass::PassBudget),
         Some(DreamerParkWaitClass::Consent),
         Some(DreamerParkWaitClass::Peer),
         Some(DreamerParkWaitClass::Human),

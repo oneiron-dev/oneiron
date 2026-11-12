@@ -59,7 +59,6 @@ mod step;
 pub use step::public as model_step;
 pub mod tagger;
 
-pub(crate) use step::wake_budget_traps_in_txn;
 pub use step::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
@@ -79,6 +78,9 @@ pub(crate) use step::{
     retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
+};
+pub(crate) use step::{
+    wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{

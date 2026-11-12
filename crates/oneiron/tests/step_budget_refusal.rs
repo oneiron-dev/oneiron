@@ -212,6 +212,7 @@ fn step_under(
         deadline: None,
         now_ms: 43_000,
         spend_scope: Some(spend),
+        wake_pass_bound: false,
     };
     Ok(block_on_ready(llm::call_as_step(
         &ctx,

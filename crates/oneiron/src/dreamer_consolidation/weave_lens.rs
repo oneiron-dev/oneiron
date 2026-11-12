@@ -361,6 +361,7 @@ pub async fn run_weave_lens(
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
         spend_scope: None,
+        wake_pass_bound: true,
     };
     let mut charges = StepChargeTally::default();
     let mut reason = String::new();
