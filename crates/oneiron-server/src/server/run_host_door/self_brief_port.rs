@@ -149,10 +149,13 @@ impl SelfBriefPort for ResidentSelfBrief {
         let fold = matches!(boundary, BriefBoundary::Fold(_)).then(|| self.door.self_brief_facts());
         let server = Arc::clone(&self.door.server);
         let (actor, board, owner) = (self.door.actor, self.door.board.clone(), self.owner);
+        tracing::debug!(target: "oneiron::run_start", stage = "brief_port_on_server_start", run = %self.door.run_id.to_hex(), "run start");
         let prepared = on_server(&self.door.runtime, move |handle| {
+            tracing::debug!(target: "oneiron::run_start", stage = "brief_port_blocking_thread_entered", "run start");
             handle.block_on(prepare_prefix(&server, actor, &board, owner, fold))
         })
         .and_then(|prepared| prepared);
+        tracing::debug!(target: "oneiron::run_start", stage = "brief_port_on_server_done", run = %self.door.run_id.to_hex(), "run start");
         let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         let token = BriefCandidateToken(self.next_token.fetch_add(1, Ordering::Relaxed));
@@ -326,17 +329,23 @@ async fn prepare_prefix(
     owner: BriefOwner,
     fold: Option<DoorFacts>,
 ) -> oneiron::Result<Option<PreparedPrefix>> {
+    tracing::debug!(target: "oneiron::run_start", stage = "brief_prefix_entered", "run start");
     let reads = crate::api::run_session_reads(server, actor, board).await;
+    tracing::debug!(target: "oneiron::run_start", stage = "brief_prefix_session_reads_done", "run start");
     let people = crate::api::run_brief_people(server, actor).map_err(unresolved)?;
+    tracing::debug!(target: "oneiron::run_start", stage = "brief_prefix_people_done", "run start");
     let people_budget_tok = crate::api::run_brief_people_budget(server, actor.entity_ref())?;
+    tracing::debug!(target: "oneiron::run_start", stage = "brief_prefix_people_budget_done", "run start");
     let state = fold
         .map(|facts| {
             crate::api::run_brief_state(server, actor, facts.line.as_ref(), &reads, &facts.host)
         })
         .transpose()
         .map_err(unresolved)?;
+    tracing::debug!(target: "oneiron::run_start", stage = "brief_prefix_state_done", "run start");
     let key = brief_key(actor, board);
     let mut briefs = server.self_brief_sessions.lock().await;
+    tracing::debug!(target: "oneiron::run_start", stage = "brief_prefix_sessions_locked", "run start");
     // The fold's epoch moved as the batch landed (`folded`); a fold here
     // only restates what the door holds now at that epoch.
     let held = match state {
@@ -353,6 +362,7 @@ async fn prepare_prefix(
         Some(&people),
         people_budget_tok,
     )?;
+    tracing::debug!(target: "oneiron::run_start", stage = "brief_prefix_prepared", "run start");
     Ok(preparation.map(|preparation| match preparation {
         BriefPreparation::Staged { candidate, .. } => PreparedPrefix {
             text: candidate.prefix().to_owned(),

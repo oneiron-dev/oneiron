@@ -334,11 +334,14 @@ pub(super) async fn spool_then<R: Send + 'static>(
     let (raw_done, mut spooled) = tokio::sync::oneshot::channel();
     let (completed, feed_done) = tokio::sync::oneshot::channel();
     let worker = transfer::spawn_worker(move || -> Result<R, Unspooled> {
+        tracing::debug!(target: "oneiron::run_start", stage = "spool_worker_started", "run start");
         let account = floor.as_ref().zip(room.as_deref());
         let file = vault.archive_spool_file().map_err(create_failed)?;
+        tracing::debug!(target: "oneiron::run_start", stage = "spool_file_created", "run start");
         // Beside the queue: one unsent copy, the current copy, and the read buffer.
         let bytes = ((SPOOL_QUEUE_PIECES + 3) * SPOOL_PIECE) as u64;
         let memory = RawSpoolMemory::admit(bytes, &stopped).map_err(Unspooled::MemoryRefused)?;
+        tracing::debug!(target: "oneiron::run_start", stage = "spool_worker_memory_leased", "run start");
         let body = BodyReader::new_admitted(receiver, Arc::clone(&memory));
         let _ = ready.send(Arc::clone(&memory));
         let file = spool_to_end(file, body, account, declared, &memory);

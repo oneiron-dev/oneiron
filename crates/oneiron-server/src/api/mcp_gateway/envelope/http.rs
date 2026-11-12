@@ -63,11 +63,13 @@ pub(crate) async fn mcp_tool_first_gateway(
     // (FIX 12072).
     crate::api::answer_hold::until_encoded(Box::pin(async move {
         let (parts, body) = request.into_parts();
+        tracing::debug!(target: "oneiron::run_start", stage = "tool_first_handler_entered", "run start");
         let arrived = match super::blob_body::read_tool_first(&server, &parts, locality, body).await
         {
             Ok(arrived) => arrived,
             Err(refused) => return refused,
         };
+        tracing::debug!(target: "oneiron::run_start", stage = "tool_first_body_arrived", "run start");
         mcp_endpoint(
             McpSurfaceMode::ToolFirst,
             parts.headers,
@@ -566,6 +568,7 @@ pub(super) async fn mcp_endpoint(
         }
     };
     let id = request.id.clone().unwrap_or(id);
+    tracing::debug!(target: "oneiron::run_start", stage = "mcp_endpoint_request_parsed", method = %request.method, "run start");
 
     // The envelope above is routed from a `Value`, which rounds a JSON number
     // through `f64`. Tool arguments are decoded against the ADVERTISED schema
@@ -586,6 +589,7 @@ pub(super) async fn mcp_endpoint(
         request.params.as_ref(),
     )
     .is_some();
+    tracing::debug!(target: "oneiron::run_start", stage = "mcp_repair_checked", "run start");
     let claim = match mcp_named_invocation(&request).filter(|_| !deferred_repair) {
         None => None,
         Some(invocation) => {
@@ -786,6 +790,7 @@ pub(super) async fn mcp_endpoint(
             }
         }
     };
+    tracing::debug!(target: "oneiron::run_start", stage = "mcp_claim_resolved", claimed = claim.is_some(), "run start");
     let method = request.method.clone();
     // The method dispatch, `tools/call` and every verb under it, on the heap
     // (FIX 12072).
@@ -806,6 +811,7 @@ pub(super) async fn mcp_endpoint(
     } else {
         (call.await, None)
     };
+    tracing::debug!(target: "oneiron::run_start", stage = "mcp_method_handled", method = %method, "run start");
     // A `tools/call` that reached its door carries its own receipt; every
     // other reply is the connection's (FIX 811).
     let covered = match &result {
@@ -844,6 +850,7 @@ pub(super) async fn mcp_endpoint(
             claim.finish(outcome);
         }
     }
+    tracing::debug!(target: "oneiron::run_start", stage = "mcp_endpoint_reply_ready", method = %method, "run start");
     super::super::oauth_call::challenged(mcp_http_reply(reply, stamp.as_ref()), challenge)
 }
 

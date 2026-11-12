@@ -111,6 +111,7 @@ pub(crate) async fn admit_http_binding(
     mut request: Request,
     next: Next,
 ) -> Response {
+    tracing::debug!(target: "oneiron::run_start", stage = "binding_entered", path = %request.uri().path(), "run start");
     if !served_after_deletion(request.uri().path())
         && let Some(refusal) = deleted_vault_refusal(&server, request.uri().path())
     {
@@ -131,6 +132,7 @@ pub(crate) async fn admit_http_binding(
         Ok(classified) => classified,
         Err(refusal) => return refusal,
     };
+    tracing::debug!(target: "oneiron::run_start", stage = "binding_clock_classified", "run start");
     let restriction_only = clock == Some(ClockIngress::RestrictionOnly);
     // A request the owner's reserve admitted (FIX 8274) carries that
     // admission here, used once: no second nonce is spent.
@@ -152,6 +154,7 @@ pub(crate) async fn admit_http_binding(
             }
         }
     };
+    tracing::debug!(target: "oneiron::run_start", stage = "binding_admitted", "run start");
     // A mesh stream's handshake proved its MACHINE: an HTTP proof of another
     // machine refuses (FIX 997). A request with no proof stays Unknown, as on
     // any transport.
@@ -171,7 +174,10 @@ pub(crate) async fn admit_http_binding(
     if let Some(clock) = clock {
         request.extensions_mut().insert(clock);
     }
-    clock_ingress::scoped(restriction_only, next.run(request)).await
+    let path = request.uri().path().to_owned();
+    let response = clock_ingress::scoped(restriction_only, next.run(request)).await;
+    tracing::debug!(target: "oneiron::run_start", stage = "binding_inner_returned", path = %path, "run start");
+    response
 }
 
 /// One request's admission at this door: the machine it proved, or

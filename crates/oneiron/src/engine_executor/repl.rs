@@ -62,28 +62,36 @@ impl EngineNativeExecutor<'_> {
         &mut self,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<EngineExecutorOutcome> {
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_run_entered", run = %config.run_id.to_hex(), "run start");
         self.verify_storage_dispatcher_binding()?;
         config.validate()?;
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_binding_verified", run = %config.run_id.to_hex(), "run start");
         // The entry's capture epoch of the run's read-world ledger (FIX 6130),
         // for the task this entry runs (FIX 7087).
         let gated = self.gated_write;
         let _read_worlds = gated.enter_read_worlds(config.run_id, &config.task);
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_read_worlds_entered", run = %config.run_id.to_hex(), "run start");
         self.validate_run_seat(config)?;
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_seat_validated", run = %config.run_id.to_hex(), "run start");
         // Resolve exactly once per run attempt. Both teaching sites use these
         // bytes, and the fingerprint joins the durable replay identity below.
         let wire_prompt = resolve_engine_executor_wire_prompt(&config.prompt_package_root)
             .map_err(Error::from)?;
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_wire_prompt_resolved", run = %config.run_id.to_hex(), "run start");
         let boundary = executor_boundary_contract()?;
         // A run forked from a failed one carries its approved note (FIX 3694).
         let continuation = continuation_note(&self.storage, config.run_id)?;
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_continuation_read", run = %config.run_id.to_hex(), "run start");
         let loaded = self.load_or_create_record(
             config,
             &wire_prompt.stamp.resolved_fingerprint,
             continuation.as_ref(),
         )?;
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_record_loaded", run = %config.run_id.to_hex(), "run start");
         // A terminal replay still owes typed restore even when no new model
         // request is assembled during this attempt.
         self.prepare_run_context(config);
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_run_context_prepared", run = %config.run_id.to_hex(), "run start");
         let LoadedReplayRecord {
             mut record,
             generation: mut expected_generation,
@@ -121,6 +129,7 @@ impl EngineNativeExecutor<'_> {
         // this run's attempt stops the step it is running, and the next.
         let root = self.attempt_root();
         let cancel = root.token();
+        tracing::debug!(target: "oneiron::run_start", stage = "executor_loop_entered", run = %config.run_id.to_hex(), "run start");
 
         loop {
             cancel.check()?;

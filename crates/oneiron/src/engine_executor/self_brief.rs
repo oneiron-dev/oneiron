@@ -172,7 +172,9 @@ impl EngineNativeExecutor<'_> {
         let Some(brief) = self.self_brief.as_mut() else {
             return Ok(None);
         };
+        tracing::debug!(target: "oneiron::run_start", stage = "brief_prepare_start", run = %run_id.to_hex(), "run start");
         brief.prepare_for(run_id)?;
+        tracing::debug!(target: "oneiron::run_start", stage = "brief_prepared", run = %run_id.to_hex(), "run start");
         Ok(brief.current.as_ref().map(|held| held.prefix.text.clone()))
     }
 

@@ -46,7 +46,9 @@ impl EngineNativeExecutor<'_> {
         continuation: Option<&ContinuationNote>,
         completed_steps: u64,
     ) -> EngineExecutorResult<TurnProgram<'c>> {
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_entered", run = %config.run_id.to_hex(), "run start");
         self.land_finished_compaction()?;
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_compaction_landed", run = %config.run_id.to_hex(), "run start");
         // A turn hook's ask parks the run before the turn, as a call's
         // ask parks the call; a skip or a hidden result ends the entry.
         let turn = match self.pre_turn_hooks(config, completed_steps)? {
@@ -66,8 +68,10 @@ impl EngineNativeExecutor<'_> {
                     .map_err(Error::from)?
             }
         };
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_pre_hooks_done", run = %config.run_id.to_hex(), "run start");
         let (mut request, mut console) =
             self.build_llm_request(config, record, wire_prompt, continuation)?;
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_request_built", run = %config.run_id.to_hex(), "run start");
         match self.feed_compaction(config, record, &request)? {
             Ok(Some(reason)) => {
                 return Ok(TurnProgram::Ended(EngineExecutorStatus::WindowFull {
@@ -99,6 +103,7 @@ impl EngineNativeExecutor<'_> {
                 }
             }
         }
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_compaction_fed", run = %config.run_id.to_hex(), "run start");
         // FIX 17594 (map §2.2): folds by kind the feed landed after this
         // request was built are a brief boundary. With a brief port bound,
         // the request is built and counted again before it is hashed,
@@ -112,6 +117,7 @@ impl EngineNativeExecutor<'_> {
         if let Some(status) = refreshed {
             return Ok(TurnProgram::Ended(status));
         }
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_brief_refreshed", run = %config.run_id.to_hex(), "run start");
         // Rule 5 (FIX 4197): the first step past the `[limits]
         // executor_run_steps` row asks whether everything is okay, once
         // per run however often it re-enters, and the run keeps going.
@@ -120,6 +126,7 @@ impl EngineNativeExecutor<'_> {
             steps.measure(EngineLimit::ExecutorRunSteps, completed_steps + 1);
         }
         let request_hash = request.canonical_hash()?;
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_request_hashed", run = %config.run_id.to_hex(), "run start");
         self.capture_step_start(
             config,
             completed_steps,
@@ -128,13 +135,17 @@ impl EngineNativeExecutor<'_> {
             record,
             prompt_fingerprint,
         );
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_step_start_captured", run = %config.run_id.to_hex(), "run start");
         let response = {
             let sources = self.step_source_rows(config, record);
+            tracing::debug!(target: "oneiron::run_start", stage = "turn_sources_read", run = %config.run_id.to_hex(), "run start");
             let _generating = self.gated_write.activity_generating();
+            tracing::debug!(target: "oneiron::run_start", stage = "turn_backend_call", run = %config.run_id.to_hex(), "run start");
             self.backend
                 .generate_sourced(request, self.lease, sources)
                 .await
         }?;
+        tracing::debug!(target: "oneiron::run_start", stage = "turn_backend_answered", run = %config.run_id.to_hex(), "run start");
         // FIX 17594 (Engine call C): the backend answered a request that
         // carried the run's brief, so the host's prefix is delivered.
         self.brief_delivered();

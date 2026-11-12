@@ -540,6 +540,7 @@ fn validate_endpoint_tool_args(
     // the raw number text is judged against the very document `tools/list`
     // published for this name (ONE-1704 repair).
     let schema = tool.input_schema();
+    tracing::debug!(target: "oneiron::run_start", stage = "tool_input_schema_built", "run start");
     match tool {
         McpEndpointTool::Setup => {
             let parsed =

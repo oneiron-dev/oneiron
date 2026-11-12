@@ -410,6 +410,7 @@ impl McpRegisteredSurface {
         mode: McpSurfaceMode,
         available: bool,
     ) -> Result<Self, McpSurfaceConstructionError> {
+        let started = std::time::Instant::now();
         let mut tools = match mode {
             // Registration starts with the non-execution tools. The verified
             // host adds execute_code below; unconfigured servers stay closed.
@@ -439,6 +440,7 @@ impl McpRegisteredSurface {
                 })
                 .collect(),
         );
+        tracing::debug!(target: "oneiron::run_start", stage = "surface_registered", mode = mode.as_str(), tools = tools.len(), available, elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX), "run start");
         Ok(Self {
             mode,
             tools,

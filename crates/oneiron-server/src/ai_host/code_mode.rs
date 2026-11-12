@@ -609,6 +609,7 @@ impl CodeModeBackend {
         sources: Option<Vec<EntityId>>,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
+            tracing::debug!(target: "oneiron::run_start", stage = "backend_generate_entered", "run start");
             let pinned = self.planned.as_ref().is_some_and(|planned| planned.exact);
             // The messages as the caller sent them, which a step's capture
             // staged: routing below only adds host data after them, and
@@ -621,6 +622,7 @@ impl CodeModeBackend {
             // CUA E5: the role the run's browser planner state picks, and
             // the evidence it holds, handed on once this call answers.
             let (role, request, handoff) = self.browser.route(request, pinned);
+            tracing::debug!(target: "oneiron::run_start", stage = "backend_routed", run = ?capture_run.as_ref().map(EntityId::to_hex), "run start");
             let (call, seat_bound, admitted_role) =
                 admit_code_mode_call(&self.models, &self.vault, request, pinned, role)
                     .and_then(|(mut call, seat_bound, admitted_role)| {
@@ -639,6 +641,7 @@ impl CodeModeBackend {
                         tracing::warn!(%refusal, "a code-mode model call was refused");
                         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
                     })?;
+            tracing::debug!(target: "oneiron::run_start", stage = "backend_call_admitted", "run start");
             // FIX 6359: the step's capture keeps the role that admitted this
             // call, matched by the executor's own messages, so its replays
             // are admitted on that role's route. The role is noted on the
@@ -654,6 +657,7 @@ impl CodeModeBackend {
                     staged_len,
                 );
             }
+            tracing::debug!(target: "oneiron::run_start", stage = "backend_capture_refreshed", "run start");
             let no_record_at_arrival = self
                 .caller
                 .as_ref()
@@ -667,10 +671,13 @@ impl CodeModeBackend {
                 .lease
                 .clone()
                 .map(|state| LiveLease::from_state(&self.vault, state));
+            tracing::debug!(target: "oneiron::run_start", stage = "backend_run_funded", "run start");
             let may_send = || {
+                tracing::debug!(target: "oneiron::run_start", stage = "backend_may_send", "run start");
                 if let Some(live) = &live {
                     live.book_and_revise();
                 }
+                tracing::debug!(target: "oneiron::run_start", stage = "backend_lease_booked", "run start");
                 true
             };
             let answered = if seat_bound {

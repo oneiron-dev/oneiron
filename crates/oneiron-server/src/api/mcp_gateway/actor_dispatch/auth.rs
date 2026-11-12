@@ -109,10 +109,13 @@ pub(super) async fn registered_actor(
         .vault
         .capability_slip_now()
         .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
+    tracing::debug!(target: "oneiron::run_start", stage = "registered_actor_slip_clock_read", "run start");
     let mut registry = server.mcp_registry.lock().await;
+    tracing::debug!(target: "oneiron::run_start", stage = "registered_actor_registry_locked", "run start");
     let actor = registry_actor(&mut registry, server, credential, &auth, now)
         .map_err(mcp_actor_resolution_error)?;
     drop(registry);
+    tracing::debug!(target: "oneiron::run_start", stage = "registered_actor_registry_released", "run start");
     admitted_context(server, actor, auth, mode, request_id, session, room_turn)
 }
 

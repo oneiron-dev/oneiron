@@ -387,6 +387,7 @@ async fn facade_route(
     extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
+    tracing::debug!(target: "oneiron::run_start", stage = "facade_route_entered", verb = %uri.path(), "run start");
     let auth = match caller {
         clock_ingress::FacadeCaller::Credential(auth) => auth,
         clock_ingress::FacadeCaller::ClockRepair(caller) => {
@@ -407,6 +408,7 @@ async fn facade_route(
             }
             None => call_verb(&server, &call, verb, input).await,
         };
+        tracing::debug!(target: "oneiron::run_start", stage = "facade_verb_done", verb = %verb, "run start");
         match output {
             Ok(output) => {
                 let rows = FacadeResultRows(output.rows.clone());

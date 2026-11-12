@@ -1084,8 +1084,10 @@ fn enter_on(
     seat: Option<&ModelSeat>,
     brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
+    tracing::debug!(target: "oneiron::run_start", stage = "enter_on_entered", run = %config.run_id.to_hex(), "run start");
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+    tracing::debug!(target: "oneiron::run_start", stage = "runtime_handle_taken", run = %config.run_id.to_hex(), "run start");
     let mut routed_config = config.clone();
     let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound);
     if let Some(seat) = seat {
@@ -1105,6 +1107,7 @@ fn enter_on(
     if let Some(port) = brief {
         executor = executor.with_self_brief(port);
     }
+    tracing::debug!(target: "oneiron::run_start", stage = "executor_built", run = %config.run_id.to_hex(), "run start");
     reactor
         .block_on(executor.run(&routed_config))
         .map_err(EngineRunError::Run)

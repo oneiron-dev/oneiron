@@ -158,11 +158,13 @@ pub(crate) async fn read_tool_first(
 ) -> Result<McpArrived, Response> {
     let limit = u64::try_from(crate::api::request_floor::request_floor(server)).unwrap_or(u64::MAX);
     let declared = body_spool::declared_length(&parts.headers).filter(|len| *len <= limit);
+    tracing::debug!(target: "oneiron::run_start", stage = "tool_first_read_start", declared = ?declared, "run start");
     if declared.is_none() || !spool_admitted(server, parts, locality).await {
         return whole_body(parts, body).await.map(McpArrived::whole);
     }
     let over = Arc::new(AtomicBool::new(false));
     let body = body_spool::capped(body, limit, Arc::clone(&over));
+    tracing::debug!(target: "oneiron::run_start", stage = "spool_admitted_returned", "run start");
     let vault = Arc::clone(&server.vault);
     let read = body_spool::spool_then(
         server,
@@ -172,6 +174,7 @@ pub(crate) async fn read_tool_first(
         move |spool| read_spool(&vault, spool),
     )
     .await;
+    tracing::debug!(target: "oneiron::run_start", stage = "spool_then_returned", "run start");
     match read {
         Ok(_) if over.load(Ordering::Relaxed) => Err(not_buffered()),
         Ok(Ok(arrived)) => Ok(arrived),
@@ -208,6 +211,7 @@ async fn spool_admitted(server: &Arc<SyncServer>, parts: &Parts, locality: Calle
     else {
         return false;
     };
+    tracing::debug!(target: "oneiron::run_start", stage = "spool_admitted_caller_resolved", "run start");
     let principal =
         crate::api::call_receipt::mcp_session_principal(caller.auth.as_ref(), caller.actor_ref);
     !crate::api::call_receipt::in_anonymous_session(server, &parts.headers, principal)

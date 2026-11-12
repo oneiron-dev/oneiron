@@ -117,6 +117,7 @@ pub(crate) async fn handle_mcp_request(
                 resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
                     .await?
                     .toward(peer);
+            tracing::debug!(target: "oneiron::run_start", stage = "list_caller_resolved", "run start");
             Ok(json!({
                 "surfaceMode": mode.as_str(),
                 "tools": super::booking_call::tools_listing(server, mode, &actor)?,
@@ -152,6 +153,7 @@ pub(crate) async fn handle_mcp_request(
             )
             .await?
             .toward(peer);
+            tracing::debug!(target: "oneiron::run_start", stage = "tool_call_caller_resolved", "run start");
             // OF-538: what the call's receipt states of its request, taken
             // before the params are consumed.
             let tool = request
@@ -192,6 +194,7 @@ pub(crate) async fn handle_mcp_request(
             // FIX 1085: the call counts once on the wire, under the caller
             // resolved above and the tool it names, before it is judged.
             super::wire::observe_tool_call(server, mode, &actor, &tool, anonymous);
+            tracing::debug!(target: "oneiron::run_start", stage = "tool_call_observed", tool = %tool, "run start");
             // OF-568 L4: the attempt whose live run the call holds, as the
             // hold witnessed it.
             let (called, attempt): (Result<Value, McpGatewayError>, _) =
@@ -218,6 +221,7 @@ pub(crate) async fn handle_mcp_request(
                     };
                     let mut args =
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
+                    tracing::debug!(target: "oneiron::run_start", stage = "tool_call_args_validated", "run start");
                     // The held content rides the call of the tool it arrived
                     // for, with that call's page argument digest (FIX 22074).
                     if let (Some(held), crate::mcp::McpValidatedToolArgs::Verb(call)) =
@@ -229,12 +233,14 @@ pub(crate) async fn handle_mcp_request(
                     }
                     ensure_mcp_actor_matches(&args, &actor)?;
                     mcp_admit_scoped_call(server, &args, &actor)?;
+                    tracing::debug!(target: "oneiron::run_start", stage = "tool_call_scope_admitted", "run start");
                     // A named verb call keeps its admission intent, as the
                     // facade's does, unless it sits off the record (FIX 4735).
                     let intent = super::super::admission_intent::McpIntent::of(
                         server, &args, &actor, anonymous,
                     );
                     // The tool fan-out, on the heap (FIX 12072).
+                    tracing::debug!(target: "oneiron::run_start", stage = "tool_call_intent_taken", "run start");
                     let run = execute_mcp_tool(server, args, &actor, headers, connection);
                     Box::pin(super::super::admission_intent::observed(
                         server,
