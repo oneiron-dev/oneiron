@@ -655,7 +655,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 10
      }
@@ -683,6 +683,28 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "AgentMadeBy",
+      "AgentMadeByRequest",
+      "AgentRunNow",
+      "AgentTreePauseOffer",
+      "MadeAgent",
+      "MadeBranch",
+      "MadeHook",
+      "MadeSend",
+      "MadeWatcher"
+     ],
+     "path": "src/agent_def/made_by.rs",
+     "purpose": "What an agent made, transitively: the blast radius the owner sees on switching an agent off or narrowing it…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/agent_def/manifest.rs",
      "purpose": "Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation",
@@ -697,9 +719,9 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 1,
-      "re-export": 9
+      "re-export": 11
      }
     },
     {
@@ -803,7 +825,7 @@
      "path": "src/agent_def/proposed_change.rs",
      "purpose": "The owner's answer to an agent's proposed change to a stored agent definition (ARCH-0053:20, r6: \"a skill…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 1
      }
     },
@@ -848,6 +870,24 @@
      "path": "src/agent_def/tests.rs",
      "purpose": "AGENT_DEF (ONE-1443) tests",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentTreeMembers",
+      "AgentTreePauseReceipt",
+      "AgentTreePauseRequest",
+      "AgentTreeResumeReceipt",
+      "AgentTreeResumeRequest"
+     ],
+     "path": "src/agent_def/tree_pause.rs",
+     "purpose": "\"Also pause these\": the owner pauses what one agent made in one act, with one receipt and an undo (owner…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 5
+     }
     },
     {
      "bucket": "s",
@@ -3101,7 +3141,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 6
      }
     },
@@ -6952,7 +6992,7 @@
      "path": "src/authority/write_authorization.rs",
      "purpose": "Transaction-bound actor authorization for engine-owned write doors",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -28707,7 +28747,7 @@
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -40700,16 +40740,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/federation/archive_delete.rs",
-     "purpose": "Who may delete one record the cleanup archived (ARCH-0073 §7, OF-449 L4), judged from the vault's own rows…",
-     "surface": {
-      "crate-vis": 8
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -40801,6 +40831,16 @@
      "purpose": "Which records a courtesy deletion ask covers here, read in the caller's own transaction (FIX 2927): this…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/delete_authority.rs",
+     "purpose": "Who may delete one record (ARCH-0043 DEL-2, owner 9 Oct; ARCH-0073 §7, OF-449 L4), judged from the vault's…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -54408,7 +54448,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/entity_delete.rs",
-     "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
+     "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation, and the delete a non-owner's role or…",
      "surface": {
       "crate-vis": 6,
       "fn": 3
@@ -71308,7 +71348,7 @@
      "path": "src/runtime_hooks/source/schedule.rs",
      "purpose": "The `schedule.tick` source (ARCH-0080 §4 Watchers; FIX 4749)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -94830,7 +94870,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentDefinitionCreateRequest",
@@ -94849,8 +94889,8 @@
      "purpose": "Typed custom AGENT_DEF authoring",
      "surface": {
       "enum": 1,
-      "fn": 6,
-      "re-export": 2,
+      "fn": 9,
+      "re-export": 3,
       "struct": 10
      }
     },
@@ -101024,6 +101064,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_blast_radius.rs",
+     "purpose": "Switching an agent off shows its blast radius (owner ruling AUTHOR-OFF = A, 10 Nov 2026, ARCH-0053…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101609,6 +101657,14 @@
      "notable": [],
      "path": "tests/default_facet_owner_door.rs",
      "purpose": "ARCH-0022 #facets (the owner, 2026-09-23): \"Every vault has one default facet ... the owner may set…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/delete_authority.rs",
+     "purpose": "DEL-2: the delete authority on every delete (ARCH-0043, owner DEL-2 = A, 9 Oct: \"Members delete their own…",
      "surface": {}
     },
     {
@@ -103895,7 +103951,7 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105542,8 +105598,8 @@
    },
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7453,
-   "test_files": 1145
+   "source_files": 7455,
+   "test_files": 1147
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -128985,7 +129041,7 @@
      "path": "src/api/facade/agent_definition_doors.rs",
      "purpose": "Custom definitions, saved workflows and workspace onboarding, with the caller's own proof",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
