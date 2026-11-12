@@ -7,8 +7,15 @@
 //! only once the provider confirmed the stop: a stop that failed, or whose
 //! outcome is unknown, leaves the job running here with its ticket, permit
 //! and row, since it may still run and bill at its provider, and its caller
-//! may poll it or delete it again.
+//! may poll it or delete it again. A job a spend scope funds stages what
+//! its scope does not hold yet of its guard's use in the commit that writes
+//! its end, its held end or its delete, and drains the scope after it
+//! ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a restart never
+//! takes up a job whose end is staged.
 //! Entry: `MediaRuntime::cancel_kept_job`.
+use oneiron::agent_dispatch::SpendScopeId;
+
+use super::run_line::ScopeStage;
 use super::{FatalLlmError, Held, KeptJob, LlmResult, MediaJobState, MediaRuntime, erased_poll};
 
 /// What writing a job's end came to.
@@ -32,12 +39,32 @@ impl MediaRuntime {
     /// job dropped meanwhile stays dropped: a delete's job is gone, and its
     /// poll finds no job. A job an erase took keeps nothing of its end,
     /// which goes from here unanswered: the answer is its erased end
-    /// (KS-2B2). Returns what the poll answers.
+    /// (KS-2B2). The scope that funds the job, when one does, stages its
+    /// end's part in the commit that writes the end or the held end, and is
+    /// drained after it (S7299-P1). Returns what the poll answers.
     pub(super) fn complete_kept_job(
         &self,
         id: &str,
         state: &MediaJobState,
     ) -> LlmResult<MediaJobState> {
+        let (answer, staged) = self.write_kept_end(id, state);
+        self.drain_end_stage(staged);
+        answer
+    }
+
+    /// [`Self::complete_kept_job`]'s writes, up to its drain: what the poll
+    /// answers, and the scope an end's commit staged a part on. An erased
+    /// job, or one with no row anywhere, is taken up by no restart: its
+    /// part books in commits of its own. An end whose writes the vault
+    /// refused stages nothing: the job's next write of its end stages it,
+    /// or a restart takes the job up and its fresh guard pays the end.
+    pub(super) fn write_kept_end(
+        &self,
+        id: &str,
+        state: &MediaJobState,
+    ) -> (LlmResult<MediaJobState>, Option<SpendScopeId>) {
+        let stage = self.end_stage(id);
+        let mut committed = false;
         let written =
             self.store
                 .as_ref()
@@ -47,56 +74,78 @@ impl MediaRuntime {
                         .get(id)
                         .ok_or_else(|| "its row is not kept".to_owned())?;
                     let Some(mut row) = kept.live() else {
+                        self.book_job_scope(id);
                         return Ok(JobWrite::Erased);
                     };
                     row.ended = Some(state.clone());
-                    store.update(id, row)
+                    let written = store.update_staged(id, row, stage.as_ref())?;
+                    committed = true;
+                    Ok(written)
                 });
         let mut jobs = self.lock_jobs();
-        match written {
+        let answer = match written {
             Ok(JobWrite::Kept) => {
                 jobs.remove(id);
+                Ok(state.clone())
             }
             Ok(JobWrite::Erased) => {
                 jobs.remove(id);
-                return Ok(erased_poll(id));
+                Ok(erased_poll(id))
             }
             Ok(JobWrite::Deleted) => {
                 jobs.remove(id);
-                return Err(FatalLlmError::InvalidRequest.into());
+                Err(FatalLlmError::InvalidRequest.into())
             }
             Err(error) => {
                 tracing::error!(%error, ticket = id, "a media job's end is held, not kept");
-                self.hold_end(id, state);
+                match self.hold_end(id, state, stage.as_ref()) {
+                    EndHold::Held => committed = true,
+                    EndHold::NoRow => self.book_job_scope(id),
+                    EndHold::Refused => {}
+                }
                 if let Some(held) = jobs.get_mut(id)
                     && matches!(held, Held::Running(_))
                 {
                     *held = Held::Unkept(state.clone());
                 }
+                Ok(state.clone())
             }
-        }
-        Ok(state.clone())
+        };
+        drop(jobs);
+        let staged = if committed {
+            self.end_committed(id, stage)
+        } else {
+            None
+        };
+        (answer, staged)
     }
 
     /// Holds job `id`'s end `state` as its held write (FIX 2963), over the
-    /// row its own key keeps or, when that was never kept, its held submit.
-    /// A job with neither keeps its end here only.
-    fn hold_end(&self, id: &str, state: &MediaJobState) {
+    /// row its own key keeps or, when that was never kept, its held submit,
+    /// `stage` staged in the same commit. A job with neither keeps its end
+    /// here only.
+    fn hold_end(&self, id: &str, state: &MediaJobState, stage: Option<&ScopeStage>) -> EndHold {
         let Some(store) = &self.store else {
-            return;
+            return EndHold::NoRow;
         };
         let base = store
             .read(id, false)
             .and_then(KeptJob::live)
             .or_else(|| store.held_row(id));
-        let held = base
-            .ok_or_else(|| "no row of it is kept".to_owned())
-            .and_then(|mut row| {
-                row.ended = Some(state.clone());
-                store.hold(id, row)
-            });
-        if let Err(error) = held {
-            tracing::error!(%error, ticket = id, "a media job's end is held here only");
+        let Some(mut row) = base else {
+            tracing::error!(
+                ticket = id,
+                "a media job's end is held here only: no row of it is kept"
+            );
+            return EndHold::NoRow;
+        };
+        row.ended = Some(state.clone());
+        match store.hold_staged(id, row, stage) {
+            Ok(()) => EndHold::Held,
+            Err(error) => {
+                tracing::error!(%error, ticket = id, "a media job's end is held here only");
+                EndHold::Refused
+            }
         }
     }
 
@@ -115,28 +164,42 @@ impl MediaRuntime {
             Held::Unsent(_) | Held::Unkept(_) | Held::Ended(_) => return self.drop_kept_job(id),
         };
         let mut held = job.lock().await;
-        let charges = held.charges();
         held.cancel().await?;
         // A confirmed stop settled its permit: what that charged reaches
-        // the scope that funds it before its row goes (FIX 11496).
-        if charges {
-            self.book_job_scope(id);
-        }
+        // the scope that funds it in the commit that drops its row (FIX
+        // 11496, S7299-P1).
         self.drop_kept_job(id)
     }
 
     /// Drops job `id` from here and its row and clips from the vault, in
-    /// one write, while no poll takes it up again. A write the vault
-    /// refuses drops nothing: the job stays, and the caller hears it.
+    /// one write, while no poll takes it up again; the scope that funds it,
+    /// when one does, stages in that write what it does not hold yet of the
+    /// job's guard use, and is drained after it (S7299-P1). A write the vault
+    /// refuses drops and stages nothing: the job stays, and the caller hears
+    /// it.
     fn drop_kept_job(&self, id: &str) -> LlmResult<()> {
         let mut jobs = self.lock_jobs();
+        let stage = self.end_stage(id);
         if let Some(store) = &self.store
-            && let Err(error) = store.delete(id)
+            && let Err(error) = store.delete_staged(id, stage.as_ref())
         {
             tracing::error!(%error, ticket = id, "a media job's row was not dropped; it is kept");
             return Err(oneiron::RetryableLlmError::ServerError.into());
         }
         jobs.remove(id);
+        drop(jobs);
+        let staged = self.end_committed(id, stage);
+        self.drain_end_stage(staged);
         Ok(())
     }
+}
+
+/// What holding a job's end in the vault came to.
+enum EndHold {
+    /// The held end, and its stage, committed.
+    Held,
+    /// No row of the job is kept: no restart takes it up.
+    NoRow,
+    /// The vault refused the held end: nothing committed.
+    Refused,
 }
