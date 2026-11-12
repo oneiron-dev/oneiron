@@ -88,6 +88,8 @@ mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+// The owner's vault default facet (ARCH-0022 #facets).
+mod default_facet_doors;
 mod device_succession_doors;
 mod disclosure_doors;
 mod dispatch {

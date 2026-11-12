@@ -3,9 +3,10 @@
 use super::LiveLeaseBackend;
 use super::actors::McpResolvedActor;
 use crate::ai_host::live_lease::{LeaseLine, LiveLeaseState};
-use crate::ai_host::payer_funding::{PayerFault, scope_funding};
+use crate::ai_host::payer_funding::{PayerFault, leased_requires_payer, scope_funding};
 use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
+use oneiron::attempt_queue::AttemptRecord;
 use oneiron::code_run::{CompactionHostBinding, GatedActorWrite, ScopedChildProfile};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
@@ -674,11 +675,22 @@ pub(crate) struct ScopeMeter<'a> {
 }
 
 impl<'a> ScopeMeter<'a> {
-    /// Opens `scope`'s meter for one entry: its guard's limit is what the
-    /// scope may still spend.
-    pub(crate) fn open(vault: &Vault, scope: &'a SpendScopeId) -> Result<Self, EngineRunError> {
-        // A room-paid scope's calls bill its root payer (OF-531), else it holds.
-        let payer = scope_funding(vault, Some(scope), false).map_err(EngineRunError::Payer)?;
+    /// Opens `scope`'s meter for one entry of the run whose leased try is
+    /// `leased`: its guard's limit is what the scope may still spend.
+    pub(crate) fn open(
+        vault: &Vault,
+        leased: &AttemptRecord,
+        scope: &'a SpendScopeId,
+    ) -> Result<Self, EngineRunError> {
+        // A room-paid scope's calls bill its root payer (OF-531), else it
+        // holds. The payer is read as the run's own steps read theirs: a
+        // room-bound or member-bound run whose root names no payer, its payer
+        // erased while it holds its lease included, is a typed fault, never
+        // the vault owner's default (LIVE-RUN-PAYER-REQUIRED).
+        let payer_required = leased_requires_payer(vault, leased)
+            .map_err(|error| EngineRunError::Binding(error.to_string()))?;
+        let payer =
+            scope_funding(vault, Some(scope), payer_required).map_err(EngineRunError::Payer)?;
         let guard = AgentDispatcher::new(vault)
             .guard_for_scope(scope)
             .map_err(|error| EngineRunError::Binding(error.to_string()))?;
