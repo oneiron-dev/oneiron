@@ -78,6 +78,9 @@ pub enum PolicySetting {
     FreeTimePolicy,
     /// The owner's board cap and board layout layers (BOARD-LAYOUT).
     BoardLayout,
+    /// The most of a context pack's claims worlds other than base may hold
+    /// (ARCH-0004 #world-scope; WORLD-SHARE-FRACTION-NO-OWNER-DOOR).
+    NonBaseWorldClaimFraction,
 }
 
 impl PolicySetting {
@@ -91,6 +94,7 @@ impl PolicySetting {
             Self::RoomThreadAdmin => "settings.room_thread_admin",
             Self::FreeTimePolicy => "settings.free_time_policy",
             Self::BoardLayout => "settings.board_layout",
+            Self::NonBaseWorldClaimFraction => "settings.non_base_world_claim_fraction",
         }
     }
 
@@ -103,6 +107,7 @@ impl PolicySetting {
             Self::RoomThreadAdmin => "room_thread_admin",
             Self::FreeTimePolicy => "free_time_policy",
             Self::BoardLayout => "board_layout",
+            Self::NonBaseWorldClaimFraction => "non_base_world_claim_fraction",
         }
     }
 
@@ -115,6 +120,7 @@ impl PolicySetting {
             "room_thread_admin" => Self::RoomThreadAdmin,
             "free_time_policy" => Self::FreeTimePolicy,
             "board_layout" => Self::BoardLayout,
+            "non_base_world_claim_fraction" => Self::NonBaseWorldClaimFraction,
             _ => return None,
         })
     }
@@ -126,7 +132,8 @@ impl PolicySetting {
             Self::DreamerWakePolicy
             | Self::InferenceDefaults
             | Self::RoomThreadAdmin
-            | Self::BoardLayout => OwnerActKind::PolicySetting,
+            | Self::BoardLayout
+            | Self::NonBaseWorldClaimFraction => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }
