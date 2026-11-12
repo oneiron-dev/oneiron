@@ -36,6 +36,16 @@ crate::side_table::side_tables! {
         // Restore class: live, as the log row and the pending check-in it joins are.
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::inquiry::erase_inquiry_pending_actor_in_txn;
+    /// The asking side's route to one member's vault (INQUIRE-1 PR 4), on the company vault:
+    /// bound to the member's seat in one shared vault, it names the member's vault, the member
+    /// host and the guest slip that vault minted for this host on its inquiry edge. The member's
+    /// leave or removal deletes it in the membership writer. Key: u64be (the shared vault) + id16
+    /// (the member's PERSON).
+    INQUIRY_ROUTE: VaultMeta b"inquiry:route:v1:" Named
+        // Restore class: live, as credential state is: the slip is bound to this host's key, and
+        // a restore must not bring back a route a leave ended.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::inquiry::erase_inquiry_route_actor_in_txn;
     /// The member's private link from an opened statement to the claim it was drawn from
     /// (federation.md #inquiry-scope): it stays in the member's vault, and no Connect export or
     /// answer reads it. An erase of either claim drops the row (`deletion::derived_rows`). Key:

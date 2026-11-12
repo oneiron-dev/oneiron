@@ -254,5 +254,8 @@ pub(in crate::api::facade) fn door_admits(
             auth,
             oneiron::memory::usage_repair::UsageRepairVerb::Receipts,
         ),
+        // A requested eval-authoring pass (LEARNING-06): the owner's own proof or an agent's own Grant
+        // naming the verb, as the writer that admits the Coach attempt checks it.
+        Proof::EvalAuthoring => crate::api::facade::eval_doors::execute_admits(server, auth),
     }
 }

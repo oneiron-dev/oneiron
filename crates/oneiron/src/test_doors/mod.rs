@@ -30,6 +30,7 @@ pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod membership;
 pub mod model_binding_proposer;
+pub mod note_bm25f_repair;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
 pub mod retrieval_policy_default_floor;

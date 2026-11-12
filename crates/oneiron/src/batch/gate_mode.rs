@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
+use crate::batch::export::OwnerArchiveRestorePermit;
 use crate::entity_id::EntityId;
 
 use super::ClaimMaterialization;
@@ -57,6 +58,8 @@ pub(crate) struct ApplyOpsGateMode {
     /// candidates, revalidated in the transaction that applies them. Raw puts
     /// never read it.
     pub(super) owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
+    /// Call-scoped Imported-source permit for one expression batch of the owner's archive restore.
+    pub(super) owner_archive_restore: Option<OwnerArchiveRestorePermit>,
     /// The body file each ASSET put this batch stages as a manifest names,
     /// published before the batch (FIX 3677); consumed by that put.
     pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
@@ -99,6 +102,7 @@ impl ApplyOpsGateMode {
             pre_analyzed_text: HashMap::new(),
             nsw_plans: HashMap::new(),
             owner_authored: None,
+            owner_archive_restore: None,
             asset_files: HashMap::new(),
             asset_file_bodies: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
@@ -149,6 +153,11 @@ impl ApplyOpsGateMode {
         owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
     ) -> Self {
         self.owner_authored = owner_authored;
+        self
+    }
+
+    pub(crate) fn with_owner_archive_restore(mut self, permit: &OwnerArchiveRestorePermit) -> Self {
+        self.owner_archive_restore = Some(permit.clone());
         self
     }
 

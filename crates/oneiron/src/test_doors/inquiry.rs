@@ -1,7 +1,9 @@
 //! Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the
 //! member's log and the asking side's receipt, each in one write transaction
-//! at the vault's store clock. Until PR 3 and PR 4 call them, only this door
-//! does.
+//! at the vault's store clock; the member side (PR 3) calls the log writers
+//! itself. `tests/inquiry_asking_side.rs` (PR 4) ends a TASK through
+//! [`cancel_task`] and counts the held answers through
+//! [`held_inquiry_answer_count`].
 
 use crate::error::Result;
 use crate::inquiry::{
@@ -56,6 +58,28 @@ pub fn record_send(
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         write_inquiry_receipt_in_txn(&vault.store, txn, inquiry, member, outcome, now)
     })
+}
+
+/// Ends `task` as `tasks.cancel` does for an open TASK with no attempt
+/// running: the immutable Cancelled fact, by `actor`, at the store clock.
+/// `tests/inquiry_asking_side.rs` ends the asking task with it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn cancel_task(vault: &Vault, task: EntityId, actor: EntityId) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        crate::context_board::cancel_task_in_txn(vault, txn, task, actor, now)
+    })
+}
+
+/// How many task-held inquiry answers `vault` holds now. Unlike
+/// `Vault::held_inquiry_answer`, it drops none first, so a test sees what a
+/// housekeeping pass dropped.
+#[must_use]
+pub fn held_inquiry_answer_count(vault: &Vault) -> usize {
+    vault.inquiry_answers.held_count()
 }
 
 /// The tables whose actor scrub [`erase_actor_in_inquiry_tables`] runs.

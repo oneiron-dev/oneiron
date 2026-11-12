@@ -1,7 +1,7 @@
 //! Inquiry: a company vault asks a member's vault (federation.md #inquiry,
 //! ARCH-0082 #inquiry; owner ASK-YOUR-VAULT = A, 2026-11-11). INQUIRE-1,
-//! PRs 1 to 3: the records, their stores, the company setting, the edge and
-//! the member side's answer. Nothing sends an inquiry yet.
+//! PRs 1 to 4: the records, their stores, the company setting, the edge,
+//! the member side's answer and the asking side. No verb reaches them yet.
 //!
 //! * [`Inquiry`] and [`InquiryAnswer`], with the one wire shape both vaults
 //!   read: statement text and its source, never a hit, score, vector or
@@ -26,15 +26,24 @@
 //!   member waits as a pending check-in until the member answers
 //!   ([`InquiryMemberAnswer`]) or it expires.
 //!
-//! The asking side's send and task-held answer (PR 4), the verbs (PR 5)
-//! and the copy landing (PR 6) are later builds.
+//! * The asking side (PR 4), on the company vault: the route to a member's
+//!   vault, bound to the member's seat ([`InquiryRoute`]); the send through
+//!   an [`InquiryTransport`], which writes the receipt and gives
+//!   `unavailable` when no route answers; and the task-held answer, in
+//!   memory only, dropped when its task ends or at `valid_until`.
+//!
+//! The verbs and the member host's route (PR 5) and the copy landing
+//! (PR 6) are later builds.
 
 mod edge;
+mod holder;
 mod log;
 mod member;
 mod policy;
 mod receipt;
 mod record;
+mod route;
+mod send;
 pub(crate) mod tables;
 mod terms;
 
@@ -44,6 +53,7 @@ pub use edge::{
     InquiryScopeItem,
 };
 
+pub(crate) use holder::InquiryAnswerHolder;
 pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
@@ -62,4 +72,7 @@ pub use record::{
     Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
     InquiryTask, StatementSource,
 };
+pub use route::{InquiryRoute, InquiryRouteRequest};
+pub(crate) use route::{end_inquiry_route_in_txn, erase_inquiry_route_actor_in_txn};
+pub use send::{InquirySendRequest, InquirySent, InquiryTransport, InquiryTransportError};
 pub use terms::{InquiryCheckInMode, InquiryTerms, InquiryTierCeiling};
