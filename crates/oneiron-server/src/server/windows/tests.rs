@@ -2,31 +2,22 @@ use super::*;
 use crate::api::ReactiveChange;
 use crate::broadcast::{BroadcastError, BroadcastSubscriber, ReactiveChangeSubscriber};
 use crate::protocol::{SyncMessage, parse_message};
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{Vault, VaultConfig};
 
 #[tokio::test(flavor = "current_thread")]
 async fn document_relay_gap_requests_resync_and_preserves_later_edits() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
-    let first = EntityId::now();
-    let next = EntityId::now();
-    for id in [first, next] {
-        vault
-            .put_entity(
-                &id,
-                oneiron::registry::ENTITY_TYPE_TURN,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"document owner",
-            )
-            .unwrap();
-    }
     // Synced text edits name their writer and time (b7a4b1fe82d, FIX 8873): the
     // local owner's edits, at the vault's now.
     let owner = oneiron::WriteActor::new(
         vault.ensure_embedded_owner_actor().unwrap(),
         oneiron::EdgeActorClass::Human,
     );
+    // A text document is a NOTE born with its head document; a bare row has
+    // no document to edit.
+    let first = vault.create_note("research", "first", owner).unwrap();
+    let next = vault.create_note("research", "next", owner).unwrap();
     let at = vault.now_recorded_at();
     let manager = Arc::new(WindowManager::new(
         vault,

@@ -33,6 +33,7 @@ struct Running {
     vault: Arc<Vault>,
     server: Arc<SyncServer>,
     lifecycle: Option<LifecycleScheduler>,
+    keystore: Arc<dyn oneiron_keystore::DeviceKeystore>,
 }
 
 impl Running {
@@ -41,7 +42,9 @@ impl Running {
     fn seeded(seed: impl FnOnce(&Path, &Vault)) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let clock = ManualClock::new(T0);
-        let vault = open(dir.path(), &clock);
+        let keystore: Arc<dyn oneiron_keystore::DeviceKeystore> =
+            Arc::new(oneiron_keystore::MemoryKeystore::new());
+        let vault = open(dir.path(), &clock, &keystore);
         seed(dir.path(), &vault);
         let server = Arc::new(
             SyncServer::new(Arc::clone(&vault), SyncServerConfig::default()).expect("server"),
@@ -52,6 +55,7 @@ impl Running {
             vault,
             server,
             lifecycle: None,
+            keystore,
         }
     }
 
@@ -64,6 +68,7 @@ impl Running {
             vault,
             server,
             lifecycle,
+            keystore,
         } = self;
         if let Some(lifecycle) = lifecycle {
             lifecycle.stop().await;
@@ -71,7 +76,7 @@ impl Running {
         drop(server);
         drop(vault);
         clock.set(at);
-        let vault = open(dir.path(), &clock);
+        let vault = open(dir.path(), &clock, &keystore);
         let server = Arc::new(
             SyncServer::new(Arc::clone(&vault), SyncServerConfig::default()).expect("server"),
         );
@@ -81,6 +86,7 @@ impl Running {
             vault,
             server,
             lifecycle: None,
+            keystore,
         }
     }
 
@@ -109,10 +115,16 @@ impl Running {
     }
 }
 
-fn open(dir: &Path, clock: &Arc<ManualClock>) -> Arc<Vault> {
+fn open(
+    dir: &Path,
+    clock: &Arc<ManualClock>,
+    keystore: &Arc<dyn oneiron_keystore::DeviceKeystore>,
+) -> Arc<Vault> {
     let mut config = oneiron::VaultConfig::device();
     config.store_clock = clock.bundle();
-    Arc::new(Vault::open_owned(dir, config).expect("open vault"))
+    let vault = Arc::new(Vault::open_owned(dir, config).expect("open vault"));
+    vault.install_device_keystore(Arc::clone(keystore));
+    vault
 }
 
 /// Waits, ticks passing, until `done` holds.
@@ -125,7 +137,7 @@ async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
 }
 
 /// The metadata header a stored record carries ahead of its body.
-const RECORD_HEADER_LEN: usize = 25;
+const RECORD_HEADER_LEN: usize = oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 
 #[derive(serde::Deserialize)]
 struct SweepTimes {
@@ -381,6 +393,7 @@ fn lease_a_file(dir: &Path, vault: &Vault) -> PathBuf {
                 (Value::from("env_bindings"), Value::Map(vec![])),
             ]),
         ),
+        (Value::from("model_reveal_allowed"), Value::from(false)),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &body).expect("encode");
