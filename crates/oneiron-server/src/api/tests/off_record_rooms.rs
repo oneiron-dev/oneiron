@@ -1201,7 +1201,7 @@ async fn an_owner_removed_from_the_room_cannot_speak_into_it() {
         serde_json::from_value(turn(room.id, "yard", 100, SECRET_WORDS)["turn"].clone()).unwrap();
     let refused = vault
         .memory(room.owner, EdgeActorClass::Human)
-        .witness_into_session_as(&proof, &session, &said, None)
+        .witness_into_session_as(&proof, &session, &said, None, None)
         .unwrap_err();
     assert_eq!(
         refused.code,
@@ -1378,9 +1378,13 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                     metadata: None,
                     is_visible: true,
                     order,
+                    parts: None,
+                    quote: None,
                 })
                 .collect(),
             occurred_at: 50,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap();
     for (id, reason) in [
@@ -1419,9 +1423,14 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                         metadata: None,
                         is_visible: true,
                         order: 0,
+                        parts: None,
+                        quote: None,
                     }],
                     occurred_at: 90,
+                    assertions: Default::default(),
+                    thread_audience: None,
                 },
+                None,
                 None,
             )
             .unwrap();
