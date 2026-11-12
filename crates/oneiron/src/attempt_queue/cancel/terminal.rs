@@ -273,6 +273,9 @@ impl AttemptQueue<'_> {
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
+        // The cleared pause takes its annotation-hold mark with it, as the
+        // operator's Cancel does.
+        crate::attempt_queue::index::delete_annotation_hold_in_txn(self.store, wtxn, record.id)?;
         // A hard cancellation is a terminal queue door, so a PACK loaded by
         // the attempt still receives the same atomic receipt as complete/fail.
         crate::receipt::stamp_attempt_pack_receipt_in_txn(

@@ -30,6 +30,33 @@ impl ActorAnnouncementAuthority for AnnouncementAuthority {
     }
 }
 
+/// A generic door's same-transaction carry check: the `project_group` it staged (`expected`,
+/// carried from its pre-write read) must still be the room's live link in this writer, or the
+/// write refuses instead of dropping or restoring a racing link change. Absent on both sides
+/// reads as unlinked, so a fresh id and a link-free room pass.
+/// # Errors
+/// A stored link that differs from the staged one, or the read's failure.
+pub(crate) fn verify_project_group_carry(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    expected: Option<EntityId>,
+) -> crate::Result<()> {
+    let current = match crate::conversation::body_in(vault, txn, *id) {
+        Ok(body) => body.project_group()?,
+        Err(crate::Error::EntityNotFound) => None,
+        Err(other) => return Err(other),
+    };
+    if current != expected {
+        return Err(crate::Error::Record(
+            crate::error::RecordError::ConversationState(
+                "conversation project_group changed under generic write",
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Stages one entity put, and its text index, on `batch`.
 /// # Errors
 /// A body that does not encode, or a scope summary's body.
