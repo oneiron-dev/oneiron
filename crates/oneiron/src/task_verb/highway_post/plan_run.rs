@@ -49,7 +49,7 @@ fn plan_run_brief(
         schema: TASK_BRIEF_SCHEMA,
         type_ref: TypeRef {
             node_id: root.entity_id()?,
-            tree_version: tree.version(),
+            tree_version: tree.version,
         },
         objective: body.title.clone(),
         intent: BriefIntent {
