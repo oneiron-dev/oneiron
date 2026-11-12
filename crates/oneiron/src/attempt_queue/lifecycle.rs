@@ -12,8 +12,11 @@
 //! replaces a row by a decode of its own serialized members, not a lifecycle
 //! write. The writer keeps its own
 //! guards (the lease fence, input validation, the reserved hold actors) and
-//! its side writes (the ready and annotation-hold indexes, dedupe, pack
-//! receipts, settlement, notifications). The writers that consult it:
+//! its side writes (the ready and annotation-hold indexes, settlement,
+//! notifications). A terminal writer ends through
+//! [`AttemptQueue::commit_terminal_in_txn`], which stores the settled row,
+//! stamps its pack receipt and retires its dedupe entry. The writers that
+//! consult it:
 //! - the interventions, `apply_intervention_in_txn` (interrupt, pause,
 //!   resume, cancel). Every hold's release resumes its row through `Resume`:
 //!   the budget, fan-out, hook and annotation releases;
@@ -47,6 +50,7 @@
 //! the launch, the verb ask, the annotation attachment) as it was (FIX
 //! RUN-HOLD changes that cell).
 
+use super::ATTEMPT_RUNTIME_ACTOR;
 use super::AttemptQueue;
 use super::AttemptResumePoint;
 use super::encoding::decode_record;
@@ -1216,6 +1220,77 @@ impl AttemptQueue<'_> {
             .put(wtxn, record.id.as_bytes(), &encoded)?;
         Ok(record)
     }
+
+    /// The one terminal commit (FIX RUN-SETTLE-RECIPE). A terminal door
+    /// calls it after its own [`RunLifecycle`] step has settled `record`: it
+    /// clears the backoff, writes the outcome's error text and the settle
+    /// instant, encodes and stores the row, stamps its pack receipt, and
+    /// retires the dedupe entry the row owns, in that order. The door keeps
+    /// its guards, its outcome payload (budget refusal, result, cancellation
+    /// receipts), its index work, its successor, and the settle notice and
+    /// spend settlement where it raises them today.
+    ///
+    /// The order is the one the landing, force, lease-expiry and retry doors
+    /// wrote before, and the other doors' writes commute with it in the one
+    /// transaction: the encode's feedback-triage scrub deletes the dedupe
+    /// entries the row owns before it clears the row's key, and a pending
+    /// row owns its key's entry; the pack receipt reads none of what the
+    /// encode rewrites on a stored row (it scrubs the manifest's erased
+    /// revisions itself).
+    ///
+    /// # Errors
+    ///
+    /// An encode the side-row wall refuses; storage errors. The caller must
+    /// abort the transaction on error.
+    pub(in crate::attempt_queue) fn commit_terminal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &mut AttemptRecord,
+        commit: TerminalCommit<'_>,
+    ) -> Result<()> {
+        record.backoff_until = None;
+        record.last_error = commit.last_error;
+        record.updated_at = commit.now;
+        let encoded = self.encode_in_txn(wtxn, record)?;
+        self.store
+            .attempt_records
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
+        let actor = match commit.receipt_actor {
+            PackReceiptActor::Caller(actor) => actor,
+            PackReceiptActor::StoredCancellation => record
+                .cancel_state
+                .cancellation
+                .as_ref()
+                .map_or(ATTEMPT_RUNTIME_ACTOR, |cancellation| {
+                    cancellation.actor.as_str()
+                }),
+        };
+        crate::receipt::stamp_attempt_pack_receipt_in_txn(self.store, wtxn, record, actor)?;
+        self.delete_dedupe_entry_for_record(wtxn, record)
+    }
+}
+
+/// What a terminal door hands [`AttemptQueue::commit_terminal_in_txn`].
+pub(in crate::attempt_queue) struct TerminalCommit<'a> {
+    /// The settled row's error text: the failure reason of a fail, a retry
+    /// source or an abandon; `None` for a completion or a cancellation, whose
+    /// reason rides its cancellation receipt.
+    pub(in crate::attempt_queue) last_error: Option<String>,
+    /// The instant the door settles the row at, already chosen by the door.
+    pub(in crate::attempt_queue) now: u64,
+    /// Whom the pack receipt names.
+    pub(in crate::attempt_queue) receipt_actor: PackReceiptActor<'a>,
+}
+
+/// Whom a terminal door's pack receipt names.
+pub(in crate::attempt_queue) enum PackReceiptActor<'a> {
+    /// The actor the door was called by: the lease owner, the intervening
+    /// actor, the force authority's actor, or the runtime.
+    Caller(&'a str),
+    /// The actor of the cancellation the row stores, read after the encode
+    /// has masked the row, or the runtime when it stores none: a landing's
+    /// finish.
+    StoredCancellation,
 }
 
 /// Who holds a paused run, and so what releases it.
