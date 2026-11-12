@@ -4,6 +4,10 @@
 //! reads are ([`SENT_LOOKUP_TIMEOUT`]), so a stalled Stalwart cannot hold the
 //! replay pass for the client's whole 30 s request bound per read.
 //!
+//! FIX 22347: one replay pass asks the provider one question, and the sent
+//! lookup answers from the same record the read-back reads, so a cancelled
+//! submission is no longer a sent send.
+//!
 //! The Stalwart here is a JMAP stub on a loopback port: it answers the session
 //! request and each JMAP method call the client makes, and can hold one
 //! method's answer for a set time.
@@ -13,11 +17,17 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::EntityId;
 use oneiron::channel_identity_provider::native_mail::NativeMailRunMode;
-use oneiron::channel_identity_provider::stalwart::{StalwartClient, StalwartConfig};
-use oneiron::outbound::SENT_LOOKUP_TIMEOUT;
+use oneiron::channel_identity_provider::stalwart::{
+    NativeMailMessage, StalwartClient, StalwartConfig, StalwartSendSink,
+};
+use oneiron::outbound::{
+    EngineSendId, OutboundExecutionSink, OutboundIntent, SENT_LOOKUP_TIMEOUT, SentLookup,
+    SentLookupTarget,
+};
 use oneiron::outbound_intent_ledger::DeliveryReadBack;
+use oneiron::test_doors::uncertain_send_questions::{PassQuestions, replay_uncertain_send};
+use oneiron::{EntityId, Vault, VaultConfig, outbound_verb_contract};
 use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
 
@@ -195,5 +205,89 @@ fn stalwart_read_back_bounded() {
         elapsed < Duration::from_secs(15) && read_back == DeliveryReadBack::Unknown,
         "a stalled read-back must read Unknown within the {SENT_LOOKUP_TIMEOUT:?} lookup bound \
          (well under 15 s); it read {read_back:?} after {elapsed:?}"
+    );
+}
+
+/// FIX 22347. One replay pass of an outcome-free Pending native mail send
+/// that its transport looks up (a connector-send TASK's) asks the provider
+/// once: the lookup settles it, and no read-back asks the same Stalwart the
+/// same question first.
+#[test]
+fn stalwart_single_verdict_per_pass() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+
+    let questions = replay_uncertain_send(&vault);
+
+    assert_eq!(
+        questions,
+        PassQuestions {
+            read_backs: 0,
+            lookups: 1,
+            sends: 0,
+        },
+        "one pass asks its provider one question and, held, sends nothing"
+    );
+}
+
+/// FIX 22347. A draft whose only submission was cancelled was never sent:
+/// the read-back reads it `Unknown`, and the sent lookup, which answers from
+/// the same record, cannot tell either. Before, the lookup read any
+/// submission id as sent, and the send completed as delivered.
+#[test]
+fn stalwart_lookup_reads_cancelled_submission_as_cannot_tell() {
+    let (identity, address, name) = sender();
+    let from = address.clone();
+    let stub = StalwartStub::start(
+        name,
+        Arc::new(move |method, _arguments| match method {
+            "Email/query" => (Duration::ZERO, json!({"ids": ["email-1"]})),
+            "EmailSubmission/query" => (Duration::ZERO, json!({"ids": ["submission-1"]})),
+            "EmailSubmission/get" => (
+                Duration::ZERO,
+                json!({"list": [{
+                    "id": "submission-1", "undoStatus": "canceled",
+                    "envelope": {"mailFrom": {"email": &from}, "rcptTo": [{"email": RECIPIENT}]}
+                }]}),
+            ),
+            _ => (Duration::ZERO, json!({})),
+        }),
+    );
+    let client = stub.client();
+    let message = NativeMailMessage::new(RECIPIENT, "Hello", Some("Hello Bob".to_owned()), None)
+        .expect("native mail message");
+    let mut sink =
+        StalwartSendSink::new(&client, &message, identity, &address).expect("native mail sink");
+    let engine_send_id: EngineSendId =
+        serde_json::from_value(json!("ab".repeat(32))).expect("engine send id");
+    let intent = OutboundIntent {
+        actor: "agent".to_owned(),
+        on_behalf_of: None,
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        target: RECIPIENT.to_owned(),
+        recipients: Vec::new(),
+        content_ref: None,
+        idempotency_key: None,
+        dedupe_key: None,
+        intent_source: "test".to_owned(),
+        trigger_ref: "trigger-1".to_owned(),
+        job_ref: None,
+        mention: None,
+    };
+    let target = SentLookupTarget {
+        intent_ref: "intent-1",
+        intent: &intent,
+        verb_contract: outbound_verb_contract("email", "send").expect("email send contract"),
+        channel_identity_ref: Some(identity),
+        send_approved_at: None,
+    };
+
+    let found = sink.lookup_sent(&engine_send_id, &target);
+
+    assert_eq!(
+        found,
+        SentLookup::CannotTell,
+        "a cancelled submission proves no send"
     );
 }
