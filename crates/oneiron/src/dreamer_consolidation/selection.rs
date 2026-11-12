@@ -297,3 +297,13 @@ impl Vault {
         Ok(config)
     }
 }
+
+/// The effective scoring config's domain-separated pin in this transaction.
+pub(crate) fn selection_config_pin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<String> {
+    let encoded = serde_json::to_vec(&vault.consolidation_selection_in_txn(txn)?)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron:consolidation:selection-config:v1\0");
+    hash.update(&encoded);
+    Ok(hash.finalize().to_hex().to_string())
+}

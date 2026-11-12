@@ -119,6 +119,7 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::RepoMergeQueueEnqueue
             | SelfEffect::RepoCheckoutBind
             | SelfEffect::RepoExport
+            | SelfEffect::RepoSymbolsObserve
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),

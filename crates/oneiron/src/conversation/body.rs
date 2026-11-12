@@ -3,7 +3,9 @@ use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use crate::scan_check::{EngineScan, ScanCount};
 
-pub use crate::store::conversation_body::{ConversationBody, ConversationKind, RoomRole};
+pub use crate::store::conversation_body::{
+    ConversationBody, ConversationKind, RoomPin, RoomPinPolicy, RoomRole,
+};
 
 pub(crate) fn validate_put_in_txn(
     store: &crate::store::Store,
@@ -67,16 +69,35 @@ pub(crate) fn validate_put_in_txn(
         if members != body.member_ids.iter().copied().collect() {
             return Err(state("membership changes require the membership door"));
         }
-        if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
-            && old.first() == Some(&ENTITY_TYPE_CONVERSATION)
-            && !old[ENTITY_METADATA_HEADER_LEN..].is_empty()
-        {
-            let previous = ConversationBody::from_bytes(&old[ENTITY_METADATA_HEADER_LEN..])?;
-            let mut retained = previous.roles;
+        let previous = match crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? {
+            Some(old)
+                if old.first() == Some(&ENTITY_TYPE_CONVERSATION)
+                    && !old[ENTITY_METADATA_HEADER_LEN..].is_empty() =>
+            {
+                Some(ConversationBody::from_bytes(
+                    &old[ENTITY_METADATA_HEADER_LEN..],
+                )?)
+            }
+            _ => None,
+        };
+        if let Some(previous) = &previous {
+            let mut retained = previous.roles.clone();
             retained.retain(|person, _| body.member_ids.iter().any(|id| id.to_hex() == *person));
             if retained != body.roles && !roles::ROLE_UPDATES.contains(store, txn, &id)? {
                 return Err(state("role changes require the room role door"));
             }
+        }
+        // ROOM-SCOPED-PINS: a room's shared pins and their policy change only
+        // through the room pin doors, which mark their write transaction; a
+        // new room starts with no pins and the default policy.
+        let (previous_pins, previous_policy) = previous
+            .as_ref()
+            .map(|previous| (previous.pins.as_slice(), previous.pin_policy))
+            .unwrap_or_default();
+        if (body.pins.as_slice(), body.pin_policy) != (previous_pins, previous_policy)
+            && !pins::PIN_UPDATES.contains(store, txn, &id)?
+        {
+            return Err(state("pin changes require the room pin doors"));
         }
     }
     // Rule 5: a roster of any size is kept whole. Past its threshold row the
