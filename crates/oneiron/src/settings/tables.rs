@@ -34,6 +34,11 @@ crate::side_table::side_tables! {
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The owner's non-base world claim fraction (ARCH-0004 #world-scope): the most of a context
+    /// pack's claims worlds other than base may hold, from 0 to 1. Absent reads as the default in
+    /// `settings::non_base_world_claim_fraction`. Key: ().
+    NON_BASE_WORLD_CLAIM_FRACTION: VaultMeta b"settings:recall:v1:non_base_world_claim_fraction" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The owner's bounds on primitive A's snapshot handles (slice 6.4b): open handles per actor,
     /// the default and the most lifetime, rows and bytes per page, and rows per handle. Absent
     /// reads as the defaults in `settings::snapshot_read`. Key: ().

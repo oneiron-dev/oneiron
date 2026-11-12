@@ -638,7 +638,13 @@ impl Vault {
                     .ok_or(Error::InvariantViolation(
                         "origin publication has no claim id",
                     ))?;
-                let body = publication_claim_body(&terminal)?;
+                let mut body = publication_claim_body(&terminal)?;
+                // [SMART-HTTP-RECEIVE-PACK-EVIDENCE-FACET]: the subject's
+                // source is the published commit's id, whose derived substrate
+                // facet is no FACET, so the CLAIM birth gate refused every
+                // publication. The claim is born in the vault default facet,
+                // as its change-index receipt below is (acab28ba1b1).
+                body.scope_facet = self.default_facet_in_txn(wtxn)?;
                 self.put_reserved_claim_in_txn(
                     wtxn,
                     &claim_id,

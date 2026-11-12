@@ -60,19 +60,25 @@ an Office oracle run.
   inventory. The Office half refuses before opening anything when they differ.
   Update the pin only after checking a deliberate upgrade
   (`scripts/office/README.md`).
-- The font inventory is per account: the SHA-256 of sorted JSON rows
+- The font inventory is measured per account: the SHA-256 of sorted JSON rows
   `{root_label, relative_path, bytes, sha256}` over the font files in
   `/System/Library/Fonts`, `/Library/Fonts`, the account's `~/Library/Fonts`
   and the PowerPoint bundle's `Contents/Resources/DFonts` and `Fonts`. A
   missing root or an unreadable file is a row of its own; mtime is never
-  identity. `environment.json` holds one approved digest per account in
-  `approved_font_inventories`, and each receipt records its `font_account` and
-  `font_inventory_sha256`, judged against that account's approval. The digest
-  is measured once per Office pass; the pass also writes the rows to
-  `office-results/font-inventory.json`.
-- Approve each account once, and again after a deliberate font or Office
-  change, on vel in a source checkout of the commit you will run, as that
-  account. The refusal prints the observed digest and this command:
+  identity; the account name is not hashed. Approvals are keyed by role:
+  `environment.json` holds one approved digest per role (`owner`, `isolated`)
+  in `approved_font_inventories`, and each receipt records its `font_account`,
+  `font_role` and `font_inventory_sha256`, judged against that role's
+  approval. An account holds `isolated` when `environment.json` lists it in
+  `isolated_accounts` (`decktest`), and `owner` when the untracked file
+  `~/.config/oneiron/office-owner-account` in its home names it. Any other
+  account holds no role and the pass refuses; without that file no account
+  holds `owner`. The digest is measured once per Office pass; the pass also
+  writes the rows to `office-results/font-inventory.json`.
+- Approve each role once, and again after a deliberate font or Office
+  change, on vel in a source checkout of the commit you will run, as an
+  account that holds it. The refusal prints the observed digest and this
+  command:
 
   ```sh
   python3 -I scripts/office/deck_oracle.py fonts
@@ -80,8 +86,10 @@ an Office oracle run.
   ```
 
   The first command prints the rows and the digest; check them. The second
-  records only this account's digest. Do it for the owner account (over ssh) and for
-  `decktest` (in its own logged-in Terminal), then commit `environment.json`
+  records only this account's digest, under its role. Do it for the owner
+  account (over ssh; once, first run `mkdir -p ~/.config/oneiron && whoami >
+  ~/.config/oneiron/office-owner-account` there) and for `decktest` (in its
+  own logged-in Terminal), then commit `environment.json`
   and start a new run: a run directory pins its copy of the script, so
   approving inside a run invalidates it.
 - The account running the Office half needs a console (Aqua) session on vel:
@@ -103,7 +111,8 @@ an Office oracle run.
   pass with an environment verdict: inconclusive, never a pass.
 - PPTArena decks are untrusted. Their candidates open only in the isolated macOS
   test account (network and active content off, logged in, PowerPoint signed in).
-  The owner account (`office.owner_accounts`) refuses `--isolated-account`.
+  `--isolated-account` runs only in an account that `environment.json` lists
+  in `isolated_accounts`; every other account refuses it.
 - Never run the Office half on the owner's MacBook.
 
 Throughout, `$sha` is the full origin/main commit under test and `$run` names the

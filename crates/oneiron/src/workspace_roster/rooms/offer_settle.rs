@@ -43,13 +43,6 @@ use crate::workspace_roster::{
 };
 use crate::{EntityId, Vault, WriteActor};
 
-/// What an answer to an open card that is no longer current does (FIX 3322;
-/// a call, canon is silent): another machine minted the agent's newer card,
-/// so this one is marked replaced by the card current now and comes back as
-/// it stands, with no consent, diary note or acceptance. `false` refuses the
-/// answer instead.
-const ROOM_OFFER_STALE_ANSWER: bool = true;
-
 /// The host's verb on a card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -387,8 +380,11 @@ fn answer_in_txn(
     if !matches!(stored.card.state, OfferState::Open { .. }) {
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
     }
-    // FIX 3322: an open card another card has replaced as current is
-    // answered by neither verb.
+    // FIX 3322 (a call, canon is silent): an open card another card has
+    // replaced as current is answered by neither verb. Another machine minted
+    // the agent's newer card, so this one is marked replaced by the card
+    // current now and comes back as it stands, with no consent, diary note or
+    // acceptance.
     let card = &stored.card;
     if let Some(by) = OFFER_CURRENT
         .get(
@@ -398,11 +394,6 @@ fn answer_in_txn(
         )?
         .filter(|current| *current != card.offer_id)
     {
-        if !ROOM_OFFER_STALE_ANSWER {
-            return Err(MemoryError::bad_request(
-                "another offer card replaced this one",
-            ));
-        }
         stored.card.state = OfferState::Superseded { by };
         OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));

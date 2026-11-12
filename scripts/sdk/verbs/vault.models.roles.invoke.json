@@ -5,6 +5,7 @@
   "output": "crate::llm::manifest::doors::ModelRoleInvocation",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.roles.invoke\", &input)?",
   "scope": "Read",
+  "act_class": "reversible_work",
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,

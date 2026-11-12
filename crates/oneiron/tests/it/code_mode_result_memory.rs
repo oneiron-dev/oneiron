@@ -138,10 +138,15 @@ fn reply(text: impl Into<String>) -> LlmResponse {
     LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
-            content: vec![ContentPart::Text { text: text.into() }],
+            content: vec![ContentPart::Text {
+                text: text.into(),
+                signature: None,
+            }],
         },
         usage: LlmUsage::zero(),
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -151,7 +156,7 @@ fn texts(request: &LlmRequest) -> impl Iterator<Item = &str> {
         .iter()
         .flat_map(|message| &message.content)
         .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
+            ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
 }
@@ -210,6 +215,8 @@ impl JsCodeModeRuntime for Producer {
         Ok(JsCodeModeStepOutcome {
             done: false,
             observation: format!("step {} stored {RESULTS_PER_STEP} results", step.seq),
+            // An unfinished step's console is its observation (FIX 6885).
+            console: String::new(),
             outputs: (0..RESULTS_PER_STEP)
                 .map(|index| {
                     JsCodeModeOutput::new(
@@ -284,10 +291,9 @@ fn a_result_past_the_session_share_and_thousands_of_small_ones_keep_memory_flat(
         seat_effort: None,
         global_tier: ModelTierRef("executor-tier".to_owned()),
         determinism: CodeRunDeterminism::new(1_719_000_001_000, [0xAB; 32]),
-        limits: EngineExecutorLimits {
-            soft_steps: 1,
-            hard_steps: 50,
-        },
+        // The hard step cap became the `[limits] executor_run_steps` row,
+        // which asks and never stops a run (FIX 4197, 5ce94a6121b).
+        limits: EngineExecutorLimits { soft_steps: 1 },
         wake: None,
     };
 

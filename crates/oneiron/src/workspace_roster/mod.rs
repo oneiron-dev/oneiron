@@ -101,7 +101,8 @@ use codec::*;
 use companion_bind::*;
 use steps::*;
 
-pub use self::house_link::parse_house_role;
+pub(crate) use self::codec::companion_principal_in_txn;
+pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
 pub(crate) use self::house_link::{
     erase_house_link_actor_in_txn, house_link_receipts, house_role_lines_in_txn,
     is_house_link_grant_in_txn,
@@ -187,10 +188,10 @@ pub(crate) use project::{
     normalize_project_body, note_project_proof, permit_leader_chat_record, precheck_goal_delete,
     project_mint_gate_refs_in_txn, projects_led_in_txn, reconcile_project_rooms,
     retire_goal_for_delete, room_facets_in, root_project_in, seed_root_project,
-    settle_leader_chat_record, speaks_as_in_txn, validate_local_leader_chat_turns,
-    validate_project_body, validate_project_edge_delete, validate_project_edge_put,
-    validate_project_graph, validate_project_transition, validate_room_body,
-    verify_existing_leader_chat_turn,
+    seeded_root_home_room, settle_leader_chat_record, speaks_as_in_txn,
+    validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_project_transition,
+    validate_room_body, verify_existing_leader_chat_turn,
 };
 pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
@@ -254,13 +255,16 @@ pub(crate) use rooms::{
     thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
 };
 pub use rooms::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
-pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
+pub(crate) use rooms::{
+    VaultStanding, private_root_of_room_in, room_thread_source_in, vault_standing_in,
+};
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub(crate) use rooms::stored_room_pins_in;
 pub use rooms::{
     ACTOR_ERASE_HOST_PIN, HostPin, HostPinKind, ProjectRoomPlace, RoomHostHand, RoomHostPin,
 };
@@ -269,6 +273,7 @@ pub use rooms::{
     OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
+pub use rooms::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
@@ -282,6 +287,8 @@ pub(crate) use rooms::room_group_project_in;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
 pub(crate) use rooms::task_binding_turns_in;
+pub(crate) use rooms::task_thread_room_in;
+pub(crate) use rooms::turn_room_in;
 pub use rooms::{ACTOR_ERASE_OFFER_BINDING, ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(crate) use rooms::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
@@ -294,7 +301,7 @@ pub(crate) use rooms::{
     erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
 };
 pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
-pub(crate) use rooms::{record_room_message_in_txn, record_thread_reply_in_txn};
+pub(crate) use rooms::{record_native_room_turn_in_txn, record_room_message_in_txn};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};

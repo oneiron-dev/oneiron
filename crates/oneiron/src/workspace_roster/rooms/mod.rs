@@ -1,4 +1,5 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
+mod access;
 mod audience;
 #[cfg(feature = "sync")]
 mod audience_carriers;
@@ -24,6 +25,7 @@ mod offer_settle;
 mod offers;
 mod participants;
 mod participation;
+mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
@@ -34,6 +36,7 @@ mod thread_history;
 mod thread_join;
 mod thread_projection;
 mod thread_reads;
+mod thread_task_source;
 mod turn_record;
 mod upkeep;
 mod upkeep_voice;
@@ -47,6 +50,7 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
+pub(in crate::workspace_roster) use access::{RoomAccess, room_access_in};
 pub(crate) use audience::{
     ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in,
     privileged_private_thread_reader_in, record_thread_admits_in, require_thread_audience_in,
@@ -88,8 +92,8 @@ pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
 pub(crate) use history::erase_room_side_rows;
 pub(in crate::workspace_roster) use history::index_task_bindings;
-pub(crate) use history::task_binding_turns_in;
 pub(in crate::workspace_roster) use history::thread_turns_in;
+pub(crate) use history::{task_binding_turns_in, task_thread_room_in, turn_room_in};
 pub(crate) use hosting::erase_host_pin_actor_in_txn;
 pub(crate) use hosting::room_group_project_in;
 pub(in crate::workspace_roster) use hosting::room_host_in;
@@ -117,11 +121,14 @@ pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, 
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;
+pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
 };
 use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
 pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
+pub(crate) use pins::stored_room_pins_in;
+pub use pins::{RoomPinPolicySet, RoomPinReply, RoomPinRequest, RoomUnpinReply};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
@@ -142,7 +149,8 @@ pub use thread_join::{
 };
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
-pub(crate) use turn_record::{record_room_message_in_txn, record_thread_reply_in_txn};
+pub(crate) use thread_task_source::room_thread_source_in;
+pub(crate) use turn_record::{record_native_room_turn_in_txn, record_room_message_in_txn};
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use upkeep::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 pub use upkeep_voice::{
@@ -202,19 +210,24 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
+    // The view never carries the room's shared pins: a reader gets them only
+    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    room.pins.clear();
     Ok(room)
 }
+/// `room`'s access for `actor` on its roster, in any room: a home room's
+/// project seat or an ordinary room's ledger seat (THREAD-TASK-EVERY-ROOM).
 pub(in crate::workspace_roster) fn require_member(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     actor: EntityId,
-) -> Result<ProjectRoom> {
-    let record = room_in(vault, txn, room)?;
-    if !record.member_ids.contains(&actor.to_hex()) {
+) -> Result<RoomAccess> {
+    let access = room_access_in(vault, txn, room)?;
+    if !access.member_ids.contains(&actor.to_hex()) {
         return Err(invalid());
     }
-    Ok(record)
+    Ok(access)
 }
 pub(in crate::workspace_roster) fn turn_in(
     vault: &Vault,
@@ -347,7 +360,8 @@ pub(crate) fn project_room_audience_in(
     let at = vault.store.clock.now_recorded_at();
     for actor in audience {
         let subject = participation::participant_in_txn(vault, txn, *actor, at)?;
-        if !participation::reads_room_in_txn(vault, txn, room, &record, *actor, subject)? {
+        if !participation::reads_room_in_txn(vault, txn, room, &record.member_ids, *actor, subject)?
+        {
             return Ok(Some(false));
         }
     }
@@ -539,7 +553,9 @@ impl Memory<'_> {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             return Ok(vec![(
                 room,
-                require_reader(self.vault(), &txn, room, self.actor())?,
+                require_reader(self.vault(), &txn, room, self.actor())?
+                    .home
+                    .ok_or_else(invalid)?,
             )]);
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -563,7 +579,7 @@ impl Memory<'_> {
                     self.vault(),
                     &txn,
                     id,
-                    &room,
+                    &room.member_ids,
                     self.actor(),
                     subject,
                 )?

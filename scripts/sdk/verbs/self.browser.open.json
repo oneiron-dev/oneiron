@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserObservationPage",
   "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.open(input))?)",
   "scope": "Write",
+  "act_class": "reversible_work",
   "context": "browser",
   "mcp": "none",
   "section": false,

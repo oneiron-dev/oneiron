@@ -18,7 +18,7 @@ use crate::{
     Vault,
     entity_id::EntityId,
     error::{Error, Result},
-    serialize::ExportBody,
+    serialize::{ExportBody, ExportSecrets},
 };
 
 /// A cohort key's subject edge: source, kind and target.
@@ -225,12 +225,14 @@ pub(super) fn mark_ready<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) ->
     Ok(any)
 }
 /// Restores the cohort queued under `key`, its subject edge first; the ids
-/// it inserted and the rows already here.
+/// it inserted and the rows already here. Comparisons re-serialize under the
+/// archive's `secrets`, so writer and reader agree.
 pub(super) fn restore<R: Read + Seek>(
     key: EntityId,
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
+    secrets: ExportSecrets,
 ) -> Result<(BTreeSet<EntityId>, usize)> {
     let subject = archive
         .index
@@ -317,7 +319,7 @@ pub(super) fn restore<R: Read + Seek>(
         }
         None => false,
     };
-    let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut)?;
+    let (inserted, unchanged) = restore_cohort(vault, txn, &rows, cut, secrets)?;
     if let Some((source, kind, target)) = cut_subject
         && !preserve_subject_edge
         && crate::ports::EdgeStoreRead::port_edge_get(&vault.store, txn, &source, kind, &target)?
@@ -347,6 +349,7 @@ fn restore_cohort(
     txn: &mut heed::RwTxn<'_>,
     rows: &[(ExportEntity, EntityId, ClaimBody)],
     cut: bool,
+    secrets: ExportSecrets,
 ) -> Result<(usize, usize)> {
     let mut inserted = 0;
     let mut unchanged = 0;
@@ -370,15 +373,16 @@ fn restore_cohort(
     let mut previous: Option<(EntityId, u64, ClaimLifecycleStatus)> = None;
     for &i in &order {
         let (row, id, body) = &rows[i];
-        let expected = ExportBody::from_bytes(
+        let expected = ExportBody::from_bytes_with(
             &crate::write_envelope::claim_body::encode_claim_body(body)?,
             row.entity_type,
+            secrets,
         );
         if let Some(existing) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
         {
             if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live()
-                || !matches_row(row, &existing, &expected)
+                || !matches_row(row, &existing, &expected, secrets)
             {
                 return Err(invalid("archive provenance ID collision"));
             }
@@ -452,11 +456,12 @@ fn restore_cohort(
     for (row, id, body) in rows {
         let actual = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
-        let expected = ExportBody::from_bytes(
+        let expected = ExportBody::from_bytes_with(
             &crate::write_envelope::claim_body::encode_claim_body(body)?,
             row.entity_type,
+            secrets,
         );
-        if !matches_row(row, &actual, &expected) {
+        if !matches_row(row, &actual, &expected, secrets) {
             return Err(invalid("archive provenance lifecycle not reconstructed"));
         }
     }

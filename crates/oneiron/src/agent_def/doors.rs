@@ -73,6 +73,9 @@ pub(crate) struct AgentAuthoring {
     /// of its own takes its slice from. `None` for an unbound lane, which
     /// grants nothing by itself.
     read_key: Option<crate::claim::ScopedReadActorKey>,
+    /// What the author writer made of each definition the batch staged, for
+    /// the committing door's receipt.
+    receipts: super::AgentDefinitionWriteReceipts,
 }
 
 impl AgentAuthoring {
@@ -87,7 +90,13 @@ impl AgentAuthoring {
             author: actor.entity_ref(),
             door,
             read_key: read_key.cloned(),
+            receipts: super::AgentDefinitionWriteReceipts::default(),
         })
+    }
+
+    /// The receipts the author writer fills as the batch applies.
+    pub(crate) fn receipts(&self) -> super::AgentDefinitionWriteReceipts {
+        self.receipts.clone()
     }
 }
 
@@ -107,7 +116,7 @@ const PROPOSED_CHANGE_ID_CONTEXT: &str = "oneiron agent_def proposed change id v
 /// # Errors
 ///
 /// An invalid-key error when the derived bytes are a reserved id pattern.
-fn proposed_change_id(stored: &EntityId, version: &str) -> Result<EntityId> {
+pub(super) fn proposed_change_id(stored: &EntityId, version: &str) -> Result<EntityId> {
     let mut hasher = blake3::Hasher::new_derive_key(PROPOSED_CHANGE_ID_CONTEXT);
     hasher.update(stored.as_bytes());
     hasher.update(version.as_bytes());
@@ -174,7 +183,7 @@ fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
 
 /// Whether a definition is one its agent runs under: active, approved and
 /// switched on.
-fn stands(definition: &AgentDefinition) -> bool {
+pub(crate) fn stands(definition: &AgentDefinition) -> bool {
     definition.lifecycle_status == ClaimLifecycleStatus::Active
         && definition.enabled
         && matches!(
@@ -286,9 +295,12 @@ impl Vault {
         )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
-        wtxn.commit()?;
-        crate::context_board::ensure_agent_person(
+        // PEOPLE (ARCH-0067): the definition and its person land in this one
+        // writer, so a person that cannot be built leaves no definition
+        // behind for a retry of this create-only door to find occupied.
+        crate::context_board::ensure_agent_person_in_txn(
             self,
+            &mut wtxn,
             *id,
             definition
                 .display_name
@@ -296,6 +308,7 @@ impl Vault {
                 .unwrap_or(&definition.agent_id),
             learned_at,
         )?;
+        wtxn.commit()?;
         Ok(disposition)
     }
 
@@ -402,7 +415,7 @@ impl Vault {
     }
 
     /// Encodes (validating) and writes an `AgentDefinition` through the generic
-    /// entity door.
+    /// entity door, with its person, in one writer.
     pub fn put_agent_definition(
         &self,
         id: &EntityId,
@@ -411,14 +424,20 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let data = encode_agent_definition(def)?;
-        self.put_entity(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)?;
-        // PEOPLE (ARCH-0067): every agent is a person with a `pr` handle.
-        crate::context_board::ensure_agent_person(
-            self,
-            *id,
-            def.display_name.as_deref().unwrap_or(&def.agent_id),
-            learned_at,
-        )
+        self.with_write_txn(|txn| {
+            self.batch_in()
+                .put(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)
+                .apply(txn)?;
+            // PEOPLE (ARCH-0067): every agent is a person with a `pr` handle.
+            // A person that cannot be built leaves no definition behind.
+            crate::context_board::ensure_agent_person_in_txn(
+                self,
+                txn,
+                *id,
+                def.display_name.as_deref().unwrap_or(&def.agent_id),
+                learned_at,
+            )
+        })
     }
 
     /// Transaction-composable [`Self::put_agent_definition`]: the definition
@@ -546,17 +565,47 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let data = encode_agent_definition(def)?;
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let existing = self.read_agent_definition_in_txn(txn, id)?;
-            if expected_version.is_some_and(|version| version != existing.version) {
-                return Err(Error::ConcurrentWrite("agent definition revision changed"));
-            }
-            validate_agent_definition_update(&existing, def)?;
-            super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
-            self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
+            self.update_agent_definition_as_owner_in_txn(
+                txn,
+                owner,
+                id,
+                expected_version,
+                def,
+                occurred,
+                learned_at,
+            )
         })
+    }
+
+    /// Owner edit of an AGENT_DEF in the caller's writer: rechecks the proof,
+    /// fences the revision, runs the immutable-field gate, moves the id pin,
+    /// and writes the row. The whole-vault seed-replacement adapter calls this
+    /// in the import writer; the public owner doors reach it through
+    /// [`Self::update_agent_definition_as_checked`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "owner, target, revision, body and event time are one edit in the caller's writer"
+    )]
+    pub(crate) fn update_agent_definition_as_owner_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_version: Option<&str>,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_agent_definition(def)?;
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let existing = self.read_agent_definition_in_txn(txn, id)?;
+        if expected_version.is_some_and(|version| version != existing.version) {
+            return Err(Error::ConcurrentWrite("agent definition revision changed"));
+        }
+        validate_agent_definition_update(&existing, def)?;
+        super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
+        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
     }
 
     /// [`Self::update_agent_definition_at_version_as`] in the caller's
@@ -1070,9 +1119,26 @@ impl Vault {
         proposal.approval_status = ClaimApprovalStatus::Proposed;
         // A reserved logical id names its one seeded row.
         proposal.logical_id = None;
+        let body = encode_agent_definition(&proposal)?;
+        // The proposal lands on its own id, past the below-owner widening
+        // check, which judged the put at the stored row's id. A proposal the
+        // owner rejected stays rejected: bringing it back to waiting moves
+        // its approval up, which is the owner's (`widening`).
+        if super::widening::agent_definition_put_widens_in_txn(
+            &self.store,
+            txn,
+            &proposal_id,
+            &body,
+        )? {
+            return Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "only the vault owner brings back a proposed change it answered",
+                ),
+            ));
+        }
         Ok(AuthoredPut::ProposedChange {
             id: proposal_id,
-            body: encode_agent_definition(&proposal)?,
+            body,
         })
     }
 
@@ -1166,6 +1232,7 @@ impl Vault {
         let Some(authoring) = authoring else {
             return Ok(());
         };
+        let mut receipts = Vec::new();
         for op in ops {
             if let BatchOp::Put {
                 id,
@@ -1175,17 +1242,28 @@ impl Vault {
             } = op
                 && *entity_type == ENTITY_TYPE_AGENT_DEF
             {
-                match self.agent_authored_put_in_txn(txn, authoring, id, data)? {
-                    AuthoredPut::AsStaged => {}
-                    AuthoredPut::Bounded(body) => *data = body,
+                let staged = *id;
+                let receipt = match self.agent_authored_put_in_txn(txn, authoring, id, data)? {
+                    AuthoredPut::AsStaged => super::write_receipt::stored_at_its_id(
+                        decode_agent_definition(data)?.approval_status,
+                    ),
+                    AuthoredPut::Bounded(body) => {
+                        let receipt = super::write_receipt::stored_at_its_id(
+                            decode_agent_definition(&body)?.approval_status,
+                        );
+                        *data = body;
+                        receipt
+                    }
                     AuthoredPut::ProposedChange { id: proposal, body } => {
                         *id = proposal;
                         *data = body;
+                        super::write_receipt::stored_as_proposed_change(&proposal)
                     }
-                }
+                };
+                receipts.push((staged, receipt));
             }
         }
-        Ok(())
+        authoring.receipts.replace(receipts)
     }
 
     /// Prepares the same author-bounded definition for a door that owns its
@@ -1237,7 +1315,7 @@ impl Vault {
         Ok((definition, disposition))
     }
 
-    fn apply_agent_definition_body(
+    pub(super) fn apply_agent_definition_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

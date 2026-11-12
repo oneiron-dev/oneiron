@@ -414,6 +414,15 @@ impl Vault {
         self.store.structural_kind_registration(type_byte)
     }
 
+    /// The kind name reads spell for `entity_type` in this vault: the static
+    /// registry's kind, else the name of the compiled-in product kind this
+    /// vault registered the byte for at run time (a project is `PROJECT`),
+    /// else `TYPE_<byte>`.
+    #[must_use]
+    pub fn entity_kind_name(&self, entity_type: u8) -> String {
+        self.store.entity_kind_name(entity_type)
+    }
+
     /// Returns all vault-scoped dynamic StructuralKind registrations sorted
     /// by type byte. Static registry entries are intentionally excluded.
     #[must_use]

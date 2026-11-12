@@ -5,6 +5,7 @@
   "output": "crate::memory::ScopedExport",
   "call": "memory.export_scoped(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "scoped_export": true
   },

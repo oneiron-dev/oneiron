@@ -78,6 +78,8 @@ package is resolved by the Oneiron root lockfile.)
   added or removed.
 - `src/env.rs` — the open seam described below. Nothing else in the file, and
   no other source file, is touched.
+- `src/txn.rs`, `src/database.rs`, `src/env.rs`, `src/mdb/lmdb_ffi.rs` — the
+  PAGE-FULL trace accessors, see that section below.
 
 **Added by this vendor:**
 
@@ -232,6 +234,26 @@ above). Add 20 to an upstream line after 6487 to find it in the vendored copy.
 
 **Re-vendoring:** re-extract the crates.io archive with the checksum above.
 Re-copy the files listed, then re-apply the `mdb.c` and `Cargo.toml` hunks.
+
+## PAGE-FULL trace: three read-only accessors
+
+FIX row TRAP-REGISTER-WAIT-PAGE-FULL: writes on several engine paths fail now
+and then with `MDB_PAGE_FULL`, and the cause is not established. The engine's
+canonical accessors (`oneiron-store` `overlay_db/accessors.rs`) trace such a
+failure; the trace needs three facts heed 0.20.5 does not expose. Each is a
+read, opens no transaction, and runs only after a write has already failed:
+
+- `src/txn.rs`: `RoTxn::environment`, the `Env` the transaction holds alive
+  (for `Env::info`: the map size and the last page number).
+- `src/database.rs`: `Database::raw_flags`, the persisted flags of one
+  database from `mdb_dbi_flags`; `src/mdb/lmdb_ffi.rs` re-exports that
+  function.
+- `src/env.rs`: `Env::page_size`, `ms_psize` from `mdb_env_stat`. LMDB marks a
+  transaction failed on `MDB_PAGE_FULL`, so `Database::stat` on it answers
+  `MDB_BAD_TXN`; the page size then comes from the environment.
+
+Each addition is marked `ONEIRON FORK (PAGE-FULL trace)`. Re-vendoring
+re-applies them with the files listed above.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 

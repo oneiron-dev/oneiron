@@ -1,7 +1,7 @@
 use super::ViewQuery;
 use super::core_engine_error;
 use super::query_params;
-use super::scoped_auth::check_request_owner_act;
+use super::scoped_auth::check_legacy_read_auth;
 use super::scoped_read_for_legacy_api;
 use crate::auth::Locality;
 use crate::error::ApiError;
@@ -114,7 +114,7 @@ pub(crate) async fn get_entity(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let auth = check_request_owner_act(&parts, &server)?.at(locality);
+    let auth = check_legacy_read_auth(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Standard);
 
@@ -142,6 +142,7 @@ pub(crate) async fn get_entity(
         Ok(Some((entity_type, updated_at, data))) => (
             StatusCode::OK,
             Json(projection::project_entity_parts(
+                &server.vault,
                 &id,
                 entity_type,
                 updated_at,
@@ -255,7 +256,7 @@ pub(crate) async fn get_edges(
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let auth = check_request_owner_act(&parts, &server)?.at(locality);
+    let auth = check_legacy_read_auth(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 

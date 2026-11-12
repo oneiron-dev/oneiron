@@ -7,6 +7,7 @@
   "host_door": true,
   "openapi": true,
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

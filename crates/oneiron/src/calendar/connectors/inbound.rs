@@ -113,9 +113,10 @@ pub fn run_calendar_connector_sync_with_screener(
     // An omission a write in flight or a moved row holds back stays owed:
     // every other change of this pull stands, and the next pull lists the
     // calendar whole again, so the omission is read again, never dropped
-    // (fix list row 19192).
+    // (fix list row 19192). A booking move a pending emergency delivery held
+    // back stays owed the same way (FIX 22385).
     let next_cursor = match batch.next_cursor {
-        Some(cursor) if counters.owed_omissions > 0 => {
+        Some(cursor) if counters.owed_omissions > 0 || counters.owed_booking_moves > 0 => {
             Some(transport.cursor_owing_full_listing(&cursor))
         }
         cursor => cursor,
@@ -150,6 +151,9 @@ struct SyncCounters {
     /// Omissions a write in flight or a moved row held back (fix list row
     /// 19192).
     owed_omissions: u32,
+    /// Resources whose booking move a pending emergency delivery held back
+    /// (FIX 22385).
+    owed_booking_moves: u32,
 }
 
 /// Applies one pulled change under the echo law, each admission under
@@ -194,6 +198,7 @@ fn apply_remote_change(
                 screen,
                 source: Some(archived),
             };
+            let mut owed_booking_move = false;
             for parsed in &feed.events {
                 let normalized = RemoteCalendarChange::Upsert(RemoteCalendarObject {
                     href: object.href.clone(),
@@ -213,19 +218,30 @@ fn apply_remote_change(
                 match classify_remote_change(current.as_ref(), &normalized) {
                     EchoDisposition::AcknowledgeEcho => counters.acknowledged += 1,
                     EchoDisposition::ApplyInbound | EchoDisposition::ApplyRemoteUpdate => {
-                        crate::calendar::ingest::admit_connector_event(
+                        if crate::calendar::ingest::admit_connector_event(
                             vault,
                             system,
                             admission_source,
                             parsed,
                             now,
-                        )?;
-                        counters.applied += 1;
+                        )? {
+                            owed_booking_move = true;
+                        } else {
+                            counters.applied += 1;
+                        }
                     }
                     EchoDisposition::ApplyRemoteDeletion => {
                         return Err(ingest_error("an upsert cannot classify as deletion"));
                     }
                 }
+            }
+            // A booking move a pending emergency delivery held back keeps
+            // the resource owed (FIX 22385): no sweep and no new remote
+            // object row, and the pull's cursor lists the calendar whole
+            // again, so the next pull reads the move again.
+            if owed_booking_move {
+                counters.owed_booking_moves += 1;
+                return Ok(());
             }
             crate::calendar::ingest::sweep_connector_resource(
                 vault,

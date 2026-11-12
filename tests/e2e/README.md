@@ -7,12 +7,14 @@ Execution is Linux-only. **Do not run Bun, Node, Python, a server, or a test on 
 coordinator Mac.** Build/package preparation belongs to the fleet lane.
 
 The public binding snapshot is main `c716fa9921692224fe46114b283993d5d81f6c8c`.
-The pinned plan has 29 files, 251 IDs, 443 public registry rows, and three explicit
+The pinned plan has 29 files, 259 IDs, 443 public registry rows, and three explicit
 excluded rows. The owner plan's 242 IDs plus MUSE-RECALL-01..08 in `retrieval.test.ts`
-(Engine order, 10 Nov 12:54 JST) and MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
-11 Nov 05:37 JST) cite their drivable PROMISE-REGISTER ids in
-`promises`; each `source` lists those promises' canon anchors. The retrieval file
-has 21 cases and an estimated 300 seconds. The plan pin's `expectedFacts` counts
+(Engine order, 10 Nov 12:54 JST), MUSE-RECALL-09 (Engine ruling E2E4-RECALL-CONTRACT,
+11 Nov 05:37 JST) and MUSE-LOOP-01..08 in `coordination.test.ts` and
+`artifacts.test.ts` (Engine answer MUSE-LOOP-REGISTRATION, 10 Nov 11:52 JST) cite
+their drivable PROMISE-REGISTER ids in `promises`; each `source` lists those promises' canon anchors. The retrieval file
+has 21 cases and an estimated 300 seconds, the coordination file 16 cases and
+160 seconds, and the artifacts file 10 cases and 85 seconds. The plan pin's `expectedFacts` counts
 are derived from the plan, not maintained independently, and the `support/run.ts`
 preflight reads its file and ID counts from that pin. The generated HTTP SDK's inputs/results are snake_case wire DTOs.
 The `oneiron` TypeScript SDK's witness and recall use camelCase DTOs, while
@@ -82,15 +84,16 @@ to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
-relayed by the Engine at 10:35, instead defers MEMORY-04, MEMORY-06,
-PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
-RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
-the Observed producer (FIX 21842). These cases remain registered with their reasons
+relayed by the Engine at 10:35, instead defers cases as SKIPPED until their doors exist; every case it
+deferred is now written or a pending door.
+RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). These cases remain registered with their reasons
 and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
 passing feature coverage. A case whose door is still missing is a **pending door**
 (Engine CORE-FOUR-SKIPS = A): `suite.pendingDoor(test, ID, "waits on <door>", {fix: "FIX <line>",
 deadline: "YYYY-MM-DD"})` keeps it registered, reports it SKIPPED with its door, FIX row and deadline,
-and fails it from the deadline on: door or delete. GATE-02 and GATE-05 are pending doors.
+and fails it from the deadline on: door or delete. GATE-02 and GATE-05 are pending doors, PRIVACY-03 and
+PRIVACY-06 are pending doors on vault.sync.outbox, MEMORY-03 is a pending door on the Observed producer
+(FIX 21842), and MEMORY-06 on the pinned productivity pack fixture (FIX 22509).
 
 ## EngineFixture
 
@@ -278,6 +281,11 @@ IDs, exact bytes and optional barriers. Scripted HTTP errors use real vendor
 error bodies and statuses. The helpers `openaiText`, `openaiStream`,
 `anthropicText`, `anthropicStream` and `embeddingReply` require declared usage;
 they do not estimate tokens or derive answers from requests.
+A request whose body names a boolean `stream` matches only a step of the same
+kind: `stream: true` needs a `{kind:"stream"}` reply, `stream: false` a buffered
+one, so a buffered reply to a streamed request fails at send time. A code-mode
+executor call is streamed when its local-openai-compat provider keeps the default
+capabilities (they include streaming); a decision call is buffered.
 
 A step or stream part may name a barrier. `awaitBarrier(name)` waits until the
 external adapter reaches it; `releaseBarrier(name)` releases that boundary.
@@ -413,7 +421,7 @@ bun "$CHECKOUT/tests/e2e/support/run.ts" --profile deterministic --workers 2 \
 ```
 
 The report records the selected files and `scope.completePlan`. A partial run
-never claims completion of the 251-ID plan. The prepared manifest must identify
+never claims completion of the 259-ID plan. The prepared manifest must identify
 the booked fleet job; never run the suite outside that job or on the Mac.
 
 ## Reports, cleanup and redaction
@@ -426,7 +434,7 @@ SKIPPED agrees with a raw JUnit skip, and the whole run (including preflight and
 cleanup) stays within 600 seconds. A TODO or failing test keeps that run non-green
 but does not turn an independently passing sibling into FAIL. Owner-deferred
 SKIPPED cases do not hold a run or grant and are never counted as PASS. Full feature
-coverage still requires passing evidence for all 251 IDs. Partial and optional-profile
+coverage still requires passing evidence for all 259 IDs. Partial and optional-profile
 results never claim default completeness. The 585-second planning
 estimate has not been measured.
 

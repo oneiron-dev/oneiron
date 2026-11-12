@@ -244,6 +244,9 @@ pub enum LeaseWarningOutcome {
     AlreadyRequested(AttemptRecord),
     /// The lease already expired: that is cleanup's force path, not a warning.
     Expired(AttemptRecord),
+    /// The run is parked on its signal: it keeps its lease until that signal
+    /// resumes it and has no work to land. Nothing recorded.
+    Parked(AttemptRecord),
 }
 
 /// Input for the runtime's QUOTA/BUDGET warning: the pass counter this attempt
@@ -296,4 +299,6 @@ pub struct AttemptLeaseWarningReport {
     pub not_due: u64,
     /// Rows already past expiry: cleanup's hard rung, never a warning.
     pub expired: u64,
+    /// Runs parked on their signal: each keeps its lease, never warned.
+    pub parked: u64,
 }

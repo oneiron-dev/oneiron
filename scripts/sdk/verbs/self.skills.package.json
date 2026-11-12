@@ -5,8 +5,8 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::task_verb::sdk::SkillPackageView>>",
   "call": "crate::task_verb::sdk::self_skills_package_embedded(memory, input)?",
   "scope": "Read",
-  "act_class": "read",
   "grant_class": "self.skills.package grant + caller read lane",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

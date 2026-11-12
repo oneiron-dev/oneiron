@@ -224,10 +224,11 @@ pub trait MailProviderWire {
 
     /// The address headers of `provider_id`, read once from its raw message,
     /// for a reply to it (fix list row 20520). `None` by default: a wire
-    /// whose header stage keeps each mailbox apart already (IMAP and mbox
-    /// split before they decode; Graph names typed addresses) leaves the
-    /// stored headers to stand. A wire that answers here never answers
-    /// `None` for a message it cannot read.
+    /// whose stored headers already hold each address field whole leaves
+    /// them to stand. IMAP and mbox land theirs from the whole raw header
+    /// block, each mailbox apart (fix list row 20852); Graph names typed
+    /// addresses. A wire that answers here never answers `None` for a
+    /// message it cannot read.
     ///
     /// # Errors
     ///

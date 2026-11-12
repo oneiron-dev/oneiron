@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ModelResponsesStoreSettings",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.settings.models.responses_store.set\", &input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "host_door": true,
   "host_door_precheck": true,
   "host_door_lists": true,

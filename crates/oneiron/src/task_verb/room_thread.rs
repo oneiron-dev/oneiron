@@ -99,28 +99,71 @@ pub(crate) fn task_roster_in(
     task: EntityId,
     members: &BTreeSet<String>,
 ) -> crate::Result<()> {
+    require_task_people_in(
+        vault,
+        txn,
+        task,
+        members,
+        |_| Ok(false),
+        [
+            "thread task owner is outside the project roster",
+            "thread task assignee is outside the project roster",
+        ],
+    )
+}
+
+/// [`task_roster_in`] for a thread of a room that is no project's home room
+/// (THREAD-TASK-EVERY-ROOM): the TASK's owner sits on the room's roster
+/// `members`, and an open assignee off it stands in the thread now, as
+/// `assignee_stands` reads it (a live Ready join). Binding seats no one.
+pub(crate) fn task_room_standing_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    members: &BTreeSet<String>,
+    assignee_stands: impl Fn(EntityId) -> crate::Result<bool>,
+) -> crate::Result<()> {
+    require_task_people_in(
+        vault,
+        txn,
+        task,
+        members,
+        assignee_stands,
+        [
+            "thread task owner is outside the room roster",
+            "thread task assignee has no standing in the room thread",
+        ],
+    )
+}
+
+/// A thread TASK's owner, as its authority names it, on `members`, and its
+/// open, non-consult assignee on `members` or standing by `assignee_stands`;
+/// `refusals` names each failure, the owner's first.
+fn require_task_people_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    members: &BTreeSet<String>,
+    assignee_stands: impl Fn(EntityId) -> crate::Result<bool>,
+    refusals: [&'static str; 2],
+) -> crate::Result<()> {
+    let [owner_refusal, assignee_refusal] = refusals;
     let body = task_verb_body_in(vault, txn, task)?.ok_or(Error::EntityNotFound)?;
     let authority = vault
         .task_authority_state_in(txn, task)?
         .ok_or(Error::EntityNotFound)?;
     if authority.owner_ref.to_hex() != body.owner_ref || !members.contains(&body.owner_ref) {
-        return Err(crate::error::RecordError::InvalidTaskBody(
-            "thread task owner is outside the project roster",
-        )
-        .into());
+        return Err(crate::error::RecordError::InvalidTaskBody(owner_refusal).into());
     }
     if let Some(assignee) = body.assignee {
         assignee.validate_in(vault, txn)?;
         if super::thread_task_is_open_in(vault, txn, task)?
             && body.task_kind() != super::TaskKind::Consult
-            && assignee
-                .entity_ref()
-                .is_some_and(|id| !members.contains(&id.to_hex()))
+            && let Some(holder) = assignee.entity_ref()
+            && !members.contains(&holder.to_hex())
+            && !assignee_stands(holder)?
         {
-            return Err(crate::error::RecordError::InvalidTaskBody(
-                "thread task assignee is outside the project roster",
-            )
-            .into());
+            return Err(crate::error::RecordError::InvalidTaskBody(assignee_refusal).into());
         }
     }
     Ok(())
