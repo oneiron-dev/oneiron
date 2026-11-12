@@ -1673,9 +1673,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/spend_lease/hard_cap_refusal.rs",
-     "purpose": "Read-only identification of a spend tree's refusing open hard cap",
+     "purpose": "Read-only identification of a spend tree's refusing open hard cap, and of that cap's generation",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -1694,6 +1695,7 @@
      "notable": [
       "GrantSpendBinding",
       "SpendCalibrationSample",
+      "SpendCapGeneration",
       "SpendPayer",
       "SpendRead",
       "SpendRefused",
@@ -1708,7 +1710,7 @@
       "enum": 2,
       "fn": 1,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -3163,7 +3165,7 @@
      "path": "src/attempt_queue/index.rs",
      "purpose": "FIX 11318: the attempt ledger's side indexes, so a reader that wants a kind's rows, a task's rows, a try's…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -3209,7 +3211,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 9,
       "re-export": 12
      }
@@ -5350,7 +5352,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -40745,7 +40747,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 54,
+      "crate-vis": 55,
       "mod": 2,
       "re-export": 24
      }
@@ -41297,7 +41299,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InitialSharedMember",
@@ -43297,7 +43299,7 @@
      "path": "src/gate/house_grant.rs",
      "purpose": "The house mind's read of a person's turn for its project question (OF-501, ARCH-0067)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -43609,7 +43611,7 @@
      "path": "src/gate/policy_upgrade.rs",
      "purpose": "A vault's untouched seeded policy manifest taking the one this build ships, and the re-gate of every consent…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -49000,9 +49002,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/llm/catalog_doors/bindings.rs",
-     "purpose": "Owner model-binding doors",
+     "purpose": "Owner model-binding doors, and an agent's proposal under its Grant",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -49024,7 +49026,7 @@
      "path": "src/llm/catalog_doors/trials.rs",
      "purpose": "Owner model-trial doors",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6
      }
     },
@@ -51056,7 +51058,7 @@
      "path": "src/llm/step/budget_wait.rs",
      "purpose": "Waking typed budget trap parks in the spend scope top-up transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -54998,6 +55000,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/read_lane/connector_source_rows.rs",
+     "purpose": "`connector.call_source_rows`'s lane read: one held call's source rows the caller's lane admits",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/read_lane/hydrate_filtered.rs",
      "purpose": "Hydration with an additional reader-bound row filter before projection",
      "surface": {
@@ -55008,8 +55020,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/read_lane/masked_asset_read.rs",
+     "purpose": "`vault.assets.masked_read`'s lane read: one admitted ASSET's bytes, always masked",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/read_lane/revisions_read.rs",
      "purpose": "`vault.revisions.read`'s lane read: each ref's entity view with its live revision, in one snapshot under one…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/read_lane/skill_package_read.rs",
+     "purpose": "`self.skills.package`'s lane read: one admitted skill's record and runtime package",
      "surface": {
       "crate-vis": 1
      }
@@ -57845,15 +57877,17 @@
      "kind": "src",
      "notable": [
       "DurableStepContext",
-      "StepOutcome"
+      "StepOutcome",
+      "StepSpendScope"
      ],
      "path": "src/model_step_context.rs",
      "purpose": "Caller-owned model-step context and terminal outcomes",
      "surface": {
       "crate-vis": 1,
       "enum": 1,
+      "fn": 1,
       "re-export": 1,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -78360,7 +78394,7 @@
      "path": "src/snapshot_read/mod.rs",
      "purpose": "Primitive A (slice 6.4, SLICE6-MAP row A): reads any agent makes behind its own grant, with the version of…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -78410,6 +78444,7 @@
      "path": "src/snapshot_read/skill_reader.rs",
      "purpose": "The grant-scoped forms of `vault.skills.get` and `vault.skills.list` (primitive A, slice 6.4d; ENGINE CALL…",
      "surface": {
+      "crate-vis": 1,
       "fn": 4
      }
     },
@@ -78584,7 +78619,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "StoreActorScrubs"
@@ -78592,7 +78627,7 @@
      "path": "src/store/actor_scrubs.rs",
      "purpose": "The actor scrubs of side tables whose eraser lives in the engine: the trait the engine implements, and the…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "trait": 1
      }
     },
@@ -91370,6 +91405,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/house_link.rs",
+     "purpose": "The house link's bind-interval read (HOUSE-BIND = A, S3) for the test that reads it on both sides of an…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/label_writers.rs",
      "purpose": "Fixture vaults for the label-writer tests (OPUS-LEAKS, lead call G): the shipped policy plus a `core:read`…",
      "surface": {
@@ -91424,7 +91469,21 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 39
+      "mod": 41
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrialFixture"
+     ],
+     "path": "src/test_doors/model_binding_proposer.rs",
+     "purpose": "Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -91478,7 +91537,7 @@
      "purpose": "Doors for `tests/run_lifecycle_props.rs`: the lifecycle table's answer, the stored pause kind, force-cancel…",
      "surface": {
       "enum": 2,
-      "fn": 6
+      "fn": 8
      }
     },
     {
@@ -91636,7 +91695,7 @@
      "path": "src/test_support.rs",
      "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…",
      "surface": {
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -93849,6 +93908,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MaskedAssetRead"
+     ],
+     "path": "src/verbs/asset_masked_read.rs",
+     "purpose": "`vault.assets.masked_read`: one admitted ASSET's bytes, always masked, as standard base64",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AuthorityHistoryImported",
       "SignedAuthorityHistory"
      ],
@@ -94138,6 +94210,19 @@
       "enum": 2,
       "fn": 7,
       "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorCallSourceRows"
+     ],
+     "path": "src/verbs/connector_source_rows_read.rs",
+     "purpose": "`connector.call_source_rows`: one held call's source rows the caller's lane admits, by ref",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -94995,7 +95080,7 @@
       "crate-vis": 1,
       "fn": 8,
       "mod": 1,
-      "re-export": 122,
+      "re-export": 125,
       "struct": 33
      }
     },
@@ -95910,6 +95995,22 @@
      "purpose": "Skill forks through the one fork law (`fork_skill_record_in_txn`): the owner's, and a caller's own within…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillPackageFormatView",
+      "SkillPackageRecordView",
+      "SkillPackageView"
+     ],
+     "path": "src/verbs/skill_package_read.rs",
+     "purpose": "`self.skills.package`: one admitted skill's record and runtime package",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -97246,6 +97347,17 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/house_link.rs",
+     "purpose": "A house mind's link to the org it runs (HOUSE-BIND = A: the owner, 10 Nov 07:43; the Engine's link shapes…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "CompanionBirthIntent",
       "CompanionChoice",
@@ -97393,9 +97505,9 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 37,
       "mod": 1,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -97674,13 +97786,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/house.rs",
      "purpose": "The house mind leads the root project (ONEIRON-ARCH-0063: the vault is the root project, its house mind…",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -97826,7 +97938,7 @@
      "purpose": "The project card a conversation proposes (OF-501, ARCH-0067)",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 7,
       "re-export": 1,
@@ -100265,6 +100377,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/force_cancel_pause.rs",
+     "purpose": "[FORCE-CANCEL-KEEPS-ACTIVE-PAUSE]: the hard cancel of a held row clears its pause, as the operator's Cancel…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -100294,6 +100414,38 @@
      "notable": [],
      "path": "tests/graph_ask_centre_owner_read.rs",
      "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_bind_interval.rs",
+     "purpose": "HOUSE-BIND = A, S3 (the Engine, 07:5x and 08:11): the org a house ran at a given time comes from its bind…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_bind_link.rs",
+     "purpose": "HOUSE-BIND = A (the owner, 10 Nov 07:43; the Engine's link shapes, 07:5x): the house mind runs its org…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_bind_onboarding.rs",
+     "purpose": "HOUSE-BIND = A (the owner, 10 Nov 07:43): a workspace whose house is a seeded agent onboards its first member",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/house_bind_own_device.rs",
+     "purpose": "HOUSE-BIND = A and OWN-DEVICE-GRANT-PURPOSE-MARKER: a house bound as an Owner holds no own-device grant",
      "surface": {}
     },
     {
@@ -101012,6 +101164,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/note_subject_reference.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/origin_register_host_git.rs",
      "purpose": "Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`)",
      "surface": {}
@@ -101638,6 +101798,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/verb_connector_call_source_rows.rs",
+     "purpose": "`connector.call_source_rows` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/verb_self_memory_diary_pinned.rs",
      "purpose": "`self.memory.diary.pinned` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
      "surface": {}
@@ -101648,6 +101816,22 @@
      "notable": [],
      "path": "tests/verb_self_memory_self_model.rs",
      "purpose": "`self.memory.self_model` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_self_skills_package.rs",
+     "purpose": "`self.skills.package`: an agent with a read permit but no Grant naming the verb is refused, the holder reads…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/verb_vault_assets_masked_read.rs",
+     "purpose": "`vault.assets.masked_read`: an agent with an ordinary read permit but no Grant is refused, the holder reads…",
      "surface": {}
     },
     {
@@ -102658,7 +102842,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 396,
+     "files": 399,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103225,7 +103409,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 41,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103337,7 +103521,7 @@
      "purpose": "Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's…"
     },
     "verbs": {
-     "files": 135,
+     "files": 138,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103386,7 +103570,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 134,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103402,8 +103586,8 @@
    },
    "over_bar": 254,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7363,
-   "test_files": 1033
+   "source_files": 7372,
+   "test_files": 1042
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -139082,7 +139266,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 3,
-      "fn": 18,
+      "fn": 20,
       "struct": 5
      }
     },
@@ -139369,7 +139553,7 @@
      "purpose": "MCP connector actor registry: cursors, board epochs, and stream proxy",
      "surface": {
       "crate-vis": 13,
-      "fn": 24,
+      "fn": 25,
       "struct": 1
      }
     },
@@ -144712,6 +144896,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mcp_caveated_reader.rs",
+     "purpose": "MCP-CAVEATED-READER (RETRIEVAL-04): a reader's `core:read` slip, narrowed by its holder to one world…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/model_binding_proposer_grant.rs",
+     "purpose": "An agent whose Grant names `vault.models.bindings.propose` may propose a binding; the owner still decides…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -145334,7 +145534,7 @@
    "over_bar": 60,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1833,
-   "test_files": 190
+   "test_files": 192
   },
   "oneiron-skill-attribution": {
    "files": [
