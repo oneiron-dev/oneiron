@@ -959,10 +959,34 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     }
     const hydratedBefore = await engine.client.call("vault.hydrate", { refs: [...targets, controlId] });
     for (const id of [...targets, controlId]) expect(hydratedBefore.value.map(row => row.id_hex)).toContain(id);
-    for (const row of [sourceRow, claimRow, summaryRow]) {
-      expect((await engine.client.call("vault.refs.resolve", { reference: row.short_ref! })).value.record.id)
-        .toBe(row.id_hex);
+    // Each erase target must resolve through the public ref door before the erase, by the very
+    // short_ref vault.get issued for it (ARCH-0019 short_ids rows 03-04: the forward key is
+    // (short_id, content_hash)). Triage 19 (job 19, set bd95597c8af): the CONVERSATION and the
+    // CLAIM resolve; the SUMMARY answers 404 NOT_FOUND. vault.get issues the NAME from
+    // short_ids_reverse plus the hash of the row it just read (memory/read_lane.rs:746-753), and
+    // vault.refs.resolve looks (name, hash) up in the forward index (ports/lmdb_index.rs:298-310).
+    // A scope SUMMARY is minted with its full body (scope_summary/request.rs:543, index hashed
+    // there), then rewritten to a document pointer (request.rs:587 -> entity_doc/summary.rs:154 ->
+    // ports/lmdb_operational_entities.rs:75-103, a raw entities.put) and no short-id row is
+    // refreshed, so the issued hash is the pointer row's and the index still holds the old one.
+    // The assertion stays; only the failure text names the defect.
+    for (const [target, row] of [
+      ["source", sourceRow], ["claim", claimRow], ["summary", summaryRow],
+    ] as const) {
+      const reference = row.short_ref!;
+      stage = `pre-erase vault.refs.resolve ${target} ${row.kind} record=${row.id_hex} reference=${reference}`;
+      try {
+        expect((await engine.client.call("vault.refs.resolve", { reference })).value.record.id)
+          .toBe(row.id_hex);
+      } catch (error) {
+        if (target === "summary" && error instanceof PublicHttpError
+          && error.reply.status === 404 && error.error?.code === "NOT_FOUND") {
+          stage = `ENGINE DEFECT 2026-11-12: [SUMMARY-SHORT-REF-INDEX] the short ref vault.get issued for this SUMMARY carries the content hash of its document-pointer row, while the short-id index still holds the hash of the body it was minted with, so the issued ref does not resolve (FIX 23470); ${stage}`;
+        }
+        throw error;
+      }
     }
+    stage = "BM25 readback before erase";
     const controlLexical = { query: spec.unrelatedText.split(":")[0]!, limit: 100 };
     expect((await engine.client.call("vault.search.bm25", controlLexical)).value
       .some(hit => hit.record?.id === controlId || hit.short_id === unrelated.claim_short_id)).toBe(true);
@@ -980,6 +1004,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       { label: "PRIVACY-02 source, claim and summary vectors searchable before erase" },
     );
     for (const id of targets) expect(vectorBefore.value.hits.map(hit => hit.entity_ref)).toContain(id);
+    stage = "phonetic, vector, hybrid and recall readbacks before erase";
     // Standard English Soundex, authored from Selina/Saleena Aurelium: S-L-N-R => S456.
     // Only the public index key prefix is a transport binding, not an oracle.
     expect(spec.phoneticName).toBe("Selina Aurelium");
@@ -999,6 +1024,7 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     expect(packBefore.items.some(item => item.value_text.includes(spec.claimText))).toBe(true);
     expect((await engine.client.call("vault.neighbors", { entity_ref: source.id, opts: { limit: 100 } })).value.length)
       .toBeGreaterThan(0);
+    stage = "MCP, export and unrelated control readbacks before erase";
     await engine.mcp.initialize();
     const tools = await engine.mcp.request<McpTools>("tools/list");
     expect(JSON.stringify(await mcpRead(engine.mcp, tools, "vault.get", { entity_ref: source.id }))).toContain(spec.sourceText);
@@ -1026,9 +1052,15 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
       try { expect(read.value).toBeNull(); }
       catch (error) {
         if (entity_ref === source.id) throw error;
-        throw new Error(`PRIVACY-02 MISSING DOOR 2026-11-12: vault.records.erase_confirm erased the CONVERSATION, not its room records; ${read.value?.kind ?? "record"} ${entity_ref} survives. FIX 23156: room-aware OwnerErase preview/confirm for TURN/MESSAGE is absent; source and dependent erasure remain unproved. ${errorText(error)}`, { cause: error });
+        // The engine's CONVERSATION erase takes the room's side rows, not its TURN/MESSAGE
+        // (workspace_roster/rooms/history.rs:205-232, CONVERSATION arm :215), and the room rail refuses
+        // OwnerErase for a TURN/MESSAGE (conversation/deletion/record.rs:221-226), so the CLAIM and SUMMARY that
+        // cite the TURN stay. A second public read says whether that TURN stayed too.
+        const turnAfter = (await engine.client.call("vault.get", { entity_ref: sourceTurn })).value;
+        throw new Error(`PRIVACY-02 MISSING DOOR 2026-11-12: vault.records.erase_confirm erased the CONVERSATION; ${read.value?.kind ?? "record"} ${entity_ref} survives and the source TURN ${sourceTurn} ${turnAfter ? "survives" : "is gone"}. FIX 23156: room-aware OwnerErase preview/confirm for TURN/MESSAGE is absent; source and dependent erasure remain unproved. ${errorText(error)}`, { cause: error });
       }
     }
+    stage = "hydrate, BM25, vector, hybrid, recall and neighbor reads after erase";
     await expectHydrateGone(engine.client, allIds, forbidden);
     for (const query of lexicalQueries) {
       expect((await engine.client.call("vault.search.bm25", { query, limit: 100 })).value).toEqual([]);
@@ -1045,9 +1077,13 @@ suite.test(test, "PRIVACY-02", "Hard erase across public reads should work", asy
     excludes(packAfter, forbidden);
     for (const id of allIds) expect(packAfter.items.map(item => item.record?.id)).not.toContain(id);
     expect((await engine.client.call("vault.neighbors", { entity_ref: source.id, opts: { limit: 100 } })).value).toEqual([]);
-    for (const row of [sourceRow, claimRow, summaryRow]) {
+    for (const [target, row] of [
+      ["source", sourceRow], ["claim", claimRow], ["summary", summaryRow],
+    ] as const) {
+      stage = `post-erase vault.refs.resolve ${target} ${row.kind} record=${row.id_hex} reference=${row.short_ref!}`;
       await expectReferenceGone(engine.client, row.short_ref!, forbidden);
     }
+    stage = "MCP reads and unrelated controls after erase";
     for (const [name, spec] of [
       ["vault.get", { entity_ref: source.id }],
       ["vault.recall", { query: "cobalt notebook", effort: "light", limit: 100 }],
