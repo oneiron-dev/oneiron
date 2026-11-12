@@ -64,6 +64,49 @@ impl Store {
         registry.get(&type_byte).cloned()
     }
 
+    /// The kind name a read spells for `entity_type`: the static registry's
+    /// kind; else the compiled-in product kind this vault registered the byte
+    /// for at run time (PROJECT, PROJECT_REVISION, CAMPAIGN, SAVED_QUERY);
+    /// else `TYPE_<byte>`. Every read that names a stored row's kind spells it
+    /// here, so a run-time kind reads back by its name on every surface.
+    pub(crate) fn entity_kind_name(&self, entity_type: u8) -> String {
+        if let Some(entry) = entity_type_registry_entry(entity_type) {
+            return entry.kind.to_owned();
+        }
+        self.structural_kind_registration(entity_type)
+            .and_then(|registration| {
+                crate::registry::pack_namespaces::compiled_product_kind_name(
+                    &registration.pack,
+                    &registration.short_id_prefix,
+                )
+            })
+            .map_or_else(|| format!("TYPE_{entity_type}"), str::to_owned)
+    }
+
+    /// The type byte a read filter names with `kind`: the inverse of
+    /// [`Self::entity_kind_name`]. A static registry kind, else a compiled-in
+    /// product kind this vault registered at run time; `None` for any other
+    /// spelling. Write doors keep the static registry: a run-time kind is
+    /// born only through its own door.
+    pub(crate) fn entity_type_of_kind_name(&self, kind: &str) -> Option<u8> {
+        if let Some(entry) = crate::registry::ENTITY_TYPE_REGISTRY
+            .iter()
+            .find(|entry| entry.kind == kind)
+        {
+            return Some(entry.type_byte);
+        }
+        let named = crate::registry::pack_namespaces::COMPILED_PRODUCT_KIND_NAMES
+            .iter()
+            .find(|row| row.kind == kind)?;
+        self.structural_kind_registrations()
+            .into_iter()
+            .find(|registration| {
+                registration.pack == named.pack
+                    && registration.short_id_prefix == named.short_id_prefix
+            })
+            .map(|registration| registration.type_byte)
+    }
+
     pub(crate) fn structural_kind_registrations(&self) -> Vec<StructuralKindRegistration> {
         let registry = self
             .kind_registry

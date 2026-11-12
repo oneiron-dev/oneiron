@@ -5,15 +5,10 @@
 
 use crate::store::Store;
 
-/// The short-id prefix PROJECT is registered under at run time.
-pub(crate) const PROJECT_SHORT_ID_PREFIX: &str = "pj";
-/// The pack PROJECT is registered under at run time.
-pub(crate) const PROJECT_PACK: &str = "oneiron.project";
+pub(crate) use crate::registry::pack_namespaces::{
+    PROJECT_PACK, PROJECT_REVISION_SHORT_ID_PREFIX, PROJECT_SHORT_ID_PREFIX,
+};
 const PACK: &str = PROJECT_PACK;
-
-/// The short-id prefix the revision kind is registered under at run time,
-/// beside PROJECT in PROJECT's pack.
-pub(crate) const PROJECT_REVISION_SHORT_ID_PREFIX: &str = "pv";
 
 pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
     store

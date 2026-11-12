@@ -136,7 +136,7 @@ impl Memory<'_> {
             let value = ScopedReadResult {
                 value: LedgerRowAtom {
                     cells: vec![
-                        cell("kind", kind(row.entity_type))?,
+                        cell("kind", self.vault.entity_kind_name(row.entity_type))?,
                         cell("ref", row.id.to_hex())?,
                         cell(
                             "value",
@@ -354,13 +354,6 @@ fn cell(label: &str, value: String) -> Result<LedgerCell> {
         label: LensText::new(label)?,
         value: LensText::new(value)?,
     })
-}
-
-fn kind(entity_type: u8) -> String {
-    crate::registry::entity_type_registry_entry(entity_type).map_or_else(
-        || format!("TYPE_{entity_type}"),
-        |entry| entry.kind.to_owned(),
-    )
 }
 
 fn excerpt(text: &str) -> String {
