@@ -371,6 +371,9 @@ pub(super) fn collect_receipt_records(
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(channel_identity_lifecycle_receipts(vault, query)?);
+        // HOUSE-BIND = A: each bind and unbind of a house mind's org link,
+        // in its own read txn.
+        records.extend(crate::workspace_roster::house_link_receipts(vault, query)?);
     }
     if query.includes_kind(ReceiptKind::Hook) {
         records.extend(crate::runtime_hooks::hook_receipts(vault, query)?);
