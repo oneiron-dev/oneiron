@@ -1,7 +1,7 @@
 //! Config model references to engine catalog rows.
 //!
 //! The engine names a model `provider/name@revision`; a provider names it
-//! however it likes (`olety7/gpt-6.1-sol`, `qwen3:8b`). The catalog row keeps
+//! however it likes (`team/gpt-6.1-sol`, `qwen3:8b`). The catalog row keeps
 //! the provider's spelling as `wire_model`, which both adapters send verbatim.
 use std::collections::BTreeMap;
 

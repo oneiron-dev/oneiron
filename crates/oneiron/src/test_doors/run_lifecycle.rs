@@ -1,11 +1,13 @@
 //! Doors for `tests/run_lifecycle_props.rs`: the lifecycle table's answer,
 //! the stored pause kind, force-cancel authority, and the production lease
-//! release of a parked run, fresh-row deferral and retry acceleration.
+//! release of a parked run, fresh-row deferral and retry acceleration. For
+//! `tests/force_cancel_pause.rs`: the annotation hold and its index mark.
 
 use crate::Vault;
 use crate::attempt_queue::lifecycle::{EngineHold, RunEvent, RunLifecycle, RunRow, RunStep};
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ForceCancelAuthority, PauseKind,
+    AnnotationHold, AttemptId, AttemptQueue, AttemptRecord, AttemptState, ForceCancelAuthority,
+    PauseKind,
 };
 use crate::error::Result;
 use crate::store::attempt_record::AttemptPause;
@@ -133,6 +135,32 @@ pub fn table_answer(record: &AttemptRecord, event: TableEvent) -> TableAnswer {
 /// The kind of the row's crate-private `active_pause`.
 pub fn pause_kind(record: &AttemptRecord) -> Option<PauseKind> {
     record.active_pause.map(PauseKind::of)
+}
+
+/// Pauses a queued or scheduled row for `hold`, as a dispatch under an
+/// unattached comment thread does, in its own write transaction.
+///
+/// # Errors
+/// Returns the production writer's refusal, a storage error or a commit error.
+pub fn hold_for_annotation(
+    vault: &Vault,
+    id: AttemptId,
+    hold: AnnotationHold,
+    now: u64,
+) -> Result<AttemptRecord> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let held = AttemptQueue::new(vault).hold_for_annotation_in_txn(&mut wtxn, id, hold, now)?;
+    wtxn.commit()?;
+    Ok(held)
+}
+
+/// Whether the annotation-hold index marks `id`.
+///
+/// # Errors
+/// Returns a storage error.
+pub fn annotation_hold_marked(vault: &Vault, id: AttemptId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::attempt_queue::annotation_hold_marked_in_txn(&vault.store, &txn, id)
 }
 
 /// Mints the owner authority used only by this test fixture's hard-cancel door.
