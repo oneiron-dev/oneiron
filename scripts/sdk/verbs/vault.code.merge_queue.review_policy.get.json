@@ -5,6 +5,7 @@
   "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
   "call": "memory.merge_queue_review_policy_get_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.get\"))?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {},
   "admission": {
     "lane_record_scope": true

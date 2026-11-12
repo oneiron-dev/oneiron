@@ -5,6 +5,7 @@
   "output": "crate::feeds::FeedRead",
   "call": "memory.feed_read(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

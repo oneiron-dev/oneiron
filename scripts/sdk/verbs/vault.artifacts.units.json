@@ -8,6 +8,7 @@
   "output": "crate::anchored_annotation::ArtifactUnitsView",
   "call": "memory.artifacts_units(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

@@ -5,6 +5,7 @@
   "output": "Vec<crate::mail_pack::MailComplianceEventView>",
   "call": "memory.mail_compliance_log()?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

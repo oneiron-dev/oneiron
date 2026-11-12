@@ -9,6 +9,7 @@
   "rust_feature": "sync",
   "openapi": true,
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

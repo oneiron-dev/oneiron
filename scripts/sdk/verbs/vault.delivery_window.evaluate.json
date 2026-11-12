@@ -5,6 +5,7 @@
   "output": "crate::memory::channel_doors::DeliveryWindowPreview",
   "call": "memory.delivery_window_evaluate(input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

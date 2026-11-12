@@ -3,6 +3,7 @@
   "input": "crate::compaction::FoldMarkInput",
   "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "run",
   "effect": "Fold",
   "host": {

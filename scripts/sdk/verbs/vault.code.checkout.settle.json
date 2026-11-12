@@ -5,6 +5,7 @@
   "output": "crate::memory::checkout_doors::CheckoutSettled",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.settle\", &input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

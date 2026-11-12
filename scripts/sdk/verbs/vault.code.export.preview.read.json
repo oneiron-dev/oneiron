@@ -5,6 +5,7 @@
   "output": "crate::memory::origin_doors::CodeExportFileReadAnswer",
   "call": "memory.code_export_preview_read_as(&memory.code_export_preview_proof(\"vault.code.export.preview.read\"), input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

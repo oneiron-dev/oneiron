@@ -5,6 +5,7 @@
   "output": "crate::blob_artifact::deck_creation::DeckOutlineView",
   "call": "memory.artifacts_propose_outline(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },
