@@ -655,7 +655,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 10
      }
@@ -743,7 +743,7 @@
      "path": "src/agent_def/portable_binding.rs",
      "purpose": "Frozen source tree identity at genuine local birth",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -7893,8 +7893,29 @@
      "path": "src/batch/export/document_import.rs",
      "purpose": "Validating archive import through ordinary admission doors, never sync replay",
      "surface": {
-      "crate-vis": 6,
-      "fn": 6
+      "crate-vis": 7,
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_import/owner_archive_restore.rs",
+     "purpose": "The owner act and call-scoped source permit for a whole-vault archive restore",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/document_import/seed_replacement.rs",
+     "purpose": "Owner-edited engine seeds restored only after the import proves a fresh destination",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -7960,7 +7981,7 @@
      "path": "src/batch/export/document_validation.rs",
      "purpose": "Import-time validation of the serializer's full document, not its claims",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -8061,7 +8082,7 @@
      "path": "src/batch/export/export_manifest.rs",
      "purpose": "Core half of `batch::export::export_manifest`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 31,
       "re-export": 1,
       "struct": 5
@@ -8149,7 +8170,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 13
      }
     },
@@ -8262,7 +8283,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -40379,7 +40400,8 @@
      "path": "src/federation/connect_grant.rs",
      "purpose": "The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants…",
      "surface": {
-      "crate-vis": 12,
+      "const": 1,
+      "crate-vis": 16,
       "fn": 3,
       "struct": 2
      }
@@ -40656,6 +40678,16 @@
      "purpose": "The guest payload's `holder_key` (FIX-LIST 1978): the public key the guest generated on their own device, as…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/grant/inquiry_terms.rs",
+     "purpose": "The `inquiry_terms` key of the FEDERATION_GRANT body (INQUIRE-1; Engine ruling INQUIRE-SHAPE Q1 = A): the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -42450,7 +42482,7 @@
      "path": "src/gate/ceiling.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 42
      }
     },
     {
@@ -43814,7 +43846,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 70
+      "crate-vis": 71
      }
     },
     {
@@ -43936,7 +43968,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 45
+      "crate-vis": 46
      }
     },
     {
@@ -47490,6 +47522,169 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "InquiryEdge",
+      "InquiryEdgeReciprocalGrant",
+      "InquiryEdgeRequest",
+      "InquiryScopeItem"
+     ],
+     "path": "src/inquiry/edge.rs",
+     "purpose": "The inquiry edge and its opened scope (federation.md #inquiry-scope, #inquiry-first-build; Engine ruling…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 10,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inquiry/holder.rs",
+     "purpose": "The task-held answer (federation.md #inquiry-keep: \"held with the task and bound to the asking actor…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InquiryDecider",
+      "InquiryLogEntry"
+     ],
+     "path": "src/inquiry/log.rs",
+     "purpose": "\"Asked about you\" (federation.md #inquiry-keep): the member vault's own full log of the inquiries companies…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inquiry/mod.rs",
+     "purpose": "Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner…",
+     "surface": {
+      "crate-vis": 9,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InquiryKeepSetting",
+      "InquiryKeepSource",
+      "InquiryPolicy"
+     ],
+     "path": "src/inquiry/policy.rs",
+     "purpose": "The `inquiry` policy row (federation.md #inquiry-keep; Engine ruling INQUIRE-SHAPE Q8 = A): one versioned…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inquiry/receipt.rs",
+     "purpose": "The asking side's `inquiry` receipt (federation.md #inquiry-keep): one receipt per send of an inquiry, with…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Inquiry",
+      "InquiryAnswer",
+      "InquiryAsker",
+      "InquiryKeep",
+      "InquiryOutcome",
+      "InquiryStatement",
+      "InquiryTask",
+      "StatementSource"
+     ],
+     "path": "src/inquiry/record.rs",
+     "purpose": "The inquiry and its answer (federation.md #inquiry, ruled 2026-11-11): the records a company vault's…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 24,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InquiryRoute",
+      "InquiryRouteRequest"
+     ],
+     "path": "src/inquiry/route.rs",
+     "purpose": "The asking side's route to one member's vault (INQUIRE-1 PR 4; Engine ruling INQUIRE-SHAPE Q2 = A)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InquirySendRequest",
+      "InquirySent",
+      "InquiryTransport",
+      "InquiryTransportError"
+     ],
+     "path": "src/inquiry/send.rs",
+     "purpose": "The asking side's send (INQUIRE-1 PR 4; Engine ruling INQUIRE-SHAPE Q2 = A, Q3 = A)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inquiry/tables.rs",
+     "purpose": "The side tables `inquiry` keeps (INQUIRE-1): each row declares one, and the crate's build script places it…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InquiryCheckInMode",
+      "InquiryTerms",
+      "InquiryTierCeiling"
+     ],
+     "path": "src/inquiry/terms.rs",
+     "purpose": "The inquiry edge's terms (federation.md #inquiry-first-build, \"Grant row\"; Engine ruling INQUIRE-SHAPE Q1 =…",
+     "surface": {
+      "enum": 2,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -48437,7 +48632,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 217,
+      "mod": 218,
       "re-export": 105
      }
     },
@@ -58176,7 +58371,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -58691,7 +58886,7 @@
      "path": "src/note/revision.rs",
      "purpose": "Stored native NOTE slots used by exact indexed and retained revision reads",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -73808,7 +74003,7 @@
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 21,
       "enum": 2,
       "struct": 1
      }
@@ -73830,7 +74025,7 @@
      "path": "src/serialize/export_value/tree.rs",
      "purpose": "Core half of `serialize::export_value::tree`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -73852,7 +74047,7 @@
      "path": "src/serialize/hub_source_archive.rs",
      "purpose": "Credential-safe view of exact replicated skill source carriers",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 13,
       "struct": 1
      }
     },
@@ -73926,9 +74121,9 @@
       "ExportPackInstance"
      ],
      "path": "src/serialize/pack_archive.rs",
-     "purpose": "Typed runtime-pack archive bodies: identity is data, payloads always pass nulling",
+     "purpose": "Typed runtime-pack archive bodies: identity is data, payloads pass the archive's policy (kept only in the…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -73968,13 +74163,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/serialize/source_tree.rs",
      "purpose": "Credential-nulled, exact source files",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -74026,7 +74221,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_document.rs",
@@ -75593,7 +75788,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -75625,9 +75820,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/archive.rs",
-     "purpose": "Offline archive import is another Candidate birth, never an activation ticket",
+     "purpose": "Candidate archive imports and exact owner restoration of existing engine seeds",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -76288,7 +76483,7 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 23
      }
@@ -80233,7 +80428,7 @@
      "path": "src/store/file_key_masks.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -91476,6 +91671,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/inquiry.rs",
+     "purpose": "Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the member's log and the asking side's…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/label_writers.rs",
      "purpose": "Fixture vaults for the label-writer tests (OPUS-LEAKS, lead call G): the shipped policy plus a `core:read`…",
      "surface": {
@@ -91530,7 +91735,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 41
+      "mod": 43
      }
     },
     {
@@ -91545,6 +91750,16 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/note_bm25f_repair.rs",
+     "purpose": "FIX 7789: lose one NOTE posting, then run the real deindex self-heal",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -92846,9 +93061,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault/open/engine_seed_identities.rs",
+     "purpose": "Engine-seed identities: the narrow import-equivalence sets and the row census, recomputed from the embedded…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault/open/first_non_bootstrap_row.rs",
      "purpose": "The empty-vault join guard's row census: which live rows a seeded open writes before any person or agent…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -92869,7 +93095,7 @@
      "path": "src/vault/open/mod.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 15
      }
     },
@@ -93459,7 +93685,7 @@
      "path": "src/vault_shape/apply.rs",
      "purpose": "Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 5,
       "struct": 3
@@ -97984,7 +98210,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 48,
+      "crate-vis": 49,
       "enum": 3,
       "fn": 19,
       "re-export": 17,
@@ -100386,6 +100612,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/device_join_census.rs",
+     "purpose": "A fresh vault that `device enrol` opens holds only its own seeds (FIX-LIST…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dreamer_stage_line.rs",
      "purpose": "FIX 21929 (brief 21, Dreamer r5): a partition's stage line splits the residual `extract_ms` into the slot's…",
      "surface": {}
@@ -100580,6 +100814,30 @@
      "notable": [],
      "path": "tests/inference_default_bind.rs",
      "purpose": "Public no-manifest local binding must use one registry snapshot, not a nested reader",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inquiry_asking_side.rs",
+     "purpose": "INQUIRE-1 PR 4 (federation.md #inquiry, #inquiry-keep; Engine ruling INQUIRE-SHAPE Q2, Q3, Q6 = A): the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inquiry_edge.rs",
+     "purpose": "INQUIRE-1 PR 2 (federation.md #inquiry-scope, #inquiry-first-build; Engine ruling INQUIRE-SHAPE Q1 = A): the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inquiry_records.rs",
+     "purpose": "INQUIRE-1 PR 1 (federation.md #inquiry, ruled 2026-11-11; Engine ruling INQUIRE-SHAPE = A): the inquiry…",
      "surface": {}
     },
     {
@@ -101266,6 +101524,30 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/native_raw_entity_body_release_scan.rs",
+     "purpose": "`NativeRawRead::entity_body`, the native raw read a credential-read callback hands its reader, serves a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/note_bm25f_fields.rs",
+     "purpose": "FIX 7789 (ARCH-0032 #bm25f): a NOTE's title is a BM25F field of its own",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/note_bm25f_repair.rs",
+     "purpose": "FIX 7789: missing-posting self-heal proves a NOTE with BM25F fields counted",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/note_edit_lands_by_grant.rs",
      "purpose": "Whether a NOTE edit lands or waits is the Grant's answer for the actor and the NOTE, never the writer's…",
      "surface": {}
@@ -101287,6 +101569,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_export_keeps_credentials.rs",
+     "purpose": "Public-path pins for the Owner's whole-vault archive credential promises (ARCH-0038 #promise-cons-06, owner…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101300,6 +101590,14 @@
      "notable": [],
      "path": "tests/owner_reason.rs",
      "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_restore_imported_permit.rs",
+     "purpose": "Owner whole-vault restore carries expression preferences under a call-scoped permit",
      "surface": {}
     },
     {
@@ -102049,6 +102347,30 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/whole_vault_restore_edited_seed_skills.rs",
+     "purpose": "Owner whole-vault restore replaces an owner-edited seeded SKILL",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/whole_vault_restore_edited_seeds.rs",
+     "purpose": "Owner whole-vault restore replaces an owner-edited seeded AGENT_DEF and PERSON",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/whole_vault_restore_seeds.rs",
+     "purpose": "Whole-vault archive restore into a fresh SEEDED vault: engine-seed equivalence",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102151,7 +102473,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 190,
+     "files": 192,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102711,7 +103033,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -102877,6 +103199,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Ingest source registry and source-local normalization"
+    },
+    "inquiry": {
+     "files": 11,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner…"
     },
     "interlocutor": {
      "files": 2,
@@ -103350,7 +103679,7 @@
     "serialize": {
      "files": 25,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Context-pack serialization"
     },
@@ -103551,7 +103880,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 43,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103621,7 +103950,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -103726,10 +104055,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 254,
+   "over_bar": 255,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7378,
-   "test_files": 1046
+   "source_files": 7395,
+   "test_files": 1058
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -147728,14 +148057,15 @@
       "Bm25Formula",
       "Bm25RecencyConfig",
       "FieldConfig",
-      "FieldLengthPolicy"
+      "FieldLengthPolicy",
+      "NoteTextField"
      ],
      "path": "src/config/bm25.rs",
      "purpose": "Rank-profile config: field/channel params, formula, recency, defaults",
      "surface": {
-      "const": 1,
-      "enum": 2,
-      "fn": 5,
+      "const": 2,
+      "enum": 3,
+      "fn": 11,
       "struct": 3
      }
     },
