@@ -1450,6 +1450,21 @@ fn put_claim(vault: &oneiron::Vault, seed: u8, text: &str) -> oneiron::entity_id
     let mut bytes = [seed; 16];
     bytes[0] = 0x7e;
     let id = oneiron::entity_id::EntityId::from_bytes(bytes).expect("entity id");
+    // A CLAIM is born only under a stored FACET (FIX 7757): store the one
+    // claim_body stamps, the subject's substrate facet, once.
+    let subject = oneiron::EntityId::from_bytes([0x7d; 16]).expect("subject id");
+    let facet = oneiron::claim::substrate_facet_id(subject).expect("substrate facet");
+    if !vault.entity_exists(&facet).expect("read facet row") {
+        vault
+            .put_entity(
+                &facet,
+                oneiron::registry::ENTITY_TYPE_FACET,
+                oneiron::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                b"embedder test facet",
+            )
+            .expect("put facet");
+    }
     vault
         .batch()
         .put(
