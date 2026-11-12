@@ -10,6 +10,7 @@ pub mod authority_world_undo;
 pub mod callable_skill;
 pub mod check_in;
 pub mod checkpoint_registry;
+pub mod claim_source_recheck;
 pub mod coach;
 pub mod code_reply_healer;
 pub mod code_run_answer;
