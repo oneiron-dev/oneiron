@@ -10,10 +10,12 @@ crate::side_table::side_tables! {
         // swap.
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::training_pack::erase_question_head_in_txn;
-    /// A question run's paired held-out trial against the question's current answerer (FIX
-    /// 3864): quality, cost and latency of both. Key: id16 (run).
+    /// A question run's paired held-out trial against a typed question's current answerer
+    /// (FIX 3864): its counted serving, then quality, cost and latency of both. Key: id16
+    /// (run).
     TRAINING_PACK_QUESTION_TRIAL: VaultMeta b"training_pack:question_trial:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::training_pack::erase_question_trial_in_txn;
     /// Current owner-approved training checkpoint per model role. Key: serialized role string.
     TRAINING_PACK_ROLE: VaultMeta b"training_pack:role:v1:" Named
         // Restore class: A restore never replays a GPU dispatch or rolls back an owner's model
