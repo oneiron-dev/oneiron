@@ -6,6 +6,7 @@ export { Field, type FieldProps } from './ground/Field'
 export { Island, type IslandProps } from './ground/Island'
 export { Well, type WellProps } from './ground/Well'
 export { WindowGround, type WindowGroundProps } from './ground/WindowGround'
+export { SceneSheet, type SceneSheetProps } from './ground/SceneSheet'
 export { useRootTheme, type RootTheme } from './ground/root-theme'
 export { readScene, type SceneReading } from './lib/scene'
 
@@ -13,6 +14,9 @@ export { Verb, type VerbProps } from './primitives/Verb'
 export { IconAction, type IconActionProps } from './primitives/IconAction'
 export { InfoMark, type InfoMarkProps } from './primitives/InfoMark'
 export { PrimaryButton, type PrimaryButtonProps } from './primitives/PrimaryButton'
+export { ToneButton, type ToneButtonProps } from './primitives/ToneButton'
+export { TextField, type TextFieldProps } from './primitives/TextField'
+export { WordDivider, type WordDividerProps } from './primitives/WordDivider'
 export { Figure, type FigureProps } from './primitives/Figure'
 export {
   Tabs,
@@ -67,6 +71,7 @@ export {
   donutSegments,
   donutCentre,
   donutLabel,
+  arcsDone,
   arcPath,
   DONUT_MAX_ARCS,
   type DonutArc,
@@ -75,8 +80,9 @@ export {
   type DonutGeometry,
 } from './marks/donut-segments'
 export { Glyph, type GlyphProps, type GlyphState, type GlyphShape, type GlyphForm } from './marks/Glyph'
-export { Portrait, type PortraitProps } from './marks/Portrait'
+export { Portrait, type PortraitProps, type PortraitFaceSize } from './marks/Portrait'
 export { BrandMark, type BrandMarkProps } from './marks/BrandMark'
+export { PinMark, type PinMarkProps } from './marks/PinMark'
 
 export {
   NeedsYou,
@@ -161,15 +167,17 @@ export {
   type SplitPaneHandleProps,
   type SplitPaneHeadProps,
   type SplitPaneThingProps,
+  type SplitPaneThingWriteBox,
 } from './patterns/SplitPane'
 export {
   paneWidth,
   paneBounds,
   paneTrack,
   thingPlaceholder,
-  thingLiesOver,
-  thingOverWidth,
-  THING_OVER_GUTTER_PX,
+  paneFloor,
+  paneLiesOver,
+  paneOverWidth,
+  PANE_OVER_GUTTER_PX,
   LIST_PANE_PX,
   THING_PANE_MIN_PX,
   THING_PANE_MAX_PX,
@@ -194,8 +202,15 @@ export {
 export { composerKeySends, composerSendText, type ComposerKeyState } from './patterns/composer-keys'
 export { OutsideLine, type OutsideLineProps, type OutsideLineGroupProps, type OutsideLineGuestProps } from './patterns/OutsideLine'
 export { ConnectionRow, type ConnectionRowProps } from './patterns/ConnectionRow'
+export { VaultRow, type VaultRowProps } from './patterns/VaultRow'
 export { FileRow, type FileRowProps, type FileRowListProps } from './patterns/FileRow'
 export { PinnedList, PINNED_LIST_NOTE, type PinnedListProps } from './patterns/PinnedList'
+export {
+  RoomOutline,
+  type RoomOutlineProps,
+  type RoomOutlineGroupProps,
+  type RoomOutlineRowProps,
+} from './patterns/RoomOutline'
 export { FileGroup, type FileGroupProps } from './patterns/FileGroup'
 export {
   LedgerTable,
@@ -256,6 +271,8 @@ export { splitChildRows, SIDEBAR_CHILD_ROWS_SHOWN, type ChildRowSplit } from './
 export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/AppFrame'
 export { PlaceHead, type PlaceHeadProps } from './frame/PlaceHead'
 export { RoomHead, ROOM_VIEWS, type RoomHeadProps, type RoomPins } from './frame/RoomHead'
+export { Place, type PlaceProps, type PlaceHeadSlotProps, type PlaceBodyProps, type PlaceFootProps } from './frame/Place'
+export { atScrollEnd, followScrollEnd, PLACE_END_SLACK_PX, type ScrollBox } from './frame/place-scroll'
 export { peekReducer, PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, type PeekState, type PeekAction } from './frame/frame-peek'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'

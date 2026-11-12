@@ -1233,6 +1233,7 @@ mod cb_a {
                 subject: peer,
                 deadline: None,
                 now_ms: NOW,
+                spend_scope: None,
             };
             let trap = open_trap(
                 &vault,
@@ -1510,6 +1511,7 @@ mod cb_a {
             subject: fixture.person,
             deadline: None,
             now_ms: NOW,
+            spend_scope: None,
         };
         let trap = open_trap(
             &fixture.vault,
