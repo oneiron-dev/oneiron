@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 /// wakes no one again.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the witness and the thread reply door hand over the row and the facts their writes proved"
+    reason = "the witness and the native turn writer hand over the row and the facts their writes proved"
 )]
 pub(super) fn record_room_turn_in_txn(
     vault: &Vault,

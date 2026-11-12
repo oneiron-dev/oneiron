@@ -174,8 +174,10 @@ fn reads_all(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, ids: &[EntityId]) -> 
 /// `txn` (FIX 3149), when its source is an indexed turn that answers a
 /// claim; `None` anywhere else, where the Retry takes its DAG path: a turn
 /// with no row, or one whose parent holds no claim, as a plain reply's
-/// (THREAD-TASK-NATIVE-AGENT-RETRY). A room that no longer lets the agent
-/// answer its claimed turn again refuses as an invalid state.
+/// (THREAD-TASK-NATIVE-AGENT-RETRY). A project's home room's witness lets
+/// an agent answer only a claim, so there an unclaimed source is refused
+/// here, before any reply is queued, as before. A room that no longer lets
+/// the agent answer its claimed turn again refuses as an invalid state.
 fn room_regeneration_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -187,7 +189,9 @@ fn room_regeneration_in(
     else {
         return Ok(None);
     };
-    if !RoomRegenerationPermit::answers_claim_in(vault, txn, &source)? {
+    if !RoomRegenerationPermit::answers_claim_in(vault, txn, &source)?
+        && crate::workspace_roster::room_project_in(vault, txn, action.conversation)?.is_none()
+    {
         return Ok(None);
     }
     RoomRegenerationPermit::prove_in(vault, txn, action, agent)
@@ -302,10 +306,10 @@ impl Memory<'_> {
     /// the source turn, MESSAGE and conversation are live and still bound
     /// as the action names them, the MESSAGE is this agent's, the requester
     /// reads them, as the agent does where the Retry writes a DAG TURN or a
-    /// room row, and the agent and the requester both read the source's
-    /// thread. A project room's indexed source answers again only under the
-    /// room's regeneration permit (FIX 3149), returned here; anywhere else,
-    /// `None`.
+    /// room row that answers a claim, and the agent and the requester both
+    /// read the source's thread. An indexed source that answers a claim
+    /// answers again only under the room's regeneration permit (FIX 3149),
+    /// returned here; anywhere else, `None`.
     pub(crate) fn check_action_retry_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -339,12 +343,16 @@ impl Memory<'_> {
                 ));
             }
         }
-        let indexed =
-            crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?
-                .is_some();
-        // The agent reads them too wherever the Retry writes topology, a
-        // DAG TURN or a room row; a plain chat's reply writes none.
-        let topology = indexed
+        let source =
+            crate::workspace_roster::replicated_turn_in(vault, txn, action.assistant_turn)?;
+        let claimed = match &source {
+            Some(row) => RoomRegenerationPermit::answers_claim_in(vault, txn, row)?,
+            None => false,
+        };
+        // The agent reads them too wherever the Retry writes topology: a DAG
+        // TURN, or a room row that answers the source's claimed parent. A
+        // trunk row, as a plain chat's reply keeps, names none of them.
+        let topology = claimed
             || crate::conversation_dag::keeps_dag_topology(
                 &vault.store,
                 txn,
@@ -369,7 +377,7 @@ impl Memory<'_> {
                 return Err(gone());
             }
         }
-        if indexed {
+        if source.is_some() {
             return room_regeneration_in(vault, txn, action, self.actor());
         }
         Ok(None)

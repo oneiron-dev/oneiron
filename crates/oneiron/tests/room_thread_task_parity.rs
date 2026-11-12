@@ -494,7 +494,10 @@ fn every_room_refuses_a_binder_without_read_standing() -> TestResult {
         let refused = fixture
             .vault
             .bind_room_thread_task(outsider, fixture.room, root, task);
-        assert!(refused.is_err(), "{kind:?}: an outsider bound a TASK");
+        assert!(
+            matches!(refused, Err(oneiron::Error::InvalidConfig(_))),
+            "{kind:?}: an outsider's bind is refused as an unknown thread, not {refused:?}"
+        );
         assert!(row(&fixture, root)?.task_ids.is_empty(), "{kind:?}");
         fixture
             .vault
@@ -520,8 +523,13 @@ fn every_room_refuses_an_assignee_without_standing() -> TestResult {
             .vault
             .bind_room_thread_task(fixture.owen, fixture.room, root, task);
         assert!(
-            refused.is_err(),
-            "{kind:?}: a TASK bound for an agent off the room"
+            matches!(
+                refused,
+                Err(oneiron::Error::Record(
+                    oneiron::error::RecordError::InvalidTaskBody(_)
+                ))
+            ),
+            "{kind:?}: a TASK for an agent off the room is refused on its assignee, not {refused:?}"
         );
         assert!(row(&fixture, root)?.task_ids.is_empty(), "{kind:?}");
     }
