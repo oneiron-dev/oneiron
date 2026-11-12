@@ -5,3 +5,4 @@
 //! `--all-features` build reaches them. Hidden; never API.
 
 pub mod big_rung;
+pub mod solved_runs;

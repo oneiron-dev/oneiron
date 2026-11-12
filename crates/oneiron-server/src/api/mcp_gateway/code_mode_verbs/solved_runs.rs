@@ -7,12 +7,13 @@
 //! origin the call came in on.
 //!
 //! The sources that do today are a library run of a filed program that met
-//! its filled postcondition, its type and subgoal the program record's, and
-//! an agent's TASK run that ended (CUA E8b), its checks and question its
-//! TASK's done-means and its type the run's recorded stamp.
-//! A draft names its checks but no recorded type, and a raw batch names
-//! neither, so they capture nothing and say why in the log. A capture that
-//! fails is logged with its cause and never fails the call.
+//! its filled postcondition, its type and subgoal the program record's, an
+//! agent's TASK run that ended (CUA E8b), its checks and question its
+//! TASK's done-means and its type the run's recorded stamp, and a draft of
+//! an unfiled run whose caller recorded its task type (FIX 10508), its
+//! checks and subgoal the draft's. A draft that records no type or names no
+//! check, and a raw batch, capture nothing and say why in the log. A capture
+//! that fails is logged with its cause and never fails the call.
 
 use super::*;
 use oneiron::browser_library::{SolvedCaptureReceipt, SolvedRunCapture, SolvedSource, workflow};
@@ -92,6 +93,7 @@ impl BrowserCapture<'_, '_> {
             // (FIX 10511), not on the press.
             through_seq: session.pre_press_through(span.after_seq),
             past_press: SOLVED_PAST_PRESS,
+            type_ref: None,
         };
         let snapshot = session
             .snapshot_solved_run(input)
@@ -220,9 +222,62 @@ fn checked_span(
                 after_seq: mark,
             }))
         }
-        AgentVerb::SelfBrowserLibraryDraft => {
-            Err("a draft names its checks but no recorded task type".to_owned())
-        }
+        AgentVerb::SelfBrowserLibraryDraft => draft_span(input).map(Some),
         _ => Ok(None),
     }
+}
+
+/// What a `self.browser.library.draft` call with `input` names for a
+/// capture (FIX 10508): its subgoal and checks, the task type its caller
+/// recorded, and the span it drafted from. Why not, for a draft that
+/// records no type, a type that is not a task type's form, or no check.
+fn draft_span(input: &Value) -> Result<CheckedSpan, String> {
+    let input: DraftInput = serde_json::from_value(input.clone())
+        .map_err(|error| format!("library draft input: {error}"))?;
+    let type_ref = TypeRef::from(
+        input
+            .type_ref
+            .ok_or_else(|| "a draft records no task type".to_owned())?,
+    );
+    type_ref
+        .validate()
+        .map_err(|error| format!("draft task type: {error}"))?;
+    if input.postcondition.is_empty() {
+        return Err("a draft names no check".to_owned());
+    }
+    Ok(CheckedSpan {
+        subgoal: input.subgoal,
+        checks: input.postcondition,
+        type_ref,
+        source: SolvedSource::UnfiledDraft,
+        after_seq: input.after_seq,
+    })
+}
+
+/// Door for `tests/library_draft_task_type.rs` (FIX 10508): what
+/// [`checked_span`] names for a `self.browser.library.draft` call with
+/// `input`, its answer `output` and the history mark `mark` before it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn draft_checked_span(
+    vault: &oneiron::Vault,
+    input: &Value,
+    output: &Value,
+    mark: Option<u64>,
+) -> Result<Option<crate::test_doors::solved_runs::CheckedSpanView>, String> {
+    let span = checked_span(
+        vault,
+        AgentVerb::SelfBrowserLibraryDraft,
+        input,
+        output,
+        mark,
+    )?;
+    Ok(
+        span.map(|span| crate::test_doors::solved_runs::CheckedSpanView {
+            subgoal: span.subgoal,
+            checks: span.checks.len(),
+            type_ref: span.type_ref,
+            source: span.source,
+            after_seq: span.after_seq,
+        }),
+    )
 }
