@@ -99,7 +99,9 @@ fn assert_ended_in_seconds(fixture: &Fixture, before: u64, after: u64) {
         .expect("read")
         .expect("the evidence claim");
     assert_eq!(body.lifecycle, ClaimLifecycleStatus::Retracted);
-    let end = body.valid_to.expect("a retracted evidence claim has an end");
+    let end = body
+        .valid_to
+        .expect("a retracted evidence claim has an end");
     assert!(
         end + SLACK_SECS >= before && end <= after + SLACK_SECS,
         "the end time {end} is not Unix seconds near the revert ({before}..={after})"
