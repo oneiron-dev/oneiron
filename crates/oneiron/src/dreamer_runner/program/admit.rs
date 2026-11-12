@@ -25,15 +25,17 @@ use super::types::{
     TurnProgramAdmissionReceipt, TurnProgramAdmissionRecord, TurnProgramArming, TurnProgramWake,
     run_id,
 };
-use super::{ADMISSION, ARM, WAKE};
+use super::{ADMISSION, ARM, DECIDED, WAKE};
 
 const NOT_ARMED: &str = "the program is no longer armed";
+const TURN_ALREADY_WOKE_PROGRAM: &str =
+    "the turn already woke this program under another arming of it";
 const NOT_TRIGGERED: &str = "the waking turn or occurrence does not match the program's trigger";
-const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
+pub(super) const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
 const PIN_MOVED: &str = "the pinned program changed since it was armed";
 /// How long after its turn landed a wake whose sealed slip lapsed stays
 /// owed for its rebind (FIX 12058): the wake's own expiry.
-const LAPSED_WAKE_HOLD_SECS: u64 = 7 * 86_400;
+pub(super) const LAPSED_WAKE_HOLD_SECS: u64 = 7 * 86_400;
 
 /// What one admission's writer did with an owed wake.
 #[allow(clippy::large_enum_variant)]
@@ -52,8 +54,9 @@ impl Vault {
     /// first receipt (one that differs is a conflict); otherwise the program
     /// must still be armed at the woken revision, the turn must be the live
     /// TURN of the trigger's conversation, landed at or after arming by the
-    /// armed actor, the waking actor's authority must still stand (an
-    /// attested owner's as the vault's live owner, FIX 11090), and the
+    /// armed actor, a turn that already woke the same program under another
+    /// arming of it is refused, the waking actor's authority must still stand
+    /// (an attested owner's as the vault's live owner, FIX 11090), and the
     /// pinned SKILL must still be the program pinned. The decision, allowed
     /// or refused, is a Gate receipt; an allowed one queues one Dreamer
     /// program attempt, stamped as the waking actor, the root of its run
@@ -71,6 +74,12 @@ impl Vault {
         now: u64,
     ) -> Result<WakeAdmission> {
         let admitted = self.with_write_txn_grouped(|txn| admit_in_txn(self, txn, wake, now))?;
+        // A wake another machine carried here leaves its window once decided,
+        // which clears the machine that recorded it (FIX 5266).
+        #[cfg(feature = "sync")]
+        if matches!(admitted, WakeAdmission::Decided(_)) {
+            self.refresh_turn_program_wakes_in_live_windows(&wake.turn.turn);
+        }
         if let WakeAdmission::Decided(receipt) = &admitted
             && receipt.first
             && matches!(receipt.outcome, TurnProgramAdmissionOutcome::Queued { .. })
@@ -84,7 +93,8 @@ impl Vault {
 }
 
 /// [`Vault::admit_turn_program`]'s writer body, also the one an owed wake's
-/// rebind admits through in its own writer (FIX 11833).
+/// rebind admits through in its own writer (FIX 11833). A turn's wake stays
+/// owed without a decision while its ChildOf edge is deferred here.
 pub(super) fn admit_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -105,6 +115,32 @@ pub(super) fn admit_in_txn(
         WAKE.delete(vault, txn, &wake.key())?;
         super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
         return Ok(WakeAdmission::Decided(existing.receipt(false)));
+    }
+    // A wake decided on another machine (an imported `Admitted` row), or one
+    // whose owed row went meanwhile, is admitted by nothing here: a drain's
+    // copy read before the import is stale (FIX 5266).
+    if DECIDED.get(vault, &*txn, &wake.key())? == Some(admission) {
+        if WAKE.contains(vault, &*txn, &wake.key())? {
+            WAKE.delete(vault, txn, &wake.key())?;
+            super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
+        }
+        return Ok(WakeAdmission::Held);
+    }
+    if !WAKE.contains(vault, &*txn, &wake.key())? {
+        return Ok(WakeAdmission::Held);
+    }
+    // A riding wake is the elected home's to admit, through every door into
+    // this writer (FIX 5266): elsewhere its row stays owed as it stands, and
+    // rides there.
+    #[cfg(feature = "sync")]
+    if super::replica::wake_is_the_homes_in_txn(vault, &*txn, &wake)? {
+        return Ok(WakeAdmission::Held);
+    }
+    #[cfg(feature = "sync")]
+    if wake.occurrence.is_none()
+        && crate::sync::bridge::has_deferred_child_of_source_in_txn(vault, &*txn, &wake.turn.turn)?
+    {
+        return Ok(WakeAdmission::Held);
     }
     let judged = judge_in_txn(vault, &*txn, &wake)?;
     let refused = judged.as_ref().err().copied();
@@ -200,6 +236,28 @@ fn judge_in_txn(
     };
     if arming.revision != wake.revision || arming.definition.revision() != wake.revision {
         return Ok(Err(NOT_ARMED));
+    }
+    if wake.occurrence.is_none() {
+        for row in ARM.iter_from(vault, txn, actor.as_bytes())? {
+            let (_, sibling) = row?;
+            if sibling.registration == wake.registration {
+                continue;
+            }
+            if sibling.actor != arming.actor
+                || sibling.actor_class != arming.actor_class
+                || sibling.conversation != arming.conversation
+                || sibling.revision != arming.revision
+            {
+                continue;
+            }
+            let mut sibling_wake = wake.clone();
+            sibling_wake.registration = sibling.registration;
+            if ADMISSION.contains(vault, txn, &sibling_wake.admission_id())?
+                || DECIDED.contains(vault, txn, &(wake.turn.turn, sibling.registration))?
+            {
+                return Ok(Err(TURN_ALREADY_WOKE_PROGRAM));
+            }
+        }
     }
     if !triggered_in_txn(vault, txn, &arming, wake)? {
         return Ok(Err(NOT_TRIGGERED));

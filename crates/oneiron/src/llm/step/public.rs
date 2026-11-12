@@ -14,11 +14,11 @@ use super::step_state::step_state_read;
 use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
 use super::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapState, DurableStepContext, DurableStepError,
-    StepOutcome, StepProgression,
+    StepOutcome, StepProgression, StepSpendScope,
 };
 use crate::agent_def::{AgentDefinition, ensure_listed};
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, SpendScopeId, agent_dispatch_actor, decode_agent_dispatch_input,
+    AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
@@ -175,14 +175,16 @@ pub async fn submit_as_run_actor(
     submit_as_run_actor_on_scope(vault, caller, input, backend, guard, None).await
 }
 
-/// A run's step on its spend scope's guard, for a typed budget wait.
+/// A run's step on its spend scope's guard, for a typed budget wait. The host
+/// read `spend_scope`'s cap generation before it built `guard`
+/// ([`StepSpendScope::read_before_guards`]).
 pub async fn submit_as_run_actor_on_scope(
     vault: &Vault,
     caller: RunStepCaller<'_>,
     input: ModelStepSubmit,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
-    spend_scope: Option<&SpendScopeId>,
+    spend_scope: Option<&StepSpendScope>,
 ) -> MemoryResult<ModelStepReceipt> {
     let execution = Some((backend, guard, spend_scope.cloned()));
     admitted(submit(vault, Submitter::Run(caller), input, execution).await?)
@@ -367,7 +369,7 @@ async fn submit(
     vault: &Vault,
     submitter: Submitter<'_>,
     input: ModelStepSubmit,
-    execution: Option<(&dyn LlmBackend, &BudgetGuard, Option<SpendScopeId>)>,
+    execution: Option<(&dyn LlmBackend, &BudgetGuard, Option<StepSpendScope>)>,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
     submitter.attached()?;
