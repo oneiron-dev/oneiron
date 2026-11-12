@@ -24,17 +24,22 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::skill_hub::osv::hub_advisory_query;
 use crate::skill_hub::{
-    CallerPermissions, MarketplaceFit, RuleSkillFit, SkillFitSetting, SkillHubAdapter,
-    pinned_tracking,
+    CallerPermissions, RuleSkillFit, SkillFitSetting, SkillHubAdapter, pinned_tracking,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::skill_record::SkillRecord;
 use crate::write_envelope::skill_source::HubRef;
-use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteProvenance};
+use crate::write_envelope::{
+    ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope,
+    WriteProvenance,
+};
 use rmpv::Value;
 
+mod install_writer;
 mod receipt_erase;
+use install_writer::{ReadyFit, fit_install_writer};
+pub(crate) use install_writer::{ensure_fit_install_writer_machine, fit_install_writer_id};
 pub(crate) use receipt_erase::erase_section_fit_receipts_in_txn;
 pub(crate) use receipt_erase::{
     scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
@@ -463,12 +468,12 @@ impl Offer<'_> {
         permissions.extend(requested);
         permissions.sort();
         permissions.dedup();
-        if outcome != MarketplaceFit::Ready {
+        let Some(ready) = ReadyFit::from_outcome(outcome) else {
             return Ok(Fit::Ask {
                 analysis,
                 permissions,
             });
-        }
+        };
         let landed = self
             .vault
             .try_with_write_txn_grouped(|txn| -> PluginResult<Fit> {
@@ -489,7 +494,7 @@ impl Offer<'_> {
                         &permissions,
                     ));
                 }
-                self.land_in_txn(txn, envelope, &record, permissions.clone())
+                self.land_in_txn(txn, envelope, &record, permissions.clone(), &ready)
                     .map(Fit::Installed)
             });
         // A failed writer rolls back first; the offer then asks with every
@@ -528,12 +533,12 @@ impl Offer<'_> {
         permissions.extend(fitted.requested_permissions());
         permissions.sort();
         permissions.dedup();
-        if fitted.outcome() != MarketplaceFit::Ready {
+        let Some(ready) = ReadyFit::from_outcome(fitted.outcome()) else {
             return Ok(Fit::Ask {
                 analysis: fitted.analysis().to_owned(),
                 permissions,
             });
-        }
+        };
         let landed = approved.check_package(fitted.package()).and_then(|()| {
             vault.try_with_write_txn_grouped(|txn| -> PluginResult<Fit> {
                 // Checked before the import writes anything: an Active holder
@@ -564,7 +569,7 @@ impl Offer<'_> {
                         found: record.lifecycle_status,
                     });
                 }
-                self.land_in_txn(txn, envelope, &record, permissions.clone())
+                self.land_in_txn(txn, envelope, &record, permissions.clone(), &ready)
                     .map(Fit::Installed)
             })
         });
@@ -575,12 +580,15 @@ impl Offer<'_> {
 
     /// Lands the Auto install claim and its `skill.section_fit` receipt
     /// beside the Active skill, after admission validation on that record.
+    /// The claim lands under the engine's fit install writer, which only a
+    /// Ready fit reaches.
     fn land_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         envelope: &SectionManifestEnvelope,
         record: &SkillRecord,
         permissions: Vec<String>,
+        ready: &ReadyFit,
     ) -> PluginResult<PluginSectionInstalled> {
         let verbs = SectionVerbAllowlist::from_exported_verbs();
         let validated =
@@ -590,21 +598,53 @@ impl Offer<'_> {
             end: self.now,
         };
         let claim_id = self.vault.store.clock.entity_id()?;
-        let mut claim = ClaimBody::new(
+        let subject = ClaimSubject::Entity(self.target.claim_subject());
+        // The scope a body about the target is born with: the target is a
+        // SKILL or another row with no substrate FACET.
+        let born = ClaimBody::new(
             PREDICATE_PLUGIN_SECTION_INSTALL,
-            ClaimSubject::Entity(self.target.claim_subject()),
+            subject,
             self.payload.to_value(),
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )?;
-        claim.source = Some(ClaimSource::Generated);
-        // The target is a SKILL or another row with no substrate FACET.
-        claim.scope_facet =
-            self.vault
-                .claim_put_facet_keeping_in_txn(txn, &claim_id, claim.scope_facet)?;
+        let facet = self
+            .vault
+            .claim_put_facet_keeping_in_txn(txn, &claim_id, born.scope_facet)?;
+        let candidate = ClaimCandidate::new(
+            PREDICATE_PLUGIN_SECTION_INSTALL,
+            subject,
+            self.payload.to_value(),
+            1.0,
+        )
+        .with_scope_stamps(facet, born.scope_project);
+        // The engine attests the Ready fit: its fit install writer lands the
+        // claim, Generated and Auto, signed with the signer the host retained
+        // for it (Engine ruling FIT-INSTALL-DESIGN = A).
+        let writer = fit_install_writer(self.vault, txn, self.now, ready)?;
+        let source = Value::Map(vec![
+            (
+                Value::from("kind"),
+                Value::from("plugin_section_fit_install"),
+            ),
+            (
+                Value::from("skill"),
+                Value::from(self.target.target_skill_ref().to_hex()),
+            ),
+        ]);
+        let mut write = WriteEnvelope::new(
+            writer,
+            ClaimSource::Generated,
+            WriteProvenance::new(source)?,
+            ClaimApprovalStatus::Auto,
+        );
         self.vault
-            .put_claim_in_txn(txn, &claim_id, &claim, occurred, self.now)?;
+            .sign_retained_machine_claim_in_txn(txn, &claim_id, &candidate, &mut write)?;
+        self.vault
+            .batch_in()
+            .claim_candidate(&claim_id, candidate, &write, occurred, self.now)
+            .apply(txn)?;
 
         let approved = ApprovedPluginIdentity::from_reviewed(self.payload, envelope)?;
         let mut receipt = SectionFitReceipt::expected(claim_id, self.payload, &approved);
