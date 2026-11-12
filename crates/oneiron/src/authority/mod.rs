@@ -446,6 +446,7 @@ pub(crate) use act_standing::{
 pub(crate) use adopted_evidence::{adopted_evidence_in_txn, carried_residence_rows_in_txn};
 pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
+pub(crate) use agent_slips::{AgentSlipStanding, LiveAgentSlip};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
     AdoptedImageCacheEntry, adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
