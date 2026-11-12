@@ -139,11 +139,11 @@ pub struct UndoSendUndone {
     pub task_ref: EntityId,
     /// When the window would have closed, Unix seconds.
     pub release_at: u64,
-    /// When the owner took it back, Unix seconds.
+    /// When it was taken back, Unix seconds.
     pub undone_at: u64,
 }
 
-/// What the owner's undo came to.
+/// What an undo came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UndoSendOutcome {
     /// Taken back inside its window: the attempt is cancelled and the TASK
