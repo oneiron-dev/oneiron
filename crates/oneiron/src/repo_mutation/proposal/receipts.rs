@@ -121,16 +121,10 @@ pub(crate) fn put_receipt_once_in_txn(
         }
         return Ok(());
     }
-    // A receipt is about a proposal, a queue batch or an admission, none of
-    // which has a substrate facet (only a PERSON's put mints one), and a
-    // CLAIM's birth needs a live FACET (#4389): it is born in the vault
-    // default facet.
-    let mut body = body.clone();
-    body.scope_facet = vault.default_facet_in_txn(&*txn)?;
     vault.put_reserved_claim_in_txn(
         txn,
         &id,
-        &body,
+        body,
         crate::temporal::TimeRange { start: at, end: at },
         at,
     )
