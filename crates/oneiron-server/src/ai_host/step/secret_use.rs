@@ -135,9 +135,23 @@ pub(super) enum StepConversation {
     HookPending(WorkflowToolWait),
 }
 
+/// The run a step's `self.use` invocations derive from: the step's run
+/// (`step_run_id`) and the tool. Its `ordinal`-th call is
+/// `InvocationId::of_run_step(&run, ordinal)`, so a try of the same leaf at
+/// the same cursor builds the same invocation, and finds the ask its hook
+/// saved under it.
+pub(super) fn self_use_run(run_id: &str) -> Vec<u8> {
+    format!("{run_id}/self.use").into_bytes()
+}
+
 pub(super) enum StepConversationFault {
     Model(oneiron::llm::LlmError),
+    /// A cursor checkpoint did not save, or the conversation failed before
+    /// any park.
     Checkpoint(oneiron::Error),
+    /// The park (the tool checkpoint with its Hook pause) did not save after
+    /// the hook saved its ask. The cursor checkpoint before it stands.
+    ParkSave(oneiron::Error),
 }
 
 impl From<oneiron::llm::LlmError> for StepConversationFault {
@@ -175,7 +189,7 @@ impl<'a> StepSecretUse<'a> {
             vault,
             attempt,
             actor,
-            run: format!("{run_id}/self.use").into_bytes(),
+            run: self_use_run(run_id),
             host,
         }
     }
@@ -359,7 +373,8 @@ impl<'a> StepSecretUse<'a> {
                             Some(wait.clone()),
                             None,
                             &refreshed_sources,
-                        )?;
+                        )
+                        .map_err(StepConversationFault::ParkSave)?;
                         return Ok(StepConversation::HookPending(wait));
                     }
                     StepToolOutcome::Answered(output, is_error) => {
