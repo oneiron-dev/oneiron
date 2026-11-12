@@ -447,12 +447,21 @@ impl SyncClient {
         self.config.followed_worlds = None;
     }
 
-    /// Effective subscription = host request ∩ trusted manifest ceiling.
-    /// Fail closed when a loaded manifest is malformed; the caller request
-    /// is never rewritten, so `follow_all_worlds` cannot bypass the cap.
-    pub(crate) fn effective_worlds(
-        &self,
-    ) -> std::result::Result<Option<BTreeSet<crate::EntityId>>, TransportError> {
+    /// The worlds this lane follows: the host's request, each world whose
+    /// read setting keeps it off this machine left out on a device lane, all
+    /// under the trusted manifest ceiling. Fail closed when a loaded manifest
+    /// is malformed; the caller request is never rewritten, so
+    /// `follow_all_worlds` cannot bypass the cap.
+    ///
+    /// `Some([])`, a fresh SyncClientConfig's request, is the device's own
+    /// follow (ARCH-0023b #partial-sync): under sync all (residence All, or
+    /// the manifest's shipped `sync_world_default`) every world readable on
+    /// this machine, else none. A named list follows the worlds it names that
+    /// are readable here. Read at every check, so a world whose setting turns
+    /// away from this machine is unfollowed at once (DEC-0005). `None`, the
+    /// home's sync all, follows every world. A federation lane follows what
+    /// it names.
+    pub(crate) fn effective_worlds(&self) -> std::result::Result<FollowedWorlds, TransportError> {
         let txn = self
             .vault
             .store
@@ -467,42 +476,47 @@ impl SyncClient {
         let default_all = resolution
             .sync_default_all_worlds()
             .map_err(|error| TransportError::Storage(error.to_string()))?;
-        // `Some([])` from a fresh SyncClientConfig means "use the manifest's
-        // shipped default". An explicit `None` from follow_all_worlds is a
-        // request for all, still capped by the trusted manifest ceiling.
-        let requested = if self
-            .config
-            .followed_worlds
-            .as_ref()
-            .is_some_and(Vec::is_empty)
-            && default_all
-        {
-            None
-        } else {
-            self.config.followed_worlds.as_ref()
+        let device = self.config.federation_peer.is_none();
+        let sync_all = default_all || self.config.residence_mode == super::SyncResidenceMode::All;
+        let requested = match self.config.followed_worlds.as_deref() {
+            None => FollowedWorlds::All,
+            Some([]) if device && sync_all => self.readable_worlds_in(&txn)?,
+            Some(worlds) if device => self.readable_worlds_in(&txn)?.narrowed_to(worlds),
+            Some([]) if default_all => FollowedWorlds::All,
+            Some(worlds) => FollowedWorlds::Only(worlds.iter().copied().collect()),
         };
-        Ok(match (requested, ceiling) {
-            (None, None) => None,
-            (None, Some(cap)) => Some(cap.clone()),
-            (Some(worlds), None) => Some(worlds.iter().copied().collect()),
-            (Some(worlds), Some(cap)) => Some(
-                worlds
-                    .iter()
-                    .filter(|world| cap.contains(world))
-                    .copied()
-                    .collect(),
-            ),
-        })
+        Ok(requested.capped_by(ceiling))
     }
 
-    pub(crate) fn follows_window(
-        key: &WindowKey,
-        worlds: &Option<BTreeSet<crate::EntityId>>,
-    ) -> bool {
-        match (key.world(), worlds) {
-            (None, _) | (_, None) => true,
-            (Some(world), Some(worlds)) => worlds.contains(&world),
-        }
+    /// Every world readable on this machine, read in `txn`: all but the
+    /// worlds whose read setting keeps them off it (DEC-0005). This install
+    /// is the destination its machine id names, or one nobody proved while
+    /// it has none. Under a conflicted vault root no world's setting is
+    /// known, so none.
+    pub(crate) fn readable_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> std::result::Result<FollowedWorlds, TransportError> {
+        let Some(view) =
+            crate::authority::WorldPrivacyView::load_unless_conflicted_in(&self.vault, txn)
+                .map_err(|error| TransportError::Storage(error.to_string()))?
+        else {
+            return Ok(FollowedWorlds::Only(BTreeSet::new()));
+        };
+        let here = match crate::identity::read_machine_id_in_txn(&self.vault, txn)
+            .map_err(|error| TransportError::Storage(error.to_string()))?
+        {
+            Some(machine) => crate::authority::Destination::Machine(machine),
+            None => crate::authority::Destination::Unknown,
+        };
+        let withheld = view
+            .withheld_for(here)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        Ok(FollowedWorlds::AllExcept(withheld))
+    }
+
+    pub(crate) fn follows_window(key: &WindowKey, worlds: &FollowedWorlds) -> bool {
+        key.world().is_none_or(|world| worlds.contains(&world))
     }
 
     /// Whether a full-window exchange of `key` may run on this lane: an
@@ -668,6 +682,62 @@ pub(super) fn home_withheld_worlds(
     home: crate::authority::PeerMachine,
 ) -> Option<BTreeSet<crate::EntityId>> {
     Withhold::Peer(home).worlds(vault).ok()
+}
+
+/// The worlds a lane follows, as its follow checks read them
+/// ([`SyncClient::effective_worlds`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FollowedWorlds {
+    /// Every world: the home, or an explicit sync all.
+    All,
+    /// Every world but these: a device's readable set, each world whose read
+    /// setting keeps it off this machine left out.
+    AllExcept(BTreeSet<crate::EntityId>),
+    /// Only these worlds.
+    Only(BTreeSet<crate::EntityId>),
+}
+
+impl FollowedWorlds {
+    pub(crate) fn contains(&self, world: &crate::EntityId) -> bool {
+        match self {
+            Self::All => true,
+            Self::AllExcept(left_out) => !left_out.contains(world),
+            Self::Only(worlds) => worlds.contains(world),
+        }
+    }
+
+    /// Whether this set may follow any world at all: a lane that follows
+    /// none takes no shared base month for a world edge.
+    pub(crate) fn follows_any(&self) -> bool {
+        match self {
+            Self::All | Self::AllExcept(_) => true,
+            Self::Only(worlds) => !worlds.is_empty(),
+        }
+    }
+
+    /// The named worlds this set follows.
+    fn narrowed_to(&self, worlds: &[crate::EntityId]) -> Self {
+        Self::Only(
+            worlds
+                .iter()
+                .filter(|world| self.contains(world))
+                .copied()
+                .collect(),
+        )
+    }
+
+    /// This set under the trusted manifest ceiling, when one is loaded.
+    fn capped_by(self, ceiling: Option<&BTreeSet<crate::EntityId>>) -> Self {
+        match ceiling {
+            None => self,
+            Some(cap) => Self::Only(
+                cap.iter()
+                    .filter(|world| self.contains(world))
+                    .copied()
+                    .collect(),
+            ),
+        }
+    }
 }
 
 /// Loads the persisted root doc: `d:root` snapshot + pending `u:root:*`
