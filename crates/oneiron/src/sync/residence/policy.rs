@@ -92,7 +92,7 @@ pub(crate) fn set_device_sync_preference_in_txn(
 }
 
 /// The worlds the owner picked for this machine to follow (ARCH-0023b
-/// #partial-sync), read in `txn`; none until he picks. Under sync all the
+/// #partial-sync), read in `txn`; none until the owner picks. Under sync all the
 /// machine follows every world it may read, whatever it picked.
 pub(crate) fn device_world_pick_in(
     vault: &Vault,
