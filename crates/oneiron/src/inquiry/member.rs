@@ -32,7 +32,7 @@
 use rmpv::Value;
 
 use crate::Vault;
-use crate::authority::VerifiedSlip;
+use crate::authority::{AuthorityFold, VerifiedSlip};
 use crate::check_in::{
     ActClass, CheckInAnswer, CheckInMode, CheckInRequest, CheckInScope, GoReason, HolderAnswer,
     NoAgentVerdict, OpenPendingCheckIn, PendingCheckIn, PendingState, RolePreset, UnsureTest,
@@ -43,7 +43,9 @@ use crate::claim::ClaimBody;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::federation::pact_admits_grant;
+use crate::federation::{
+    Ceiling, FederationGrant, connect_direction_projection, pact_admits_grant,
+};
 use crate::side_table::{self, Raw, SideTable};
 
 use super::edge::{
@@ -398,8 +400,9 @@ pub(crate) fn answer_inquiry_in_txn(
 /// credential is the company host's own, bound to this edge's grant and
 /// live in `txn` (its holder, its grant's expiry and withdrawal, its pact);
 /// the grant is a live inquiry edge, not expired or withdrawn, whose Connect
-/// pact is Active; and the inquiry comes from the edge's company. One
-/// refusal for every credential, edge or pact failure.
+/// pact is Active and still holds the edge's scope; and the inquiry comes
+/// from the edge's company. One refusal for every credential, edge or pact
+/// failure.
 fn admitted_edge_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -424,6 +427,7 @@ fn admitted_edge_in_txn(
     if !decoded.is_live_at(now)
         || vault.guest_grant_withdrawn_in_txn(txn, &grant)?
         || !pact_admits_grant(&fold, &grant, &decoded)
+        || !pact_holds_edge_scope(&fold, &grant, &decoded)
     {
         return Err(not_admitted());
     }
@@ -433,6 +437,25 @@ fn admitted_edge_in_txn(
         ));
     }
     Ok(edge)
+}
+
+/// Whether the pact over `grant_id` still holds the whole scope the edge's
+/// grant projects to (the opened WORLD and the CLAIM band) under its current
+/// effective scope. A member's narrowing that drops either part leaves the
+/// pact Active and the company's slip live, so without this check a repeat
+/// would still return its stored answer and a new inquiry would still read
+/// the opened WORLD (review round 1 of #7164). No verb is asked.
+fn pact_holds_edge_scope(
+    fold: &AuthorityFold,
+    grant_id: &EntityId,
+    grant: &FederationGrant,
+) -> bool {
+    let Some(edge_scope) = connect_direction_projection(&grant.authority_scope) else {
+        return false;
+    };
+    fold.pact_for_grant(grant_id).is_some_and(|pact| {
+        Ceiling::new(edge_scope).is_within(&Ceiling::new(pact.effective_scope.clone()))
+    })
 }
 
 /// The texts of `edge`'s opened scope its tier admits, in id order.
