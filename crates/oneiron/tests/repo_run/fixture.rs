@@ -46,14 +46,14 @@ use oneiron::verbs::{
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use serde_json::json;
 
-pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+pub(crate) type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-pub const MAIN: &str = "refs/heads/main";
+pub(crate) const MAIN: &str = "refs/heads/main";
 const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:repo-run-fixture";
 
 /// The repo's two files, as committed.
-pub const MATH_RS: &str = "pub fn add_one(value: u32) -> u32 {\n    value + 1\n}\n";
-pub const LABEL_RS: &str = "pub fn label() -> &'static str {\n    \"ready\"\n}\n";
+pub(crate) const MATH_RS: &str = "pub fn add_one(value: u32) -> u32 {\n    value + 1\n}\n";
+pub(crate) const LABEL_RS: &str = "pub fn label() -> &'static str {\n    \"ready\"\n}\n";
 
 /// The enrolled repo's check plan: one fast and one slow command, no
 /// contract outputs. The test checker host reports each command it is
@@ -117,31 +117,31 @@ fn committed_repo(init: QueueInit) -> TestResult<(tempfile::TempDir, String)> {
 }
 
 /// A fresh owned vault, its owner, and the repo the owner ingested.
-pub struct RepoFixture {
-    pub vault: Vault,
+pub(crate) struct RepoFixture {
+    pub(crate) vault: Vault,
     _vault_dir: tempfile::TempDir,
     _repo_dir: tempfile::TempDir,
-    pub issuer: HostSlipIssuer,
-    pub owner: EntityId,
-    pub owner_proof: AuthenticatedOwner,
-    pub project: EntityId,
+    pub(crate) issuer: HostSlipIssuer,
+    pub(crate) owner: EntityId,
+    pub(crate) owner_proof: AuthenticatedOwner,
+    pub(crate) project: EntityId,
     /// The ingested snapshot's CODE, a member of the root PROJECT.
-    pub repo: EntityId,
+    pub(crate) repo: EntityId,
     /// The snapshot's fork hash, the read doors' snapshot selector.
-    pub snapshot: String,
+    pub(crate) snapshot: String,
     /// The commit `refs/heads/main` names, and the queue's green.
-    pub commit: String,
+    pub(crate) commit: String,
 }
 
 impl RepoFixture {
     /// The repo with its queue initialized natively: nothing drives it.
-    pub fn new() -> TestResult<Self> {
+    pub(crate) fn new() -> TestResult<Self> {
         Self::build(QueueInit::Native)
     }
 
     /// The repo with its queue initialized by the owner's checked init,
     /// enrolled for the automatic driver.
-    pub fn enrolled() -> TestResult<Self> {
+    pub(crate) fn enrolled() -> TestResult<Self> {
         Self::build(QueueInit::Checked)
     }
 
@@ -216,7 +216,7 @@ impl RepoFixture {
     }
 
     /// The owner's own Memory handle, with its authorship bound.
-    pub fn owner_memory(&self) -> Memory<'_> {
+    pub(crate) fn owner_memory(&self) -> Memory<'_> {
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
             .with_owner_authorship(&self.owner_proof)
@@ -224,7 +224,7 @@ impl RepoFixture {
 
     /// The current CODE_SYMBOL id of `name` in `path`, from the snapshot's
     /// symbol manifest.
-    pub fn symbol(&self, path: &str, name: &str) -> TestResult<EntityId> {
+    pub(crate) fn symbol(&self, path: &str, name: &str) -> TestResult<EntityId> {
         let manifest = self
             .vault
             .get_code_symbol_manifest(&self.repo)?
@@ -238,7 +238,7 @@ impl RepoFixture {
     }
 
     /// Repo bounds on `refs/heads/main` that read and edit the given globs.
-    pub fn bounds(&self, readable: &[&str], editable: &[&str]) -> RepoAccessBounds {
+    pub(crate) fn bounds(&self, readable: &[&str], editable: &[&str]) -> RepoAccessBounds {
         RepoAccessBounds {
             repo: self.repo,
             project: self.project,
@@ -284,7 +284,7 @@ fn checked_init(
 /// The test's checker host: it reports each command of a check's frozen plan
 /// as exited zero, with no contract output. It stands in for the isolated
 /// executor an operator configures.
-pub struct PassingChecks;
+pub(crate) struct PassingChecks;
 
 impl QueueCheckHost for PassingChecks {
     fn environment(&mut self) -> Result<QueueCheckEnvironment, QueueCheckNeed> {
@@ -330,7 +330,7 @@ impl QueueCheckHost for PassingChecks {
 }
 
 /// An enabled, active agent definition the owner creates as `agent_id`.
-pub fn create_enabled_agent(
+pub(crate) fn create_enabled_agent(
     vault: &Vault,
     owner_proof: &AuthenticatedOwner,
     agent_id: &str,
@@ -354,7 +354,7 @@ pub fn create_enabled_agent(
 }
 
 /// The agent's own credential, paired by the owner and proven held.
-pub fn paired_agent_slip(
+pub(crate) fn paired_agent_slip(
     vault: &Vault,
     issuer: &HostSlipIssuer,
     owner: &AuthenticatedOwner,
@@ -401,7 +401,7 @@ pub fn paired_agent_slip(
 
 /// An owner-minted Access Grant for `agent`, read and write, with `bounds`
 /// as its repo bounds or with none.
-pub fn mint_repo_grant(
+pub(crate) fn mint_repo_grant(
     vault: &Vault,
     owner_proof: &AuthenticatedOwner,
     agent: EntityId,
@@ -427,7 +427,7 @@ pub fn mint_repo_grant(
 }
 
 /// The owner's TASK for `agent`, and its claimed agent try.
-pub fn leased_try(
+pub(crate) fn leased_try(
     vault: &Vault,
     owner_memory: &Memory<'_>,
     owner: EntityId,
@@ -471,23 +471,23 @@ pub fn leased_try(
 
 /// The run the host seals for a claimed try, read on the agent's own
 /// credential.
-pub struct RunBinding {
-    pub task: EntityId,
-    pub binding: RepoRunBinding,
+pub(crate) struct RunBinding {
+    pub(crate) task: EntityId,
+    pub(crate) binding: RepoRunBinding,
     /// The read lane of the agent's own credential, as the binding reads.
-    pub reader: ScopedReadActorKey,
-    pub actor: WriteActor,
+    pub(crate) reader: ScopedReadActorKey,
+    pub(crate) actor: WriteActor,
 }
 
 impl RunBinding {
     /// The run's own Memory handle: the agent, as the binding names it.
-    pub fn memory<'v>(&self, vault: &'v Vault) -> Memory<'v> {
+    pub(crate) fn memory<'v>(&self, vault: &'v Vault) -> Memory<'v> {
         vault.memory(self.actor.entity_ref(), self.actor.actor_class())
     }
 }
 
 /// The run the host seals for `leased`, read on `slip`'s credential.
-pub fn bind_run(
+pub(crate) fn bind_run(
     vault: &Vault,
     slip: &VerifiedSlip,
     (task, actor, leased): (EntityId, WriteActor, AttemptRecord),
@@ -508,19 +508,19 @@ pub fn bind_run(
 
 /// One agent's live run on the repo: its TASK, its sealed run binding and
 /// the work it opened at the queue's green commit.
-pub struct AgentRun {
-    pub task: EntityId,
-    pub binding: RepoRunBinding,
+pub(crate) struct AgentRun {
+    pub(crate) task: EntityId,
+    pub(crate) binding: RepoRunBinding,
     /// The read lane of the agent's own credential, as the binding reads.
-    pub reader: ScopedReadActorKey,
-    pub actor: WriteActor,
-    pub work: EntityId,
-    pub grant: EntityId,
+    pub(crate) reader: ScopedReadActorKey,
+    pub(crate) actor: WriteActor,
+    pub(crate) work: EntityId,
+    pub(crate) grant: EntityId,
 }
 
 /// The run the host seals for a claimed try, read on the agent's own
 /// credential, with the work it opens at the queue's green commit.
-pub fn agent_run(
+pub(crate) fn agent_run(
     vault: &Vault,
     slip: &VerifiedSlip,
     leased: (EntityId, WriteActor, AttemptRecord),
