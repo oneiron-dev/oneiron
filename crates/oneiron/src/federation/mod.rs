@@ -11,6 +11,7 @@
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod agent_grant;
 mod agent_verb_class;
+pub use agent_grant::DefaultAgentGrantBackfill;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, SelectedOwnerAgentFundingGrant,
     agent_grants_for_store_in_txn, backfill_agent_grant_member_index,
