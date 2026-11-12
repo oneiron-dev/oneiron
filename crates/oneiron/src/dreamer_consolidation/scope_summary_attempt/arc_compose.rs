@@ -273,10 +273,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     {
                         charges.record_usage(usage);
                     }
-                    return Ok(charges.park_for(
-                        &other.to_string(),
-                        crate::dreamer_runner::dreamer_park_cause_of_step(&other),
-                    ));
+                    return Ok(charges.end_on_step_error(&other.to_string(), &other));
                 }
             };
             let ask = match arc_output(&response, &view.labels, (&opened, &view.inherited), &covers)

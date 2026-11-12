@@ -43,10 +43,15 @@ pub enum DreamerParkWait {
     },
     /// The guard of the wake pass the step ran in refused the step's reservation, which asked it
     /// for `asked_units`; that guard is rebuilt each pass, so a later pass whose guard has room
-    /// for them wakes the trap at its start.
+    /// for them wakes the trap at its start. A step also bound to a spend scope (a free-time
+    /// item's) names the scope's nearest open hard scope, whose top-up that leaves room for them
+    /// wakes the trap too: the scope's own room is stale until the pass settles the step's spend.
     PassBudget {
         /// The units the refused reservation asked of the pass's guard.
         asked_units: u64,
+        /// The nearest open hard scope above the step's spend scope, when the step has one: the
+        /// scope a top-up raises to give the step room.
+        scope: Option<SpendScopeId>,
     },
     /// A held effect's consent answer or an outbound call's settled reply delivered on the wait.
     Consent {

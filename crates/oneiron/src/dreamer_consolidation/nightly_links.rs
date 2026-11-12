@@ -477,10 +477,9 @@ impl ConsolidationExecutor<'_> {
                 return Ok(ControlFlow::Break(charges.park_on_error(&error)));
             }
             Err(error) => {
-                return Ok(ControlFlow::Break(charges.park_for(
-                    &error.to_string(),
-                    crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-                )));
+                return Ok(ControlFlow::Break(
+                    charges.end_on_step_error(&error.to_string(), &error),
+                ));
             }
         };
         // A question the decision clock cut keeps its memo: the attempt

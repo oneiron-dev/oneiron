@@ -39,16 +39,22 @@ pub enum MediaStepOutcome {
 /// The supplied path owns admission, replay, receipts, and settlement.
 /// Only a typed budget or host-check denial before any rung admitted opens a trap.
 /// The media path sets `admitted` before an admitted rung can run its effect.
+/// `asked_units` is the reservation the media path's run line asks of its
+/// meter for one call, when the caller knows it: a spent budget walks the
+/// step's spend scope with it, so the step parks on the scope whose top-up
+/// gives it room, or refuses typed when no top-up can.
 ///
 /// # Errors
 ///
 /// Returns request canonicalization, trap persistence, or the media path's error. A spent
 /// budget whose step is bound to no wake pass and no spend scope refuses
 /// `DurableStepError::BudgetRefused` with `Unbound`: no write
-/// refills it.
+/// refills it. A spend scope that a closed boundary or a ceiling holds refuses it with that
+/// typed reason.
 pub async fn call_media_as_step<SendCall, CallFuture>(
     ctx: &DurableStepContext<'_>,
     request: MediaRequest,
+    asked_units: Option<u64>,
     admitted: &AtomicBool,
     send: SendCall,
 ) -> DurableStepResult<MediaStepOutcome>
@@ -64,7 +70,7 @@ where
         )) if !admitted.load(Ordering::Acquire) => {
             let cause = match denied {
                 BudgetDenied::HostCheck => BudgetTrapCause::HostCheck,
-                _ => BudgetTrapCause::Spent { asked_units: None },
+                _ => BudgetTrapCause::Spent { asked_units },
             };
             match budget_trap(ctx, step_hash, cause)? {
                 StepOutcome::Trapped {

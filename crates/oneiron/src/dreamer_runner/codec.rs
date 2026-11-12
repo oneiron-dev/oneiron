@@ -229,11 +229,16 @@ fn encode_parked_wait(wait: Option<&DreamerParkedWait>) -> Value {
                 (Value::from(KEY_WAIT_ASKED_UNITS), Value::from(*asked_units)),
                 lease_generation,
             ],
-            DreamerParkWait::PassBudget { asked_units } => vec![
-                (Value::from(KEY_CLASS), class),
-                (Value::from(KEY_WAIT_ASKED_UNITS), Value::from(*asked_units)),
-                lease_generation,
-            ],
+            DreamerParkWait::PassBudget { asked_units, scope } => {
+                let mut entries = vec![(Value::from(KEY_CLASS), class)];
+                // The scope key only when the wait names one, as the seat's reset time.
+                if let Some(scope) = scope {
+                    entries.push((Value::from(KEY_WAIT_SCOPE), Value::from(scope.as_str())));
+                }
+                entries.push((Value::from(KEY_WAIT_ASKED_UNITS), Value::from(*asked_units)));
+                entries.push(lease_generation);
+                entries
+            }
             DreamerParkWait::Consent { key }
             | DreamerParkWait::Peer { key }
             | DreamerParkWait::Human { key } => vec![
@@ -441,8 +446,7 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
             }
         }
         DreamerParkWaitClass::PassBudget => {
-            if scope.is_some()
-                || wait_run.is_some()
+            if wait_run.is_some()
                 || wait_id.is_some()
                 || wait_generation.is_some()
                 || seat.is_some()
@@ -457,6 +461,7 @@ fn decode_parked_wait(value: &Value) -> Result<DreamerParkedWait> {
                 asked_units: asked_units.ok_or(invalid_dreamer_runner(
                     "missing dreamer parked wait asked_units",
                 ))?,
+                scope: scope.map(SpendScopeId),
             }
         }
         DreamerParkWaitClass::Seat => {
@@ -810,10 +815,25 @@ mod tests {
     #[test]
     fn parked_rows_round_trip_with_and_without_a_wait() {
         let pass_budget = DreamerParkedWait {
-            wait: DreamerParkWait::PassBudget { asked_units: 500 },
+            wait: DreamerParkWait::PassBudget {
+                asked_units: 500,
+                scope: None,
+            },
             lease_generation: 3,
         };
-        for wait in [None, Some(budget_wait()), Some(pass_budget)] {
+        let scoped_pass_budget = DreamerParkedWait {
+            wait: DreamerParkWait::PassBudget {
+                asked_units: 500,
+                scope: Some(SpendScopeId::launch("free_time:cycle").expect("test scope reads")),
+            },
+            lease_generation: 3,
+        };
+        for wait in [
+            None,
+            Some(budget_wait()),
+            Some(pass_budget),
+            Some(scoped_pass_budget),
+        ] {
             let record = parked_record(wait);
             let bytes = encode_parked_record(&record).expect("parked row encodes");
             let decoded = decode_parked_record(&bytes).expect("parked row decodes");
