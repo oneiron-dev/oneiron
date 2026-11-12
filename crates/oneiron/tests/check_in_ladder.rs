@@ -60,7 +60,7 @@ struct Ladder {
 }
 
 impl Ladder {
-    fn open() -> Self {
+    fn new() -> Self {
         let fx = Fixture::open();
         let owner_id = fx.vault.ensure_embedded_owner_actor().expect("owner");
         let owner = (owner_id, fx.owner());
@@ -182,7 +182,7 @@ fn skipped(row: &PendingCheckIn) -> Vec<(Rung, String)> {
 
 #[test]
 fn the_ladder_asks_the_grantor_then_the_other_holders_of_its_role_then_the_owner() {
-    let l = Ladder::open();
+    let l = Ladder::new();
     let row = l.open(l.ask(l.delegate, ActClass::MemberAdd, "org:add-member"));
     assert_eq!(
         pinned(&row),
@@ -216,7 +216,7 @@ fn the_ladder_asks_the_grantor_then_the_other_holders_of_its_role_then_the_owner
 
 #[test]
 fn only_a_holder_pinned_on_the_current_rung_answers_and_as_themself() {
-    let l = Ladder::open();
+    let l = Ladder::new();
     let row = l.open(l.ask(l.delegate, ActClass::MemberAdd, "org:add-member"));
     for (_, proof) in [&l.member, &l.deputy, &l.second_admin, &l.owner] {
         assert!(
@@ -247,7 +247,7 @@ fn only_a_holder_pinned_on_the_current_rung_answers_and_as_themself() {
 fn a_holder_whose_own_check_in_would_wait_is_not_asked() {
     // An Admin's own outbound send always asks (ARCH-0082's role table), so
     // neither Admin may approve the agent's; the Owner's goes.
-    let l = Ladder::open();
+    let l = Ladder::new();
     let row = l.open(l.ask(l.delegate, ActClass::OutboundSend, "write"));
     let why = "no holder whose live grant and own check-in admit the act".to_owned();
     assert_eq!(
@@ -263,7 +263,7 @@ fn a_holder_whose_own_check_in_would_wait_is_not_asked() {
 
 #[test]
 fn a_holder_whose_grant_does_not_admit_the_verb_is_not_asked() {
-    let l = Ladder::open();
+    let l = Ladder::new();
     let row = l.open(l.ask(
         l.delegate,
         ActClass::ReversibleWork,
@@ -285,7 +285,7 @@ fn a_holder_whose_grant_does_not_admit_the_verb_is_not_asked() {
 
 #[test]
 fn an_owner_who_minted_the_askers_grant_is_asked_once() {
-    let l = Ladder::open();
+    let l = Ladder::new();
     let delegate =
         l.fx.vault
             .create_federation_delegate(&l.owner.1, l.owner_grant, l.agent, T0, T0 + DELEGATE_TTL)
@@ -317,7 +317,7 @@ fn an_owner_who_minted_the_askers_grant_is_asked_once() {
 
 #[test]
 fn a_grant_ref_naming_another_principals_grant_finds_no_grantor() {
-    let l = Ladder::open();
+    let l = Ladder::new();
     let row = l.open(l.ask(l.first_admin_grant, ActClass::MemberAdd, "org:add-member"));
     let why = "the asker's grant is not a live grant naming the asker".to_owned();
     assert_eq!(
