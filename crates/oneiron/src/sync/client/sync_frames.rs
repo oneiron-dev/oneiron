@@ -227,6 +227,20 @@ impl SyncClient {
                     keys.push(key);
                 }
             }
+            // A followed world's windows sync in full with no promotion marker:
+            // the home grants each one on this socket (`follows_full_window`).
+            // Only the windows the home's root lists are asked, since the home
+            // closes the socket on a window it does not list.
+            if self.config.residence_selector.is_some() {
+                for key in crate::sync::schema::read_window_list(&self.root_doc) {
+                    if key.world().is_some()
+                        && self.follows_full_window(key.as_str())
+                        && !keys.contains(&key)
+                    {
+                        keys.push(key);
+                    }
+                }
+            }
             // This vault's embedding setup rows (OF-370) reach an opened-item device whatever
             // it opened: it asks the home to grant their window (`setup_catch_up`).
             let setup =
@@ -265,19 +279,7 @@ impl SyncClient {
                 if !self.home_may_promote(&key) {
                     continue;
                 }
-                let selector = self.config.residence_selector.as_ref().ok_or(
-                    TransportError::InvalidPayload("promoted window has no selector"),
-                )?;
-                let bytes = crate::sync::encode_sync_selector(selector)
-                    .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
-                messages.push(
-                    transport::encode_window_sync(
-                        key.as_str(),
-                        window_sub_tags::PROMOTION_REQUEST,
-                        &bytes,
-                    )
-                    .into_result()?,
-                );
+                messages.push(self.promotion_request_frame(&key)?);
                 // The setup window's vector waits for the home's grant.
                 if self.setup_catch_up(key.as_str()) {
                     continue;
@@ -341,6 +343,25 @@ impl SyncClient {
         Ok(messages)
     }
 
+    /// The `PROMOTION_REQUEST` frame for `key`: this lane's residence
+    /// selector, as the home grant-checks it.
+    fn promotion_request_frame(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        let selector =
+            self.config
+                .residence_selector
+                .as_ref()
+                .ok_or(TransportError::InvalidPayload(
+                    "promoted window has no selector",
+                ))?;
+        let bytes = crate::sync::encode_sync_selector(selector)
+            .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
+        transport::encode_window_sync(key.as_str(), window_sub_tags::PROMOTION_REQUEST, &bytes)
+            .into_result()
+    }
+
     fn selected_discovered_windows(
         discovered: Vec<WindowKey>,
         effective_worlds: &FollowedWorlds,
@@ -377,8 +398,9 @@ impl SyncClient {
         &mut self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let effective_worlds = self.effective_worlds()?;
-        // Opened residence exchanges full VVs only for promoted windows; the
-        // deferred set holds only those, so an advertised key never enrolls.
+        // Opened residence exchanges full VVs only for promoted windows and
+        // followed worlds' windows; the deferred set holds the ones this
+        // connection's first frames asked to promote.
         let opened = self.config.residence_mode == SyncResidenceMode::Opened
             && self.config.federation_peer.is_none();
         let mut discovered = if opened {
@@ -395,6 +417,28 @@ impl SyncClient {
                 .iter()
                 .cloned(),
         );
+        // A followed world's window the root lists now and this connection's
+        // first frames did not ask for: its promotion request goes ahead of
+        // its vector, on the same writer, so the home grants it first.
+        let mut late_follows = std::collections::HashSet::new();
+        if opened && self.config.residence_selector.is_some() {
+            for key in crate::sync::schema::read_window_list(&self.root_doc) {
+                let requested = self
+                    .requested_windows
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .contains(&key);
+                if key.world().is_some()
+                    && !requested
+                    && !discovered.contains(&key)
+                    && self.follows_full_window(key.as_str())
+                    && self.home_may_promote(&key)
+                {
+                    late_follows.insert(key.clone());
+                    discovered.push(key);
+                }
+            }
+        }
         if !opened && !self.root_bootstrapped && effective_worlds.follows_any() {
             discovered.extend(
                 crate::sync::discover_local_window_keys(&self.vault)
@@ -429,6 +473,9 @@ impl SyncClient {
             // read the world (FIX 922 item 11).
             if !self.home_may_request(&key) {
                 continue;
+            }
+            if late_follows.contains(&key) {
+                frames.push(self.promotion_request_frame(&key)?);
             }
             let vv = self
                 .window_vv_for_initial_sync(&key)

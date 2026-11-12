@@ -18,8 +18,11 @@ use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::connection::{ConnectionConfig, SyncConnection};
 use oneiron::sync::schema::create_root_doc;
-use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC};
-use oneiron::sync::{SyncClient, SyncClientConfig, SyncResidenceMode, WindowKey, WindowManager};
+use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags};
+use oneiron::sync::{
+    SyncClient, SyncClientConfig, SyncResidenceMode, SyncSelector, SyncSelectorWorld, WindowKey,
+    WindowManager,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 use crate::sync_harness::window_update_frame;
@@ -156,6 +159,22 @@ fn negotiated_world_windows(client: &mut SyncClient, root: &[u8]) -> Vec<WindowK
     worlds
 }
 
+/// The windows `frames` ask the home to promote.
+fn promotion_requests(frames: &[Vec<u8>]) -> Vec<WindowKey> {
+    let mut keys: Vec<WindowKey> = frames
+        .iter()
+        .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
+        .filter_map(|frame| {
+            let (key, sub_tag, _) =
+                transport::decode_window_sync(&frame[1..]).expect("decode window frame");
+            (sub_tag == window_sub_tags::PROMOTION_REQUEST).then(|| WindowKey::new(key))
+        })
+        .collect();
+    keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    keys.dedup();
+    keys
+}
+
 /// A window update of `world`'s window this month, as the home relays one.
 fn world_update(at: u64, world: EntityId) -> Vec<u8> {
     let doc = LoroDoc::new();
@@ -209,6 +228,67 @@ fn a_device_follows_only_its_picked_world() {
     assert!(
         kept.to_string().contains("unfollowed world window"),
         "refused as unfollowed: {kept}",
+    );
+}
+
+#[test]
+fn a_picked_world_syncs_its_full_windows_when_opened() {
+    let device = Device::open();
+    let at = now_secs();
+    let root = root_frame(at, &[device.founder, device.granted, device.kept_home]);
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    connection
+        .set_followed_worlds([device.founder].into_iter().collect())
+        .expect("the owner's pick");
+    let selected = |device: &Device| {
+        let manager = device.manager();
+        SyncClient::new(
+            manager,
+            SyncClientConfig {
+                residence_mode: SyncResidenceMode::Opened,
+                residence_selector: Some(SyncSelector::new(
+                    EntityId::now(),
+                    EntityId::now(),
+                    SyncSelectorWorld::All,
+                    Vec::new(),
+                    Vec::new(),
+                )),
+                ..SyncClientConfig::default()
+            },
+        )
+        .expect("opened device client")
+        .0
+    };
+
+    // The home's root arrives after the first frames: the picked world's
+    // window is asked to be promoted, then for its vector.
+    let mut client = selected(&device);
+    let mut frames = client.generate_initial_sync();
+    frames.extend(client.handle_server_message(&root).expect("root update"));
+    let founder = WindowKey::for_world(at, device.founder);
+    assert_eq!(
+        promotion_requests(&frames),
+        vec![founder.clone()],
+        "only the picked world's window is asked in full, not the readable \
+         world nobody picked nor the world kept on the owner's machines",
+    );
+
+    // The home grants it on this socket with no promotion marker here.
+    let grant =
+        transport::encode_window_sync(founder.as_str(), window_sub_tags::PROMOTION_GRANTED, &[])
+            .into_result()
+            .expect("grant frame");
+    client
+        .handle_server_message(&grant)
+        .expect("the device takes the home's grant for its followed window");
+
+    // The next connect asks for it in its first frames, the root now held.
+    let reconnected = selected(&device);
+    assert_eq!(
+        promotion_requests(&reconnected.generate_initial_sync()),
+        vec![founder],
+        "a reconnect asks again for the followed window's promotion",
     );
 }
 
