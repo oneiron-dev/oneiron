@@ -630,10 +630,13 @@ fn put_journal_claim(
     {
         return Err(invalid("invalid repository journal producer"));
     }
+    // The subject is the code session, which has no FACET of its own.
+    let mut body = body.clone();
+    body.scope_facet = vault.claim_put_facet_in_txn(txn, &id)?;
     vault.put_reserved_claim_in_txn(
         txn,
         &id,
-        body,
+        &body,
         crate::temporal::TimeRange {
             start: now,
             end: now,

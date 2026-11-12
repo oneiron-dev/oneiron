@@ -143,6 +143,9 @@ impl Vault {
             return Ok(id);
         }
         let id = self.store.clock.entity_id()?;
+        // The subject is the observing MACHINE, which has no substrate
+        // FACET: the claim takes the actor rule's facet.
+        body.scope_facet = crate::actor_claims::actor_claim_facet_in_txn(self, &wtxn, subject)?;
         self.put_claim_in_txn(
             &mut wtxn,
             &id,
