@@ -231,6 +231,27 @@ pub(crate) fn release_due_ticks(vault: &Vault, now: u64) -> Result<bool> {
     Ok(more)
 }
 
+/// When `task` ticks, Unix seconds, while it still waits for that tick: its
+/// due row is not yet released and the TASK is open at that due time.
+/// `None` for a TASK with no due time, one already ticked, and one closed
+/// before its tick, whose release drops the row with no tick. A waiting
+/// TASK is a watcher (ARCH-0080 §4); `agent_def::made_by` lists its
+/// creator's.
+pub(crate) fn task_tick_waiting_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Option<u64>> {
+    let Some(entry) = TASK_DUE_REVERSE.get(&vault.store, txn, &task)? else {
+        return Ok(None);
+    };
+    if entry.tick.is_some() {
+        return Ok(None);
+    }
+    Ok(crate::task_verb::open_task_due_at_in_txn(vault, txn, task)?
+        .filter(|due_at| *due_at == entry.due_at))
+}
+
 /// When this node next releases a tick: the due time of the earliest row in
 /// the due index, Unix seconds, on the node that releases ([`releases_here`]),
 /// the elected home or, before an election, the vault's one machine; `None`
