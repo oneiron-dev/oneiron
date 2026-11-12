@@ -6,13 +6,16 @@ impl Memory<'_> {
     /// Inside the schedule's write: the ready attempt and, when it is new, the
     /// connector TASK that will replay it and an invite's SEQUENCE bump. An
     /// agent run's send is scheduled only while its machine holds the run
-    /// (FIX 4747): a stale executor schedules nothing.
+    /// (FIX 4747): a stale executor schedules nothing. A new agent send then
+    /// waits out its channel's undo-send window in the same write (DEC-0006
+    /// #undo-send), read against the schedule's `gate_reason_codes`.
     pub(super) fn enqueue_scheduled_send_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         send: &ScheduledSend<'_>,
         payload: Vec<u8>,
         dedupe_actor_ref: &str,
+        gate_reason_codes: &[String],
     ) -> MemoryResult<EnqueueOutcome> {
         if let Some(host) = self.task_host() {
             crate::agent_dispatch::fence_agent_run_effect_in_txn(
@@ -65,6 +68,21 @@ impl Memory<'_> {
                     .map_err(facade_error_from_calendar)?;
             }
         }
-        Ok(outcome)
+        Ok(match outcome {
+            EnqueueOutcome::Enqueued(record) => {
+                EnqueueOutcome::Enqueued(crate::outbound::hold_agent_send_for_undo_in_txn(
+                    self.vault,
+                    wtxn,
+                    record,
+                    &crate::outbound::UndoSendCandidate {
+                        task_ref: send.task_ref,
+                        channel: &send.draft.channel,
+                        actor_class: self.actor_class,
+                        gate_reason_codes,
+                    },
+                )?)
+            }
+            existing => existing,
+        })
     }
 }
