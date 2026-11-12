@@ -26,18 +26,10 @@ struct Room {
 
 fn room() -> Room {
     let (_dir, server) = interlocutor_test_server();
-    let owner = seeded_test_entity_id(0x2401_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let agent = seeded_test_entity_id(0x2401_0002);
-    server
-        .vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"room owner",
-        )
-        .expect("onboard person");
     bind_room_owner(&server, owner);
     let definition = oneiron::agent_def::AgentDefinition::new(
         "oneiron.agent.credkey",

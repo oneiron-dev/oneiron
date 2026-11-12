@@ -622,7 +622,9 @@ async fn an_mcp_room_speech_wakes_the_dreamer() {
     };
     let fake = FakeLlm::start(vec![], Some(reply)).await;
     let (_dir, server, host) = server_past_the_start_scan(&fake).await;
-    let owner = seeded_test_entity_id(0x0024_6513);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let credential = "mcp-room-speech-wake";
     register_mcp_actor(&server, credential, owner, EdgeActorClass::Human).await;
     let project = EntityId::now();
