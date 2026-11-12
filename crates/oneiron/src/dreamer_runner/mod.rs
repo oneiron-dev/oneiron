@@ -21,6 +21,7 @@ mod program;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
+mod seat_wait;
 pub mod shadow_values;
 pub mod step_replay;
 mod store;
@@ -106,6 +107,9 @@ pub use self::program::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebi
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;
+pub use self::seat_wait::{
+    ModelSeatAvailability, ModelSeatAvailableSource, ModelSeatSource, ModelSeatState,
+};
 pub use self::store::*;
 pub use self::types::*;
 pub use self::wake_park::DreamerCheckpointDue;
