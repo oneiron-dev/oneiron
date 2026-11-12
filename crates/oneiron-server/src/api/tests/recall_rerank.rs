@@ -254,7 +254,7 @@ async fn recall_spec_from(
         MCP_TOOL_FIRST_PATH,
         credential,
         &format!("recall-{}", spec["effort"]),
-        "recall",
+        "vault.recall",
         mcp_merge_args(
             mcp_endpoint_envelope(actor, "read_memory"),
             json!({"arguments": {"spec": spec}}),
@@ -1137,7 +1137,7 @@ async fn every_effort_through_mcp_on_the_local_embedder_and_a_loopback_reranker(
                 MCP_TOOL_FIRST_PATH,
                 "acceptance",
                 &format!("acceptance-{effort}"),
-                "recall",
+                "vault.recall",
                 mcp_merge_args(
                     mcp_endpoint_envelope(actor, "read_memory"),
                     json!({"arguments": {"spec": {"query": PARAPHRASE, "effort": effort, "limit": 7}}}),

@@ -554,7 +554,7 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
         &server,
         &slip,
         &key,
-        json_request("POST", "/v1/core/facade/witness", later_turn(&server)),
+        json_request("POST", "/v1/core/facade/vault.witness", later_turn(&server)),
     );
     let response = crate::build_app(Arc::clone(&server))
         .oneshot(request)
@@ -595,7 +595,13 @@ async fn an_mcp_witness_turn_wakes_the_dreamer() {
     );
     let (_, body) = route_json(
         Arc::clone(&server),
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "witness",
+            "vault.witness",
+            args,
+        ),
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
