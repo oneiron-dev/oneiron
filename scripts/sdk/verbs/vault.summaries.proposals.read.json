@@ -5,6 +5,7 @@
   "output": "crate::scope_summary::SummaryProposalView",
   "call": "memory.read_summary_proposal(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserLibraryRetireOutput",
   "call": "oneiron_browser::BrowserAnswer::of(driver.library_retire(input)?)",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "browser",
   "mcp": "none",
   "section": false,

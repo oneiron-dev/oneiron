@@ -4,9 +4,11 @@
 //! ... --test <stem>`); never behind a cargo feature, so no `--all-features`
 //! build reaches them. Hidden; never API.
 
+pub mod agent_definition_scans;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
+pub mod check_in;
 pub mod checkpoint_registry;
 pub mod coach;
 pub mod code_reply_healer;

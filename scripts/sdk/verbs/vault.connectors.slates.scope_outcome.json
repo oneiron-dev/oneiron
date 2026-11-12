@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ConnectorScopeOutcomeView",
   "call": "crate::task_verb::sdk::record_connector_scope_outcome(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.scope_outcome\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

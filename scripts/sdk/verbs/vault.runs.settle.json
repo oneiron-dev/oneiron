@@ -9,6 +9,7 @@
   "host_door_surface": true,
   "host_door_caller": true,
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

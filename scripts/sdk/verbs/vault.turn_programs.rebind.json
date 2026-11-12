@@ -5,6 +5,7 @@
   "output": "crate::dreamer_runner::TurnProgramRebindReceipt",
   "call": "crate::dreamer_runner::rebind_turn_program(memory, &input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

@@ -193,6 +193,19 @@ impl<'a> BatchBuilder<'a> {
         self
     }
 
+    /// What the author writer makes of each AGENT_DEF put this batch stages,
+    /// by staged id, readable once the batch has committed; none for a batch
+    /// with no agent author ([`Self::authored_through`]).
+    #[must_use]
+    pub fn agent_definition_write_receipts(
+        &self,
+    ) -> crate::agent_def::AgentDefinitionWriteReceipts {
+        self.agent_authoring
+            .as_ref()
+            .map(crate::agent_def::AgentAuthoring::receipts)
+            .unwrap_or_default()
+    }
+
     /// Gates and applies `id`'s raw CLAIM put under `envelope`, its verified
     /// caller's (FIX 8118), in this batch's preflight and in its apply.
     pub(crate) fn caller_envelope(mut self, id: &EntityId, envelope: crate::WriteEnvelope) -> Self {

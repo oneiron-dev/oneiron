@@ -226,7 +226,8 @@ async function coordination01HouseCard(engine: EngineFixture, providers: Scripte
  *   (workspace_roster/project/proposal.rs) asks for the card's leader with no parent attempt and the new child
  *   project; project_depth_limit_in_txn refuses it before enqueue ("a project spawn requires a real parent in
  *   its ancestor project", agent_dispatch/dispatch/depth.rs), and the confirm only logs a warning. The earlier
- *   red at the house's source read (HOUSE-SOURCE-READ-DENIED) was fixed by #7028.
+ *   red at the house's source read (HOUSE-SOURCE-READ-DENIED) was fixed by #7028. Past the barrier (fix #7193)
+ *   the next red is the project kind check, FIX 23490 (see the comment at the check).
  */
 suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an agent's card mints nothing until its person confirms, and a dismissed card never mints", async () => {
   const scenario = await coordination01Scenario();
@@ -338,6 +339,12 @@ suite.test(test, "COORDINATION-01", "Project proposal requires acceptance: an ag
       .toEqual(["coordination01-draft-1", "coordination01-draft-2", "coordination01-intake"]);
 
     const project = await coordination01Entity(client, minted.project_id);
+    // DEFECT (expected red here once #7193 lands, Thu 12 Nov 2026; FIX 23490
+    // [PROJECT-KIND-READS-TYPE-103]): vault.get spells a minted project's kind
+    // "TYPE_103", not "PROJECT". PROJECT is a product kind registered at run time,
+    // and every read-back kind spelling consults only the static entity-type
+    // registry. E2E-1's job 20 measured this same check on MEMORY-01/02/05/07/08
+    // (fleet job 1112-130158-e1f6, log sha256 2110bc0f209a840f). The check stays.
     expect(project.kind).toBe("PROJECT");
     const body = coordination01ProjectBody(project);
     expect(body.role).toBe("project");

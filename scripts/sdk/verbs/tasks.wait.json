@@ -3,6 +3,7 @@
   "input": "crate::code_run::TaskWaitInput",
   "output": "crate::code_run::TaskWaitOutput",
   "scope": "Read",
+  "act_class": "unstated",
   "context": "run",
   "effect": "TasksWaitSet",
   "host": {

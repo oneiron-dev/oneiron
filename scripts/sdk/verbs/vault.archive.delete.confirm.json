@@ -5,6 +5,7 @@
   "output": "crate::memory::ArchiveDeleteBatchResult",
   "call": "crate::memory::confirm_archive_delete_wire(memory, &input)?",
   "scope": "Write",
+  "act_class": "delete",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

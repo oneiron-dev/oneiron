@@ -16,6 +16,7 @@
   "output": "crate::memory::CommitReceipt",
   "call": "memory.claim_upsert(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "validate": "crate::memory::caps::check_claim_input(&input)?;"
   },

@@ -101,7 +101,8 @@ use codec::*;
 use companion_bind::*;
 use steps::*;
 
-pub use self::house_link::parse_house_role;
+pub(crate) use self::codec::companion_principal_in_txn;
+pub use self::house_link::{DEFAULT_HOUSE_ROLE, parse_house_role};
 pub(crate) use self::house_link::{
     erase_house_link_actor_in_txn, house_link_receipts, house_role_lines_in_txn,
     is_house_link_grant_in_txn,
