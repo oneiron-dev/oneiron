@@ -295,6 +295,7 @@ impl ConsolidationExecutor<'_> {
         let mut replies = Vec::new();
         let mut refused = None;
         let mut budget_refused = None;
+        let mut seat_refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
         for (
@@ -320,6 +321,13 @@ impl ConsolidationExecutor<'_> {
                 SliceFate::BudgetRefused { reason, refusal } => {
                     budget_refused.get_or_insert((reason, refusal));
                 }
+                SliceFate::SeatRefused {
+                    reason,
+                    seat,
+                    reset_at_s,
+                } => {
+                    seat_refused.get_or_insert((reason, seat, reset_at_s));
+                }
             }
         }
         if trapped {
@@ -331,6 +339,15 @@ impl ConsolidationExecutor<'_> {
         // A refusal for good ends the try, before a reply a retry may fix.
         if let Some((reason, refusal)) = budget_refused {
             return Ok(PartitionRun::BudgetRefused { reason, refusal });
+        }
+        // A spent seat waits for its login or its reset, before a reply a
+        // retry may fix (SEAT-PARK-MODEL-STEP-PATH).
+        if let Some((reason, seat, reset_at_s)) = seat_refused {
+            return Ok(PartitionRun::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            });
         }
         if let Some(reason) = refused {
             return Ok(PartitionRun::Refused { reason });

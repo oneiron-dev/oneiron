@@ -47,25 +47,48 @@ impl StepChargeTally {
 
     /// Ends the try on a failed durable step: `Failed`, typed, with what
     /// the try already spent and its paid steps' receipts, when a spend
-    /// scope refused the step for good; any other step error parks for
-    /// `reason` with that error's cause, as [`Self::park_for`] does
-    /// (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    /// scope refused the step for good; a park on the seat, with the same
+    /// spend, when a spent model seat refused it (SEAT-PARK-MODEL-STEP-PATH);
+    /// any other step error parks for `reason` with that error's cause, as
+    /// [`Self::park_for`] does (BUDGET-TRAP-UNTYPED-NO-SENDER).
     pub(super) fn end_on_step_error(
         &self,
         reason: &str,
         error: &DurableStepError,
     ) -> DreamerAttemptExecution {
-        crate::dreamer_runner::dreamer_failed_on_refused_step(
+        if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(
             error,
             self.units,
             &self.step_bindings,
+        ) {
+            return failed;
+        }
+        if let Some((seat, reset_at_s)) = crate::dreamer_runner::dreamer_seat_refusal_of_step(error)
+        {
+            return self.park_on_seat(reason, seat, reset_at_s);
+        }
+        self.park_for(
+            reason,
+            crate::dreamer_runner::dreamer_park_cause_of_step(error),
         )
-        .unwrap_or_else(|| {
-            self.park_for(
-                reason,
-                crate::dreamer_runner::dreamer_park_cause_of_step(error),
-            )
-        })
+    }
+
+    /// Parks on the spent model `seat` that refused a step, with `reason`
+    /// and what the try already spent; the seat's available write resumes
+    /// it (SEAT-PARK-MODEL-STEP-PATH).
+    pub(super) fn park_on_seat(
+        &self,
+        reason: &str,
+        seat: crate::dreamer_runner::ModelSeatId,
+        reset_at_s: Option<u64>,
+    ) -> DreamerAttemptExecution {
+        DreamerAttemptExecution::ParkOnSeatWithSpend {
+            reason: reason.to_owned(),
+            seat: *seat.as_bytes(),
+            reset_at_s,
+            completed_units: self.units,
+            step_bindings: self.step_bindings.clone(),
+        }
     }
 
     /// Ends the try `Failed` for `reason` on a step a spend scope refused
@@ -300,6 +323,13 @@ pub(super) enum SliceFate {
         reason: String,
         refusal: StepBudgetRefusal,
     },
+    /// A spent model seat refused the slice's step: the try parks on the
+    /// seat (SEAT-PARK-MODEL-STEP-PATH).
+    SeatRefused {
+        reason: String,
+        seat: crate::dreamer_runner::ModelSeatId,
+        reset_at_s: Option<u64>,
+    },
 }
 
 /// Accounts one slice step's outcome into `charges` and reports its
@@ -356,7 +386,14 @@ pub(super) fn tally_slice_outcome(
             } else if let Some(usage) = unsaved_usage {
                 charges.record_usage(&usage);
             }
-            SliceFate::Refused(error.to_string())
+            match crate::dreamer_runner::dreamer_seat_refusal_of_step(&error) {
+                Some((seat, reset_at_s)) => SliceFate::SeatRefused {
+                    reason: error.to_string(),
+                    seat,
+                    reset_at_s,
+                },
+                None => SliceFate::Refused(error.to_string()),
+            }
         }
     })
 }
