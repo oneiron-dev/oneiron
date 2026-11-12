@@ -174,9 +174,12 @@ fn each_reserved_family_takes_its_ruled_door_or_reason() {
 fn a_section_install_claim_restores_without_its_fit_receipt() {
     let (_source_dir, source) = open_vault();
     let _owner = owner_actor(&source);
+    // A folder skill's archive is re-read through its SKILL.md frontmatter,
+    // which must name the native row's skill id, description and version.
     let files = vec![HubFile::new(
         "SKILL.md",
-        b"# a skill with a fitted section\n".to_vec(),
+        b"---\nname: archive-pin.sectioned\ndescription: A skill a plugin section was fitted onto\nversion: 1.0.0\n---\n# a skill with a fitted section\n"
+            .to_vec(),
     )];
     let tree = canonical_skill_tree_hash(
         files
