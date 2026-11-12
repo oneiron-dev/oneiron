@@ -93,7 +93,9 @@ fn thread_reply(
 
 /// G31: the owner opens a private thread naming its audience, then replies
 /// again. The second reply continues that thread, so the thread door read the
-/// root's stamped binding through `thread_binding` and admitted it.
+/// root's stamped binding through `thread_binding` and admitted it. A private
+/// audience names members of the room (`validate_private_audience_in`), so
+/// the room is a group conversation that seats the owner.
 #[test]
 fn a_private_thread_root_binding_admits_the_next_reply() -> TestResult {
     let fixture = open()?;
@@ -105,7 +107,12 @@ fn a_private_thread_root_binding_admits_the_next_reply() -> TestResult {
                 occurred_start: None,
                 occurred_end: None,
                 learned_at: None,
-                body: json!({}),
+                body: json!({
+                    "v": 1,
+                    "kind": "group",
+                    "member_ids": [fixture.owner.to_hex()],
+                    "title": "gate census pin room",
+                }),
                 text: None,
             })?
             .id,

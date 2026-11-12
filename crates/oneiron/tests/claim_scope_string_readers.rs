@@ -133,6 +133,20 @@ fn put_lens_skill(vault: &Vault, name: &str) -> Result<EntityId, Box<dyn std::er
     )
     .with_content_hash(tree);
     vault.put_skill_record(&id, &record, TimeRange { start: 12, end: 12 }, 12)?;
+    // An accepted outcome trains the lens's reliability cell, whose projected
+    // `learning.*` head is a claim about this SKILL (learning/project.rs). On
+    // main that head is born in the SKILL's substrate facet, which no put
+    // stores, so the birth gate refuses it InvalidFacet (#4389; #7205 gives it
+    // the vault default facet). The fixture stores that facet, so the outcome
+    // lands on main and on #7205 alike; the scope readers are this file's
+    // subject, not the facet gate.
+    vault.put_entity(
+        &oneiron::claim::substrate_facet_id(id)?,
+        oneiron::registry::ENTITY_TYPE_FACET,
+        TimeRange { start: 12, end: 12 },
+        12,
+        &rmp_serde::to_vec_named(&json!({"name": format!("{name} facet")}))?,
+    )?;
     Ok(id)
 }
 
