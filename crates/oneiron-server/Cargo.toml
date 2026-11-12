@@ -284,6 +284,12 @@ name = "facade_live_run_status"
 path = "tests/facade_live_run_status.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
+[[test]]
+name = "note_session_bind_reply"
+path = "tests/note_session_bind_reply.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 
