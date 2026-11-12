@@ -11,10 +11,11 @@
 //! The ladder above rung 1 is rungs 2 to 4: the grantor, the next holders up
 //! the grant chain, the Owner role. A [`RungResolver`] names each rung's
 //! holders from verified records when the ask enters it, and they are pinned
-//! there (Q3, Q9). This piece holds the row, the waits and the answer door;
-//! the resolver over the verified records, the live re-check of a holder's
-//! grant and own check-in, and the agent holder's verdict are 2c, stacked on
-//! it. The host that wakes a due row is 2e; the agent verbs are 2f and 2l.
+//! there (Q3, Q9). The same resolver says whether a pinned holder may still
+//! answer (its live grant and its own check-in, re-read at each answer) and
+//! carries the agent holders' verdicts (Q4). `VerifiedChain` is the
+//! resolver over the verified records (2c). The host that wakes a due row is
+//! 2e; the agent verbs are 2f and 2l.
 
 use serde::{Deserialize, Serialize};
 
@@ -108,7 +109,8 @@ pub enum RungMembers {
 }
 
 /// Names the holders of one rung of one pending check-in, from verified
-/// records only, when the ask enters that rung.
+/// records only, when the ask enters that rung; says whether a holder may
+/// still answer; and carries the agent holders' verdicts.
 pub(crate) trait RungResolver {
     /// # Errors
     ///
@@ -116,11 +118,32 @@ pub(crate) trait RungResolver {
     /// [`RungMembers::Missing`], not an error.
     fn members(
         &self,
-        store: &Store,
+        vault: &Vault,
         txn: &heed::RoTxn<'_>,
         pending: &PendingCheckIn,
         rung: Rung,
     ) -> Result<RungMembers>;
+
+    /// Whether `holder` may answer `pending` at `now`: read when the ask
+    /// pins the holder, and again at each answer and extension (P22-SHAPE
+    /// Q9), so a holder whose grant lapsed since cannot answer.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    fn may_answer(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        pending: &PendingCheckIn,
+        holder: &RungHolder,
+        now: u64,
+    ) -> Result<bool>;
+
+    /// An agent holder's verdict on `pending`, asked once when the ask
+    /// enters the agent's rung (P22-SHAPE Q4 = A). `None`: no verdict, and
+    /// the agent passes the ask up.
+    fn agent_verdict(&self, pending: &PendingCheckIn, holder: &RungHolder) -> Option<HolderAnswer>;
 }
 
 /// The wait a person rung captured when the ask entered it (P22-SHAPE Q5).
@@ -206,6 +229,14 @@ impl HolderAnswer {
             Self::Deny => "deny",
         }
     }
+}
+
+/// A holder's answer and the effect it is over: it settles the ask only
+/// over the exact effect digest the ask waits on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HolderReply {
+    pub effect_digest: [u8; 32],
+    pub answer: HolderAnswer,
 }
 
 /// Where a pending check-in stands. Every state but `Open` is final, and
@@ -456,18 +487,17 @@ fn validate_open(request: &OpenPendingCheckIn, now: u64) -> Result<()> {
 /// A holder's answer to a pending check-in, in `txn` at `now`. The person is
 /// revalidated in `txn`; the answer lands only while the ask is open, before
 /// `until`, before its delay window's end, before the current rung's wait
-/// ends, from a person pinned on the current rung, over the exact effect
-/// digest. The first valid answer lands and every other holder reads who
-/// gave it.
-///
-/// The live re-check of the holder's grant and own check-in for the act is
-/// 2c, stacked on this piece; the public answer verb is 2l.
+/// ends, from a person pinned on the current rung who `chain` says may still
+/// answer (their live grant and own check-in, P22-SHAPE Q9), over the exact
+/// effect digest. The first valid answer lands and every other holder reads
+/// who gave it. The public answer verb is 2l.
 ///
 /// # Errors
 ///
 /// A dead or foreign proof; no such row; a final state; `until`, the delay
 /// window's end or the rung's wait passed; a mismatched digest; a person not
-/// pinned on the current rung; storage errors.
+/// pinned on the current rung, or one who may no longer answer; storage
+/// errors.
 #[cfg_attr(
     not(oneiron_test_support),
     allow(
@@ -480,16 +510,21 @@ pub(crate) fn answer_pending_check_in_in_txn(
     txn: &mut heed::RwTxn<'_>,
     person: &AuthenticatedOwner,
     id: &EntityId,
-    effect_digest: &[u8; 32],
-    answer: HolderAnswer,
+    reply: HolderReply,
+    chain: &dyn RungResolver,
     now: u64,
 ) -> Result<PendingCheckIn> {
+    let HolderReply {
+        effect_digest,
+        answer,
+    } = reply;
     let by = person.revalidate_person_in_txn(vault, txn)?;
     let mut row = open_row_in_txn(&vault.store, txn, id, now)?;
-    if row.effect_digest != *effect_digest {
+    if row.effect_digest != effect_digest {
         return Err(refuse("the answer is over another effect"));
     }
     let rung = pinned_person_rung(&row, by, now)?;
+    require_may_answer(vault, txn, &row, by, chain, now)?;
     row.state = PendingState::Answered {
         answer,
         by: Some(by),
@@ -521,8 +556,8 @@ pub(crate) fn answer_pending_check_in_in_txn(
 ///
 /// A dead or foreign proof; no such row; a final state; `until`, the delay
 /// window's end or the rung's wait passed; a person not pinned on the
-/// current rung; an extension that does not lengthen the wait or passes the
-/// asker's `until`; storage errors.
+/// current rung, or one who may no longer answer; an extension that does not
+/// lengthen the wait or passes the asker's `until`; storage errors.
 #[cfg_attr(
     not(oneiron_test_support),
     allow(
@@ -536,11 +571,13 @@ pub(crate) fn extend_pending_check_in_in_txn(
     person: &AuthenticatedOwner,
     id: &EntityId,
     until: u64,
+    chain: &dyn RungResolver,
     now: u64,
 ) -> Result<PendingCheckIn> {
     let by = person.revalidate_person_in_txn(vault, txn)?;
     let mut row = open_row_in_txn(&vault.store, txn, id, now)?;
     let rung = pinned_person_rung(&row, by, now)?;
+    require_may_answer(vault, txn, &row, by, chain, now)?;
     if row.until.is_some_and(|cutoff| until > cutoff) {
         return Err(refuse("an extension may not pass the asker's until"));
     }
@@ -656,6 +693,28 @@ fn pinned_person_rung(row: &PendingCheckIn, by: EntityId, now: u64) -> Result<Ru
         return Err(refuse("only a person pinned on the current rung answers"));
     }
     Ok(entry.rung)
+}
+
+/// Refuses a pinned person `by` whom `chain` no longer lets answer.
+fn require_may_answer(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &PendingCheckIn,
+    by: EntityId,
+    chain: &dyn RungResolver,
+    now: u64,
+) -> Result<()> {
+    let holder = RungHolder {
+        principal: by,
+        kind: HolderKind::Person,
+    };
+    if chain.may_answer(vault, txn, row, &holder, now)? {
+        Ok(())
+    } else {
+        Err(refuse(
+            "the holder's live grant or own check-in no longer admits this act",
+        ))
+    }
 }
 
 /// The table's actor scrub (an actor's erase, and a restore's rerun of it):
