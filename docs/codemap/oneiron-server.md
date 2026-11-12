@@ -21,7 +21,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/coach_heal.rs` | src | s | 7 crate-vis | — | The host Coach (ARCH-0066 #coach, OF-418) |
 | `src/ai_host/coach_heal/wake.rs` | src | s | 5 crate-vis | — | The installed Coach worker's resources, lent to an invoked wake pass |
 | `src/ai_host/coach_health.rs` | src | s | 2 crate-vis | — | The host Coach's answer to an agent-health ask (agent-mind §3.5, OF-568) |
-| `src/ai_host/coach_host.rs` | src | m | 6 crate-vis | — | The host Coach's nightly jobs (ARCH-0066 #coach, OF-420) |
+| `src/ai_host/coach_host.rs` | src | m | 7 crate-vis | — | The host Coach's nightly jobs (ARCH-0066 #coach, OF-420) |
 | `src/ai_host/coach_host/attribution_audits.rs` | src | s | 1 crate-vis | — | The attribution judge's held-out audits on the host's ladder (ARCH-0053, OF-542) |
 | `src/ai_host/coach_host/attribution_labels.rs` | src | s | 1 crate-vis | — | The unclear-note clustering on the host's ladder (ARCH-0056 §5 #unclear, FIX 7824) |
 | `src/ai_host/coach_host/fork_promote.rs` | src | s | 1 crate-vis | — | The host side of the project tree fork (ARCH-0079 #task-type, OF-420): the engine forks a project's… |
@@ -1929,7 +1929,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/slide_render/scratch/bounded.rs` | src | s | 5 crate-vis | — | The opt-in Linux scratch mount and file-content write fence |
 | `src/test_credentials.rs` | src | m | 13 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/test_doors/big_rung.rs` | src | s | 1 fn | — | Doors for `tests/big_rung_written_reply.rs` (FIX 22368): the decision the Big rung stores from a written reply |
-| `src/test_doors/mod.rs` | src | s | 1 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/coach_round.rs` | src | s | 1 fn | — | Door for `tests/eval_authoring_execute_lapsed_lease.rs`: one Coach host round, the nightly worker's unit of… |
+| `src/test_doors/mod.rs` | src | s | 2 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/export.rs` | src | s | 1 crate-vis | — | Generic original-usage export over ctl (LC191311): one stored event's original JSON in framed chunks |
 | `src/usage/keys.rs` | src | s | 20 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
@@ -1997,6 +1998,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/bounded_legacy_reads.rs` | test | m | — | — | BOUNDED-LEGACY-READ (RETRIEVAL-04): the legacy reads `GET /api/search/vector`, `/api/entity/{id}` and… |
 | `tests/code_run_reply_evidence.rs` | test | m | — | — | RAW-PROVIDER-EVIDENCE-READ (CODE-RUNTIME-02): `vault.code.reply_evidence` reads the model reply a code run… |
 | `tests/consent_revoke_grantee_renounce.rs` | test | m | — | — | A grantee may renounce its own standing consent grant (P-GATE-010, DEC-0006) |
+| `tests/eval_authoring_execute_lapsed_lease.rs` | test | s | — | — | `vault.evals.authoring.execute` on a requested attempt whose host stopped before it settled the lease (FIX… |
+| `tests/eval_authoring_execute_served.rs` | test | s | — | — | `vault.evals.authoring.execute` served over the real facade route (FIX EVAL-AUTHORING-EXECUTE-SERVER-CASE)… |
 | `tests/facade_live_run_status.rs` | test | s | — | — | Live-run guard refusals keep their status through the real facade router |
 | `tests/facade_repo_refusal_status.rs` | test | s | — | — | A repo door's typed refusal keeps its own status through the real facade router (NO-DOOR… |
 | `tests/federation_connect_host_fault_status.rs` | test | m | — | — | Connect host faults keep their server status while invalid peer proofs remain request errors |
@@ -2041,6 +2044,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/openapi_off_record_rooms.rs` | test | s | — | — | The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with… |
 | `tests/run_reader_record_scope.rs` | test | s | — | — | The HTTP facade refuses facet-limited credentials before reading run branches or spend leases, while an… |
 | `tests/runtime_clock.rs` | test | m | — | — | The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and… |
+| `tests/support/eval_authoring_fixture.rs` | test | m | 22 crate-vis | — | Shared fixture for the `vault.evals.authoring.execute` server tests: a rooted vault served over the real… |
 | `tests/support/fake_llm.rs` | test | m | 11 crate-vis | — | A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |
