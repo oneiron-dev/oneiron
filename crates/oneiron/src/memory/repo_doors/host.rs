@@ -18,7 +18,8 @@ use oneiron_authority::federation::RepoAccessRefusal;
 
 impl RepoRunBinding {
     /// Uses the native host's existing gated provenance mint for this held
-    /// run, with the request the host actually served on its attachment.
+    /// run, with the request the host actually served on its attachment,
+    /// for the proposal row `effect` it serves.
     pub fn sources_from_host(
         &self,
         vault: &Vault,
@@ -26,9 +27,10 @@ impl RepoRunBinding {
         path: String,
         content_hash: [u8; 32],
         witness: &crate::code_run::RepoRequestWitness,
+        effect: crate::code_run::SelfEffect,
     ) -> MemoryResult<super::RepoRunSources> {
         crate::code_run::HostSelfDispatcher::for_live_run(vault, self.actor, &self.lease)?
-            .repo_sources_from_host(stamp, path, content_hash, witness)
+            .repo_sources_from_host(stamp, path, content_hash, witness, effect)
     }
 
     /// The binding of the live run `lease` seals, as `actor`, reading on

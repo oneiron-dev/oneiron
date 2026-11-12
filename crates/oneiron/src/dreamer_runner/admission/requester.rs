@@ -69,6 +69,7 @@ impl DreamerRunnerStore<'_> {
                 crate::task_verb::highway_runner::RunnerSettle::Failed {
                     error: reason,
                     retryable: false,
+                    budget_refusal: None,
                 },
                 held.as_ref(),
             )?;
