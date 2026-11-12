@@ -23,6 +23,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::work_line::TaskWorkTurn;
 use crate::write_envelope::WriteActor;
 
@@ -132,6 +133,7 @@ pub(crate) fn accept_runner_task_in_txn(
 /// its lease. The queue row is the runner's to settle. `turn` is the
 /// task-work turn the runner took before it opened that transaction
 /// ([`runner_report_turn`]): the report runs on it and waits for no other.
+/// `note` is one more engine field its lifecycle receipt keeps.
 ///
 /// `Ok(None)`, with nothing written, when the row realizes no TASK, or the
 /// TASK is missing, not standard, already terminal or cancelled.
@@ -148,6 +150,7 @@ pub(crate) fn report_runner_task_in_txn(
     report_key: &str,
     body: TaskReportBody,
     judged: Option<RunnerDoneAnswer>,
+    note: Option<(&str, &str)>,
     turn: &Arc<TaskWorkTurn>,
 ) -> MemoryResult<Option<TaskCallReceipt>> {
     let Some(task_ref) = runner_task_in(vault, txn, record)? else {
@@ -164,7 +167,7 @@ pub(crate) fn report_runner_task_in_txn(
         attempt_count: record.attempt_count,
         node_ref: local_node_in(vault, txn)?,
     };
-    let receipt = memory.report_in_runner_txn(
+    let receipt = memory.report_in_runner_txn_noting(
         txn,
         &via,
         TaskReport {
@@ -174,6 +177,7 @@ pub(crate) fn report_runner_task_in_txn(
             body,
         },
         judged,
+        note,
     )?;
     // FIX 1140: a TASK this report settled wakes its peer-result waiters
     // when the runner's transaction commits, not at the next wake pass.
@@ -254,7 +258,13 @@ pub(crate) enum RunnerSettle<'a> {
     /// means met?" before it settled (OF-533).
     Judged(RunnerDoneAnswer),
     /// The try failed; `retryable` when the queue tries it again.
-    Failed { error: &'a str, retryable: bool },
+    /// `budget_refusal` is the typed refusal of a try a spend scope refused
+    /// for good: the TASK's lifecycle receipt keeps it beside `error`.
+    Failed {
+        error: &'a str,
+        retryable: bool,
+        budget_refusal: Option<&'a StepBudgetRefusal>,
+    },
 }
 
 /// The actor a leased row's TASK transitions run as, the one the runner
@@ -302,8 +312,9 @@ fn runner_caller_in(
 /// [`runner_caller_in`]'s actor derivation without its running-lease gate:
 /// who a runner's report on `record` runs as. Shared by the ordinary turn
 /// and the queued turn a withdrawn try's terminal report takes before it
-/// claims (FIX 11687): one derivation, never two.
-fn runner_report_actor_in(
+/// claims (FIX 11687): one derivation, never two. A met Done reads it to
+/// match its host run to the reporting actor (LEARN-CRITIC Q2).
+pub(super) fn runner_report_actor_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &AttemptRecord,
@@ -428,6 +439,15 @@ pub(crate) fn report_leased_task_in_txn(
         RunnerSettle::Judged(answer) => Some(answer.clone()),
         RunnerSettle::Done | RunnerSettle::Failed { .. } => None,
     };
+    // BUDGET-TRAP-UNTYPED-NO-SENDER: the engine's own lifecycle field, never
+    // a member of the report body a caller could author.
+    let refusal_note = match &settle {
+        RunnerSettle::Failed {
+            budget_refusal: Some(refusal),
+            ..
+        } => Some(crate::receipt::budget_refusal_field_value(refusal)?),
+        RunnerSettle::Done | RunnerSettle::Judged(_) | RunnerSettle::Failed { .. } => None,
+    };
     let (transition, body) = match settle {
         RunnerSettle::Done | RunnerSettle::Judged(_) => {
             let Some(result_ref) = record
@@ -449,7 +469,9 @@ pub(crate) fn report_leased_task_in_txn(
                 },
             )
         }
-        RunnerSettle::Failed { error, retryable } => (
+        RunnerSettle::Failed {
+            error, retryable, ..
+        } => (
             if retryable { "retry" } else { "failed" },
             TaskReportBody::Failed {
                 error: if error.trim().is_empty() {
@@ -479,6 +501,9 @@ pub(crate) fn report_leased_task_in_txn(
         &runner_task_key(&record, transition),
         body,
         judged,
+        refusal_note
+            .as_deref()
+            .map(|value| (crate::receipt::FIELD_BUDGET_REFUSAL, value)),
         turn,
     )
     .map_err(runner_refusal)?;

@@ -138,6 +138,7 @@ pub(super) fn fail_once_in_txn(
         crate::task_verb::highway_runner::RunnerSettle::Failed {
             error: &input.evidence.stable_reason,
             retryable: false,
+            budget_refusal: None,
         },
         turn,
     )?;

@@ -5,6 +5,7 @@
   "output": "Vec<crate::task_verb::sdk::RoomEntry>",
   "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {},
   "mcp_scope": "unrestricted",
   "section": false,

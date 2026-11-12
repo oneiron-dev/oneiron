@@ -54,9 +54,13 @@ type GoalRecord = {
 };
 
 // LEARNING-01 — Goal-vector admission and tradeoff should work. OF-495.
-// Waiting: human goal-intake WRITE of the complete vector record, plus typed
-// optimizer candidate/proposal submission and admission readback. ProjectGoalDraft
-// currently has goal, why, axes:string[]; goal.intake only READS interview context.
+// Waiting: the witnessed-intake and fixed-baseline production-judge fixture,
+// grounded proposal evidence, and HTTP/MCP flow wiring. The doors exist:
+// vault.projects.goal.intake.complete writes the full record after a witnessed
+// interview, vault.projects.goal.get reads it, vault.skills.optimize.* propose,
+// measure, score and admit, and vault.projects.goal.propose stores a full goal
+// revision proposal (base claim + generation, engine diff) that
+// vault.projects.goal.revisions and goal.intake show and goal.dismiss sets aside.
 // Existing HTTP: POST /v1/owner/skills/judge/measure {proposal,pulls_per_axis?},
 // GET /skills/judge/{preferences,tradeoff-asks,goal-revisions}, and
 // POST /skills/judge/tradeoff-asks/pick {proposal,question_digest,choice}.
@@ -77,7 +81,7 @@ type Learning01 = {
   goal_change: { proposed: GoalRecord; effective_goal_before: Ref; effective_goal_after: Ref };
 };
 type Learning01Current = PublicCall<"vault.projects.goal.intake">;
-suite.todo(test, "LEARNING-01", "waits on typed full goal-vector intake write and optimizer candidate admission/proposal calls");
+suite.todo(test, "LEARNING-01", "waits on the witnessed-intake and fixed-baseline production-judge fixture, grounded proposal evidence, and HTTP/MCP flow wiring; the full-goal proposal door and its Rust coverage do not arm it");
 
 // LEARNING-02 — Measured learning rows cannot be forged should work. OF-542.
 // Waiting: measured learning-cell view with explicit priors, outcome provenance
@@ -169,11 +173,15 @@ suite.todo(test, "LEARNING-03", "waits on its arming PR: the OF-366 authoring bi
 // LEARNING-04 — Multi-critic findings and seal audits should work. OF-352/544.
 // Waiting: typed confession/recheck/audit receipt readback and controlled public
 // completion/trigger. The Coach seal checker IS wired; do not call it absent.
+// A public tasks.update DONE through a host-bound run stamps that run's executor
+// model on the held try (LEARN-CRITIC Q2), so a public completion can be sealed.
 // Existing vault.critic.review takes CriticReviewSubmit and returns triage,
 // critique artifacts and decision receipts. Learned-setting seed/pin is public.
 // Set up two independently anchored critic histories, same task type and axis.
 // Merge duplicate findings with their evidence/attribution; a real hard-check
 // veto cannot be outvoted by a reliable critic's unsupported reassurance.
+// Duplicates merge on the flaw identity a critic's note names (target, kind,
+// location; LEARN-CRITIC Q1 = B): give both fixture duplicates one flaw.
 // Read default audit_rate = .05, nonzero. Publicly pin it to 1 for this fixture:
 // the hidden-flaw audit is guaranteed, NOT a probabilistic test or private seed.
 // A confession schedules a directed recheck and changes NO score by itself.
@@ -224,6 +232,8 @@ suite.todo(test, "LEARNING-05", "waits on its arming PR: goal/TASK/real output/c
 // summaries, rubrics or synthetic rows. Every derivative stays with its family.
 // New sealed cohorts use explicit dates. Exposed labels retire to development;
 // one fixed reference cohort stays. Near-copy similarity flags REVIEW only.
+// Retire: vault.evals.cohorts.retire (the owner, or an agent on a Grant that lists it)
+// retires a served non-reference cohort; its receipt names that caller.
 // Inspect counts of served candidates, queries and promotions independently.
 // Tiny rare slice, interval crossing margin, changed set, changed rubric and
 // divergent canary each yield unknown, never a confident invented number.
@@ -242,7 +252,7 @@ type Learning06 = {
 };
 type Learning06ExistingCard = PublicCall<"vault.research.promote">["request"]["sufficiency"];
 // Label ask: vault.evals.labels.ask asks one label for a pending stock-switch offer whose stored card labels can settle.
-suite.todo(test, "LEARNING-06", "waits on vault.evals.authoring.execute with a stored report, public cohort retirement, and grounded setup: terminal pack receipts, an installed eval-authoring recipe, a cut cohort with counted exposure, a Coach-recorded stock offer");
+suite.todo(test, "LEARNING-06", "waits on vault.evals.authoring.execute with a stored report and grounded setup: terminal pack receipts, an installed eval-authoring recipe, a cut cohort with counted exposure, a Coach-recorded stock offer");
 
 // LEARNING-07 — Training export and approval before deploy should work.
 // OF-382/400. Owner routes already exist:

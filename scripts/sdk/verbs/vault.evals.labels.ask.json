@@ -5,8 +5,8 @@
   "output": "Option<crate::skill_optimize::EvalLabelAsk>",
   "call": "crate::skill_optimize::eval_doors::ask_label(memory, input)?",
   "scope": "Write",
-  "act_class": "unstated",
   "grant_class": "vault.evals.labels.ask grant or the vault owner",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

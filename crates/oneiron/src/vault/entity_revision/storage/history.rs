@@ -393,6 +393,16 @@ pub(in crate::vault::entity_revision) fn citation_live_doc(
     }
 }
 
+/// A NOTE revision's text fields, as its persist published them: title,
+/// tags and body under their BM25F NOTE fields (FIX 7789), so an idle
+/// refresh or a repo projection keeps them.
+fn note_text_fields(doc: &LoroDoc) -> Result<Vec<(String, String)>> {
+    Ok(crate::note::revision::index_fields(doc)?
+        .into_iter()
+        .map(|(name, text)| (name.to_owned(), text))
+        .collect())
+}
+
 pub(in crate::vault::entity_revision) fn revision_text_fields(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -406,10 +416,7 @@ pub(in crate::vault::entity_revision) fn revision_text_fields(
         else {
             return Err(Error::CorruptedIndex("NOTE revision document"));
         };
-        return Ok(vec![(
-            "markdown".to_owned(),
-            doc.get_text("body").to_string(),
-        )]);
+        return note_text_fields(&doc);
     }
     if let Some(field) = crate::entity_doc::pointer_field_in(store, txn, id)? {
         let frontier = FRONTIER
@@ -417,10 +424,7 @@ pub(in crate::vault::entity_revision) fn revision_text_fields(
             .ok_or(Error::EntityNotFound)?;
         return match revision_document(store, txn, id, revision, &frontier)? {
             RevisionDocument::Common(doc) => crate::entity_doc::document_text_fields(&doc, &field),
-            RevisionDocument::Note { doc, .. } => Ok(vec![(
-                "markdown".to_owned(),
-                doc.get_text("body").to_string(),
-            )]),
+            RevisionDocument::Note { doc, .. } => note_text_fields(&doc),
             RevisionDocument::Generic(doc) => {
                 let raw = generic_revision_raw(id, revision, &frontier, &doc)?;
                 Ok(text_fields(

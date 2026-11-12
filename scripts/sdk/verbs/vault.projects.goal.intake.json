@@ -1,10 +1,11 @@
 {
   "name": "vault.projects.goal.intake",
-  "description": "What a project's goal-intake interview starts from, for a member of its home room.",
+  "description": "What a project's goal-intake interview starts from, for a member of its home room: the full goal proposals open on the goal in force only for a reader of the goal.",
   "input": "ProjectRefRequest",
   "output": "crate::workspace_roster::ProjectGoalInterviewContext",
   "call": "memory.projects_goal_intake(crate::EntityId::from_hex(&input.project_ref)?)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

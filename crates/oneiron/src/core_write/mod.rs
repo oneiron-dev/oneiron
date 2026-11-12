@@ -10,8 +10,9 @@ pub mod shape;
 pub use batch::CoreWriteLane;
 pub(crate) use batch::CoreWriteLaneRef;
 pub use oneiron_store::core_write::{
-    ConversationCreateInput, ConversationTurnCreateInput, CoreBatchCommit, CoreBatchEntityInput,
-    CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt, CoreDagAddressMode,
-    CoreDagQuoteInput, CoreEntityWriteReceipt, DagRecordAppendInput, DagRecordAppendReceipt,
+    AgentDefinitionWriteDisposition, AgentDefinitionWriteReceipt, ConversationCreateInput,
+    ConversationTurnCreateInput, CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt,
+    CoreBatchWriteInput, CoreBatchWriteReceipt, CoreDagAddressMode, CoreDagQuoteInput,
+    CoreEntityWriteReceipt, DagRecordAppendInput, DagRecordAppendReceipt,
 };
 pub use shape::{AnnouncementAuthority, CoreWriteTextField, CoreWriteTimes};

@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailComplianceSearchReply",
   "call": "memory.mail_compliance_search(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "mcp_fields": {
     "spec": "$"
   },

@@ -3,6 +3,7 @@
   "input": "crate::policy_model::WorldPrivacySetInput",
   "output": "crate::policy_model::WorldPrivacySetOutput",
   "scope": "Write",
+  "act_class": "world_widen",
   "context": "run",
   "effect": "WorldPrivacySet"
 }

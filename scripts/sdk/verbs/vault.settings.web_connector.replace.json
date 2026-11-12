@@ -5,6 +5,7 @@
   "output": "crate::web_connector::WebConnectorSetting",
   "call": "crate::task_verb::sdk::replace_web_connector_setting(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "host_door": true,
   "host_door_precheck": false,
   "host_door_lists": true,

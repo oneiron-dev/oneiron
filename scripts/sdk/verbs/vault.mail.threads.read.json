@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailThreadView",
   "call": "memory.mail_thread(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },
