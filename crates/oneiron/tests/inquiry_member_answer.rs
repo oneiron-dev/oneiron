@@ -21,6 +21,10 @@
 //!   that allows only `task` still goes to the member;
 //! - an inquiry from another vault, a new inquiry already expired, and one
 //!   after the member revoked the edge are refused, and none is logged;
+//! - once the member narrows the edge's pact off the opened WORLD (the pact
+//!   stays Active and the company's credential live), a repeat of an
+//!   answered inquiry and a new inquiry are both refused, the new one is
+//!   not logged and the companion is not shown the scope again;
 //! - an erase of the company's guest actor, which removes the pending
 //!   check-ins it asked, settles each inquiry waiting on one `no_answer`
 //!   and leaves no join to a removed check-in, whichever of the two
@@ -36,11 +40,12 @@ use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AuthorityVaultId, CapabilitySlip, HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole,
-    VerifiedSlip,
+    AuthorityVaultId, CapabilitySlip, FederationPactStatus, HOST_ISSUER_SEED_BYTES, HostSlipIssuer,
+    MachineRole, VerifiedSlip,
 };
 use oneiron::check_in::{ActClass, CheckInMode, HolderAnswer, PendingState, WaitReason};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{FederationDirectionScope, ScopeAxis};
 use oneiron::inquiry::{
     INQUIRY_ANSWER_VERB, INQUIRY_STATEMENT_PREDICATE, Inquiry, InquiryAnswer, InquiryAsker,
     InquiryCheckInMode, InquiryDecider, InquiryEdge, InquiryEdgeRequest, InquiryJudgment,
@@ -174,6 +179,8 @@ struct Thursday {
     member: Side,
     company: Side,
     edge: InquiryEdge,
+    pact_id: [u8; 32],
+    pact_epoch: u64,
     host_key: SigningKey,
     slip: CapabilitySlip,
 }
@@ -215,7 +222,7 @@ impl Thursday {
             .vault
             .accept_connect_as(&company.proof, &company.issuer, reciprocal.grant, &offer)
             .expect("the company Owner accepts");
-        member
+        let (pact, _) = member
             .vault
             .accept_connect_as(&member.proof, &member.issuer, edge.grant, &counter)
             .expect("the member accepts the company's half");
@@ -236,6 +243,8 @@ impl Thursday {
             member,
             company,
             edge,
+            pact_id: offer.pact_id,
+            pact_epoch: pact.pact_epoch,
             host_key,
             slip,
         }
@@ -292,6 +301,31 @@ impl Thursday {
         self.member
             .vault
             .admit_inquiry(self.edge.grant, &self.credential(), inquiry, judgment)
+    }
+
+    /// The member narrows the outbound half of the edge's pact off the
+    /// opened WORLD; the pact stays Active.
+    fn narrow_off_the_opened_world(&self) {
+        let outbound = FederationDirectionScope {
+            worlds: ScopeAxis::Bottom,
+            ..self.edge.pact_direction().expect("the edge's direction")
+        };
+        let narrowed = self
+            .member
+            .vault
+            .narrow_connect_as(
+                &self.member.proof,
+                &self.member.issuer,
+                self.pact_id,
+                self.pact_epoch,
+                outbound,
+            )
+            .expect("the member narrows the pact");
+        assert_eq!(
+            narrowed.status,
+            FederationPactStatus::Active,
+            "a narrowing leaves the pact Active",
+        );
     }
 
     /// The member opens `text` to the company.
@@ -713,6 +747,48 @@ fn an_inquiry_from_another_vault_already_expired_or_after_the_edge_is_revoked_is
         "a refused inquiry is not logged",
     );
     assert!(companion.shown().is_empty(), "nor shown to the companion");
+}
+
+#[test]
+fn a_pact_narrowed_off_the_opened_world_answers_no_repeat_and_no_new_inquiry() {
+    let thursday = Thursday::open(InquiryCheckInMode::AskWhenUnsure);
+    thursday.open_statement(OUT_THURSDAY);
+    let companion = ScriptedCompanion::sure_of(&[OUT_THURSDAY]);
+    let inquiry = thursday.inquiry(QUESTION, InquiryKeep::Task, T0);
+    let answered = thursday
+        .admit(&inquiry, &companion)
+        .expect("the member's vault admits the inquiry");
+    assert_eq!(answered.outcome(), InquiryOutcome::Answered);
+
+    let credential = thursday.credential();
+    thursday.narrow_off_the_opened_world();
+    let admit = |inquiry: &Inquiry| {
+        thursday
+            .member
+            .vault
+            .admit_inquiry(thursday.edge.grant, &credential, inquiry, &companion)
+    };
+    assert!(
+        admit(&inquiry).is_err(),
+        "a repeat of an answered inquiry returns nothing once the pact no longer holds the \
+         opened WORLD",
+    );
+    let after = thursday.inquiry(QUESTION, InquiryKeep::Task, T0);
+    assert!(
+        admit(&after).is_err(),
+        "a new inquiry reads nothing once the pact no longer holds the opened WORLD",
+    );
+
+    assert_eq!(
+        thursday.member.vault.inquiry_log().expect("log").len(),
+        1,
+        "the refused inquiry is not logged",
+    );
+    assert_eq!(
+        companion.shown().len(),
+        1,
+        "the companion is not shown the opened scope after the narrowing",
+    );
 }
 
 #[test]
