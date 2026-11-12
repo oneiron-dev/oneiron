@@ -11,6 +11,7 @@
 //! Run with `cargo test --locked -p oneiron --all-features --test owner_approval_criticality_floor`.
 
 use oneiron::agent_dispatch::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+use oneiron::authority::HostSlipIssuer;
 use oneiron::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression};
 use oneiron::claim::relationship_predicates::PREDICATE_RELATIONSHIP_PERSON_REF;
@@ -55,6 +56,17 @@ impl Fixture {
     /// A vault opened with the shipped default manifest, its owner's proof,
     /// and an agent the owner granted read and propose.
     fn new() -> Self {
+        Self::open(false)
+    }
+
+    /// [`Fixture::new`] on a vault rooted under a host, which binds its
+    /// owner under the root (H149). The run review doors act only for the
+    /// root owner (`verify_owner`), as a served vault always has one.
+    fn rooted() -> Self {
+        Self::open(true)
+    }
+
+    fn open(rooted: bool) -> Self {
         let directory = tempfile::tempdir().expect("vault dir");
         let vault = Vault::open(directory.path(), VaultConfig::device()).expect("open vault");
         vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
@@ -62,6 +74,13 @@ impl Fixture {
             .prepare_install_signing()
             .expect("load this install's signing keys");
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
+        if rooted {
+            let issuer = HostSlipIssuer::from_secret(b"owner-approval-criticality-floor")
+                .expect("fixture host issuer");
+            vault
+                .ensure_host_root_slip(&issuer)
+                .expect("the host root binds the owner");
+        }
         let agent = vault
             .ensure_agent_principal("criticality-floor-proposer")
             .expect("agent");
@@ -197,7 +216,7 @@ fn owner_settle_lands_an_agent_proposal_on_a_declared_critical_predicate() {
 /// predicate no rule names (MUSE-LOOP-08).
 #[test]
 fn owner_run_settle_lands_an_agent_proposal_on_an_undeclared_predicate() {
-    let f = Fixture::new();
+    let f = Fixture::rooted();
     let id = f.propose(UNDECLARED_PREDICATE, "the run's loop note");
     let memory = f.vault.memory(f.owner, EdgeActorClass::Human);
     let request = RunReviewRequest {
