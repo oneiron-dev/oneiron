@@ -1,17 +1,15 @@
 //! When an open offer card's thread has ended (OF-530, ARCH-0006a:233): a
 //! thread is live while it has an open task, an open wait or fresh messages,
-//! and a card ages out with it. One fold decides it for a project room's
-//! turns and for an ordinary Conversation's DAG threads, over only what the
-//! caller reads; nothing is stored. A card for the room itself is not decided
-//! here.
+//! and a card ages out with it. One fold over the room's turn rows decides
+//! it for every room (THREAD-TASK-EVERY-ROOM P2: every TURN keeps its row),
+//! over only what the caller reads; nothing is stored. A card for the room
+//! itself is not decided here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::thread_reads::RoomReach;
-use super::{RoomTurn, agent_off_room_in_txn, history, liveness};
+use super::{RoomTurn, agent_off_room_in_txn, liveness, require_reader};
 use crate::EntityId;
-use crate::claim::{ClaimReadStatus, PointRead};
-use crate::error::{Error, Result};
+use crate::error::Error;
 use crate::memory::{Memory, MemoryResult};
 
 impl Memory<'_> {
@@ -19,7 +17,9 @@ impl Memory<'_> {
     /// cards age out: the room's thread fold, as the caller reads it, lists
     /// them quiet, with no open task, open wait or fresh message. A branch
     /// the fold does not hold, or whose root or trunk anchor the caller
-    /// cannot read, ends nothing.
+    /// cannot read, ends nothing. A home room's roster is its project's
+    /// seats; any other room's is its own, and a thread there that the
+    /// caller does not read is left out before the fold.
     pub(super) fn ended_offer_threads(
         &self,
         room: EntityId,
@@ -28,20 +28,51 @@ impl Memory<'_> {
         if threads.is_empty() {
             return Ok(BTreeSet::new());
         }
-        match self.vault().project_room(room)? {
-            Some(project_room) => {
-                let members = project_room.member_ids.into_iter().collect();
-                self.ended_project_threads(room, threads, &members)
-            }
-            None => self.ended_dag_threads(room, threads),
+        let vault = self.vault();
+        // Only a home room's body is a project room's: `Vault::project_room`
+        // refuses any other room's body as invalid, not absent, so the
+        // room-access seam's classifier picks the arm first.
+        let home = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            super::project_room_of(vault, &txn, room)?.is_some()
+        };
+        if home && let Some(project_room) = vault.project_room(room)? {
+            let members = project_room.member_ids.into_iter().collect();
+            return self.ended_room_threads(room, threads, &members);
         }
+        let (readable, members) = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            let Some(roster) = crate::context_board::room_roster_in(vault, &txn, room)? else {
+                return Ok(BTreeSet::new());
+            };
+            let mut readable = BTreeSet::new();
+            for thread in threads {
+                if crate::context_board::thread_reader_in(
+                    vault,
+                    &txn,
+                    room,
+                    *thread,
+                    &roster,
+                    self.actor(),
+                )? {
+                    readable.insert(*thread);
+                }
+            }
+            let members: BTreeSet<String> = roster.iter().map(EntityId::to_hex).collect();
+            (readable, members)
+        };
+        if readable.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        self.ended_room_threads(room, &readable, &members)
     }
 
-    /// [`Self::ended_offer_threads`] for a project room: its own fold over
-    /// the room's history. An agent with no standing in the room itself reads
-    /// each thread on that thread's own receipt, through a snapshot and a lane
-    /// bound to it alone.
-    fn ended_project_threads(
+    /// [`Self::ended_offer_threads`] over the room's history, for the room's
+    /// `members`. An agent with no standing in the room itself, and a person
+    /// the room does not read (a vault Owner or Admin reading a private
+    /// thread, FIX 5638), reads each thread on that thread's own receipt,
+    /// through a snapshot and a lane bound to it alone.
+    fn ended_room_threads(
         &self,
         room: EntityId,
         threads: &BTreeSet<EntityId>,
@@ -53,7 +84,8 @@ impl Memory<'_> {
         let (off_room, fold) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             (
-                agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?,
+                agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?
+                    || require_reader(self.vault(), &txn, room, self.actor()).is_err(),
                 liveness::direct_thread_fold_in(self.vault(), &txn, self.actor(), now)?,
             )
         };
@@ -90,137 +122,6 @@ impl Memory<'_> {
         }
         Ok(ended)
     }
-
-    /// [`Self::ended_offer_threads`] for an ordinary Conversation: its DAG
-    /// threads folded the same way. The room's records are found by their
-    /// structure alone ([`crate::conversation_dag::offer_turns_in_txn`]); each
-    /// thread the caller reads is then admitted through a lane bound to that
-    /// thread, its root's whole branch and the trunk record it hangs off, and
-    /// its tasks are read on the same lane. A record held back from the
-    /// caller stays as its place alone (FIX 5545).
-    fn ended_dag_threads(
-        &self,
-        room: EntityId,
-        threads: &BTreeSet<EntityId>,
-    ) -> MemoryResult<BTreeSet<EntityId>> {
-        let vault = self.vault();
-        let (members, readable, turns) = {
-            let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            let Some(members) = crate::context_board::room_roster_in(vault, &txn, room)? else {
-                return Ok(BTreeSet::new());
-            };
-            let mut readable = Vec::new();
-            for thread in threads {
-                if crate::context_board::thread_reader_in(
-                    vault,
-                    &txn,
-                    room,
-                    *thread,
-                    &members,
-                    self.actor(),
-                )? {
-                    readable.push(*thread);
-                }
-            }
-            if readable.is_empty() {
-                return Ok(BTreeSet::new());
-            }
-            // Every record is read, however many (rule 5); past the
-            // threshold row the owner's check is raised for the room.
-            let mut count = crate::scan_check::ScanCount::start(
-                &vault.store,
-                &txn,
-                crate::scan_check::EngineScan::RoomHistoryRows,
-                room.as_bytes(),
-            )?;
-            let turns = crate::conversation_dag::offer_turns_in_txn(vault, &txn, room, &mut count)?;
-            drop(txn);
-            count.finish(vault);
-            (members, readable, turns)
-        };
-        let members: BTreeSet<String> = members.iter().map(EntityId::to_hex).collect();
-        let turns = history::answer_closed(turns);
-        let roots = liveness::thread_root_map(&turns)?;
-        let fold = {
-            let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            liveness::direct_thread_fold_in(vault, &txn, self.actor(), crate::unix_seconds_now())?
-        };
-        let mut ended = BTreeSet::new();
-        for thread in readable {
-            if roots.get(&thread) != Some(&thread) {
-                continue;
-            }
-            let root = thread.to_hex();
-            let anchor = turns
-                .iter()
-                .find(|turn| turn.turn_id == root)
-                .and_then(|turn| turn.thread_of.clone());
-            let selected: Vec<RoomTurn> = turns
-                .iter()
-                .filter(|turn| {
-                    anchor.as_ref() == Some(&turn.turn_id)
-                        || EntityId::from_hex(&turn.turn_id)
-                            .is_ok_and(|id| roots.get(&id) == Some(&thread))
-                })
-                .cloned()
-                .collect();
-            let projection = self.for_thread_projection(room, thread)?;
-            let memory = projection.memory();
-            let admitted = admitted_records(memory, room, selected)?.answer_closed();
-            let one = BTreeSet::from([thread]);
-            ended.extend(ended_in(
-                memory,
-                admitted.placed(),
-                admitted.held(),
-                room,
-                &one,
-                &members,
-                fold,
-            )?);
-        }
-        Ok(ended)
-    }
-}
-
-/// The turns among `turns`, records of `room`, whose own records `memory`'s
-/// lane admits, beside the place of each one held back from its reader.
-fn admitted_records(
-    memory: &Memory<'_>,
-    room: EntityId,
-    turns: Vec<RoomTurn>,
-) -> MemoryResult<RoomReach> {
-    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
-    let ids = turns
-        .iter()
-        .map(|turn| EntityId::from_hex(&turn.turn_id))
-        .collect::<Result<Vec<_>>>()?;
-    let mut admitted = BTreeSet::new();
-    for chunk in ids.chunks(128) {
-        let reads: Vec<_> = chunk.iter().copied().map(PointRead::id).collect();
-        let rows = lane.read(&reads, None)?.value;
-        admitted.extend(
-            chunk
-                .iter()
-                .zip(rows)
-                .filter_map(|(id, row)| row.map(|_| *id)),
-        );
-    }
-    let read = |id: &String| EntityId::from_hex(id).is_ok_and(|id| admitted.contains(&id));
-    let unread = turns
-        .iter()
-        .filter(|turn| !read(&turn.turn_id))
-        .map(|turn| turn.turn_id.clone())
-        .collect();
-    let held = memory.held_back_among(room, &unread)?;
-    let mut reach = RoomReach::default();
-    for turn in turns {
-        if read(&turn.turn_id) {
-            reach.push_read(turn);
-        } else if held.contains(&turn.turn_id) {
-            reach.push_held(&turn);
-        }
-    }
-    Ok(reach)
 }
 
 /// The fold itself: of `threads`, those `turns` hold whose direct-by-handle

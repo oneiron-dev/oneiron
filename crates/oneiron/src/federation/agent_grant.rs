@@ -90,6 +90,7 @@ const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than no
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
 const BAD_WALLET: &str = "an agent grant's wallet_ref names a nonempty issuer and id";
+const BAD_WORKING_VIEW: &str = "an agent grant's working_view_bounds name a live owner working view of its repo_bounds repo, made by the minting owner in that account";
 /// The one verb of the read Grant pairing a named agent mints (Engine RULING
 /// PAIR-GRANT-DESIGN Q4): the Grant spelling, not the slip's `core:read`.
 const DEFAULT_GRANT_VERB: &str = "read";
@@ -161,21 +162,23 @@ impl Vault {
     /// recorded scope; on a personal vault under the home's residence scope.
     /// `repo_bounds`, when he gives them, ride the grant and his signed act;
     /// so do `verb_classes`, the verb classes he names beside the exact
-    /// verbs (FIX 8735), resolved when a door judges a verb, and
+    /// verbs (FIX 8735), resolved when a door judges a verb,
     /// `wallet_ref`, the host wallet the grant's funded work draws on (FIX
-    /// 7766).
+    /// 7766), and `working_view_bounds`, the one owner working view of the
+    /// repo bounds' repo the grant edits alone (row 6 WORKING-VIEW-EDIT).
     ///
     /// # Errors
     /// An owner refusal; `InvalidConfig` for a verb set and class set both
     /// empty, a verb set over every verb, an invalid class name, a wallet
-    /// with an empty part, a member
+    /// with an empty part, a working view bound without repo bounds or on
+    /// no live owner view of their repo in the owner's account, a member
     /// that is no live agent principal, an expiry already passed or repo
     /// bounds that break their grammar or name no repo of their PROJECT;
     /// [`crate::error::RecordError::AuthorityRefused`] when this install
     /// cannot carry the owner's act.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the owner's one mint: his proof, surface, agent, scope, expiry, repo bounds, classes and wallet"
+        reason = "the owner's one mint: his proof, surface, agent, scope, expiry, repo bounds, classes, wallet and working view"
     )]
     pub(crate) fn mint_agent_grant(
         &self,
@@ -187,6 +190,7 @@ impl Vault {
         repo_bounds: Option<RepoAccessBounds>,
         verb_classes: BTreeSet<String>,
         wallet_ref: Option<super::WalletRef>,
+        working_view_bounds: Option<super::WorkingViewEditBounds>,
     ) -> Result<AgentGrantMintOutcome> {
         self.with_write_txn_grouped(|txn| {
             self.mint_agent_grant_in_txn(
@@ -199,6 +203,7 @@ impl Vault {
                 repo_bounds,
                 verb_classes,
                 wallet_ref,
+                working_view_bounds,
             )
         })
     }
@@ -211,7 +216,7 @@ impl Vault {
     /// As [`Self::mint_agent_grant`].
     #[expect(
         clippy::too_many_arguments,
-        reason = "the owner's one mint in the caller's writer: his proof, surface, agent, scope, expiry, repo bounds, classes and wallet"
+        reason = "the owner's one mint in the caller's writer: his proof, surface, agent, scope, expiry, repo bounds, classes, wallet and working view"
     )]
     pub(crate) fn mint_agent_grant_in_txn(
         &self,
@@ -224,6 +229,7 @@ impl Vault {
         repo_bounds: Option<RepoAccessBounds>,
         verb_classes: BTreeSet<String>,
         wallet_ref: Option<super::WalletRef>,
+        working_view_bounds: Option<super::WorkingViewEditBounds>,
     ) -> Result<AgentGrantMintOutcome> {
         let delegated_by = owner.revalidate_in_txn(self, txn)?;
         let names_verbs = match &authority_scope.verbs {
@@ -278,6 +284,7 @@ impl Vault {
             verb_classes,
             wallet_ref,
             inquiry_terms: None,
+            working_view_bounds,
         };
         // The owner's class rows, read once in this writer when the grant
         // names a class: repo bounds take `read` from a class as from its
@@ -289,6 +296,14 @@ impl Vault {
                 &grant.scope_for_verb(super::REPO_READ_VERB, &classes),
                 bounds,
             )?;
+        }
+        if let Some(view) = &grant.working_view_bounds {
+            let Some(bounds) = &grant.repo_bounds else {
+                return Err(Error::InvalidConfig(BAD_WORKING_VIEW.into()));
+            };
+            if !self.working_view_mint_stands_in_txn(txn, delegated_by, bounds, view)? {
+                return Err(Error::InvalidConfig(BAD_WORKING_VIEW.into()));
+            }
         }
         // Encoding validates: nothing is signed for a grant that cannot stand.
         let data = encode_federation_grant_body(&grant)?;
@@ -308,6 +323,7 @@ impl Vault {
                 verb_classes: grant.verb_classes.clone(),
                 wallet_ref: grant.wallet_ref.clone(),
                 steward: false,
+                working_view_bounds: grant.working_view_bounds,
             },
         )?;
         self.apply_agent_grant_op_in_txn(
@@ -376,6 +392,7 @@ impl Vault {
             None,
             None,
             BTreeSet::new(),
+            None,
             None,
         )?;
         Ok(Some(minted.standing.id))
@@ -642,6 +659,7 @@ impl Vault {
                     grant_kind: FederationGrantKind::Access,
                     verb_classes,
                     wallet_ref,
+                    working_view_bounds,
                     ..
                 } = &record.change
                 else {
@@ -657,6 +675,7 @@ impl Vault {
                         repo_bounds: repo_bounds.clone(),
                         verb_classes: verb_classes.clone(),
                         wallet_ref: wallet_ref.clone(),
+                        working_view_bounds: *working_view_bounds,
                         confers: false,
                     },
                     crate::consent::ConsentGrantStatus::Revoked,

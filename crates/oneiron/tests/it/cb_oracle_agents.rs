@@ -26,120 +26,6 @@
 //        kill · ONE-1709 team-lead · ONE-1710 peer-answer trust)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_a {
-    /// One rendered AGENTS-section row.
-    struct AgentRow {
-        /// Actor handle (children: run/agent id; peers: connection-keyed).
-        id: String,
-        /// "child" or "peer".
-        lane: String,
-        /// Exact rendered text of the row.
-        line: String,
-        /// Harness label carried on peer rows (a label, never the identity).
-        harness_label: Option<String>,
-    }
-
-    struct AgentsSectionRender {
-        rows: Vec<AgentRow>,
-    }
-
-    /// ONE-1697 fixture: children `child_a` + `child_b` (running, M8 driver
-    /// state) + 2 peer connections of the SAME vendor/harness ("claude-code")
-    /// registered under two different config dirs whose owner-assigned actor
-    /// handles are `cc-main` and `cc-second` (08b §4.2 multi-instance law);
-    /// render the AGENTS section collapsed.
-    fn arm_render_agents_section() -> AgentsSectionRender {
-        use oneiron::agent_run_status::AgentRunStatus;
-        use oneiron::context_board::{ChildAgentPresence, PeerPresence};
-        use oneiron::run_tree::{RunTreeNode, RunTreeStatus, RunTreeTimestamps};
-
-        let node = RunTreeNode {
-            attempt_id: "child_a".to_owned(),
-            run_id: None,
-            parent_id: None,
-            worker_kind: oneiron::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE.to_owned(),
-            worker: None,
-            agent_id: None,
-            status: RunTreeStatus::Running,
-            result_ref: None,
-            timestamps: RunTreeTimestamps {
-                created_at: 1,
-                updated_at: 1,
-            },
-            failure: None,
-            events: Vec::new(),
-            children: Vec::new(),
-        };
-        let children = [
-            ChildAgentPresence::from_run_tree_node(&node)
-                .expect("running driver node must produce child presence"),
-            ChildAgentPresence {
-                id: "child_b".to_owned(),
-                status: AgentRunStatus::Working,
-                label: None,
-                role: "worker".to_owned(),
-            },
-        ];
-        let peers = [
-            PeerPresence {
-                actor_handle: "cc-main".to_owned(),
-                harness_label: "claude-code".to_owned(),
-                last_seen: Some(1),
-            },
-            PeerPresence {
-                actor_handle: "cc-second".to_owned(),
-                harness_label: "claude-code".to_owned(),
-                last_seen: Some(2),
-            },
-        ];
-
-        let section = oneiron::context_board::render_agents_section(&children, &peers);
-        let rows = section
-            .rows
-            .into_iter()
-            .map(|row| AgentRow {
-                id: row.id,
-                lane: row.lane.as_str().to_string(),
-                line: row.line,
-                harness_label: row.harness_label,
-            })
-            .collect();
-        AgentsSectionRender { rows }
-    }
-
-    /// ONE-1697 · 08b §4.1–4.2: one-line rows; children from driver state;
-    /// peer identity keys on the CONNECTION (config dir), never the vendor —
-    /// two same-vendor connections are two named actors (`cc-main` /
-    /// `cc-second`); harness is a row label with an exact value (F9).
-    #[test]
-    fn agents_section_renders_children_and_connection_keyed_peers() {
-        let section = arm_render_agents_section();
-        assert_eq!(section.rows.len(), 4);
-        let one_liners = section
-            .rows
-            .iter()
-            .filter(|r| r.line.lines().count() == 1)
-            .count();
-        assert_eq!(one_liners, 4);
-        let mut child_ids: Vec<&str> = section
-            .rows
-            .iter()
-            .filter(|r| r.lane == "child")
-            .map(|r| r.id.as_str())
-            .collect();
-        child_ids.sort_unstable();
-        assert_eq!(child_ids, ["child_a", "child_b"]);
-        let peers: Vec<&AgentRow> = section.rows.iter().filter(|r| r.lane == "peer").collect();
-        assert_eq!(peers.len(), 2);
-        let mut peer_ids: Vec<&str> = peers.iter().map(|r| r.id.as_str()).collect();
-        peer_ids.sort_unstable();
-        assert_eq!(peer_ids, ["cc-main", "cc-second"]);
-        let exact_labels = peers
-            .iter()
-            .filter(|r| r.harness_label.as_deref() == Some("claude-code"))
-            .count();
-        assert_eq!(exact_labels, 2);
-    }
-
     /// Outcome of a zero-config spawn.
     struct DefaultPresetSpawn {
         spawned_children: usize,
@@ -446,6 +332,9 @@ mod cb_a {
         }
 
         let fixture = super::lead_fixture::LeadFixture::open();
+        // The owner's explicit depth on the vault project: the root lineage
+        // spends it (FIX 9560, #3935).
+        fixture.set_owner_depth(10);
         let vault = &fixture.vault;
 
         // The seeded lead is DATA: a `sys.*` logical id resolving to a stored
@@ -674,7 +563,8 @@ mod cb_a {
             .collect();
         assert_eq!(branch_runs.iter().filter(|id| **id == run_id).count(), 3);
         // Depth decrements at every level and is persisted, not merely counted.
-        // The root starts at the project's depth row, 10 by default (ARCH-0067 §7).
+        // The root starts at the project's depth row, 10 as the owner set it
+        // (ARCH-0067 §7; the seeded default alone stores none since FIX 9560).
         assert_eq!(fixture.persisted_depth(lead_attempt), Some(10));
         assert_eq!(fixture.persisted_depth(workers[0].attempt.id), Some(9));
         assert_eq!(fixture.persisted_depth(helper.attempt.id), Some(8));
@@ -871,6 +761,7 @@ mod cb_a {
                                 evidence_refs: vec![ConsultPayloadRef::Turn(result_ref)],
                             },
                             completed_at: super::LEAD_NOW + 10,
+                            measured_spend: None,
                         },
                     )
                     .expect("a panel member answers");
@@ -931,6 +822,7 @@ mod cb_a {
                             .collect(),
                     },
                     completed_at: super::LEAD_NOW + 20,
+                    measured_spend: None,
                 },
             )
             .expect("the judge ranks the answers");
@@ -959,6 +851,7 @@ mod cb_a {
                             .collect(),
                     },
                     completed_at: super::LEAD_NOW + 30,
+                    measured_spend: None,
                 },
             )
             .expect("the synthesist writes the final answer");
@@ -1235,8 +1128,12 @@ mod cb_a {
         else {
             panic!("policy has actor-bound Generated permits");
         };
-        // ARCH-0026: the stock rows bind the commitment projector and the
-        // Dreamer. The helper rebinds the projector's row and keeps the other.
+        // ARCH-0026: the stock rows bind the commitment projector, the e-sign
+        // seal actor with its SealJob auto checker (16fc2ad674d; Engine ruling
+        // T0F-STOCK-GENERATED-ROWS = A), the scope summary landing writer
+        // (cd9f9715a50; Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A) and
+        // the Dreamer. The helper rebinds the projector's row and keeps the
+        // other three.
         let mut actor_refs = permits.iter_mut().map(|permit| {
             let Value::Map(fields) = permit else {
                 panic!("Generated permit is a row");
@@ -1246,10 +1143,16 @@ mod cb_a {
                 .find_map(|(key, value)| (key.as_str() == Some("actor_ref")).then_some(value))
                 .expect("Generated permit is actor-bound")
         });
-        let (Some(actor_ref), Some(dreamer_ref), None) =
-            (actor_refs.next(), actor_refs.next(), actor_refs.next())
-        else {
-            panic!("the stock Generated rows bind the projector and the Dreamer");
+        let (Some(actor_ref), Some(_seal_ref), Some(_landing_ref), Some(dreamer_ref), None) = (
+            actor_refs.next(),
+            actor_refs.next(),
+            actor_refs.next(),
+            actor_refs.next(),
+            actor_refs.next(),
+        ) else {
+            panic!(
+                "the stock Generated rows bind the projector, seal, summary landing and Dreamer"
+            );
         };
         let dreamer = vault
             .dreamer_authority()
@@ -1853,6 +1756,7 @@ mod peer_fixture {
                     end: PEER_NOW,
                 },
                 learned_at: PEER_NOW,
+                decisions: Vec::new(),
             }
         }
 
@@ -2434,7 +2338,7 @@ mod lead_fixture {
                 .run_id
         }
 
-        pub(crate) fn persisted_depth(&self, attempt: AttemptId) -> Option<u8> {
+        pub(crate) fn persisted_depth(&self, attempt: AttemptId) -> Option<u64> {
             let record = AttemptQueue::new(&self.vault)
                 .get(attempt)
                 .expect("read the attempt")
@@ -2445,6 +2349,108 @@ mod lead_fixture {
             decode_agent_dispatch_input(&payload.input)
                 .expect("decode the dispatch input")
                 .depth_remaining
+        }
+
+        /// The owner's explicit depth setting on the vault project. Since FIX
+        /// 9560 (a5f08b9b77d, #3935) a lineage under the seeded default alone
+        /// stores no depth (Engine ruling T0F-DELEGATION-DEPTH-DEFAULT = A).
+        /// The vault's embedded owner is rooted under a test owner key, a
+        /// signed genesis and its binding as a self-hosted root binds the
+        /// embedded owner, and that key signs the depth edit.
+        pub(crate) fn set_owner_depth(&self, depth: u64) {
+            use ed25519_dalek::{Signer, SigningKey};
+            use oneiron::authority::{
+                AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey,
+                AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority,
+                GenesisRecoveryStep, ROLE_ADMIN, ROLE_OWNER, authority_entry_hash,
+                authority_transcript, genesis_vault_id,
+            };
+            const OWNER_KEY_SEED: u8 = 0xD9;
+
+            let owner = self
+                .vault
+                .ensure_embedded_owner_actor()
+                .expect("the vault's owner");
+            let signing = SigningKey::from_bytes(&[OWNER_KEY_SEED; 32]);
+            let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+            let sign = |mut entry: AuthorityLogEntry| {
+                let transcript = authority_transcript(&entry).expect("authority transcript");
+                entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+                entry
+            };
+            let genesis = sign(AuthorityLogEntry {
+                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: None,
+                seq: 0,
+                parent_hashes: Vec::new(),
+                op: AuthorityOp::Genesis {
+                    device: DeviceAuthority {
+                        key: key.clone(),
+                        transport_key_binding: [7; 32],
+                        attestation: AuthorityAttestation {
+                            kind: "SoftwareArgon2id".to_owned(),
+                            evidence: vec![1, 2, 3],
+                        },
+                        tier: AuthorityTier::Software,
+                        roles: ROLE_OWNER | ROLE_ADMIN,
+                    },
+                    genesis_nonce: [OWNER_KEY_SEED; 32],
+                    recovery: GenesisRecoveryStep::Saved([1; 32]),
+                },
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100,
+            });
+            let bind = sign(AuthorityLogEntry {
+                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(genesis_vault_id(&genesis).expect("the genesis vault id")),
+                seq: 1,
+                parent_hashes: vec![authority_entry_hash(&genesis).expect("the genesis hash")],
+                op: AuthorityOp::BindActor {
+                    authority_key: key.clone(),
+                    actor_ref: owner,
+                    actor_class: "human".to_owned(),
+                    epoch: 1,
+                },
+                signer: genesis.signer.clone(),
+                cosigns: Vec::new(),
+                ts: 101,
+            });
+            self.vault
+                .put_authority_log_entries(&[
+                    (
+                        genesis,
+                        TimeRange {
+                            start: 100,
+                            end: 100,
+                        },
+                        100,
+                    ),
+                    (
+                        bind,
+                        TimeRange {
+                            start: 101,
+                            end: 101,
+                        },
+                        101,
+                    ),
+                ])
+                .expect("root the owner's key");
+            let root = self.vault.root_project().expect("the vault project");
+            self.vault
+                .set_project_depth(
+                    root,
+                    depth,
+                    &oneiron::WriteActor::new(owner, EdgeActorClass::Human),
+                    102,
+                    key,
+                    |message| Ok(signing.sign(message).to_bytes().to_vec()),
+                )
+                .expect("the owner sets the vault project's depth");
         }
 
         /// The settled `result_ref` on a TASK, read off the persisted body.
@@ -2630,11 +2636,12 @@ mod cb_x {
         assert_eq!(contract.illegal_transitions_rejected, 5);
         assert_eq!(contract.illegal_transitions_accepted, 0);
 
-        assert_eq!(AgentRunStatus::TERMINAL.len(), 3);
+        assert_eq!(AgentRunStatus::TERMINAL.len(), 4);
         for status in [
             AgentRunStatus::Archived,
             AgentRunStatus::Failed,
             AgentRunStatus::Abandoned,
+            AgentRunStatus::Cancelled,
         ] {
             assert!(AgentRunStatus::TERMINAL.contains(&status));
         }
@@ -2673,7 +2680,7 @@ mod cb_x {
         );
         assert_eq!(
             project_agent_run_status(oneiron::run_tree::RunTreeStatus::Cancelled),
-            AgentRunStatus::Failed,
+            AgentRunStatus::Cancelled,
         );
         assert_eq!(
             project_abandoned_terminal(ExecutorTerminalCause::LeaseReclaimed),
@@ -2706,9 +2713,12 @@ mod cb_x {
     /// ONE-1711 fixture: a run asks for input (→ needs_input), the owner
     /// answers, the run resumes and delivers.
     fn arm_needs_input_round_trip() -> NeedsInputRoundTrip {
-        use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
-        use oneiron::agent_run_status::{AgentRunStatus, project_agent_run_status};
-        use oneiron::context_board::{ChildAgentPresence, render_agents_section};
+        use oneiron::agent_dispatch::{
+            AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchOutcome, AgentDispatcher,
+        };
+        use oneiron::agent_run_status::{
+            AgentRunStatus, project_agent_run_status, project_agent_run_status_with_park,
+        };
         use oneiron::dreamer_runner::{DreamerRunnerStore, ParkDreamerAttempt};
         use oneiron::llm::{
             DurableStepContext, consume_trap_signal, open_trap, register_wait,
@@ -2759,6 +2769,7 @@ mod cb_x {
             deadline: None,
             now_ms: 1,
             spend_scope: None,
+            wake_pass_bound: false,
         };
         let trap = open_trap(
             &vault,
@@ -2780,7 +2791,9 @@ mod cb_x {
             .park_attempt(ParkDreamerAttempt {
                 attempt_id,
                 reason: "human response".to_owned(),
+                cause: oneiron::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
+                carried_spend: None,
                 now: 1,
             })
             .expect("park");
@@ -2798,14 +2811,13 @@ mod cb_x {
             .expect("render tree")
             .roots
             .remove(0);
-        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
-            .expect("parked child presence");
-        let waiting = render_agents_section(&[presence], &[]);
-        let runs_in_needs_input_after_ask = waiting
-            .rows
-            .iter()
-            .filter(|row| row.line.ends_with(AgentRunStatus::NeedsInput.as_str()))
-            .count();
+        // The AGENTS board section that rendered this presence was removed by
+        // the PEOPLE ruling (6bef6393118, ARCH-0067); the status it rendered is
+        // the park-aware projection of the run-tree node.
+        assert_eq!(node.worker_kind, AGENT_DISPATCH_ATTEMPT_TYPE);
+        let waiting = project_agent_run_status_with_park(node.status, is_parked);
+        assert!(waiting.is_live_presence(), "parked child presence");
+        let runs_in_needs_input_after_ask = usize::from(waiting == AgentRunStatus::NeedsInput);
         let signal = oneiron::llm::send_trap_signal(&vault, &trap.trap_claim_id, step_hash, 2)
             .expect("send signal");
         let _ = signal;
@@ -2823,18 +2835,21 @@ mod cb_x {
             .expect("render resumed tree")
             .roots
             .remove(0);
-        let presence = ChildAgentPresence::from_run_tree_node_with_park(&node, is_parked)
-            .expect("working child presence");
-        let resumed = render_agents_section(&[presence], &[]);
-        let resumed_to_working_after_input = resumed
-            .rows
-            .iter()
-            .filter(|row| row.line.ends_with(AgentRunStatus::Working.as_str()))
-            .count();
-        let completed_record = AttemptQueue::new(&vault)
-            .get(attempt_id)
-            .expect("read completion attempt")
-            .expect("completion attempt");
+        assert_eq!(node.worker_kind, AGENT_DISPATCH_ATTEMPT_TYPE);
+        let resumed = project_agent_run_status_with_park(node.status, is_parked);
+        assert!(resumed.is_live_presence(), "working child presence");
+        let resumed_to_working_after_input = usize::from(resumed == AgentRunStatus::Working);
+        // The un-park returns the attempt to the queue; its worker leases it
+        // again before it completes.
+        let oneiron::attempt_queue::ClaimOutcome::Claimed(completed_record) = queue
+            .claim(oneiron::attempt_queue::ClaimAttempt {
+                lease_owner: "agent-worker".to_owned(),
+                now: 3,
+            })
+            .expect("claim resumed attempt")
+        else {
+            panic!("the resumed attempt is claimable");
+        };
         AttemptQueue::new(&vault)
             .complete(oneiron::attempt_queue::CompleteAttempt {
                 id: attempt_id,

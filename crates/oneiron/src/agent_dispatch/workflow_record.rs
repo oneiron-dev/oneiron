@@ -109,6 +109,11 @@ pub(super) struct WorkflowIntent {
     /// it against the real parent; a retry naming another is another intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<super::CommReach>,
+    /// The powers the caller asked for each leaf (SPAWN-KNOB). Each leaf is
+    /// born with the real parent's powers met with this request at its
+    /// release; a retry naming another is another intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
     /// The TASK this run realizes and the actor who bound it (FIX 4391,
     /// FIX 5316). Only the wrapper carries the backlink; a retry naming
     /// another TASK, or none, is another intent.

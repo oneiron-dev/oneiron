@@ -5,6 +5,7 @@
   "output": "crate::memory::channel_doors::ChannelIdentityView",
   "call": "memory.channel_identity_get(input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

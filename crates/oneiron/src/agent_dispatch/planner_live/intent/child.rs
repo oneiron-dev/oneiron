@@ -90,6 +90,10 @@ struct LeasedAsk<'a> {
     team: Option<&'a TeamRunStamp>,
     healer_case: Option<&'a HealerCase>,
     run_id: Option<&'a str>,
+    /// SPAWN-KNOB: joins the ask only when the spawn names one, so every
+    /// ask without one keeps its digest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    powers: Option<&'a crate::agent_def::ChildPowerRequest>,
 }
 
 impl AgentDispatcher<'_> {
@@ -496,6 +500,7 @@ fn leased_ask_digest(request: &LeasedSpawnRequest, run_id: Option<&str>) -> Resu
         team: context.team.as_ref(),
         healer_case: context.healer_case.as_ref(),
         run_id,
+        powers: context.powers.as_ref(),
     };
     let asked = rmp_serde::to_vec_named(&asked)
         .map_err(|_| invalid("a leased planned spawn's request does not encode"))?;

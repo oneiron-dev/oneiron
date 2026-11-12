@@ -24,9 +24,16 @@
 //! - the CODE anchor: a live CODE_ARTIFACT whose stored repo_ref parses (the
 //!   current repo) and that belongs to the bounds' live PROJECT.
 //!
+//! A Grant bound to one owner working view (row 6 WORKING-VIEW-EDIT,
+//! CODECUSTODY-VIEW-BUILD Q1 = A) is no repo Grant: every seam here but
+//! [`Vault::admit_working_view_edit_in_txn`] passes over it, and that seam
+//! passes over every other Grant.
+//!
 //! The owner's own doors never call these: his live proof admits him as it
 //! did. A missing or unreadable record is a typed refusal here, never an
 //! error on a path that answers today.
+
+use std::collections::BTreeSet;
 
 use crate::Vault;
 use crate::authority::{
@@ -42,8 +49,9 @@ use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 use super::{
-    AgentGrantStanding, AgentVerbClasses, FederationGrantScope, REPO_READ_VERB, RepoAccessBounds,
-    RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, own_device_residence_scope,
+    AgentGrantStanding, AgentVerbClasses, FederationGrantScope, REPO_EDIT_VERB, REPO_READ_VERB,
+    RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope,
+    WorkingViewEditBounds, own_device_residence_scope,
 };
 
 /// A mint names repo bounds its Scope cannot use.
@@ -74,6 +82,58 @@ pub(crate) struct RepoMembership {
 
 /// An admission: the membership, or the typed reason it was refused.
 pub(crate) type RepoAdmission = std::result::Result<RepoMembership, RepoAccessRefusal>;
+
+/// What one repo admission judges past membership, and so which Grants it
+/// may pass.
+#[derive(Debug, Clone, Copy)]
+enum RepoAsk<'a> {
+    /// A repo door's act, or membership alone: a Grant bound to no working
+    /// view, judged on the target's repo, ref and paths for its intent.
+    Repo(Option<(&'a RepoTarget, RepoAccessIntent)>),
+    /// The view edit door's act: a Grant bound to exactly this view and
+    /// account, judged on the repo and every edited path. The view bound
+    /// takes the place of the ref (CODECUSTODY-VIEW-BUILD Q1 = A).
+    WorkingViewEdit(&'a WorkingViewEditBounds, &'a BTreeSet<String>),
+}
+
+impl<'a> RepoAsk<'a> {
+    /// The verb the actor's standing and the Grant's Scope must list.
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Repo(ask) => ask.map_or(REPO_READ_VERB, |(_, intent)| intent.verb()),
+            Self::WorkingViewEdit(..) => REPO_EDIT_VERB,
+        }
+    }
+
+    /// The working view bound a Grant must carry to be judged: none for a
+    /// repo door.
+    fn view_bound(self) -> Option<&'a WorkingViewEditBounds> {
+        match self {
+            Self::Repo(_) => None,
+            Self::WorkingViewEdit(bound, _) => Some(bound),
+        }
+    }
+
+    /// The Grant `scope`'s judgement of this act under `bounds`, on the repo
+    /// handle `repo`; membership alone passes.
+    fn admit(
+        self,
+        grant: &super::FederationGrant,
+        classes: &AgentVerbClasses,
+        bounds: &RepoAccessBounds,
+        repo: EntityId,
+    ) -> std::result::Result<(), RepoAccessRefusal> {
+        match self {
+            Self::Repo(None) => Ok(()),
+            Self::Repo(Some((target, intent))) => grant
+                .scope_for_verb(intent.verb(), classes)
+                .admit_repo_target(bounds, target, intent),
+            Self::WorkingViewEdit(_, paths) => grant
+                .scope_for_verb(REPO_EDIT_VERB, classes)
+                .admit_working_view_edit(bounds, repo, paths),
+        }
+    }
+}
 
 /// How one agent Grant stands under this vault's own rule (FIX 6896).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +182,14 @@ impl Vault {
         repo: EntityId,
         project: EntityId,
     ) -> Result<RepoAdmission> {
-        self.admit_repo_in_project_in_txn(txn, actor, class, repo, Some(project), None)
+        self.admit_repo_in_project_in_txn(
+            txn,
+            actor,
+            class,
+            repo,
+            Some(project),
+            RepoAsk::Repo(None),
+        )
     }
 
     /// Admits `actor` to the repo handle `repo` as
@@ -185,6 +252,42 @@ impl Vault {
             .map(|()| membership))
     }
 
+    /// The view edit door's Grant arm (row 6 WORKING-VIEW-EDIT,
+    /// CODECUSTODY-VIEW-BUILD Q1 = A): admits `actor`, of `class`, to edit
+    /// `paths` of the owner working view `bound` names, a view of the repo
+    /// handle `repo`, under one live Grant bound to exactly that view and
+    /// account whose repo bounds list the edit verb and match every path to
+    /// an editable glob. The view bound takes the place of the ref, so no ref
+    /// is judged; the repo's retained whitelist still applies (FIX 4299). A
+    /// Grant bound to another view, or to none, does not admit it.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure; never a refusal.
+    pub(crate) fn admit_working_view_edit_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        repo: EntityId,
+        bound: &WorkingViewEditBounds,
+        paths: &BTreeSet<String>,
+    ) -> Result<RepoAdmission> {
+        let membership = match self.admit_repo_in_project_in_txn(
+            txn,
+            actor,
+            class,
+            repo,
+            None,
+            RepoAsk::WorkingViewEdit(bound, paths),
+        )? {
+            Ok(membership) => membership,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        Ok(self
+            .admit_registered_edit_in_txn(txn, repo, paths.iter().map(String::as_str))?
+            .map(|()| membership))
+    }
+
     /// The one admission the three seams share. With no `ask` it admits the
     /// membership alone; with one, the first Grant (in id order) whose
     /// bounds admit the target wins, and the refusal is the one that got
@@ -207,7 +310,7 @@ impl Vault {
             None => None,
         };
         let repo = resolved.unwrap_or(repo);
-        self.admit_repo_in_project_in_txn(txn, actor, class, repo, None, ask)
+        self.admit_repo_in_project_in_txn(txn, actor, class, repo, None, RepoAsk::Repo(ask))
     }
 
     fn admit_repo_in_project_in_txn(
@@ -217,9 +320,9 @@ impl Vault {
         class: EdgeActorClass,
         repo: EntityId,
         project: Option<EntityId>,
-        ask: Option<(&RepoTarget, RepoAccessIntent)>,
+        ask: RepoAsk<'_>,
     ) -> Result<RepoAdmission> {
-        let verb = ask.map_or(REPO_READ_VERB, |(_, intent)| intent.verb());
+        let verb = ask.verb();
         if principal_standing_in_txn(self, txn, actor, class, verb)?.is_none() {
             return Ok(Err(RepoAccessRefusal::NoMembership));
         }
@@ -243,6 +346,11 @@ impl Vault {
             let Some(bounds) = grant.repo_bounds.as_ref() else {
                 continue;
             };
+            // A Grant bound to a working view edits that view alone: no repo
+            // door passes it, and the view edit door passes only it (row 6).
+            if grant.working_view_bounds.as_ref() != ask.view_bound() {
+                continue;
+            }
             // A verb a class the Grant names admits counts as listed (FIX 8735).
             if bounds.repo != repo
                 || project.is_some_and(|project| bounds.project != project)
@@ -266,11 +374,7 @@ impl Vault {
             let Some(repo_ref) = self.repo_anchor_in_txn(txn, bounds)? else {
                 continue;
             };
-            if let Some((target, intent)) = ask
-                && let Err(refused) = grant
-                    .scope_for_verb(intent.verb(), &classes)
-                    .admit_repo_target(bounds, target, intent)
-            {
+            if let Err(refused) = ask.admit(grant, &classes, bounds, repo) {
                 refusal = refusal.max(refused);
                 continue;
             }
@@ -381,6 +485,10 @@ impl Vault {
             let Some(bounds) = grant.repo_bounds.as_ref() else {
                 continue;
             };
+            // A Grant bound to a working view is no repo Grant (row 6).
+            if grant.working_view_bounds.is_some() {
+                continue;
+            }
             // A verb a class the Grant names admits counts as listed (FIX 8735).
             if bounds.repo != repo
                 || grant.member_ref != actor
@@ -518,6 +626,29 @@ impl Vault {
             return Err(Error::InvalidConfig(NOT_IN_PROJECT.into()));
         }
         Ok(())
+    }
+
+    /// Whether the working view `view` names, for a new agent grant with
+    /// repo `bounds`, stands in the minting writer (row 6 WORKING-VIEW-EDIT):
+    /// a live owner working view (no run's) of the bounds' repo, made by
+    /// `owner`, the minting owner, in the account the bound names.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(super) fn working_view_mint_stands_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+        bounds: &RepoAccessBounds,
+        view: &WorkingViewEditBounds,
+    ) -> Result<bool> {
+        let Some(receipt) = crate::code_view::view_receipt_in_txn(self, txn, view.view)? else {
+            return Ok(false);
+        };
+        Ok(receipt.run.is_none()
+            && receipt.base.is_some_and(|(repo, _)| repo == bounds.repo)
+            && receipt.actor == owner
+            && view.account == owner)
     }
 
     /// The CODE anchor's current repo in `txn`: a live CODE_ARTIFACT whose

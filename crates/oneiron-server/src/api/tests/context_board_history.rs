@@ -567,7 +567,7 @@ async fn a_turns_board_keeps_the_revision_it_served() {
                 "memories": {
                     "enabled": true,
                     "slots": {"claims": 0, "turns": 0, "summaries": 0,
-                              "facets": 0, "companions": 0, "other": 1},
+                              "facets": 0, "other": 1},
                     "shared_total": 1,
                     "pinned_refs": []
                 },

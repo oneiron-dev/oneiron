@@ -5,6 +5,7 @@
   "output": "oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>",
   "call": "oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| driver.type_text(input))?)",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "browser",
   "mcp": "none",
   "section": false

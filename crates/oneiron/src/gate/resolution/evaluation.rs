@@ -335,7 +335,8 @@ impl PolicyManifestResolution {
             | GateContentKind::EdgeProvenanceClaim
             | GateContentKind::Repair
             | GateContentKind::AgentDefinitionSetup
-            | GateContentKind::WitnessMessage => {}
+            | GateContentKind::WitnessMessage
+            | GateContentKind::AgentPower => {}
             GateContentKind::PolicyManifest => {
                 pending.push(GateReasonCode::PendingPolicyManifestAuthority);
             }

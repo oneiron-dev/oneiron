@@ -395,6 +395,7 @@ impl SyncConnection {
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
     ) -> Result<crate::sync::carrier::SyncSocket, SessionFault> {
         client.note_session_bound = false;
+        client.note_bind_receipt = None;
         client.artifact_publication_resend.clear();
         client.document_retries = Default::default();
         client.asset_bodies = Default::default();

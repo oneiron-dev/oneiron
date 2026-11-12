@@ -35,6 +35,9 @@ impl AgentDispatcher<'_> {
     /// Read the live project in the same snapshot as the stored parent slice.
     /// Root defaults to the vault project; an omitted child project inherits.
     /// A project transition may only enter a direct child responsibility space.
+    /// A root run names a project other than the vault's only as a minted
+    /// project's goal-intake interview ([`Self::admitting_goal_intake`]),
+    /// and every ancestor project's explicit depth binds it.
     /// Every ancestor is read, however many (rule 5): past its threshold row
     /// the walk asks whether everything is okay, counted on every way out.
     /// The limit is [`UNBOUNDED_DEPTH`] where no explicit slice binds.
@@ -79,10 +82,17 @@ impl AgentDispatcher<'_> {
             txn,
             requested_project.or_else(|| parent_attempt.map(|_| parent_project)),
         )?;
-        if id != root && (parent_attempt.is_none() || !has_parent_input) {
+        // A minted project's goal-intake interview is the one root run a
+        // project other than the vault's admits (OF-501), proved here.
+        let entered = parent_attempt.is_none() && self.goal_intake_entry_in_txn(txn, id)?;
+        if id != root && !entered && (parent_attempt.is_none() || !has_parent_input) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "a project spawn requires a real parent in its ancestor project",
             )));
+        }
+        if entered {
+            // No ancestor's explicit depth is skipped by entering below it.
+            parent_limit = self.entered_ancestors_limit_in_txn(txn, &project.parents)?;
         }
         if parent_attempt.is_some() {
             if id != parent_project && !project.parents.contains(&parent_project.to_hex()) {
@@ -188,6 +198,71 @@ impl AgentDispatcher<'_> {
             distance += 1;
         }
         Ok((parent_project, has_parent_input, parent_limit))
+    }
+
+    /// Whether this dispatcher's goal-intake entry names `project` and
+    /// proves itself in `txn`: the stored card minted `project` from the
+    /// entry's home room and the entry's leader still leads it. An entry for
+    /// another project, or none, admits nothing; a failed proof refuses.
+    fn goal_intake_entry_in_txn(&self, txn: &heed::RoTxn<'_>, project: EntityId) -> Result<bool> {
+        let Some(entry) = self
+            .goal_intake
+            .as_ref()
+            .filter(|entry| entry.project == project)
+        else {
+            return Ok(false);
+        };
+        let leader = self.goal_intake_leader_in_txn(txn, &entry.card, project, entry.home_room)?;
+        if leader != entry.leader {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "goal-intake entry names another leader than its card",
+            )));
+        }
+        Ok(true)
+    }
+
+    /// The slice a root run entering the child of `parents` keeps: each
+    /// ancestor project's explicit live depth, less its distance along the
+    /// shortest `belongs_to` path, as the vault's root run spawning down that
+    /// path would spend it. [`UNBOUNDED_DEPTH`] where none binds. A project
+    /// shared along two paths is read once, at its nearest; a missing
+    /// ancestor refuses.
+    fn entered_ancestors_limit_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parents: &[String],
+    ) -> Result<u64> {
+        let mut limit = UNBOUNDED_DEPTH;
+        let mut seen = HashSet::new();
+        let mut level = Vec::with_capacity(parents.len());
+        for parent in parents {
+            level.push(EntityId::from_hex(parent)?);
+        }
+        let mut distance = 1_u64;
+        while !level.is_empty() {
+            let mut next = Vec::new();
+            for ancestor in level {
+                if !seen.insert(ancestor) {
+                    continue;
+                }
+                let (_, view) = self.vault.project_for_spawn_in_txn(txn, Some(ancestor))?;
+                let live = self.explicit_depth_in_txn(txn, ancestor, view.depth)?;
+                if live != UNBOUNDED_DEPTH {
+                    let remaining = live.checked_sub(distance).ok_or(Error::Artifact(
+                        ArtifactError::InvalidAgentDispatchInput(
+                            "project ancestor depth is exhausted",
+                        ),
+                    ))?;
+                    limit = limit.min(remaining);
+                }
+                for parent in &view.parents {
+                    next.push(EntityId::from_hex(parent)?);
+                }
+            }
+            level = next;
+            distance += 1;
+        }
+        Ok(limit)
     }
 
     /// The depth `project`'s live policy spends, `resolved` being the depth

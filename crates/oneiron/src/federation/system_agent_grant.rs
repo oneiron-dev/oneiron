@@ -778,6 +778,7 @@ impl Vault {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 steward: true,
+                working_view_bounds: None,
             },
         )?;
         Ok(id)

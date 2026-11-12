@@ -5,6 +5,7 @@
   "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
   "call": "memory.repo_checkout_bind_for_holder(input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

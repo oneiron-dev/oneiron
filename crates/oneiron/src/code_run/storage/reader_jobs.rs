@@ -29,6 +29,7 @@ use heed::{RoTxn, RwTxn};
 use super::reader_folds::{MEMOS, SummaryMemo};
 use super::records::REPLAY_RECORDS;
 use super::wait_delivery::deliver_wait_listing_in_txn;
+use crate::agent_def::AgentPowerTarget;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::code_run::CodeRunRawOutput;
@@ -587,6 +588,9 @@ pub(crate) struct NewReaderJob {
     /// The parent attempt lease a scoped child borrows; `None` for every
     /// other job.
     pub(crate) parent_lease: Option<BorrowedAttemptLease>,
+    /// The grant powers the child is born with (SPAWN-KNOB), staged with its
+    /// job; `None` stages none, and the child answers to its agent's grant.
+    pub(crate) powers: Option<crate::agent_def::AgentPowers>,
 }
 
 /// What one spawn came to.
@@ -638,6 +642,43 @@ impl ExecutorStorage<'_> {
                 participant: self.participant(),
             });
         }
+    }
+
+    /// The grant reader task `task` was born with on this route (SPAWN-KNOB),
+    /// if one was staged.
+    pub(crate) fn reader_task_powers(
+        &self,
+        task: EntityId,
+    ) -> Result<Option<crate::agent_def::AgentPowers>> {
+        self.reader_read(|txn, dbs| {
+            crate::agent_def::POWER_GRANTS
+                .get(&dbs, txn, &AgentPowerTarget::ReaderTask(task).key())?
+                .map(crate::agent_def::decode_power_grant_row)
+                .transpose()
+        })
+    }
+
+    /// What an agent instance holds on this route (SPAWN-KNOB), and whose
+    /// grant decided: the first of `instances` with a staged grant, else
+    /// `agent`'s root grant. A session's route reads the vault's rows under
+    /// its own.
+    pub(crate) fn effective_agent_powers(
+        &self,
+        agent: EntityId,
+        instances: &[AgentPowerTarget],
+    ) -> Result<(crate::agent_def::AgentPowers, AgentPowerTarget)> {
+        self.reader_read(|txn, dbs| {
+            for &instance in instances {
+                if let Some(row) = crate::agent_def::POWER_GRANTS.get(&dbs, txn, &instance.key())? {
+                    return Ok((crate::agent_def::decode_power_grant_row(row)?, instance));
+                }
+            }
+            let root = AgentPowerTarget::Agent(agent);
+            Ok((
+                crate::agent_def::agent_powers_in_txn(&dbs, txn, root)?,
+                root,
+            ))
+        })
     }
 
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
@@ -707,6 +748,13 @@ impl ExecutorStorage<'_> {
             parent.next_ordinal = parent.next_ordinal.saturating_add(1);
             parent.queued = parent.queued.saturating_add(1);
             tx.put_job(&job)?;
+            if let Some(powers) = new.powers {
+                tx.put_row(
+                    &crate::agent_def::POWER_GRANTS,
+                    &AgentPowerTarget::ReaderTask(job.task).key(),
+                    &crate::agent_def::power_grant_row(powers),
+                )?;
+            }
             tx.put_index(&child_key(new.parent_run, ordinal, job.task), &[])?;
             tx.put_index(&queued_key(now_ms, job.task), &[])?;
             tx.put_index(&due_key(cutoff, job.task), DUE_JOB)?;
@@ -1198,6 +1246,66 @@ impl<'a> ReaderJobs<'a> {
     ) -> Result<Self> {
         Ok(Self {
             storage: ExecutorStorage::for_session(session, participant)?,
+        })
+    }
+
+    /// The grant reader task `task` was born with on this route
+    /// (SPAWN-KNOB); `None` when none was staged, and the child answers to
+    /// its agent's grant.
+    ///
+    /// # Errors
+    ///
+    /// A store read error, or a corrupt row.
+    pub fn task_powers(&self, task: EntityId) -> Result<Option<crate::agent_def::AgentPowers>> {
+        self.storage.reader_task_powers(task)
+    }
+
+    /// The owner sets reader task `task`'s grant to `powers` on this route,
+    /// when it still holds `expected` (SPAWN-KNOB). A session's child is set
+    /// on the session's own route, never through the vault's.
+    ///
+    /// # Errors
+    ///
+    /// An owner proof that does not revalidate, a route of another vault, no
+    /// job for `task` on this route, and a concurrent change.
+    pub fn set_task_powers_as(
+        &self,
+        vault: &Vault,
+        owner: &crate::consent::AuthenticatedOwner,
+        task: EntityId,
+        expected: crate::agent_def::AgentPowers,
+        powers: crate::agent_def::AgentPowers,
+    ) -> Result<crate::agent_def::AgentPowers> {
+        if self.storage.vault_id() != vault.vault_id() {
+            return Err(Error::InvalidConfig(
+                "reader power grant names another vault".to_owned(),
+            ));
+        }
+        {
+            let txn = vault.store.env.read_txn()?;
+            owner.revalidate_as_vault_owner_in_txn(vault, &txn)?;
+        }
+        self.storage.reader_txn(|tx| {
+            // On the vault's own route the proof holds in this writer too.
+            if let Some(own) = tx.vault {
+                owner.revalidate_as_vault_owner_in_txn(own, tx.txn)?;
+            }
+            tx.job(task)?.ok_or(Error::EntityNotFound)?;
+            let key = AgentPowerTarget::ReaderTask(task).key();
+            let held = tx
+                .get_row(&crate::agent_def::POWER_GRANTS, &key)?
+                .map(crate::agent_def::decode_power_grant_row)
+                .transpose()?
+                .unwrap_or(crate::agent_def::AgentPowers::ALL);
+            if held != expected {
+                return Err(Error::ConcurrentWrite("agent power grant changed"));
+            }
+            tx.put_row(
+                &crate::agent_def::POWER_GRANTS,
+                &key,
+                &crate::agent_def::power_grant_row(powers),
+            )?;
+            Ok(powers)
         })
     }
 

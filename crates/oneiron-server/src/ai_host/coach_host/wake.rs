@@ -55,6 +55,7 @@ impl WakeExecutor {
                 reason: format!("{facet} failed: {:?}", error.kind()),
                 completed_units: 0,
                 budget_refusal: None,
+                step_bindings: Vec::new(),
             }),
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Err(_) => Err(oneiron::Error::InvalidConfig(

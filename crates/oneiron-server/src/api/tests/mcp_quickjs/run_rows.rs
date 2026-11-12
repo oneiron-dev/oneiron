@@ -182,7 +182,7 @@ async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&mode.server);
     let revoked = mode
         .vault
         .revoke_held_capability_slips(&issuer, &actor.to_hex(), [0; 32])
@@ -229,7 +229,13 @@ async fn witness_on_turn(
     );
     let (_, body) = route_json(
         server.clone(),
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "witness",
+            "vault.witness",
+            args,
+        ),
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");

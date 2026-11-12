@@ -5,6 +5,7 @@
   "output": "bool",
   "call": "memory.disarm_turn_program(input.registration)?",
   "scope": "Write",
+  "act_class": "unstated",
   "openapi": true,
   "section": false
 }

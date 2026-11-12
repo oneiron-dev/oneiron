@@ -5,6 +5,7 @@
   "output": "crate::claim::WeaveReportView",
   "call": "memory.weave_report(None, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -152,57 +152,86 @@ impl crate::Vault {
     /// Makes the stored FACET `facet` the vault default. Only the owner may
     /// call it.
     pub fn set_default_facet(&self, facet: EntityId, actor: WriteActor) -> MemoryResult<()> {
-        let owner = self.ensure_embedded_owner_actor()?;
+        self.ensure_embedded_owner_actor()?;
         let now = self.store.clock.now_recorded_at();
         self.try_with_write_txn_grouped(|wtxn| {
-            if actor.actor_class() != EdgeActorClass::Human
-                || crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref())
-                    .is_err()
-            {
-                return Err(MemoryError::from(Error::Claim(
-                    crate::error::ClaimError::ActorLacksClaimAuthority {
-                        reason: "only the vault owner sets the default facet",
-                    },
-                )));
-            }
-            let found = self.get_entity_type_in_txn(wtxn, &facet)?;
-            if found != Some(ENTITY_TYPE_FACET) {
-                return Err(MemoryError::from(Error::Registry(
-                    crate::error::RegistryError::InvalidFacet { facet, found },
-                )));
-            }
-            let previous = crate::ports::ClaimStore::port_claim_get_active(
-                self,
-                wtxn,
-                &owner,
-                PREDICATE_VAULT_DEFAULT_FACET,
-            )?;
             let claim = self.store.clock.entity_id()?;
-            let mut body = ClaimBody::new(
-                PREDICATE_VAULT_DEFAULT_FACET,
-                ClaimSubject::Entity(owner),
-                id_value(facet),
-                1.0,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            )?;
-            body.source = Some(ClaimSource::UserStated);
-            self.put_reserved_claim_in_txn(
-                wtxn,
-                &claim,
-                &body,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            )?;
-            if let Some((previous, _)) = previous {
-                self.supersede_reserved_claim_in_txn(wtxn, &claim, &previous, now)?;
-            }
-            Ok(())
+            let occurred = TimeRange {
+                start: now,
+                end: now,
+            };
+            self.put_default_facet_in_txn(wtxn, actor, &claim, facet, occurred, now)
+                .map_err(MemoryError::from)
         })
     }
+
+    /// [`Self::set_default_facet`] in `wtxn`: as the owner `actor`, puts
+    /// `claim` making the stored FACET `facet` the vault default, at
+    /// `occurred` and `learned_at`, and supersedes the default it replaces.
+    /// The whole-vault import's owner restore into a fresh vault puts an
+    /// archived default facet through it, under that claim's id and times.
+    pub(crate) fn put_default_facet_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        actor: WriteActor,
+        claim: &EntityId,
+        facet: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        if actor.actor_class() != EdgeActorClass::Human
+            || crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref())
+                .is_err()
+        {
+            return Err(Error::Claim(
+                crate::error::ClaimError::ActorLacksClaimAuthority {
+                    reason: "only the vault owner sets the default facet",
+                },
+            ));
+        }
+        let found = self.get_entity_type_in_txn(wtxn, &facet)?;
+        if found != Some(ENTITY_TYPE_FACET) {
+            return Err(Error::Registry(crate::error::RegistryError::InvalidFacet {
+                facet,
+                found,
+            }));
+        }
+        let owner = crate::vault::embedded_owner_actor_id()?;
+        let previous = crate::ports::ClaimStore::port_claim_get_active(
+            self,
+            wtxn,
+            &owner,
+            PREDICATE_VAULT_DEFAULT_FACET,
+        )?;
+        let mut body = ClaimBody::new(
+            PREDICATE_VAULT_DEFAULT_FACET,
+            ClaimSubject::Entity(owner),
+            id_value(facet),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.source = Some(ClaimSource::UserStated);
+        self.put_reserved_claim_in_txn(wtxn, claim, &body, occurred, learned_at)?;
+        if let Some((previous, _)) = previous {
+            self.supersede_reserved_claim_in_txn(wtxn, claim, &previous, learned_at)?;
+        }
+        Ok(())
+    }
+}
+
+/// The FACET an archived [`PREDICATE_VAULT_DEFAULT_FACET`] claim names, in
+/// the shape its one writer gives it: a claim about the vault owner whose
+/// value is a FACET id.
+pub(crate) fn archived_default_facet(body: &ClaimBody) -> Result<EntityId> {
+    if body.predicate != PREDICATE_VAULT_DEFAULT_FACET
+        || body.subject != ClaimSubject::Entity(crate::vault::embedded_owner_actor_id()?)
+    {
+        return Err(Error::InvalidClaimBody(
+            "vault.default_facet must be a claim about the vault owner",
+        ));
+    }
+    scope_id(&body.value)
 }
 
 /// The record-position Scope projection of a stored claim.

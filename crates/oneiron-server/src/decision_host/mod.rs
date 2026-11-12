@@ -212,6 +212,9 @@ pub struct DecisionHost {
     /// The notes beside decided answers: the big model's when one is bound,
     /// else the template (FIX 3040, 654).
     notes: notes::HostNotes,
+    /// The Local slot's question heads, kept so a bind or unbind drops the
+    /// heads no binding names (FIX 3864).
+    question_heads: Option<Arc<crate::ai_host::training_pack::QuestionHeadRung>>,
 }
 
 impl DecisionHost {
@@ -252,6 +255,7 @@ impl DecisionHost {
             verdict_spend: Arc::default(),
             broker: None,
             notes: notes::HostNotes::default(),
+            question_heads: None,
         }
     }
 
@@ -401,6 +405,32 @@ impl DecisionHost {
             Err(error) => tracing::warn!(%error, "the Local-vision seat cannot fill its rung"),
         }
         self
+    }
+
+    /// The owner's bound question heads in front of whatever the Local slot
+    /// holds (FIX 3864): a yes/no call on a question a head is bound to, with
+    /// the head's input as its state, reaches that head; every other call
+    /// reaches the seat as before, or steps past an empty slot as before.
+    fn with_question_heads(mut self, vault: &Arc<Vault>) -> Self {
+        let inner = self.ladder.local.take();
+        let heads = Arc::new(crate::ai_host::training_pack::QuestionHeadRung::new(
+            Arc::clone(vault),
+            inner,
+        ));
+        self.ladder.local = Some(Arc::clone(&heads) as Arc<dyn DecisionProvider>);
+        self.question_heads = Some(heads);
+        self
+    }
+
+    /// Drops the loaded question heads no binding names any more, after an
+    /// owner's bind or unbind (FIX 3864). A failure is logged; the slot
+    /// prunes again on its own within a minute.
+    pub(crate) fn forget_unbound_question_heads(&self) {
+        if let Some(heads) = &self.question_heads
+            && let Err(error) = heads.prune()
+        {
+            tracing::warn!(%error, "the loaded question heads were not pruned");
+        }
     }
 
     /// The System One seat on its rung, its measurements sent on `runtime`.

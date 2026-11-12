@@ -56,17 +56,39 @@ pub(crate) fn facade_provenance(verb: &str) -> Value {
     ])
 }
 
+/// The approval a claim write asks for; the gate still decides it, and a
+/// pended Auto request is retried as Proposed by each caller.
+///
+/// ARCH-0003's consent matrix routes on the claim's sensitivity, never on
+/// whether a stamp is present: a `user_stated` or `observed` claim asks Auto
+/// with no stamp or with a public (0) or private (1) stamp, and Proposed with
+/// a sensitive (2) or restricted (3) stamp. A stamp no band reads asks
+/// Proposed. Every other source asks Proposed.
 pub(in crate::memory) fn requested_approval(
     source: ClaimSource,
     scope: Option<&serde_json::Value>,
 ) -> ClaimApprovalStatus {
     let auto_source = matches!(source, ClaimSource::UserStated | ClaimSource::Observed);
-    let has_sensitivity_key = scope
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|map| map.contains_key(SCOPE_SENSITIVITY_KEY));
-    if auto_source && !has_sensitivity_key {
+    if auto_source && sensitivity_stamp_admits_auto(scope) {
         ClaimApprovalStatus::Auto
     } else {
         ClaimApprovalStatus::Proposed
     }
+}
+
+/// The first band ARCH-0003 routes to Proposed (`sensitive`).
+const FIRST_PROPOSED_SENSITIVITY_BAND: u8 = 2;
+
+/// True when the scope carries no `sensitivity` stamp, or a stamp whose band
+/// is below [`FIRST_PROPOSED_SENSITIVITY_BAND`]. The stamp is read by the
+/// parser the stored claim body is read with.
+fn sensitivity_stamp_admits_auto(scope: Option<&serde_json::Value>) -> bool {
+    let Some(stamp) = scope
+        .and_then(serde_json::Value::as_object)
+        .and_then(|map| map.get(SCOPE_SENSITIVITY_KEY))
+    else {
+        return true;
+    };
+    crate::claim::sensitivity_band_from_value(&json_to_rmpv(stamp))
+        .is_some_and(|band| band < FIRST_PROPOSED_SENSITIVITY_BAND)
 }

@@ -359,6 +359,7 @@ pub(crate) async fn create_core_conversation(
         project_core_entity(&server.vault, &id, View::Full)?.0
     } else {
         projection::project_entity_parts(
+            &server.vault,
             &id,
             ENTITY_TYPE_CONVERSATION,
             receipt.learned_at,
@@ -511,6 +512,7 @@ pub(crate) async fn create_core_conversation_turn(
     };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = projection::project_entity_parts(
+        &server.vault,
         &id,
         ENTITY_TYPE_TURN,
         receipt.learned_at,
@@ -562,7 +564,8 @@ pub(crate) async fn get_core_turn(
         core_turn_for_read(&server.vault, &read, &id, turn_read_query(query))?;
     let view = params.view.unwrap_or(View::Full);
     // The words its admission read, in that same snapshot (FIX 5870).
-    let mut item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
+    let mut item =
+        projection::project_entity_parts(&server.vault, &id, entity_type, learned_at, &body, view);
     if params.with.as_deref() == Some("reply_strip") {
         let strip = server
             .vault

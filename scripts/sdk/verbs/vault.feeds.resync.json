@@ -5,6 +5,7 @@
   "output": "crate::feeds::FeedSubscription",
   "call": "memory.feed_resync(input.subscription)?",
   "scope": "Write",
+  "act_class": "unstated",
   "openapi": true,
   "section": false
 }

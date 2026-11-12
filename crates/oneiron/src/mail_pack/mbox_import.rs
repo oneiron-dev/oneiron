@@ -255,6 +255,23 @@ enum ImportNaming {
     HeaderBlock,
 }
 
+/// The headers the mbox message `raw` lands with, named by its header block
+/// (fix list row 20852). A test door: built only under
+/// `--cfg oneiron_test_support`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn mbox_landed_headers(raw: &[u8]) -> Option<MailHeaders> {
+    let message = MboxMessage {
+        separator: "From MAILER-DAEMON Thu Nov 12 00:00:00 2026".to_owned(),
+        raw: raw.to_vec(),
+        oversized: false,
+    };
+    Intake::headers(
+        ImportNaming::HeaderBlock,
+        &message,
+        &MimeMessage::parse(raw),
+    )
+}
+
 /// One call's landings into one source.
 struct Intake<'v> {
     vault: &'v Vault,
@@ -267,11 +284,16 @@ struct Intake<'v> {
 }
 
 impl Intake<'_> {
-    /// A message's headers, its labels Takeout's and its address headers
-    /// read from its raw header block, each mailbox apart, as a reply's
-    /// recipients take them (fix list row 20520); `None` for one its source
-    /// names by a Gmail id it does not carry.
-    fn headers(&self, message: &MboxMessage, parsed: &MimeMessage<'_>) -> Option<MailHeaders> {
+    /// A message's headers, named as `naming` names it: its labels Takeout's
+    /// and its address headers read from its whole raw header block, each
+    /// mailbox apart, as a reply's recipients take them (fix list rows 20520,
+    /// 20852); `None` for one its source names by a Gmail id it does not
+    /// carry.
+    fn headers(
+        naming: ImportNaming,
+        message: &MboxMessage,
+        parsed: &MimeMessage<'_>,
+    ) -> Option<MailHeaders> {
         let rfc_message_id = parsed.header("message-id").filter(|id| !id.is_empty());
         let takeout = || {
             parsed
@@ -279,7 +301,7 @@ impl Intake<'_> {
                 .map(|value| takeout_labels(&value))
                 .unwrap_or_default()
         };
-        let (provider_id, thread_id, labels) = match self.naming {
+        let (provider_id, thread_id, labels) = match naming {
             ImportNaming::GmailApi => {
                 let id = gmail_message_id(&message.separator, parsed)?;
                 let thread = parsed
@@ -306,7 +328,9 @@ impl Intake<'_> {
         };
         let date = parsed.header("date").as_deref().and_then(rfc2822_seconds);
         let received_at = separator_seconds(&message.separator).or(date).unwrap_or(0);
-        let addresses = |name: &str| parsed.address_header(name);
+        // A parse keeps only a message's first header fields, so a late
+        // Reply-To would be lost and the reply would go to From.
+        let addresses = super::mime::raw_address_headers(&message.raw);
         Some(MailHeaders {
             provider_id,
             thread_id,
@@ -316,10 +340,10 @@ impl Intake<'_> {
                 .header("references")
                 .map(|value| value.split_whitespace().map(str::to_owned).collect())
                 .unwrap_or_default(),
-            from: Some(parsed.address_header("from").join(", ")).filter(|from| !from.is_empty()),
-            to: addresses("to"),
-            cc: addresses("cc"),
-            reply_to: addresses("reply-to"),
+            from: Some(addresses.from.join(", ")).filter(|from| !from.is_empty()),
+            to: addresses.to,
+            cc: addresses.cc,
+            reply_to: addresses.reply_to,
             subject: parsed.header("subject"),
             date,
             received_at,
@@ -340,7 +364,7 @@ impl Intake<'_> {
             return Ok(());
         }
         let parsed = MimeMessage::parse(&message.raw);
-        let Some(mut headers) = self.headers(message, &parsed) else {
+        let Some(mut headers) = Self::headers(self.naming, message, &parsed) else {
             let reason = if self.naming == ImportNaming::GmailImap {
                 "a message with no Gmail id: a Gmail mailbox over IMAP names each message by \
                  its Gmail id, which a Google Takeout export carries"
