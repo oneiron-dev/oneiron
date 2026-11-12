@@ -603,7 +603,8 @@ impl OmissionLedger {
 /// (`MachineSignedClaimNotRestored`): the signature binds the source vault's
 /// id, this vault holds neither that MACHINE nor its omitted history, and
 /// dropping the proof would pass a signed write off as an unsigned one, as
-/// the guest-claim rule (FIX 3497) holds.
+/// the guest-claim rule (FIX 3497) holds. Only the owner's restore brings it
+/// back, as the owner's restore of it, its MACHINE author and proof inert.
 pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
     match row.entity_type {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR => Some(ImportOmissionReason::SkillAnchorRecomputed),

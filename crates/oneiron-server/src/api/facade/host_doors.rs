@@ -92,6 +92,7 @@ pub(crate) use super::voice_bank_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
+pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::identity_doors::*;
 pub(crate) use super::legal_hold_doors::*;
