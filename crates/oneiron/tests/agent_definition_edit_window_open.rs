@@ -15,7 +15,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 
 use oneiron::agent_def::{
     AgentCeiling, AgentDefinition, AgentScope, RefusalDial, RefusalDomain, RefusalLevel,
@@ -102,6 +103,21 @@ fn open_as_owner(dir: &Path, keystore: &Arc<MemoryKeystore>) -> (Arc<Vault>, Aut
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .expect("owner proof");
     (Arc::new(vault), owner)
+}
+
+/// Waits until the last holder of a stopped vault lets it go, so the next
+/// open can take its writer lease. The live mirror's thread holds the
+/// manager, and through it the vault, for the rest of a pass it began
+/// before the stop; its next pass finds the manager gone and ends.
+fn wait_until_closed(stopped: &Weak<Vault>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while stopped.strong_count() > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the stopped vault is still held after 10 s"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// The window the engine keeps `id`'s row in.
@@ -214,13 +230,14 @@ fn an_owner_edit_survives_a_restart_and_keeps_its_revision_fence() {
     let keystore = Arc::new(MemoryKeystore::new());
     // A clean stop persists the loaded window; the block's end lets the
     // manager, the proof and the vault go.
-    let (id, first, second, key) = {
+    let (id, first, second, key, stopped) = {
         let (vault, owner) = open_as_owner(dir.path(), &keystore);
         let (id, first, manager, key) = created_under_a_loaded_window(&vault, &owner);
         let second = edit_to_second_version(&vault, &owner, &id, &first);
         assert!(manager.unload_window(&key).expect("the window unloads"));
-        (id, first, second, key)
+        (id, first, second, key, Arc::downgrade(&vault))
     };
+    wait_until_closed(&stopped);
 
     let (vault, owner) = open_as_owner(dir.path(), &keystore);
     let manager = Arc::new(WindowManager::new(
