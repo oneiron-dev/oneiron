@@ -4,7 +4,7 @@ import { mkdir, copyFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { PublicHttpClient } from "./support/clients.ts";
+import { credentialParts, PublicHttpClient } from "./support/clients.ts";
 import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { ScriptedProviders, openaiStream, openaiText } from "./support/providers.ts";
 import { BlockedDoor, defineFile } from "./support/run.ts";
@@ -23,8 +23,9 @@ afterAll(suite.flush);
  * MEMORY-01 asserts the fixture's full lifecycle: an approved proposal supersedes the head on its
  * conflict set (#6930), and the holder's retraction keeps history. MEMORY-07 asserts the fixture's
  * full split promise: split membership reads through merged_into (#6924). MEMORY-05 ends on a dated
- * engine-defect label while a context pack drops a window's CLAIM for token_budget. MEMORY-02 and
- * MEMORY-08 mint two projects and stay todo on the nightly budget list (30 s cap).
+ * engine-defect label while a context pack drops a window's CLAIM for token_budget. MEMORY-08 mints
+ * two projects inside the 30 s cap (#7297). MEMORY-02 mints two and stays todo on the nightly budget
+ * list until its MCP tool calls get faster.
  */
 
 type ClaimInput = FacadeInput<"vault.claims.upsert">;
@@ -306,8 +307,8 @@ async function setup(id: string, projectRefs: readonly string[] = ["@project-nor
     serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
   await installProjectProposal(engine);
-  // Each minted project costs the house three agent runs (decide, draft, goal intake), about 8.5 s
-  // on the fleet: each run starts about 4 s after the call that queues it (job 1112-193055-add3).
+  // Each minted project costs the house three agent runs (decide, draft, goal intake), about 4.5 s
+  // on the fleet: each run's model call comes about 2 s after the call that queues it (job 1113-014554-4015).
   // A case therefore mints only the projects it names; a case that names an unminted one fails at ref().
   const base = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
   const projects = new Map<string, string>();
@@ -522,12 +523,12 @@ suite.test(test, "MEMORY-01", "Claim lifecycle: only the holder settles a propos
  * bad row in claims/point-reads/neighbors/recall, HTTP/MCP parity, valid siblings
  * preserved, batch per-element outcomes (never blanket rollback).
  */
-// The journey described above is at commit 0023232ce73 (tests/e2e/memory.test.ts). It needs two house-minted
-// projects (about 17 s: three agent runs each, every run starting about 4 s after the call that
-// queues it) and its MCP half costs about 1.6 s per tool call; with a 60 s diagnostic budget it was
-// still at its MCP upserts at 60 s (fleet job 1112-211116-26cc). It keeps the 30 s cap and sits on
-// the nightly budget list (Engine ruling 21:1x Thu 12 Nov, B) until both rows land.
-suite.todo(test, "MEMORY-02", "waits on [AGENT-RUN-START-LATENCY-4S] and [SLOW-FACADE-CALLS-COORDINATION-08]: two house-minted projects and 1.6 s MCP calls exceed the 30 s cap; nightly budget list (Claim admission rejects malformed scope should work)");
+// The journey described above is at commit 0023232ce73 (tests/e2e/memory.test.ts). With #7297 its two
+// house-minted projects take about 9 s, but its MCP half still costs about 1.6 s per tool call (the same
+// verb over HTTP: about 0.04 s), and it reached only its MCP vault.get at 30 s (fleet job
+// 1113-014554-4015). It keeps the 30 s cap and sits on the nightly budget list (Engine ruling 21:1x
+// Thu 12 Nov, B) until [SLOW-FACADE-CALLS-COORDINATION-08] lands.
+suite.todo(test, "MEMORY-02", "waits on [SLOW-FACADE-CALLS-COORDINATION-08]: 1.6 s MCP tool calls exceed the 30 s cap; nightly budget list (Claim admission rejects malformed scope should work)");
 
 /* ARCH-0003 observed/stated disagreement; ARCH-0040 source trust.
  * The extraction and run-bound supersession doors NOW EXIST:
@@ -890,8 +891,119 @@ suite.test(test, "MEMORY-07", "Identity merge split and undo should work", async
 
 // ARCH-0022 four explicit axes; ARCH-0004 labelled world partitions;
 // ARCH-0043 grant axes are distinct from requested axes.
-// The journey is at commit 0023232ce73 (tests/e2e/memory.test.ts). It needs both projects, about 17 s
-// of house-minted setup (three agent runs each, every run starting about 4 s after the call that
-// queues it), and reached its third guest ceiling case at 27.1 s (fleet job 1112-211116-26cc). It
-// keeps the 30 s cap and sits on the nightly budget list (Engine ruling 21:1x Thu 12 Nov, B).
-suite.todo(test, "MEMORY-08", "waits on [AGENT-RUN-START-LATENCY-4S]: two house-minted projects exceed the 30 s cap; nightly budget list (World and project separation should work)");
+suite.test(test, "MEMORY-08", "World and project separation should work", async () => {
+  const w = await setup("MEMORY-08", ["@project-north", "@project-south"]);
+  try {
+    const c = scenario(w, "MEMORY-08");
+    const ids: string[] = [];
+    for (const input of c.claims) {
+      const receipt = await w.engine.client.call("vault.claims.upsert", claimInput(w, input));
+      const id = (await entity(w.engine.client, receipt.claim_short_id)).id_hex; ids.push(id);
+      const stored = await claim(w, id);
+      expect(stored.claim_scope).toEqual(claimInput(w, input).scope);
+      expect(stored.value).toBe(input.value.value); expect(stored.lifecycle).toBe("active");
+    }
+    // Same subject/predicate in six explicit partitions must not supersede.
+    const nameRows = (await claims(w)).filter(row => row.predicate === c.claims[0]!.predicate);
+    expect(nameRows).toHaveLength(6); expect(nameRows.every(row => row.lifecycle === "active")).toBe(true);
+    // An All-world pack keeps at most half its claims from non-base worlds unless a facet is named;
+    // every claim here sits at the shared work facet, which lifts that share without widening authority.
+    const all = await recalled(w, "Morgan Vale Glass keeper Paper captain north south name", {
+      worlds: { kind: "all" }, facet: ref(w, "@facet-work"),
+      project_refs: w.data.fixture.projects.map(row => ref(w, row.ref)), kinds: ["CLAIM"],
+    });
+    expect(values(all, c.claims[0]!.predicate)).toEqual(c.claims.map(row => row.value.value).sort());
+    const names = all.items.filter(item => item.predicate === c.claims[0]!.predicate);
+    expect(names.slice(0, 2).map(item => item.world)).toEqual([ref(w, "@base"), ref(w, "@base")]);
+    for (const world of ["@base", "@dream", "@roleplay"]) {
+      const positions = names.map((item, index) => item.world === ref(w, world) ? index : -1)
+        .filter(index => index >= 0);
+      expect(positions).toHaveLength(2);
+      expect(positions[1]! - positions[0]!).toBe(1);
+    }
+    for (const input of c.claims) {
+      const item = names.find(item => item.value_text === input.value.value);
+      expect(item?.world).toBe(ref(w, input.worldId));
+      expect(item?.project_ref).toBe(ref(w, input.scopeProjectId));
+      const selected = await recalled(w, "Morgan Vale Glass keeper Paper captain north south name", {
+        worlds: input.worldId === "@base" ? { kind: "base" }
+          : { kind: "world", world_ref: ref(w, input.worldId), include_base: false },
+        project_refs: [ref(w, input.scopeProjectId)], kinds: ["CLAIM"],
+      });
+      expect(values(selected, input.predicate)).toEqual([input.value.value]);
+    }
+    // Mint a real, distinct reader. Attenuation below narrows that reader's
+    // actual paired read grant, never the owner's own-root authority.
+    const guestId = await person(w, "@guest", "Observatory guest reader");
+    const guest = await w.engine.pairActor({ principalRef: guestId, actorClass: "human", scope: ["core:read"] });
+    expect((await guest.client.call("self.actor", {})).actor_ref).toBe(guestId);
+    const { seed } = credentialParts(guest.credential);
+    const topRest: Pick<Facade.Scope, "bands" | "audience" | "verbs" | "sensitivity"> = {
+      bands: { kind: "all" }, audience: { kind: "all" },
+      verbs: { kind: "some", values: ["core:read"] }, sensitivity: { kind: "all" },
+    };
+    async function reader(scope: Facade.Scope): Promise<PublicHttpClient> {
+      const narrowed = await guest.client.call("self.credential.attenuate", {
+        holder_seed: [...Buffer.from(seed, "hex")], caveat: { scope: { kind: "ceiling", scope } },
+      });
+      expect(narrowed.token.startsWith("v2.slip.")).toBe(true);
+      // binding_key is public. No transfer was requested: retain our own
+      // seed, not the returned public key, in the paired credential format.
+      return new PublicHttpClient(w.engine.url, { credential: `v2.cred.${narrowed.token.slice(8)}.${seed}`,
+        artifacts: w.engine.artifacts });
+    }
+    const positive = await reader({ ...topRest, worlds: { kind: "some", values: [ref(w, "@dream")] },
+      facets: { kind: "some", values: [ref(w, "@facet-work")] } });
+    const query: FacadeInput<"vault.recall"> = { query: "Glass keeper north south name", effort: "light",
+      limit: 100, token_budget: 8192, scope: { worlds: { kind: "all" }, facet: ref(w, "@facet-work"), kinds: ["CLAIM"] } };
+    const readable = await positive.call("vault.recall", query);
+    // The world ceiling admits exactly the two @dream rows, one per project. A guest connection reads at
+    // the Public band, so each name-class value prints as the subject's handle, never a fake and never a
+    // drop (ARCH-0069 S9; disclosure/model_channel.rs claim_handle_in).
+    const dream = c.claims.filter(row => row.worldId === "@dream");
+    const guestNames = readable.items.filter(item => item.predicate === c.claims[0]!.predicate);
+    expect(guestNames.map(item => item.world)).toEqual(dream.map(() => ref(w, "@dream")));
+    expect(guestNames.map(item => item.project_ref).sort()).toEqual(dream.map(row => ref(w, row.scopeProjectId)).sort());
+    for (const item of guestNames) {
+      expect(item.value_text.length).toBeGreaterThan(0);
+      expect(c.claims.map(row => row.value.value)).not.toContain(item.value_text);
+    }
+    const receipts = [];
+    for (const input of c.expected.guestCeilingCases) {
+      const scope: Facade.Scope = { ...topRest,
+        ...(input.worlds === undefined ? {} : { worlds: { kind: "some" as const, values: input.worlds.map(role => ref(w, role)) } }),
+        ...(input.facets === undefined ? {} : { facets: { kind: "some" as const, values: input.facets.map(role => ref(w, role)) } }) };
+      const client = await reader(scope);
+      const ceiling = await client.call("vault.scope.ceiling", {});
+      const deniedAxis = input.name.includes("world") ? ceiling.scope.worlds : ceiling.scope.facets;
+      expect(deniedAxis?.kind).toBe("bottom");
+      const pack = await client.call("vault.recall", query);
+      expect(pack.items).toHaveLength(input.expectedReadableClaims);
+      // A bottom world floors the scalar read ceiling (deny_all); a bottom facet withholds rows by
+      // facet admission instead, so its scalar ceiling stays open while the items stay empty.
+      const worldBottom = input.name.includes("world");
+      expect(pack.narrowing.actor_ceiling.deny_all).toBe(worldBottom);
+      expect(pack.narrowing.applied.deny_all).toBe(worldBottom);
+      // The receipt names deny_all for a bottom world. A bottom facet is the key's own baseline:
+      // its per-row withholding stays opaque, so it names no axis and counts no suppressed row
+      // (oneiron-contracts claim/receipt.rs record_axes; claim/scoped_read/search.rs, FIX 8670).
+      if (worldBottom) expect(pack.narrowing.narrowed_axes).toContain("deny_all");
+      else { expect(pack.narrowing.narrowed_axes).toEqual([]); expect(pack.narrowing.suppressed_count).toBe(0); }
+      // An empty *requested* world set adds no narrowing; it cannot lift a
+      // bottom credential to top. Same zero result and same applied ceiling.
+      const emptyRequested = await client.call("vault.recall", { ...query,
+        scope: { worlds: { kind: "worlds", world_refs: [], include_base: false }, kinds: ["CLAIM"] } });
+      expect(emptyRequested.items).toEqual([]);
+      expect(emptyRequested.narrowing.applied.deny_all).toBe(worldBottom);
+      receipts.push({ name: input.name, ceiling, pack, emptyRequested });
+    }
+    const missing = claimInput(w, c.claims[0]!, inputId("MEMORY-08:missing-world"));
+    const malformed: Record<string, unknown> = { ...missing, scope: { ...missing.scope } };
+    delete object(malformed.scope).world_id;
+    const rejected = await w.engine.client.raw("POST", "/v1/core/facade/vault.claims.upsert", malformed);
+    expect(rejected.status).toBeGreaterThanOrEqual(400); expect(rejected.status).toBeLessThan(500);
+    expect((await w.engine.client.call("vault.get", { entity_ref: missing.id! })).value).toBeNull();
+    expect((await claims(w)).filter(row => row.predicate === c.claims[0]!.predicate)).toHaveLength(6);
+    await w.engine.artifacts.json("world-project-scopes.json", { ids, all, positive: readable, receipts, refusal: rejected.body });
+  } finally { await closeWorld(w) }
+});

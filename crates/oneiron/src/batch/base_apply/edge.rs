@@ -108,9 +108,10 @@ pub(super) fn apply_edge_op(
         }
         BatchOp::DeleteEdge { src, kind, tgt } => {
             // Deleting or purging the source removes its stamp with it; a live
-            // NOTE, ASSET, ASSET_TEXT, CLAIM, TURN or EVENT keeps the one it was
-            // born with (FIX 9596: a facet move is a new-record fork through the
-            // claim-supersession fork machinery, never a delete plus a re-stamp).
+            // NOTE, ASSET, ASSET_TEXT, CLAIM, TURN, EVENT or TASK keeps the one it
+            // was born with (FIX 9596: a facet move is a new-record fork through
+            // the claim-supersession fork machinery, never a delete plus a
+            // re-stamp).
             if kind == crate::edge::EdgeKind::FacetOf
                 && matches!(
                     stored_entity_type(store, wtxn, &src)?,
@@ -121,6 +122,7 @@ pub(super) fn apply_edge_op(
                             | crate::registry::ENTITY_TYPE_CLAIM
                             | crate::registry::ENTITY_TYPE_TURN
                             | crate::registry::ENTITY_TYPE_EVENT
+                            | crate::registry::ENTITY_TYPE_TASK
                     )
                 )
             {

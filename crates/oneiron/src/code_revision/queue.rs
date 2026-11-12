@@ -385,6 +385,8 @@ pub(crate) fn record_queue_revision_provenance_in_txn(
     // Observed queue bookkeeping, not a code approval: promotion still
     // reviews every changed file on its own.
     body.source = Some(ClaimSource::Observed);
+    // The subject is the code session, which has no FACET of its own.
+    body.scope_facet = vault.claim_put_facet_in_txn(wtxn, &id)?;
     let at = revision.finalized_at;
     vault.put_reserved_claim_in_txn(wtxn, &id, &body, TimeRange { start: at, end: at }, at)?;
     Ok(id)
