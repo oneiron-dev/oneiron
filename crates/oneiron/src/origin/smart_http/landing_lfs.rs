@@ -10,9 +10,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitTreeEntry, GitWire, GitWireRepo};
-use crate::origin::lfs::{
-    DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPointerIntent, LfsPushedPointer,
-};
+use crate::origin::lfs::{LfsAdmission, LfsOid, LfsPointerIntent, LfsPushedPointer};
 
 /// The admitted LFS objects one advancing ref's own tree actually carries.
 ///
@@ -40,14 +38,12 @@ pub(super) fn ref_required_lfs_oids(
     Ok(required)
 }
 
-/// Classifies this landing's pointers and returns the ones that publish.
+/// Classifies this landing's pointers and returns them, every one admitted.
 ///
-/// `KeepInGit` is dropped silently and on purpose: a build-required asset stays
-/// ordinary Git content, so it publishes as itself, gets no durable ref
-/// attachment, and any staged upload of it stays unreferenced and collectible.
-/// `StoreInLfs` demands its bytes: publishing a pointer whose object is absent
-/// would advertise a head that fails checkout, which is the one outcome
-/// ARCH-0068 forbids outright.
+/// Every pushed pointer demands its bytes, a build-required one included
+/// (Engine CODECUSTODY-LFS Q2 = A): publishing a pointer whose object is
+/// absent would advertise a head that fails checkout, which is the one
+/// outcome ARCH-0068 forbids outright.
 pub(super) fn admit_landing_lfs_pointers(
     vault: &Vault,
     repo_id: EntityId,
@@ -56,24 +52,21 @@ pub(super) fn admit_landing_lfs_pointers(
     if pointers.is_empty() {
         return Ok(Vec::new());
     }
-    let policy = DefaultRepositoryLargeLfsPathPolicy;
+    // The owner's path policy classifies; both classes keep their bytes.
+    let policy = vault.origin_lfs_path_policy(repo_id)?;
     let mut admitted = Vec::new();
     for pointer in pointers {
         let intent = pointer.intent(repo_id);
-        match vault.admit_lfs_pointer(&policy, &intent)? {
-            LfsAdmission::KeepInGit => continue,
-            LfsAdmission::StoreInLfs => {
-                if !vault.has_lfs_object(intent.oid, intent.size_bytes)? {
-                    return Err(Error::Code(CodeError::ReceivePackLandingRefused {
-                        reason: format!(
-                            "lfs object for {} is not stored in this vault",
-                            printable_ref_name(&String::from_utf8_lossy(&intent.path))
-                        ),
-                    }));
-                }
-                admitted.push(intent);
-            }
+        let LfsAdmission::StoreInLfs = vault.admit_lfs_pointer(&policy, &intent)?;
+        if !vault.has_lfs_object(intent.oid, intent.size_bytes)? {
+            return Err(Error::Code(CodeError::ReceivePackLandingRefused {
+                reason: format!(
+                    "lfs object for {} is not stored in this vault",
+                    printable_ref_name(&String::from_utf8_lossy(&intent.path))
+                ),
+            }));
         }
+        admitted.push(intent);
     }
     Ok(admitted)
 }
@@ -99,9 +92,6 @@ pub(super) fn admit_landing_lfs_pointers(
 /// pointer admits nothing, and replacing a ref's rows with that empty set would
 /// erase attachments that are still true. Rows are dropped when the ref itself
 /// goes, and there only.
-///
-/// A `BuildRequired` path is absent from `admitted` and so stays unattached,
-/// whatever tree carries it.
 pub(super) fn attach_landing_lfs_pointers(
     vault: &Vault,
     wire: &GitWire<'_>,
