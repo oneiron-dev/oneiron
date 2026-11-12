@@ -230,6 +230,7 @@ pub async fn settle_paid_step(
         deadline: None,
         now_ms: now * 1_000,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let guard = crate::llm::BudgetGuard::with_reserve_units(
         "wake",
@@ -357,6 +358,7 @@ pub async fn retain_owed_call_charge(
         deadline: None,
         now_ms: now * 1_000,
         spend_scope: None,
+        wake_pass_bound: false,
     };
     let guard = crate::llm::BudgetGuard::with_reserve_units(
         "wake",

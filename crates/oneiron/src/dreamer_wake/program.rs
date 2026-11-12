@@ -442,6 +442,7 @@ async fn enter(
         code_run: binding.code_run,
         inner: &*backend,
         meter,
+        wake_pass_bound: attempt.ordinary_budget_limit_units() >= meter.reserve_units(),
         reactor: &*reactor,
         occurrence: AtomicU64::new(0),
         stop: Mutex::new(None),
@@ -620,6 +621,10 @@ struct ProgramModelSeam<'s> {
     code_run: EntityId,
     inner: &'s dyn LlmBackend,
     meter: &'s BudgetGuard,
+    /// Whether the program's steps are bound to the pass: its meter is lent under the pass's
+    /// shared cap each pass, so a spent meter parks the step for a later pass with room. A try
+    /// whose own limit is below the step reserve never fits a pass, so its steps refuse `Unbound`.
+    wake_pass_bound: bool,
     reactor: &'s dyn TurnProgramReactor,
     occurrence: AtomicU64,
     stop: Mutex<Option<SeamStop>>,
@@ -717,6 +722,7 @@ impl ProgramModelSeam<'_> {
                         deadline: Some(self.deadline),
                         now_ms: now.saturating_mul(1_000),
                         spend_scope: None,
+                        wake_pass_bound: self.wake_pass_bound,
                     };
                     let mut slot = None;
                     self.reactor.block_on(Box::pin(async {

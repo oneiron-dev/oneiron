@@ -27,8 +27,8 @@ pub struct ParkDreamerAttempt {
 /// A model seat's durable identity: one login or subscription.
 pub type ModelSeatId = EntityId;
 
-/// Exactly what wakes a parked attempt. A Budget, Consent, Peer or Human wait exists only on a
-/// trap park: for Consent, Peer and Human, the code-run wait's delivery wakes the trap through
+/// Exactly what wakes a parked attempt. A Budget, PassBudget, Consent, Peer or Human wait exists
+/// only on a trap park: for Consent, Peer and Human, the code-run wait's delivery wakes the trap through
 /// the `TRAPS` binding written beside the park. A Seat wait exists only on the driver's own park.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DreamerParkWait {
@@ -39,6 +39,13 @@ pub enum DreamerParkWait {
         scope: SpendScopeId,
         /// The units the reservation asked of that scope: the reservation less what the open
         /// scopes below it could still cover when the step parked.
+        asked_units: u64,
+    },
+    /// The guard of the wake pass the step ran in refused the step's reservation, which asked it
+    /// for `asked_units`; that guard is rebuilt each pass, so a later pass whose guard has room
+    /// for them wakes the trap at its start.
+    PassBudget {
+        /// The units the refused reservation asked of the pass's guard.
         asked_units: u64,
     },
     /// A held effect's consent answer or an outbound call's settled reply delivered on the wait.
@@ -73,6 +80,7 @@ impl DreamerParkWait {
     pub fn class(&self) -> DreamerParkWaitClass {
         match self {
             Self::Budget { .. } => DreamerParkWaitClass::Budget,
+            Self::PassBudget { .. } => DreamerParkWaitClass::PassBudget,
             Self::Consent { .. } => DreamerParkWaitClass::Consent,
             Self::Peer { .. } => DreamerParkWaitClass::Peer,
             Self::Human { .. } => DreamerParkWaitClass::Human,

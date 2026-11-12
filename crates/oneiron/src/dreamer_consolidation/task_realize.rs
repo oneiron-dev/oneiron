@@ -217,6 +217,7 @@ pub async fn run_task_realize(
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
         spend_scope: None,
+        wake_pass_bound: true,
     };
     let mut charges = StepChargeTally::default();
     // The spec and brief are the TASK's own: the call sends under its row.
