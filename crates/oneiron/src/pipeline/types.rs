@@ -444,8 +444,12 @@ pub enum WorldScope {
     /// Only base-reality claims — claims with NO `world` key (and all
     /// non-claim entities). Every world-scoped claim is removed.
     Base,
-    /// Claims scoped to this world id PLUS base-reality claims. Claims scoped
-    /// to any OTHER world are removed.
+    /// Claims scoped to this world id PLUS base-reality claims (and all
+    /// non-claim entities). Claims scoped to any OTHER world are removed.
+    /// ARCH-0004 #world-scope gives a named world the default selection
+    /// `{base, id}`; a caller that declines base selects a
+    /// [`WorldScope::WorldSet`] without it. A context pack partitions it as it
+    /// does `All`: base section first, the world's claims under the share.
     World(EntityId),
     /// Entities explicitly indexed under this codebase scope key. This is the
     /// repository-backed world-set clamp and does not include base reality by

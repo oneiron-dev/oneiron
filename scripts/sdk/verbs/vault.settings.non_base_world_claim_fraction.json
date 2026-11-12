@@ -1,0 +1,17 @@
+{
+  "name": "vault.settings.non_base_world_claim_fraction",
+  "description": "The owner, or a holder of any engine.controls class, reads the most of a context pack's claims that worlds other than base may hold, from 0 to 1. Unset reads as 0.5.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::settings::non_base_world_claim_fraction::NonBaseWorldClaimFraction",
+  "call": "{ let _ = &input; crate::settings::non_base_world_claim_fraction::read_non_base_world_claim_fraction(memory)? }",
+  "scope": "Read",
+  "act_class": "read",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "substrate_reader"
+}

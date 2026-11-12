@@ -22,6 +22,12 @@
 //! receipt, the budget the try still holds settles, its paid-step receipts go, and a Coach Issues run's owed
 //! successor is queued. A stopped try sends nothing more: its Pending sends are abandoned as a held program's Stop
 //! abandons them (FIX 7188), which matters for a turn program's try parked at a checkpoint under the server's pass.
+//!
+//! The same door frees a try parked at its budget trap on a spent budget, a `Budget` or `PassBudget` wait
+//! (BUDGET-TRAP-UNTYPED-NO-SENDER, D2): such a park has its own sender (a top-up, a later pass with room), and
+//! the owner may free it as well. Resume wakes the park's trap in the release write, so the try runs again
+//! as the same try; Stop wakes the trap the same way and ends the try through the owner force-cancel, so the trap
+//! is consumed and nothing waits on it. Such a park raises no notice: it does not wait on the owner.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +47,10 @@ use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 use super::store::PARKED;
-use super::{DreamerParkedAttemptRecord, DreamerRunnerStore, ParkOwnerClass, ParkResumer};
+use super::{
+    DreamerParkWaitClass, DreamerParkedAttemptRecord, DreamerRunnerStore, ParkOwnerClass,
+    ParkResumer,
+};
 
 /// The producer of the owner notice a park waiting on the owner's release raises.
 pub const PARK_RELEASE_OWED_PRODUCER: &str = "dreamer.park.release_owed";
@@ -73,11 +82,12 @@ pub struct ReleaseParkedAttemptRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ParkReleaseAction {
-    /// Queue the same try again: only a park that waits on an owner act and that no other resumer frees (an
-    /// ExecutorError or a private Other park).
+    /// Queue the same try again: a park that waits on an owner act and that no other resumer frees (an
+    /// ExecutorError or a private Other park), or a park at its budget trap on a spent budget, whose trap the
+    /// release wakes.
     Resume,
     /// End the try on the owner's grounds and clear its park: any park of the Dreamer server's own pass, whatever
-    /// its cause.
+    /// its cause, or a park at its budget trap on a spent budget, whose trap the stop consumes.
     Stop,
 }
 
@@ -86,9 +96,21 @@ impl ParkReleaseAction {
     fn serves(self, park: &DreamerParkedAttemptRecord) -> bool {
         match self {
             Self::Resume => park.resumable_by(ParkResumer::OwnerRelease),
-            Self::Stop => ParkOwnerClass::of(&park.park_owner) == ParkOwnerClass::DreamerServer,
+            Self::Stop => {
+                ParkOwnerClass::of(&park.park_owner) == ParkOwnerClass::DreamerServer
+                    || waits_on_budget_trap(park)
+            }
         }
     }
+}
+
+/// Whether `park` waits at its budget trap on a spent budget: a `Budget` or `PassBudget` wait under a trap owner.
+fn waits_on_budget_trap(park: &DreamerParkedAttemptRecord) -> bool {
+    ParkOwnerClass::of(&park.park_owner) == ParkOwnerClass::Trap
+        && matches!(
+            park.wait.as_ref().map(|wait| wait.wait.class()),
+            Some(DreamerParkWaitClass::Budget | DreamerParkWaitClass::PassBudget)
+        )
 }
 
 /// What releasing one park did.
@@ -144,7 +166,8 @@ pub(crate) fn raise_park_release_notice_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &DreamerParkedAttemptRecord,
 ) {
-    if !record.resumable_by(ParkResumer::OwnerRelease) {
+    // A park at its budget trap has its own sender, so it does not wait on the owner.
+    if !record.resumable_by(ParkResumer::OwnerRelease) || waits_on_budget_trap(record) {
         return;
     }
     let raised = (|| -> Result<()> {
@@ -184,12 +207,13 @@ pub(crate) fn raise_park_release_notice_in_txn(
 /// Releases one parked try as the vault's authenticated owner, against the exact park the owner's reads show (its
 /// cause, park time and the try's lease generation); the owner is revalidated in the writer.
 ///
-/// - Resume: the park must be one only the owner's release resumes (the park resume table's OwnerRelease row), and
-///   a settled try is never reopened. The owner's intervention is recorded on the queue row, and the park resumes
-///   as the same try under its own owner token.
-/// - Stop: the park must be one of the Dreamer server's own pass, of any cause. The queue's owner force-cancel ends
-///   the try, its receipt naming the owner; the try it ends is settled as any ended try is; the park is cleared and
-///   the try's Pending sends are abandoned. A try already settled only loses its park and its Pending sends.
+/// - Resume: the park must be one the owner's release resumes (the park resume table's OwnerRelease row), and a
+///   settled try is never reopened. The owner's intervention is recorded on the queue row, and the park resumes as
+///   the same try under its own owner token; a park at its budget trap resumes through its trap's wake.
+/// - Stop: the park must be one of the Dreamer server's own pass, of any cause, or one at its budget trap on a spent
+///   budget, whose trap is woken first. The queue's owner force-cancel ends the try, its receipt naming the owner;
+///   the try it ends is settled as any ended try is; the park is cleared and the try's Pending sends are abandoned.
+///   A try already settled only loses its park and its Pending sends.
 ///
 /// Either way the park's notices are resolved for every owner, in the same write. After the commit a stopped try's
 /// running step stops, and admission is woken.
@@ -252,6 +276,10 @@ fn release_in_txn(
             (true, None)
         }
         ParkReleaseAction::Stop => {
+            if waits_on_budget_trap(&park) {
+                // The trap is consumed before the try ends, so nothing is left waiting on it.
+                wake_budget_trap_park_in_txn(vault, wtxn, &park, now)?;
+            }
             let (count, stopped) = stop_in_txn(vault, wtxn, actor, attempt, input, now)?;
             (stopped, stopped.then_some((attempt, count)))
         }
@@ -299,9 +327,30 @@ fn resume_in_txn(
             now,
         },
     )?;
+    if waits_on_budget_trap(park) {
+        return wake_budget_trap_park_in_txn(vault, wtxn, park, now);
+    }
     DreamerRunnerStore::new(vault)
         .resume_parked_in_txn(wtxn, attempt, &park.park_owner, now)?
         .ok_or(Error::EntityNotFound)?;
+    Ok(())
+}
+
+/// Wakes the budget trap `park` waits at, in the caller's write: the trap is signalled and consumed, and the park
+/// resumes as the same try. A trap an earlier wake reached, or a broken park, is not found, and nothing moves.
+fn wake_budget_trap_park_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    park: &DreamerParkedAttemptRecord,
+    now: u64,
+) -> Result<()> {
+    crate::llm::wake_budget_trap_of_park_in_txn(
+        vault,
+        wtxn,
+        &park.park_owner,
+        now.saturating_mul(1_000),
+    )?
+    .ok_or(Error::EntityNotFound)?;
     Ok(())
 }
 

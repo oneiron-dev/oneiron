@@ -421,7 +421,7 @@ pub(crate) fn put_repo_secret_mark_in_txn(
     mark: &RepoSecretMark,
 ) -> Result<bool> {
     let id = mark.id()?;
-    let body = mark.claim()?;
+    let mut body = mark.claim()?;
     match vault.get_claim_in_txn(wtxn, &id)? {
         Some(stored)
             if stored.predicate == body.predicate
@@ -446,6 +446,10 @@ pub(crate) fn put_repo_secret_mark_in_txn(
         start: mark.marked_at,
         end: mark.marked_at,
     };
+    // The mark is born in the vault default facet: its edge source, the push
+    // operation, has no FACET of its own, so the derived substrate id
+    // `ClaimBody::new` stamps would be refused at birth (#4389).
+    body.scope_facet = vault.default_facet_in_txn(wtxn)?;
     vault.put_reserved_claim_in_txn(wtxn, &id, &body, occurred, mark.marked_at)?;
     Ok(true)
 }

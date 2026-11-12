@@ -117,6 +117,7 @@ pub(crate) use self::put_apply::{
 pub use self::short_id::short_id_content_hash;
 pub(crate) use self::short_id::{
     delete_short_id_rows_for_id, encode_short_id_forward_key, parse_short_id_value,
+    refresh_short_id_hash_in_txn,
 };
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
