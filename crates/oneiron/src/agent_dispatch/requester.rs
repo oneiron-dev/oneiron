@@ -254,6 +254,7 @@ impl AgentDispatcher<'_> {
                 RunnerSettle::Failed {
                     error: reason,
                     retryable: false,
+                    budget_refusal: None,
                 },
                 held.as_ref(),
             )?;
