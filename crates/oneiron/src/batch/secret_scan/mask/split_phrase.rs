@@ -4,7 +4,11 @@
 //! leaf's decoded parts joined or in its lossy text, where no run of valid
 //! text holds it, so no text span places it. Each word is found at its bytes
 //! in the leaf: one custody record holds the phrase, and the file's mark
-//! covers each word (owner ruling G04 binary = C2).
+//! covers each word (owner ruling G04 binary = C2). In a body that is no
+//! file, [`ArrayText`] and [`encoded_phrase_part`] name the smallest value
+//! that reads as the phrase, which takes the handle whole; in a value that
+//! reads as more than that phrase, the items that read as it take the handle
+//! and the rest stay as written (REVIEW-7060 P1).
 
 use std::ops::Range;
 
@@ -41,6 +45,375 @@ pub(super) fn split_phrases(leaf: &[u8]) -> Vec<SplitPhrase> {
         });
     }
     phrases
+}
+
+/// An array read as one text, as the field walk reads an array before its
+/// items (its byte values, or its text items one per line, two at least),
+/// with the bytes each piece of that text reads. The text is wiped when it
+/// drops.
+pub(super) struct ArrayText {
+    text: Zeroizing<String>,
+    pieces: Vec<ArrayPiece>,
+    /// Whether the text reads every item: no number, map or nil sits beside
+    /// the text items.
+    every_item: bool,
+}
+
+/// One piece of an array's text: the item it reads (`None`: the array's own
+/// byte values, all of them), whether that item is a string, its bytes, and
+/// where its text sits.
+struct ArrayPiece {
+    item: Option<usize>,
+    string: bool,
+    bytes: Zeroizing<Vec<u8>>,
+    text: Range<usize>,
+}
+
+/// How an array is written once each phrase it places takes its handle.
+pub(super) struct Placement {
+    /// For each piece of the text a phrase touches, its bytes as written
+    /// next: the runs it keeps, and where each handle goes. An empty one is
+    /// an item the phrases cover whole, which goes.
+    pieces: Vec<Option<Vec<Cut>>>,
+    /// The array reads as one phrase and nothing else: its handle stands for
+    /// the array whole, as a credential field's value.
+    whole: bool,
+}
+
+/// One run of a piece's bytes as written next.
+enum Cut {
+    /// Bytes kept as written.
+    Keep(Range<usize>),
+    /// The handle of the phrase at this index.
+    Handle(usize),
+}
+
+impl ArrayText {
+    /// `items` read as one text, as the field walk reads an array before its
+    /// items: `None` when it reads none (no byte values, fewer than two text
+    /// items).
+    pub(super) fn of(items: &[Value]) -> Option<Self> {
+        if let Some(bytes) = byte_values(items.iter().map(Value::as_u64)) {
+            let bytes = Zeroizing::new(bytes);
+            let text = lossy(&bytes);
+            let piece = ArrayPiece {
+                item: None,
+                string: false,
+                bytes,
+                text: 0..text.len(),
+            };
+            return Some(Self {
+                text,
+                pieces: vec![piece],
+                every_item: true,
+            });
+        }
+        let mut pieces = Vec::new();
+        let mut texts = Vec::new();
+        for (at, item) in items.iter().enumerate() {
+            if let Some(bytes) = item_bytes(item) {
+                texts.push(lossy(&bytes));
+                pieces.push(ArrayPiece {
+                    item: Some(at),
+                    string: matches!(item, Value::String(_)),
+                    bytes,
+                    text: 0..0,
+                });
+            }
+        }
+        if pieces.len() < 2 {
+            return None;
+        }
+        let mut text = Zeroizing::new(String::with_capacity(
+            texts.iter().map(|text| text.len() + 1).sum(),
+        ));
+        for (at, (piece, piece_text)) in pieces.iter_mut().zip(&texts).enumerate() {
+            if at > 0 {
+                text.push('\n');
+            }
+            let start = text.len();
+            text.push_str(piece_text);
+            piece.text = start..text.len();
+        }
+        Some(Self {
+            text,
+            every_item: pieces.len() == items.len(),
+            pieces,
+        })
+    }
+
+    /// Each recovery phrase the text holds, in order: its words, one space
+    /// between them, and its span in the text.
+    pub(super) fn phrases(&self) -> Vec<(Zeroizing<Vec<u8>>, Range<usize>)> {
+        phrases_in(&self.text)
+    }
+
+    /// How the array is written once the phrase at each of `spans` takes a
+    /// handle, the rest kept as written: `None` when no span is given, two
+    /// overlap, or a run kept would not be the item's bytes as written.
+    pub(super) fn placement(&self, spans: &[Range<usize>]) -> Option<Placement> {
+        if spans.is_empty() || spans.windows(2).any(|pair| pair[0].end > pair[1].start) {
+            return None;
+        }
+        let mut pieces = Vec::with_capacity(self.pieces.len());
+        for piece in &self.pieces {
+            let mut cuts = Vec::new();
+            let mut at = piece.text.start;
+            let mut touched = false;
+            for (place, span) in spans.iter().enumerate() {
+                if span.end <= piece.text.start || span.start >= piece.text.end {
+                    continue;
+                }
+                touched = true;
+                if span.start > at {
+                    cuts.push(Cut::Keep(piece.kept(at..span.start)?));
+                }
+                if span.start >= piece.text.start {
+                    cuts.push(Cut::Handle(place));
+                }
+                at = at.max(span.end.min(piece.text.end));
+            }
+            if touched && at < piece.text.end {
+                cuts.push(Cut::Keep(piece.kept(at..piece.text.end)?));
+            }
+            pieces.push(touched.then_some(cuts));
+        }
+        let whole = spans.len() == 1
+            && self.every_item
+            && pieces.iter().all(|cuts| {
+                cuts.as_ref()
+                    .is_some_and(|cuts| cuts.iter().all(|cut| matches!(cut, Cut::Handle(_))))
+            });
+        Some(Placement { pieces, whole })
+    }
+
+    /// The array `items` as `placement` writes it, the phrase at each span
+    /// replaced by its handle in `handles`.
+    pub(super) fn written(
+        &self,
+        items: &[Value],
+        placement: &Placement,
+        handles: &[String],
+    ) -> Value {
+        if let (true, Some(handle)) = (placement.whole, handles.first()) {
+            return Value::from(handle.as_str());
+        }
+        let mut rewritten: Vec<Option<Option<Value>>> = vec![None; items.len()];
+        for (piece, cuts) in self.pieces.iter().zip(&placement.pieces) {
+            let Some(cuts) = cuts else {
+                continue;
+            };
+            let bytes = piece.rewritten(cuts, handles);
+            let Some(at) = piece.item else {
+                return Value::Array(bytes.into_iter().map(Value::from).collect());
+            };
+            if let (Some(slot), Some(item)) = (rewritten.get_mut(at), items.get(at)) {
+                *slot = Some((!cuts.is_empty()).then(|| item_of(item, bytes)));
+            }
+        }
+        let mut out = Vec::with_capacity(items.len());
+        for (item, slot) in items.iter().zip(rewritten) {
+            match slot {
+                Some(Some(value)) => out.push(value),
+                Some(None) => {}
+                None => out.push(item.clone()),
+            }
+        }
+        Value::Array(out)
+    }
+}
+
+impl ArrayPiece {
+    /// The bytes that write the run `text` of the array's text in this piece:
+    /// `None` when its ends sit inside a replacement character, or a string's
+    /// run would be no UTF-8.
+    fn kept(&self, text: Range<usize>) -> Option<Range<usize>> {
+        let start = byte_offset(&self.bytes, text.start.checked_sub(self.text.start)?)?;
+        let end = byte_offset(&self.bytes, text.end.checked_sub(self.text.start)?)?;
+        let run = self.bytes.get(start..end)?;
+        if self.string && std::str::from_utf8(run).is_err() {
+            return None;
+        }
+        Some(start..end)
+    }
+
+    /// This piece's bytes as `cuts` write them.
+    fn rewritten(&self, cuts: &[Cut], handles: &[String]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for cut in cuts {
+            match cut {
+                Cut::Keep(run) => {
+                    bytes.extend_from_slice(self.bytes.get(run.clone()).unwrap_or_default())
+                }
+                Cut::Handle(place) => {
+                    bytes.extend_from_slice(handles.get(*place).map_or(&[][..], String::as_bytes));
+                }
+            }
+        }
+        bytes
+    }
+}
+
+/// An array item of the same kind as `item` that holds `bytes`.
+fn item_of(item: &Value, bytes: Vec<u8>) -> Value {
+    match item {
+        Value::String(_) => String::from_utf8(bytes)
+            .map_or_else(|error| Value::Binary(error.into_bytes()), Value::from),
+        Value::Ext(kind, _) => Value::Ext(*kind, bytes),
+        Value::Array(_) => Value::Array(bytes.into_iter().map(Value::from).collect()),
+        _ => Value::Binary(bytes),
+    }
+}
+
+/// Where the offset `at` of `bytes`' lossy text sits in `bytes`: `None` inside
+/// a replacement character.
+fn byte_offset(bytes: &[u8], at: usize) -> Option<usize> {
+    let (mut text, mut byte) = (0, 0);
+    for chunk in bytes.utf8_chunks() {
+        let valid = chunk.valid().len();
+        if at <= text + valid {
+            return Some(byte + at - text);
+        }
+        text += valid;
+        byte += valid;
+        if !chunk.invalid().is_empty() {
+            text += char::REPLACEMENT_CHARACTER.len_utf8();
+            byte += chunk.invalid().len();
+            if at < text {
+                return None;
+            }
+        }
+    }
+    (at == text).then_some(byte)
+}
+
+/// The smallest part of `value` whose MessagePack encoding holds, in its
+/// lossy text, a recovery phrase `places` takes, as the text rules read a
+/// body's raw bytes: its path (an array item by its index, a map's key at
+/// `2i` and its member at `2i + 1`), and the phrase's words, one space
+/// between them. A phrase `places` refuses is read past (REVIEW-7060 P1).
+pub(super) fn encoded_phrase_part(
+    value: &Value,
+    places: impl Fn(&[u8]) -> bool,
+) -> Option<(Vec<usize>, Zeroizing<Vec<u8>>)> {
+    let placed = |part: &Value| {
+        encoded_phrases(std::slice::from_ref(part))
+            .into_iter()
+            .find(|phrase| places(phrase))
+    };
+    let mut phrase = placed(value)?;
+    let mut path = Vec::new();
+    let mut part = value;
+    'descend: loop {
+        let children: Vec<&Value> = match part {
+            Value::Array(items) => items.iter().collect(),
+            Value::Map(fields) => fields
+                .iter()
+                .flat_map(|(key, member)| [key, member])
+                .collect(),
+            _ => break,
+        };
+        for (at, child) in children.into_iter().enumerate() {
+            if let Some(found) = placed(child) {
+                phrase = found;
+                path.push(at);
+                part = child;
+                continue 'descend;
+            }
+        }
+        break;
+    }
+    Some((path, phrase))
+}
+
+/// Each recovery phrase the MessagePack encodings of `parts`, one after
+/// another, hold in their lossy text, in order.
+pub(super) fn encoded_phrases(parts: &[Value]) -> Vec<Zeroizing<Vec<u8>>> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    for part in parts {
+        if rmpv::encode::write_value(&mut *bytes, part).is_err() {
+            return Vec::new();
+        }
+    }
+    phrases_in(&lossy(&bytes))
+        .into_iter()
+        .map(|(phrase, _)| phrase)
+        .collect()
+}
+
+/// The smallest run of `items` whose encodings, one after another, hold
+/// `phrase` in their lossy text and no other phrase: the items that take its
+/// handle, the rest kept as written (REVIEW-7060 P1). `None` when no run
+/// holds it alone. Each end is found by halving (speed).
+pub(super) fn encoded_run(items: &[Value], phrase: &[u8]) -> Option<Range<usize>> {
+    let holds = |run: Range<usize>| {
+        items.get(run).is_some_and(|run| {
+            encoded_phrases(run)
+                .iter()
+                .any(|found| found.as_slice() == phrase)
+        })
+    };
+    if !holds(0..items.len()) {
+        return None;
+    }
+    // A run to the end holds it from `start`, and from `past` no more.
+    let (mut start, mut past) = (0, items.len());
+    while past - start > 1 {
+        let mid = start + (past - start) / 2;
+        if holds(mid..items.len()) {
+            start = mid;
+        } else {
+            past = mid;
+        }
+    }
+    // A run from `start` holds it to `end`, and to `short` not yet.
+    let (mut short, mut end) = (start, items.len());
+    while end - short > 1 {
+        let mid = short + (end - short) / 2;
+        if holds(start..mid) {
+            end = mid;
+        } else {
+            short = mid;
+        }
+    }
+    let found = encoded_phrases(items.get(start..end)?);
+    matches!(found.as_slice(), [only] if only.as_slice() == phrase).then_some(start..end)
+}
+
+/// The bytes an array item's text reads, as the field walk joins it: a
+/// string, binary or extension value, or an array of byte values.
+fn item_bytes(item: &Value) -> Option<Zeroizing<Vec<u8>>> {
+    match item {
+        Value::String(text) => Some(Zeroizing::new(text.as_bytes().to_vec())),
+        Value::Binary(bytes) | Value::Ext(_, bytes) => Some(Zeroizing::new(bytes.clone())),
+        Value::Array(values) => byte_values(values.iter().map(Value::as_u64)).map(Zeroizing::new),
+        _ => None,
+    }
+}
+
+fn lossy(bytes: &[u8]) -> Zeroizing<String> {
+    Zeroizing::new(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Each recovery phrase `text` holds, in order, each span once: its words,
+/// one space between them, and its span.
+fn phrases_in(text: &str) -> Vec<(Zeroizing<Vec<u8>>, Range<usize>)> {
+    let mut spans = shapes::mnemonic_spans(text);
+    spans.sort_by_key(|span| (span.start, span.end));
+    spans.dedup();
+    spans
+        .into_iter()
+        .filter_map(|span| {
+            let mut value = Zeroizing::new(Vec::with_capacity(span.len()));
+            for word in words_in(text.as_bytes(), &span) {
+                if !value.is_empty() {
+                    value.push(b' ');
+                }
+                value.extend_from_slice(text.as_bytes().get(word)?);
+            }
+            Some((value, span))
+        })
+        .collect()
 }
 
 /// `leaf` decoded as the door decodes a body (`decode_members`: JSON, else
