@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::snapshot_read::StrengthObservationsPage>",
   "call": "crate::snapshot_read::strength_observations_page(memory, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

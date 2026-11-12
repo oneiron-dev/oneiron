@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::PackPutReceipt",
   "call": "memory.hooks_regen_revert_as(&memory.embedded_owner(\"vault.hooks.regen.revert\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

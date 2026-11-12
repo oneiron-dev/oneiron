@@ -5,6 +5,7 @@
   "output": "Option<crate::failure_signals::HeldFailureSignalBatchView>",
   "call": "memory.vault().held_failure_signal_batch(&memory.embedded_owner(\"vault.consent.failure_signals_held\")?)?.0",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

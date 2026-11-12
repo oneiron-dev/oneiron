@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::calendar::query::CalendarSearchPage>",
   "call": "memory.calendar_search_page(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true,
     "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
