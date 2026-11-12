@@ -408,6 +408,9 @@ pub struct ExportDerivationEnvelope {
 #[derive(Debug, Clone)]
 pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
+    /// Durable `gate:<32 hex>` owner-act receipt naming this archive's full document-manifest
+    /// digest. Present only for the owner-authenticated restore entry, not a reusable grant.
+    pub owner_restore_receipt_ref: Option<String>,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
     /// New inert source ASSETs; these never count as native terminal receipts.
