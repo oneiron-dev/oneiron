@@ -11,6 +11,7 @@ use crate::store::Store;
 
 pub mod backup;
 pub(crate) mod board_layout;
+pub mod default_facet;
 mod destination;
 mod device_local;
 mod device_only;
