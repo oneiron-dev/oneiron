@@ -121511,6 +121511,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/facade/calendar_paging_tests.rs",
+     "purpose": "Regression tests for the actor-bound calendar paging surface",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -121890,7 +121898,7 @@
      "purpose": "JS bindings for the typed `companion.expression.*` doors"
     },
     "facade": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -121914,7 +121922,7 @@
    "over_bar": 2,
    "purpose": "The raw N-API addon root: module registrations and the crate-level native exports",
    "source_files": 28,
-   "test_files": 1
+   "test_files": 2
   },
   "oneiron-organ-host": {
    "files": [
