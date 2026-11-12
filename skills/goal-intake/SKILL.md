@@ -14,11 +14,18 @@ never apply one; return its proposal to the responsible human for a new intervie
 Before the first question, read `vault.projects.goal.intake` for the project
 (`Vault::project_goal_interview_context`): the goal claim in force, its goal
 generation, the card draft the project was minted with (`card_seed`: goal, why
-and axis names) and the loop's open revision proposals. The card draft is the
-interview's first turn: a starting point the human confirms or changes, never
-an answer. Its axes are names only; ask for each measure and bound. Revision
-proposals are optional preferences to offer the human; never merge one into
-the record without the human's own pick.
+and axis names), the loop's open preference proposals (`revision_proposals`)
+and the full goal proposals open on the goal in force (`goal_proposals`). The
+card draft is the interview's first turn: a starting point the human confirms
+or changes, never an answer. Its axes are names only; ask for each measure and
+bound. Preference proposals are optional preferences to offer the human; never
+merge one into the record without the human's own pick. A full goal proposal
+is an argument, not an answer: show the human its diff against the goal in
+force (name every floor axis it removes or relaxes, with the bound before and
+after), its reasons (merits, demerits and the sacrifice), its evidence (the
+attractor case, imp@k over its cycles, the cost spent) and who proposed it.
+Then ask. Never copy a proposed record into the draft without the human's own
+answer to each change; a dismissed proposal stays dismissed.
 
 ## Interview
 1. Identify the project and responsible human. Reuse known facts; ask only for

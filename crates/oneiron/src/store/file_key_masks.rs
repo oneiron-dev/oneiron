@@ -184,7 +184,9 @@ pub(crate) fn drop_masked_key_in_txn(
 
 /// `bytes`, read from the store, as `sight` reads them. A file the write
 /// door kept no keys in is served as it is, once a container's members and
-/// the bytes no reader shows read clean to the write door; a container whose
+/// the bytes no reader shows read clean to the write door, and once a plain
+/// file reads clean to the release scan (bytes stored with the scan off
+/// carry no mark; FIX NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS); a container whose
 /// only key sits in those bytes, at any depth, is served its copy rebuilt
 /// through the whole tree without them, once that copy reads clean (FIX
 /// 11553, 12268, 12279). A masked
@@ -214,6 +216,44 @@ pub(crate) fn sighted_bytes_in_txn(
     )
 }
 
+/// `bytes`, read from the store, as a door serves them to a reader with
+/// `sight`, or `None` when it serves that reader none. A reader that sees
+/// stored keys (`Owner`, `Granted`) is served the bytes as stored. A masked
+/// reader reads them as [`sighted_bytes_in_txn`] does; a file no masked copy
+/// is served of ([`SecretError::MaskedCopyWithheld`],
+/// [`SecretError::SealedFileWithheld`]) answers `None`, as a withheld row
+/// does, and so do plain bytes the release scan reads a credential in
+/// (stored while the write door's scan was off, with no mark to mask by).
+/// The release scan then reads what the masked reader would be served, a
+/// masked copy and a container included, and a hit answers `None` too:
+/// serve still redacts (`SecretScanMode::Off`; #7149 review round 1, FIX
+/// NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS). A door that answers
+/// a masked reader with an optional file reads it here.
+///
+/// `digest` is as [`sighted_bytes_in_txn`] takes it.
+pub(crate) fn served_bytes_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    bytes: Vec<u8>,
+    digest: Option<&[u8; 32]>,
+    sight: SecretSight,
+) -> Result<Option<Vec<u8>>> {
+    if sight != SecretSight::Masked {
+        return Ok(Some(bytes));
+    }
+    let served = match sighted_bytes_in_txn(store, txn, bytes, digest, sight) {
+        Ok(served) => served,
+        Err(Error::Secret(
+            SecretError::MaskedCopyWithheld { .. } | SecretError::SealedFileWithheld,
+        )) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if crate::batch::secret_scan::scan_file_content("", &served).is_some() {
+        return Ok(None);
+    }
+    Ok(Some(served))
+}
+
 pub(crate) fn sighted_bytes_in_txn_with_reader(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -238,9 +278,16 @@ pub(crate) fn sighted_bytes_in_txn_with_reader(
     };
     let Some(file) = masked_file_in_txn(store, txn, &hash)? else {
         // Bytes that lead as no container are none to the walk, so none is
-        // sealed and none holds a member: they are served as they are, read
-        // once (speed).
+        // sealed and none holds a member. With no mark, nothing says the
+        // write door read them: bytes stored while its scan was off keep
+        // their keys, and serve still redacts (`SecretScanMode::Off`). So
+        // the release scan reads them once before they are served, and a hit
+        // withholds them as a container's live key does (FIX
+        // NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS).
         if !secret_scan::is_container(&bytes) {
+            if let Some(reason) = secret_scan::scan_file_content("", &bytes) {
+                return Err(masked_copy_withheld(reason));
+            }
             return Ok(bytes);
         }
         // A sealed file goes to the owner and a granted agent only: no mark

@@ -37,13 +37,6 @@ const FIELD_EXPIRES_AT: &str = "expires_at";
 /// # Errors
 ///
 /// An invalid inquiry; storage errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "the asking-side send (INQUIRE-1 PR 4) calls it; until then only test_doors::inquiry does"
-    )
-)]
 pub(crate) fn write_inquiry_receipt_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,

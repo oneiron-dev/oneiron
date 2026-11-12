@@ -172,6 +172,14 @@ pub use project::{
     ProjectRoomChange, ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof,
     RoomOriginCard,
 };
+pub use project::{
+    GoalAxisChange, GoalAxisChanges, GoalBudgetChange, GoalPreferenceChange, GoalPreferenceChanges,
+    GoalRecordDiff, GoalTextChange, ProjectGoalBase, ProjectGoalProposal,
+    ProjectGoalProposalDismissal, ProjectGoalProposalEvidence, ProjectGoalProposalImprovement,
+    ProjectGoalProposalRate, ProjectGoalProposalReasons, ProjectGoalProposalStatus,
+    ProjectGoalProposalView, ProjectGoalProposeRequest, ProjectGoalProposer,
+    ProjectGoalRevisionsView, project_goal_propose,
+};
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_PACK, PROJECT_SHORT_ID_PREFIX,
     ProjectReader, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
@@ -180,10 +188,10 @@ pub(crate) use project::{
     normalize_project_body, note_project_proof, permit_leader_chat_record, precheck_goal_delete,
     project_mint_gate_refs_in_txn, projects_led_in_txn, reconcile_project_rooms,
     retire_goal_for_delete, room_facets_in, root_project_in, seed_root_project,
-    settle_leader_chat_record, speaks_as_in_txn, validate_local_leader_chat_turns,
-    validate_project_body, validate_project_edge_delete, validate_project_edge_put,
-    validate_project_graph, validate_project_transition, validate_room_body,
-    verify_existing_leader_chat_turn,
+    seeded_root_home_room, settle_leader_chat_record, speaks_as_in_txn,
+    validate_local_leader_chat_turns, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_project_transition,
+    validate_room_body, verify_existing_leader_chat_turn,
 };
 pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
@@ -197,6 +205,10 @@ pub use project::{
 pub(crate) use project::{
     decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
     inadmissible_revision_carriers,
+};
+pub(crate) use project::{
+    dismiss_project_goal_proposal, project_goal_base_in_txn, project_goal_proposals_in_txn,
+    reads_goal_proposals_in_txn,
 };
 // Old paths of items the store layer now names at `store::project_kind` and
 // `batch::export`; only sync code still reads them here.
