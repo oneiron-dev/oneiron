@@ -133,7 +133,7 @@ fn server(reader: &Arc<Reader>, reads: usize) -> (tempfile::TempDir, Arc<SyncSer
         person: Some("Person?".to_owned()),
         presence: None,
     };
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),

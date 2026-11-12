@@ -77,6 +77,21 @@ pub(crate) fn install_fixture_keystore(vault: &oneiron::Vault, secret: &[u8]) {
     }));
 }
 
+/// [`SyncServer::new`] over `vault` once [`install_fixture_keystore`] holds
+/// the seed of the secret `config` names, as `oneiron serve` installs its
+/// keystore before it serves: a server with an `auth_secret` then roots the
+/// vault, and [`host_issuer`] finds that root.
+pub(crate) fn server_with_fixture_keystore(
+    vault: std::sync::Arc<oneiron::Vault>,
+    config: crate::config::SyncServerConfig,
+) -> Result<SyncServer, oneiron::Error> {
+    install_fixture_keystore(
+        &vault,
+        config.auth_secret.as_deref().unwrap_or_default().as_bytes(),
+    );
+    SyncServer::new(vault, config)
+}
+
 /// The host issuer that roots `vault`, rebuilt from the `secret` its fixture
 /// configured, with its authority-log signing key: the install seed
 /// [`install_fixture_keystore`] gave the server, or, for a vault a fixture

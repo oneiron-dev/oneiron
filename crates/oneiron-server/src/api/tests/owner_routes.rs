@@ -352,7 +352,7 @@ fn owner_host_server_with(
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     };
-    let server = SyncServer::new(vault, config)
+    let server = crate::test_credentials::server_with_fixture_keystore(vault, config)
         .unwrap()
         .with_owner_host(host)
         .with_embedder(embedder);

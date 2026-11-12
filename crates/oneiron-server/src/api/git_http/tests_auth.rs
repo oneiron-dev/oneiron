@@ -34,7 +34,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
-        let server = Arc::new(SyncServer::new(vault, config).unwrap());
+        let server =
+            Arc::new(crate::test_credentials::server_with_fixture_keystore(vault, config).unwrap());
         (dir, server)
     }
     fn bearer(server: &SyncServer, token: &str) -> HeaderMap {
@@ -104,7 +105,10 @@ mod tests {
         let config = secret_config();
         let pusher = principal();
         let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
-        let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
+        let server = Arc::new(
+            crate::test_credentials::server_with_fixture_keystore(Arc::clone(&vault), config)
+                .expect("server"),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("listener");
@@ -307,7 +311,9 @@ mod tests {
         );
         let config = secret_config();
         let no_principal = scoped_token(&config, "core:write", None);
-        let server = Arc::new(SyncServer::new(vault, config).expect("server"));
+        let server = Arc::new(
+            crate::test_credentials::server_with_fixture_keystore(vault, config).expect("server"),
+        );
         for (token, expected) in [
             (None, StatusCode::UNAUTHORIZED),
             (Some(no_principal), StatusCode::FORBIDDEN),
@@ -412,7 +418,10 @@ mod tests {
         let config = secret_config();
         let pusher = principal();
         let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
-        let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).unwrap());
+        let server = Arc::new(
+            crate::test_credentials::server_with_fixture_keystore(Arc::clone(&vault), config)
+                .unwrap(),
+        );
         let headers = bearer(&server, &token);
         let token = headers[AUTHORIZATION]
             .to_str()

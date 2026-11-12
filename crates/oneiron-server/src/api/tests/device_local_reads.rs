@@ -116,7 +116,7 @@ fn serve() -> (tempfile::TempDir, Arc<SyncServer>, Caller, EntityId) {
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             crate::config::SyncServerConfig {
                 auth_secret: Some("device-local".into()),

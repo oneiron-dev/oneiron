@@ -46,7 +46,9 @@ fn test_server(config: SyncServerConfig) -> (tempfile::TempDir, Arc<SyncServer>)
     let vault = Arc::new(
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("open vault"),
     );
-    let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
+    let server = Arc::new(
+        crate::test_credentials::server_with_fixture_keystore(vault, config).expect("sync server"),
+    );
     (dir, server)
 }
 
