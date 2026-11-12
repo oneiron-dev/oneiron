@@ -1,6 +1,8 @@
 //! Room-scoped shared pins through the real signed HTTP board route.
 //! Run on a build host with `cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test room_pins_boards`.
+//! The deleted-target case deletes through the `test-support` seam
+//! `delete_room_record_unchecked_for_test`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -24,7 +26,7 @@ use oneiron::policy_manifest_doors::{
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::{ProjectRecord, RoomPinRequest};
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
@@ -221,7 +223,7 @@ impl Fixture {
         grant_room_messages(&vault, room_b, &[leader])?;
 
         let (target_a, short_ref_a) = speak_trunk(&vault, leader, room_a)?;
-        let (target_b, _) = speak_trunk(&vault, leader, room_b)?;
+        let target_b = say_in_ordinary_room(&vault, leader, room_b)?;
         let pin_a = vault
             .memory(leader, EdgeActorClass::Human)
             .rooms_pins_pin(&RoomPinRequest {
@@ -244,7 +246,14 @@ impl Fixture {
                     room: room_a,
                     target,
                 })?;
-            assert!(vault.delete_entity(&target)?);
+            // The subject is the board after a delete, not who may delete:
+            // a plain delete_entity of a room MESSAGE is refused without the
+            // room's authority, so the test-support seam deletes it.
+            assert!(
+                vault
+                    .delete_room_record_unchecked_for_test(&target, DeleteReason::UserDelete)?
+                    .existed
+            );
             Some(target)
         } else {
             None
@@ -330,29 +339,46 @@ impl Fixture {
     }
 }
 
-/// A public trunk witness returns the MESSAGE id and its engine-issued short ref.
+/// A trunk turn in `room` holding the one MESSAGE `message`.
+fn trunk_turn(vault: &Vault, room: EntityId, message: EntityId) -> WitnessTurn {
+    WitnessTurn {
+        conversation_ref: room.to_hex(),
+        turn_ref: Some(EntityId::now().to_hex()),
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: Some(message.to_hex()),
+            author: WitnessAuthor::User,
+            message_type: "text".into(),
+            content: "yuki".into(),
+            parts: None,
+            metadata: Some(json!({})),
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: vault.now_recorded_at(),
+        assertions: Default::default(),
+    }
+}
+
+/// `speaker`'s trunk turn in the ordinary room `room`, one MESSAGE, through
+/// the witness gate: `rooms_speak` serves project rooms only and refuses an
+/// ordinary room as "invalid project or home room". Returns the MESSAGE id.
+fn say_in_ordinary_room(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<EntityId> {
+    let message = EntityId::now();
+    vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness(&trunk_turn(vault, room, message))?;
+    Ok(message)
+}
+
+/// A public trunk turn in the home room `room` returns the MESSAGE id and its
+/// engine-issued short ref.
 fn speak_trunk(vault: &Vault, leader: EntityId, room: EntityId) -> TestResult<(EntityId, String)> {
     let message = EntityId::now();
     let receipt = vault
         .memory(leader, EdgeActorClass::Human)
-        .rooms_speak(&WitnessTurn {
-            conversation_ref: room.to_hex(),
-            turn_ref: Some(EntityId::now().to_hex()),
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: Some(message.to_hex()),
-                author: WitnessAuthor::User,
-                message_type: "text".into(),
-                content: "yuki".into(),
-                parts: None,
-                metadata: Some(json!({})),
-                is_visible: true,
-                order: 0,
-                quote: None,
-            }],
-            occurred_at: vault.now_recorded_at(),
-            assertions: Default::default(),
-        })?;
+        .rooms_speak(&trunk_turn(vault, room, message))?;
     let reference = receipt
         .message_short_ids
         .into_iter()
