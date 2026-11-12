@@ -7,6 +7,7 @@
 #[cfg(feature = "sync")]
 mod adoption;
 mod artifact;
+#[cfg(feature = "sync")]
 mod carried;
 pub(crate) mod checkpoint;
 mod citation_floor;

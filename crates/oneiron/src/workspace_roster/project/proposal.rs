@@ -415,17 +415,31 @@ pub(crate) fn fail_project_detection(
 /// house room. `None` when that leader is not an AGENT_DEF.
 pub(crate) fn project_house_agent(vault: &Vault) -> Result<Option<EntityId>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(root) = super::root_project_in(&vault.store, &txn)? else {
+    project_house_agent_in_txn(vault, &txn)
+}
+
+/// [`project_house_agent`] in the caller's snapshot.
+pub(crate) fn project_house_agent_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<EntityId>> {
+    let Some(root) = super::root_project_in(&vault.store, txn)? else {
         return Ok(None);
     };
-    let Some((_, effective)) = vault.effective_project_in_txn(&txn, root)? else {
+    let Some((_, effective)) = vault.effective_project_in_txn(txn, root)? else {
         return Ok(None);
     };
     let leader = EntityId::from_hex(&effective.leader).map_err(|_| invalid())?;
     Ok(
-        (vault.get_entity_type_in_txn(&txn, &leader)? == Some(ENTITY_TYPE_AGENT_DEF))
+        (vault.get_entity_type_in_txn(txn, &leader)? == Some(ENTITY_TYPE_AGENT_DEF))
             .then_some(leader),
     )
+}
+
+/// The root's seeded leader, `sys.team_lead`: the house mind a vault has
+/// before a workspace names its own. `None` when no seeded row is so named.
+pub(crate) fn seeded_house_agent() -> Result<Option<EntityId>> {
+    crate::agent_def::legacy_logical_id_row(super::ROOT_SEED_LEADER)
 }
 
 fn mark_minted_in_txn(

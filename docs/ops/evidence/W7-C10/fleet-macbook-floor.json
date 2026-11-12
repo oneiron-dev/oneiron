@@ -11,7 +11,7 @@
       "cpu": "Apple M4 Max",
       "debug_assertions": false,
       "fd_limit": "65536",
-      "hostname": "Oletybook.local",
+      "hostname": "macbook.local",
       "kernel": "27.0.0",
       "logical_cpus": 16,
       "os": "macos"

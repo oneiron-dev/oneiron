@@ -40,6 +40,9 @@ use crate::{EntityId, Result, Vault};
 /// row where the earlier deleted it, its delete of that row changes nothing,
 /// and each row goes once.
 pub(crate) fn prune_hook_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
+    // Untangle slice 6.8b: the change feed's own edge and redirty feeds go by the same rule, in
+    // the same passes.
+    crate::feeds::prune_feeds(vault, max_rows)?;
     let planned = {
         let rtxn = vault.store.env.read_txn()?;
         let readers: Vec<EntityId> = vault

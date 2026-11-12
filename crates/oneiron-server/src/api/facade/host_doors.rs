@@ -58,6 +58,12 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::agent_definition_doors::*;
 // The owner's agent grant doors (FIX 5628) too.
 pub(crate) use super::agent_grant_doors::*;
+// The Steward doors: member asks, the system-agent grant narrowing and the
+// engine-control receipts (untangle 6.3, 6.6).
+pub(crate) use super::steward_doors::*;
+// The engine-control knob doors, for the owner or a holder of
+// `engine.controls` (untangle 6.6d).
+pub(crate) use super::engine_control_doors::*;
 // The owner's answer to an OAuth sign-in request (FIX 4902) too.
 pub(crate) use super::oauth_authorization_doors::*;
 // The owner's answer to a send that may have gone out (FIX 4747) too.
@@ -99,6 +105,7 @@ pub(crate) use super::model_setting_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
+pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
