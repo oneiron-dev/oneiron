@@ -610,14 +610,15 @@ impl Memory<'_> {
                 None => short.clone().unwrap_or_else(|| hit.id.to_hex()),
             };
             out.push(LexicalHit {
-                record: Some(crate::lens::RecordRef::from_body(
+                record: Some(crate::lens::RecordRef::from_body_in_vault(
+                    self.vault,
                     row.entity_type,
                     &hit.id,
                     short.as_deref(),
                     body.as_ref(),
                 )),
                 short_id,
-                kind: kind_string_for_type(row.entity_type),
+                kind: self.vault.entity_kind_name(row.entity_type),
                 score,
                 snippet,
             });
@@ -670,16 +671,18 @@ impl Memory<'_> {
                         let short = self.short_ref_of_in_txn(txn, &edge.target)?;
                         Ok(NeighborHit {
                             record: neighbor.peer_type.map(|peer_type| {
-                                crate::lens::RecordRef::from_id(
+                                crate::lens::RecordRef::from_id_in_vault(
+                                    self.vault,
                                     peer_type,
                                     &edge.target,
                                     short.as_deref(),
                                 )
                             }),
                             short_id: short.unwrap_or_else(|| edge.target.to_hex()),
-                            kind: neighbor
-                                .peer_type
-                                .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type),
+                            kind: neighbor.peer_type.map_or_else(
+                                || "UNKNOWN".to_owned(),
+                                |peer_type| self.vault.entity_kind_name(peer_type),
+                            ),
                             edge_kind: edge.kind.name().to_owned(),
                             weight: edge.weight,
                             direction: if neighbor.outbound { "out" } else { "in" }.to_owned(),
@@ -770,7 +773,8 @@ impl Memory<'_> {
     ) -> MemoryResult<EntityRefReceipt> {
         let short = self.short_ref_of(id)?;
         Ok(EntityRefReceipt {
-            record: Some(crate::lens::RecordRef::from_id(
+            record: Some(crate::lens::RecordRef::from_id_in_vault(
+                self.vault,
                 entity_type,
                 id,
                 short.as_deref(),
