@@ -189,12 +189,16 @@ impl ConflictHeadIndex {
     /// settled it: it joins its subject's standing claims or leaves them. A
     /// settlement keeps the claim's subject and predicate. A subject this
     /// index has not read yet is read at its first use, so it needs nothing.
+    /// The claims about `id` itself change with it (an approval of a MACHINE
+    /// claim writes its history claims, and a claim Put deletes its lexical
+    /// query hints), so `id` read as a subject is read again at its next use.
     pub(super) fn record_settled(
         &mut self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> crate::Result<()> {
+        self.subjects.remove(id);
         let Some(body) = vault.get_claim_in_txn(txn, id)? else {
             for standing in self.subjects.values_mut() {
                 for claims in standing.values_mut() {
