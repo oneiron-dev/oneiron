@@ -12,6 +12,7 @@
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test verb_tasks_done_executor_stamp`.
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::agent_dispatch::{
@@ -20,8 +21,10 @@ use oneiron::agent_dispatch::{
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
 };
-use oneiron::authority::MachineRole;
+use oneiron::authority::{ActSurface, AgentTier, MachineRole};
+use oneiron::claim::base_world_id;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{Scope, ScopeId};
 use oneiron::learning::TypeRef;
 use oneiron::memory::{Memory, MemoryError};
 use oneiron::registry::ENTITY_TYPE_TURN;
@@ -32,6 +35,7 @@ use oneiron::task_verb::sdk::invoke;
 use oneiron::task_verb::{AttemptHandle, HostBinding, TaskHandle};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::derive_verbs::define_agent;
+use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
@@ -92,6 +96,37 @@ fn owner_proof(fixture: &Fixture) -> AuthenticatedOwner {
 
 fn owner_memory(fixture: &Fixture) -> Memory<'_> {
     fixture.vault.memory(fixture.owner, EdgeActorClass::Human)
+}
+
+/// `name`'s agent definition with an owner Grant of base reach: the generated
+/// reference check reads each record a call names (`tasks.accept`'s and
+/// `tasks.update`'s `task_ref`) with the caller's own key, so an agent with no
+/// Grant reads no TASK and its call is refused before the verb runs.
+fn granted_agent(fixture: &Fixture, name: &str) -> EntityId {
+    let agent = define_agent(&fixture.vault, name).expect("agent");
+    let mut authority_scope = Scope::top();
+    authority_scope.worlds = [ScopeId(base_world_id())].into_iter().collect();
+    authority_scope.verbs = AgentTier::FullAccess
+        .grant_verbs()
+        .iter()
+        .map(|verb| (*verb).to_owned())
+        .collect();
+    let minted = mint_agent_grant_as(
+        &fixture.vault,
+        &owner_proof(fixture),
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+        },
+    )
+    .expect("the owner grants the agent base reach");
+    assert!(minted.grant.confers, "the grant confers");
+    agent
 }
 
 /// One run of `agent`, dispatched and leased by the host, as the host holds the run
@@ -273,7 +308,7 @@ fn assert_unsealable(fixture: &Fixture, attempt: AttemptId, subject: EntityId) {
 #[test]
 fn a_hosted_done_stamps_the_runs_executor_and_the_try_is_sealed() {
     let fixture = rooted_vault();
-    let agent = define_agent(&fixture.vault, "executor-stamp-agent").expect("agent");
+    let agent = granted_agent(&fixture, "executor-stamp-agent");
     let run = stamp_run(&fixture, &leased_run(&fixture, agent), RUN_MODEL);
     let task = task_for(&fixture, agent);
     let memory = hosted(&fixture, agent, &run);
@@ -305,7 +340,7 @@ fn a_hosted_done_stamps_the_runs_executor_and_the_try_is_sealed() {
 #[test]
 fn a_model_named_in_the_report_is_never_stamped() {
     let fixture = rooted_vault();
-    let agent = define_agent(&fixture.vault, "executor-stamp-agent").expect("agent");
+    let agent = granted_agent(&fixture, "executor-stamp-agent");
     let run = stamp_run(&fixture, &leased_run(&fixture, agent), RUN_MODEL);
     let task = task_for(&fixture, agent);
     let memory = hosted(&fixture, agent, &run);
@@ -340,7 +375,7 @@ fn a_model_named_in_the_report_is_never_stamped() {
 #[test]
 fn a_wire_done_stamps_nothing_and_the_try_stays_unsealed() {
     let fixture = rooted_vault();
-    let agent = define_agent(&fixture.vault, "executor-stamp-agent").expect("agent");
+    let agent = granted_agent(&fixture, "executor-stamp-agent");
     let _run = stamp_run(&fixture, &leased_run(&fixture, agent), RUN_MODEL);
     let task = task_for(&fixture, agent);
     let wire = fixture.vault.memory(agent, EdgeActorClass::Agent);
@@ -363,7 +398,7 @@ fn a_wire_done_stamps_nothing_and_the_try_stays_unsealed() {
 #[test]
 fn a_binding_whose_lease_no_longer_holds_lends_nothing() {
     let fixture = rooted_vault();
-    let agent = define_agent(&fixture.vault, "executor-stamp-agent").expect("agent");
+    let agent = granted_agent(&fixture, "executor-stamp-agent");
     let run = stamp_run(&fixture, &leased_run(&fixture, agent), RUN_MODEL);
     let mut rebound = run.clone();
     rebound.lease_owner = Some("another-host".to_owned());
@@ -385,8 +420,8 @@ fn a_binding_whose_lease_no_longer_holds_lends_nothing() {
 #[test]
 fn another_agents_run_lends_nothing() {
     let fixture = rooted_vault();
-    let runner = define_agent(&fixture.vault, "executor-stamp-runner").expect("runner agent");
-    let reporter = define_agent(&fixture.vault, "executor-stamp-reporter").expect("reporter");
+    let runner = granted_agent(&fixture, "executor-stamp-runner");
+    let reporter = granted_agent(&fixture, "executor-stamp-reporter");
     let run = stamp_run(&fixture, &leased_run(&fixture, runner), RUN_MODEL);
     let task = task_for(&fixture, reporter);
     let memory = hosted(&fixture, reporter, &run);
@@ -406,7 +441,7 @@ fn another_agents_run_lends_nothing() {
 #[test]
 fn an_unstamped_run_lends_nothing() {
     let fixture = rooted_vault();
-    let agent = define_agent(&fixture.vault, "executor-stamp-agent").expect("agent");
+    let agent = granted_agent(&fixture, "executor-stamp-agent");
     let run = leased_run(&fixture, agent);
     let task = task_for(&fixture, agent);
     let memory = hosted(&fixture, agent, &run);
@@ -426,7 +461,7 @@ fn an_unstamped_run_lends_nothing() {
 #[test]
 fn a_try_that_holds_a_model_keeps_it() {
     let fixture = rooted_vault();
-    let agent = define_agent(&fixture.vault, "executor-stamp-agent").expect("agent");
+    let agent = granted_agent(&fixture, "executor-stamp-agent");
     let run = stamp_run(&fixture, &leased_run(&fixture, agent), RUN_MODEL);
     let task = task_for(&fixture, agent);
     let memory = hosted(&fixture, agent, &run);
