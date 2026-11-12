@@ -355,7 +355,7 @@ fn lease_a_file(dir: &Path, vault: &Vault) -> PathBuf {
         ])
     };
     let body = Value::Map(vec![
-        (Value::from("schema_version"), Value::from(1_u64)),
+        (Value::from("schema_version"), Value::from(3_u64)),
         (Value::from("name"), Value::from("local")),
         (Value::from("class"), Value::from("custody-portable")),
         (Value::from("device_only"), Value::from(false)),

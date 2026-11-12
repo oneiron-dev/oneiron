@@ -29,7 +29,7 @@ fn running_definition() -> AgentDefinition {
         1.0,
         false,
         true,
-        rmpv::Value::Map(Vec::new()),
+        rmpv::Value::Map(vec![("source".into(), "agent-definition-test".into())]),
         None,
         true,
         None,

@@ -677,7 +677,7 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
             ),
         ]);
         let body = Value::Map(vec![
-            (Value::from("schema_version"), Value::from(1_u64)),
+            (Value::from("schema_version"), Value::from(3_u64)),
             (Value::from("name"), Value::from("graph-fs-secret")),
             (Value::from("class"), Value::from("custody-portable")),
             (Value::from("device_only"), Value::from(false)),
@@ -693,6 +693,7 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
             (Value::from("manifest_ref"), Value::from("")),
             (Value::from("declared_paths"), Value::Array(vec![])),
             (Value::from("policy_floor_snapshot"), floor),
+            (Value::from("model_reveal_allowed"), Value::from(false)),
         ]);
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &body).unwrap();
