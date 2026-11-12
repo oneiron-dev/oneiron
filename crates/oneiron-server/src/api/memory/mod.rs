@@ -269,7 +269,7 @@ pub(super) use self::watch::{
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
         (status = 400, description = "Malformed verb request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds or unresolved_actor. remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 422, description = "remember: a ref the entity names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body (as `/v1/core/batch`).", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
@@ -682,21 +682,35 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
 /// Admin's in-scope item, an agent under a Grant that names `delete`), each
 /// refusal FORBIDDEN and naming its reason. A token that names no actor is
 /// refused `unresolved_actor`.
+///
+/// An account API key (OF-448) names its person and no actor class: it is
+/// judged as that person, a human (Engine rulings 13 Nov 08:20 and 08:30 =
+/// C). The owner's own key deletes on the owner's path, within its scopes.
+/// The key carries no vault slip, so on a rooted vault no other person
+/// stands by it: the engine's owner refusal there answers
+/// `account_key_unbound`. On a rootless vault the role table judges it.
 fn core_memory_delete_by_role(
     server: &SyncServer,
     auth: &CoreAuth,
     id: &oneiron::EntityId,
     reason: CoreMemoryVerbDeleteReason,
 ) -> Result<oneiron::memory::DeleteReceipt, DagWriteError> {
-    let (actor, class) = facade::facade_actor(server, auth).map_err(|_| {
-        oneiron::memory::MemoryError::new(
-            oneiron::memory::MEMORY_CODE_FORBIDDEN,
-            "unresolved_actor: this token names no actor the delete authority can judge",
-            &[
-                "Present a slip paired with --principal-ref and --actor-class, or the owner's own credential.",
-            ],
-        )
-    })?;
+    let (actor, class, by_account_key) = match facade::facade_actor(server, auth) {
+        Ok((actor, class)) => (actor, class, false),
+        Err(_) => match auth.account_key_principal() {
+            Some(person) => (person, oneiron::EdgeActorClass::Human, true),
+            None => {
+                return Err(oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_FORBIDDEN,
+                    "unresolved_actor: this token names no actor the delete authority can judge",
+                    &[
+                        "Present a slip paired with --principal-ref and --actor-class, an account key that names its person, or the owner's own credential.",
+                    ],
+                )
+                .into());
+            }
+        },
+    };
     let memory = super::scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
     let reason = match reason {
         CoreMemoryVerbDeleteReason::User => oneiron::memory::SafeDeleteReason::UserDelete,
@@ -704,7 +718,26 @@ fn core_memory_delete_by_role(
         CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
         CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
     };
-    Ok(memory.safe_delete(&id.to_hex(), reason)?)
+    match memory.safe_delete(&id.to_hex(), reason) {
+        Err(refusal)
+            if by_account_key
+                && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+                && server
+                    .vault()
+                    .authority_vault_id()
+                    .is_ok_and(|root| root.is_some()) =>
+        {
+            Err(oneiron::memory::MemoryError::new(
+                oneiron::memory::MEMORY_CODE_FORBIDDEN,
+                "account_key_unbound: an account key carries no vault slip, so on a rooted vault it deletes only as the vault's owner",
+                &[
+                    "Present the person's own paired slip (--principal-ref, --actor-class human) to delete as that person.",
+                ],
+            )
+            .into())
+        }
+        outcome => Ok(outcome?),
+    }
 }
 
 pub(crate) fn core_memory_delete_reason(
