@@ -241,6 +241,8 @@ async function effortCorpus(engine: EngineFixture) {
 // plus 10s awaitPublic server-provided lists (/api/search/vector per-row
 // probes, vault.claims.list), not assumed from R22 snapshots. No fixture
 // oracle change (evidence.json/scenarios.json untouched).
+// The goal-intake rows pin skills/goal-intake/SKILL.md as of ed396f61a5c
+// (12 Nov); a later edit of a bootstrap SKILL.md changes its two literals.
 const BACKGROUND_LITERALS: readonly string[] = [
   'model',
   'a4c287a77f1c843ba4b81ebc08ca586b',
@@ -254,8 +256,8 @@ const BACKGROUND_LITERALS: readonly string[] = [
   '{"contentHash": "6aaf0a1c744bc7eebd62970aa2089b3822dec8055558f5855a69d33ff1bfde2e", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "9f976250cbb5ec53a19be22b10a294c02ffeb58ecf1df6942babca6f17aab321"}',
   '{"contentHash": "d5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "judge", "pin": {"type": "content_hash", "value": "d5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d"}}}',
   '{"contentHash": "d5ad33a464e4c5bf48254121a0c3fc9a600e7104d46a1359057ec8369ac25a4d", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "da909150abaf0d3c0a3d561aa5fb4ee014ef4a3a5cf91852e7ebbcffa3196181"}',
-  '{"contentHash": "4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "goal-intake", "pin": {"type": "content_hash", "value": "4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040"}}}',
-  '{"contentHash": "4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "8211f1a1b1da05e2ae2ad8bc9e68875d29c0c1e1d115c4a8119200e196e7b965"}',
+  '{"contentHash": "11fbb5c56b35347a041964c8fb654d637ccf08e446eeb18f7dc9dde7dc1eefc8", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "goal-intake", "pin": {"type": "content_hash", "value": "11fbb5c56b35347a041964c8fb654d637ccf08e446eeb18f7dc9dde7dc1eefc8"}}}',
+  '{"contentHash": "11fbb5c56b35347a041964c8fb654d637ccf08e446eeb18f7dc9dde7dc1eefc8", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "e1e56f9fabbb5c0c58c6a67c420d99b356f429f6a0f2fbc4e1c07dd9db9de08b"}',
   '{"contentHash": "680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "wake", "pin": {"type": "content_hash", "value": "680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d"}}}',
   '{"contentHash": "680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d", "provider": "oneiron.static.v1", "scannedAt": 0, "verdict": "unknown", "riskLevel": "none", "completeness": "complete", "governance": "recommended", "staticInputHash": "b9641ba28169ecc42be2009f72932c5b47cf076b8cb40ad6c83601cd3c4dcf91"}',
   '{"contentHash": "73278f055a5c12348058a87f0918afdb900e9a84c629259b28820ab5960350ea", "hubRef": {"hubId": "eba40381816289359d577401be27f01f", "refString": "agent-health-review", "pin": {"type": "content_hash", "value": "73278f055a5c12348058a87f0918afdb900e9a84c629259b28820ab5960350ea"}}}',
@@ -278,9 +280,9 @@ const BACKGROUND_LITERALS: readonly string[] = [
 ];
 // contentHashes of the 14 observed skill rows (5 bootstrap + 9 pack).
 const BACKGROUND_SKILL_HASHES: ReadonlySet<string> = new Set([
+  '11fbb5c56b35347a041964c8fb654d637ccf08e446eeb18f7dc9dde7dc1eefc8',
   '1bb662bb3d352973c375c2e2884979ae868c32d0b496666a0a908babb77977f7',
   '237cec53997e8d4b4bc642b34913249a2d86672def3fc1d5948679aa75ac7e0c',
-  '4a4b957ac57ad162aba6bf04f857aea09dc9134a120e167175eef70e1f462040',
   '680595164edaf97e42280f9f6f6ef6283d0167eb0c63d3e6f25fc7339049508d',
   '6aaf0a1c744bc7eebd62970aa2089b3822dec8055558f5855a69d33ff1bfde2e',
   '73278f055a5c12348058a87f0918afdb900e9a84c629259b28820ab5960350ea',
@@ -4928,6 +4930,7 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
 
     // A read-scoped agent reads the same record back over HTTP before it
     // loses that scope below.
+    stage = "read-scoped agent HTTP recall read-back";
     expect(await museRecall06RecallMentions(reader.client, common, alphaToken)).toBe(true);
 
     // Wrong actor kind: a write-only agent is refused the read. The HTTP

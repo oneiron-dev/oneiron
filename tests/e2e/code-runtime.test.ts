@@ -670,7 +670,7 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
       const firstText = codeRuntime03SliceText(firstSlice);
       if (!firstText.includes(firstMarker)) {
         throw new Error(
-          `CODE-RUNTIME-03 ENGINE DEFECT 2026-11-11: guest step 1 (console.log -> ask -> pending tasks.wait) run_output=${JSON.stringify(firstText)} expected=${JSON.stringify(firstMarker)}; FIX [CODE-SANDBOX-WAIT-RESPONSE-FIELD]: tasks.wait replies with waitId but no output; the typed self.verbs.call shim requires output`,
+          `CODE-RUNTIME-03 guest step 1 (console.log -> ask -> pending tasks.wait) run_output=${JSON.stringify(firstText)} expected=${JSON.stringify(firstMarker)}; FIX [CODE-SANDBOX-WAIT-RESPONSE-FIELD], fixed by #7120: tasks.wait replies with waitId but no output; the typed self.verbs.call shim requires output`,
         );
       }
       expect(firstText).toContain(firstMarker);
@@ -715,7 +715,7 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
       expect(refusal!.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
       const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
       expect(receipt).not.toBeNull();
-      expect(receipt!.verb).toBe("v1/core/facade/tasks.answer");
+      expect(receipt!.verb).toBe("tasks.answer");
       expect(receipt!.actor_class).toBe("agent");
       expect(receipt!.actor_ref).toBe(minted.principal_ref);
       expect(receipt!.outcome).toEqual({ refused: { code: "BAD_REQUEST" } });
