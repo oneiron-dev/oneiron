@@ -5,11 +5,19 @@
 //! decides that by the deterministic fit, and a ready fit lands the install
 //! claim through `Offer::land_in_txn` (context_board/plugin/fit_install.rs).
 //!
-//! On a vault with the shipped gate policy, that claim (Auto, source
-//! Generated, raw door, no actor) pends at the gate: no `generated`
-//! source-trust row binds its writer, and `plugin.*` takes the criticality
-//! floor. The writer rolls back and the door answers the owner's permission
-//! ask instead, so a ready fit never installs.
+//! Two refusals stand between a ready fit and the install on main:
+//! - The install claim and its fit receipt are about the SKILL, so
+//!   `ClaimBody::new` gives them the SKILL's substrate facet, which no row
+//!   holds: the birth gate refuses them InvalidFacet (#4389). #7205 (FIX
+//!   [CLAIM-FACET-BIRTH-GATE-CENSUS]) stamps both with a stored facet.
+//! - Past the facet, the claim (Auto, source Generated, raw door, no actor)
+//!   pends at the gate under the shipped policy: no `generated` source-trust
+//!   row binds its writer, and `plugin.*` takes the criticality floor.
+//!
+//! Either way the writer rolls back and the door answers the owner's
+//! permission ask instead, so a ready fit never installs. The second test
+//! stores the SKILL's facet first, as #7205 would give the claim a stored
+//! facet, so its red shows the gate refusal alone.
 //!
 //! Fixture: a plain device vault (the shipped manifest is seeded on create),
 //! its owner as the caller, a hub skill imported Active through a ready rule
@@ -33,12 +41,14 @@ use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{
     PluginSectionInstallOutcome, PluginSectionProposeRequest, PluginSectionTargetInput,
 };
+use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::{
     CallerPermissions, HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, RuleSkillFit,
     SkillCapabilitySurface, SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use serde_json::json;
 
 const HUB_ENDPOINT: &str = "https://example.invalid/index.json";
 const SKILL_ID: &str = "sk_open_tasks";
@@ -135,8 +145,18 @@ fn manifest(content_hash_hex: String) -> SectionManifestEnvelope {
     }
 }
 
-#[test]
-fn ready_fit_installs_a_code_free_section_under_the_shipped_gate() {
+/// The owner's offer of a code-free section on a skill imported Active.
+/// `vault` is declared before `_dir`, so the vault closes before its
+/// directory is removed.
+struct Offered {
+    vault: Vault,
+    owner_id: EntityId,
+    skill: EntityId,
+    request: PluginSectionProposeRequest,
+    _dir: tempfile::TempDir,
+}
+
+fn offered() -> Offered {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let mut config = VaultConfig::device();
     config.map_size = 64 * 1024 * 1024;
@@ -205,9 +225,21 @@ fn ready_fit_installs_a_code_free_section_under_the_shipped_gate() {
         target: PluginSectionTargetInput::ExistingSkill { skill_ref: skill },
         turn_ref: "turn:fit-install-1".to_owned(),
     };
-    let outcome = vault
-        .memory(owner_id, EdgeActorClass::Human)
-        .plugin_section_propose_holding(&request, &HoldsAll)
+    Offered {
+        vault,
+        owner_id,
+        skill,
+        request,
+        _dir: dir,
+    }
+}
+
+/// Runs the production door as the owner and expects the install at once.
+fn assert_installs(offered: &Offered) {
+    let outcome = offered
+        .vault
+        .memory(offered.owner_id, EdgeActorClass::Human)
+        .plugin_section_propose_holding(&offered.request, &HoldsAll)
         .expect("the propose door answers");
     let PluginSectionInstallOutcome::Installed {
         claim_ref,
@@ -223,4 +255,29 @@ fn ready_fit_installs_a_code_free_section_under_the_shipped_gate() {
         "the install names every permission the fit evaluated: {outcome:?}"
     );
     assert_eq!(claim_ref.len(), 32, "the install claim ref: {outcome:?}");
+}
+
+#[test]
+fn ready_fit_installs_a_code_free_section_under_the_shipped_gate() {
+    assert_installs(&offered());
+}
+
+/// The same offer with the SKILL's substrate FACET stored first, so the
+/// install claim's facet resolves (as #7205 gives it a stored facet) and
+/// only the gate stands between the fit and the install.
+#[test]
+fn ready_fit_installs_with_the_skill_facet_stored() {
+    let offered = offered();
+    offered
+        .vault
+        .put_entity(
+            &oneiron::claim::substrate_facet_id(offered.skill).expect("the skill's facet id"),
+            ENTITY_TYPE_FACET,
+            at(6),
+            6,
+            &rmp_serde::to_vec_named(&json!({"name": "open task digest facet"}))
+                .expect("facet body"),
+        )
+        .expect("store the skill's facet");
+    assert_installs(&offered);
 }
