@@ -294,6 +294,20 @@ fn round(server: &SyncServer, renewal: &DigestRenewal) -> oneiron::Result<()> {
     Ok(())
 }
 
+/// One Coach round on the calling thread, with no worker, tick or digest
+/// readiness word: the round the nightly worker runs. The cfg-only door
+/// `crate::test_doors::coach_round` calls it; the renewal it passes is inert
+/// (`DigestRenewal::write` writes only while `alive` is true).
+#[cfg(oneiron_test_support)]
+pub(crate) fn round_once(server: &SyncServer) -> oneiron::Result<()> {
+    let renewal = DigestRenewal {
+        vault: std::sync::Weak::new(),
+        expected_round_interval: Duration::ZERO,
+        alive: Arc::new(Mutex::new(false)),
+    };
+    round(server, &renewal)
+}
+
 pub(super) fn run_one(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
