@@ -2,7 +2,7 @@ use super::*;
 use crate::api::ReactiveChange;
 use crate::broadcast::{BroadcastError, BroadcastSubscriber, ReactiveChangeSubscriber};
 use crate::protocol::{SyncMessage, parse_message};
-use oneiron::{Vault, VaultConfig};
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 #[tokio::test(flavor = "current_thread")]
 async fn document_relay_gap_requests_resync_and_preserves_later_edits() {
@@ -14,10 +14,23 @@ async fn document_relay_gap_requests_resync_and_preserves_later_edits() {
         vault.ensure_embedded_owner_actor().unwrap(),
         oneiron::EdgeActorClass::Human,
     );
-    // A text document is a NOTE born with its head document; a bare row has
-    // no document to edit.
-    let first = vault.create_note("research", "first", owner).unwrap();
-    let next = vault.create_note("research", "next", owner).unwrap();
+    // A text document is a TURN placeholder whose body is a canonical map with
+    // one txt string: the sync plane births its document on the first edit
+    // (FIX 11794). A NOTE's text goes through the note verbs, never this door.
+    let first = EntityId::now();
+    let next = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"txt": "document owner"})).unwrap();
+    for id in [first, next] {
+        vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .unwrap();
+    }
     let at = vault.now_recorded_at();
     let manager = Arc::new(WindowManager::new(
         vault,
