@@ -412,9 +412,20 @@ pub const COMMITMENT_REMINDER_WORDING_BLOB: &[u8] = b"oneiron:commitment-reminde
 /// No parts: policy binds this one engine writer.
 pub const ESIGN_SEAL_ACTOR: &[u8] = b"oneiron.esign.seal.actor.v1";
 
+/// One commitment a signing document's draft names, born inert
+/// (`blob_artifact::esign::esign_document_commitment_id`, ARCH-0064 §3).
+/// Parts: the document (16 bytes), the term's index in the draft (u32
+/// big-endian).
+pub const ESIGN_DOCUMENT_COMMITMENT: &[u8] = b"oneiron.esign.document.commitment.v1";
+
 /// The scope summary landing writer (`scope_summary::landing_writer`), distinct
 /// from the summary's requester. No parts: policy binds this one engine writer.
 pub const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.actor.v1";
+
+/// The plugin section fit install writer
+/// (`context_board::plugin::fit_install::install_writer`), distinct from the
+/// offering actor. No parts: policy binds this one engine writer.
+pub const PLUGIN_SECTION_FIT_INSTALL_ACTOR: &[u8] = b"oneiron.plugin-section.fit-install.actor.v1";
 
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
@@ -453,7 +464,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 69] = [
+pub(crate) const ALL: [&[u8]; 70] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -522,5 +533,6 @@ pub(crate) const ALL: [&[u8]; 69] = [
     REMOVAL_ARCHIVE_OWNER,
     REPO_SECRET_MARK,
     VAD_ANNOTATION_CLAIM,
+    ESIGN_DOCUMENT_COMMITMENT,
     RESIDENT_MESSAGE_ASK,
 ];

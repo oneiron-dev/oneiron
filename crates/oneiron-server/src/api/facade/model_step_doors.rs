@@ -346,7 +346,13 @@ impl RunStep {
                 spend: None,
             });
         };
-        let (payer, _) = scope_run_funding(vault, Some(scope), false).map_err(|_| unopened())?;
+        // The payer is read as the run's own steps read theirs: a room-bound
+        // or member-bound run whose root names no payer, its payer erased
+        // while it holds its lease included, does not open its line
+        // (LIVE-RUN-PAYER-REQUIRED).
+        let payer_required = self.held.payer_required(vault).map_err(|_| unopened())?;
+        let (payer, _) =
+            scope_run_funding(vault, Some(scope), payer_required).map_err(|_| unopened())?;
         let dispatcher = AgentDispatcher::new(vault);
         // The cap generation first: a top-up after the two guards read their
         // room then moves it, and the step's budget park wakes itself.

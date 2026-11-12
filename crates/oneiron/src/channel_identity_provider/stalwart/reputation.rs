@@ -221,7 +221,7 @@ impl StalwartClient {
             }
         }
         let mut claim_refs = Vec::new();
-        for body in bodies {
+        for mut body in bodies {
             let id = EntityId::derive(
                 b"oneiron.native_mail.reputation.v1",
                 &[
@@ -230,6 +230,10 @@ impl StalwartClient {
                     body.predicate.as_bytes(),
                 ],
             )?;
+            // The subject is the channel identity, which has no FACET of its
+            // own. A replay reads the stored claim's facet, so the equality
+            // check below still holds.
+            body.scope_facet = vault.claim_put_facet_in_txn(&txn, &id)?;
             let deletion =
                 crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &txn, &id)?;
             if deletion.deleted || deletion.stale {

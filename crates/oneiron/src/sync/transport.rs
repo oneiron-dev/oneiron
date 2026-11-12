@@ -180,6 +180,14 @@ pub const fn installs_window_replacements(version: u8) -> bool {
     version == REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION
         || version == REPLACEMENT_RESIDENCE_PROTOCOL_VERSION
 }
+
+/// Whether a socket whose hello said `version` is a lane for custody carrier
+/// leaf-key frames (FIX 11785). A v12 hello opens only the residence RPC lane
+/// now, which reads RPC frames alone: a residence sync socket has said v14
+/// since before the leaf-key frames came.
+pub const fn carries_leaf_keys(version: u8) -> bool {
+    version != RESIDENCE_PROTOCOL_VERSION
+}
 // The owner, residence and selector lanes are told apart by the hello byte alone.
 const _: () = assert!(
     CHUNK_FULL_WINDOW_PROTOCOL_VERSION != RESIDENCE_PROTOCOL_VERSION
@@ -379,9 +387,14 @@ pub fn encode_chunk_full_window_protocol_hello() -> Vec<u8> {
     codec::hello_frame(CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
 }
 
-/// Encodes the own-device opened-item residence hello.
+/// Encodes the hello of the own-device opened-item residence RPC lane (v12).
+///
+/// It lists the codecs and no frame kind. The lane reads its bind reply and
+/// RPC answers only, and refuses any other frame, so the home must not offer
+/// it sealed world updates (a proven machine's socket gets that offer at
+/// connect when its hello lists them).
 pub fn encode_residence_protocol_hello() -> Vec<u8> {
-    codec::hello_frame(RESIDENCE_PROTOCOL_VERSION)
+    codec::codecs_only_hello_frame(RESIDENCE_PROTOCOL_VERSION)
 }
 
 /// Encodes the owner hello of a client that installs window replacements (v13).
