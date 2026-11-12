@@ -99,7 +99,9 @@ mod replicated_confirm;
 mod residence_budgets;
 mod resolution;
 mod tracker_limits;
-pub(crate) use self::derive_verdict::{DeriveAllowance, DeriveCapability, derive_verdict_in_txn};
+pub(crate) use self::derive_verdict::{
+    DeriveAllowance, DeriveCapability, derive_verdict_in_txn, reaches_target,
+};
 pub use self::dreamer_grant::DreamerWeaveReach;
 // The refusal's type is named only by the integration tests' doors; the
 // engine reads its token where the verdict answers.

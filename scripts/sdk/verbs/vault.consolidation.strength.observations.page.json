@@ -1,0 +1,13 @@
+{
+  "name": "vault.consolidation.strength.observations.page",
+  "description": "The owner, or a reader with a live Steward grant naming read, pages the Dreamer's strength observations: each source current, moved or withheld, a pin per current claim, and the strength policy and scoring config with their pins.",
+  "input": "crate::snapshot_read::StrengthObservationsPageRequest",
+  "output": "crate::claim::ScopedReadResult<crate::snapshot_read::StrengthObservationsPage>",
+  "call": "crate::snapshot_read::strength_observations_page(memory, &input)?",
+  "scope": "Read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered"
+}
