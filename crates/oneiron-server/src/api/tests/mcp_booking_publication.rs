@@ -151,24 +151,28 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
     }
     crate::test_credentials::bind_owner(&server.vault, "secret", owner);
     let config = config(host);
+    let mut config_claim = ClaimBody::new(
+        BOOKING_EVENT_TYPE_PREDICATE,
+        ClaimSubject::Entity(page),
+        encode_event_type_claim_value(&BookingEventTypeClaimValue {
+            schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+            page_ref: page,
+            config: config.clone(),
+        })
+        .expect("config value"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("config claim");
+    // A CLAIM is born only under a stored FACET (FIX 7757); the page's derived
+    // facet is none, so the claim takes the vault's default facet.
+    config_claim.scope_facet = server.vault.default_facet().expect("default facet");
     server
         .vault
         .put_claim(
             &seeded_test_entity_id(0x0024_7104),
-            &ClaimBody::new(
-                BOOKING_EVENT_TYPE_PREDICATE,
-                ClaimSubject::Entity(page),
-                encode_event_type_claim_value(&BookingEventTypeClaimValue {
-                    schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
-                    page_ref: page,
-                    config: config.clone(),
-                })
-                .expect("config value"),
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            )
-            .expect("config claim"),
+            &config_claim,
             oneiron::TimeRange { start: 1, end: 1 },
             1,
         )
