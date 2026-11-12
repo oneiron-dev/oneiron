@@ -13,7 +13,7 @@ use crate::deletion::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::federation::{DeleteAuthority, DeleteCaller, DeleteRefusal};
+use crate::federation::{DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget};
 use crate::secret_custody::EraseOwnerAct;
 use crate::write_envelope::WriteActor;
 
@@ -95,8 +95,11 @@ impl Memory<'_> {
             class: self.actor_class,
             credential: self.presented_credential(),
         };
+        // The scrub retires the record's facts before the tombstone's publish
+        // re-reads this authority; the target keeps its last live read.
+        let target = DeleteTarget::new(id);
         let authority = |txn: &heed::RoTxn<'_>| -> MemoryResult<DeleteAuthority> {
-            crate::federation::require_delete_authority_in_txn(self.vault, txn, caller, id)?
+            crate::federation::require_delete_authority_in_txn(self.vault, txn, caller, &target)?
                 .map_err(|refusal| role_delete_refusal(refusal, &owner_refusal))
         };
         let (receipt, _) =

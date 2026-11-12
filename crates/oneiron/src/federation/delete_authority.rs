@@ -17,6 +17,7 @@
 //! an owner or a Grant: the answer is a sealed [`DeleteAuthority`],
 //! read again in each write that deletes.
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use super::record_scope::note_world::any_world_at;
@@ -30,7 +31,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
@@ -71,12 +72,48 @@ pub(crate) struct DeleteCaller<'a> {
     pub(crate) credential: Option<&'a VerifiedSlip>,
 }
 
+/// The record one delete judges. Its row is read afresh in each check while
+/// it stands. Once the delete's own scrub has applied (the row's deletion
+/// fence), the scrub has retired its scope stamp, body and owner facts, so
+/// the transaction that publishes the tombstone judges the record as the
+/// last live read held it. The caller's binding, roles, Grants and
+/// credential are read again every time.
+pub(crate) struct DeleteTarget {
+    id: EntityId,
+    live: RefCell<Option<TargetRecord>>,
+}
+
+impl DeleteTarget {
+    /// The record `id`, not yet read.
+    #[must_use]
+    pub(crate) const fn new(id: EntityId) -> Self {
+        Self {
+            id,
+            live: RefCell::new(None),
+        }
+    }
+
+    /// The record as `txn` holds it, or as its last live read held it once
+    /// its deletion has applied; `None` where no live row was ever read.
+    fn record_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<TargetRecord>> {
+        if vault
+            .store
+            .port_deletion_marked(txn, DeletionMarker::RowFence, &self.id)?
+        {
+            return Ok(self.live.borrow().clone());
+        }
+        let record = TargetRecord::read_in(vault, txn, self.id)?;
+        *self.live.borrow_mut() = record.clone();
+        Ok(record)
+    }
+}
+
 /// Why one record may not be deleted by this caller. Each refuses that
 /// record alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DeleteRefusal {
-    /// The person holds no live write binding; a root bound to no PERSON
-    /// is no one here.
+    /// The person holds no live write binding and presents no live
+    /// credential of its own; a root bound to no PERSON is no one here.
     Unbound,
     /// The person holds no membership role in this vault that deletes (a
     /// personal vault has none), or no such record is stored.
@@ -144,27 +181,41 @@ impl DeleteRefusal {
 /// The Owner arm runs first and counts every live owner of the vault,
 /// co-owners included (`policy_model::owners_in_txn`), with no clearance
 /// term: an Owner deletes any record its bound credential reaches. A person
-/// must first hold a live write binding, so a root bound to no PERSON gets
-/// no role. A failure to read the credential check or any other arm refuses
-/// this record alone ([`DeleteRefusal::Unreadable`]).
+/// must first be someone here: a live PERSON with a live write binding, or,
+/// where the rooted log binds it no key, one that presents a live `human`
+/// credential this host verified for it ([`credential_names_person`]). A
+/// human binding is the owner's (H149), so every other person on a rooted
+/// vault acts by its credential. A root bound to no PERSON gets no role. A
+/// failure to read the credential check or any other arm refuses this
+/// record alone ([`DeleteRefusal::Unreadable`]).
 ///
 /// # Errors
 /// A store or fold failure of the binding or owners read, as the owner's
-/// own delete path meets. A missing or unbound person, or a fold with two
-/// roots, is [`DeleteRefusal::Unbound`].
+/// own delete path meets. A missing person, an unbound one with no
+/// credential of its own, a quarantined binding or a fold with two roots is
+/// [`DeleteRefusal::Unbound`].
 pub(crate) fn require_delete_authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     caller: DeleteCaller<'_>,
-    target: EntityId,
+    target: &DeleteTarget,
 ) -> Result<std::result::Result<DeleteAuthority, DeleteRefusal>> {
     if caller.class == EdgeActorClass::Human {
-        match vault.verify_write_actor_in_txn(txn, &WriteActor::new(caller.actor, caller.class)) {
-            Ok(_) => {}
+        let bound = match vault
+            .write_actor_bound_in_txn(txn, &WriteActor::new(caller.actor, caller.class))
+        {
+            Ok(bound) => bound,
             Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
                 return Ok(Err(DeleteRefusal::Unbound));
             }
             Err(error) => return Err(error),
+        };
+        if !bound {
+            match credential_names_person(vault, txn, caller) {
+                Ok(true) => {}
+                Ok(false) => return Ok(Err(DeleteRefusal::Unbound)),
+                Err(error) => return Ok(Err(DeleteRefusal::Unreadable(error.kind()))),
+            }
         }
         if crate::policy_model::owners_in_txn(vault, txn)?.contains(&caller.actor) {
             let owner = DeleteAuthority {
@@ -173,7 +224,7 @@ pub(crate) fn require_delete_authority_in_txn(
             };
             let reaches = match caller.credential {
                 None => Ok(true),
-                Some(_) => TargetRecord::read_in(vault, txn, target).and_then(|record| {
+                Some(_) => target.record_in(vault, txn).and_then(|record| {
                     credential_reaches(vault, txn, caller, record.as_ref(), true)
                 }),
             };
@@ -193,9 +244,9 @@ fn other_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     caller: DeleteCaller<'_>,
-    target: EntityId,
+    target: &DeleteTarget,
 ) -> Result<std::result::Result<DeleteAuthority, DeleteRefusal>> {
-    let Some(record) = TargetRecord::read_in(vault, txn, target)? else {
+    let Some(record) = target.record_in(vault, txn)? else {
         return Ok(Err(match caller.class {
             EdgeActorClass::Human => DeleteRefusal::NoStanding,
             EdgeActorClass::Agent | EdgeActorClass::System => DeleteRefusal::NoDeleteGrant,
@@ -217,12 +268,16 @@ fn other_arms(
     Ok(Ok(admitted))
 }
 
-/// The record as `txn` holds it: its kind, body and the position
-/// the scoped doors select it at. `None` where no row is stored.
+/// The record as `txn` holds it: its kind, body, a TASK's Owner fact and
+/// the position the scoped doors select it at. `None` where no row is
+/// stored.
+#[derive(Clone)]
 struct TargetRecord {
     id: EntityId,
     kind: u8,
     body: Vec<u8>,
+    /// A TASK's Owner fact; `None` for any other kind, or a TASK with none.
+    task_owner: Option<EntityId>,
     /// `None` where the record proves no position: no grant axis holds it.
     position: Option<Scope>,
 }
@@ -256,10 +311,18 @@ impl TargetRecord {
                 position,
             )
         });
+        let task_owner = if header.entity_type == ENTITY_TYPE_TASK {
+            vault
+                .task_standing_in(txn, id)?
+                .map(|standing| standing.owner)
+        } else {
+            None
+        };
         Ok(Some(Self {
             id,
             kind: header.entity_type,
             body,
+            task_owner,
             position,
         }))
     }
@@ -362,9 +425,7 @@ fn owned_by(
     record: &TargetRecord,
 ) -> Result<bool> {
     match record.kind {
-        ENTITY_TYPE_TASK => Ok(vault
-            .task_standing_in(txn, record.id)?
-            .is_some_and(|standing| standing.owner == person)),
+        ENTITY_TYPE_TASK => Ok(record.task_owner == Some(person)),
         ENTITY_TYPE_NOTE => {
             Ok(
                 crate::note::decode_note_core_in_txn(&vault.store, txn, &record.body)?
@@ -486,6 +547,25 @@ fn pact_lapsed(
         Ok(None) | Err(Error::Claim(_)) => Ok(true),
         Err(error) => Err(error),
     }
+}
+
+/// Whether `caller` presents a live credential this host verified for it as
+/// a person: held by it, of the `human` class and bound to no invitation. It
+/// stands in for the write binding a person on a rooted vault does not hold;
+/// it confers no role, and [`credential_reaches`] still bounds every arm.
+fn credential_names_person(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    caller: DeleteCaller<'_>,
+) -> Result<bool> {
+    let Some(proof) = caller.credential else {
+        return Ok(false);
+    };
+    let claims = proof.claims();
+    Ok(claims.holder_ref == caller.actor.to_hex()
+        && claims.actor_class.as_deref() == Some(crate::authority::ACTOR_CLASS_HUMAN)
+        && claims.invitation_ref.is_none()
+        && vault.capability_slip_is_live_in_txn(txn, proof)?)
 }
 
 /// Whether the credential bound to `caller`, if any, reaches `record`: live,
