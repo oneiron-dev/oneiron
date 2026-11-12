@@ -431,26 +431,31 @@ pub async fn run(
 ///
 /// # Errors
 ///
-/// The vault's, or no finding for the claim.
+/// The vault's, or no finding for the claim; that error counts the claim
+/// rows it could not read or decode and names each claim about `claim`.
 #[doc(hidden)]
 pub fn finding(vault: &Vault, claim: EntityId) -> Result<serde_json::Value> {
     let wanted = [
         crate::dreamer_runner::maintenance::claim_source_recheck::CLAIM_SOURCE_RECHECK_PREDICATE,
         crate::dreamer_runner::maintenance::CURATOR_PROPOSAL_PREDICATE,
     ];
+    let mut unreadable = 0_usize;
+    let mut undecodable = 0_usize;
+    let mut about_claim = Vec::new();
     for id in vault.entities_by_type(ENTITY_TYPE_CLAIM)? {
-        let Some(raw) = vault.get(&id)? else {
+        // `Vault::get` answers the row's body, its metadata header already off.
+        let Some(body) = vault.get(&id)? else {
+            unreadable += 1;
             continue;
         };
-        let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) else {
-            continue;
-        };
-        let Ok(decoded) = crate::claim::decode_claim_body(body, true) else {
+        let Ok(decoded) = crate::claim::decode_claim_body(&body, true) else {
+            undecodable += 1;
             continue;
         };
         if decoded.subject != ClaimSubject::Entity(claim) {
             continue;
         }
+        about_claim.push(format!("{} ({:?})", decoded.predicate, decoded.approval));
         if !wanted.contains(&decoded.predicate.as_str()) {
             continue;
         }
@@ -470,5 +475,8 @@ pub fn finding(vault: &Vault, claim: EntityId) -> Result<serde_json::Value> {
         }
         return Ok(value);
     }
-    Err(invalid("no re-check finding for the claim"))
+    Err(invalid(&format!(
+        "no re-check finding for the claim: {unreadable} unreadable and {undecodable} \
+         undecodable claim rows; claims about it: {about_claim:?}"
+    )))
 }
