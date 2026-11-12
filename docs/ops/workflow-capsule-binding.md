@@ -42,7 +42,10 @@ ran wider than the role's route went out on the owner's standing quota fallback
 (`use_fallback`) for one of the route's offers. Its replay re-reads that choice
 at replay time: it is admitted while the owner's fallback still names the model
 at that locality, and refused once the owner has turned it off or named another
-(`fallback_no_longer_allowed` for a shadow call). The selected rung's
+(`fallback_no_longer_allowed` for a shadow call). A role whose work never leaves
+the device (`leave_device = "never"`) has no third-party call replayed, whatever
+the fallback names: the replay reads that rule from the role, since a manifest
+pin off the role's seat routes on the model's bare ladder. The selected rung's
 configured prompt must match the stored digest; otherwise the replay is refused
 (`route_prompt_moved`). An owner fallback whose prompt differs from the model's
 current standalone prompt is therefore not replayed. The replay then reads the
