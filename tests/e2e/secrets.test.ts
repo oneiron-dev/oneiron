@@ -1853,7 +1853,7 @@ enabled = false
  * Delivery also needs a fully scripted verified channel binding, not an
  * invented generic POST /concern sink; native-mail JMAP is a possible fixture.
  * The owner's own source read/archive may legitimately contain the conversation.
- * Report: <workspace>/Desktop/temp/vibe-build-20261017/lanes/kimi/OPUS-E2E-5/cases/SECRETS-08.report.md
+ * Report: <workspace>/vibe-build-20261017/lanes/kimi/OPUS-E2E-5/cases/SECRETS-08.report.md
  */
 suite.todo(test, "SECRETS-08", "waits on owner-revocable agent Grant admission for vault.trusted_contacts.concern.propose, vault.trusted_contacts.concern.asks and vault.trusted_contacts.list");
 

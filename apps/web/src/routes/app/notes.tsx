@@ -25,8 +25,8 @@ export const Route = createFileRoute('/app/notes')({
 
 export type Who = 'o' | 'y' | 'eiri' | 'tory' | 'antevon'
 export const WHO: Record<Who, { name: string; tip: string; human: boolean }> = {
-  o: { name: 'Owen', tip: 'o · Owen · owner', human: true },
-  y: { name: 'Yuki', tip: 'y · Yuki · member', human: true },
+  o: { name: 'owen', tip: 'o · owen · owner', human: true },
+  y: { name: 'yuki', tip: 'y · yuki · member', human: true },
   eiri: { name: 'Eiri', tip: 'Eiri · outbound companion', human: false },
   tory: { name: 'Tory', tip: 'Tory · research companion', human: false },
   antevon: { name: 'Antevon', tip: 'Antevon · the house mind', human: false },
@@ -810,7 +810,7 @@ const NOTES: Note[] = [
       LI('Forty-two claims went in on their own; two wait for review.'),
       LI('The LinkedIn import paused itself at 180 writes.'),
       LI('The Hokuei brief for Thursday is compiled and cites every claim under it.'),
-      P('Start with the two held claims. Then resume the import once Owen has cleared it.'),
+      P('Start with the two held claims. Then resume the import once owen has cleared it.'),
     ]),
     trail: [{ when: 'Aug 15 03:12', who: 'antevon', what: 'wrote · 5 blocks' }],
   },

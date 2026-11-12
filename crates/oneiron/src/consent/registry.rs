@@ -166,6 +166,57 @@ pub const CONSENT_REVOKE_COMMAND: &str = "vault.consent.revoke";
 pub struct ConsentRegistry {
     /// The rows, newest first.
     pub rows: Vec<ConsentRegistryRow>,
+    /// The live slips of named agents that no Grant has ever named, newest
+    /// issued first (FIX AGENT-GRANTLESS-VISIBLE); absent when there are
+    /// none. Each reads as its Scope allows until the owner converts it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grantless_agents: Vec<GrantlessAgentRow>,
+}
+
+/// A live issued slip of a named agent that no Grant has ever named, as the
+/// owner's registry lists it (FIX AGENT-GRANTLESS-VISIBLE; Engine RULING
+/// GRANTLESS-SHAPE Q8 = A): an agent paired before the owner's Grants, or on
+/// a link with no owner proof. No Grant stands behind it, so it has no Grant
+/// id and no revoke. It leaves the list once a counted mint names its
+/// holder.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct GrantlessAgentRow {
+    /// The named agent's PERSON the slip names as its holder.
+    pub holder: EntityId,
+    /// The slip's id (64 hex).
+    pub slip_ref: String,
+    /// When its mint issued it (Unix seconds).
+    pub issued_at: u64,
+    /// When it stops (Unix seconds).
+    pub expires_at: u64,
+    /// The Scope its mint logged. A presented copy may carry narrower
+    /// caveats its holder added.
+    pub scope: Scope,
+    /// The named secret and repository bounds it carries beside its Scope.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub records: std::collections::BTreeSet<String>,
+    /// The credential-door effectors it names beside its Scope.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub channels: std::collections::BTreeSet<String>,
+    /// Whom its holder may message; absent: the vault-wide reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<crate::authority::CommReach>,
+    /// The owner's conversion of this slip into its holder's default read
+    /// Grants.
+    pub convert_action: GrantlessAgentConvertAction,
+}
+
+/// The owner's conversion of a grantless slip and its argument.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct GrantlessAgentConvertAction {
+    /// Pinned command name: `vault.agents.grants.from_slip`.
+    pub command: String,
+    /// The slip it converts (64 hex).
+    pub slip_ref: String,
 }
 
 impl ConsentRegistryRow {
