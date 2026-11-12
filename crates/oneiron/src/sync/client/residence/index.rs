@@ -83,6 +83,38 @@ impl SyncClient {
             .map_err(IndexFetchFault::into_error)
     }
 
+    /// The windows the thin index enrols now: each of the current
+    /// `current_window_count` months' windows the home lists that this
+    /// device follows (main's choice, moved here unchanged for the red run).
+    pub(crate) fn thin_index_windows(
+        &self,
+        now_secs: u64,
+        current_window_count: usize,
+    ) -> Result<Vec<WindowKey>, TransportError> {
+        let mut eligible = HashSet::new();
+        let mut next = Some(WindowKey::from_timestamp(now_secs));
+        for _ in 0..current_window_count {
+            let Some(key) = next else { break };
+            next = key.previous_month();
+            eligible.insert(key);
+        }
+        // A current month's world windows are indexed for the worlds this
+        // device follows; any other world item is still opened by id.
+        let worlds = self.effective_worlds()?;
+        Ok(self
+            .server_windows()
+            .iter()
+            .filter_map(|key| WindowKey::try_new(key))
+            .filter(|window| {
+                window
+                    .start_timestamp()
+                    .map(WindowKey::from_timestamp)
+                    .is_some_and(|month| eligible.contains(&month))
+                    && Self::follows_window(window, &worlds)
+            })
+            .collect())
+    }
+
     /// [`Self::fetch_current_index`], its fault told by the side it is on
     /// (FIX 22153): a home session counts only the home's against the home.
     /// The residence socket's opening and each call on it fail on the side
@@ -110,28 +142,13 @@ impl SyncClient {
         else {
             return Err(IndexFetchFault::Remote(TransportError::home_offline()));
         };
-        let mut eligible = HashSet::new();
-        let mut next = Some(WindowKey::from_timestamp(now_secs));
-        for _ in 0..budgets.current_window_count {
-            let Some(key) = next else { break };
-            next = key.previous_month();
-            eligible.insert(key);
-        }
-        // A current month's world windows are indexed for the worlds this
-        // device follows; any other world item is still opened by id.
-        let worlds = self.effective_worlds().map_err(IndexFetchFault::Local)?;
+        let windows = self
+            .thin_index_windows(now_secs, budgets.current_window_count)
+            .map_err(IndexFetchFault::Local)?;
         let mut total = 0;
         let mut indexed = HashSet::new();
-        for key in self.server_windows() {
-            let Some(window) = WindowKey::try_new(&key) else {
-                continue;
-            };
-            let month = window.start_timestamp().map(WindowKey::from_timestamp);
-            if !month.is_some_and(|month| eligible.contains(&month))
-                || !Self::follows_window(&window, &worlds)
-            {
-                continue;
-            }
+        for window in windows {
+            let key = window.as_str().to_owned();
             let mut complete = None;
             for _retry in 0..3 {
                 let mut cursor: Option<String> = None;
@@ -235,8 +252,8 @@ impl SyncClient {
             total += items.len();
             indexed.insert(key);
         }
-        // A window that left the current set, or that this device no longer
-        // follows, keeps no stale titles.
+        // A window that left the current set, or whose world this machine may
+        // no longer read, keeps no stale titles.
         self.vault
             .with_write_txn_grouped(|txn| {
                 let stale: Vec<_> = self
