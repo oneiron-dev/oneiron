@@ -326,6 +326,7 @@ impl EngineNativeExecutor<'_> {
             // console, as it stands now: never inside the console (FIX 8277).
             messages.extend(self.step_feedback_message(record, seq as u64));
             messages.extend(self.step_board_frames_message(record, seq as u64));
+            messages.extend(self.step_signals_message(record, seq as u64));
             if let Some(output) = resumed.get(&(seq as u64)) {
                 messages.push(self.resumed_reply_message(record, seq as u64, output)?);
             }
