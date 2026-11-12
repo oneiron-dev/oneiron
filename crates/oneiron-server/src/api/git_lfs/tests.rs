@@ -720,26 +720,28 @@ fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneir
         )],
     ))
     .unwrap();
-    let want =
-        oneiron::sync::chunks::encode_chunk_request(&oneiron::sync::chunks::ChunkSyncRequest {
-            oid: *oid.as_bytes(),
-            selector,
-            have: vec![],
-            want: Some(
-                vault
-                    .lfs_manifest(oid)
-                    .unwrap()
-                    .expect("manifest")
-                    .chunks
-                    .iter()
-                    .map(|chunk| chunk.hash)
-                    .collect(),
-            ),
-            request: 1,
-            cursor: None,
-            read: None,
-        })
-        .unwrap();
+    // HTTP carries a chunk request as a stream of frames (FIX 145), not as
+    // the socket's envelope.
+    let chunk_request = oneiron::sync::chunks::ChunkSyncRequest {
+        oid: *oid.as_bytes(),
+        selector,
+        have: vec![],
+        want: Some(
+            vault
+                .lfs_manifest(oid)
+                .unwrap()
+                .expect("manifest")
+                .chunks
+                .iter()
+                .map(|chunk| chunk.hash)
+                .collect(),
+        ),
+        request: 1,
+        cursor: None,
+        read: None,
+    };
+    let mut want = Vec::new();
+    oneiron::sync::chunks::write_chunk_request_stream(&chunk_request, &mut want).unwrap();
     let token = format!(
         "{}scope=core:read;principal_ref={}",
         crate::test_credentials::RECIPE_PREFIX,
