@@ -462,6 +462,14 @@ fn accept_all_leaves_waiting_a_member_that_would_replace_a_live_head() {
     let group = the_restore_group(&memory, &owner, &receipt_ref);
     assert_eq!(group["replaces_live_head"], 1, "{group:#}");
     let group_key = group["group_key"].as_str().expect("group_key").to_owned();
+    // Review-each reads the heads as the page does; it names the same head
+    // the settle's own review binds below.
+    let review_each = resolve(&memory, &owner, &group_key, "review_each");
+    assert_eq!(
+        member(&review_each, &source.owner_written)["replaces_ref"],
+        newer.to_hex(),
+        "{review_each:#}"
+    );
 
     let resolution = resolve(&memory, &owner, &group_key, "accept_all");
     let waiting = member(&resolution, &source.owner_written);

@@ -106,12 +106,11 @@ pub struct RestoreInboxResolution {
     pub warnings: Vec<crate::memory::SettleWarning>,
 }
 
-/// Where one restored claim stands for its restore group.
-pub(crate) enum RestoredMemberState {
-    /// It is no open proposal: settled, closed, deleted or gone.
-    Closed,
-    /// It is open; `replaces` is the live head its approval would supersede.
-    Open { replaces: Option<EntityId> },
+/// One restored claim still open for its restore group.
+pub(crate) struct OpenRestoredMember {
+    pub(crate) id: EntityId,
+    /// The live head its approval would supersede.
+    pub(crate) replaces: Option<EntityId>,
 }
 
 /// What settling one restore group member did, in its savepoint.
@@ -136,7 +135,8 @@ pub(crate) enum RestoredMemberSettle {
 impl Vault {
     /// Every owner restore with a restored claim still open, one inbox group each,
     /// in receipt order. Each card counts its open members and those whose
-    /// approval would supersede a live head: one claim read per member.
+    /// approval would supersede a live head: one claim read per member, and
+    /// one read of the claims about each subject per group.
     ///
     /// # Errors
     ///
@@ -150,16 +150,8 @@ impl Vault {
             else {
                 continue;
             };
-            let (mut open, mut replaces) = (0_u64, 0_u64);
-            for member in &members {
-                if let RestoredMemberState::Open { replaces: head } =
-                    self.restored_member_state_in_txn(&txn, member)?
-                {
-                    open += 1;
-                    replaces += u64::from(head.is_some());
-                }
-            }
-            if open == 0 {
+            let open = self.open_restored_members_in_txn(&txn, &members)?;
+            if open.is_empty() {
                 continue;
             }
             let head =
@@ -169,8 +161,11 @@ impl Vault {
                 group_key,
                 created_at: receipt.created_at,
                 source_vault: head.and_then(|head| head.source_vault),
-                open_members: open,
-                replaces_live_head: replaces,
+                open_members: open.len() as u64,
+                replaces_live_head: open
+                    .iter()
+                    .filter(|member| member.replaces.is_some())
+                    .count() as u64,
             });
         }
         Ok(groups)
