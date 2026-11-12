@@ -81,6 +81,7 @@ pub(crate) use step::{
 };
 pub(crate) use step::{
     wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
+    wake_resident_share_traps_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{

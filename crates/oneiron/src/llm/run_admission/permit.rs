@@ -580,8 +580,10 @@ fn priced(
             from: native.clone(),
             to: target.clone(),
         },
+        // No allocation holds a price past its unit: nothing funds the
+        // call, and no budget write frees it (D3).
         Unpriced::TooLarge => RunDenied::Budget {
-            denied: BudgetDenied::Exhausted,
+            denied: BudgetDenied::Unfunded,
         },
     })
 }

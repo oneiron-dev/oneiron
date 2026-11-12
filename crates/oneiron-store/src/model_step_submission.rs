@@ -61,6 +61,12 @@ pub enum StepBudgetRefusal {
     /// named one.
     #[error("the step's budget is spent and no wake pass or spend scope refills it")]
     Unbound { asked_units: Option<u64> },
+    /// The host's run admission found no allocation to fund the host-paid
+    /// call: none delivered, the allocation spent or another wallet's, or a
+    /// price past its unit. No budget write funds it. `asked_units` is the
+    /// reservation the step's guard held for the call.
+    #[error("no allocation of the host funds the step's call")]
+    Unfunded { asked_units: Option<u64> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
