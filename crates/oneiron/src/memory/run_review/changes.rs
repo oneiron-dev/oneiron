@@ -114,6 +114,21 @@ pub(super) fn run_changes_in_txn(
     Ok(changes)
 }
 
+/// Each stored journal row of `run`, in write order: its whole key's and its
+/// value's byte lengths, for the journal's write-cost measurement.
+#[cfg(oneiron_test_support)]
+pub(crate) fn journal_row_sizes(
+    vault: &crate::Vault,
+    run: &str,
+) -> crate::Result<Vec<(usize, usize)>> {
+    let txn = vault.store.env.read_txn()?;
+    let prefix = CHANGES.decl().prefix.len();
+    CHANGES
+        .iter_raw_from(&vault.store, &txn, &run_hash(run))?
+        .map(|row| row.map(|(key, value)| (prefix + key.len(), value.len())))
+        .collect()
+}
+
 impl Memory<'_> {
     /// Every change the run wrote, in write order, as `vault.runs.review`
     /// takes them. An unknown run has none.
