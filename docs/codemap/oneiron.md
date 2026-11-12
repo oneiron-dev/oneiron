@@ -607,7 +607,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/world_refold.rs` | src | s | 5 crate-vis | — | A world edit, a world key record, a grant travel choice, or a root request, the owner's cancel of one or its… |
 | `src/authority/world_strength.rs` | src | m | 11 crate-vis | — | Each world's settings-edit frontier and the strength of its edits (world privacy P2, re-cut for the mesh… |
 | `src/authority/world_undo_door.rs` | src | m | 3 crate-vis | — | The authority-internal half of the FIX 22381 and FIX 23218 integration-test doors |
-| `src/authority/write_authorization.rs` | src | s | 1 fn · 6 crate-vis | — | Transaction-bound actor authorization for engine-owned write doors |
+| `src/authority/write_authorization.rs` | src | m | 1 fn · 7 crate-vis | — | Transaction-bound actor authorization for engine-owned write doors |
 | `src/autoreason_campaign.rs` | src | s | 1 enum · 1 type · 4 const · 7 mod · 4 re-export · 1 crate-vis | CampaignError | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `src/autoreason_campaign/archive.rs` | src | m | 7 struct · 1 enum · 1 trait · 20 fn · 2 re-export · 5 crate-vis | ArchiveCell, ArchiveCellJudge, ArchiveCellJudgment, ArchiveEntry, ArchiveOutputRef, ArchiveOutputScore, ArchiveQualityMetric, CampaignArchivePin +1 | OF-545: a rebuildable output archive, joined from placement and scoring receipts |
 | `src/autoreason_campaign/archive/axes.rs` | src | s | 3 struct · 1 enum · 1 trait · 1 fn · 3 crate-vis | ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor, CoachArchiveAxesRecipe | Coach-owned, per-task archive descriptors |
@@ -3543,7 +3543,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/doors/claim_write/record_inner.rs` | src | m | 2 crate-vis | — | The record seam's inner claim-policy check and its Dreamer isolation class (moved from `claim_write.rs`, FIX… |
 | `src/gate/doors/claim_write/reference_hook.rs` | src | s | 2 crate-vis | — | The staged-reference probe's hook into the claim write door (FIX 11304) |
 | `src/gate/doors/claim_write/reference_read.rs` | src | s | 1 crate-vis | — | OF-063 (FIX 1218): the typed record refs a CLAIM body names, judged under its writer's own scoped read in… |
-| `src/gate/doors/claim_write/stored_close.rs` | src | s | 2 crate-vis | — | Whether a claim write only closes its stored row, under a verified in-place transition: the checks the claim… |
+| `src/gate/doors/claim_write/stored_close.rs` | src | s | 3 crate-vis | — | Whether a claim write only closes or only approves its stored row, under a verified in-place transition: the… |
 | `src/gate/doors/consent.rs` | src | s | 10 crate-vis | — | Consent binding hashes plus the pending lifecycle and enforcement matrix |
 | `src/gate/doors/dreamer_run.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/doors/mod.rs` | src | s | 9 crate-vis | — | Claim write doors: policy gating for local claim writes |
@@ -7570,6 +7570,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/check_in.rs` | src | m | 2 struct · 15 fn | FixedChain, FixedVerdicts | Door for `tests/check_in_pending_handle.rs`, `tests/check_in_rung_waits.rs` and `tests/check_in_ladder.rs`… |
 | `src/test_doors/checkpoint_registry.rs` | src | s | 1 fn | — | The checkpoint payload registry's side-table gaps, for `tests/checkpoint_registry_rows.rs` |
 | `src/test_doors/claim_source_recheck.rs` | src | m | 1 struct · 3 fn · 1 re-export | SeededRecheck | Doors for `tests/claim_source_recheck_decide.rs` (DECIDE-BYPASS-1): seed one provider-deleted, kept mail… |
+| `src/test_doors/claim_transition.rs` | src | s | 1 struct · 1 fn | FoldedDecay | Doors to the signed claim-transition fold (FIX 22387) |
 | `src/test_doors/coach.rs` | src | s | 4 fn · 2 const | — | The owner's proof, the Coach and a project goal, for integration tests (untangle 6.6: the Coach's… |
 | `src/test_doors/code_reply_healer.rs` | src | s | 5 fn | — | Doors for `tests/code_reply_healer.rs` (CODE-RUNTIME-02 ruling B, the lead 10 Nov 10:32): the code-reply… |
 | `src/test_doors/code_run_answer.rs` | src | s | 2 fn | — | Doors for `tests/code_run_restricted_actor_answer.rs` (OPUS-E2E-1): the actor-bound approval ceiling a… |
@@ -7592,7 +7593,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/live_run_claim_put.rs` | src | s | 4 fn | — | Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate fixtures… |
 | `src/test_doors/mail_landing.rs` | src | s | 2 fn | — | Doors for `tests/mail_late_address_headers.rs` (fix list row 20852): the address headers an IMAP or mbox… |
 | `src/test_doors/membership.rs` | src | s | 1 fn | — | A shared vault's member grants, for integration tests (primitive A, slice 6.4f: the Steward arm of the run… |
-| `src/test_doors/mod.rs` | src | s | 1 fn · 50 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 1 fn · 51 mod | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
 | `src/test_doors/park_typed_wait.rs` | src | s | 2 fn | — | Doors for `tests/park_typed_wait.rs` (6.5d-1): the head state of a trap chain, and a soft child spend… |
@@ -8259,6 +8260,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/check_in_verb_census.rs` | test | s | — | — | ROLES-CHECKIN PR 2, P2.1 (ONEIRON-ARCH-0082 #act-table): every verb row states its act class, by the ruled… |
 | `tests/checkpoint_registry_rows.rs` | test | s | — | — | Every side table states a complete checkpoint row (fix list rows 22409-22423, 22346): a payload family, a… |
 | `tests/claim_approval_recall.rs` | test | s | — | — | Approval publishes a Generated claim without changing corroboration eligibility |
+| `tests/claim_decay_transition.rs` | test | s | — | — | One decay rule for the live demotion door and the signed-history fold (FIX 22387, brief 15 B) |
 | `tests/claim_declared_cardinality.rs` | test | s | — | — | E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing |
 | `tests/claim_settle_supersession.rs` | test | m | — | — | Settling a proposal closes the supersession it proposed (e2e MEMORY-01; ARCH-0040 `mcp:5`: a destructive… |
 | `tests/claim_source_recheck_decide.rs` | test | s | — | — | DECIDE-BYPASS-1: the claim re-check judges each live claim drawn from a mail message deleted at the provider… |
@@ -8316,6 +8318,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/goal_read_through_grant.rs` | test | s | — | — | The goal read is an ordinary granted read with an actor (untangle 6.6d, F4; Engine 10 Nov 06:53 and 07:23) |
 | `tests/grant_roles_seven.rs` | test | s | — | — | The grant roles after the lead's 11 Nov 11:38 ruling (VS-CHECKIN-NAMES = A with the roles, VS-OLD-NAMES =… |
 | `tests/graph_ask_centre_owner_read.rs` | test | s | — | — | STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its… |
+| `tests/holder_approval_fallback_floor.rs` | test | s | — | — | A Grant holder's approval lands under the holder's Grant on a predicate no manifest rule names… |
 | `tests/house_bind_deputy.rs` | test | m | — | — | HOUSE-ROLE-DEPUTY-AFTER-7071 = A (the Engine, 12 Nov 09:36), on DEPUTY = A (the owner, 10 Nov 07:45) and… |
 | `tests/house_bind_interval.rs` | test | s | — | — | HOUSE-BIND = A, S3 (the Engine, 07:5x and 08:11): the org a house ran at a given time comes from its bind… |
 | `tests/house_bind_link.rs` | test | m | — | — | HOUSE-BIND = A (the owner, 10 Nov 07:43; the Engine's link shapes, 07:5x): the house mind runs its org… |
@@ -8456,6 +8459,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/report_route_one_reader.rs` | test | s | — | — | Regression coverage for report routing with LMDB's one reader slot per thread |
 | `tests/restore_over_live_compartment_rows.rs` | test | s | — | — | Live restores compare refused families with the image's opened compartments |
 | `tests/retrieval_policy_default_floor.rs` | test | s | — | — | Default retrieval-policy updates keep tiny trials as offers; only an explicit owner reward floor admits the… |
+| `tests/room_offer_paired_agent.rs` | test | m | — | — | A paired agent asks into a room by an offer card on a rooted vault (ARCH-0006a:243: "An agent that wants in… |
 | `tests/room_pins.rs` | test | L | — | — | A room's shared pins (ROOM-SCOPED-PINS; owner 12 Nov 00:04, ROOM-PIN-WRITERS = A; Engine ruling… |
 | `tests/room_pins_work_room.rs` | test | m | — | — | The room an agent's run works in (ROOM-SCOPED-PINS P2c; Engine ruling THREADTASK-PINS-NATIVE Q1 = A)… |
 | `tests/room_thread_task_parity.rs` | test | m | — | — | Every room keeps one turn projection and one access path (THREAD-TASK-EVERY-ROOM, P1): a project's home… |

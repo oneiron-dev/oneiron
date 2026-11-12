@@ -6916,13 +6916,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/write_authorization.rs",
      "purpose": "Transaction-bound actor authorization for engine-owned write doors",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -43252,9 +43252,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/gate/doors/claim_write/stored_close.rs",
-     "purpose": "Whether a claim write only closes its stored row, under a verified in-place transition: the checks the claim…",
+     "purpose": "Whether a claim write only closes or only approves its stored row, under a verified in-place transition: the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -91864,6 +91864,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FoldedDecay"
+     ],
+     "path": "src/test_doors/claim_transition.rs",
+     "purpose": "Doors to the signed claim-transition fold (FIX 22387)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/coach.rs",
      "purpose": "The owner's proof, the Coach and a project goal, for integration tests (untangle 6.6: the Coach's…",
@@ -92127,7 +92140,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 50
+      "mod": 51
      }
     },
     {
@@ -100941,6 +100954,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/claim_decay_transition.rs",
+     "purpose": "One decay rule for the live demotion door and the signed-history fold (FIX 22387, brief 15 B)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/claim_declared_cardinality.rs",
      "purpose": "E2E MUSE-RECALL-03: a declared multi-cardinality predicate keeps each distinct value standing",
      "surface": {}
@@ -101393,6 +101414,14 @@
      "notable": [],
      "path": "tests/graph_ask_centre_owner_read.rs",
      "purpose": "STANDING-GRAPH-OWNER-CENTRE-READ: a manual refresh admits its centre and peers under the same request as its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/holder_approval_fallback_floor.rs",
+     "purpose": "A Grant holder's approval lands under the holder's Grant on a predicate no manifest rule names…",
      "surface": {}
     },
     {
@@ -102531,6 +102560,14 @@
      "notable": [],
      "path": "tests/retrieval_policy_default_floor.rs",
      "purpose": "Default retrieval-policy updates keep tiny trials as offers; only an explicit owner reward floor admits the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/room_offer_paired_agent.rs",
+     "purpose": "A paired agent asks into a room by an offer card on a rooted vault (ARCH-0006a:243: \"An agent that wants in…",
      "surface": {}
     },
     {
@@ -104749,7 +104786,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 52,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104926,8 +104963,8 @@
    },
    "over_bar": 261,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7428,
-   "test_files": 1107
+   "source_files": 7429,
+   "test_files": 1110
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -155247,6 +155284,7 @@
       "ClaimDemotionAction",
       "ClaimDemotionRung",
       "ClaimSuccession",
+      "DecayRefusal",
       "MapValue"
      ],
      "path": "src/write_envelope/claim_body/source_trust.rs",
@@ -155254,8 +155292,8 @@
      "surface": {
       "const": 5,
       "crate-vis": 1,
-      "enum": 4,
-      "fn": 6,
+      "enum": 5,
+      "fn": 7,
       "struct": 1
      }
     },
