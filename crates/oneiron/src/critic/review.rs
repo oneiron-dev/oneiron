@@ -23,6 +23,7 @@ pub(crate) use persistence::{
 };
 pub use questions::{
     REVIEW_DIAL, ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording,
+    flaw_fits_review_state, review_state_body_text,
 };
 mod submit;
 pub use submit::{CriticBinding, CriticReviewOutcome, CriticReviewSubmit};
@@ -189,8 +190,9 @@ pub fn review_artifact(
     let mut triage = triage_critiques(catalog, &artifacts, &reliabilities)?;
     triage.findings =
         super::findings::merge_findings(&artifacts, &reliabilities, request.auto_resolve_threshold);
-    triage.auto_resolved =
-        super::findings::verdict_confidence(&artifacts, &reliabilities, triage.verdict)
+    // A finding its critics disagree on waits for a person, at any threshold.
+    triage.auto_resolved = !triage.findings.iter().any(|finding| finding.conflict)
+        && super::findings::verdict_confidence(&artifacts, &reliabilities, triage.verdict)
             >= request.auto_resolve_threshold;
     let result = persist_review(vault, request, &review_key, &triage, &artifacts, &receipts)?;
     let result = keep_declared_spawn(vault, request, result);
