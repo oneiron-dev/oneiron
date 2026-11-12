@@ -101,6 +101,20 @@ impl McpConnectorScope {
         })
     }
 
+    /// Whether this scope reads nothing `parent` does not: `parent` holds
+    /// every world or this one's, and every facet or a superset of this
+    /// scope's facets.
+    #[must_use]
+    pub fn within(&self, parent: &Self) -> bool {
+        let world = parent.world_ref.is_none() || self.world_ref == parent.world_ref;
+        let facets = match (&parent.facets, &self.facets) {
+            (ScopeAxis::All, _) => true,
+            (ScopeAxis::Some(outer), ScopeAxis::Some(inner)) => inner.is_subset(outer),
+            _ => false,
+        };
+        world && facets
+    }
+
     /// True when this credential was NARROWED to a world or a facet.
     #[must_use]
     pub fn is_narrow(&self) -> bool {
@@ -220,6 +234,32 @@ impl McpConnectorActorRecord {
     pub const fn with_revoked_at(mut self, revoked_at: u64) -> Self {
         self.revoked_at = Some(revoked_at);
         self
+    }
+
+    /// This record held to `parent`'s, the registration of a signed prefix
+    /// of the same slip (MCP-CAVEATED-READER): the same actor, a scope within
+    /// the parent's, only the tools both bind, and the earlier expiry. `None`
+    /// when `parent` is revoked, names another actor, or reads less than this
+    /// record would.
+    #[must_use]
+    pub fn within_parent(mut self, parent: &Self) -> Option<Self> {
+        if parent.revoked_at.is_some()
+            || parent.actor_ref != self.actor_ref
+            || parent.actor_class != self.actor_class
+            || !self.scope.within(&parent.scope)
+        {
+            return None;
+        }
+        self.bound_verbs = match (self.bound_verbs.take(), &parent.bound_verbs) {
+            (own, None) => own,
+            (None, Some(theirs)) => Some(theirs.clone()),
+            (Some(own), Some(theirs)) => Some(own.intersection(theirs).copied().collect()),
+        };
+        self.expires_at = match (self.expires_at, parent.expires_at) {
+            (Some(own), Some(theirs)) => Some(own.min(theirs)),
+            (own, theirs) => own.or(theirs),
+        };
+        Some(self)
     }
 
     #[must_use]

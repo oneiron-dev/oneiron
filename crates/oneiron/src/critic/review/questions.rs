@@ -71,12 +71,18 @@ pub struct ReviewFinding {
     pub out_of_scope: bool,
 }
 
-/// Generated text beside one finding. Both parts are optional.
-#[derive(Debug, Clone, Default)]
+/// Generated text beside one finding. Every part is optional: a note read
+/// from JSON names only the parts it has.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ReviewNote {
     pub evidence_refs: Vec<String>,
     pub suggested_edit: Option<String>,
     pub prediction: Option<CriticPrediction>,
+    /// The concrete flaw the finding names, if any: its review refuses one
+    /// that names no place in the target as the review's state shows it
+    /// ([`flaw_fits_review_state`]).
+    pub flaw: Option<FlawIdentity>,
 }
 
 /// Generation beside a typed review: evidence refs and a suggested edit per finding, from the
@@ -118,6 +124,62 @@ impl Field {
             Self::Severity => "severity",
             Self::HardCheck => "hard_check",
             Self::OutOfScope => "out_of_scope",
+        }
+    }
+}
+
+/// The text a flaw's byte range counts in, from `state`, the state a review's
+/// questions read (a host's door builds `{kind, target: {id, body, ..},
+/// cut_at_bytes}`), when that state is a view of `target` reviewed as `kind`:
+/// the body's JSON text when the state holds it whole, the cut text when it
+/// holds a cut. `None` for any other state.
+#[must_use]
+pub fn review_state_body_text(
+    target: EntityId,
+    kind: ReviewArtifactKind,
+    state: &serde_json::Value,
+) -> Option<String> {
+    let view = state.get("target")?;
+    if state.get("kind")?.as_str()? != kind.token() || view.get("id")?.as_str()? != target.to_hex()
+    {
+        return None;
+    }
+    let body = view.get("body")?;
+    match state.get("cut_at_bytes") {
+        None | Some(serde_json::Value::Null) => Some(body.to_string()),
+        Some(cut) => {
+            let text = body.as_str()?;
+            (usize::try_from(cut.as_u64()?).ok()? == text.len()).then(|| text.to_owned())
+        }
+    }
+}
+
+/// Whether `flaw` names a place in `target` as `state` shows it
+/// ([`review_state_body_text`]): the whole target, or a nonempty byte range
+/// of its body text that ends inside it, both ends on character boundaries.
+#[must_use]
+pub fn flaw_fits_review_state(
+    target: EntityId,
+    kind: ReviewArtifactKind,
+    state: &serde_json::Value,
+    flaw: &FlawIdentity,
+) -> bool {
+    if validate_flaw(flaw).is_err() {
+        return false;
+    }
+    let Some(text) = review_state_body_text(target, kind, state) else {
+        return false;
+    };
+    match flaw.location {
+        FlawLocation::WholeTarget => true,
+        FlawLocation::BodyBytes { start, end } => {
+            let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
+                return false;
+            };
+            start < end
+                && end <= text.len()
+                && text.is_char_boundary(start)
+                && text.is_char_boundary(end)
         }
     }
 }
@@ -219,6 +281,13 @@ impl ReviewDecisions<'_> {
         let mut artifacts = Vec::with_capacity(inputs.len());
         for ((finding, note), (id, provenance)) in findings.into_iter().zip(notes).zip(meta) {
             let input = finding.input;
+            if let Some(flaw) = &note.flaw
+                && !flaw_fits_review_state(input.target, input.kind, self.state, flaw)
+            {
+                return Err(invalid_critic_config(
+                    "a finding's flaw names no place in the reviewed target",
+                ));
+            }
             let mut artifact = CritiqueArtifact::new(
                 id,
                 input.run_id,
@@ -240,6 +309,7 @@ impl ReviewDecisions<'_> {
             )?;
             artifact.out_of_scope = finding.out_of_scope;
             artifact.prediction = note.prediction;
+            artifact.flaw = note.flaw;
             validate_critique_artifact(&artifact)?;
             artifacts.push(artifact);
         }

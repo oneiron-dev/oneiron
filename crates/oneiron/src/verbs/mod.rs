@@ -1,4 +1,8 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
+mod asset_masked_read;
+mod connector_source_rows_read;
+mod skill_package_read;
+
 mod act_answer;
 mod agent_grant;
 mod agent_run_effect;
@@ -30,6 +34,7 @@ mod credential;
 mod custody_drain;
 mod describe;
 mod diary;
+mod diary_pinned;
 mod disclosure;
 mod embedding_space;
 mod engine_controls;
@@ -43,6 +48,8 @@ mod feedback;
 mod files;
 mod follower_keyframe;
 mod free_time_policy;
+mod gate_decision_read;
+mod gate_policy_read;
 mod git_push_grant;
 mod goal_optimize;
 mod grants;
@@ -79,9 +86,11 @@ mod repo_copy_edit;
 #[cfg(feature = "sync")]
 mod repo_manifest_conflict;
 mod research;
+mod research_root;
 mod reservoir_sources;
 mod residence;
 mod retrieval;
+mod revisions_read;
 mod root_requests;
 mod scratchpad;
 mod secret;
@@ -89,6 +98,7 @@ mod secret_custody;
 mod secret_grant;
 mod secret_use;
 mod self_actor;
+mod self_model_read;
 mod self_verbs;
 mod share;
 mod shared;
@@ -171,14 +181,28 @@ pub struct RoomClaimRequest {
 pub struct ProjectRefRequest {
     pub project_ref: String,
 }
-/// `vault.projects.goal.dismiss`'s input: the proposal one tradeoff question
-/// made, under the goal claim the caller saw in force.
+/// `vault.projects.goal.dismiss`'s input: the project and the proposal to
+/// set aside.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGoalDismissRequest {
     pub project_ref: String,
-    pub expected_goal_ref: String,
-    pub question_digest: String,
+    pub target: ProjectGoalDismissTarget,
+}
+/// What `vault.projects.goal.dismiss` sets aside: the preference one
+/// tradeoff question proposed, under the goal claim the caller saw in force;
+/// or a full goal proposal by its id, with the owner's reason.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProjectGoalDismissTarget {
+    Preference {
+        expected_goal_ref: String,
+        question_digest: String,
+    },
+    Proposal {
+        proposal_ref: String,
+        reason: String,
+    },
 }
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
 /// wrote nothing.
@@ -450,6 +474,10 @@ pub use crate::memory::RecallRequest;
 
 pub use crate::memory::affect::QueryAffect;
 
+pub use self::asset_masked_read::*;
+pub use self::connector_source_rows_read::*;
+pub use self::skill_package_read::*;
+
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
 pub use self::agent_run_effect::*;
@@ -483,6 +511,7 @@ pub use self::credential::*;
 pub use self::custody_drain::*;
 pub use self::describe::*;
 pub use self::diary::*;
+pub use self::diary_pinned::*;
 pub use self::disclosure::*;
 pub use self::embedding_space::*;
 pub use self::engine_controls::*;
@@ -496,6 +525,8 @@ pub use self::feedback::*;
 pub use self::files::*;
 pub use self::follower_keyframe::*;
 pub use self::free_time_policy::*;
+pub use self::gate_decision_read::*;
+pub use self::gate_policy_read::*;
 pub use self::git_push_grant::*;
 pub use self::goal_optimize::*;
 pub use self::grants::*;
@@ -529,9 +560,11 @@ pub use self::repo_copy_edit::*;
 #[cfg(feature = "sync")]
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
+pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
 pub use self::retrieval::*;
+pub use self::revisions_read::*;
 pub use self::root_requests::*;
 pub use self::scratchpad::*;
 pub use self::secret::*;
@@ -539,6 +572,7 @@ pub use self::secret_custody::*;
 pub use self::secret_grant::*;
 pub use self::secret_use::*;
 pub use self::self_actor::*;
+pub use self::self_model_read::*;
 pub use self::self_verbs::*;
 pub use self::share::*;
 pub use self::shared::*;

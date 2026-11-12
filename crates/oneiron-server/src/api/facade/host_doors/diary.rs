@@ -1,6 +1,7 @@
-//! The caller's own diary query door (`self.memory.diary.query`), and the
-//! sealed-pad doors on a person's own proof (`self.memory.pads.read`,
-//! `self.memory.pads.admin_reads`, FIX 12143).
+//! The caller's own diary query doors (`self.memory.diary.query` and
+//! `self.memory.diary.pinned`), and the sealed-pad doors on a person's own
+//! proof (`self.memory.pads.read`, `self.memory.pads.admin_reads`,
+//! FIX 12143).
 //! `self_memory_diary_query` is its call surface.
 //! The engine's diary read (`oneiron::memory`) defines the records forwarded here.
 
@@ -32,6 +33,29 @@ pub(crate) async fn self_memory_diary_query(
     credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
         let proof = crate::api::facade::shared_act_doors::person(server, auth, VERB).ok();
         oneiron::task_verb::sdk::diary_query_as(&memory, proof.as_ref(), input)
+    })
+    .await
+}
+
+/// `self.memory.diary.pinned`: the caller reads an agent's diary with each entry's live NOTE
+/// revision, stating a reason the agent sees in its read log
+/// (`Memory::read_agent_diary_pinned_filtered`). The caller's `diary.read` Grants decide what it
+/// gets, each entry also passes the caller's ordinary read lane, and an agent or system needs its
+/// live Grant listing the verb. A person reads with their authentication, as
+/// [`self_memory_diary_query`] does. Beside it, the rows its reads listed.
+pub(crate) async fn self_memory_diary_pinned(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::DiaryQueryRequest,
+) -> Listed<oneiron::task_verb::sdk::DiaryPinnedOutcome> {
+    const VERB: &str = "self.memory.diary.pinned";
+    let caller = match diary_reader(server, auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |server, auth, memory| {
+        let proof = crate::api::facade::shared_act_doors::person(server, auth, VERB).ok();
+        oneiron::task_verb::sdk::diary_pinned_as(&memory, proof.as_ref(), input)
     })
     .await
 }
