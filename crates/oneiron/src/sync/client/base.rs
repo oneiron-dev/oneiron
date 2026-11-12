@@ -332,7 +332,8 @@ impl SyncClient {
     }
 
     /// Whether window `key`'s updates may go out as residence updates: an
-    /// opened machine sends only the windows the home granted (`rp:w:`). A
+    /// opened machine sends only the windows the home granted (`rp:w:`) and
+    /// the windows of the worlds it follows ([`Self::follows_full_window`]). A
     /// window the home refused to grant again stays on disk and no longer
     /// syncs, so its writes wait queued instead of closing the socket ("window
     /// not promoted"). A sync-all machine sends every window. A marker that
@@ -343,6 +344,7 @@ impl SyncClient {
                 .vault
                 .sync_state_get(&format!("rp:w:{key}"))
                 .is_ok_and(|marker| marker.is_some())
+            || self.follows_full_window(key)
     }
 
     /// Whether an outgoing frame carries what a device-only world now keeps
@@ -527,7 +529,8 @@ impl SyncClient {
 
     /// Whether a full-window exchange of `key` may run on this lane: an
     /// opened-item owner lane exchanges only the windows this device promoted
-    /// (ARCH-0023b); no other lane is held to it. An import judges it again
+    /// and the windows of the worlds it follows (ARCH-0023b); no other lane
+    /// is held to it. An import judges it again
     /// once it holds the window's handle: a demotion may end between the
     /// frame's gate and the open, and a held handle defers any later one.
     pub(crate) fn full_window_exchange_allowed(
@@ -540,11 +543,12 @@ impl SyncClient {
         {
             return Ok(true);
         }
-        Ok(self
+        let promoted = self
             .vault
             .sync_state_get(&format!("rp:w:{key}"))
             .map_err(|e| TransportError::Storage(e.to_string()))?
-            .is_some())
+            .is_some();
+        Ok(promoted || self.follows_full_window(key))
     }
 
     /// Whether `key` is this vault's embedding setup window on an opened-item
@@ -564,6 +568,24 @@ impl SyncClient {
                 .vault
                 .sync_state_get(&format!("rp:w:{key}"))
                 .is_ok_and(|marker| marker.is_none())
+    }
+
+    /// Whether `key` is a window of a world this opened-item device follows
+    /// (ARCH-0023b #partial-sync: following decides which full window
+    /// documents sync). Its full document syncs both ways with no promotion
+    /// marker: the home grants it on each socket, and an unfollow stops it at
+    /// once while the held window stays. Never on a federation lane, under
+    /// sync all or for a base window. A follow set that cannot be read
+    /// follows nothing.
+    pub(crate) fn follows_full_window(&self, key: &str) -> bool {
+        self.config.residence_mode == super::SyncResidenceMode::Opened
+            && self.config.federation_peer.is_none()
+            && WindowKey::try_new(key)
+                .and_then(|window| window.world())
+                .is_some_and(|world| {
+                    self.effective_worlds()
+                        .is_ok_and(|worlds| worlds.contains(&world))
+                })
     }
 
     /// Whether this opened-item device promoted `key` to a canonical copy.
