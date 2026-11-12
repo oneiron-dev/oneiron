@@ -33,6 +33,7 @@ use sha2::{Digest, Sha256};
 use crate::attempt_queue::AttemptId;
 use crate::checkout::CheckoutId;
 use crate::code_sandbox::SandboxCredentialHandle;
+use crate::codebase::entity_id_from_hash_material;
 use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
@@ -457,6 +458,29 @@ pub fn validate_official_seat(spec: &OfficialSeatSpec) -> ByoaResult<()> {
         return Err(invalid(ERR_SEAT_SPEC));
     }
     Ok(())
+}
+
+/// Domain an official seat's model-seat id is derived under.
+const OFFICIAL_SEAT_DOMAIN: &[u8] = b"oneiron:official-seat:v1";
+
+/// The model-seat id of an official seat: its route and account, machine and login-store labels.
+///
+/// Same digest helper as the runner quota id, under its own domain; a missing
+/// machine or login-store label hashes as the empty string. Labels only, never
+/// a credential.
+///
+/// # Errors
+/// Refuses when the digest helper exhausts its salt space (never in practice).
+pub fn official_seat_id(spec: &OfficialSeatSpec) -> ByoaResult<crate::dreamer_runner::ModelSeatId> {
+    Ok(entity_id_from_hash_material(
+        OFFICIAL_SEAT_DOMAIN,
+        &[
+            spec.route.as_str().as_bytes(),
+            spec.account_ref.as_bytes(),
+            spec.machine_ref.as_deref().unwrap_or("").as_bytes(),
+            spec.login_store_ref.as_deref().unwrap_or("").as_bytes(),
+        ],
+    )?)
 }
 
 /// A request to dispatch one official seat. The connector is built by an

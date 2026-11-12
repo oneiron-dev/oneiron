@@ -9,8 +9,8 @@
 //! pins only the holders who may answer when it is entered; an agent holder
 //! answers then or passes the ask up (ruling R2, P22-SHAPE Q4), and once no
 //! pinned person may still answer, the ask climbs at once. At the due
-//! instant the climb wins over an answer; at `until`, let-go wins over
-//! everything.
+//! instant the climb wins over an answer; at a delay window's end, its
+//! settlement wins over an answer; at `until`, let-go wins over everything.
 
 use super::act_class::{ActClass, UndoClass};
 use super::mode::CheckInMode;

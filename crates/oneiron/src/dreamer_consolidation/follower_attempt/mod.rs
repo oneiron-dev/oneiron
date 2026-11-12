@@ -66,6 +66,7 @@ impl Leg<'_> {
             subject,
             deadline: Some(self.ctx.deadline),
             now_ms: self.ctx.now_ms,
+            spend_scope: None,
         }
     }
 

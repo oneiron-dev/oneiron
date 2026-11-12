@@ -4,7 +4,8 @@
 //! store clock, read once. In the plain doors the chain is the test's: each
 //! rung's holders as the test names them, each of them free to answer. The
 //! `_verified` doors run the ladder from verified records (2c), with the
-//! test's agent verdicts.
+//! test's agent verdicts. Beside them: the check-in tables' actor scrubs, as
+//! an erase runs them, and the rows the off-device screen reads a receipt by.
 
 use std::collections::BTreeMap;
 
@@ -16,6 +17,7 @@ use crate::check_in::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
+use crate::receipt::ReceiptRecord;
 use crate::{EntityId, Vault};
 
 /// A chain the test names: each rung's members. A rung it does not name is
@@ -256,4 +258,37 @@ pub fn extend_verified(
             now,
         )
     })
+}
+
+/// The check-in tables with an actor scrub.
+const CHECK_IN_TABLES: [&str; 2] = ["CHECK_IN_PENDING", "CHECK_IN_RECEIPT"];
+
+/// The part of `actor`'s erase that runs over the check-in tables: the actor
+/// scrub each of [`CHECK_IN_TABLES`] registers, in one write transaction, as
+/// an erase and a restore's rerun run it. Returns how many ran.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn erase_actor(vault: &Vault, actor: &EntityId) -> Result<usize> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut ran = 0;
+    for (decl, scrub) in crate::side_table::actor_scrubs() {
+        if CHECK_IN_TABLES.contains(&decl.name) {
+            scrub(vault, &mut wtxn, actor)?;
+            ran += 1;
+        }
+    }
+    wtxn.commit()?;
+    Ok(ran)
+}
+
+/// The rows a caller off this device has `receipt` screened on (FIX 1119):
+/// `None` when they cannot be known.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn screened_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<EntityId>>> {
+    crate::receipt::referenced_rows(vault, receipt)
 }
