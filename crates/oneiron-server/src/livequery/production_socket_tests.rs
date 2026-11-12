@@ -150,7 +150,7 @@ async fn barrier(socket: &mut Socket) {
     send(
         socket,
         TAG_RPC,
-        json!({"method":"hydrate","requestId":7,"params":{"refs":[]}}),
+        json!({"method":"vault.hydrate","requestId":7,"params":{"refs":[]}}),
     )
     .await;
     let reply = app(socket, TAG_RPC).await;
@@ -204,7 +204,7 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":7,"method":"hydrate",
+        json!({"requestId":7,"method":"vault.hydrate",
         "params":{"refs":witnessed.message_short_ids}}),
     )
     .await;
@@ -242,7 +242,7 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":8,"method":"hydrate","params":{"refs":[pinned_ref]}}),
+        json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[pinned_ref]}}),
     )
     .await;
     let pinned = app(&mut socket, TAG_RPC).await;
@@ -267,7 +267,7 @@ async fn production_read_socket_closes_after_bound_jti_revocation() {
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":7,"method":"hydrate","params":{"refs":[ACTOR]}}),
+        json!({"requestId":7,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
     )
     .await;
     let read = app(&mut socket, TAG_RPC).await;
@@ -279,7 +279,7 @@ async fn production_read_socket_closes_after_bound_jti_revocation() {
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":8,"method":"hydrate","params":{"refs":[ACTOR]}}),
+        json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
     )
     .await;
     revoked_close(&mut socket).await;

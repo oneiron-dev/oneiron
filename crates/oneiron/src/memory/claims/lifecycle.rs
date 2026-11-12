@@ -270,6 +270,13 @@ impl Memory<'_> {
     /// actor. Everything else is a typed denial — binding an actor key is
     /// not authority (W3).
     ///
+    /// An agent's retract of its own claim that the gate holds for consent
+    /// is parked for the holder (ARCH-0040 `mcp:5`): the receipt answers
+    /// `approval: "pending"` with the pending decision as `receipt_ref`, and
+    /// the claim stays as it was until the holder approves or declines it
+    /// with `vault.claims.settle`. A repeat retract while one is parked
+    /// answers the same pending decision.
+    ///
     /// Actor binding, authorship, pending-consent closure, gate receipt, and
     /// lifecycle transition share one write transaction, so a same-id
     /// intervening writer cannot turn prior authorization into authority over
@@ -353,18 +360,33 @@ impl Memory<'_> {
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
             }
-            let consent_receipt = self.vault.retract_claim_in_txn_as(
-                wtxn,
-                &id,
-                now,
-                Some(self.write_actor()),
-            )?;
+            // An agent reaches here only for its own claim. A retract the
+            // gate holds for consent parks for the holder (ARCH-0040
+            // `mcp:5`), and the claim stays as it was until the holder settles.
+            let retracted = if self.actor_class == EdgeActorClass::Agent {
+                self.vault
+                    .retract_own_claim_or_park_in_txn(wtxn, &id, now, self.write_actor())?
+            } else {
+                crate::claim::OwnClaimRetract::Landed(
+                    self.vault
+                        .retract_claim_in_txn_as(wtxn, &id, now, Some(self.write_actor()))?
+                        .map(|record| record.decision_id),
+                )
+            };
             super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
-            let approval = self.vault.claim_for_restriction_in_txn(wtxn, &id)?.map_or_else(
-                || "retracted".to_owned(),
-                |body| body.approval.as_str().to_owned(),
-            );
-            Ok((approval, consent_receipt.map(|record| record.decision_id)))
+            Ok(match retracted {
+                crate::claim::OwnClaimRetract::Parked(decision_id) => {
+                    ("pending".to_owned(), Some(decision_id))
+                }
+                crate::claim::OwnClaimRetract::Landed(decision_id) => {
+                    let approval =
+                        self.vault.claim_for_restriction_in_txn(wtxn, &id)?.map_or_else(
+                            || "retracted".to_owned(),
+                            |body| body.approval.as_str().to_owned(),
+                        );
+                    (approval, decision_id)
+                }
+            })
         }))?;
         let receipt_ref = match consent_decision_id {
             Some(decision_id) => format!("gate:{}", decision_id.to_hex()),

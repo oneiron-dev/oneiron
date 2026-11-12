@@ -381,7 +381,14 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
     );
     let exhausted = board_mcp_call(&server, "board-main", actor, "describe", json!({})).await;
     assert!(exhausted["result"].get("carrier").is_none());
-    let refreshed = board_mcp_call(&server, "board-main", actor, "board.refresh", json!({})).await;
+    let refreshed = board_mcp_call(
+        &server,
+        "board-main",
+        actor,
+        "self.focus.refresh",
+        json!({}),
+    )
+    .await;
     assert!(
         refreshed["result"]["structuredContent"]["output"]["frame"]["kind"]["payload"]
             .as_str()

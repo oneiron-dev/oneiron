@@ -138,7 +138,7 @@ async fn mcp_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "recall-call-mode",
-            "recall",
+            "vault.recall",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor, "read_memory"),
                 json!({"arguments": {"spec": spec}}),

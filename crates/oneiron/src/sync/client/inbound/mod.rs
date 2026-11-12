@@ -52,7 +52,7 @@ impl SyncClient {
                 responses.extend(self.handle_lfs_chunk_reply(payload)?);
             }
             transport::TAG_RPC if self.config.note_session.is_some() => {
-                super::note_session::accept_bind_reply(payload)?;
+                self.note_bind_receipt = Some(super::note_session::accept_bind_reply(payload)?);
                 // A peer bound the socket's actor only: the NOTE authority is
                 // the home, so a peer session's NOTE lane stays unbound (FIX
                 // 4748).

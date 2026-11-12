@@ -419,6 +419,11 @@ pub struct WholeVaultImportReceipt {
     pub archived_receipt_sources: usize,
     /// Archived rows intentionally not restored as local authority or verdicts.
     pub omitted_entities: usize,
+    /// The archived rows among `omitted_entities` that this vault's state kept
+    /// out, beyond the manifest's `import_omissions`: an archived
+    /// `vault.default_facet` outside the owner's restore into a fresh vault
+    /// (`TargetDefaultFacetKept`).
+    pub destination_omissions: Vec<ExportImportOmission>,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
     /// Run results whose bodies came back, and those whose bodies the export
