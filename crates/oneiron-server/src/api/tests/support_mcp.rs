@@ -53,6 +53,47 @@ pub(super) async fn register_mcp_actor(
         .expect("register mcp actor");
 }
 
+/// A position-only `core:read` policy grant for `actor`: what a key with no
+/// slip now needs to read a record that is not a CLAIM (FIX 9917, the ask
+/// and answer reads) or the record a CLAIM names (FIX 1218). `None` reads
+/// every band, as `Vault::install_read_permit_for_test` does, so what the
+/// actor's slip reads stays as it was: a matching grant narrows a slip's
+/// read to the grant. `Some(types)` reads those bands only. The manifest id
+/// comes from the actor, so a later call for the same actor replaces the
+/// earlier grant instead of folding beside it.
+pub(super) fn put_actor_read_grant(
+    vault: &oneiron::Vault,
+    actor: oneiron::EntityId,
+    entity_types: Option<&[u8]>,
+) {
+    let mut read = oneiron::federation::Scope::top();
+    read.verbs = oneiron::federation::ScopeAxis::Some(["read".to_owned()].into());
+    let mut grant = json!({
+        "actor_ref": actor.to_hex(),
+        "effector": "core:read",
+        "scope": serde_json::to_value(read).unwrap(),
+        "receipt_required": false,
+    });
+    if let Some(entity_types) = entity_types {
+        grant["selectors"] = json!({ "entity_types": entity_types });
+    }
+    let hash = blake3::hash(format!("test-read-grant:{}", actor.to_hex()).as_bytes());
+    let id = oneiron::EntityId::from_bytes(hash.as_bytes()[..16].try_into().expect("id width"))
+        .expect("manifest id");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        vault,
+        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        id,
+        &json!({
+            "schema_version": "1.2", "pack_id": "test-read-grant", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "scoped_grants": [grant],
+        }),
+    )
+    .expect("actor read grant");
+}
+
 pub(super) fn mcp_actor_json(actor_ref: oneiron::EntityId, actor_class: &str) -> Value {
     json!({
         "actor_ref": actor_ref.to_hex(),

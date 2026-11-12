@@ -165,6 +165,8 @@ async fn a_code_runs_search_off_this_device_finds_no_device_local_claim() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The claims' writer reads the PERSON they are about (FIX 1218).
+    put_actor_read_grant(&mode.vault, actor, None);
     put_indexed_claim(&mode.vault, actor, portable, subject, None, "orchid lamp");
     put_indexed_claim(
         &mode.vault,
@@ -331,6 +333,9 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
     mode.vault
         .put_edge(&holder, oneiron::EdgeKind::About, &about, 1.0)
         .unwrap();
+    // The holder reads the question TURN and the PERSON its answer names
+    // (FIX 9917); the fixture's own grant covers the owner only.
+    put_actor_read_grant(&mode.vault, holder, None);
     let (handle, answered) =
         oneiron::test_support::settle_outcome_ask(&mode.vault, owner, holder, Some("about"))
             .unwrap();
