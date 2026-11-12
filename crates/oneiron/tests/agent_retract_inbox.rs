@@ -1,11 +1,13 @@
 //! The owner inbox and an agent's parked retract (FIX 23599). The retract
 //! parks behind a tray row with no run id, and the inbox groups hold only
 //! Dreamer-run rows, so no group lists it and no bulk verb reaches it. The
-//! one inbox door keyed by claim id, the approve-with-edit door, answers it
-//! as the holder's approval when the body is unchanged and refuses an edit.
-//! The holder settles it with `vault.claims.review` and `vault.claims.settle`.
+//! one inbox door keyed by claim id, the approve-with-edit door, refuses it
+//! whole, edited or not: an unchanged body is re-put as the agent author's
+//! write, which the gate holds at the agent's ceiling. The holder settles it
+//! with `vault.claims.review` and `vault.claims.settle`.
 
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::GateError;
 use oneiron::inbox::{InboxBulkVerb, UnifiedInboxGroup};
 use oneiron::memory::{
     ClaimInput, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest,
@@ -269,16 +271,27 @@ fn an_inbox_approval_with_an_edit_of_a_parked_retract_is_refused_whole() {
 }
 
 #[test]
-fn an_inbox_approval_without_an_edit_retracts_the_parked_claim() {
+fn an_inbox_approval_without_an_edit_of_a_parked_retract_is_refused_whole() {
     let f = Fixture::new();
     let id = f.approved_agent_claim();
     f.park(id);
     let unchanged = encode_claim_body(&f.body(id)).expect("encode the body as reviewed");
 
-    f.vault
-        .approve_inbox_member_with_edit(&id, &unchanged)
-        .expect("the inbox approves the parked retract");
+    let answer = f.vault.approve_inbox_member_with_edit(&id, &unchanged);
 
+    match answer.expect_err("an unchanged body is no consent to the retract") {
+        Error::Gate(GateError::GateWriteRejected {
+            outcome,
+            reason_codes,
+        }) => {
+            assert_eq!(outcome, "pending");
+            assert_eq!(reason_codes.as_slice(), ["gate.pending.actor_ceiling"]);
+        }
+        other => panic!("expected the agent's ceiling to hold the re-put, got {other:?}"),
+    }
+    f.assert_still_parked(id, "the refused approval closes nothing");
+    let settled = f.settle(id, ClaimSettleDecision::Approve);
+    assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
     let body = f.body(id);
     assert_eq!(body.lifecycle, ClaimLifecycleStatus::Retracted);
     assert!(
