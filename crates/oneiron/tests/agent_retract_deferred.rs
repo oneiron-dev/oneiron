@@ -2,7 +2,8 @@
 //! (e2e MEMORY-01; ARCH-0040 `mcp:5`: "destructive supersede/retract defers
 //! closure until approval"). The retract parks for the holder's consent and
 //! the claim stands until the holder settles it: an approval retracts it, a
-//! decline leaves it as it was. Another agent's retract is still refused.
+//! decline leaves it as it was. Another agent's retract is still refused,
+//! and so is a retract while another action waits on the claim.
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
@@ -10,6 +11,7 @@ use oneiron::memory::{
     ClaimSettlement, ClaimSettlementVerdict, CommitReceipt, MemoryResult, resolve_entity_ref,
 };
 use oneiron::store::GateDecisionId;
+use oneiron::write_envelope::claim_body::ClaimDemotionAction;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, EdgeActorClass, EntityId, Vault,
     VaultConfig,
@@ -74,11 +76,16 @@ impl Fixture {
     /// The agent's claim, proposed and then approved by the owner: an
     /// approved claim the agent wrote.
     fn approved_agent_claim(&self) -> EntityId {
+        self.approved_agent_claim_on("profile.name", "Yuki")
+    }
+
+    /// [`Self::approved_agent_claim`] on `predicate`.
+    fn approved_agent_claim_on(&self, predicate: &str, value: &str) -> EntityId {
         let input = ClaimInput {
             id: None,
-            predicate: "profile.name".to_owned(),
+            predicate: predicate.to_owned(),
             subject_ref: self.subject.to_hex(),
-            value: json!("Yuki"),
+            value: json!(value),
             confidence: 1.0,
             confidence_details: None,
             source: "inferred".to_owned(),
@@ -264,4 +271,44 @@ fn another_agents_retract_is_still_refused() {
     );
     f.assert_standing(id, "a refused retract changes nothing");
     assert!(f.review(id).is_err(), "nothing parks for the holder");
+}
+
+/// A retract while the owner's critical confirm of a stale mark waits on
+/// the claim is refused: it would close that confirm's tray row as its own
+/// consent. The stale mark still waits (review round 1 of #7289).
+#[test]
+fn a_retract_while_another_action_waits_on_the_claim_is_refused() {
+    let f = Fixture::new();
+    // A predicate the default manifest declares critical.
+    let id = f.approved_agent_claim_on("health.allergy", "peanuts");
+    let held = f
+        .vault
+        .apply_claim_demotion(&id, ClaimDemotionAction::MarkStale, 1_000);
+    assert!(
+        held.is_err(),
+        "a critical stale mark waits for the owner's confirm: {held:?}"
+    );
+    assert!(matches!(
+        f.vault
+            .pending_claim_demotion(&id)
+            .expect("read the demotion"),
+        Some(ClaimDemotionAction::MarkStale)
+    ));
+
+    let refused = f.retract_as(f.agent, id);
+
+    assert!(
+        refused.is_err(),
+        "the retract waits for the parked stale mark: {refused:?}"
+    );
+    f.assert_standing(id, "a refused retract changes nothing");
+    assert!(
+        matches!(
+            f.vault
+                .pending_claim_demotion(&id)
+                .expect("read the demotion"),
+            Some(ClaimDemotionAction::MarkStale)
+        ),
+        "the owner's stale-mark confirm still waits"
+    );
 }
