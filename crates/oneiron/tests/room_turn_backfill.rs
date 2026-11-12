@@ -88,6 +88,8 @@ struct FilledRoom {
     room: EntityId,
     turns: Vec<EntityId>,
     keep: Vec<EntityId>,
+    /// How many room rows the room held before its first TURN here.
+    base_rows: u64,
 }
 
 /// An agent made through the agent-definition door, as the owner.
@@ -400,9 +402,20 @@ fn create_task(rig: &Rig) -> TestResult<EntityId> {
         .ok_or("TASK creation did not take effect")?)
 }
 
+/// The room rows `room` holds before the test's own TURNs, each printed for
+/// the fleet log.
+fn base_rows(rig: &Rig, room: EntityId, label: &str) -> TestResult<u64> {
+    let rows = rows_by_turn(&rig.vault, room)?;
+    for row in rows.values() {
+        println!("BASE-ROW {label} {row:?}");
+    }
+    Ok(rows.len() as u64)
+}
+
 /// A room of `kind` holding T1, T2, R1 (bound), R2 and R3.
 fn fill_room(rig: &Rig, kind: RoomKind) -> TestResult<FilledRoom> {
     let room = make_room(rig, kind)?;
+    let base_rows = base_rows(rig, room, &format!("{kind:?}"))?;
     let t1 = speak_trunk(rig, room)?;
     let t2 = native_trunk(rig, room, vec![])?;
     let r1 = plain_reply(rig, room, t1)?;
@@ -421,6 +434,7 @@ fn fill_room(rig: &Rig, kind: RoomKind) -> TestResult<FilledRoom> {
         room,
         turns: vec![t1, t2, r1, r2, r3],
         keep,
+        base_rows,
     })
 }
 
@@ -520,7 +534,12 @@ fn reopen_rows_every_stripped_turn_of_every_room() -> TestResult {
             room.kind
         );
     }
-    assert_eq!(stripped, 11, "rows stripped: 3 + 4 + 4");
+    let base: u64 = filled.iter().map(|room| room.base_rows).sum();
+    assert_eq!(
+        stripped,
+        11 + base,
+        "rows stripped: 3 + 4 + 4, and the {base} rows the rooms held before"
+    );
     let (rig, _) = reopen(rig)?;
     for room in &filled {
         let rebuilt = rows_by_turn(&rig.vault, room.room)?;
@@ -584,7 +603,10 @@ fn reopen_keeps_a_present_row_as_it_is() -> TestResult {
     let t2 = filled.turns[1];
     let mut altered = native[&t2.to_hex()].clone();
     altered.addressed_agents.insert(rig.agent_b.to_hex());
-    doors::strip_room_turn_rows(&rig.vault, filled.room, &[t2])?;
+    // The bound reply keeps its row too: a binding lives on its row alone.
+    let mut keep = filled.keep.clone();
+    keep.push(t2);
+    doors::strip_room_turn_rows(&rig.vault, filled.room, &keep)?;
     doors::put_room_turn_row(&rig.vault, &altered)?;
     let (rig, _) = reopen(rig)?;
     let rebuilt = rows_by_turn(&rig.vault, filled.room)?;
@@ -635,6 +657,8 @@ fn reopen_names_every_recorded_recipient_and_wakes_no_one() -> TestResult {
 fn backfill_time_on_a_bulk_room() -> TestResult {
     let rig = open_rig()?;
     let room = make_room(&rig, RoomKind::Ordinary)?;
+    let base = base_rows(&rig, room, "bulk")?;
+    let rows = BULK_TURNS + base;
     let mut anchor = None;
     for index in 0..BULK_TURNS {
         match (index % 4, anchor) {
@@ -645,17 +669,14 @@ fn backfill_time_on_a_bulk_room() -> TestResult {
         }
     }
     let native = rows_by_turn(&rig.vault, room)?;
-    assert_eq!(native.len() as u64, BULK_TURNS);
-    assert_eq!(
-        doors::strip_room_turn_rows(&rig.vault, room, &[])?,
-        BULK_TURNS
-    );
+    assert_eq!(native.len() as u64, rows);
+    assert_eq!(doors::strip_room_turn_rows(&rig.vault, room, &[])?, rows);
     let started = Instant::now();
     let pass = doors::run_room_turn_backfill(&rig.vault)?;
     let pass_ms = started.elapsed().as_millis();
     assert_eq!(pass.rooms_completed, 1, "{pass:?}");
-    assert_eq!(pass.turns_written, BULK_TURNS, "{pass:?}");
-    println!("BACKFILL turns={BULK_TURNS} rooms=1 ms={pass_ms}");
+    assert_eq!(pass.turns_written, rows, "{pass:?}");
+    println!("BACKFILL turns={rows} rooms=1 ms={pass_ms}");
     let rebuilt = rows_by_turn(&rig.vault, room)?;
     for (turn, row) in &native {
         assert_same_row(row, &rebuilt[turn], turn)?;
@@ -663,9 +684,9 @@ fn backfill_time_on_a_bulk_room() -> TestResult {
     doors::strip_room_turn_rows(&rig.vault, room, &[])?;
     let (rig, open_stripped_ms) = reopen(rig)?;
     let (rig, open_marked_ms) = reopen(rig)?;
-    assert_eq!(rows_by_turn(&rig.vault, room)?.len() as u64, BULK_TURNS);
+    assert_eq!(rows_by_turn(&rig.vault, room)?.len() as u64, rows);
     println!(
-        "BACKFILL-OPEN turns={BULK_TURNS} open_stripped_ms={open_stripped_ms} open_marked_ms={open_marked_ms}"
+        "BACKFILL-OPEN turns={rows} open_stripped_ms={open_stripped_ms} open_marked_ms={open_marked_ms}"
     );
     Ok(())
 }

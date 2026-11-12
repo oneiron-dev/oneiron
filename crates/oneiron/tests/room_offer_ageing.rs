@@ -1,16 +1,21 @@
-//! An open offer card ages out with its thread in an ordinary room, through
-//! the one row fold every room's cards take (OF-530, ARCH-0006a:233;
-//! THREAD-TASK-EVERY-ROOM P2 removed the ordinary room's DAG fold). A card
-//! on a thread whose last turn is older than the room's freshness reads as
-//! aged out; a card on a fresh thread stays open; a card on a quiet thread
-//! that holds an open bound TASK stays open, since the TASK keeps the thread
-//! live.
+//! An open offer card ages out with its thread, through the one row fold
+//! every room's cards take (OF-530, ARCH-0006a:233; THREAD-TASK-EVERY-ROOM
+//! P2 removed the ordinary room's DAG fold). A card on a thread whose last
+//! turn is older than the room's freshness reads as aged out; a card on a
+//! fresh thread stays open; a card on a quiet thread that holds an open
+//! bound TASK stays open, since the TASK keeps the thread live.
 //!
-//! Fixture: owen, the vault's owner, hosts an ordinary group room; agent A
-//! stands in it on the Ready join owen gave its offer card, and is the
-//! bound TASK's assignee; agent B asks into each thread by a thread offer
-//! card. Each thread is a native DAG turn on the trunk and owen's plain
-//! reply on it, its root; a quiet thread's turns are dated 90 days back.
+//! In a project's home room this is the fold main already runs. Before P2 an
+//! ordinary room's thread cards were never listed: the read classified the
+//! room through `Vault::project_room`, which refuses an ordinary room's body
+//! as "invalid project or home room".
+//!
+//! Fixture: owen, the vault's owner, hosts a project's home room seating
+//! agent A, or an ordinary group room where A stands on the Ready join owen
+//! gave its offer card; A is the bound TASK's assignee. Agent B, in neither,
+//! asks into each thread by a thread offer card. Each thread is a native DAG
+//! turn on the trunk and owen's plain reply on it, its root; a quiet
+//! thread's turns are dated 90 days back.
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron --all-features --test room_offer_ageing`.
@@ -33,6 +38,7 @@ use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::{
     JoinDecision, OfferAnswer, OfferAnswerRequest, OfferDraft, OfferState, OffersRequest,
+    ProjectRecord,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
@@ -43,6 +49,15 @@ const FIXTURE_PATH: &str = "crates/oneiron/tests/room_offer_ageing.rs";
 const QUIET_AGE_SECS: u64 = 90 * 24 * 60 * 60;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// The room kinds the fixture opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoomKind {
+    /// A project's home room.
+    Home,
+    /// An ordinary room of the vault.
+    Ordinary,
+}
 
 struct Fixture {
     vault: Vault,
@@ -128,6 +143,17 @@ fn grant_reads(vault: &Vault, owen: EntityId, agent_a: EntityId, agent_b: Entity
     Ok(())
 }
 
+/// A project led by owen whose roster also seats `seated`. Returns its
+/// home room.
+fn home_room(vault: &Vault, owen: EntityId, seated: &[EntityId]) -> TestResult<EntityId> {
+    let root = vault.root_project()?;
+    let id = EntityId::now();
+    let mut record = ProjectRecord::new(id, Some(root), root, owen)?;
+    record.roster.extend(seated.iter().map(EntityId::to_hex));
+    vault.put_project(id, &record, vault.now_recorded_at())?;
+    Ok(EntityId::from_hex(&record.home_room)?)
+}
+
 /// An ordinary group room owen creates, and so hosts, holding owen alone.
 fn ordinary_room(vault: &Vault, owen: EntityId, title: &str) -> TestResult<EntityId> {
     let receipt = vault
@@ -202,7 +228,7 @@ fn grant_messages(vault: &Vault, room: EntityId, principal: EntityId) -> TestRes
     Ok(())
 }
 
-fn open_fixture() -> TestResult<Fixture> {
+fn open_fixture(kind: RoomKind) -> TestResult<Fixture> {
     let directory = tempfile::tempdir()?;
     // `open_owned` holds the writer lease the owner's doors ask for.
     let vault = Vault::open_owned(directory.path(), VaultConfig::default())?;
@@ -210,11 +236,16 @@ fn open_fixture() -> TestResult<Fixture> {
     let agent_a = create_agent(&vault, owen, "yuki")?;
     let agent_b = create_agent(&vault, owen, "yuki-two")?;
     grant_reads(&vault, owen, agent_a, agent_b)?;
-    let room = ordinary_room(&vault, owen, "ordinary room")?;
+    let room = match kind {
+        RoomKind::Home => home_room(&vault, owen, &[agent_a])?,
+        RoomKind::Ordinary => ordinary_room(&vault, owen, "ordinary room")?,
+    };
     for principal in [agent_a, agent_b] {
         grant_messages(&vault, room, principal)?;
     }
-    join_room(&vault, owen, room, agent_a)?;
+    if kind == RoomKind::Ordinary {
+        join_room(&vault, owen, room, agent_a)?;
+    }
     Ok(Fixture {
         vault,
         owen,
@@ -300,9 +331,8 @@ fn card_state(fixture: &Fixture, root: EntityId) -> TestResult<OfferState> {
 
 /// A card on a thread quiet for 90 days reads as aged out; a card on a
 /// fresh thread stays open.
-#[test]
-fn ordinary_room_thread_card_ages_out_with_its_quiet_thread() -> TestResult {
-    let fixture = open_fixture()?;
+fn thread_card_ages_out_with_its_quiet_thread(kind: RoomKind) -> TestResult {
+    let fixture = open_fixture(kind)?;
     let quiet = thread(&fixture, QUIET_AGE_SECS)?;
     let fresh = thread(&fixture, 0)?;
     thread_card(&fixture, quiet)?;
@@ -315,11 +345,22 @@ fn ordinary_room_thread_card_ages_out_with_its_quiet_thread() -> TestResult {
     Ok(())
 }
 
+/// In a home room, the fold main already runs.
+#[test]
+fn home_room_thread_card_ages_out_with_its_quiet_thread() -> TestResult {
+    thread_card_ages_out_with_its_quiet_thread(RoomKind::Home)
+}
+
+#[test]
+fn ordinary_room_thread_card_ages_out_with_its_quiet_thread() -> TestResult {
+    thread_card_ages_out_with_its_quiet_thread(RoomKind::Ordinary)
+}
+
 /// A quiet thread with an open TASK bound to it is live, so its card stays
 /// open: the fold reads the binding from the thread's room row.
 #[test]
 fn ordinary_room_thread_card_stays_open_while_a_bound_task_is_open() -> TestResult {
-    let fixture = open_fixture()?;
+    let fixture = open_fixture(RoomKind::Ordinary)?;
     let kept = thread(&fixture, QUIET_AGE_SECS)?;
     let spec = TaskCreateSpec::new(
         rmpv::Value::Nil,
