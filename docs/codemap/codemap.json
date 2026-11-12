@@ -17571,7 +17571,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 28,
       "fn": 9
      }
     },
@@ -17592,7 +17592,7 @@
      "path": "src/code_document/storage/edit.rs",
      "purpose": "The one shared writer of a code document operation (moved from `storage.rs`, G4 PR2): the edit's span…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -17612,7 +17612,7 @@
      "path": "src/code_document/storage/receipt_actor.rs",
      "purpose": "Whose operation a code-document receipt records, and the erase that forgets it (FIX 3520)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -17621,6 +17621,16 @@
      "notable": [],
      "path": "src/code_document/storage/replay.rs",
      "purpose": "A crash-retry of a live code edit whose replacement landed masked (FIX 21363, the residual of FIX 2372)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/storage/view_fork.rs",
+     "purpose": "The writer of one working view's fork of a file (row 6 WORKING-VIEW-EDIT): an operation's checks, admission…",
      "surface": {
       "crate-vis": 3
      }
@@ -21993,6 +22003,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_view/fork.rs",
+     "purpose": "An owner working view's own file states (row 6 WORKING-VIEW-EDIT)",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "LanguageServer",
       "SharedLanguageServer",
@@ -22017,7 +22037,7 @@
      "path": "src/code_view/mod.rs",
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 6,
       "re-export": 2,
       "struct": 3
@@ -22030,7 +22050,7 @@
      "path": "src/code_view/run.rs",
      "purpose": "The one view materializer (moved from `mod.rs`, FIX 6867 G1 PR2a): an owner's or trusted caller's view, and…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -40572,7 +40592,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/federation/agent_grant.rs",
@@ -41011,6 +41031,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/grant/working_view_bounds.rs",
+     "purpose": "The `working_view_bounds` key of the FEDERATION_GRANT body (row 6 WORKING-VIEW-EDIT, ruling…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -41392,7 +41422,7 @@
      "path": "src/federation/repo_access.rs",
      "purpose": "The repo admission seams on an owner's agent Grant (FIX 6867): the L02 seams the Engine approved for L11 G1",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -50108,7 +50138,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/erase.rs",
@@ -50476,7 +50506,7 @@
      "path": "src/llm/decision/questions/store.rs",
      "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 7
      }
     },
@@ -53719,6 +53749,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeViewEditProof"
+     ],
+     "path": "src/memory/code_view_doors/edit.rs",
+     "purpose": "`vault.code.views.edit` (row 6 WORKING-VIEW-EDIT, CODECUSTODY-VIEW = A): one whole-file replacement of a…",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -53736,7 +53779,7 @@
      "purpose": "Owner-credential working views and account-local build/verify reuse",
      "surface": {
       "fn": 7,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -53752,8 +53795,11 @@
       "CodeViewAction",
       "CodeViewActionRequest",
       "CodeViewBuildRequest",
+      "CodeViewEdit",
+      "CodeViewEditRequest",
       "CodeViewFile",
       "CodeViewFileBytes",
+      "CodeViewForkFile",
       "CodeViewMaterializeRequest",
       "CodeViewReadRequest",
       "CodeViewRequest",
@@ -53764,7 +53810,7 @@
      "surface": {
       "enum": 1,
       "re-export": 1,
-      "struct": 14
+      "struct": 17
      }
     },
     {
@@ -77580,7 +77626,7 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 4,
       "fn": 8,
       "mod": 1,
@@ -77806,7 +77852,7 @@
      "path": "src/skill_optimize/eval_set/measurement.rs",
      "purpose": "Paired, family-grouped eval measurements (FIX 574, OF-578; ARCH-0053)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 6,
       "re-export": 3,
@@ -91973,6 +92019,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ViewForkEdit"
+     ],
+     "path": "src/test_doors/code_view_fork.rs",
+     "purpose": "Door for `tests/code_view_edit.rs` (row 6 WORKING-VIEW-EDIT): a tested revision of a repo's files, built…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -92207,7 +92266,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 52
+      "mod": 53
      }
     },
     {
@@ -92952,9 +93011,9 @@
      "path": "src/training_pack/mod.rs",
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 6,
-      "re-export": 7
+      "re-export": 9
      }
     },
     {
@@ -92973,6 +93032,37 @@
       "enum": 2,
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QuestionHeadBinding"
+     ],
+     "path": "src/training_pack/question_heads.rs",
+     "purpose": "A trained question head bound to one typed question (FIX 3864, OF-577)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "QuestionHeadTrial",
+      "QuestionTrialCase",
+      "QuestionTrialInput",
+      "QuestionTrialMeasure"
+     ],
+     "path": "src/training_pack/question_trials.rs",
+     "purpose": "A question head's paired held-out trial against its typed question's current answerer (FIX 3864, ARCH-0076…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 5,
+      "struct": 4
      }
     },
     {
@@ -101196,6 +101286,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/code_view_edit.rs",
+     "purpose": "Row 6 WORKING-VIEW-EDIT, ruled CODECUSTODY-VIEW = A and CODECUSTODY-VIEW-BUILD Q1 = A, Q2 = A, Q3 = A…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101251,6 +101349,14 @@
      "notable": [],
      "path": "tests/consolidation_facade_facet.rs",
      "purpose": "Regression for a facade claim's facet on the consolidation root-pin path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_group_split.rs",
+     "purpose": "A context pack whose rows fit its token budget keeps every row (FIX [CONTEXT-PACK-GROUP-SPLIT-DROPS-ROW])",
      "surface": {}
     },
     {
@@ -101515,6 +101621,14 @@
      "notable": [],
      "path": "tests/gate_pins_authority_rechecks.rs",
      "purpose": "OPUS-T0-F gate pins, PR 1 (Engine task 12 Nov 19:38): green pins for ten write gates of OPUS-GATECENSUS's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_pins_claim_producers.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 2 (Engine task 12 Nov 19:38): green pins for eleven write gates of OPUS-GATECENSUS's…",
      "surface": {}
     },
     {
@@ -102571,6 +102685,14 @@
      "notable": [],
      "path": "tests/provisional_confirm_source_label.rs",
      "purpose": "A provisional entity named only in a relationship-scoped MESSAGE, once confirmed, stays inside that…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/question_head_binding.rs",
+     "purpose": "FIX 3864: an unmeasured question head binds only on the owner's reason",
      "surface": {}
     },
     {
@@ -103697,7 +103819,7 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -103739,7 +103861,7 @@
      "purpose": "Code-symbol manifests, semantic changes and producing-operation views"
     },
     "code_view": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -104096,7 +104218,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 101,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104376,7 +104498,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 401,
+     "files": 402,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104943,7 +105065,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 54,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104999,7 +105121,7 @@
      "purpose": "Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02)"
     },
     "training_pack": {
-     "files": 13,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -105118,10 +105240,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 262,
+   "over_bar": 263,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7435,
-   "test_files": 1120
+   "source_files": 7442,
+   "test_files": 1124
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -106448,8 +106570,8 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction…",
      "surface": {
-      "mod": 9,
-      "re-export": 7
+      "mod": 10,
+      "re-export": 8
      }
     },
     {
@@ -106484,7 +106606,7 @@
      "surface": {
       "const": 4,
       "enum": 2,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -106552,6 +106674,20 @@
      "surface": {
       "const": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkingViewEditBounds"
+     ],
+     "path": "src/federation/working_view_bounds.rs",
+     "purpose": "The owner working view an agent Grant edits (row 6 WORKING-VIEW-EDIT, ruling CODECUSTODY-VIEW-BUILD Q1 = A)…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -106641,7 +106777,7 @@
      "purpose": "Credential-door bounds the authority log's slip checks share with the door itself"
     },
     "federation": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -106657,7 +106793,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 67,
+   "source_files": 68,
    "test_files": 1
   },
   "oneiron-base": {
@@ -126454,7 +126590,7 @@
      "path": "src/ai_host/trained_serving.rs",
      "purpose": "Actual trained-checkpoint serving, separate from a bound custody receipt",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -126544,7 +126680,7 @@
      "path": "src/ai_host/training_pack.rs",
      "purpose": "An owner-authorized training run on the host (OF-577, OF-552)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -126564,7 +126700,7 @@
      "path": "src/ai_host/training_pack/question_evaluation.rs",
      "purpose": "Held-out measurements for the worker's exported binary question head",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -126575,6 +126711,26 @@
      "purpose": "One positive temperature fitted without the held-out answers",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack/question_serving.rs",
+     "purpose": "A bound question head answers its typed question on the Local rung (FIX 3864, OF-577)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack/question_trial.rs",
+     "purpose": "The host's reads for a question head's paired held-out trial (FIX 3864, ARCH-0076 tier 3)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -128802,7 +128958,7 @@
      "path": "src/api/facade/code_view_doors.rs",
      "purpose": "Typed owner projections of linked working views and account-local cache use",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -133306,7 +133462,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/training_swap_routes.rs",
@@ -137480,7 +137636,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DecisionHost"
@@ -137489,7 +137645,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "re-export": 1,
       "struct": 1
@@ -143159,7 +143315,7 @@
      "path": "src/oneironer/local/classifier.rs",
      "purpose": "The frozen binary question head exported by training_pack/worker.py",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -146712,7 +146868,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 133,
+     "files": 135,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -146875,7 +147031,7 @@
     "decision_host": {
      "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…"
     },
@@ -147265,9 +147421,9 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 60,
+   "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1838,
+   "source_files": 1840,
    "test_files": 208
   },
   "oneiron-skill-attribution": {
