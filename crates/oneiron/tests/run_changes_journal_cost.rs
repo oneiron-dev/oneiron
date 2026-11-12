@@ -10,7 +10,7 @@
 use oneiron::code_run::{HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemoryPutClaimCall};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::run_changes::journal_row_sizes;
-use oneiron::test_support::{bind_host_owner, put_policy_manifest_bytes, test_host_issuer};
+use oneiron::test_support::put_policy_manifest_bytes;
 use oneiron::{
     ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault,
     VaultConfig, WriteActor,
@@ -89,7 +89,6 @@ fn run_changes_journal_keeps_one_row_per_claim() -> TestResult {
     let owner = vault
         .ensure_embedded_owner_actor()
         .map_err(at("embedded owner"))?;
-    bind_host_owner(&vault, &test_host_issuer(), owner).map_err(at("owner host binding"))?;
     put_policy_manifest_bytes(&vault, EntityId::now(), &run_policy(owner)?)
         .map_err(at("install the policy"))?;
     let subject = EntityId::now();
