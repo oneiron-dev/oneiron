@@ -142,6 +142,7 @@ impl ServedModel for Synthetic {
         Ok(Embedded {
             rows,
             tokens: texts.len(),
+            tokens_per_item: vec![1; texts.len()],
         })
     }
 }
@@ -639,6 +640,7 @@ impl ServedModel for Wide {
         Ok(Embedded {
             rows: texts.iter().map(|_| vec![0.5; WIDE_DIMS]).collect(),
             tokens: texts.len(),
+            tokens_per_item: vec![1; texts.len()],
         })
     }
 }
@@ -779,6 +781,7 @@ impl ServedModel for Constant {
         Ok(Embedded {
             rows: texts.iter().map(|_| vec![self.0; CONSTANT_DIMS]).collect(),
             tokens: texts.len(),
+            tokens_per_item: vec![1; texts.len()],
         })
     }
 }

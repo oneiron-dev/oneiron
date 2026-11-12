@@ -105,6 +105,8 @@ fn call(vault: &Vault, model: &ModelId) -> Request<Body> {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OnDevice,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -139,12 +141,16 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
                     output_per_million: "1".into(),
                     cache_read_per_million: None,
                     cache_write_per_million: None,
+                    currency: None,
                 }),
                 capabilities: vec![],
                 metadata: Default::default(),
             },
             scores: Default::default(),
             fetched_at: Default::default(),
+            tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
         })
         .expect("registry");
     let count = Arc::new(AtomicUsize::new(0));

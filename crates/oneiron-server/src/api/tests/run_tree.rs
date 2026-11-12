@@ -10,6 +10,7 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
     let mut config = oneiron::VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), config).expect("vault"));
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(
         SyncServer::new(

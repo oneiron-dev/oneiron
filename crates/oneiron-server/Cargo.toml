@@ -257,10 +257,12 @@ name = "it"
 path = "tests/it/main.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# Its signing fixture vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded
+# by `oneiron/test-support`): the e-sign dispatch signs with the install's keys.
 [[test]]
 name = "it_esign_public"
 path = "tests/it_esign_public.rs"
-required-features = ["oneiron/test-hooks"]
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 [[test]]
 name = "managed_mode"
