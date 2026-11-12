@@ -724,9 +724,10 @@ impl Memory<'_> {
     }
 
     /// What carried the run's Superseded entry `batch`, as its lane reads
-    /// it (QUEUE Q1 = A): the green successor batch when the lane reads
-    /// every proposal of it, whose rows join `rows`; else only that another
-    /// batch did. `None` for an entry that is not Superseded.
+    /// it (QUEUE Q1 = A): the green successor batch when the lane reads that
+    /// successor's own completion receipt, which then joins `rows`; else
+    /// only that another batch did. `None` for an entry that is not
+    /// Superseded.
     fn repo_entry_successor(
         &self,
         binding: &RepoRunBinding,
@@ -745,17 +746,9 @@ impl Memory<'_> {
         else {
             return Ok(Some(RepoQueueSuccessor::AnotherBatch));
         };
-        let proposals = queue
-            .batch(successor)?
-            .proposals
-            .iter()
-            .map(|proposal| EntityId::from_hex(&proposal.id))
-            .collect::<Result<Vec<_>, _>>();
-        let Ok(proposals) = proposals else {
-            return Ok(Some(RepoQueueSuccessor::AnotherBatch));
-        };
-        let readable = self.repo_lane_readable(binding, proposals.clone())?;
-        if proposals.is_empty() || readable.len() != proposals.len() {
+        let completion = queue.batch_receipts(&queue.batch(successor)?)?.completion;
+        let readable = self.repo_lane_readable(binding, completion.into_iter().collect())?;
+        if readable.is_empty() {
             return Ok(Some(RepoQueueSuccessor::AnotherBatch));
         }
         rows.extend(readable);
