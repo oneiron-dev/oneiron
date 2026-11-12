@@ -583,14 +583,15 @@ fn git_smart_http_delete_only_push_is_journaled_like_any_other_landing() {
     );
 }
 
+/// A push that carries a key lands with the key marked: nothing is refused
+/// for a secret hit (owner ruling SECRETS-IN-REPOS = A, ARCH-0068). The key's
+/// bytes stay exact in history. A refusal before refs move is the ref-name
+/// test's (`..._ref_name_the_landing_cannot_journal_is_refused_before_refs_move`).
 #[test]
-fn git_smart_http_rejecting_door_hook_fails_before_refs_move_and_objects_stay_unreachable() {
+fn git_smart_http_secret_push_lands_with_its_key_marked() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
     let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
-    let before = origin
-        .origin_ref("refs/heads/main")
-        .expect("origin starts with a tip");
 
     let work = tempfile::tempdir().expect("work tempdir");
     git(
@@ -598,42 +599,39 @@ fn git_smart_http_rejecting_door_hook_fails_before_refs_move_and_objects_stay_un
         &["clone", "--branch=main", "--", &origin.url(), "clone"],
     );
     let clone = work.path().join("clone");
-    // Secret-shaped added bytes. The door's scan is unconditional, so this is
-    // refused while the objects are still quarantined.
-    let head = commit_file(
-        &clone,
-        "config.env",
-        "TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
-        "carries a secret",
-    );
-    let push = git_output(&clone, &["push", "origin", "main"]);
+    // Secret-shaped added bytes. The door's scan is unconditional, so it finds
+    // the key while the objects are still quarantined, and marks it.
+    let body = "TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n";
+    let head = commit_file(&clone, "config.env", body, "carries a secret");
+    let blob = git(&clone, &["rev-parse", &format!("{head}:config.env")]);
+    git(&clone, &["push", "origin", "main"]);
 
-    assert!(!push.status.success(), "the door refused the push");
     assert_eq!(
         origin.origin_ref("refs/heads/main").as_deref(),
-        Some(before.as_str()),
-        "a rejected push leaves refs unmoved"
+        Some(head.as_str()),
+        "a marked push moves refs"
     );
-    assert!(
-        !origin.object_present(&head),
-        "rejected before objects become durable: the pushed commit never became reachable"
+    let stored = git_output(&origin.repo_dir, &["cat-file", "blob", "main:config.env"]);
+    assert!(stored.status.success(), "read the landed blob");
+    assert_eq!(
+        stored.stdout.as_slice(),
+        body.as_bytes(),
+        "the key's bytes stay exact in history"
     );
-    assert!(
-        origin.landed().is_empty(),
-        "a refused push produces no landing and no receipt"
-    );
+    assert_eq!(origin.landed().len(), 1, "the marked push was journaled");
     let refusals = door_refusals(&origin);
     assert!(
-        refusals
-            .last()
-            .is_some_and(|reason| reason.contains("config.env: gate.secret_scan.github_token")),
-        "the door detected the secret: {refusals:?}"
+        refusals.is_empty(),
+        "nothing is refused for a secret hit: {refusals:?}"
     );
+    assert_admitted_marked(&origin, "config.env", "github_token", &blob);
 }
 
 /// Git's binary diff classification must not prevent whole-blob extraction.
-/// The positive payload is valid UTF-8 without NULs, so the real door can scan
-/// it even though `-diff` hides its patch. Truly unscannable bytes still fail.
+/// The first payload is valid UTF-8 without NULs, so the real door can scan
+/// it even though `-diff` hides its patch. Bytes no text scan reads go through
+/// the byte-safe scan: a key in them is marked and the push lands whole (owner
+/// ruling G7-BINARY = A, ARCH-0068).
 #[test]
 fn git_smart_http_binary_diff_push_streams_whole_through_landed_scan() {
     let source = tempfile::tempdir().expect("source tempdir");
@@ -689,50 +687,52 @@ fn git_smart_http_binary_diff_push_streams_whole_through_landed_scan() {
     assert_eq!(landed.len(), 1, "the binary-diff push was journaled");
     assert_eq!(landed[0].door.verdict, DoorWindowVerdict::Clean);
 
-    // The diff attribute is not an exemption: the original NUL/invalid-UTF-8
-    // payload must still be refused before refs move or objects leave quarantine.
-    let rejected = commit_bytes(
+    // The diff attribute is not an exemption: the NUL/invalid-UTF-8 payload is
+    // read by the byte-safe scan, which finds the key it carries and marks it.
+    let marked = commit_bytes(
         &clone,
         "logo.png",
         &binary_payload(),
-        "unscannable binary push",
+        "binary push carrying a key",
     );
-    let push = git_output(&clone, &["push", "origin", "main"]);
-    assert!(
-        !push.status.success(),
-        "binary diff policy cannot bypass scanning"
-    );
+    let blob = git(&clone, &["rev-parse", &format!("{marked}:logo.png")]);
+    git(&clone, &["push", "origin", "main"]);
     assert_eq!(
         origin.origin_ref("refs/heads/main").as_deref(),
-        Some(head.as_str())
+        Some(marked.as_str()),
+        "the marked binary push moved refs"
     );
-    assert!(
-        !origin.object_present(&rejected),
-        "unscannable commit stayed quarantined"
+    let stored = git_output(&origin.repo_dir, &["cat-file", "blob", "main:logo.png"]);
+    assert!(stored.status.success(), "read the landed binary blob");
+    assert_eq!(
+        stored.stdout,
+        binary_payload(),
+        "the binary bytes stay exact in history"
     );
-    assert_eq!(origin.landed().len(), 1, "refusal added no landing");
+    assert_eq!(
+        origin.landed().len(),
+        2,
+        "the marked binary push was journaled"
+    );
     let refusals = door_refusals(&origin);
     assert!(
-        refusals
-            .last()
-            .is_some_and(|reason| reason.contains("receive-pack scan could not complete")),
-        "the landed scan refused the binary bytes: {refusals:?}"
+        refusals.is_empty(),
+        "binary bytes are scanned, never refused: {refusals:?}"
     );
+    assert_admitted_marked(&origin, "logo.png", "github_token", &blob);
 }
 
 /// Added lines that begin with `++` and `+++ b/...` are content, not headers.
 ///
 /// A patch grammar reads the second as a file header and loses the first; the
 /// framed extraction has no header a line can imitate, so the secret-shaped
-/// line reaches the door and the door refuses it.
+/// line reaches the door, the door marks its key, and the push lands (owner
+/// ruling SECRETS-IN-REPOS = A). A lost line would admit the push clean.
 #[test]
 fn git_smart_http_double_plus_added_lines_reach_the_door() {
     let source = tempfile::tempdir().expect("source tempdir");
     seed_source_repo(source.path(), "base\n");
     let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
-    let before = origin
-        .origin_ref("refs/heads/main")
-        .expect("origin starts with a tip");
 
     let work = tempfile::tempdir().expect("work tempdir");
     git(
@@ -746,28 +746,25 @@ fn git_smart_http_double_plus_added_lines_reach_the_door() {
         "++ TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n+++ b/decoy.md\n",
         "leading plus signs",
     );
-    let push = git_output(&clone, &["push", "origin", "main"]);
+    let blob = git(&clone, &["rev-parse", &format!("{head}:notes.md")]);
+    git(&clone, &["push", "origin", "main"]);
 
-    assert!(
-        !push.status.success(),
-        "a `++`-leading added line is scanned like any other"
-    );
     assert_eq!(
         origin.origin_ref("refs/heads/main").as_deref(),
-        Some(before.as_str()),
-        "the refused push left refs unmoved"
+        Some(head.as_str()),
+        "the marked push moved refs"
     );
     assert!(
-        !origin.object_present(&head),
-        "rejected before objects become durable"
+        origin.object_present(&head),
+        "the pushed commit became durable"
     );
     let refusals = door_refusals(&origin);
     assert!(
-        refusals
-            .last()
-            .is_some_and(|reason| reason.contains("notes.md: gate.secret_scan.github_token")),
-        "the door scanned the leading-plus content: {refusals:?}"
+        refusals.is_empty(),
+        "nothing is refused for a secret hit: {refusals:?}"
     );
+    // A `++`-leading added line is scanned like any other.
+    assert_admitted_marked(&origin, "notes.md", "github_token", &blob);
 }
 
 /// Every refusal the door published, oldest first, one joined string per
@@ -784,6 +781,34 @@ fn door_refusals(origin: &TestOrigin) -> Vec<String> {
             | DoorWindowVerdict::AdmitMarked { .. } => None,
         })
         .collect()
+}
+
+/// Asserts the door admitted the last landed push with its keys marked, and
+/// prints the verdict into the run. Under the test-support doors it also
+/// asserts that a mark names the hit: `path`, a detector code containing
+/// `detector`, and the blob `blob`, the bytes the push made durable.
+fn assert_admitted_marked(origin: &TestOrigin, path: &str, detector: &str, blob: &str) {
+    let landed = origin.landed();
+    let verdict = &landed.last().expect("the marked push landed").door.verdict;
+    eprintln!("door verdict for {path} ({detector}, blob {blob}): {verdict:?}");
+    assert!(
+        matches!(verdict, DoorWindowVerdict::AdmitMarked { .. }),
+        "the door admitted the push with its key marked: {verdict:?}"
+    );
+    #[cfg(oneiron_test_support)]
+    {
+        let hits = oneiron::test_doors::repo_secret_marks::marked_hits(&origin.vault)
+            .expect("read the repo secret marks");
+        eprintln!("marked hits for {path}: {hits:?}");
+        assert!(
+            hits.iter().any(|hit| {
+                hit.path.as_deref() == Some(path)
+                    && hit.detector_kind.contains(detector)
+                    && hit.blob == blob
+            }),
+            "a mark names the hit {path} ({detector}) in blob {blob}: {hits:?}"
+        );
+    }
 }
 
 /// A planted `refs/replace/<oid>` must never decide which bytes the door reads.
@@ -841,17 +866,17 @@ fn git_smart_http_planted_replace_ref_cannot_substitute_the_bytes_the_door_scans
     );
 
     // Layer two: with the replacement planted directly in the origin — the
-    // shape the wire now refuses — the door still reads the true bytes.
+    // shape the wire now refuses — the door still reads the true bytes. The
+    // benign substitute carries no key, so a substituted read would admit the
+    // push clean; the door instead marks the key in the secret commit's own
+    // blob, and the push lands (owner ruling SECRETS-IN-REPOS = A).
+    let blob = git(&clone, &["rev-parse", &format!("{secret}:config.env")]);
     git(&origin.repo_dir, &["update-ref", &planted, &before]);
-    let push = git_output(&clone, &["push", "origin", "main"]);
-    assert!(
-        !push.status.success(),
-        "the door scanned the bytes this push would make durable, not a substitute"
-    );
+    git(&clone, &["push", "origin", "main"]);
     assert_eq!(
         origin.origin_ref("refs/heads/main").as_deref(),
-        Some(before.as_str()),
-        "the refused push left refs unmoved"
+        Some(secret.as_str()),
+        "the marked push moved refs to the true commit"
     );
     // Asked with replacement off, because the planted ref would otherwise
     // answer this question with the substitute's existence.
@@ -859,21 +884,14 @@ fn git_smart_http_planted_replace_ref_cannot_substitute_the_bytes_the_door_scans
         &origin.repo_dir,
         &["--no-replace-objects", "cat-file", "-e", &secret],
     );
-    assert!(
-        !durable.status.success(),
-        "the secret commit never became durable"
+    assert!(durable.status.success(), "the true commit became durable");
+    assert_eq!(origin.landed().len(), 1, "the marked push was journaled");
+    assert_eq!(
+        door_refusals(&origin).len(),
+        1,
+        "only the plant was refused"
     );
-    assert!(
-        origin.landed().is_empty(),
-        "a refused push produces no landing and no receipt"
-    );
-    let refusals = door_refusals(&origin);
-    assert!(
-        refusals
-            .last()
-            .is_some_and(|reason| reason.contains("config.env: gate.secret_scan.github_token")),
-        "the door scanned the real secret, not the replacement: {refusals:?}"
-    );
+    assert_admitted_marked(&origin, "config.env", "github_token", &blob);
 }
 
 /// A name git accepts but the landing could never journal is refused pre-move.
