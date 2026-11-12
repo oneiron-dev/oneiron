@@ -6,10 +6,19 @@
 //! path is unchanged; a caller the owner predicate refuses is now judged by
 //! the one delete authority the cleanup archive's door already used.
 //!
+//! The shared vault is rooted, as every served vault is. A human binding is
+//! the owner's (H149), so its Members and its Admin hold none: each acts by
+//! the live `human` credential this host minted it, as a transport binds it.
+//!
+//! A `user_delete` scrubs the row before the transaction that publishes its
+//! tombstone reads the delete authority again; that read judges the record
+//! as its last live read held it, so every admitted delete here publishes.
+//!
 //! Red on main: a Member's own delete, the Admin's in-scope delete, the
 //! agent's delete under a delete Grant, and the two typed refusals
 //! (`not_owner_of_item`, `no_delete_grant`). Guards (pass on main too): the
-//! owner's delete, and a person with no role keeping the owner refusal.
+//! owner's delete, a person with no role keeping the owner refusal though it
+//! presents a credential, and a Member with no credential keeping it.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test delete_authority`.
 #![cfg(oneiron_test_support)]
@@ -17,8 +26,9 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
-use oneiron::authority::{ActSurface, MachineRole};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, VerifiedSlip};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::memory::{
@@ -30,6 +40,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
@@ -86,6 +97,7 @@ fn deleted(vault: &Vault, note: &str) -> bool {
         .expect("shell read")
 }
 
+/// `actor`'s own delete of `note` on the in-process handle: no credential.
 fn delete_as(vault: &Vault, actor: EntityId, note: &str) -> Result<bool, MemoryError> {
     vault
         .memory(actor, EdgeActorClass::Human)
@@ -93,11 +105,18 @@ fn delete_as(vault: &Vault, actor: EntityId, note: &str) -> Result<bool, MemoryE
         .map(|receipt| receipt.existed)
 }
 
-/// A shared vault: its owner, an Admin, two Members and a person with no
-/// role, and a subject PERSON the NOTEs are about.
+/// A distinct slip id for each credential a test mints.
+fn next_slip_id() -> [u8; 32] {
+    static NEXT: AtomicU8 = AtomicU8::new(1);
+    [NEXT.fetch_add(1, Ordering::Relaxed); 32]
+}
+
+/// A rooted shared vault: its owner, an Admin, two Members and a person
+/// with no role, and a subject PERSON the NOTEs are about.
 struct Shared {
     _dir: tempfile::TempDir,
     vault: Vault,
+    issuer: HostSlipIssuer,
     owner: EntityId,
     admin: EntityId,
     member_a: EntityId,
@@ -111,8 +130,9 @@ fn shared() -> Shared {
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
     // A delete signs its receipt with this install's key.
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    oneiron::test_support::provision_engine_machines(&vault);
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
     let [admin, member_a, member_b, stranger, subject] = std::array::from_fn(|_| EntityId::now());
     for id in [admin, member_a, member_b, stranger, subject] {
         person(&vault, id);
@@ -141,6 +161,7 @@ fn shared() -> Shared {
     Shared {
         _dir: dir,
         vault,
+        issuer,
         owner,
         admin,
         member_a,
@@ -150,12 +171,76 @@ fn shared() -> Shared {
     }
 }
 
+impl Shared {
+    /// A NOTE Member A authors about the subject. The fixture binds the host
+    /// key to the Member for this one write and then gives it back to the
+    /// owner, so the Member holds no binding when it deletes.
+    fn member_note(&self) -> String {
+        bind_host_actor(&self.vault, &self.issuer, self.member_a, "human")
+            .expect("the host key bound to Member A for its write");
+        let note = note_by(
+            &self.vault,
+            self.member_a,
+            EdgeActorClass::Human,
+            self.subject,
+        );
+        bind_host_owner(&self.vault, &self.issuer, self.owner).expect("the owner's binding again");
+        note
+    }
+
+    /// The live `human` credential this host mints `person`, verified as a
+    /// transport verifies the slip a request presents.
+    fn credential(&self, person: EntityId) -> VerifiedSlip {
+        let root = self
+            .vault
+            .ensure_host_root_slip(&self.issuer)
+            .expect("the host root slip");
+        let issued_at = self.vault.capability_slip_now().expect("slip clock");
+        let mut claims = root.claims;
+        claims.slip_id = next_slip_id();
+        claims.holder_ref = person.to_hex();
+        claims.actor_class = Some("human".into());
+        claims.issued_at = issued_at;
+        claims.expires_at = issued_at + 3_600;
+        claims.ttl_secs = 3_600;
+        let slip = self
+            .vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the person's credential");
+        let challenge = b"delete-authority";
+        let proof = self
+            .issuer
+            .binding_proof(&slip, challenge)
+            .expect("binding proof");
+        self.vault
+            .verify_capability_slip(&self.issuer.public_key(), &slip, challenge, &proof)
+            .expect("a verified credential")
+    }
+
+    /// `person` deletes `note` over its own credential.
+    fn delete_with_credential(&self, person: EntityId, note: &str) -> Result<bool, MemoryError> {
+        let credential = self.credential(person);
+        self.vault
+            .memory(person, EdgeActorClass::Human)
+            .with_transport_invocation()
+            .with_read_proof(&credential)
+            .safe_delete(note, SafeDeleteReason::UserDelete)
+            .map(|receipt| receipt.existed)
+    }
+}
+
 #[test]
 fn a_member_deletes_its_own_note() {
     let fx = shared();
-    let note = note_by(&fx.vault, fx.member_a, EdgeActorClass::Human, fx.subject);
-    let existed = delete_as(&fx.vault, fx.member_a, &note)
-        .unwrap_or_else(|error| panic!("a Member deletes the NOTE it authored: {error:?}"));
+    let note = fx.member_note();
+    let existed = fx
+        .delete_with_credential(fx.member_a, &note)
+        .unwrap_or_else(|error| {
+            panic!(
+                "a Member deletes the NOTE it authored: {error:?}; scrubbed: {}",
+                deleted(&fx.vault, &note)
+            )
+        });
     assert!(existed, "the Member's NOTE existed");
     assert!(
         deleted(&fx.vault, &note),
@@ -166,8 +251,9 @@ fn a_member_deletes_its_own_note() {
 #[test]
 fn a_member_is_refused_another_members_note() {
     let fx = shared();
-    let note = note_by(&fx.vault, fx.member_a, EdgeActorClass::Human, fx.subject);
-    let error = delete_as(&fx.vault, fx.member_b, &note)
+    let note = fx.member_note();
+    let error = fx
+        .delete_with_credential(fx.member_b, &note)
         .expect_err("a Member is refused another Member's NOTE");
     assert_eq!(error.code, MEMORY_CODE_FORBIDDEN, "{error:?}");
     assert!(
@@ -180,9 +266,15 @@ fn a_member_is_refused_another_members_note() {
 #[test]
 fn an_admin_deletes_a_member_note_in_scope() {
     let fx = shared();
-    let note = note_by(&fx.vault, fx.member_a, EdgeActorClass::Human, fx.subject);
-    let existed = delete_as(&fx.vault, fx.admin, &note)
-        .unwrap_or_else(|error| panic!("an Admin deletes in scope: {error:?}"));
+    let note = fx.member_note();
+    let existed = fx
+        .delete_with_credential(fx.admin, &note)
+        .unwrap_or_else(|error| {
+            panic!(
+                "an Admin deletes in scope: {error:?}; scrubbed: {}",
+                deleted(&fx.vault, &note)
+            )
+        });
     assert!(existed);
     assert!(deleted(&fx.vault, &note), "the NOTE is a deleted shell");
 }
@@ -190,7 +282,7 @@ fn an_admin_deletes_a_member_note_in_scope() {
 #[test]
 fn the_owner_deletes_any_note_as_before() {
     let fx = shared();
-    let note = note_by(&fx.vault, fx.member_a, EdgeActorClass::Human, fx.subject);
+    let note = fx.member_note();
     let existed = delete_as(&fx.vault, fx.owner, &note)
         .unwrap_or_else(|error| panic!("the owner deletes anything: {error:?}"));
     assert!(existed);
@@ -200,9 +292,20 @@ fn the_owner_deletes_any_note_as_before() {
 #[test]
 fn a_person_with_no_role_keeps_the_owner_refusal() {
     let fx = shared();
-    let note = note_by(&fx.vault, fx.member_a, EdgeActorClass::Human, fx.subject);
-    let error = delete_as(&fx.vault, fx.stranger, &note)
-        .expect_err("a person with no role in the vault is refused");
+    let note = fx.member_note();
+    let error = fx
+        .delete_with_credential(fx.stranger, &note)
+        .expect_err("a person with no role in the vault is refused, credential or not");
+    assert_eq!(error.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{error:?}");
+    assert!(!deleted(&fx.vault, &note), "the refused NOTE is untouched");
+}
+
+#[test]
+fn a_member_with_no_credential_keeps_the_owner_refusal() {
+    let fx = shared();
+    let note = fx.member_note();
+    let error = delete_as(&fx.vault, fx.member_a, &note)
+        .expect_err("a Member with no binding and no credential is no one here");
     assert_eq!(error.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{error:?}");
     assert!(!deleted(&fx.vault, &note), "the refused NOTE is untouched");
 }
@@ -310,8 +413,12 @@ fn agent_deletes(
 fn an_agent_with_a_delete_grant_deletes_through_vault_delete() {
     let fx = personal();
     let note = note_by(&fx.vault, fx.owner, EdgeActorClass::Human, fx.subject);
-    let receipt = agent_deletes(&fx.vault, fx.granted, &note)
-        .unwrap_or_else(|error| panic!("an agent under a delete Grant deletes: {error:?}"));
+    let receipt = agent_deletes(&fx.vault, fx.granted, &note).unwrap_or_else(|error| {
+        panic!(
+            "an agent under a delete Grant deletes: {error:?}; scrubbed: {}",
+            deleted(&fx.vault, &note)
+        )
+    });
     assert_eq!(receipt["existed"], true, "{receipt}");
     assert!(deleted(&fx.vault, &note), "the NOTE is a deleted shell");
 }

@@ -24,7 +24,7 @@ mod agent_grant_brief;
 // OF-449 L4, and a record's own).
 mod delete_authority;
 pub(crate) use delete_authority::{
-    DeleteAuthority, DeleteCaller, DeleteRefusal, require_delete_authority_in_txn,
+    DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget, require_delete_authority_in_txn,
 };
 // The old path of the role the deletion gate now names at
 // `deletion::archive_role`; kept for callers of the federation path.
