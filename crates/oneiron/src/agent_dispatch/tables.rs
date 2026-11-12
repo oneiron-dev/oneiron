@@ -40,6 +40,12 @@ crate::side_table::side_tables! {
     AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::agent_dispatch::erase_spend_scope_actor_in_txn;
+    /// A live lease's spend staged on its scope and not yet booked there
+    /// ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]): written before any answer it paid for is saved,
+    /// booked and deleted in one commit. Node-local; a restore never takes it from an image. Key:
+    /// scope id + 0x00 + id16(lease). Value: u64be units.
+    AGENT_DISPATCH_LEASE_PENDING_SPEND: VaultMeta b"agent.dispatch.lease_pending_spend.v1\0" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
