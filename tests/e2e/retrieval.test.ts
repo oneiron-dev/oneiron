@@ -2311,9 +2311,8 @@ async function museRecallRefusalReceipt<V extends FacadeVerb>(
 
 // A scoped actor's authenticated HTTP refusal states its call receipt in the
 // error envelope and the x-oneiron-receipt-ref header (api/call_receipt.rs,
-// OF-538). Read that receipt back as owner through vault.receipts.get. A /ws
-// socket is owner-grade only for these actors (FIX 23077), so the HTTP reply
-// is the refusal under test.
+// OF-538). Read that receipt back as owner through vault.receipts.get; the
+// HTTP reply is the refusal under test.
 async function museRecallHttpRefusalReceipt(
   engine: EngineFixture,
   label: string,
@@ -4524,8 +4523,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     if (!widenError) throw new Error("Agent self-widen was not refused with the standard error envelope");
     expect(widenError.code.length).toBeGreaterThan(0);
     expect(widenError.message.length).toBeGreaterThan(0);
-    // The refusal's call receipt, read back as owner. A /ws socket is
-    // owner-grade only for a scoped agent (FIX 23077), so the HTTP reply's
+    // The refusal's call receipt, read back as owner: the HTTP reply's
     // receipt is the one under test.
     await museRecallHttpRefusalReceipt(engine, "MUSE-RECALL-05", widenReply, "vault.agents.grants.mint");
     // The refused widen changed nothing, read back through the listing.
@@ -5093,12 +5091,6 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
         { cause: error },
       );
     }
-    if (stage.startsWith("write-only agent") && /WS upgrade (failed|closed)/.test(message)) {
-      throw new Error(
-        `MUSE-RECALL-06 ENGINE DEFECT 2026-11-11: scoped agent cannot reach WS facade/subscription; plain /ws requires owner grade, same pre-upgrade cause as FIX-LIST:23077 [FEDERATION-GUEST-WS-FACADE-ADMISSION]; ${stage}; ${message}`,
-        { cause: error },
-      );
-    }
     throw new Error(`MUSE-RECALL-06 ${stage}: ${message}`, { cause: error });
   } finally {
     await engine.close();
@@ -5322,8 +5314,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     expect(museRecall07BodyField(readerHydrated.value[0]?.body, "content")).toBe(liveText);
 
     // These authenticated HTTP refusals carry a call receipt. Read it back as
-    // owner instead of re-driving the refusal over an owner-grade-only /ws
-    // socket with the scoped writer's credential.
+    // owner through vault.receipts.get.
     const readRefusalReceipt = async (
       reply: { readonly status: number; readonly headers: Headers; readonly body: unknown },
       verb: "vault.hydrate" | "vault.delete",
@@ -5877,19 +5868,7 @@ suite.test(test, "MUSE-RECALL-08", "Recall serializes the same pack in all five 
     expect((JSON.stringify(writerDenied.body) ?? "").includes(sentinel)).toBe(false);
 
     // The same refusal over WS leaves a call receipt the owner can read back.
-    let writerSocket: Awaited<ReturnType<typeof engine.websocket>>;
-    try {
-      writerSocket = await engine.websocket(writer);
-    } catch (error) {
-      const message = errorText(error);
-      if (/WS upgrade (failed|closed)/.test(message)) {
-        throw new Error(
-          `MUSE-RECALL-08 ENGINE DEFECT 2026-11-12: scoped agent cannot reach the WS facade; plain /ws requires owner grade, same pre-upgrade cause as FIX-LIST:23077 [FEDERATION-GUEST-WS-FACADE-ADMISSION]; actor=write-only agent ${writer.principalRef}; ${message}`,
-          { cause: error },
-        );
-      }
-      throw error;
-    }
+    const writerSocket = await engine.websocket(writer);
     let wsRefusal: unknown = undefined;
     try {
       await writerSocket.call("vault.recall", jsonRecall);
