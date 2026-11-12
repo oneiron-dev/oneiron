@@ -9,6 +9,7 @@ mod source_events;
 use super::ingest;
 #[cfg(test)]
 use super::poll::IcsFeedPollConfig;
+use crate::booking::lifecycle::FeedMoveOutcome;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportSource,
@@ -125,8 +126,11 @@ impl PollAdmission<'_> {
             PassportDecision::UpdateExisting { event_ref } => {
                 // The update verdict moves the EVENT, not just the passport
                 // head: occurred and name follow the drifted VEVENT, and
-                // `calendar.time` re-mints when its value moved.
-                self.rewrite_event(event_ref, event)?;
+                // `calendar.time` re-mints when its value moved. A live
+                // booking's EVENT moves through its booking instead.
+                if !self.move_booking(event_ref, event)? {
+                    self.rewrite_event(event_ref, event)?;
+                }
                 self.admit_properties(event_ref, event)?;
                 let next = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
                 let body = screen_body(event);
@@ -271,6 +275,44 @@ impl PollAdmission<'_> {
         let (admitted, token) = screened.value;
         self.verdict_fold.record(token);
         Ok(admitted?)
+    }
+
+    /// Moves a live booking's EVENT to the drifted VEVENT's slot through the
+    /// booking writer (FIX 22385). The host moved it in their own calendar,
+    /// so the move lands, and in one transaction the booking passport takes
+    /// its next SEQUENCE, the revision receipt is recorded and the booker's
+    /// revised invite is queued. The echo of the slot the booking already
+    /// sits at writes nothing. False when the EVENT carries no live booking,
+    /// or when the VEVENT is a cancellation, which stays the imported-cancel
+    /// outcome: the caller then rewrites the EVENT as any other.
+    fn move_booking(
+        &self,
+        event_ref: EntityId,
+        event: &ParsedVEvent,
+    ) -> Result<bool, CalendarError> {
+        if event.cancelled {
+            return Ok(false);
+        }
+        let slot = match (event.starts_at_utc, event.ends_at_utc) {
+            (Some(start), Some(end)) => Some(TimeRange { start, end }),
+            _ => None,
+        };
+        let outcome =
+            crate::booking::lifecycle::move_booking_by_feed(self.vault, event_ref, slot, self.now)
+                .map_err(|error| CalendarError::IcsIngest {
+                    reason: error.to_string(),
+                })?;
+        Ok(match outcome {
+            FeedMoveOutcome::NotBooking => false,
+            FeedMoveOutcome::Unchanged => true,
+            FeedMoveOutcome::Moved(revision) => {
+                tracing::debug!(
+                    sequence = revision.sequence,
+                    "calendar feed moved a booking"
+                );
+                true
+            }
+        })
     }
 
     /// Drift changes the EVENT's time/name without erasing its origin or
