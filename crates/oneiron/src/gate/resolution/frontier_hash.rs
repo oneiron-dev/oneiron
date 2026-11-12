@@ -116,6 +116,13 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "auto_checker");
         hash_str(hasher, auto_checker);
     }
+    // The inquiry row decides what the company keeps of an answer: hashed
+    // only when present, so a manifest that never names it keeps its exact
+    // frontier hash, with a domain tag as the knob above has.
+    if let Some(policy) = resolution.inquiry_policy {
+        hash_str(hasher, "inquiry");
+        hash_str(hasher, policy.keep().as_str());
+    }
     // The common owner-change wait moves start deadlines, so naming one
     // moves the frontier; a manifest that never names it keeps its exact
     // no-common frontier hash. A domain tag rides with the value so no
