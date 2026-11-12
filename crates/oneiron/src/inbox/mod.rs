@@ -34,6 +34,7 @@ pub use oneiron_store::inbox::notification_recipient;
 mod outbox_ask;
 mod projection;
 mod resolve;
+mod restore_group;
 mod root_group;
 mod takeover_ask;
 mod traversal;
@@ -53,6 +54,10 @@ pub use self::model::{
     InboxExceptionClass, InboxGroup, InboxGroupCursor, InboxGroupMember, InboxGroupPage,
     InboxGroupReopen, InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
 };
+pub use self::restore_group::{
+    RestoreInboxGroup, RestoreInboxResolution, RestoreMemberOutcome, RestoreMemberVerdict,
+    RestoreMemberWait,
+};
 pub use self::unified::{
     InboxGroupKind, InboxGroupResolution, InboxGroupResolveRequest, InboxGroupResolveTarget,
     UnifiedInboxGroup, UnifiedInboxGroupCursor, UnifiedInboxGroupPage,
@@ -60,6 +65,7 @@ pub use self::unified::{
 
 pub(crate) use self::notification::{notification_id, scrub_finding_notification_actor_in_txn};
 pub(crate) use self::projection::inbox_claim_hash;
+pub(crate) use self::restore_group::{RestoredMemberSettle, RestoredMemberState};
 
 pub(crate) mod tables;
 #[cfg(test)]

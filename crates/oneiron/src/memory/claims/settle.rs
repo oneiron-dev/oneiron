@@ -32,6 +32,7 @@ mod authority;
 use authority::ClaimSettler;
 mod conflict_head;
 use conflict_head::{ConflictHead, conflict_head_in_txn};
+mod restored_member;
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";
