@@ -2,11 +2,16 @@
 //! import's decision for each reserved predicate family, and a fit install's
 //! claim pair to export (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS).
 
+use std::sync::atomic::Ordering;
+
+use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::context_board::{PREDICATE_PLUGIN_SECTION_INSTALL, PREDICATE_SKILL_SECTION_FIT};
+use crate::edge::EdgeActorClass;
 use crate::error::Result;
+use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, TimeRange, Vault};
 
 /// Every reserved predicate family as one predicate of it: the `edge`
@@ -40,13 +45,19 @@ pub fn reserved_claim_import(predicate: &str) -> Option<String> {
 }
 
 /// Lands, in one writer, a `plugin.section_install` claim about the SKILL
-/// `skill` and its `skill.section_fit` receipt, in the shapes the fit
-/// install's landing gives them (context_board/plugin/fit_install.rs
-/// `land_in_txn`): the install claim Auto and Generated through the generic
-/// claim door, the receipt Auto and Observed through the reserved door. The
-/// install payload stands in as a map naming the install, and the receipt
-/// names the install claim; the import reads neither value. Returns the
-/// install claim and the receipt.
+/// `skill` and its `skill.section_fit` receipt. The install claim takes the
+/// owner-consent shape (context_board/plugin/claim.rs
+/// `land_proposed_install`: Generated, Proposed, through the batch door with
+/// pending-consent persistence) under the vault's embedded owner. The Auto
+/// shape the fit's landing writes (fit_install.rs `land_in_txn`) pends at
+/// the gate of a vault with the shipped policy (`gate.pending.source_trust`,
+/// `gate.pending.criticality_floor`; FIX-LIST
+/// FIT-INSTALL-AUTO-CLAIM-PENDS-AT-GATE), and the import rewrites either
+/// shape to Imported + Proposed. The receipt lands Auto and Observed through
+/// the reserved door, as the fit's landing writes it. The install payload
+/// stands in as a map naming the install, and the receipt names the install
+/// claim; the import reads neither value. Returns the install claim and the
+/// receipt.
 ///
 /// # Errors
 ///
@@ -60,21 +71,40 @@ pub fn land_section_install_with_fit_receipt(
         start: now,
         end: now,
     };
-    vault.with_write_txn(|txn| {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(owner, EdgeActorClass::Human),
+        ClaimSource::Generated,
+        WriteProvenance::new(rmpv::Value::from("archive-import-reserved-families"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        PREDICATE_PLUGIN_SECTION_INSTALL,
+        ClaimSubject::Entity(skill),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("section_id"),
+            rmpv::Value::from("archive-pin.section"),
+        )]),
+        1.0,
+    );
+    vault.with_write_txn_grouped(|txn| {
         let install = vault.store.clock.entity_id()?;
-        let mut claim = ClaimBody::new(
-            PREDICATE_PLUGIN_SECTION_INSTALL,
-            ClaimSubject::Entity(skill),
-            rmpv::Value::Map(vec![(
-                rmpv::Value::from("section_id"),
-                rmpv::Value::from("archive-pin.section"),
-            )]),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
+        apply_ops_with_gate_mode(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![BatchOp::ClaimCandidate {
+                id: install,
+                candidate: Box::new(candidate),
+                envelope,
+                occurred,
+                learned_at: now,
+                internal_lexical_query_hint: false,
+            }],
+            vault.text_index_trusted.load(Ordering::Acquire),
+            ApplyOpsGateMode::new(true, true),
         )?;
-        claim.source = Some(ClaimSource::Generated);
-        vault.put_claim_in_txn(txn, &install, &claim, occurred, now)?;
         let receipt = vault.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_SECTION_FIT,
