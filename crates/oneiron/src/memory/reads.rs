@@ -757,6 +757,7 @@ impl Memory<'_> {
             id_hex: id.to_hex(),
             receipt_ref: format!("put:{}", id.to_hex()),
             record: None,
+            agent_definition: None,
         })
     }
 
@@ -778,6 +779,7 @@ impl Memory<'_> {
             entity_ref: short.unwrap_or_else(|| id.to_hex()),
             id_hex: id.to_hex(),
             receipt_ref: format!("put:{}", id.to_hex()),
+            agent_definition: None,
         })
     }
 }

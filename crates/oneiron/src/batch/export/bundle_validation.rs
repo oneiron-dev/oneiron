@@ -8,7 +8,7 @@ use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST,
     ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SKILL_HUB,
 };
-use crate::serialize::ExportBody;
+use crate::serialize::{ExportBody, ExportSecrets};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
@@ -17,8 +17,10 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     /// The bundles' checks against the import's row index (FIX 3678): each
     /// skill and agent bundle is read and checked alone, each agent's facets
     /// are recomputed from its own native rows, and the manifest's omission
-    /// lists are compared as the rows declare them, in their order.
-    pub(super) fn validate_bundles(&mut self) -> Result<()> {
+    /// lists are compared as the rows declare them, in their order. Skill
+    /// source trees validate under the archive's `secrets`; agent bundles
+    /// and facets stay Nulled.
+    pub(super) fn validate_bundles(&mut self, secrets: ExportSecrets) -> Result<()> {
         let mut skills = self.spool.rows(ArchiveRecordKind::Skill);
         while let Some((loc, _)) = skills.next(&self.spool)? {
             let bundle: ExportSkillBundle = self.hydrated(loc)?;
@@ -28,7 +30,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 ));
             }
             if let Some(tree) = &bundle.source_tree {
-                tree.validate_in(&self.files)?;
+                tree.validate_in_with(&self.files, secrets)?;
                 if let Some(hash) = &tree.content_hash {
                     let body = crate::write_envelope::skill_record::decode_skill_record(
                         &bundle.entity.body.to_bytes()?,
@@ -38,7 +40,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                     }
                     crate::store::skill_package::package_from_source(
                         &body,
-                        tree.import_files_in(&self.files)?,
+                        tree.import_files_in_with(&self.files, secrets)?,
                         bundle
                             .source_format
                             .ok_or_else(|| invalid("skill source format missing"))?,

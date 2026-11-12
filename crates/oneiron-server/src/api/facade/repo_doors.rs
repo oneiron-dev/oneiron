@@ -14,18 +14,22 @@
 //! lane door, here as over MCP. No owner door is called.
 use std::sync::Arc;
 
+use axum::http::StatusCode;
+use oneiron::federation::RepoAccessRefusal;
 use oneiron::memory::repo_doors::{
-    OwnerProposalReviewPolicy, RepoCheckoutBindInput, RepoCheckoutBindOutput, RepoExportInput,
-    RepoExportOutput, RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput,
-    RepoMergeQueueObserveInput, RepoMergeQueueObserveOutput, RepoProposalSubmitInput,
+    OwnerProposalReviewPolicy, REPO_LANE_UNREADABLE, REPO_PROVENANCE_REQUIRED,
+    REPO_PUBLICATION_POLICY_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, REPO_WORK_BASE_CHANGED,
+    RepoCheckoutBindInput, RepoCheckoutBindOutput, RepoExportInput, RepoExportOutput,
+    RepoMergeQueueEnqueueInput, RepoMergeQueueEnqueueOutput, RepoMergeQueueObserveInput,
+    RepoMergeQueueObserveOutput, RepoProposalResolveInput, RepoProposalSubmitInput,
     RepoProposalSubmitOutput, RepoReviewPolicy, RepoRunAnswer, RepoRunBinding,
     RepoSnapshotsGetInput, RepoSnapshotsGetOutput, RepoSnapshotsIngestInput,
     RepoSnapshotsIngestOutput, RepoSnapshotsReadInput, RepoSnapshotsReadOutput,
     RepoSymbolsDeclareInput, RepoSymbolsDeclareOutput, RepoSymbolsDefinitionsInput,
-    RepoSymbolsDefinitionsOutput, RepoSymbolsReleaseInput, RepoSymbolsReleaseOutput,
-    RepoSymbolsRenewInput, RepoSymbolsRenewOutput, RepoViewsGetInput, RepoViewsGetOutput,
-    RepoViewsReadInput, RepoViewsReadOutput, RepoWorkOpenInput, RepoWorkOpenOutput,
-    repo_provenance_unwitnessed,
+    RepoSymbolsDefinitionsOutput, RepoSymbolsObserveInput, RepoSymbolsObserveOutput,
+    RepoSymbolsReleaseInput, RepoSymbolsReleaseOutput, RepoSymbolsRenewInput,
+    RepoSymbolsRenewOutput, RepoViewsGetInput, RepoViewsGetOutput, RepoViewsReadInput,
+    RepoViewsReadOutput, RepoWorkOpenInput, RepoWorkOpenOutput, repo_provenance_unwitnessed,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
@@ -40,6 +44,37 @@ use crate::server::SyncServer;
 /// The caller a caller door is handed; the repo doors act as the attached
 /// run's actor, which `hold_live_run` checks is this same credential's.
 type Caller = (EntityId, EdgeActorClass);
+
+/// The HTTP status of a repo door's typed refusal or hold: the caller's,
+/// never this server's failure. A Grant that does not admit the act, and a
+/// run lane that does not read the repo, are 403. A lease, checkout or
+/// declaration that is no longer the current one, a membership held while
+/// its root is conflicted, and a proposal's or export's typed hold (its work
+/// kept) are 409. `None` for every other code.
+pub(super) fn repo_refusal_status(code: &str) -> Option<StatusCode> {
+    if let Some(refusal) = RepoAccessRefusal::ALL
+        .into_iter()
+        .find(|refusal| refusal.public_code() == code)
+    {
+        return Some(match refusal {
+            RepoAccessRefusal::NoMembership
+            | RepoAccessRefusal::WrongRepo
+            | RepoAccessRefusal::WrongRef
+            | RepoAccessRefusal::PathOutsideScope => StatusCode::FORBIDDEN,
+            RepoAccessRefusal::MembershipHeld | RepoAccessRefusal::StaleLease => {
+                StatusCode::CONFLICT
+            }
+        });
+    }
+    match code {
+        REPO_LANE_UNREADABLE => Some(StatusCode::FORBIDDEN),
+        REPO_REVIEW_POLICY_REQUIRED
+        | REPO_PROVENANCE_REQUIRED
+        | REPO_PUBLICATION_POLICY_REQUIRED
+        | REPO_WORK_BASE_CHANGED => Some(StatusCode::CONFLICT),
+        _ => None,
+    }
+}
 
 /// One repo run door: the attachment held, the run bound from its held
 /// proof and the credential's lane, `call` run on the credential's own
@@ -364,6 +399,29 @@ pub(crate) async fn vault_repo_symbols_renew(
     .await
 }
 
+/// `vault.repo.symbols.observe`: reads the run's own declaration; writes
+/// nothing.
+pub(crate) async fn vault_repo_symbols_observe(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: Caller,
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<RepoSymbolsObserveInput>,
+) -> Listed<RepoSymbolsObserveOutput> {
+    let verb = "vault.repo.symbols.observe";
+    on_repo_run(
+        server,
+        auth,
+        session,
+        invocation,
+        verb,
+        input,
+        |memory, binding, spec, _request| memory.repo_symbols_observe_for_run(binding, spec),
+    )
+    .await
+}
+
 /// `vault.repo.symbols.release`.
 pub(crate) async fn vault_repo_symbols_release(
     server: &Arc<SyncServer>,
@@ -450,9 +508,62 @@ pub(crate) async fn vault_repo_proposal_submit(
                 spec,
                 Some(&policy as &dyn RepoReviewPolicy),
                 |stamp| match request {
-                    Some(request) => {
-                        binding.sources_from_host(&vault, stamp, path, content_hash, &request)
-                    }
+                    Some(request) => binding.sources_from_host(
+                        &vault,
+                        stamp,
+                        path,
+                        content_hash,
+                        &request,
+                        oneiron::code_run::SelfEffect::RepoProposalSubmit,
+                    ),
+                    None => Err(repo_provenance_unwitnessed()),
+                },
+            )
+        },
+    )
+    .await
+}
+
+/// `vault.repo.proposal_resolve`: one whole-file resolution of a typed
+/// repository conflict against the run's own work, the public mirror of
+/// `self.code.proposal_resolve`, held to the vault's review policy. The
+/// host uses only a request actually served on this exact attachment, and
+/// its provenance names the resolution; without one the proposal holds as
+/// `repo_provenance_required`, its work kept.
+pub(crate) async fn vault_repo_proposal_resolve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: Caller,
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<RepoProposalResolveInput>,
+) -> Listed<RepoProposalSubmitOutput> {
+    let verb = "vault.repo.proposal_resolve";
+    let policy = OwnerProposalReviewPolicy::new(Arc::clone(&server.vault));
+    let vault = Arc::clone(&server.vault);
+    on_repo_run(
+        server,
+        auth,
+        session,
+        invocation,
+        verb,
+        input,
+        move |memory, binding, spec, request| {
+            let path = spec.path.clone();
+            let content_hash = *blake3::hash(&spec.content).as_bytes();
+            memory.repo_proposal_resolve_for_run(
+                binding,
+                spec,
+                Some(&policy as &dyn RepoReviewPolicy),
+                |stamp| match request.as_ref() {
+                    Some(request) => binding.sources_from_host(
+                        &vault,
+                        stamp,
+                        path.clone(),
+                        content_hash,
+                        request,
+                        oneiron::code_run::SelfEffect::RepoProposalResolve,
+                    ),
                     None => Err(repo_provenance_unwitnessed()),
                 },
             )

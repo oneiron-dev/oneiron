@@ -94,6 +94,9 @@ pub enum SelfEffect {
     /// The run's checkout binding and export (FIX 6867, G1 PR3b).
     RepoCheckoutBind,
     RepoExport,
+    /// The run's read of its own symbol declaration (NO-DOOR
+    /// SYMBOL-LEASE-OBSERVATION). Last, so no earlier label moves.
+    RepoSymbolsObserve,
 }
 
 impl SelfEffect {
@@ -154,6 +157,7 @@ impl SelfEffect {
             Self::RepoMergeQueueEnqueue => "self.code.merge_queue.enqueue",
             Self::RepoCheckoutBind => "self.code.checkout.bind",
             Self::RepoExport => "self.code.export",
+            Self::RepoSymbolsObserve => "self.code.symbols.observe",
         }
     }
 
@@ -213,7 +217,8 @@ impl SelfEffect {
             | Self::RepoProposalResolve
             | Self::RepoMergeQueueEnqueue
             | Self::RepoCheckoutBind
-            | Self::RepoExport => None,
+            | Self::RepoExport
+            | Self::RepoSymbolsObserve => None,
         }
     }
 

@@ -24,6 +24,10 @@ impl<'a> NativeRawRead<'a> {
     }
 
     /// The admitted live body, with repo and file secrets projected in the same snapshot.
+    /// A masked reader is served an ASSET as `file_key_masks::served_bytes_in_txn`
+    /// serves it: a file no masked copy is served of, and bytes in which the
+    /// release scan still reads a credential, answer `None`, as a withheld row
+    /// does (FIX NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS).
     pub fn entity_body(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         Ok(self
             .lane
@@ -51,18 +55,16 @@ impl<'a> NativeRawRead<'a> {
                     } else {
                         body
                     };
-                    let body = if row.entity_type == crate::registry::ENTITY_TYPE_ASSET {
-                        crate::store::file_key_masks::sighted_bytes_in_txn(
-                            &self.lane.vault.store,
-                            txn,
-                            body,
-                            None,
-                            self.lane.actor_key.secret_sight(),
-                        )?
-                    } else {
-                        body
-                    };
-                    Ok(Some(body))
+                    if row.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+                        return Ok(Some(body));
+                    }
+                    crate::store::file_key_masks::served_bytes_in_txn(
+                        &self.lane.vault.store,
+                        txn,
+                        body,
+                        None,
+                        self.lane.actor_key.secret_sight(),
+                    )
                 },
             )?
             .value)
