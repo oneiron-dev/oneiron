@@ -260,6 +260,51 @@ pub(crate) fn leased_requires_payer(
     requires_payer(vault, leased.id, input.room.is_some())
 }
 
+/// The live run a host call that bills the run's payer acts for (FIX 8902):
+/// its leased try and the scope its entries spend under. A door that serves
+/// the run across calls keeps this, never a payer read once: each call reads
+/// its payer afresh with [`Self::funding`]
+/// (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK).
+#[derive(Clone)]
+pub(crate) struct LiveRunPayer {
+    leased: AttemptRecord,
+    scope: Option<SpendScopeId>,
+}
+
+impl LiveRunPayer {
+    /// The run whose leased try is `leased`, spending under `scope`.
+    pub(crate) fn new(leased: AttemptRecord, scope: Option<SpendScopeId>) -> Self {
+        Self { leased, scope }
+    }
+
+    /// Who a call for the run bills now, read as the run's entry meter reads
+    /// it ([`leased_requires_payer`], then [`scope_funding`]): `None` keeps
+    /// the vault owner's default, for a run that spends under no scope or
+    /// whose root names no payer and that no room or member binds.
+    ///
+    /// # Errors
+    ///
+    /// The payer fault the run's model doors refuse with:
+    /// [`PayerFault::Missing`] also where the run's payer requirement cannot
+    /// be read.
+    pub(crate) fn funding(&self, vault: &Vault) -> Result<Option<PayerPerson>, PayerFault> {
+        let Some(scope) = self.scope.as_ref() else {
+            return Ok(None);
+        };
+        let required = leased_requires_payer(vault, &self.leased).map_err(|error| {
+            tracing::warn!(
+                %error,
+                attempt = ?self.leased.id,
+                "a live run's payer requirement could not be read"
+            );
+            PayerFault::Missing {
+                scope: Some(scope.clone()),
+            }
+        })?;
+        scope_funding(vault, Some(scope), required)
+    }
+}
+
 /// How a launch that `agent` answers in `room`, or its thread `branch`, for
 /// `requester` is funded (FIX 805): a chat or voice turn, or a queued
 /// Continue or Retry. This is the one place that says which launch is
