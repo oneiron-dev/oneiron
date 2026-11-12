@@ -294,6 +294,16 @@ pub(super) struct NoteDocument {
     pub(super) id: EntityId,
 }
 
+/// A span of quoted body characters ([`NoteDocument::quoted_span`]).
+pub(super) struct QuotedSpan {
+    /// The cursor on the first quoted character's left edge.
+    pub(super) start_cursor: Vec<u8>,
+    /// The cursor on the last quoted character's right edge.
+    pub(super) end_cursor: Vec<u8>,
+    /// The quoted characters.
+    pub(super) quote: String,
+}
+
 /// The deterministic peer of NOTE `id`'s birth operations, the same on every
 /// replica. Every later operation is made on a document loaded from storage,
 /// under a peer of its own, so the birth's operations are the only ones
@@ -547,11 +557,28 @@ impl NoteDocument {
     }
 
     pub(super) fn pin(&self, claim: EntityId, start: usize, end: usize) -> Result<NotePin> {
+        let span = self.quoted_span(start, end)?;
+        Ok(NotePin {
+            claim,
+            document: self.id,
+            frontier: self.doc.oplog_frontiers().encode(),
+            start_cursor: span.start_cursor,
+            end_cursor: span.end_cursor,
+            quote_hash: *blake3::hash(span.quote.as_bytes()).as_bytes(),
+            quote_text: span.quote,
+        })
+    }
+
+    /// The body's characters `start..end` (Unicode scalar indices) as a
+    /// cited span names them: the cursor on the first quoted character's
+    /// left edge, the cursor on the last one's right edge, and their text.
+    /// [`Self::live_span`] reads the same characters in a later document.
+    pub(super) fn quoted_span(&self, start: usize, end: usize) -> Result<QuotedSpan> {
         let text = self.doc.get_text(BODY);
         if end <= start || end > text.len_unicode() {
             return Err(invalid("invalid NOTE citation range"));
         }
-        let quote_text = text
+        let quote = text
             .slice(start, end)
             .map_err(|_| invalid("NOTE quote slice"))?;
         let start_cursor = text
@@ -565,14 +592,10 @@ impl NoteDocument {
             .get_cursor(end - 1, Side::Right)
             .ok_or_else(|| invalid("NOTE end cursor"))?
             .encode();
-        Ok(NotePin {
-            claim,
-            document: self.id,
-            frontier: self.doc.oplog_frontiers().encode(),
+        Ok(QuotedSpan {
             start_cursor,
             end_cursor,
-            quote_hash: *blake3::hash(quote_text.as_bytes()).as_bytes(),
-            quote_text,
+            quote,
         })
     }
 
