@@ -5,6 +5,7 @@
   "output": "crate::policy_manifest_doors::AgentVerbClassesReceipt",
   "call": "crate::policy_manifest_doors::configure_agent_verb_classes_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.verb_classes.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
   "scope": "Write",
+  "act_class": "unstated",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

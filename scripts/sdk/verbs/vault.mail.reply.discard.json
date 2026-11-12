@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailReplyDraftView",
   "call": "memory.mail_reply_discard(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

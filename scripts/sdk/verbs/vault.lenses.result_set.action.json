@@ -8,6 +8,7 @@
   "host_door_precheck": false,
   "host_door_caller": true,
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "projection_record_scope": true
   },

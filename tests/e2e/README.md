@@ -84,15 +84,16 @@ to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
-relayed by the Engine at 10:35, instead defers MEMORY-04, MEMORY-06,
-PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
-RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
-the Observed producer (FIX 21842). These cases remain registered with their reasons
+relayed by the Engine at 10:35, instead defers cases as SKIPPED until their doors exist; every case it
+deferred is now written or a pending door.
+RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). These cases remain registered with their reasons
 and FIX ids, are not failures, and never hold a run or a runtime grant. They are not
 passing feature coverage. A case whose door is still missing is a **pending door**
 (Engine CORE-FOUR-SKIPS = A): `suite.pendingDoor(test, ID, "waits on <door>", {fix: "FIX <line>",
 deadline: "YYYY-MM-DD"})` keeps it registered, reports it SKIPPED with its door, FIX row and deadline,
-and fails it from the deadline on: door or delete. GATE-02 and GATE-05 are pending doors.
+and fails it from the deadline on: door or delete. GATE-02 and GATE-05 are pending doors, PRIVACY-03 and
+PRIVACY-06 are pending doors on vault.sync.outbox, MEMORY-03 is a pending door on the Observed producer
+(FIX 21842), and MEMORY-06 on the pinned productivity pack fixture (FIX 22509).
 
 ## EngineFixture
 
@@ -280,6 +281,11 @@ IDs, exact bytes and optional barriers. Scripted HTTP errors use real vendor
 error bodies and statuses. The helpers `openaiText`, `openaiStream`,
 `anthropicText`, `anthropicStream` and `embeddingReply` require declared usage;
 they do not estimate tokens or derive answers from requests.
+A request whose body names a boolean `stream` matches only a step of the same
+kind: `stream: true` needs a `{kind:"stream"}` reply, `stream: false` a buffered
+one, so a buffered reply to a streamed request fails at send time. A code-mode
+executor call is streamed when its local-openai-compat provider keeps the default
+capabilities (they include streaming); a decision call is buffered.
 
 A step or stream part may name a barrier. `awaitBarrier(name)` waits until the
 external adapter reaches it; `releaseBarrier(name)` releases that boundary.

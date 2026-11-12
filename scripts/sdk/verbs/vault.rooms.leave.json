@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::RoomLeaveOutcome",
   "call": "memory.rooms_leave(&input)?",
   "scope": "Write",
+  "act_class": "member_remove",
   "mcp_fields": {
     "spec": "$",
     "room_ref": "=room"

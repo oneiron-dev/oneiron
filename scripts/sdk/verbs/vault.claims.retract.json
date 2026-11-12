@@ -14,6 +14,7 @@
   "output": "crate::memory::CommitReceipt",
   "call": "memory.claim_retract(&input.claim_ref)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {},
   "section": false,
   "binding": {

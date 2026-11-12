@@ -201,9 +201,9 @@ impl Vault {
         // itself only; every other landing under its proven one (FIX 7608).
         let authority =
             self.receive_pack_publication_authority(repo_id, &outcome.repo_root, attribution)?;
-        // Decided BEFORE the refs move: a RepositoryLarge pointer whose bytes
-        // this vault does not hold refuses the landing, so no head is ever
-        // advertised that a stock client could not check out.
+        // Decided BEFORE the refs move: an LFS pointer whose bytes this vault
+        // does not hold refuses the landing, so no head is ever advertised
+        // that a stock client could not check out.
         let admitted = admit_landing_lfs_pointers(self, repo_id, &outcome.lfs_pointers)?;
         let learned_at = now_secs();
         let landing = self.land_receive_pack_refs(

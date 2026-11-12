@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailSyncStatusView",
   "call": "memory.mail_sources_sync_status(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

@@ -4,6 +4,7 @@
   "input": "crate::memory::consolidation_frontier::ConsolidationAccountingRequest",
   "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
   "scope": "Read",
+  "act_class": "read",
   "call": "memory.consolidation_accounting_as_owner(&memory.embedded_owner(\"vault.consolidation.accounting\")?, &input)?",
   "host_door": true,
   "host_door_lists": true,

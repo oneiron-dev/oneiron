@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailSourceConnectReceipt",
   "call": "memory.mail_sources_connect(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },
