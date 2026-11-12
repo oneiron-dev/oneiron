@@ -318,7 +318,12 @@ impl Memory<'_> {
                 .ok_or(crate::Error::CorruptedIndex("scoped export header"))?;
             let Some(position) = row.scope else { continue };
             records.push(ScopedExportRecord {
-                record: crate::lens::RecordRef::from_id(header.entity_type, &row.id, None),
+                record: crate::lens::RecordRef::from_id_in_vault(
+                    self.vault,
+                    header.entity_type,
+                    &row.id,
+                    None,
+                ),
                 position: RecordPosition::Position(position),
                 bytes: row.bytes,
                 birth: row
