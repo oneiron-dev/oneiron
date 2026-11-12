@@ -219,6 +219,25 @@ pub(crate) struct ContextBoardMemoryRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = "local/remind")]
     hook: Option<String>,
+    /// The board room's pin record when the room pins this row (ROOM-SCOPED-PINS): who
+    /// pinned it, the agent that acted for that PERSON and when; absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    room_pin: Option<ContextBoardRoomPin>,
+}
+
+/// One shared pin of the board's room, on the MEMORIES row of its target.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ContextBoardRoomPin {
+    /// Hex entity id of the pinned record.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    target: String,
+    /// Hex id of the PERSON who pinned it.
+    pinned_by: String,
+    /// Hex id of the agent that pinned it for that PERSON; null when the PERSON did.
+    acting_agent: Option<String>,
+    /// Engine time of the pin, in Unix seconds.
+    #[schema(example = 1_800_000_000)]
+    pinned_at: u64,
 }
 
 /// MEMORIES section envelope.
@@ -345,8 +364,14 @@ pub(crate) async fn board_pins_section(
     server
         .vault
         .measure_limit(EngineLimit::MemoryPinnedRefs, pins.refs.len() as u64);
-    let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
-    let Some(pinned) = board_pins_projection(&server.vault, auth, read, room_id, &pins)? else {
+    // The facade the room's pins read through stays in this block, off the
+    // receipt's await.
+    let pinned = {
+        let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
+        let memory = board_memory(&server.vault, auth);
+        board_pins_projection(&server.vault, auth, read, room_id, memory.as_ref(), &pins)?
+    };
+    let Some(pinned) = pinned else {
         return Ok(None);
     };
     pinned.receipt.record(&server.vault).await?;
@@ -377,15 +402,19 @@ pub(crate) struct PinsReceipt {
 
 /// [`board_pins_section`]'s rows, read under `read` (the caller's own ceiling) narrowed to the
 /// board's room (or the caller alone) and clamped to those present, with the receipt left for
-/// the caller to record once the board is delivered. `None` when no row is admitted.
+/// the caller to record once the board is delivered. With `room_reader`, the caller's own facade
+/// handle, the room's shared pins the caller sees join last (ROOM-SCOPED-PINS P2b). `None` when
+/// no row is admitted.
 pub(crate) fn board_pins_projection<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
     read: oneiron::claim::ScopedRead<'a>,
     room_id: Option<oneiron::EntityId>,
+    room_reader: Option<&oneiron::memory::Memory<'_>>,
     pins: &BoardPinSources<'_>,
 ) -> Result<Option<BoardPins>, ApiError> {
-    if pins.refs.is_empty() && !pins.manifest && pins.hooks.is_empty() {
+    let room_pins = room_id.zip(room_reader);
+    if pins.refs.is_empty() && !pins.manifest && pins.hooks.is_empty() && room_pins.is_none() {
         return Ok(None);
     }
     let super::super::CoreAudience {
@@ -410,6 +439,11 @@ pub(crate) fn board_pins_projection<'a>(
     section
         .include_hook_pins(&read, pins.hooks, disclosure.as_ref())
         .map_err(|error| core_engine_error("hook pin read failed", error))?;
+    // ROOM-SCOPED-PINS P2b: the board room's shared pins come last, so a
+    // target another source pinned renders once, with the room's record.
+    if let Some((room, memory)) = room_pins {
+        include_board_room_pins(memory, room, disclosure.as_ref(), &mut section)?;
+    }
     if section.rows.is_empty() {
         return Ok(None);
     }
@@ -459,6 +493,97 @@ pub(crate) fn lane_pins_projection(
             channels: std::collections::BTreeSet::new(),
         },
     }))
+}
+
+/// A retrieval board's room pins (ROOM-SCOPED-PINS P2b): the shared pins of the room its ROOM
+/// section renders, joined to the pack's MEMORIES (or to a pins-only section when the pack
+/// carries none) under the clamp of those present in that room, as a board with no retrieval
+/// joins them in [`board_pins_projection`]. A room the caller does not read adds nothing here:
+/// its ROOM section refuses a room the board names explicitly. The rows that go out under a
+/// contact's standing clearance get the owner's post-hoc receipt, as the board's other pins do;
+/// a target the pack already delivered is not counted twice.
+pub(crate) async fn board_room_pins(
+    server: &crate::server::SyncServer,
+    auth: &CoreAuth,
+    room_id: Option<oneiron::EntityId>,
+    memories: Option<oneiron::MemoriesSection>,
+) -> Result<Option<oneiron::MemoriesSection>, ApiError> {
+    let Some(room) = room_id else {
+        return Ok(memories);
+    };
+    // The facade, the lane and the clamp stay in this block: none of them
+    // is held across the receipt's await.
+    let (section, receipt) = {
+        let Some(memory) = board_memory(&server.vault, auth) else {
+            return Ok(memories);
+        };
+        match memory.room_roster(room) {
+            Ok(_) => {}
+            Err(error) if super::board::caller_fault(&error) => return Ok(memories),
+            Err(error) => return Err(room_pins_error(error)),
+        }
+        let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
+        let super::super::CoreAudience {
+            interlocutors,
+            disclosure,
+            ..
+        } = super::super::resolve_core_audience(&server.vault, auth, read, Some(room))?;
+        let had_section = memories.is_some();
+        let mut section = memories.unwrap_or_else(|| {
+            oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)))
+        });
+        let before: std::collections::BTreeSet<String> =
+            section.rows.iter().map(|row| row.id.clone()).collect();
+        let records = include_board_room_pins(&memory, room, disclosure.as_ref(), &mut section)?;
+        if records.is_empty() {
+            return Ok(had_section.then_some(section));
+        }
+        let receipt = PinsReceipt {
+            delivered: records
+                .iter()
+                .map(|pin| pin.target)
+                .filter(|target| !before.contains(&target.to_hex()))
+                .collect(),
+            interlocutors,
+            channels: [oneiron::consent::contact_disclosure_room_channel(&room)]
+                .into_iter()
+                .collect(),
+        };
+        (section, receipt)
+    };
+    receipt.record(&server.vault).await?;
+    Ok(Some(section))
+}
+
+/// The caller's own facade handle, as the board's ROOM section reads through it; `None` for a
+/// caller with no entity principal and declared class, whose board renders no ROOM.
+fn board_memory<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+) -> Option<oneiron::memory::Memory<'a>> {
+    let (actor, class) = super::board::board_actor(auth)?;
+    Some(crate::api::credential_memory(vault, Some(auth), actor, class).at(auth.locality()))
+}
+
+/// Joins the shared pins of `room` the caller sees to `section`'s PINNED tier
+/// ([`oneiron::memory::Memory::include_room_pins`]): each target read through the caller's room
+/// read, the room's P7 and `disclosure`. Returns the admitted records; none for a room the caller
+/// does not read, which changes nothing.
+fn include_board_room_pins(
+    memory: &oneiron::memory::Memory<'_>,
+    room: oneiron::EntityId,
+    disclosure: Option<&oneiron::DisclosureContext>,
+    section: &mut oneiron::MemoriesSection,
+) -> Result<Vec<oneiron::conversation::RoomPin>, ApiError> {
+    match memory.include_room_pins(room, section, disclosure) {
+        Ok(records) => Ok(records),
+        Err(error) if super::board::caller_fault(&error) => Ok(Vec::new()),
+        Err(error) => Err(room_pins_error(error)),
+    }
+}
+
+fn room_pins_error(error: oneiron::memory::MemoryError) -> ApiError {
+    super::board::board_memory_error("board room pins failed", "room.conversation_id", error)
 }
 
 /// The ids of the rows a pins-only MEMORIES section delivers.
