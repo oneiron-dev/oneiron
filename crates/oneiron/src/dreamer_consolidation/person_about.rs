@@ -716,6 +716,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
                 spend_scope: None,
+                wake_pass_bound: true,
             };
             let backend =
                 CallBackend::new(self.backend, self.sourced, Some(fact_claim_ids.clone()));

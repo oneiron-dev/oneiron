@@ -623,6 +623,7 @@ pub async fn run_resident_dream(
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
         spend_scope: None,
+        wake_pass_bound: true,
     };
     let mut charges = StepChargeTally::default();
     let (response, binding) = match call_as_step_checked(

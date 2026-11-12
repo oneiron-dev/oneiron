@@ -7,7 +7,7 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::execute::{BUDGET_PARK_REASON, HOST_CHECK_PARK_REASON, budget_trap};
+use super::execute::{BudgetTrapCause, budget_trap};
 use super::{DurableStepContext, DurableStepResult, StepOutcome, TrapRef};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::media::{MediaReplayKey, MediaRequest, MediaResponse};
@@ -42,7 +42,10 @@ pub enum MediaStepOutcome {
 ///
 /// # Errors
 ///
-/// Returns request canonicalization, trap persistence, or the media path's error.
+/// Returns request canonicalization, trap persistence, or the media path's error. A spent
+/// budget whose step is bound to no wake pass and no spend scope refuses
+/// `DurableStepError::BudgetRefused` with `Unbound`: no write
+/// refills it.
 pub async fn call_media_as_step<SendCall, CallFuture>(
     ctx: &DurableStepContext<'_>,
     request: MediaRequest,
@@ -59,11 +62,11 @@ where
         Err(LlmError::BudgetDenied(
             denied @ (BudgetDenied::Exhausted | BudgetDenied::HostCheck),
         )) if !admitted.load(Ordering::Acquire) => {
-            let reason = match denied {
-                BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
-                _ => BUDGET_PARK_REASON,
+            let cause = match denied {
+                BudgetDenied::HostCheck => BudgetTrapCause::HostCheck,
+                _ => BudgetTrapCause::Spent { asked_units: None },
             };
-            match budget_trap(ctx, step_hash, reason, None)? {
+            match budget_trap(ctx, step_hash, cause)? {
                 StepOutcome::Trapped {
                     trap,
                     failure_policy,

@@ -44,6 +44,7 @@ impl RunMediaStep {
             deadline: None,
             now_ms: self.vault.now_recorded_at().saturating_mul(1_000),
             spend_scope: None,
+            wake_pass_bound: false,
         }
     }
 

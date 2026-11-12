@@ -67,6 +67,7 @@ impl Leg<'_> {
             deadline: Some(self.ctx.deadline),
             now_ms: self.ctx.now_ms,
             spend_scope: None,
+            wake_pass_bound: true,
         }
     }
 

@@ -181,6 +181,7 @@ impl ConsolidationExecutor<'_> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
                 spend_scope: None,
+                wake_pass_bound: true,
             };
             let mut decided = Vec::with_capacity(partners.len());
             for call in link_calls(anchor, &partners) {
