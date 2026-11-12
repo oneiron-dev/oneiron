@@ -1,7 +1,10 @@
 //! The bound actor's one read lane. Every Memory read verb opens it, so each
 //! verb admits exactly what `ScopedRead` admits and returns its receipt.
 
-use super::structural::kind_string_for_type;
+mod connector_source_rows;
+mod masked_asset_read;
+mod skill_package_read;
+
 use super::support::*;
 use super::*;
 
@@ -14,6 +17,7 @@ use crate::error::Error;
 use crate::vault::ReadMode;
 
 mod hydrate_filtered;
+mod revisions_read;
 
 /// One resolved read target: the entity a reference names, at its frontier.
 /// `None` is a reference that resolves to nothing, never a withheld row.
@@ -835,7 +839,7 @@ impl Memory<'_> {
         let view = EntityView {
             id_hex: row.id.to_hex(),
             short_ref,
-            kind: kind_string_for_type(row.entity_type),
+            kind: self.vault.entity_kind_name(row.entity_type),
             occurred_start: row.occurred.start,
             occurred_end: row.occurred.end,
             learned_at: row.learned_at,

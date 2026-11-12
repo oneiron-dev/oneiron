@@ -168,6 +168,9 @@ fn sent_request() -> (
     let vault = Arc::new(
         Vault::open(dir.path(), VaultConfig::server()).expect("open signing fixture vault"),
     );
+    // `oneiron serve` installs the install's keystore at open; the dispatch
+    // below signs its request with the keys it holds.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("create embedded owner actor");
@@ -216,6 +219,7 @@ fn sent_request() -> (
             expires_at: now + 3600,
             principal_ref: None,
             automated: false,
+            natural_person: None,
         }],
         fields: vec![EsignField {
             id: field.clone(),
@@ -233,6 +237,8 @@ fn sent_request() -> (
         }],
         full_trail_appendix: false,
         lifecycle: None,
+        token_expires_at: None,
+        project: None,
     };
     vault
         .create_esign_document(
@@ -298,6 +304,7 @@ fn sent_request() -> (
                 content_ref: None,
                 idempotency_key: Some("public-sign".into()),
                 dedupe_key: Some("public-sign".into()),
+                mention: None,
             },
             OutboundIntentTrigger {
                 source: OutboundIntentSource::AgentImmediate,

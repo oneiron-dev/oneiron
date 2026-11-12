@@ -25,6 +25,8 @@ pub(crate) enum GateContentKind {
     /// ONE-1686 (RT-04): one witnessed MESSAGE envelope, gated at the shared
     /// `Memory::witness` write boundary. See `gate::witness_message`.
     WitnessMessage,
+    /// SPAWN-KNOB: one act an agent's grant powers decide (`spawn`, `save_agent`).
+    AgentPower,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -39,6 +41,7 @@ impl GateContentKind {
             Self::ExternalEffect => "external_effect",
             Self::Repair => "repair",
             Self::WitnessMessage => "witness_message",
+            Self::AgentPower => "agent_power",
         }
     }
 }

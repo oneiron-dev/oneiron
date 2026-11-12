@@ -10,6 +10,146 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RECIPE_PREFIX: &str = "OneironTestCredential ";
 
+/// The host issuer seed a fixture install holds for the host `secret` its
+/// server is configured with. Since FIX-LIST 3018 `SyncServer::new` roots a
+/// vault with this install's own seed from its keystore, never with one the
+/// secret derives, so a fixture that rebuilds the root needs the seed.
+pub(crate) fn fixture_host_issuer_seed(secret: &[u8]) -> [u8; 32] {
+    blake3::derive_key("oneiron-server/test/host-issuer-seed/v1", secret)
+}
+
+/// A this-device-only keystore for in-process test servers: the empty host
+/// issuer seed slot takes `host_seed` on its first `create`, in place of the
+/// fresh seed `Vault::bootstrap_host_slip_issuer` draws. Every other slot
+/// behaves as `MemoryKeystore`. It stands in for the keystore `oneiron serve`
+/// installs at open.
+struct FixtureHostSeedKeystore {
+    inner: oneiron_keystore::MemoryKeystore,
+    host_seed: [u8; 32],
+}
+
+impl oneiron_keystore::DeviceKeystore for FixtureHostSeedKeystore {
+    fn get(
+        &self,
+        slot: &oneiron_keystore::KeystoreSlot,
+    ) -> oneiron_keystore::Result<Option<zeroize::Zeroizing<[u8; 32]>>> {
+        self.inner.get(slot)
+    }
+
+    fn create(
+        &self,
+        slot: &oneiron_keystore::KeystoreSlot,
+        secret: &[u8; 32],
+    ) -> oneiron_keystore::Result<()> {
+        if slot.kind == oneiron_keystore::SlotKind::HostIssuerSeed {
+            self.inner.create(slot, &self.host_seed)
+        } else {
+            self.inner.create(slot, secret)
+        }
+    }
+
+    fn delete(&self, slot: &oneiron_keystore::KeystoreSlot) -> oneiron_keystore::Result<()> {
+        self.inner.delete(slot)
+    }
+
+    fn replace(
+        &self,
+        slot: &oneiron_keystore::KeystoreSlot,
+        secret: &[u8; 32],
+    ) -> oneiron_keystore::Result<bool> {
+        self.inner.replace(slot, secret)
+    }
+
+    fn locality(&self) -> oneiron_keystore::KeystoreLocality {
+        oneiron_keystore::KeystoreLocality::ThisDeviceOnly
+    }
+}
+
+/// Installs the fixture keystore on `vault` before `SyncServer::new`, as
+/// `oneiron serve` installs its keystore at open: the server then roots the
+/// vault with [`fixture_host_issuer_seed`] of `secret` (an empty `secret`
+/// when the config names none), and deletes and other signing doors find
+/// their keys.
+pub(crate) fn install_fixture_keystore(vault: &oneiron::Vault, secret: &[u8]) {
+    vault.install_device_keystore(std::sync::Arc::new(FixtureHostSeedKeystore {
+        inner: oneiron_keystore::MemoryKeystore::new(),
+        host_seed: fixture_host_issuer_seed(secret),
+    }));
+}
+
+/// [`SyncServer::new`] over `vault` once [`install_fixture_keystore`] holds
+/// the seed of the secret `config` names, as `oneiron serve` installs its
+/// keystore before it serves: a server with an `auth_secret` then roots the
+/// vault, and [`host_issuer`] finds that root.
+pub(crate) fn server_with_fixture_keystore(
+    vault: std::sync::Arc<oneiron::Vault>,
+    config: crate::config::SyncServerConfig,
+) -> Result<SyncServer, oneiron::Error> {
+    install_fixture_keystore(
+        &vault,
+        config.auth_secret.as_deref().unwrap_or_default().as_bytes(),
+    );
+    SyncServer::new(vault, config)
+}
+
+/// The host issuer that roots `vault`, rebuilt from the `secret` its fixture
+/// configured, with its authority-log signing key: the install seed
+/// [`install_fixture_keystore`] gave the server, or, for a vault a fixture
+/// rooted itself with `HostSlipIssuer::from_secret`, the secret. The root is
+/// the candidate that signed a valid entry of the vault's authority log.
+pub(crate) fn rooting_host_issuer(
+    vault: &oneiron::Vault,
+    secret: &[u8],
+) -> (HostSlipIssuer, SigningKey) {
+    use oneiron::authority::{HOST_ISSUER_SIGNING_CONTEXT, authority_entry_hash};
+
+    let seed = fixture_host_issuer_seed(secret);
+    let candidates = [
+        (
+            HostSlipIssuer::from_seed(&seed).expect("fixture seed issuer"),
+            SigningKey::from_bytes(&blake3::derive_key(HOST_ISSUER_SIGNING_CONTEXT, &seed)),
+        ),
+        (
+            HostSlipIssuer::from_secret(secret).expect("secret issuer"),
+            SigningKey::from_bytes(&blake3::derive_key(
+                "oneiron/host-authority-signing/v2",
+                secret,
+            )),
+        ),
+    ];
+    let fold = vault.authority_fold().expect("authority fold");
+    let mut signers = Vec::new();
+    for row in vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
+        .expect("authority rows")
+    {
+        let entry = vault
+            .get_authority_log_entry(&row)
+            .expect("authority read")
+            .expect("authority row decodes");
+        if fold
+            .valid_entries
+            .contains(&authority_entry_hash(&entry).expect("entry hash"))
+        {
+            signers.push(entry.signer.public_key);
+        }
+    }
+    let (issuer, signing) = candidates
+        .into_iter()
+        .find(|(issuer, _)| signers.contains(&issuer.public_key()))
+        .expect(
+            "no valid authority entry is signed by the host issuer this secret makes: \
+             the vault is unrooted (install_fixture_keystore before SyncServer::new) \
+             or rooted by another host",
+        );
+    assert_eq!(
+        signing.verifying_key().to_bytes(),
+        issuer.binding_key(),
+        "fixture host-key re-derivation must match the issuer"
+    );
+    (issuer, signing)
+}
+
 /// The host root the server's vault is rooted under.
 pub(crate) fn host_issuer(server: &SyncServer) -> HostSlipIssuer {
     let secret = server
@@ -17,7 +157,7 @@ pub(crate) fn host_issuer(server: &SyncServer) -> HostSlipIssuer {
         .auth_secret
         .as_deref()
         .expect("authenticated fixture needs a configured host root");
-    HostSlipIssuer::from_secret(secret.as_bytes()).unwrap()
+    rooting_host_issuer(server.vault(), secret.as_bytes()).0
 }
 
 pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, SigningKey) {
@@ -186,9 +326,7 @@ pub(crate) fn host_reader(vault: &oneiron::Vault) -> oneiron::claim::ScopedReadA
 }
 pub(crate) fn revoke(server: &SyncServer, recipe: &str) {
     let (slip, _) = credential(server, recipe);
-    let issuer =
-        HostSlipIssuer::from_secret(server.config.auth_secret.as_ref().unwrap().as_bytes())
-            .unwrap();
+    let issuer = host_issuer(server);
     server
         .vault()
         .revoke_capability_slip(&issuer, slip.claims.slip_id)
@@ -225,10 +363,10 @@ pub(crate) fn bind_payload(server: &SyncServer, recipe: &str) -> serde_json::Val
     serde_json::json!({"token":request.headers()[AUTHORIZATION].to_str().unwrap().strip_prefix("Bearer ").unwrap(),"binding":serde_json::from_str::<serde_json::Value>(request.headers()["x-oneiron-binding"].to_str().unwrap()).unwrap()})
 }
 
-/// Binds `actor` as a human owner under the host key derived from `secret`.
+/// Binds `actor` as a human owner under the host root `secret` names.
 ///
-/// The host signing key is re-derived from the same secret
-/// `SyncServer::new` used to bootstrap the genesis; the re-derivation is
+/// The host signing key is re-derived by [`rooting_host_issuer`] from the
+/// seed `SyncServer::new` rooted the genesis with; the re-derivation is
 /// pinned against `HostSlipIssuer::binding_key` so a core KDF move fails
 /// loudly here instead of minting a signature the fold would reject.
 pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::EntityId) {
@@ -271,8 +409,8 @@ pub(crate) fn binding_op(
     })
 }
 
-/// Binds `actor` with `actor_class` under the host key derived from
-/// `secret`, as [`bind_owner`] binds a human owner.
+/// Binds `actor` with `actor_class` under the host root `secret` names
+/// ([`rooting_host_issuer`]), as [`bind_owner`] binds a human owner.
 pub(crate) fn bind_actor(
     vault: &oneiron::Vault,
     secret: &str,
@@ -287,21 +425,14 @@ pub(crate) fn bind_actor(
     };
     use std::collections::BTreeSet;
 
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).expect("host issuer");
+    let (issuer, signing) = rooting_host_issuer(vault, secret.as_bytes());
     let host_key = issuer.public_key();
-    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", secret.as_bytes());
-    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-    assert_eq!(
-        signing.verifying_key().to_bytes(),
-        issuer.binding_key(),
-        "fixture host-key re-derivation must match the issuer"
-    );
     let fold = vault.authority_fold().expect("authority fold");
     let vault_id = fold.vault_id.expect("host root bootstrapped");
     let Some(op) = binding_op(&fold, &host_key, actor, actor_class) else {
         return;
     };
-    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.clone();
+    let mut heads: BTreeSet<[u8; 32]> = fold.valid_entries.iter().copied().collect();
     let mut seq = 0u64;
     let rows = vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
@@ -368,4 +499,19 @@ pub(crate) fn bind_actor(
         ),
         "fixture actor binding must fold active"
     );
+}
+
+/// The vault's embedded owner, authenticated as the owner's own act: what an
+/// owner-only engine door takes, such as a booking rule amendment since
+/// 439971c2702 (#4292).
+pub(crate) fn embedded_owner(vault: &oneiron::Vault) -> oneiron::consent::AuthenticatedOwner {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("authenticate the embedded owner")
 }

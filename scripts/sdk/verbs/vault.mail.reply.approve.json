@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailReplyDraftView",
   "call": "memory.mail_reply_approve(&input)?",
   "scope": "Write",
+  "act_class": "outbound_send",
   "admission": {
     "unrestricted_record_scope": true
   },

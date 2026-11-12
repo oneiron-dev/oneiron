@@ -1,7 +1,7 @@
 //! Owner reads of measured learning state and anchored outcome projection.
 //! These doors never admit evidence or run a projector.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -362,20 +362,7 @@ fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningC
         .as_ref()
         .map(|source| self::provenance(vault, &txn, source))
         .transpose()?;
-    let mut attributed_outcome_receipts = Vec::new();
-    for row in &provenance.evidence {
-        let receipt = row
-            .evidence
-            .pack_attribution
-            .as_ref()
-            .map_or(row.receipt.as_str(), |pack| pack.outcome_receipt.as_str());
-        if !attributed_outcome_receipts
-            .iter()
-            .any(|kept| kept == receipt)
-        {
-            attributed_outcome_receipts.push(receipt.to_owned());
-        }
-    }
+    let attributed_outcome_receipts = attributed_outcome_receipts(&provenance);
     Ok(LearningCellView {
         cell: cell.into(),
         view: MeasuredLearningView {
@@ -387,6 +374,81 @@ fn read_learning(vault: &Vault, input: &LearningReadRequest) -> Result<LearningC
             prior_provenance,
         },
     })
+}
+
+/// The outcome receipts `provenance`'s evidence is attributed to, each once:
+/// a pack attribution's outcome receipt, else the evidence receipt.
+fn attributed_outcome_receipts(provenance: &LearningProvenanceView) -> Vec<String> {
+    let mut attributed = Vec::new();
+    for row in &provenance.evidence {
+        let receipt = row
+            .evidence
+            .pack_attribution
+            .as_ref()
+            .map_or(row.receipt.as_str(), |pack| pack.outcome_receipt.as_str());
+        if !attributed.iter().any(|kept| kept == receipt) {
+            attributed.push(receipt.to_owned());
+        }
+    }
+    attributed
+}
+
+/// Keeps only `receipts` in `provenance`: its evidence rows and each head's
+/// citations. Gives back how many evidence rows it dropped.
+fn scope_provenance(provenance: &mut LearningProvenanceView, receipts: &BTreeSet<String>) -> u64 {
+    let all = provenance.evidence.len();
+    provenance
+        .evidence
+        .retain(|row| receipts.contains(&row.receipt));
+    for head in &mut provenance.heads {
+        head.evidence_receipts
+            .retain(|receipt| receipts.contains(receipt));
+    }
+    u64::try_from(all.saturating_sub(provenance.evidence.len())).unwrap_or(u64::MAX)
+}
+
+/// `cell`'s reading in one snapshot, with its provenance cut to `receipts`, as
+/// a critic review's own read shows its critics' cells (`vault.critic.findings`).
+/// The estimate is the whole cell's, while evidence rows, head citations and
+/// attributed receipts, a borrowed prior's too, name only `receipts`. Also gives
+/// back how many of the cell's own evidence rows are not shown. It writes
+/// nothing and runs no projector.
+///
+/// # Errors
+///
+/// An invalid cell or type stamp; storage errors.
+pub(crate) fn receipt_scoped_cell_view(
+    vault: &Vault,
+    cell: &LearningCell,
+    parents: &[TypeRef],
+    receipts: &BTreeSet<String>,
+) -> Result<(LearningCellView, u64)> {
+    let txn = vault.store.env.read_txn()?;
+    let reading = read_learning_in_txn(vault, &txn, cell, parents)?;
+    let mut own = provenance(vault, &txn, cell)?;
+    let undisclosed = scope_provenance(&mut own, receipts);
+    let prior_provenance = reading
+        .borrowed_from
+        .as_ref()
+        .map(|source| {
+            let mut prior = provenance(vault, &txn, source)?;
+            scope_provenance(&mut prior, receipts);
+            Ok::<_, Error>(prior)
+        })
+        .transpose()?;
+    let attributed_outcome_receipts = attributed_outcome_receipts(&own);
+    let view = LearningCellView {
+        cell: cell.clone().into(),
+        view: MeasuredLearningView {
+            estimate: reading.estimate.into(),
+            own: reading.own,
+            borrowed_from: reading.borrowed_from.map(Into::into),
+            attributed_outcome_receipts,
+            provenance: own,
+            prior_provenance,
+        },
+    };
+    Ok((view, undisclosed))
 }
 
 /// Reads only the stored credit receipt. Its presence means the learning heads

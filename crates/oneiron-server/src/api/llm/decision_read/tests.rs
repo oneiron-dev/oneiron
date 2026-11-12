@@ -63,14 +63,20 @@ impl LabelReadModel for Reader {
             held = self.released.wait(held).unwrap();
         }
         drop(held);
+        // The pack (e624d9a55c3, recipe format 2): the caller's question read
+        // jointly with the paired question, then the person question apart.
+        let primary = request.questions[0];
         self.seen.lock().unwrap().push(Seen {
-            question: request.primary.text.to_owned(),
-            options: match request.primary.labels {
+            question: primary.text.to_owned(),
+            options: match primary.labels {
                 LabelSet::Noul => None,
                 LabelSet::Choice(options) => Some(options.to_vec()),
             },
-            paired: request.paired.to_owned(),
-            person: request.person.map(str::to_owned),
+            paired: primary.paired.expect("the paired question").to_owned(),
+            person: request
+                .questions
+                .get(1)
+                .map(|person| person.text.to_owned()),
             state: request.state.clone(),
         });
         self.answer.lock().unwrap().clone()
@@ -79,9 +85,10 @@ impl LabelReadModel for Reader {
 
 fn answered() -> LabelReadResponse {
     LabelReadResponse {
-        primary: vec![0.3, 0.7],
-        paired_yes: 0.2,
-        person_yes: Some(0.6),
+        // The joint readout's cells (keep, no), (keep, yes), (split, no),
+        // (split, yes): marginals keep 0.3 and split 0.7, paired yes 0.2.
+        // The person readout: yes 0.6, then no.
+        readouts: vec![vec![0.3, 0.0, 0.5, 0.2], vec![0.6, 0.4]],
         usage: LlmUsage {
             input: LlmInputUsage {
                 total: 40,
@@ -93,6 +100,7 @@ fn answered() -> LabelReadResponse {
                 reasoning: 0,
             },
             raw_provider: JsonValue::Null,
+            call_metadata: None,
         },
     }
 }
@@ -123,8 +131,9 @@ fn server(reader: &Arc<Reader>, reads: usize) -> (tempfile::TempDir, Arc<SyncSer
     let probe = ProbeQuestions {
         paired: "Think?".to_owned(),
         person: Some("Person?".to_owned()),
+        presence: None,
     };
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("owner".into()),

@@ -5,6 +5,7 @@
   "output": "crate::feeds::FeedSubscription",
   "call": "memory.feed_ack(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "openapi": true,
   "section": false
 }

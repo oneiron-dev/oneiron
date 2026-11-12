@@ -19,44 +19,44 @@
   "sourcePins": {
     "canon": [
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0066-self-healing-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0066-self-healing-v1.md",
         "sha256": "fa5bc77fb8712e740153026fab0b31ecd1dee9a4d123a161606a1f6f28662a1e"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
         "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md",
         "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0003-semantic-memory.md",
         "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0019-oneiron-db-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0019-oneiron-db-v1.md",
         "sha256": "99a775e2b95d0e7fcf1c5f7bd138882a4c0b7920239ce020e26382e718544483"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
         "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
         "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/implementation-baseline-v1.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/implementation-baseline-v1.md",
         "sha256": "a94a4fb284a264e448fc55dc4a1e2810ecf80f9bdf07e98d3cfb46c775e47dc2"
       },
       {
-        "mirror": "<workspace>/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0044-public-surface-ws.md",
+        "mirror": "<workspace>/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0044-public-surface-ws.md",
         "sha256": "e29ef93a3f343377411b6226964f0e9d3da0ca7b85df4a8845f859bf1af0b48b"
       }
     ],
     "registry": {
-      "path": "<workspace>/Desktop/code/oneiron-docs/registry/oneiron.json",
+      "path": "<workspace>/oneiron-docs/registry/oneiron.json",
       "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
       "rows": [
         "OF-024",

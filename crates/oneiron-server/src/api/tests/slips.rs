@@ -41,7 +41,7 @@ async fn descriptor_is_unauthenticated_and_pairing_link_is_one_use() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["slip_version"], 2);
     let actor = seed_turn(&server, "pairing fixture actor").to_hex();
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let link = server
         .vault()
         .issue_pairing_link(&issuer, Scope::top(), 600)
@@ -77,7 +77,7 @@ async fn descriptor_is_unauthenticated_and_pairing_link_is_one_use() {
 #[tokio::test]
 async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     let (_dir, server) = server();
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let holder = SigningKey::from_bytes(&[82; 32]);
     let mut claims = server
         .vault()
@@ -214,7 +214,7 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     let issuer = HostSlipIssuer::from_secret(b"managed-vault-root").unwrap();
     server.vault().ensure_host_root_slip(&issuer).unwrap();
     let mutable = Arc::get_mut(&mut server).unwrap();
-    mutable.managed_issuer = Some(issuer);
+    mutable.managed_issuer = Some(crate::server::ManagedIssuer::new(Some(issuer)));
     mutable.config.auth_secret = Some("supervisor-transport-not-root".into());
     mutable.config.allow_unauthenticated = false;
     let actor = seed_turn(&server, "managed pairing holder");
@@ -276,7 +276,11 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     let slip = CapabilitySlip::from_token(body["token"].as_str().unwrap()).unwrap();
     let binding = holder.sign(&slip.binding_transcript(b"managed-proof").unwrap());
-    let issuer = server.managed_issuer.as_ref().unwrap();
+    let issuer = server
+        .managed_issuer
+        .as_ref()
+        .and_then(crate::server::ManagedIssuer::issuer)
+        .unwrap();
     assert!(
         server
             .vault()
@@ -344,7 +348,7 @@ async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
     let issuer = HostSlipIssuer::from_secret(b"managed-mesh-pairing-root").unwrap();
     server.vault().ensure_host_root_slip(&issuer).unwrap();
     let mutable = Arc::get_mut(&mut server).unwrap();
-    mutable.managed_issuer = Some(issuer);
+    mutable.managed_issuer = Some(crate::server::ManagedIssuer::new(Some(issuer)));
     mutable.config.auth_secret = Some("supervisor-transport-not-root".into());
     mutable.config.allow_unauthenticated = false;
     let machine = oneiron::EntityId::now();
@@ -429,7 +433,11 @@ async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
     let mut transcript = b"oneiron/mesh-machine-binding/v1\0".to_vec();
     transcript.extend_from_slice(machine.as_bytes());
     transcript.extend_from_slice(&endpoint_key);
-    let issuer = server.managed_issuer.as_ref().unwrap();
+    let issuer = server
+        .managed_issuer
+        .as_ref()
+        .and_then(crate::server::ManagedIssuer::issuer)
+        .unwrap();
     server
         .vault()
         .bind_mesh_machine(
@@ -506,6 +514,7 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
     vault_config.retrieval_telemetry_capture = true;
     vault_config.store_clock = clock.bundle();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, SLIP_SECRET.as_bytes());
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(
         SyncServer::new(
@@ -517,7 +526,7 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
         )
         .unwrap(),
     );
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let holder = SigningKey::from_bytes(&[89; 32]);
     let mut claims = server
         .vault()
@@ -564,7 +573,7 @@ async fn vault_clock_owns_http_proof_freshness_and_replay_admission() {
 #[tokio::test]
 async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_records() {
     let (_dir, server) = server();
-    let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let holder = SigningKey::from_bytes(&[90; 32]);
     let actor = seed_turn(&server, "static capability holder");
     let mut claims = server

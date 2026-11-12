@@ -634,22 +634,17 @@ fn a_subagent_log_over_the_limit_is_left_out_and_the_rest_of_the_session_lands()
     fs::create_dir_all(&subagents).unwrap();
     bench.write(&subagents.join("agent-a7f3.jsonl"), 2, 0..2);
     let big = subagents.join("agent-b9c8.jsonl");
-    let limit = super::super::MAX_LOG_BYTES;
+    // MAX_LOG_BYTES, ImportWarning::LogTooLarge and Landed.left_out are gone
+    // (#2608, a8d1d88e1bc): the limit keeps its value here, and the asserts
+    // on the left-out list have nothing left to read (rule D).
+    let limit: u64 = 1 << 30;
     fs::File::create(&big).unwrap().set_len(limit + 1).unwrap();
     bench.hand_over(&log);
 
-    let landed = bench.pass(&vault).0.unwrap();
+    bench.pass(&vault).0.unwrap();
     assert_eq!(messages(&vault), 4, "the session and its other subagent");
-    assert_eq!(
-        serde_json::to_value(&landed.left_out).unwrap(),
-        serde_json::json!([{
-            "warning": "log_too_large",
-            "path": big,
-            "bytes": limit + 1,
-            "limit": limit,
-        }])
-    );
     assert!(bench.waiting().is_empty(), "the entry is done");
     let (landed, reads) = bench.pass(&vault);
-    assert!(landed.unwrap().left_out.is_empty() && reads.is_empty());
+    landed.unwrap();
+    assert!(reads.is_empty());
 }

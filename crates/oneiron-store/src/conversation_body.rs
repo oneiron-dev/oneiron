@@ -51,8 +51,58 @@ pub struct ConversationBody {
     pub history_visible: Option<bool>,
     pub relationship: Option<EntityId>,
     pub is_default: Option<bool>,
+    /// The room's shared pins, one record per target; only the room pin
+    /// doors write them. Absent from the bytes while empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<RoomPin>,
+    /// Who may change `pins`; only the room pin-policy door writes it.
+    /// Absent from the bytes while it is the default.
+    #[serde(skip_serializing_if = "RoomPinPolicy::is_members")]
+    pub pin_policy: RoomPinPolicy,
     #[serde(flatten)]
     pub extra: BTreeMap<String, rmpv::Value>,
+}
+
+/// One shared pin of a room (ROOM-SCOPED-PINS, owner 12 Nov 00:04): the
+/// target, the PERSON who pinned it, the AGENT_DEF that acted for that
+/// PERSON (`None` when the PERSON acted), and the engine time of the pin in
+/// Unix seconds. A pin moves its target into the PINNED tier of the boards
+/// that work in the room; every reader still reads the target as itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPin {
+    pub target: EntityId,
+    pub pinned_by: EntityId,
+    pub acting_agent: Option<EntityId>,
+    pub pinned_at: u64,
+}
+
+/// Who may change a room's shared pins: every current member (the default),
+/// or only the room's managers.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RoomPinPolicy {
+    #[default]
+    Members,
+    Managers,
+}
+impl RoomPinPolicy {
+    /// Whether this is the default policy, which a body leaves unwritten.
+    pub fn is_members(&self) -> bool {
+        *self == Self::Members
+    }
+}
+
+/// Refuses a pin list that names one target twice.
+pub fn validate_room_pins(pins: &[RoomPin]) -> Result<()> {
+    let mut targets = BTreeSet::new();
+    if pins.iter().all(|pin| targets.insert(pin.target)) {
+        Ok(())
+    } else {
+        Err(invalid("duplicate pin target"))
+    }
 }
 impl ConversationBody {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
@@ -92,7 +142,24 @@ impl ConversationBody {
     pub fn shares_history(&self) -> bool {
         self.history_visible.unwrap_or(self.kind.history_default())
     }
+    /// The project that groups this room as an extra room, from its door-owned `project_group`
+    /// key: absent reads as unlinked; a canonical 32-hex id reads as linked; any other value is
+    /// refused, so a malformed key never encodes or decodes.
+    pub fn project_group(&self) -> Result<Option<EntityId>> {
+        let Some(value) = self.extra.get(ROOM_PROJECT_GROUP_KEY) else {
+            return Ok(None);
+        };
+        let Some(id) = value.as_str() else {
+            return Err(invalid("invalid project_group"));
+        };
+        let project = EntityId::from_hex(id).map_err(|_| invalid("invalid project_group"))?;
+        if project.to_hex() != id {
+            return Err(invalid("invalid project_group"));
+        }
+        Ok(Some(project))
+    }
     fn validate(&self) -> Result<()> {
+        self.project_group()?;
         for person in self.roles.keys() {
             let id = EntityId::from_hex(person).map_err(|_| invalid("invalid role PERSON id"))?;
             if id.to_hex() != *person || !self.member_ids.contains(&id) {
@@ -120,6 +187,7 @@ impl ConversationBody {
         {
             return Err(invalid("duplicate member"));
         }
+        validate_room_pins(&self.pins)?;
         Ok(())
     }
 }
@@ -138,6 +206,10 @@ pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 
 /// The door-owned TURN body key a thread binding rides under.
 pub const ROOM_THREAD_KEY: &str = "room_thread";
+
+/// The door-owned CONVERSATION body key naming the project that groups this ordinary room as an
+/// extra room; only vault.projects.rooms.link and .unlink stamp it.
+pub const ROOM_PROJECT_GROUP_KEY: &str = "project_group";
 
 /// A thread TURN's birth binding: its thread's root, the room whose
 /// membership it reads under, the trunk turn the thread hangs off and, on
@@ -177,6 +249,13 @@ pub struct ProjectRoom {
     /// Absent on an ordinary room, so its body and API shape stay unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<RoomOriginCard>,
+    /// The home room's shared pins, as on [`ConversationBody::pins`]; the
+    /// project projector carries them forward unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<RoomPin>,
+    /// As [`ConversationBody::pin_policy`].
+    #[serde(default, skip_serializing_if = "RoomPinPolicy::is_members")]
+    pub pin_policy: RoomPinPolicy,
 }
 /// A reference to the original thread, not a second copy of its messages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

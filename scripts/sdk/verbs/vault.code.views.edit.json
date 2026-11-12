@@ -1,0 +1,20 @@
+{
+  "name": "vault.code.views.edit",
+  "description": "Replace one file's whole text in an owner working view, against the view revision and file SHA-256 last read: one operation on the view's own fork. Live owner, or an agent under a Grant bound to that view.",
+  "input": "crate::memory::code_view_doors::CodeViewEditRequest",
+  "output": "crate::memory::code_view_doors::CodeViewEdit",
+  "call": "memory.code_view_edit_as(&memory.code_view_edit_proof(\"vault.code.views.edit\"), input)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "mcp_scope": "filtered",
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "openapi": true,
+  "host_door_proof": "view_editor"
+}

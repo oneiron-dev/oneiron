@@ -8,6 +8,7 @@
   "host_door_lists": true,
   "rust_feature": "sync",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true,
     "validate": "input.validate()?;"

@@ -268,7 +268,9 @@ pub(crate) const MCP_BOARD_TASKS_SECTION: &str = "TASKS";
 /// frame is the answer, so the queue behind it is superseded and drained.
 /// Leaves the hook blocks the answer shows in `hooks`, for
 /// [`deliver_run_board_hooks`] once the answer returns to the run. A pumped
-/// run's host door binds no session, so its board renders no SCRATCHPAD.
+/// run's host door binds no session, so its board renders no SCRATCHPAD. Its
+/// board joins the shared pins of the room the attempt its writer is bound
+/// to works in (ROOM-SCOPED-PINS P2c).
 pub(crate) async fn execute_run_board_verb(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
@@ -276,21 +278,24 @@ pub(crate) async fn execute_run_board_verb(
     call: oneiron::board_verb::BoardVerbCall,
     hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
-    execute_run_board_verb_in_session(server, actor, connection, None, call, hooks).await
+    let attempt = super::board_setup::run_actor_attempt(actor);
+    execute_run_board_verb_in_session(server, actor, connection, None, attempt, call, hooks).await
 }
 
 /// [`execute_run_board_verb`] over a board bound to `session`, the session
 /// the call's host origin names (FIX 2340): its SCRATCHPAD is that
-/// session's live pad.
+/// session's live pad. `attempt`, the dispatch attempt the run serves, names
+/// the room whose shared pins its MEMORIES joins (ROOM-SCOPED-PINS P2c).
 pub(crate) async fn execute_run_board_verb_in_session(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,
     session: Option<&str>,
+    attempt: Option<oneiron::AttemptId>,
     call: oneiron::board_verb::BoardVerbCall,
     hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
-    let board = super::board_setup::run_current_board(server, actor, connection, session)
+    let board = super::board_setup::run_current_board(server, actor, connection, session, attempt)
         .await
         .map_err(run_board_error)?;
     let world = actor.entity_ref();

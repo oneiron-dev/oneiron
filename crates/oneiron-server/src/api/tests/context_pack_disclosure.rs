@@ -719,6 +719,8 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         member_ids: roster.roster.clone(),
         claims_scope_ref: roster.claims_scope_ref.clone(),
         origin: None,
+        pins: Vec::new(),
+        pin_policy: Default::default(),
     };
     // A public batch can submit the exact derived room beside its PROJECT
     // edit; the owner-signed birth above admitted the PROJECT itself.
@@ -1063,6 +1065,8 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
         member_ids: roster.roster.clone(),
         claims_scope_ref: roster.claims_scope_ref.clone(),
         origin: None,
+        pins: Vec::new(),
+        pin_policy: Default::default(),
     };
     server
         .vault
@@ -1098,8 +1102,12 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
                 metadata: Some(json!({ "rel": space.to_hex() })),
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: 2,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .expect("speak");
 
@@ -1132,6 +1140,7 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
                         created_at: 1,
                         revoked_at: None,
                         expires_at: None,
+                        companion_bounds: None,
                     },
                 )
                 .expect("grant the message's space");

@@ -88,6 +88,7 @@ pub(crate) mod history_store;
 mod lexical_query_hint;
 mod lifecycle;
 mod machine_birth;
+mod observed_preference;
 mod predicate_grammar;
 mod predicate_validators;
 mod projection_index;
@@ -120,6 +121,11 @@ pub use history_handoff::*;
 pub use lexical_query_hint::*;
 pub(crate) use lifecycle::is_observed_preference;
 pub(crate) use machine_birth::SignedClaimBirth;
+pub(crate) use observed_preference::{
+    OBSERVED_PREFERENCE_MIN_OBSERVATIONS, OBSERVED_PREFERENCE_MIN_SESSIONS,
+    is_preference_predicate, observed_preference_support_in_txn, preference_answers_agree,
+    stated_preference_peers_in_txn,
+};
 pub use oneiron_contracts::claim::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
     VerdictBasis,
@@ -132,7 +138,9 @@ pub use scope_stamp::{
     ClaimRecordScope, PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id,
     substrate_facet_id,
 };
-pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
+pub(crate) use scope_stamp::{
+    archived_default_facet, default_facet_in, record_scope_at, upgrade_pre_scope_body,
+};
 pub use scoped_read::*;
 // On its own line so no other change to the re-export list below collides
 // with it (FIX 11766).
@@ -143,7 +151,7 @@ pub(crate) use scoped_read::{
     saved_weave_loop_reason_decisions_in_txn, scrub_saved_weave_loop_reasons_in_txn,
 };
 pub use source_trust::*;
-pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker};
+pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker, write_coaching};
 pub(crate) use write_target::validate_claim_write_target_in_txn;
 #[cfg(test)]
 mod tests;

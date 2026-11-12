@@ -86,7 +86,7 @@
       "profile": "fleet20k-v1",
       "rounds": 1,
       "runtime_threads": 4,
-      "scratch": "<host-home>/w7-build/wt/W7-C10/target/fleet-scratch",
+      "scratch": "target/fleet-scratch",
       "storage_label": "worktree-filesystem",
       "timeout_secs": 600
     },

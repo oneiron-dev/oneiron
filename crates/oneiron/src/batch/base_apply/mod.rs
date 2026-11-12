@@ -304,6 +304,7 @@ pub(super) fn apply_ops_with_authority_beside(
     let run_derivations = crate::skill_attribution::run_derivations(&ops.ops, replay);
     let hub_admission = gate_mode.hub_admission.take();
     let refinement_admission = gate_mode.refinement_admission.take();
+    let owner_archive_restore = gate_mode.owner_archive_restore.take();
     let birth_mask = gate_mode.birth_mask;
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
@@ -400,6 +401,10 @@ pub(super) fn apply_ops_with_authority_beside(
     let write_policy = (contains_local_claim_put(&ops) && !claim_gate_prechecked)
         .then(|| crate::gate::resolve_policy_manifest(store, &*wtxn))
         .transpose()?;
+    let write_policy = match (write_policy, owner_archive_restore) {
+        (Some(policy), Some(permit)) => Some(policy.with_owner_archive_restore_permit(&permit)),
+        (policy, _) => policy,
+    };
     let pending_gate_consent_at_batch_start = persist_gate_pending_consent
         .then(|| pending_gate_consent_ids_at_batch_start(store, &*wtxn, &ops))
         .transpose()?

@@ -1,6 +1,7 @@
 //! Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements.
 
 use super::*;
+use oneiron::core_write::shape::{ANNOUNCEMENT_STATUS_CORRECTED, ANNOUNCEMENT_STATUS_RETRACTED};
 
 #[tokio::test]
 async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
@@ -499,7 +500,10 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     );
     assert!(deleted_body.get("item").is_none());
 
-    let too_many_refs = vec![empty_short_ref.clone(); CORE_MAX_BATCH_ENTITIES + 1];
+    // CORE_MAX_BATCH_ENTITIES is gone (#4034, 005dd2c4427); the hydrate frame
+    // keeps its 256 (rule D).
+    let too_many_refs =
+        vec![empty_short_ref.clone(); crate::api::core::CORE_HYDRATE_FRAME_REFS + 1];
     let (too_many_status, too_many_body) = route_json_auth(
         server.clone(),
         json_request(
@@ -1232,8 +1236,12 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at: at,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap();
     let bearer = owner_reader_bearer(&server);

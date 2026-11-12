@@ -75,7 +75,7 @@ impl Fixture {
         let vault =
             Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("vault"));
         let server = Arc::new(
-            SyncServer::new(
+            crate::test_credentials::server_with_fixture_keystore(
                 vault,
                 crate::config::SyncServerConfig {
                     auth_secret: Some("owner-fixture-secret".to_owned()),
@@ -139,22 +139,22 @@ impl Fixture {
             config: self.config.clone(),
         })
         .expect("config");
+        let mut body = ClaimBody::new(
+            BOOKING_EVENT_TYPE_PREDICATE,
+            ClaimSubject::Entity(page),
+            value,
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        // A CLAIM birth stamps its body's facet, and the page is not a
+        // PERSON, so the constructor's derived substrate names no stored
+        // FACET. Every page's configuration takes the vault default instead.
+        body.scope_facet = self.server.vault.default_facet().expect("default facet");
         self.server
             .vault
-            .put_claim(
-                &claim_id,
-                &ClaimBody::new(
-                    BOOKING_EVENT_TYPE_PREDICATE,
-                    ClaimSubject::Entity(page),
-                    value,
-                    1.0,
-                    ClaimApprovalStatus::Auto,
-                    ClaimLifecycleStatus::Active,
-                )
-                .unwrap(),
-                TimeRange { start: 1, end: 1 },
-                1,
-            )
+            .put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)
             .expect("config claim");
     }
 
@@ -318,6 +318,8 @@ pub(super) fn publication_input(
             window_secs: 86_400,
             visitor_tz: "UTC".to_owned(),
         },
+        constraint_front: None,
+        sponsor: None,
     };
     ClaimInput {
         id: None,
@@ -334,6 +336,7 @@ pub(super) fn publication_input(
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 

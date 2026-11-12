@@ -43,6 +43,22 @@ pub(super) fn validate_critique_artifact(artifact: &CritiqueArtifact) -> Result<
     if let Some(suggested_edit) = &artifact.suggested_edit {
         validate_text(suggested_edit, MAX_SUGGESTED_EDIT_BYTES, "suggested_edit")?;
     }
+    if let Some(flaw) = &artifact.flaw {
+        validate_flaw(flaw)?;
+    }
+    Ok(())
+}
+
+/// A flaw identity's shape: its kind a token, a byte range nonempty. Whether
+/// the range is inside the target needs the review's state, which its review
+/// checks.
+pub(super) fn validate_flaw(flaw: &FlawIdentity) -> Result<()> {
+    validate_identifier(&flaw.kind, MAX_FLAW_KIND_BYTES, "flaw kind")?;
+    if let FlawLocation::BodyBytes { start, end } = flaw.location
+        && start >= end
+    {
+        return Err(invalid_critic_config("a flaw's byte range is empty"));
+    }
     Ok(())
 }
 

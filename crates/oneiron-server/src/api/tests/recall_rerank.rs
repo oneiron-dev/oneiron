@@ -165,6 +165,7 @@ async fn served_with(
 ) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -1064,6 +1065,7 @@ async fn every_effort_through_mcp_on_the_local_embedder_and_a_loopback_reranker(
     vault_config.dimensions = 1024;
     vault_config.embedding_model = Some(model_id.clone());
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config.clone()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let receipts = Arc::new(MemoryReceipts::default());
     let server = SyncServer::new(
         vault,
@@ -1074,13 +1076,14 @@ async fn every_effort_through_mcp_on_the_local_embedder_and_a_loopback_reranker(
     )
     .unwrap()
     .with_run_receipts(receipts.clone())
-    .with_owner_host(crate::owner::schedule::OwnerHost {
-        vault_path: dir.path().to_path_buf(),
-        vault_config,
-        backups: crate::owner::backup::BackupPlan::new(dir.path(), backups.path().to_path_buf(), 2),
-        every: None,
-        backup_lock: std::sync::Mutex::new(()),
-        rehearse_temp: None,
+    // The owner host is built from its config since #3229 (fields private);
+    // `[backup]` off by default, as `every: None` was.
+    .with_owner_host({
+        let mut config = crate::config::ServeConfig::default();
+        config.vault_path = dir.path().to_path_buf();
+        config.backup.dir = Some(backups.path().to_path_buf());
+        config.backup.keep = 2;
+        crate::owner::schedule::OwnerHost::from_config(&config, vault_config)
     })
     .with_embedder(crate::embedder::EmbedderSlot::from_config(&embedder).unwrap());
     let (server, _host) = AiHost::attach(server, Some(&models)).await;

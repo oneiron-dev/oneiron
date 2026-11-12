@@ -1,7 +1,10 @@
 //! Credential-safe, type-preserving MessagePack values for whole-vault JSON.
 //!
-//! No raw/base64 body is shipped inside this tree. Unknown binary and extension
-//! payloads are nulled: an opaque byte string is not proof that it is public data.
+//! No raw/base64 body is shipped inside this tree, except in the Owner's
+//! whole-vault archive with secrets included, which carries raw Binary/Ext
+//! leaves; every other export never does. Unknown binary and extension
+//! payloads are otherwise nulled: an opaque byte string is not proof that it
+//! is public data.
 //! A stored file is no tree: the whole-vault archive carries its bytes beside the
 //! document as they are stored (OF-222), and the tree names them ([`ExportBodyFile`]).
 //! A value is kept at any depth, and its archive form is flat (FIX 10097, [`tree`]).
@@ -29,6 +32,28 @@ mod tree;
 /// none of it (FIX 10097).
 const TEXT_DEPTH: usize = 128;
 
+/// Whether an export's serializer nulls credentials (every export but one) or
+/// keeps them (the Owner's whole-vault archive with secrets included).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExportSecrets {
+    Nulled,
+    Included,
+}
+
+impl ExportSecrets {
+    /// The policy of the archive `manifest` describes: [`Self::Included`] iff
+    /// the manifest says its secrets were not nulled, else [`Self::Nulled`].
+    /// Every read/validate/import site of a whole-vault archive derives its
+    /// policy from the manifest once through this helper.
+    pub(crate) fn of_manifest(manifest: &crate::batch::export::WholeVaultDocumentManifest) -> Self {
+        if manifest.secrets_nulled {
+            Self::Nulled
+        } else {
+            Self::Included
+        }
+    }
+}
+
 /// A MessagePack value with explicit numeric widths and binary-reference types.
 /// Map entries stay ordered, including duplicate keys; they are not JSON objects.
 /// It serializes as its nodes in postorder ([`tree`]): no depth of value
@@ -45,6 +70,13 @@ pub enum ExportValue {
     EntityReference(Vec<u8>),
     /// Inspectable UTF-8 binary; the decoder restores MessagePack Binary.
     BinaryText(String),
+    /// Raw MessagePack Binary that is neither an id reference nor printable
+    /// UTF-8. Only the Owner's whole-vault archive with secrets included
+    /// writes one; every other export nulls it.
+    Binary(Vec<u8>),
+    /// Raw MessagePack Ext. Only the Owner's whole-vault archive with secrets
+    /// included writes one; every other export nulls it.
+    Ext(i8, Vec<u8>),
     Array(Vec<Self>),
     Map(Vec<(Self, Self)>),
     Nil,
@@ -152,17 +184,30 @@ pub(crate) fn attaches_as_file(entity_type: u8, body: &[u8]) -> bool {
 }
 
 impl ExportBody {
+    /// [`Self::from_bytes_with`] under [`ExportSecrets::Nulled`]: every export
+    /// but the Owner's whole-vault archive with secrets included.
     pub(crate) fn from_bytes(bytes: &[u8], entity_type: u8) -> Self {
+        Self::from_bytes_with(bytes, entity_type, ExportSecrets::Nulled)
+    }
+
+    /// A stored body as its typed export under `secrets`. Under
+    /// [`ExportSecrets::Included`] (the Owner's whole-vault archive with
+    /// secrets included) credential fields, opaque binary/ext payloads and
+    /// UTF-8 text are kept byte-equal to stored; under [`ExportSecrets::Nulled`]
+    /// every rule is byte-for-byte as [`Self::from_bytes`] always was.
+    pub(crate) fn from_bytes_with(bytes: &[u8], entity_type: u8, secrets: ExportSecrets) -> Self {
         if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
             return match crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(bytes) {
-                Ok(value) => Self::Pack(Box::new(super::ExportPackInstance::from_envelope(value))),
+                Ok(value) => Self::Pack(Box::new(super::ExportPackInstance::from_envelope_with(
+                    value, secrets,
+                ))),
                 Err(_) => Self::Nulled,
             };
         }
         if entity_type == crate::registry::ENTITY_TYPE_ASSET {
             match crate::store::skill_source_carrier::decode_source_carrier(bytes) {
                 Ok(Some((holder, package))) => {
-                    return super::ExportHubSource::from_package(&holder, &package)
+                    return super::ExportHubSource::from_package_with(&holder, &package, secrets)
                         .map_or(Self::Nulled, |source| Self::HubSource(Box::new(source)));
                 }
                 Err(_) => return Self::Nulled,
@@ -173,17 +218,21 @@ impl ExportBody {
         if let Ok(value) = rmpv::decode::read_value(&mut cursor)
             && cursor.position() == bytes.len() as u64
         {
-            let mut exported = tree::export_value_tree(&value, entity_type, 0);
+            let mut exported = tree::export_value_tree_with(&value, entity_type, 0, secrets);
             if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-                export_provenance_references(bytes, &mut exported);
+                export_provenance_references(bytes, &mut exported, secrets);
                 if let Ok(body) = crate::write_envelope::claim_body::decode_claim_body(bytes, true)
                 {
                     export_scope_references(&body, &mut exported);
-                    super::export_actor_references::export_actor_references(&body, &mut exported);
+                    super::export_actor_references::export_actor_references(
+                        &body,
+                        &mut exported,
+                        secrets,
+                    );
                 }
             }
             if entity_type == crate::registry::ENTITY_TYPE_FACET {
-                export_substrate_reference(&value, &mut exported);
+                export_substrate_reference(&value, &mut exported, secrets);
             }
             // The NOTE codec has one validated binary revision reference.
             // Treating it as arbitrary opaque bytes would null it and make a live
@@ -205,7 +254,12 @@ impl ExportBody {
                     .map(|core| core.source_revision_ref)
                 })
             {
-                export_note_references(&source_revision_ref, &mut exported);
+                export_note_references(&source_revision_ref, &mut exported, secrets);
+            }
+            // Under Included the tree keeps credentials, so no reference is
+            // nulled and no whole-read gate runs: the MessagePack goes out.
+            if secrets == ExportSecrets::Included {
+                return Self::MessagePack(exported);
             }
             // An id slot is required where it sits (a CLAIM's subject), so a
             // body with one nulled is no body its codec reads: none goes out.
@@ -220,6 +274,7 @@ impl ExportBody {
             };
         }
         match std::str::from_utf8(bytes) {
+            Ok(text) if secrets == ExportSecrets::Included => Self::Utf8(text.to_owned()),
             Ok(text) if safe_text(text, 0) => Self::Utf8(text.to_owned()),
             _ => Self::Nulled,
         }
@@ -280,17 +335,38 @@ impl ExportBody {
 
     /// The stored bytes, a file body's read from the archive's files, and a
     /// hub source's with its file members read from them (FIX 10101).
+    /// [`Self::to_bytes_in_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn to_bytes_in(&self, files: &dyn ArchiveFiles) -> Result<Vec<u8>> {
+        self.to_bytes_in_with(files, ExportSecrets::Nulled)
+    }
+
+    /// [`Self::to_bytes_in`] under `secrets`: a hub source rebuilds with
+    /// [`super::ExportHubSource::to_bytes_in_with`], so a kept credential tree
+    /// restores its exact package; any other body reads as always.
+    pub(crate) fn to_bytes_in_with(
+        &self,
+        files: &dyn ArchiveFiles,
+        secrets: ExportSecrets,
+    ) -> Result<Vec<u8>> {
         match self {
             Self::File(file) => file.read(files),
-            Self::HubSource(value) => value.to_bytes_in(files),
+            Self::HubSource(value) => value.to_bytes_in_with(files, secrets),
             body => body.to_bytes(),
         }
     }
 
     /// Verify imported typed trees through the same serializer transform. No
     /// forged binary tag or proof boolean may smuggle a credential on reimport.
+    /// [`Self::validate_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn validate(&self, entity_type: u8) -> Result<()> {
+        self.validate_with(entity_type, ExportSecrets::Nulled)
+    }
+
+    /// [`Self::validate`] under `secrets`: the round trip re-runs
+    /// [`Self::from_bytes_with`] with the same policy, a hub source validates
+    /// with [`super::ExportHubSource::validate_in_with`], and a pack with
+    /// [`super::ExportPackInstance::validate_with`].
+    pub(crate) fn validate_with(&self, entity_type: u8, secrets: ExportSecrets) -> Result<()> {
         if matches!(self, Self::Nulled) {
             return Ok(());
         }
@@ -298,16 +374,19 @@ impl ExportBody {
             if entity_type != crate::registry::ENTITY_TYPE_ASSET {
                 return Err(invalid("hub source attached to non-asset kind"));
             }
-            return value.validate();
+            return value.validate_with(secrets);
         }
         if let Self::Pack(value) = self {
             if crate::registry::zone_of(entity_type) != crate::registry::TypeByteZone::PackHandle {
                 return Err(invalid("pack envelope attached to non-pack kind"));
             }
-            return value.validate();
+            return value.validate_with(secrets);
         }
         let bytes = self.to_bytes()?;
-        if Self::from_bytes(&bytes, entity_type) != *self {
+        if Self::from_bytes_with(&bytes, entity_type, secrets) != *self {
+            if secrets == ExportSecrets::Included {
+                return Err(invalid("body is not canonical credential-kept export data"));
+            }
             return Err(invalid(
                 "body is not canonical credential-nulled export data",
             ));
@@ -321,15 +400,29 @@ impl ExportBody {
     /// body or text passes as a file. The file is judged as it streams from
     /// the archive, checked to its end, never held whole (FIX 3677). A hub
     /// source's file members are read from them too (FIX 10101).
+    /// [`Self::validate_in_with`] under [`ExportSecrets::Nulled`].
     pub(crate) fn validate_in(&self, entity_type: u8, files: &dyn ArchiveFiles) -> Result<()> {
+        self.validate_in_with(entity_type, files, ExportSecrets::Nulled)
+    }
+
+    /// [`Self::validate_in`] under `secrets`: a hub source validates with
+    /// [`super::ExportHubSource::validate_in_with`], any other non-file body
+    /// with [`Self::validate_with`]; a file body is judged as it streams, as
+    /// always.
+    pub(crate) fn validate_in_with(
+        &self,
+        entity_type: u8,
+        files: &dyn ArchiveFiles,
+        secrets: ExportSecrets,
+    ) -> Result<()> {
         if let Self::HubSource(value) = self {
             if entity_type != crate::registry::ENTITY_TYPE_ASSET {
                 return Err(invalid("hub source attached to non-asset kind"));
             }
-            return value.validate_in(files);
+            return value.validate_in_with(files, secrets);
         }
         let Self::File(file) = self else {
-            return self.validate(entity_type);
+            return self.validate_with(entity_type, secrets);
         };
         if entity_type != crate::registry::ENTITY_TYPE_ASSET {
             return Err(invalid("file body attached to non-asset kind"));
@@ -404,8 +497,13 @@ fn export_scope_references(
 
 // The NOTE codec proves this one top-level binary revision is a reference,
 // not arbitrary payload. The author ref is a hex STRING and stays one.
-fn export_note_references(source_revision_ref: &[u8; 16], exported: &mut ExportValue) {
-    if scan_file_content("", source_revision_ref).is_some() {
+// Under Included the credential scan is skipped: the reference is kept.
+fn export_note_references(
+    source_revision_ref: &[u8; 16],
+    exported: &mut ExportValue,
+    secrets: ExportSecrets,
+) {
+    if secrets == ExportSecrets::Nulled && scan_file_content("", source_revision_ref).is_some() {
         return;
     }
     let ExportValue::Map(entries) = exported else {
@@ -420,7 +518,8 @@ fn export_note_references(source_revision_ref: &[u8; 16], exported: &mut ExportV
 
 // A PERSON substrate mask names its PERSON by id; the FACET put door re-proves
 // that the mask id binds that PERSON before an imported row lands.
-fn export_substrate_reference(value: &Mp, exported: &mut ExportValue) {
+// Under Included the credential scan is skipped: the reference is kept.
+fn export_substrate_reference(value: &Mp, exported: &mut ExportValue, secrets: ExportSecrets) {
     let (Mp::Map(entries), ExportValue::Map(exported)) = (value, exported) else {
         return;
     };
@@ -436,7 +535,7 @@ fn export_substrate_reference(value: &Mp, exported: &mut ExportValue) {
             && let Mp::Binary(bytes) = value
             && <[u8; 16]>::try_from(bytes.as_slice())
                 .is_ok_and(|id| crate::entity_id::EntityId::from_bytes(id).is_ok())
-            && scan_file_content("", bytes).is_none()
+            && (secrets == ExportSecrets::Included || scan_file_content("", bytes).is_none())
         {
             *out = ExportValue::EntityReference(bytes.clone());
         }
@@ -446,7 +545,8 @@ fn export_substrate_reference(value: &Mp, exported: &mut ExportValue) {
 // Only the owning, validated edge.provenance value map gets these four
 // binary reference fields. An equally named field in arbitrary evidence is
 // still subject to ordinary opaque-byte nulling.
-fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue) {
+// Under Included the credential scan is skipped: the references are kept.
+fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue, secrets: ExportSecrets) {
     let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(bytes, true) else {
         return;
     };
@@ -487,7 +587,7 @@ fn export_provenance_references(bytes: &[u8], exported: &mut ExportValue) {
         ("body_snapshot_ref", record.body_snapshot_ref),
     ] {
         if let Some(bytes) = bytes {
-            if scan_file_content("", &bytes).is_some() {
+            if secrets == ExportSecrets::Nulled && scan_file_content("", &bytes).is_some() {
                 continue;
             }
             if let Some(value) = values.iter_mut().find_map(|(key, value)| {

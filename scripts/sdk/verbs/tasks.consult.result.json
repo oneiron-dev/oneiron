@@ -3,6 +3,7 @@
   "input": "crate::task_verb::run_doors::ConsultLandRequest",
   "output": "crate::task_verb::run_doors::ConsultLandReply",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "run",
   "effect": "ConsultResult",
   "run_surface": "live"

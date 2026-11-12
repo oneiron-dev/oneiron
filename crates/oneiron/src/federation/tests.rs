@@ -300,10 +300,10 @@ fn delegate_minting_never_self_widens() {
     assert!(!FederationGrantRole::Delegate.is_admin());
     for role in [
         FederationGrantRole::Owner,
+        FederationGrantRole::Deputy,
         FederationGrantRole::Admin,
         FederationGrantRole::Member,
         FederationGrantRole::Viewer,
-        FederationGrantRole::Auditor,
         FederationGrantRole::Delegate,
         FederationGrantRole::Guest,
     ] {
@@ -311,9 +311,11 @@ fn delegate_minting_never_self_widens() {
             role.is_admin(),
             matches!(
                 role,
-                FederationGrantRole::Owner | FederationGrantRole::Admin
+                FederationGrantRole::Owner
+                    | FederationGrantRole::Deputy
+                    | FederationGrantRole::Admin
             ),
-            "{role:?}: is_admin must stay Owner/Admin only"
+            "{role:?}: is_admin must stay Owner/Deputy/Admin only"
         );
     }
 
@@ -325,6 +327,10 @@ fn delegate_minting_never_self_widens() {
         (
             "admin",
             non_delegate_grant(FederationGrantRole::Admin, FederationGrantPreset::Admin),
+        ),
+        (
+            "deputy",
+            non_delegate_grant(FederationGrantRole::Deputy, FederationGrantPreset::Admin),
         ),
     ] {
         FederationGrant::attenuated_delegate(
@@ -344,10 +350,6 @@ fn delegate_minting_never_self_widens() {
         (
             "viewer",
             non_delegate_grant(FederationGrantRole::Viewer, FederationGrantPreset::ReadOnly),
-        ),
-        (
-            "auditor",
-            non_delegate_grant(FederationGrantRole::Auditor, FederationGrantPreset::Audit),
         ),
         // One hop, not a chain.
         ("delegate", delegate),
@@ -376,14 +378,13 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
         FederationGrantPreset::Admin,
         FederationGrantPreset::Member,
         FederationGrantPreset::ReadOnly,
-        FederationGrantPreset::Audit,
     ];
     let non_delegate_roles = [
         FederationGrantRole::Owner,
+        FederationGrantRole::Deputy,
         FederationGrantRole::Admin,
         FederationGrantRole::Member,
         FederationGrantRole::Viewer,
-        FederationGrantRole::Auditor,
     ];
 
     for preset in non_delegate_presets {
@@ -431,19 +432,14 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
     for preset in non_delegate_presets {
         for role in non_delegate_roles {
             let expected = match preset {
-                FederationGrantPreset::Owner => true,
+                // A Deputy rides only the Admin envelope.
+                FederationGrantPreset::Owner => !matches!(role, FederationGrantRole::Deputy),
                 FederationGrantPreset::Admin => !matches!(role, FederationGrantRole::Owner),
                 FederationGrantPreset::Member => matches!(
                     role,
-                    FederationGrantRole::Member
-                        | FederationGrantRole::Viewer
-                        | FederationGrantRole::Auditor
+                    FederationGrantRole::Member | FederationGrantRole::Viewer
                 ),
-                FederationGrantPreset::ReadOnly => matches!(
-                    role,
-                    FederationGrantRole::Viewer | FederationGrantRole::Auditor
-                ),
-                FederationGrantPreset::Audit => matches!(role, FederationGrantRole::Auditor),
+                FederationGrantPreset::ReadOnly => matches!(role, FederationGrantRole::Viewer),
                 FederationGrantPreset::Delegate | FederationGrantPreset::Guest => {
                     unreachable!("non-delegate presets only")
                 }
@@ -499,9 +495,9 @@ fn role_conditional_fields_are_required_and_forbidden() {
             FederationGrantPreset::ReadOnly,
         ),
         (
-            "auditor",
-            FederationGrantRole::Auditor,
-            FederationGrantPreset::Audit,
+            "deputy",
+            FederationGrantRole::Deputy,
+            FederationGrantPreset::Admin,
         ),
     ] {
         let grant = non_delegate_grant(role, preset);
@@ -1216,6 +1212,19 @@ fn relationship_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
+/// The vault owner's proof a member binding is written under.
+fn binding_owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 #[test]
 fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()> {
     let (_dir, vault) = relationship_vault();
@@ -1223,9 +1232,16 @@ fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()
     let ghost = entity(GHOST_PERSON_SEED);
 
     assert_eq!(
-        bind_member_person(&vault, member, ghost, relationship_time(), 1)
-            .expect_err("nonexistent person must be refused")
-            .kind(),
+        bind_member_person(
+            &vault,
+            &binding_owner(&vault),
+            member,
+            ghost,
+            relationship_time(),
+            1
+        )
+        .expect_err("nonexistent person must be refused")
+        .kind(),
         ErrorKind::EntityNotFound
     );
     // Refusal precedes the write: no claim landed on the member.
@@ -1236,7 +1252,14 @@ fn bind_member_person_refuses_a_nonexistent_person_before_writing() -> Result<()
     );
 
     let person = entity(PERSON_SEED);
-    let claim = bind_member_person(&vault, member, person, relationship_time(), 1)?;
+    let claim = bind_member_person(
+        &vault,
+        &binding_owner(&vault),
+        member,
+        person,
+        relationship_time(),
+        1,
+    )?;
     let body = vault.get_claim(&claim)?.expect("bound claim body");
     assert_eq!(body.predicate, PREDICATE_RELATIONSHIP_PERSON_REF);
     assert_eq!(body.subject, ClaimSubject::Entity(member));
@@ -3329,7 +3352,14 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
         Ok(id)
     };
     let shared = relationship(0xB1)?;
-    let binding = bind_member_person(&vault, shared, person, relationship_time(), 1)?;
+    let binding = bind_member_person(
+        &vault,
+        &binding_owner(&vault),
+        shared,
+        person,
+        relationship_time(),
+        1,
+    )?;
     let backups = crate::test_support::restore_tempdir();
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
@@ -3357,7 +3387,14 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
     let before_binding = backups.path().join("before-binding");
     vault.snapshot_checkpoint(&before_binding, 110)?;
     let later = relationship(0xB2)?;
-    bind_member_person(&vault, later, person, relationship_time(), 2)?;
+    bind_member_person(
+        &vault,
+        &binding_owner(&vault),
+        later,
+        person,
+        relationship_time(),
+        2,
+    )?;
     refused(&before_binding, "after-binding");
     Ok(())
 }

@@ -77,6 +77,8 @@ fn facets() -> Facets {
             member_ids: roster.roster.clone(),
             claims_scope_ref: roster.claims_scope_ref.clone(),
             origin: None,
+            pins: Vec::new(),
+            pin_policy: Default::default(),
         };
         server
             .vault
@@ -112,8 +114,12 @@ fn facets() -> Facets {
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: 2,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .expect("speak");
         Room {

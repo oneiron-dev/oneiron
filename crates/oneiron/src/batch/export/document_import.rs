@@ -3,6 +3,11 @@
 //! each pass reads one row at a time from it; the dependency queues, id sets
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
+mod owner_archive_restore;
+mod seed_replacement;
+
+pub(crate) use owner_archive_restore::OwnerArchiveRestorePermit;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
@@ -12,10 +17,12 @@ use super::archive_index::{
     ArchiveIndex, EntityAt, FLAG_EXPRESSION, FLAG_PACK_BODY, FLAG_PROVENANCE, IndexedArchive,
     QUEUE_EXPRESSION, QUEUE_PROVENANCE, QUEUE_ROW, Section, Tag, id_at, id_list, ids_of, ready_key,
 };
+use super::bundle_validation::{ReservedClaimImport, ReservedClaimRestore};
 use super::result_import::put_run_results_in_txn;
 use super::{
     ArchiveFiles, ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity,
-    ExportResultBody, ExportSkillBundle, WholeVaultDocument, WholeVaultImportReceipt,
+    ExportImportOmission, ExportResultBody, ExportSkillBundle, ImportOmissionReason,
+    WholeVaultDocument, WholeVaultImportReceipt,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -25,15 +32,15 @@ use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
     ENTITY_TYPE_WORKFLOW,
 };
-use crate::serialize::{ExportBody, ExportBodyFile};
+use crate::serialize::{ExportBody, ExportBodyFile, ExportSecrets};
 use crate::temporal::TimeRange;
-use crate::vault::live_entity_row_in_txn;
+use crate::vault::{EngineSeedIdentities, live_entity_row_in_txn};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::{ClaimSubject, decode_claim_body, encode_claim_body};
-use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimSource};
+use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 
 impl Vault {
     /// Validates a whole-vault archive (OF-222) and the document its records
@@ -71,6 +78,7 @@ impl Vault {
     /// Missing claim-class vocabulary returns through its native setting door,
     /// without foreign owner stamps; enforcement follows this build's compiled
     /// equivalence. An exact normalized repeat is unchanged.
+    /// Unchanged engine seeds compare apart from seed times and keep the destination's times.
     ///
     /// Witness MESSAGE rows come back as imported evidence (FIX 7777): typed
     /// `import.archive`, marked `metadata.import.source = "archive"`, with the
@@ -80,8 +88,13 @@ impl Vault {
     /// imported one, which matches no local writer, and no `AuthoredBy`
     /// edge; a stored NOTE compares as its live body, as the export reads it.
     ///
-    /// Same-ID divergent rows are refused, never overwritten. Other maintenance rows,
-    /// other reserved claims and owned/provenanced edges need
+    /// Same-ID divergent rows are refused, never overwritten. A reserved claim
+    /// comes back through its owning restore door or stays archive data with
+    /// the reason the manifest names (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS). An
+    /// archived `vault.default_facet` sets this vault's default facet only in the
+    /// owner's restore into a fresh vault; otherwise it stays archive data, named
+    /// in the receipt's `destination_omissions`. Other maintenance rows and
+    /// owned/provenanced edges need
     /// their owning import adapter and fail through the existing public doors.
     /// Such a failure aborts the entire transaction, not a partial import.
     /// The manifest explicitly marks hub configuration and foreign skill signals
@@ -99,11 +112,19 @@ impl Vault {
     /// group or file map is held whole, each attached file is read when its
     /// row goes in, and the import is still one atomic write transaction.
     /// The rows wait in a disk-backed row index (FIX 3678), never in memory.
+    ///
+    /// The CLI uses [`Self::import_whole_vault_archive_from_as_owner`] when this vault's
+    /// bound owner authenticates, and this actorless door otherwise. Only an archive with
+    /// expression preferences needs the owner; its refusal says how to bind the owner.
+    /// The owner door carries a permit for that restore only, with a `gate:<id>` receipt of
+    /// content kind `owner_archive_restore` naming the full document-manifest digest.
+    /// No policy changes. The actor-taking door still requires its existing local
+    /// Imported-source Auto grant for expression preferences.
     pub fn import_whole_vault_archive_from<R: Read + Seek>(
         &self,
         source: R,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(source, None)
+        self.import_whole_vault_archive_as(source, None, None)
     }
 
     /// Imports with a current local actor authenticated by the host. Never use
@@ -125,20 +146,41 @@ impl Vault {
         source: R,
         actor: &WriteActor,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(source, Some(actor))
+        self.import_whole_vault_archive_as(source, Some(actor), None)
+    }
+
+    /// Restores the owner's own whole-vault archive as the bound vault owner proved by
+    /// `owner`, never an actor taken from the archive. Expression preferences carry an
+    /// Imported-source Auto permit for this synchronous call only, recorded as an owner-act
+    /// receipt naming the archive in `owner_restore_receipt_ref`. No policy is changed and
+    /// no later write gains a permit. In a destination proved fresh before any import write,
+    /// owner-edited census AGENT_DEF, PERSON and SKILL seeds replace their fresh rows with the
+    /// archive's native bodies and header times, through the owner's own edit writers; they
+    /// keep the destination's birth metadata and are counted in `replaced_seed_entities`.
+    pub fn import_whole_vault_archive_from_as_owner<R: Read + Seek>(
+        &self,
+        source: R,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_archive_as(source, None, Some(owner))
     }
 
     fn import_whole_vault_archive_as<R: Read + Seek>(
         &self,
         source: R,
         actor: Option<&WriteActor>,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<WholeVaultImportReceipt> {
         let scratch = self
             .store
             .archive_scratch_env(self.config.page_seal.as_ref())?;
         let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
-        archive.validate(self)?;
-        if actor.is_none() && archive.expressions {
+        // The archive's policy, derived once from its manifest: validation and
+        // every kept body and source tree below reuse it, while agent facets
+        // and receipt sources stay Nulled.
+        let secrets = ExportSecrets::of_manifest(&archive.manifest);
+        archive.validate_with(self, secrets)?;
+        if actor.is_none() && owner.is_none() && archive.expressions {
             return Err(actor_required());
         }
         let authority =
@@ -181,13 +223,33 @@ impl Vault {
         let _bodies = self.pin_all_result_bodies();
         let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
         let mut wtxn = self.store.env.write_txn()?;
+        let seeds = EngineSeedIdentities::load()?;
+        let restore_fresh =
+            owner.is_some() && self.first_non_bootstrap_row_in_txn(&wtxn)?.is_none();
         let assets = super::asset_reserve::ArchiveAssets {
             mint,
             known: self.asset_stream_known_in_txn(&mut wtxn)?,
         };
-        if let Some(actor) = actor {
-            super::expression_import::validate_local_actor(self, &wtxn, actor)?;
-        }
+        let mut owner_actor = None;
+        let permit = if let Some(owner) = owner {
+            let actor =
+                owner_archive_restore::owner_archive_restore_actor_in_txn(self, &wtxn, owner)?;
+            let owner_id = actor.entity_ref();
+            let receipt = owner_archive_restore::record_owner_archive_restore_in_txn(
+                self,
+                &mut wtxn,
+                actor,
+                owner_archive_restore::full_manifest_digest(&archive.manifest)?,
+            )?;
+            owner_actor = Some(actor);
+            Some(OwnerArchiveRestorePermit::mint(owner_id, receipt))
+        } else {
+            if let Some(actor) = actor {
+                super::expression_import::validate_local_actor(self, &wtxn, actor)?;
+            }
+            None
+        };
+        let actor = owner_actor.as_ref().or(actor);
         withhold_unborn_projects(self, &wtxn, &mut archive)?;
         let projects = map_project_root(self, &wtxn, &mut archive)?;
         omit_project_revisions(self, &mut archive)?;
@@ -196,7 +258,7 @@ impl Vault {
         let mut after = None;
         while let Some((id, at)) = archive.next_entity(after.as_ref())? {
             if at.section == Section::Ledger && at.has(FLAG_PACK_BODY) {
-                imported_row(self, &wtxn, &archive, &at, None)?;
+                imported_row(self, &wtxn, &archive, &at, None, secrets)?;
             }
             after = Some(id);
         }
@@ -209,6 +271,8 @@ impl Vault {
         let mut pending = 0;
         let mut inserted_descriptors = 0;
         let mut unchanged_entities = model_imports.unchanged;
+        let mut replaced_seed_entities = 0;
+        let mut replaced_seed_agents = Vec::new();
         let mut after = None;
         while let Some((id, at)) = archive.next_entity(after.as_ref())? {
             after = Some(id);
@@ -222,13 +286,21 @@ impl Vault {
             if self.store.off_record_sessions.contains_entity(&id)? {
                 return Err(invalid("import ID belongs to an off-record overlay"));
             }
-            let row = imported_row(self, &wtxn, &archive, &at, projects.as_ref())?;
+            let row = imported_row(self, &wtxn, &archive, &at, projects.as_ref(), secrets)?;
             let existing = match &row.body {
+                // Seed restore may have already created this ASSET from its
+                // archived carrier. Queue its ordinary replay in either id
+                // order, including archived birth and door-minted facet edges.
+                ExportBody::HubSource(_)
+                    if archive.index.contains(Tag::Inserted, id.as_bytes())? =>
+                {
+                    None
+                }
                 // OF-222, FIX 3677: a file body meets no lossy form and no
                 // copy of the row stored under its id.
                 ExportBody::File(file) => {
                     if file_row_stored(self, &wtxn, &id, &row, file, &archive.files)? {
-                        validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                        validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                         stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                         unchanged_entities += 1;
                         continue;
@@ -245,8 +317,8 @@ impl Vault {
                 // its row keeps (FIX 3677).
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 let existing = live_note_row(self, &wtxn, &id, existing)?;
-                if matches_row(&row, &existing, &row.body) {
-                    validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                if matches_row(&row, &existing, &row.body, secrets) {
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     if row.entity_type == ENTITY_TYPE_MESSAGE {
                         super::evidence_import::validate_stored_message(
                             self, &wtxn, &archive, &id,
@@ -256,13 +328,14 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(&row, &archive.index, &archive.files)?;
+                let body = imported_body(&row, &archive.index, &archive.files, secrets)?;
                 if matches_row(
                     &row,
                     &existing,
-                    &ExportBody::from_bytes(&body, row.entity_type),
+                    &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
+                    secrets,
                 ) {
-                    validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
                     if row.entity_type == ENTITY_TYPE_MESSAGE {
                         super::evidence_import::validate_stored_message(
                             self, &wtxn, &archive, &id,
@@ -270,6 +343,40 @@ impl Vault {
                     }
                     stamp_archived_birth(self, &mut wtxn, &archive, &id)?;
                     unchanged_entities += 1;
+                    continue;
+                }
+                if seeds.is_pack_seed(row.entity_type, &id)
+                    && (matches_seed_row_apart_from_seed_times(&row, &existing, &row.body, secrets)
+                        || matches_seed_row_apart_from_seed_times(
+                            &row,
+                            &existing,
+                            &ExportBody::from_bytes_with(&body, row.entity_type, secrets),
+                            secrets,
+                        ))
+                {
+                    validate_existing_source(self, &wtxn, &row, &archive, &at, secrets)?;
+                    // Keep the destination seed's birth metadata as well as its header.
+                    unchanged_entities += 1;
+                    continue;
+                }
+                if restore_fresh
+                    && let Some(owner) = owner
+                    && seed_replacement::replace_edited_seed_in_txn(
+                        self,
+                        &mut wtxn,
+                        owner,
+                        &seeds,
+                        &row,
+                        &row.body.to_bytes_in_with(&archive.files, secrets)?,
+                        &mut archive,
+                        &at,
+                        secrets,
+                    )?
+                {
+                    replaced_seed_entities += 1;
+                    if row.entity_type == ENTITY_TYPE_AGENT_DEF {
+                        replaced_seed_agents.push(id);
+                    }
                     continue;
                 }
                 return Err(invalid("import ID collides with different entity data"));
@@ -287,7 +394,7 @@ impl Vault {
                     self,
                     &mut wtxn,
                     &id,
-                    &row.body.to_bytes_in(&archive.files)?,
+                    &row.body.to_bytes_in_with(&archive.files, secrets)?,
                     TimeRange {
                         start: row.occurred_start,
                         end: row.occurred_end,
@@ -309,7 +416,7 @@ impl Vault {
             } else {
                 dependencies(
                     row.entity_type,
-                    &imported_body(&row, &archive.index, &archive.files)?,
+                    &imported_body(&row, &archive.index, &archive.files, secrets)?,
                 )?
             };
             // Blind-review P1b (REVIEW-4389): an EVENT/TURN born under a
@@ -362,6 +469,9 @@ impl Vault {
             pending += 1;
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
+        // Only the owner's restore into a fresh vault sets the default facet.
+        let default_facet_owner = owner_actor.filter(|_| restore_fresh);
+        let mut destination_omissions = Vec::new();
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.
@@ -377,17 +487,44 @@ impl Vault {
                 let id = id_at(&key, 1)?;
                 let (inserted, unchanged) = match key[0] {
                     QUEUE_PROVENANCE => {
-                        let (inserted, unchanged) =
-                            super::provenance_import::restore(id, self, &mut wtxn, &mut archive)?;
+                        let (inserted, unchanged) = super::provenance_import::restore(
+                            id,
+                            self,
+                            &mut wtxn,
+                            &mut archive,
+                            secrets,
+                        )?;
                         (inserted.into_iter().collect::<Vec<_>>(), unchanged)
                     }
                     QUEUE_EXPRESSION => {
                         let actor = actor.ok_or_else(actor_required)?;
-                        super::expression_import::restore(id, self, &mut wtxn, actor, &mut archive)?
+                        super::expression_import::restore(
+                            id,
+                            self,
+                            &mut wtxn,
+                            actor,
+                            &mut archive,
+                            permit.as_ref(),
+                        )?
                     }
                     _ => {
                         let projects = projects.as_ref();
-                        insert_ready_row(self, &mut wtxn, &mut archive, id, projects, &assets)?;
+                        if let Some(reason) = insert_ready_row(
+                            self,
+                            &mut wtxn,
+                            &mut archive,
+                            id,
+                            projects,
+                            &assets,
+                            secrets,
+                            default_facet_owner,
+                        )? {
+                            inserted_entities -= 1;
+                            destination_omissions.push(ExportImportOmission {
+                                entity_id: id.to_hex(),
+                                reason,
+                            });
+                        }
                         (Vec::new(), 0)
                     }
                 };
@@ -403,6 +540,13 @@ impl Vault {
             let id = parse_id(&bundle.entity_id)?;
             if archive.index.contains(Tag::Inserted, id.as_bytes())? {
                 crate::agent_def::import_agent_fork_hash_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    &id,
+                    bundle.fork_hash.as_deref(),
+                )?;
+            } else if replaced_seed_agents.contains(&id) {
+                crate::agent_def::restore_seed_agent_fork_hash_in_txn(
                     &self.store,
                     &mut wtxn,
                     &id,
@@ -441,7 +585,8 @@ impl Vault {
                 {
                     continue;
                 }
-                let landed = import_edge(self, &mut wtxn, &edge, &archive.index)?;
+                let landed =
+                    import_edge_with_seeds(self, &mut wtxn, &edge, &archive.index, Some(&seeds))?;
                 if landed == EdgeImport::UnprovenRegenerates {
                     skipped_unproven_regenerates_edges += 1;
                 }
@@ -501,10 +646,13 @@ impl Vault {
         }
         Ok(WholeVaultImportReceipt {
             authority,
+            owner_restore_receipt_ref: permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref),
             inserted_entities,
             unchanged_entities,
+            replaced_seed_entities,
             archived_receipt_sources,
             omitted_entities: archive.index.count(Tag::Omitted)?,
+            destination_omissions,
             remapped_entities,
             imported_results,
             withheld_results,
@@ -555,6 +703,14 @@ fn mark_ready_rows<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) -> Resul
 }
 
 /// Writes one pending row whose references are in, through its type's door.
+/// The row and a skill's source tree read under the archive's `secrets`.
+/// `default_facet_owner` is the owner of a restore into a fresh vault, the
+/// one import that sets the default facet. Returns the reason for a row the
+/// destination keeps as archive data instead (`TargetDefaultFacetKept`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the import's writer, archive and maps, plus the one row and its owner"
+)]
 fn insert_ready_row<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -562,7 +718,9 @@ fn insert_ready_row<R: Read + Seek>(
     id: EntityId,
     projects: Option<&ProjectRootMap>,
     assets: &super::asset_reserve::ArchiveAssets,
-) -> Result<()> {
+    secrets: ExportSecrets,
+    default_facet_owner: Option<WriteActor>,
+) -> Result<Option<ImportOmissionReason>> {
     if !archive.index.remove(Tag::Pending, id.as_bytes())? {
         return Err(Error::InvariantViolation("import queue lost row"));
     }
@@ -570,7 +728,7 @@ fn insert_ready_row<R: Read + Seek>(
     let at = archive
         .entity_at(&id)?
         .ok_or(Error::InvariantViolation("import queue lost row"))?;
-    let row = imported_row(vault, wtxn, archive, &at, projects)?;
+    let row = imported_row(vault, wtxn, archive, &at, projects, secrets)?;
     let occurred = TimeRange {
         start: row.occurred_start,
         end: row.occurred_end,
@@ -589,9 +747,10 @@ fn insert_ready_row<R: Read + Seek>(
         })?;
         let staged = staged.ok_or(Error::InvariantViolation("archive file body not staged"))?;
         vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged)?;
-        return stamp_archived_birth(vault, wtxn, archive, &id);
+        stamp_archived_birth(vault, wtxn, archive, &id)?;
+        return Ok(None);
     }
-    let body = imported_body(&row, &archive.index, &archive.files)?;
+    let body = imported_body(&row, &archive.index, &archive.files, secrets)?;
     let landed = match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
@@ -601,20 +760,39 @@ fn insert_ready_row<R: Read + Seek>(
                 // skips its links and the receipt counts it with the rest.
                 archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
                 archive.index.remove(Tag::Inserted, id.as_bytes())?;
-                return Ok(());
+                return Ok(None);
             }
-            if crate::write_envelope::subject_record::is_subject_model_predicate(&claim.predicate) {
-                vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if crate::write_envelope::actor_predicate::is_actor_claim_predicate(
-                &claim.predicate,
-            ) {
-                vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if claim.predicate
-                == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY
-            {
-                vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else {
-                vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+            // The one list of reserved families names each claim's restore
+            // door; an archive-only family never reaches this writer.
+            match super::bundle_validation::reserved_claim_import(&claim.predicate) {
+                Some(ReservedClaimImport::Restore(ReservedClaimRestore::OwnerDefaultFacet)) => {
+                    return restore_archived_default_facet(
+                        vault,
+                        wtxn,
+                        archive,
+                        &id,
+                        &claim,
+                        &row,
+                        default_facet_owner,
+                    );
+                }
+                Some(ReservedClaimImport::Restore(ReservedClaimRestore::SubjectModel)) => {
+                    vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+                }
+                Some(ReservedClaimImport::Restore(ReservedClaimRestore::ActorProjection)) => vault
+                    .restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at),
+                _ if claim.predicate
+                    == crate::write_envelope::learning_predicate::PREDICATE_LEARNING_RELIABILITY =>
+                {
+                    vault.restore_reliability_claim_in_txn(
+                        wtxn,
+                        &id,
+                        &claim,
+                        occurred,
+                        row.learned_at,
+                    )
+                }
+                _ => vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at),
             }
         }
         // FIX 7777: the witness archive owner writes the row as imported
@@ -654,7 +832,7 @@ fn insert_ready_row<R: Read + Seek>(
                         bundle
                             .source_format
                             .ok_or_else(|| invalid("skill source format missing"))?,
-                        tree.import_files_in(&archive.files)?,
+                        tree.import_files_in_with(&archive.files, secrets)?,
                     ),
                     occurred,
                     row.learned_at,
@@ -742,7 +920,44 @@ fn insert_ready_row<R: Read + Seek>(
         }
     };
     landed?;
-    stamp_archived_birth(vault, wtxn, archive, &id)
+    stamp_archived_birth(vault, wtxn, archive, &id)?;
+    Ok(None)
+}
+
+/// An archived `vault.default_facet` claim (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS).
+/// In the owner's restore into a fresh vault, the archive's current default
+/// (Active, not stale, not rejected) is put through the owner's setter under
+/// its archived id and times, once the FACET it names is stored here; that
+/// claim supersedes any default this import already set. Every other one is
+/// kept as archive data, as an omitted row is, and this vault's default facet
+/// stays as it is: `TargetDefaultFacetKept`.
+fn restore_archived_default_facet<R: Read + Seek>(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    archive: &mut IndexedArchive<'_, R>,
+    id: &EntityId,
+    claim: &crate::write_envelope::claim_body::ClaimBody,
+    row: &ExportEntity,
+    owner: Option<WriteActor>,
+) -> Result<Option<ImportOmissionReason>> {
+    let facet = crate::claim::archived_default_facet(claim)?;
+    if let Some(owner) = owner
+        && claim.lifecycle == ClaimLifecycleStatus::Active
+        && !claim.stale
+        && claim.approval != ClaimApprovalStatus::Rejected
+        && vault.get_entity_type_in_txn(wtxn, &facet)? == Some(ENTITY_TYPE_FACET)
+    {
+        let occurred = TimeRange {
+            start: row.occurred_start,
+            end: row.occurred_end,
+        };
+        vault.put_default_facet_in_txn(wtxn, owner, id, facet, occurred, row.learned_at)?;
+        stamp_archived_birth(vault, wtxn, archive, id)?;
+        return Ok(None);
+    }
+    archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+    archive.index.remove(Tag::Inserted, id.as_bytes())?;
+    Ok(Some(ImportOmissionReason::TargetDefaultFacetKept))
 }
 
 /// FIX 1178: stamps the birth the archive carries for `id` beside its landed
@@ -808,13 +1023,15 @@ struct ProjectRootMap {
 
 /// The row `at` as the import writes it: a project row's parent moves from
 /// the source root to this vault's root, and a runtime pack row is mapped
-/// onto this vault's pack handle for its kind.
+/// onto this vault's pack handle for its kind. Both remaps re-serialize under
+/// the archive's `secrets`, so writer and reader agree.
 fn imported_row<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     archive: &IndexedArchive<'_, R>,
     at: &EntityAt,
     projects: Option<&ProjectRootMap>,
+    secrets: ExportSecrets,
 ) -> Result<ExportEntity> {
     let mut row = archive.entity_row(at)?;
     // Fix list row 16256: an archive row is never a source landing's, so
@@ -841,7 +1058,7 @@ fn imported_row<R: Read + Seek>(
             }
         }
         let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
-        row.body = ExportBody::from_bytes(&bytes, row.entity_type);
+        row.body = ExportBody::from_bytes_with(&bytes, row.entity_type, secrets);
     }
     if at.section == Section::Ledger
         && let ExportBody::Pack(value) = &row.body
@@ -850,7 +1067,7 @@ fn imported_row<R: Read + Seek>(
             .store
             .remap_pack_instance_in_txn(txn, &value.envelope()?)?;
         row.entity_type = handle;
-        row.body = ExportBody::from_bytes(&envelope.to_bytes()?, handle);
+        row.body = ExportBody::from_bytes_with(&envelope.to_bytes()?, handle, secrets);
     }
     Ok(row)
 }
@@ -970,19 +1187,22 @@ fn owed_secrets_in_txn(
     Ok(owed)
 }
 
+/// A stored skill's source package against the archive's: the tree reads
+/// under the archive's `secrets`, so writer and reader agree.
 fn validate_existing_source<R: Read + Seek>(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &ExportEntity,
     archive: &IndexedArchive<'_, R>,
     at: &EntityAt,
+    secrets: ExportSecrets,
 ) -> Result<()> {
     if at.section != Section::Skill {
         return Ok(());
     }
     let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
     if let Some(tree) = &bundle.source_tree {
-        let files = tree.import_files_in(&archive.files)?;
+        let files = tree.import_files_in_with(&archive.files, secrets)?;
         let stored = vault
             .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
             .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;
@@ -999,8 +1219,23 @@ pub(super) fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault import: {reason}"))
 }
 
+impl Vault {
+    /// Whether an actorless archive restore refused its expression preferences for lack of
+    /// this vault's bound owner or a host-authenticated local WriteActor.
+    pub fn is_archive_expression_owner_refusal(error: &Error) -> bool {
+        match (error, actor_required()) {
+            (Error::InvalidConfig(actual), Error::InvalidConfig(expected)) => actual == &expected,
+            _ => false,
+        }
+    }
+}
+
 fn actor_required() -> Error {
-    invalid("expression preferences require a host-authenticated local WriteActor")
+    invalid(
+        "the archive holds expression preferences; they restore only as this vault's bound owner \
+         (run the owner's `import archive` with the owner authenticated) or through a \
+         host-authenticated local WriteActor",
+    )
 }
 
 /// An archived PROJECT row, which the archive marks as needing its owning
@@ -1210,9 +1445,37 @@ pub(super) fn parse_id(text: &str) -> Result<EntityId> {
     Ok(id)
 }
 
-pub(super) fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody) -> bool {
+/// Whether the stored row `raw` is the archived `row`, whose body re-serializes
+/// to `expected`: the comparison re-runs the serializer under the archive's
+/// `secrets`, so writer and reader agree.
+pub(super) fn matches_row(
+    row: &ExportEntity,
+    raw: &[u8],
+    expected: &ExportBody,
+    secrets: ExportSecrets,
+) -> bool {
     matches_header(row, raw)
-        && ExportBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..], row.entity_type) == *expected
+        && ExportBody::from_bytes_with(&raw[ENTITY_METADATA_HEADER_LEN..], row.entity_type, secrets)
+            == *expected
+}
+
+/// An allowlisted seed's stored kind and adapted body must match exactly;
+/// only its occurred and learned seed times are ignored. The caller keeps the
+/// destination row, header and birth metadata.
+fn matches_seed_row_apart_from_seed_times(
+    row: &ExportEntity,
+    raw: &[u8],
+    expected: &ExportBody,
+    secrets: ExportSecrets,
+) -> bool {
+    EntityMetadataHeader::parse(raw).is_some_and(|header| {
+        header.entity_type == row.entity_type
+            && ExportBody::from_bytes_with(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                row.entity_type,
+                secrets,
+            ) == *expected
+    })
 }
 
 /// Whether the row this vault stores under `id` is the archived `row`, whose
@@ -1341,13 +1604,16 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 /// The body the import writes; an ASSET's file body is its archive file's
 /// bytes, as they were stored (OF-222). A claim's subject is mapped onto this
 /// vault's MODEL rows through the row index. Claim-class vocabulary is normalized
-/// by its owning adapter without carrying a foreign owner approval.
+/// by its owning adapter without carrying a foreign owner approval. A hub
+/// source carrier rebuilds under the archive's `secrets`, so a kept carrier
+/// tree restores its exact package instead of being re-nulled.
 fn imported_body(
     row: &ExportEntity,
     index: &ArchiveIndex<'_>,
     files: &dyn ArchiveFiles,
+    secrets: ExportSecrets,
 ) -> Result<Vec<u8>> {
-    let bytes = row.body.to_bytes_in(files)?;
+    let bytes = row.body.to_bytes_in_with(files, secrets)?;
     let mapped = |id: EntityId| super::provenance_import::mapped(index, id);
     match row.entity_type {
         ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => {
@@ -1471,6 +1737,11 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             if crate::write_envelope::actor_predicate::is_actor_claim_predicate(&body.predicate) {
                 refs.extend(crate::actor_claims::imported_actor_dependencies(&body)?);
             }
+            // The FACET a default facet names lands first, so its owner
+            // restore finds it stored.
+            if body.predicate == crate::claim::PREDICATE_VAULT_DEFAULT_FACET {
+                refs.push(crate::claim::archived_default_facet(&body)?);
+            }
             if body.predicate == crate::write_envelope::subject_record::PREDICATE_ACTOR_SUBJECT_REF
             {
                 refs.push(
@@ -1523,20 +1794,36 @@ pub(super) fn import_edge(
     edge: &ExportEdge,
     inserted: &ArchiveIndex<'_>,
 ) -> Result<EdgeImport> {
+    import_edge_with_seeds(vault, wtxn, edge, inserted, None)
+}
+
+/// Whole-vault seed equivalence is opt-in; provenance adapters retain the
+/// strict comparison used by `import_edge`.
+fn import_edge_with_seeds(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    edge: &ExportEdge,
+    inserted: &ArchiveIndex<'_>,
+    seeds: Option<&EngineSeedIdentities>,
+) -> Result<EdgeImport> {
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
     let kind = EdgeKind::try_from_u8(edge.kind).ok_or_else(|| invalid("unknown edge kind"))?;
     if let Some(existing) =
         crate::ports::EdgeStoreRead::port_edge_get(&vault.store, wtxn, &source, kind, &target)?
     {
-        let same = existing.weight == edge.weight
-            && existing.created_at == edge.created_at
+        let same_body = existing.weight == edge.weight
             && existing.vad.map(|v| [v.valence, v.arousal, v.dominance]) == edge.vad
             && existing
                 .provenance
                 .map(|p| [p.confirmation_status as u8, p.actor_class as u8])
                 == edge.provenance;
-        if same {
+        let seed_edge = seeds.is_some_and(|seeds| match kind {
+            EdgeKind::ClaimOf => seeds.is_subject_claim_edge(&source, &target),
+            EdgeKind::FacetOf => seeds.is_carrier_facet_edge(&source, &target),
+            _ => false,
+        });
+        if same_body && (existing.created_at == edge.created_at || seed_edge) {
             return Ok(EdgeImport::Landed);
         }
         // A newly imported claim's typed door creates its own ClaimOf link, and
@@ -1635,6 +1922,11 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::write_envelope::claim_body
         // stays archive data under the `learning.*` omission, which the import
         // report names; decoding succeeds so the callers route it there
         // instead of the strict door refusing the namespace.
+        Ok(body)
+    } else if body.predicate == crate::claim::PREDICATE_VAULT_DEFAULT_FACET {
+        // The owner's setter restores it, or the destination keeps it as
+        // archive data (`restore_archived_default_facet`).
+        crate::claim::archived_default_facet(&body)?;
         Ok(body)
     } else {
         decode_claim_body(bytes, false)

@@ -147,8 +147,7 @@ enum SelectionRead {
 /// Every quote `trunk` selects, in one snapshot. A DAG record's are those
 /// its selected chain's native appends hold, root-first. A room turn's are
 /// every message quote of every reply of every thread the room's index
-/// selects for it, with each native DAG append on the chain that has no room
-/// row, by `(at, reply id, message order, citer id)`.
+/// selects for it, by `(at, reply id, message order, citer id)`.
 fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSelection> {
     let txn = vault.store.env.read_txn()?;
     if trunk == room {
@@ -157,12 +156,12 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
     if conversation_of(&vault.store, &txn, &trunk)? != room {
         return Err(invalid("thread is outside the room"));
     }
-    let chain = selected_thread_in_txn(vault, &txn, trunk)?
-        .map(|selected| selected.replies)
-        .unwrap_or_default();
     let Some(indexed) =
         crate::workspace_roster::room_thread_turns_in_txn(vault, &txn, room, trunk)?
     else {
+        let chain = selected_thread_in_txn(vault, &txn, trunk)?
+            .map(|selected| selected.replies)
+            .unwrap_or_default();
         let mut facts = Vec::new();
         for reply in chain {
             facts.extend(dag_fact_in(vault, &txn, reply)?);
@@ -173,10 +172,8 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
         });
     };
     let mut facts = Vec::new();
-    let mut selected = BTreeSet::new();
     for turn in &indexed.turns {
         let reply = EntityId::from_hex(&turn.turn_id)?;
-        selected.insert(reply);
         // Each message's quote is kept in its room row, by citing MESSAGE.
         let mut cited = BTreeSet::new();
         for (citer, quote) in &turn.quotes {
@@ -185,15 +182,25 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
             let pointer = Some((quote.target_turn, quote.anchor));
             facts.extend(fact_in(vault, &txn, reply, citer, pointer, turn.at)?);
         }
-        facts.extend(message_facts_in(vault, &txn, reply, turn.at, &cited)?);
-    }
-    // A native append lands no room row, so only the DAG chain holds it.
-    for reply in chain {
-        if !selected.contains(&reply)
-            && crate::workspace_roster::replicated_turn_in(vault, &txn, reply)?.is_none()
+        // A plain thread reply's row keeps no quote: its TURN's own reply
+        // pointer holds it (THREAD-TASK-ONE-SURFACE). A witness turn that
+        // quotes keeps every quote in its row instead.
+        if turn.quotes.is_empty()
+            && let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_TURN,
+                body,
+            } = live_entity_row_in_txn(&vault.store, &txn, &reply)?
         {
-            facts.extend(dag_fact_in(vault, &txn, reply)?);
+            facts.extend(fact_in(
+                vault,
+                &txn,
+                reply,
+                reply,
+                read_pointer(&body)?,
+                turn.at,
+            )?);
         }
+        facts.extend(message_facts_in(vault, &txn, reply, turn.at, &cited)?);
     }
     facts.sort_by_key(|fact| (fact.at, fact.reply, fact.order, fact.citer));
     Ok(QuoteSelection {

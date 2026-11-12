@@ -22,10 +22,8 @@ impl Memory<'_> {
         Vec<EntityId>,
     )> {
         let (actor, review) = self.admit_run_settlement_in_txn(txn, owner, input, run)?;
-        let owner_answer = owner.owner_answer_in_txn(self.vault(), txn)?;
         let answer = RunAnswer {
             owner,
-            owner_answer: owner_answer.as_ref(),
             actor,
             approve,
             now,

@@ -21,6 +21,7 @@ mod program;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
+mod seat_wait;
 pub mod shadow_values;
 pub mod step_replay;
 mod store;
@@ -78,6 +79,11 @@ pub(crate) use self::program::{
     settle_program_outbound_in_txn, settle_program_write_in_txn, turn_program_erase_details,
     turn_programs_armed_in_txn,
 };
+// FIX 5266: a turn program's rows on the window plane, for the sync carriers.
+#[cfg(feature = "sync")]
+pub(crate) use self::program::replica as turn_program_replica;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::program::test_hooks as turn_program_test_hooks;
 // KS-2B1: a turn program's STEP bodies and run actor, for body custody.
 pub(crate) use self::program::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
@@ -106,6 +112,9 @@ pub use self::program::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebi
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;
+pub use self::seat_wait::{
+    ModelSeatAvailability, ModelSeatAvailableSource, ModelSeatSource, ModelSeatState,
+};
 pub use self::store::*;
 pub use self::types::*;
 pub use self::wake_park::DreamerCheckpointDue;

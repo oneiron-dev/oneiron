@@ -103,6 +103,10 @@ pub(super) fn test_server_with_config(
     vault_config.retrieval_telemetry_capture = true;
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
     assert_default_policy_manifest_fixture(vault.as_ref());
+    crate::test_credentials::install_fixture_keystore(
+        &vault,
+        config.auth_secret.as_deref().unwrap_or_default().as_bytes(),
+    );
     let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
     (dir, server)
 }
@@ -273,8 +277,12 @@ pub(super) fn seed_companion_profile_access(
     person_ref: oneiron::EntityId,
     persona_ref: oneiron::EntityId,
 ) {
-    let grant =
-        oneiron::AccessGrant::companion_profile_read(principal_ref, person_ref, persona_ref, 10);
+    let grant = oneiron::AccessGrant::companion_profile_read(
+        principal_ref,
+        person_ref,
+        Some(persona_ref),
+        10,
+    );
     server
         .vault
         .create_access_grant(&grant_id, &grant)
@@ -646,8 +654,12 @@ pub(super) fn witness_vad_message_fixture(
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
             occurred_at,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .expect("witness fixture turn");
 }
@@ -1064,6 +1076,10 @@ fn memory_reason_server_inner(
         .commit()
         .expect("seed reasoning evidence");
 
+    crate::test_credentials::install_fixture_keystore(
+        &vault,
+        auth_secret.as_deref().unwrap_or_default().as_bytes(),
+    );
     let allow_unauthenticated = auth_secret.is_none();
     let server = SyncServer::new(
         vault,

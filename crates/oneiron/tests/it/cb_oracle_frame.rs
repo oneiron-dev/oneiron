@@ -114,12 +114,14 @@ mod one_1797 {
             header: &hostile_header,
             legend: &legend,
             sections: &hostile_sections,
+            you: None,
         };
         let benign_frame = BoardFrame {
             changes: None,
             header: &benign_header,
             legend: &legend,
             sections: &benign_sections,
+            you: None,
         };
         let request = BoardBudgetRequest {
             harness_default_tok: cap_tok,

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "recorded_at_utc": "2026-09-27T05:08:16+00:00",
-  "oracle_host": "macmini (Mac mini; Office host)",
+  "oracle_host": "macmini.local (Mac mini; Office host)",
   "word_version": "16.113.2",
   "custody": "~/Library/Containers/com.microsoft.Word/Data/lin-2522/ on Mac mini; binary fixtures and Word outputs are not committed",
   "method": "AppleScript open/save as a new DOCX; System Events reported zero sheets after open and save; Word revision object counts checked; logical text compared per paragraph to ignore Word run splitting; document windows closed individually with Command-W",
@@ -318,7 +318,7 @@
       "fork_reject_all_after_fix_sha256": "58a0ba6338562f7addd12727bb23c523b0b4587ec755f6a348a75337942b585c",
       "fork_fixed_word_saved_sha256": "d3a291d9b900e6ff359e634979ebb3fc10fa260707f896c18cbecb81f45b44c0",
       "fixed_word_roundtrip": {
-        "host": "macmini",
+        "host": "macmini.local",
         "word_version": "16.113.2",
         "container_path": "~/Library/Containers/com.microsoft.Word/Data/lin-2522/fixtures/",
         "repair_dialog_observed": false,
