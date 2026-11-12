@@ -960,6 +960,8 @@ fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
         .unwrap();
     let replies = runtime.block_on(async {
         let (_dir, server, _host, _) = served(Some(&models)).await;
+        // The synchronous RPC door answers through this server's live-query hub.
+        let _hub = crate::livequery::connection::Hub::for_server(&server);
         let owner = server.vault().ensure_embedded_owner_actor().unwrap();
         for text in OTHERS.iter().chain([&KNOWN]) {
             remember(server.vault(), owner, text);
