@@ -9,10 +9,13 @@
 //! - A holder's extension is receipted and never passes the asker's `until`.
 //! - At `until` the ask lets go and no answer lands.
 //! - A rung with no verified holder is skipped at once, naming the missing
-//!   link; a rung of agents does not wait.
+//!   link; a rung of agents does not wait. A missing link that names a
+//!   principal is a row the off-device screen reads, and that principal's
+//!   erase takes it out of the row (review round 1 of #7096).
 //! - The chain's end: an undoable `AskWhenUnsure` act with an undo plan
 //!   proceeds with it; any other act holds; a delay window passes in silence
-//!   and an objection holds it.
+//!   and an objection holds it. At the window's end its settlement wins over
+//!   an answer (review round 1 of #7096).
 //!
 //! On #7090's head this file does not build: there is no pending check-in,
 //! no `check_in` policy row and no `test_doors::check_in`.
@@ -32,7 +35,9 @@ use oneiron::check_in::{
     ActClass, CheckInMode, CheckInScope, CheckInTransition, DelayWindowOpen, HolderAnswer,
     HolderKind, PendingState, Rung, RungHolder, RungMembers, WaitReason, WaitSource,
 };
-use oneiron::test_doors::check_in::{FixedChain, advance, answer, extend, object, open};
+use oneiron::test_doors::check_in::{
+    FixedChain, advance, answer, erase_actor, extend, object, open, screened_rows,
+};
 
 /// A chain of one person on each rung.
 fn three_people(fixture: &Fixture) -> (FixedChain, [EntityId; 3]) {
@@ -510,5 +515,131 @@ fn a_delay_window_passes_in_silence_and_an_objection_holds_it() {
     assert_eq!(
         fixture.row(&objected).state,
         PendingState::ObjectionHeld { at: T0 + 7 * DAY }
+    );
+}
+
+#[test]
+fn a_missing_link_that_names_a_principal_is_a_row_the_off_device_screen_reads() {
+    let fixture = Fixture::open();
+    let missing = EntityId::now();
+    let (holder, _) = fixture.person();
+    let chain_naming = |link: String| {
+        FixedChain::default()
+            .with(Rung::Grantor, RungMembers::Missing(link))
+            .with(Rung::ChainHolders, people(&[holder]))
+    };
+    let named = open(
+        &fixture.vault,
+        request(EntityId::now(), ActClass::Spawn),
+        &chain_naming(missing.to_hex()),
+    )
+    .expect("open");
+    let texted = open(
+        &fixture.vault,
+        request(EntityId::now(), ActClass::Spawn),
+        &chain_naming("spawn parent principal".to_owned()),
+    )
+    .expect("open");
+
+    let skipped = &fixture.receipts(&named.id)[1];
+    assert_eq!(skipped.outcome, "skipped");
+    assert_eq!(skipped.fields["missing_link"], missing.to_hex());
+    let rows = screened_rows(&fixture.vault, skipped)
+        .expect("rows")
+        .expect("a check-in receipt's rows are known");
+    assert!(
+        rows.contains(&missing),
+        "a world withheld from the caller that keeps the principal withholds the receipt"
+    );
+    let skipped = &fixture.receipts(&texted.id)[1];
+    assert_eq!(
+        screened_rows(&fixture.vault, skipped).expect("rows"),
+        Some(Vec::new()),
+        "a missing link in words names no row"
+    );
+}
+
+#[test]
+fn an_erase_takes_the_principal_out_of_a_skipped_rungs_missing_link() {
+    let fixture = Fixture::open();
+    let erased = EntityId::now();
+    let (holder, _) = fixture.person();
+    let chain = FixedChain::default()
+        .with(Rung::Grantor, RungMembers::Missing(erased.to_hex()))
+        .with(Rung::ChainHolders, people(&[holder]));
+    let opened = open(
+        &fixture.vault,
+        request(EntityId::now(), ActClass::Spawn),
+        &chain,
+    )
+    .expect("open");
+    assert_eq!(
+        opened.rungs[0].skipped.as_deref(),
+        Some(erased.to_hex().as_str())
+    );
+
+    assert_eq!(
+        erase_actor(&fixture.vault, &erased).expect("erase"),
+        2,
+        "both check-in tables scrub an erased actor"
+    );
+    let row = fixture.row(&opened.id);
+    assert_eq!(
+        row.rungs[0].skipped.as_deref(),
+        Some(""),
+        "the rung stays skipped and names nobody"
+    );
+    assert_eq!(row.rungs[1].holders[0].principal, holder);
+    assert_eq!(fixture.receipts(&opened.id)[1].fields["missing_link"], "");
+}
+
+#[test]
+fn at_the_delay_windows_end_its_settlement_wins_over_an_answer() {
+    let fixture = Fixture::open();
+    let (grantor, proof) = fixture.person();
+    let (objector, _) = fixture.person();
+    let chain = FixedChain::default().with(Rung::Grantor, people(&[grantor]));
+    let mut ask = request(EntityId::now(), ActClass::OutboundSend);
+    ask.delay_window = Some(DelayWindowOpen {
+        notice_at: T0,
+        ends_at: T0 + HOUR,
+    });
+    let opened = open(&fixture.vault, ask, &chain).expect("open");
+    assert_eq!(
+        opened.current_rung().unwrap().due_at(),
+        T0 + DAY,
+        "the grantor's wait runs past the window's end"
+    );
+    fixture.at(T0 + HOUR / 2);
+    object(&fixture.vault, &opened.id, objector).expect("objection");
+
+    fixture.at(T0 + HOUR);
+    assert!(
+        answer(
+            &fixture.vault,
+            &proof,
+            &opened.id,
+            &DIGEST,
+            HolderAnswer::Approve
+        )
+        .is_err(),
+        "at the window's end, its objection holds the act; no answer lands"
+    );
+    assert!(
+        extend(&fixture.vault, &proof, &opened.id, T0 + 2 * DAY).is_err(),
+        "nor does an extension"
+    );
+    assert_eq!(fixture.row(&opened.id).state, PendingState::Open);
+    assert_eq!(
+        advance(&fixture.vault, &opened.id, &chain).expect("tick"),
+        Some(CheckInTransition::ObjectionHeld)
+    );
+    assert_eq!(
+        fixture.row(&opened.id).state,
+        PendingState::ObjectionHeld { at: T0 + HOUR }
+    );
+    assert_eq!(
+        fixture.outcomes(&opened.id),
+        ["opened", "climbed", "objection_held"]
     );
 }

@@ -147,6 +147,10 @@ impl Vault {
         rows.extend(
             self.connector_witness_read_registry_rows_in_txn(&rtxn, query.include_revoked)?,
         );
+        // A named agent's live slip that no Grant has ever named (FIX
+        // AGENT-GRANTLESS-VISIBLE) is listed apart, with no Grant id and no
+        // revoke, and with the owner's conversion into a Grant.
+        let mut grantless_agents = self.grantless_agent_registry_rows_in_txn(&rtxn)?;
         drop(rtxn);
         rows.sort_by(|left, right| {
             right
@@ -155,6 +159,10 @@ impl Vault {
                 .then_with(|| left.grant_ref.cmp(&right.grant_ref))
         });
         rows.truncate(query.limit);
-        Ok(ConsentRegistry { rows })
+        grantless_agents.truncate(query.limit);
+        Ok(ConsentRegistry {
+            rows,
+            grantless_agents,
+        })
     }
 }

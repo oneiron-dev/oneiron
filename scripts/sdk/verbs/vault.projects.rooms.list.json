@@ -1,0 +1,14 @@
+{
+  "name": "vault.projects.rooms.list",
+  "description": "The project's home room and the extra rooms it groups that the caller can read.",
+  "input": "crate::workspace_roster::ProjectRoomsRequest",
+  "output": "crate::workspace_roster::ProjectRoomsPage",
+  "call": "memory.projects_rooms_list(&input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

@@ -318,6 +318,60 @@ pub struct SyncServer {
     pub(crate) booking_test_clock_from: Option<tokio::time::Instant>,
 }
 
+// SAFETY: every field of `SyncServer` is `Send`: the constant below names each field and
+// compiles only while that holds, as the automatic impl this one replaces did.
+unsafe impl Send for SyncServer {}
+
+// SAFETY: every field of `SyncServer` is `Sync`, by the same constant.
+unsafe impl Sync for SyncServer {}
+
+/// What the two impls above rest on, kept true by the compiler: each field of [`SyncServer`]
+/// is `Send` and `Sync`. The pattern names every field, so a new field does not compile
+/// until it is listed here.
+///
+/// The impls are written out because of what the automatic ones cost to build. When rustc
+/// generates code it proves `Arc<SyncServer>: Send + Sync` again for every route handler,
+/// every blocking closure that holds the server and every future boxed as
+/// `dyn Future + Send`; with lifetimes erased it cannot reuse an earlier answer, so each
+/// proof walked every type the server holds. Those walks were most of the memory of the one
+/// rustc that builds this lib (FIX-LIST SERVER-LIB-RUSTC-37G). An impl with no bounds ends
+/// the walk here; this check keeps what the walk proved.
+const _: fn(&SyncServer) = |server| {
+    fn field<T: Send + Sync>(_: &T) {}
+    macro_rules! fields {
+        ($($(#[$cfg:meta])* $name:ident),* $(,)?) => {
+            let SyncServer { $($(#[$cfg])* $name),* } = server;
+            $($(#[$cfg])* field($name);)*
+        };
+    }
+    fields! {
+        vault, invocation_claims, root_doc, ephemeral_store, message_scopes, dreamer_progress,
+        standing_block_cache, broadcast_tx, next_conn_id, lease_registrar, reassert_manager,
+        _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
+        residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
+        context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
+        policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
+        mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
+        leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
+        meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
+        mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
+        seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
+        browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
+        web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
+        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
+        decision_reads, decisions, hook_runtime,
+        #[cfg(feature = "mesh")] mesh_transport,
+        builtin_handles,
+        #[cfg(unix)] organs,
+        #[cfg(unix)] organ_dir,
+        run_receipts, ai, pattern_launch_runner, rerank_runtime, hyde_host, extraction_egress,
+        tagger_egress, owner_host, feedback, feedback_triage, feedback_flood, artifact_port,
+        api_addr, artifact_socket,
+        #[cfg(test)] booking_test_now_secs,
+        #[cfg(test)] booking_test_clock_from,
+    }
+};
+
 /// Sets the vault's live rows from `[limits]` and points their crossings at
 /// this server's questions.
 fn live_rows(
