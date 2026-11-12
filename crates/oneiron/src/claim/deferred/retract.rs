@@ -51,7 +51,8 @@ impl Vault {
     /// its body until the holder settles it. A class a manifest rule declares
     /// critical parks for the owner's critical confirm, as a parked demotion
     /// does. A repeat retract while one is parked answers the same pending
-    /// decision.
+    /// decision. A retract while another action is parked on the claim is
+    /// refused with [`GateError::GateConsentStale`].
     pub(crate) fn retract_own_claim_or_park_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -61,10 +62,21 @@ impl Vault {
     ) -> Result<OwnClaimRetract> {
         // The tray row a parked retract shows is the holder's to answer; the
         // plain retract below would close it as the retract's own consent.
-        if let Some(pending) = self.store.pending_gate_consent_in_txn(&*wtxn, id)?
-            && parked_retract(self, &*wtxn, id)?
-        {
-            return Ok(OwnClaimRetract::Parked(pending.decision_id));
+        if let Some(pending) = self.store.pending_gate_consent_in_txn(&*wtxn, id)? {
+            match DEFERRED.get(&self.store, &*wtxn, id)? {
+                Some(row) if matches!(row.action, DeferredAction::Retract) => {
+                    return Ok(OwnClaimRetract::Parked(pending.decision_id));
+                }
+                // Another action parked on the claim waits for the holder
+                // behind that row. The plain retract would close the row as
+                // its own consent and land without the holder, so it is
+                // refused until the holder settles that action, as
+                // `put_pending` refuses a second parked action.
+                Some(_) => {
+                    return Err(Error::Gate(GateError::GateConsentStale { claim_id: *id }));
+                }
+                None => {}
+            }
         }
         // The gate's answer alone, from a savepoint that is always rolled
         // back, so the decision it records is gone with it. A retract the
