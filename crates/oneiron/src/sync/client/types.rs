@@ -229,11 +229,15 @@ impl SyncTransportCredential {
 
     /// Proves the slip on a WebSocket upgrade with a fresh holder signature.
     /// Each upgrade has its own nonce, so a proof cannot be replayed. An
-    /// enrolled install also names its machine, signed over the same proof.
+    /// enrolled install also names its machine, signed over the same proof;
+    /// `pin`, the checkpoint pin the client config holds, lets a machine that
+    /// joined from an empty vault name itself before its first catch-up
+    /// (`Vault::machine_connection_proof_with_pin`).
     /// Returns the proof, which the home's answer must bind.
     pub(in crate::sync) fn sign_upgrade(
         &self,
         vault: &crate::Vault,
+        pin: Option<&crate::authority::AuthorityCheckpointPin>,
         timestamp: u64,
         request: &mut tokio_tungstenite::tungstenite::handshake::client::Request,
     ) -> Result<crate::sync::home_proof::UpgradeBinding, &'static str> {
@@ -273,7 +277,7 @@ impl SyncTransportCredential {
         );
         // A machine that cannot name itself syncs as an unknown destination.
         if let Ok(Some((machine, proof))) =
-            vault.machine_connection_proof(&self.token, timestamp, &nonce)
+            vault.machine_connection_proof_with_pin(&self.token, timestamp, &nonce, pin)
             && let Ok(value) = crate::authority::machine_proof_header_value(machine, &proof).parse()
         {
             request
