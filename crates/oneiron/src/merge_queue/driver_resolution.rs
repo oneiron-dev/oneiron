@@ -61,7 +61,10 @@ impl MergeQueue<'_> {
                 .is_some_and(|order| order.task == task)
                 || matches!(
                     batch.state,
-                    BatchState::Cancelled | BatchState::RolledBack | BatchState::Quarantined
+                    BatchState::Cancelled
+                        | BatchState::RolledBack
+                        | BatchState::Quarantined
+                        | BatchState::Superseded
                 )
             {
                 continue;

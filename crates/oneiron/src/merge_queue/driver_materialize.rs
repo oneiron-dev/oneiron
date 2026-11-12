@@ -72,9 +72,9 @@ impl MergeQueue<'_> {
 
     /// Releases a settled batch's staged-path keep-refs (FIX 7305): its
     /// speculative commits, which nothing reads once it is sealed green,
-    /// rolled back, cancelled or its survivors decided. Its base and landed
-    /// commits stay pinned, and so does a commit another pinned batch still
-    /// names; its drive record is no longer pinned.
+    /// rolled back, cancelled, superseded or its survivors decided. Its base
+    /// and landed commits stay pinned, and so does a commit another pinned
+    /// batch still names; its drive record is no longer pinned.
     pub(super) fn release_batch_pins(&self, id: &str) -> Result<QueueDriveOutcome> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let queue = self.queue()?;
