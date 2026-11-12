@@ -4,6 +4,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::CallerLocality;
 use crate::provenance::birth::{WithheldKey, row_birth_in_txn};
 use crate::settings::ReadDestination;
+use crate::workspace_roster::project::extra_room_redaction;
 use crate::{
     Vault,
     error::{Error, Result},
@@ -177,6 +178,11 @@ impl Vault {
                 } else {
                     bytes
                 };
+                let bytes = extra_room_redaction::strip_project_group_from_record_bytes(
+                    h.entity_type,
+                    &bytes,
+                )
+                .unwrap_or(bytes);
                 out.push(ScopedRecord {
                     id,
                     bytes,

@@ -34,9 +34,11 @@ const REPLY_DOC: &[&str] = &[
     "Every verb call resolves with its row's output itself, or with a `StoredResult` card in its place past 512 KiB of JSON.",
     "A refused call rejects with a string, the refusal's JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,",
     r#"`reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one)."#,
-    r#"A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own"#,
-    r#"refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON"#,
-    r#"cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask."#,
+    "A `wait`, or a `tasks.wait` on a world-privacy request, that parks the run or comes after a park resolves with the park, its",
+    "row's `Park` output; a callable that finishes on that park fails as unfinished. Any other call that parks the run, and every",
+    r#"other call after a park, rejects with "missing_host_response_field"; the host bridge's own refusals reject with a bare code"#,
+    r#"too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON cannot carry throws at the call"#,
+    r#"itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask."#,
 ];
 /// The rows code mode answers with the run's own coordination reply.
 /// None today; Python tests membership in the tuple with `==` (no hash).

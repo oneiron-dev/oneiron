@@ -64,7 +64,7 @@ const CUT: CutRow[] = [
   {
     id: 'cl_a04c',
     conf: 0.91,
-    claim: 'Yurii sends the formal quote by Tuesday',
+    claim: 'Yuki sends the formal quote by Tuesday',
     occurred: '08-12',
     learned: '08-12',
     world: 'clients',
@@ -385,7 +385,7 @@ function Recall() {
 
             <p className="a-prose">
               A {cite('cl_9f21', 0.94, 'six-week pilot')}, starting the{' '}
-              {cite('cl_9f21', 0.94, 'first week of September')}. Yurii owes Mika the{' '}
+              {cite('cl_9f21', 0.94, 'first week of September')}. Yuki owes Mika the{' '}
               {cite('cl_a04c', 0.91, 'formal quote by Tuesday')}. The scope stands at the{' '}
               {cite('cl_77b8', 0.84, '¥380,000 desk floor')} agreed in May. The timeline moved on the
               8th. The mid-August start no longer holds.

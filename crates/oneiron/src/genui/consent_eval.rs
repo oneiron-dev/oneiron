@@ -308,7 +308,7 @@ pub enum GrantMintIntentScope {
 /// [`GrantMintIntent`].
 ///
 /// The agent-facing input is a sentence — "share my work calendar fully with
-/// Yura" — already resolved upstream to typed refs and a rung. This seam turns
+/// Yuki" — already resolved upstream to typed refs and a rung. This seam turns
 /// that into a single `(calendar_ref, audience, rung)` grant intent, where the
 /// audience is the intent's `principal_ref`. It never fans the sentence out
 /// into a settings matrix: one sentence mints one scope, or it errors.

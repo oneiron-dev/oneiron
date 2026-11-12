@@ -11,9 +11,12 @@ const PATHS = {
   calendar: '<path d="M8 2v4M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/>',
   canvas:
     '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4a2.5 2.5 0 0 1 2.5 2.5v5"/>',
+  /* Columns from a baseline: a chart. */
+  chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9M13 17V5M8 17v-3"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
   circlePlus: '<circle cx="12" cy="12" r="9.5"/><path d="M12 8v8M8 12h8"/>',
+  clock: '<circle cx="12" cy="12" r="9.5"/><path d="M12 7v5l3.5 2"/>',
   clip:
     '<path d="m21.4 11.1-8.9 8.9a5.5 5.5 0 0 1-7.8-7.8l8.9-8.9a3.7 3.7 0 0 1 5.2 5.2l-8.9 8.9a1.8 1.8 0 0 1-2.6-2.6l8.2-8.2"/>',
   compose:
@@ -29,6 +32,8 @@ const PATHS = {
     '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
   house: '<path d="M2.5 10.5 12 3l9.5 7.5"/><path d="M6.5 14.5h11M6.5 18.5h11M10.6 11.5l-1 9.5M15 11.5l-1 9.5"/>',
+  /* The letter i in a ring: about this. */
+  info: '<circle cx="12" cy="12" r="9.5"/><path d="M12 16.5v-5M12 8h.01"/>',
   images:
     '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
   lens: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>',
@@ -38,6 +43,8 @@ const PATHS = {
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   note:
     '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M16 13H8M16 17H8"/>',
+  /* A frame with a panel at its right: open beside. */
+  pane: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/>',
   page:
     '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   pen: '<path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7.5 18.5l-4 1 1-4Z"/>',
@@ -61,6 +68,8 @@ const PATHS = {
   signOut: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   smile: '<path d="M21 12a9 9 0 1 1-9-9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9.5h.01M15 9.5h.01M16 5h6M19 2v6"/>',
   sort: '<path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/>',
+  /* A frame with a head row and one column: a table. */
+  table: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/>',
   thread:
     '<path d="M4 19V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H8z"/><path d="M8.5 8.5h7M8.5 11.5h4"/>',
   tool:
@@ -79,6 +88,12 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS
 export const ICON_NAMES = Object.keys(PATHS) as IconName[]
+
+/* One markup object per icon, made once. React DOM writes innerHTML again
+   whenever this object differs from the last render's, which replaces the
+   paths: a control that renders between pointer down and pointer up would
+   lose the element the press began on, and with it the click. */
+const MARKUP = Object.fromEntries(ICON_NAMES.map((name) => [name, { __html: PATHS[name] }])) as Record<IconName, { __html: string }>
 
 export interface IconProps extends Omit<React.ComponentPropsWithRef<'svg'>, 'children'> {
   name: IconName
@@ -102,7 +117,7 @@ export function Icon({ name, size = 16, className, ...props }: IconProps) {
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
-      dangerouslySetInnerHTML={{ __html: PATHS[name] }}
+      dangerouslySetInnerHTML={MARKUP[name]}
       {...props}
     />
   )
