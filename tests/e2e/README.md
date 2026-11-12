@@ -82,7 +82,7 @@ to `FacadeVerb`, route it through a generic endpoint, execute code instead, or
 use internal state as a substitute. For G09's additional hook families, use
 `"waits on owner question G09"`. A TODO is a BLOCKED report row and makes a
 required run non-green. It is not passing coverage. The owner ruling of 7 Nov 10:33,
-relayed by the Engine at 10:35, instead defers BOOT-06, MEMORY-04, MEMORY-06,
+relayed by the Engine at 10:35, instead defers MEMORY-04, MEMORY-06,
 PRIVACY-03, PRIVACY-06 and PRIVACY-07 as SKIPPED until their doors exist.
 RETRIEVAL-04 and RETRIEVAL-11 are written as partial cases (10 Nov). MEMORY-03 is also SKIPPED while its complete journey still needs
 the Observed producer (FIX 21842). These cases remain registered with their reasons
@@ -114,10 +114,11 @@ const engine = await EngineFixture.start({
 | `pairedActor` | `{principalRef, actorClass, credential, pin, client, mcp, cli}`. Never print it. |
 | `sdk` | `SdkProcessDriver` using the prepared Node package or Python venv. |
 | `peers` | Additional fresh independent fixtures; no automatic sync or authority. |
+| `feedbackRequests` | In-memory snapshot of local feedback collector requests, with the same fields as `ScriptedProviders.seenFixtureCalls`; empty when not opted in. |
 | `awaitReceipt(ref, timeoutMs?)` | Resolves `call:` refs through `vault.receipts.get` and other refs only as rows of the `vault.receipts` page (gate-ledger receipts), never a job drain; `witness:` and `put:` refs are write markers, not receipt rows, so they never resolve here: read the written entity back through `vault.get` instead. |
 | `restart()` | Stop and re-serve only this fixture's vault, using the same credential. |
 | `kill()` | SIGKILL the owned server group. First observe a public receipt/ACK/provider barrier. |
-| `close({retainVault?})` | Close peers/server and remove the private root unless explicit local retention. |
+| `close({retainVault?})` | Close peers/server, then the feedback collector if opted in, and remove the private root unless explicit local retention. Unexpected collector requests fail cleanup. |
 | `serverOutputHas(values)` | After `close()`: `{found, truncated}` for the raw stdout/stderr of every server launch, restarts included. In memory only; never persisted or returned. A leak case asserts `{found:false,truncated:false}`. |
 | `artifacts` | Redacting JSON writer; never uploads anything. |
 
@@ -144,6 +145,19 @@ header). For example, configure `[models.providers.fixture]` with
 silently authorize inference or egress. Apply required owner policy separately.
 The fixture owns host, port, vault path, issuer secret and authentication.
 
+`feedbackDestination: "local-collector"` opts a preview-only case into a
+`[feedback]` table with `destination = "collector"` and an HTTP endpoint on an
+ephemeral `127.0.0.1` listener. No feedback table or listener is added by default.
+Do not also supply `[feedback]` in `serverConfig` when using this option.
+The collector needs no token or vault secret. It uses `ScriptedProviders` with
+an empty script: every request is unexpected, receives HTTP 500, and fails
+fixture/flow cleanup even if the engine hides the delivery error. Assert
+`expect(engine.feedbackRequests).toHaveLength(0)` after preview. The collector
+stays active across `restart()` and closes only after the engine stops; cleanup
+also catches requests arriving after that assertion. Its redacted provider
+artifact records requests and violations. This option does not authorize a send
+or change any disclosure checks.
+
 For the public embedding/tagger adapters, use typed options:
 
 - `embedder: {endpoint, modelKey, modelId, dimensions, egress}`. Egress is either
@@ -163,6 +177,30 @@ Readiness observations may repeat. Mutations and failed public calls are never
 silently retried. A bind collision is an explicit failure, not a hidden retry.
 Fresh ephemeral reservations reduce collisions; pairing proves the answering
 server owns this fixture's bootstrap link.
+
+### Device peers and the sync link
+
+`await engine.startDevicePeer({id, ownership?, homeOrigin?, serverConfig?, serverLog?})` runs a second
+server process of the **same logical vault** on this host, in its own root, port and keystore. It
+initialises an empty peer vault (no `token bootstrap`), waits until the home's authority checkpoint is
+attested (`GET /v1/owner/checkpoint-policy/roots`), has the owner issue one machine pairing link
+(`token pair --url <homeOrigin ?? engine.url> --principal-ref <owner> --actor-class human --machine
+<ownership ?? "yours">`), runs `device enrol <peer vault> --config <peer toml>` on the stopped peer with
+the link on stdin, and serves it. The returned `DevicePeer` has `url`, `root`, `enrolment` (the
+parsed `device enrol` output), `client` and `cli` (the **home owner's own paired credential**, pointed
+at the peer; the test mints nothing), `kill()`, `restart()` and `close()`. It is ready when the peer
+serves and admits the owner (`self.actor` answers 200), not when a first sync round has finished: a
+case waits on the public read it asserts. The server build needs the `mesh` feature (the shared
+artifact set builds it).
+
+`await SyncLinkProxy.start({target: engine.url})` (support/sync_link.ts) relays TCP between the device
+and its home; pass its `url` as `homeOrigin` so the link names it and the device dials it. Plain HTTP
+and every WebSocket handshake pass byte for byte. After an upgrade it acts on whole data messages per
+direction (`to_home`, `to_device`): `drop(direction, n)`, `duplicate(direction, n)`,
+`hold(direction)` with `release(direction, {order: "fifo" | "reverse"})`; `cut()` closes the relayed
+sockets and refuses new upgrades until `heal()`. `counts(direction)` gives seen, forwarded (a duplicate
+counts twice), dropped, duplicated and held; `awaitSeen(direction, n)` is a barrier. Counters report
+what the relay did, never convergence. Control frames always pass. The proxy is an owned resource.
 
 ## Request and startup diagnostics
 

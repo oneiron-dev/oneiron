@@ -482,6 +482,7 @@ async fn ask_judge(
         subject: ask.head,
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
+        spend_scope: None,
     };
     let (vault, role, inference) = (ctx.vault, model.role, &model.inference);
     let seal = move |request: LlmRequest| -> Result<LlmRequest> {

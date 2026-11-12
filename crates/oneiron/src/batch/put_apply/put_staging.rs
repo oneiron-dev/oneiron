@@ -522,6 +522,11 @@ pub(super) fn validate_scope_carriers(
         store
             .project_writes
             .validate_room_body(store, wtxn, id, data)?;
+        // The extra-room index follows every CONVERSATION put, local and replicated alike: the
+        // room body rides sync and archives, and the index is rebuilt from its `project_group`.
+        store
+            .project_writes
+            .index_extra_room(store, wtxn, id, data)?;
     }
     Ok(())
 }

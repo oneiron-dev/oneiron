@@ -70,7 +70,8 @@ export class PublicHttpClient {
     const requestSecrets = proofSecrets.filter((value): value is string => value !== null);
     if (body !== undefined && !bound.has("content-type")) bound.set("content-type","application/json");
     const rpc = (url.pathname === "/mcp" || url.pathname === "/mcp/tool-first") && body && typeof body === "object" && "method" in body
-      ? {rpcMethod:body.method} : {};
+      ? {rpcMethod:body.method,...(body.method === "tools/call" && "params" in body && typeof (body.params as {name?:unknown})?.name === "string"
+        ? {tool:(body.params as {name:string}).name} : {})} : {};
     const stepId = await recordStart("http",{method,path:url.pathname,client:this.options.label,...rpc},this.options.artifacts);
     try {
       const requestBody = body === undefined ? undefined : typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body);
@@ -115,9 +116,16 @@ export class PublicHttpClient {
 export interface JsonRpcError { readonly code: number; readonly message: string; readonly data?: unknown }
 export type JsonRpcReply<T> = { readonly jsonrpc:"2.0";readonly id:number;readonly result:T } |
   { readonly jsonrpc:"2.0";readonly id:number;readonly error:JsonRpcError };
+/** The refusal's JSON-RPC code and message, and the engine's error code or kind when it sends one. */
+function refusalText(response: JsonRpcReply<unknown>): string {
+  if (!("error" in response)) return "MCP JSON-RPC refusal";
+  const data = response.error.data && typeof response.error.data === "object" ? response.error.data as Record<string,unknown> : {};
+  const detail = ["error_code","kind","code"].map(key => data[key]).find(value => typeof value === "string");
+  return `MCP JSON-RPC refusal ${response.error.code}${detail ? ` ${String(detail)}` : ""}: ${response.error.message}`.slice(0,400);
+}
 export class McpRpcError extends Error {
   override name = "McpRpcError";
-  constructor(readonly response: JsonRpcReply<unknown>) { super("MCP JSON-RPC refusal") }
+  constructor(readonly response: JsonRpcReply<unknown>) { super(refusalText(response)) }
 }
 export class McpClient {
   private nextId = 1;
@@ -262,7 +270,8 @@ export class CliClient {
     return this.json(["api","call",verb,"--data","-"],input);
   }
 }
-type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`;
+type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`
+  | "device-peer-init" | "device-pair-link" | "device-enrol";
 export class CliError extends Error {
   override name = "CliError";
   constructor(readonly result: ProcessResult, readonly stage: CliStage = "cli") {
