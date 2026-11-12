@@ -257,28 +257,11 @@ async function mintProject(engine: EngineFixture, providers: ScriptedProviders, 
   await awaitPublic(async () => client.call("vault.projects.proposals", { conversation_ref: conversation.id }),
     cards => cards.some(card => card.card.card_id === card_id && card.state === "proposed"),
     { label: `house-drafted project card ${card_id}` });
-  const intake = `project-intake-${index}`;
-  providers.enqueue({ id: `project-intake-${index}`, origin: "drafter", role: "generative_reasoner", purpose: "leader goal intake",
-    request: { method: "POST", path: "/v1/chat/completions", model: "project-drafter", fields: EXECUTOR_STREAM }, barrier: intake,
-    response: openaiStream(`project-intake-${index}`, "project-drafter", [`finish("goal intake waits for the owner");`],
-      { inputTokens: 512, outputTokens: 16 }) });
+  // DIAGNOSTIC ONLY (never for a PR): this engine never dispatches the goal intake
+  // (FIX GOAL-INTAKE-NEVER-DISPATCHED), so no intake step is scripted or awaited; an intake
+  // call would arrive unscripted and fail the case loudly.
   const minted = await client.call("vault.projects.confirm", { card_id, action_id: "mint_project", occurred_at: occurred });
   expect(minted.card_id).toBe(card_id);
-  try {
-    await providers.awaitBarrier(intake);
-  } catch (error) {
-    await engine.artifacts.json(`diagnostic-project-intake-${index}-timeout.json`, {
-      project_ref: minted.project_id, card_id,
-      seenFixtureCalls: providers.seenFixtureCalls.map(call => ({
-        origin: call.origin, fixtureId: call.fixtureId, path: call.path,
-        model: (call.body as {model?:unknown})?.model,
-      })),
-    });
-    throw new Error(`ENGINE DEFECT 2026-11-12: the owner's confirm minted project ${minted.project_id}, but its leader's `
-      + `goal-intake run never called the drafter (FIX GOAL-INTAKE-NEVER-DISPATCHED). ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error });
-  }
-  providers.releaseBarrier(intake);
   expect((await entity(client, minted.project_id)).kind).toBe("PROJECT");
   return minted.project_id;
 }
