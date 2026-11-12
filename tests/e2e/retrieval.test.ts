@@ -4393,7 +4393,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
             ? `status=${error.reply.status} code=${error.error?.code ?? "<none>"} message=${error.error?.message ?? "<none>"} suggestion=${error.error?.suggestions?.[0] ?? "<none>"}`
             : errorText(error);
           throw new Error(
-            `MUSE-RECALL-05 ENGINE DEFECT 2026-11-11: FIX [AGENT-GRAPHFS-GRANT-WORLDS] the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ extra_names=${JSON.stringify(extraNames ?? "<unavailable>")} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(seenNames ?? "<unavailable>")}; ${detail}`,
+            `MUSE-RECALL-05 the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97; FIX [AGENT-GRAPHFS-GRANT-WORLDS], fixed by #7044); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ extra_names=${JSON.stringify(extraNames ?? "<unavailable>")} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(seenNames ?? "<unavailable>")}; ${detail}`,
             { cause: error },
           );
         }
@@ -4489,7 +4489,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     } catch (error) {
       const extraNames = afterWiden.names.filter((name) => !readerBaseline.names.includes(name));
       throw new Error(
-        `MUSE-RECALL-05 ENGINE DEFECT 2026-11-11: FIX [AGENT-GRAPHFS-GRANT-WORLDS] the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ after refused self-widen extra_names=${JSON.stringify(extraNames)} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(afterWiden.names)}; ${errorText(error)}`,
+        `MUSE-RECALL-05 the graph_fs walk is not clamped by the agent grant (ARCH-0051:84, :97; FIX [AGENT-GRAPHFS-GRANT-WORLDS], fixed by #7044); actor=reader agent ${reader.principalRef}; grant.worlds=${JSON.stringify(minted.grant.authority_scope.worlds)}; graph_fs.readdir /worlds/ after refused self-widen extra_names=${JSON.stringify(extraNames)} baseline=${JSON.stringify(readerBaseline.names)} seen=${JSON.stringify(afterWiden.names)}; ${errorText(error)}`,
         { cause: error },
       );
     }
