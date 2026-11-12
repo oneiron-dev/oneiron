@@ -21,10 +21,12 @@
 //! seated non-owner holds a grant over the room's messages, since a room
 //! read admits a row only when every reader of its audience may.
 //!
-//! Public paths only; no test door.
+//! Public paths only; no test door. One delete goes through the
+//! `test-support` seam `delete_room_record_unchecked_for_test`.
 //! `cargo test --locked -p oneiron --all-features --test room_pins`.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
@@ -41,7 +43,7 @@ use oneiron::policy_manifest_doors::{
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::{ProjectRecord, RoomPinPolicySet, RoomPinReply, RoomPinRequest};
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -106,29 +108,46 @@ fn grant_room_messages(vault: &Vault, room: EntityId, principals: &[EntityId]) -
     Ok(())
 }
 
-/// The leader's trunk turn in `room`, one MESSAGE; returns the MESSAGE id.
+/// A trunk turn in `room` holding the one MESSAGE `message`.
+fn trunk_turn(vault: &Vault, room: EntityId, message: EntityId) -> WitnessTurn {
+    WitnessTurn {
+        conversation_ref: room.to_hex(),
+        turn_ref: Some(EntityId::now().to_hex()),
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: Some(message.to_hex()),
+            author: WitnessAuthor::User,
+            message_type: "text".into(),
+            content: "owen".into(),
+            parts: None,
+            metadata: Some(serde_json::Value::Object(serde_json::Map::new())),
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: vault.now_recorded_at(),
+        assertions: Default::default(),
+    }
+}
+
+/// The leader's trunk turn in the home room `room`, one MESSAGE; returns the
+/// MESSAGE id.
 fn speak_trunk(vault: &Vault, leader: EntityId, room: EntityId) -> TestResult<EntityId> {
     let message = EntityId::now();
     vault
         .memory(leader, EdgeActorClass::Human)
-        .rooms_speak(&WitnessTurn {
-            conversation_ref: room.to_hex(),
-            turn_ref: Some(EntityId::now().to_hex()),
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: Some(message.to_hex()),
-                author: WitnessAuthor::User,
-                message_type: "text".into(),
-                content: "owen".into(),
-                parts: None,
-                metadata: Some(serde_json::Value::Object(serde_json::Map::new())),
-                is_visible: true,
-                order: 0,
-                quote: None,
-            }],
-            occurred_at: vault.now_recorded_at(),
-            assertions: Default::default(),
-        })?;
+        .rooms_speak(&trunk_turn(vault, room, message))?;
+    Ok(message)
+}
+
+/// `speaker`'s trunk turn in the ordinary room `room`, one MESSAGE, through
+/// the witness gate: `rooms_speak` serves project rooms only and refuses an
+/// ordinary room as "invalid project or home room". Returns the MESSAGE id.
+fn say_in_ordinary_room(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<EntityId> {
+    let message = EntityId::now();
+    vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness(&trunk_turn(vault, room, message))?;
     Ok(message)
 }
 
@@ -750,7 +769,17 @@ fn withheld_target_leaves_no_record_or_count() -> TestResult {
         .rooms_pins_pin(&pin(fx.room, fx.targets[0]))?
         .pin;
     person(&fx, fx.leader).rooms_pins_pin(&pin(fx.room, fx.targets[1]))?;
-    assert!(fx.vault.delete_entity(&fx.targets[1])?);
+    // The subject is the read after a delete, not who may delete: a plain
+    // delete_entity of a room MESSAGE is refused without the room's
+    // authority, so the test-support seam deletes it. Every delete signs as
+    // this install.
+    fx.vault
+        .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    assert!(
+        fx.vault
+            .delete_room_record_unchecked_for_test(&fx.targets[1], DeleteReason::UserDelete)?
+            .existed
+    );
     assert_eq!(stored_pins(&fx, fx.room)?.len(), 2);
     let member = person(&fx, fx.member);
     assert_eq!(member.rooms_render(fx.room)?.pins, vec![kept.clone()]);
@@ -786,7 +815,7 @@ fn each_room_shows_only_its_own_pins() -> TestResult {
     // The ordinary room is its own conversation: the home room's grants do
     // not reach it.
     grant_room_messages(&fx.vault, room, &[fx.leader, fx.member])?;
-    let said = speak_trunk(&fx.vault, fx.leader, room)?;
+    let said = say_in_ordinary_room(&fx.vault, fx.leader, room)?;
     let in_ordinary = person(&fx, fx.member).rooms_pins_pin(&pin(room, said))?.pin;
     let in_home = person(&fx, fx.member)
         .rooms_pins_pin(&pin(fx.room, fx.targets[0]))?
