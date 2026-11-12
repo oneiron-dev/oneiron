@@ -5,6 +5,7 @@
   "output": "crate::autoreason_campaign::archive::CampaignArchiveView",
   "call": "crate::task_verb::sdk::research_archive_best(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -5,6 +5,7 @@
   "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
   "call": "memory.merge_queue_review_policy_set_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.set\"), input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "lane_record_scope": true
   },

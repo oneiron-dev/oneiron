@@ -5,6 +5,7 @@
   "output": "crate::memory::GrantAskedPage",
   "call": "memory.grants_asked(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {},
   "section": false
 }

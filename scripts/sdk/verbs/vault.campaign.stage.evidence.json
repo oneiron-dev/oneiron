@@ -5,6 +5,7 @@
   "output": "crate::campaign::surface::CampaignStageEvidenceReceipt",
   "call": "memory.campaign_stage_evidence(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

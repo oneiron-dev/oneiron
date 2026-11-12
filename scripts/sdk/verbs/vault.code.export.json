@@ -5,6 +5,7 @@
   "output": "crate::memory::origin_doors::CodeExportResult",
   "call": "memory.code_export_as(&memory.embedded_owner(\"vault.code.export\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -249,6 +249,17 @@ pub(super) fn fold_policy_manifest(
                 {
                     resolution.catastrophe_floor = Some(floor);
                 }
+                // One check-in row per vault: the same row twice is one
+                // configuration; two different rows have no deterministic
+                // wait, so the policy fails closed and every rung takes the
+                // shipped wait, receipted as unreadable.
+                if let Some(policy) = decoded.check_in_policy {
+                    match &resolution.check_in_policy {
+                        None => resolution.check_in_policy = Some(policy),
+                        Some(existing) if *existing == policy => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);

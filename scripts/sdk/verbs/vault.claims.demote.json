@@ -8,6 +8,7 @@
   "output": "crate::memory::ClaimDemoteView",
   "call": "memory.claim_demote(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {},
   "section": false,
   "binding": {

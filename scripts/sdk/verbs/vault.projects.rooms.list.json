@@ -5,6 +5,7 @@
   "output": "crate::workspace_roster::ProjectRoomsPage",
   "call": "memory.projects_rooms_list(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

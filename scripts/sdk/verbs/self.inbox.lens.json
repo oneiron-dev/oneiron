@@ -5,6 +5,7 @@
   "output": "crate::agent_inbox_lens::InboxLensPage",
   "call": "memory.inbox_lens(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

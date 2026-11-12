@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::memory::AssetResolved>",
   "call": "memory.resolve_asset_form(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

@@ -9,6 +9,7 @@
   "output": "Vec<crate::memory::CommitOutcome>",
   "call": "memory.commit_scoped(&input.claims, true)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "claim_record_scope": true
   },
