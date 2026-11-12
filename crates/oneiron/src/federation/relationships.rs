@@ -367,19 +367,22 @@ fn put_relationship_claim(
     learned_at: u64,
 ) -> Result<EntityId> {
     let id = vault.store.clock.entity_id()?;
-    vault.put_claim(
-        &id,
-        &ClaimBody::new(
-            claim.predicate,
-            ClaimSubject::Entity(claim.subject),
-            claim.value,
-            1.0,
-            claim.approval,
-            ClaimLifecycleStatus::Active,
-        )?,
-        occurred,
-        learned_at,
+    let mut body = ClaimBody::new(
+        claim.predicate,
+        ClaimSubject::Entity(claim.subject),
+        claim.value,
+        1.0,
+        claim.approval,
+        ClaimLifecycleStatus::Active,
     )?;
+    // Only a PERSON subject has a substrate FACET; any other subject (a
+    // RELATIONSHIP) takes the vault default facet (a birth gate refusal
+    // otherwise, #4389).
+    body.scope_facet = {
+        let txn = vault.store.env.read_txn()?;
+        vault.claim_put_facet_keeping_in_txn(&txn, &id, body.scope_facet)?
+    };
+    vault.put_claim(&id, &body, occurred, learned_at)?;
     Ok(id)
 }
 

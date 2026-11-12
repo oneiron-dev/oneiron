@@ -561,9 +561,10 @@ fn commitment_lifecycle_receipts(
                 crate::commitment::CommitmentStatus::Lapsed => {
                     ("let_go", "commitment.instance.gap_decayed")
                 }
-                // Open is not terminal, and a supersession is a replacement
-                // rather than an outcome of the promise.
-                crate::commitment::CommitmentStatus::Open
+                // Inert and Open are not terminal, and a supersession is a
+                // replacement rather than an outcome of the promise.
+                crate::commitment::CommitmentStatus::Inert
+                | crate::commitment::CommitmentStatus::Open
                 | crate::commitment::CommitmentStatus::Superseded => return Ok(()),
             };
             let mut fields = BTreeMap::new();

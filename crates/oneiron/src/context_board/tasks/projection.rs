@@ -341,16 +341,27 @@ impl TasksSectionRows {
     /// names people, puts each live child on the task it realizes (a child
     /// whose task is not on the board rides as its own row), and lists who
     /// `fits:` each open, unassigned task: the persons who finished tasks of
-    /// the same type, most often first.
+    /// the same type, best measured fit first, then most often first.
+    ///
+    /// The fit (FIX 1161) is each person's (task-type, person) learning
+    /// cell, fed by the runs the person drove
+    /// ([`crate::skill_reliability::person_skill_fit`]), read at the open
+    /// task's own stamp on the tree its project placed it in: the higher
+    /// estimate first, then the more own runs. A person with no runs of
+    /// this type reads the cell's borrowed prior (the person's parent type,
+    /// else the shared prior), so persons on one prior keep the completion
+    /// order. A row whose stamp that tree no longer holds, or whose fit read
+    /// fails, ranks by completions alone, as before.
     ///
     /// Every child rides here. A host whose reader or destination is
     /// narrower than the actor uses [`Self::attach_people_admitted`].
     pub fn attach_people(
         &mut self,
+        vault: &Vault,
         people: &crate::context_board::PeopleView<'_>,
         children: &[crate::context_board::ChildState],
     ) {
-        let Ok(()) = self.attach_people_admitted(people, children, |_| {
+        let Ok(()) = self.attach_people_admitted(vault, people, children, |_| {
             Ok::<_, std::convert::Infallible>(true)
         });
     }
@@ -364,6 +375,7 @@ impl TasksSectionRows {
     /// these rows rides that task, which already passed both.
     pub fn attach_people_admitted<E>(
         &mut self,
+        vault: &Vault,
         people: &crate::context_board::PeopleView<'_>,
         children: &[crate::context_board::ChildState],
         mut admit: impl FnMut(&crate::context_board::ChildState) -> std::result::Result<bool, E>,
@@ -389,47 +401,72 @@ impl TasksSectionRows {
                 }
             }
         }
+        let fits = self.ranked_fits(vault, people);
+        for (intent, fits) in self.intents.iter_mut().zip(fits) {
+            intent.fits = fits;
+        }
+        Ok(())
+    }
+
+    /// Who `fits:` each open, unassigned row, as [`Self::attach_people`]
+    /// ranks them; an empty list for every other row.
+    fn ranked_fits(
+        &self,
+        vault: &Vault,
+        people: &crate::context_board::PeopleView<'_>,
+    ) -> Vec<Vec<String>> {
         let mut done: std::collections::BTreeMap<
             &str,
             std::collections::BTreeMap<crate::EntityId, usize>,
         > = std::collections::BTreeMap::new();
         for intent in &self.intents {
             if intent.status == TaskBoardStatus::Done
-                && let (Some(node), Some(who)) = (intent.type_node.as_deref(), intent.who)
+                && let (Some(type_ref), Some(who)) = (intent.type_ref.as_ref(), intent.who)
                 && people.people.get(who).is_some()
             {
-                *done.entry(node).or_default().entry(who).or_default() += 1;
+                *done
+                    .entry(type_ref.node_id.as_str())
+                    .or_default()
+                    .entry(who)
+                    .or_default() += 1;
             }
         }
-        let fits: Vec<Vec<String>> = self
-            .intents
+        let mut fit_reads = PersonFitReads::new(vault);
+        self.intents
             .iter()
             .map(|intent| {
                 let open = matches!(
                     intent.status,
                     TaskBoardStatus::Queued | TaskBoardStatus::Scheduled
                 );
-                let Some(past) = intent
-                    .type_node
-                    .as_deref()
+                let Some((type_ref, past)) = intent
+                    .type_ref
+                    .as_ref()
                     .filter(|_| open && intent.who.is_none())
-                    .and_then(|node| done.get(node))
+                    .and_then(|type_ref| Some((type_ref, done.get(type_ref.node_id.as_str())?)))
                 else {
                     return Vec::new();
                 };
-                let mut ranked: Vec<_> = past.iter().collect();
-                ranked.sort_by(|left, right| right.1.cmp(left.1).then(left.0.cmp(right.0)));
+                let measured = fit_reads.row(type_ref, intent.project_ref, past);
+                let mut ranked: Vec<(EntityId, usize, Option<PersonFit>)> = past
+                    .iter()
+                    .map(|(who, finished)| {
+                        let fit = measured.as_ref().and_then(|row| row.get(who).copied());
+                        (*who, *finished, fit)
+                    })
+                    .collect();
+                ranked.sort_by(|left, right| {
+                    PersonFit::best_first(left.2.as_ref(), right.2.as_ref())
+                        .then(right.1.cmp(&left.1))
+                        .then(left.0.cmp(&right.0))
+                });
                 ranked
                     .into_iter()
                     .take(TASK_FITS_CAP)
-                    .map(|(who, _)| people.label(*who))
+                    .map(|(who, _, _)| people.label(who))
                     .collect()
             })
-            .collect();
-        for (intent, fits) in self.intents.iter_mut().zip(fits) {
-            intent.fits = fits;
-        }
-        Ok(())
+            .collect()
     }
 
     /// Whether `task` passes the reader and destination the TASKS rows pass
@@ -461,6 +498,118 @@ impl TasksSectionRows {
 
 /// Most persons one TASKS row names under `fits:`.
 const TASK_FITS_CAP: usize = 3;
+
+/// One person's measured fit for an open task's type (FIX 1161): the
+/// estimate of the person's (task-type, person) cell, and the runs of the
+/// person's own it rests on (none when it reads a borrowed or shared prior).
+#[derive(Debug, Clone, Copy)]
+struct PersonFit {
+    mean: f64,
+    own_runs: f64,
+}
+
+impl PersonFit {
+    fn of(read: &crate::learning::LearningRead) -> Self {
+        Self {
+            mean: read.estimate.mean(),
+            own_runs: if read.own { read.estimate.runs } else { 0.0 },
+        }
+    }
+
+    /// The `fits:` order: the higher estimate first, then the more own runs;
+    /// a person with a fit before one without.
+    fn best_first(left: Option<&Self>, right: Option<&Self>) -> std::cmp::Ordering {
+        match (left, right) {
+            (Some(left), Some(right)) => right
+                .mean
+                .total_cmp(&left.mean)
+                .then(right.own_runs.total_cmp(&left.own_runs)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+/// The fit reads one `fits:` pass makes, each once: the type tree each
+/// (project, tree version) placed its stamps in, and each (project, stamp)
+/// row's person fits.
+struct PersonFitReads<'v> {
+    vault: &'v Vault,
+    trees: std::collections::BTreeMap<(Option<EntityId>, u64), Option<crate::task_type::TypeTree>>,
+    rows: std::collections::BTreeMap<
+        (Option<EntityId>, crate::task_type::TaskTypeRef),
+        Option<std::collections::BTreeMap<EntityId, PersonFit>>,
+    >,
+}
+
+impl<'v> PersonFitReads<'v> {
+    fn new(vault: &'v Vault) -> Self {
+        Self {
+            vault,
+            trees: std::collections::BTreeMap::new(),
+            rows: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Each of `past`'s persons' fit for a task stamped `type_ref` in
+    /// `project`; `None` when the tree that placed the stamp no longer holds
+    /// it, or a read fails, so the row ranks by completions alone.
+    fn row(
+        &mut self,
+        type_ref: &crate::task_type::TaskTypeRef,
+        project: Option<EntityId>,
+        past: &std::collections::BTreeMap<EntityId, usize>,
+    ) -> Option<std::collections::BTreeMap<EntityId, PersonFit>> {
+        let key = (project, type_ref.clone());
+        if let Some(row) = self.rows.get(&key) {
+            return row.clone();
+        }
+        let row = self.read_row(type_ref, project, past);
+        self.rows.insert(key, row.clone());
+        row
+    }
+
+    fn read_row(
+        &mut self,
+        type_ref: &crate::task_type::TaskTypeRef,
+        project: Option<EntityId>,
+        past: &std::collections::BTreeMap<EntityId, usize>,
+    ) -> Option<std::collections::BTreeMap<EntityId, PersonFit>> {
+        let vault = self.vault;
+        let tree = self
+            .trees
+            .entry((project, type_ref.tree_version))
+            .or_insert_with(|| {
+                crate::task_type::type_tree_at(vault, project, type_ref.tree_version)
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "a TASKS fits: type tree did not load");
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .as_ref()?;
+        let query = crate::skill_reliability::SkillReliabilityQuery::on_tree(
+            tree,
+            project,
+            crate::learning::TypeRef::from(type_ref),
+            None,
+        )
+        .inspect_err(|error| tracing::warn!(%error, "a TASKS fits: query did not build"))
+        .ok()
+        .flatten()?;
+        past.keys()
+            .map(|person| {
+                crate::skill_reliability::person_skill_fit(vault, person, &query)
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "a TASKS fits: person fit did not read");
+                    })
+                    .ok()
+                    .map(|read| (*person, PersonFit::of(&read)))
+            })
+            .collect()
+    }
+}
 
 /// A live child's run state on the TASKS axis.
 const fn child_board_status(
@@ -584,13 +733,17 @@ pub struct TaskIntentPresence {
     pub counter_task_ref: Option<String>,
     /// PEOPLE: the person or actor the task is assigned to, typed.
     pub who: Option<crate::EntityId>,
-    /// The task type's node, which `fits:` matches past work on.
-    pub type_node: Option<String>,
+    /// The task's type stamp: `fits:` matches past work on its node and
+    /// reads each person's measured fit at the stamp itself.
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
+    /// The project the task's brief names, whose type tree placed the stamp;
+    /// `None` is the vault's.
+    pub project_ref: Option<crate::EntityId>,
     /// `who` as this reader's board names the person; set by
     /// [`TasksSectionRows::attach_people`].
     pub who_label: Option<String>,
-    /// Persons who did this type of task before, as this reader's board
-    /// names them.
+    /// Persons who did this type of task before, best measured fit first, as
+    /// this reader's board names them.
     pub fits: Vec<String>,
     /// Live children realizing this task: each one's attempt id and its
     /// `<agent>:<status>[:lead]` token, in the order they were attached.
@@ -630,7 +783,8 @@ impl TaskIntentPresence {
             interrupted: false,
             counter_task_ref: None,
             who: None,
-            type_node: None,
+            type_ref: None,
+            project_ref: None,
             who_label: None,
             fits: Vec::new(),
             children: Vec::new(),

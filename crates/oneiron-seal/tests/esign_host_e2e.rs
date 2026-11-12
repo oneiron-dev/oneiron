@@ -314,6 +314,7 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
         full_trail_appendix: true,
         lifecycle: None,
         project: None,
+        commitments: Vec::new(),
     };
     let actor = EsignAuditActor {
         actor: owner.to_hex(),
