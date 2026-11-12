@@ -4,10 +4,12 @@
 //! one custody record holds the phrase, the stored bytes stay the owner's,
 //! and a masked reader is served each word overwritten.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::policy_model::SecretScanMode;
-use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY};
 use oneiron::secret_custody::SecretSight;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
@@ -28,18 +30,24 @@ fn open_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>
 }
 
 fn put_asset(vault: &Vault, body: &[u8]) -> oneiron::Result<EntityId> {
+    put(vault, ENTITY_TYPE_ASSET, body)
+}
+
+fn put(vault: &Vault, entity_type: u8, body: &[u8]) -> oneiron::Result<EntityId> {
     let id = EntityId::now();
     vault
         .batch()
-        .put(
-            &id,
-            ENTITY_TYPE_ASSET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            body,
-        )
+        .put(&id, entity_type, TimeRange { start: 1, end: 1 }, 1, body)
         .commit()?;
     Ok(id)
+}
+
+/// Whether `bytes` carry a custody handle (`sc` plus digits), as mask on
+/// write leaves it where the secret was.
+fn carries_handle(bytes: &[u8]) -> bool {
+    bytes
+        .windows(3)
+        .any(|window| window[0] == b's' && window[1] == b'c' && window[2].is_ascii_digit())
 }
 
 fn encode(value: &rmpv::Value) -> Vec<u8> {
@@ -112,10 +120,15 @@ fn bodies() -> Vec<(String, Vec<u8>)> {
     bodies
 }
 
-/// Whether `bytes` still carry a word of the phrase, read as the release
+/// Whether `bytes` still carry a word of [`PHRASE`] ([`carries_a_word_of`]).
+fn carries_a_word(bytes: &[u8]) -> bool {
+    carries_a_word_of(bytes, PHRASE)
+}
+
+/// Whether `bytes` still carry a word of `phrase`, read as the release
 /// doors read text: its lossy text, and each string, binary or extension
 /// value and array of byte values a JSON or MessagePack decode of it holds.
-fn carries_a_word(bytes: &[u8]) -> bool {
+fn carries_a_word_of(bytes: &[u8], phrase: &str) -> bool {
     fn texts(value: &rmpv::Value, out: &mut String) {
         use rmpv::Value as M;
         match value {
@@ -149,7 +162,7 @@ fn carries_a_word(bytes: &[u8]) -> bool {
     if let Some(value) = decoded {
         texts(&value, &mut text);
     }
-    PHRASE.split(' ').any(|word| text.contains(word))
+    phrase.split(' ').any(|word| text.contains(word))
 }
 
 /// Each LABEL-04 body lands in a vault of its own: the stored bytes are the
@@ -214,6 +227,35 @@ fn a_split_phrase_custody_holds_keeps_its_record() -> TestResult {
         before + 1,
         "one custody record holds the phrase across files"
     );
+    Ok(())
+}
+
+/// LABEL-04 for a body that is no file (ARCH-0069 #handles-in-fields): the
+/// smallest value that reads as the phrase (the array whose items are its
+/// words, or the part whose MessagePack encoding holds them) takes the
+/// handle whole in the stored body, as a credential field's value does.
+#[test]
+fn a_split_phrase_in_a_body_lands_with_its_handle() -> TestResult {
+    for (name, body) in bodies() {
+        let (_dir, vault) = open_vault()?;
+        let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+        let id = put(&vault, ENTITY_TYPE_PERSON, &body)
+            .unwrap_or_else(|error| panic!("{name}: a split-phrase body lands: {error:?}"));
+        assert_eq!(
+            vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+            before + 1,
+            "{name}: one custody record holds the phrase"
+        );
+        let stored = vault.get(&id)?.expect("stored body");
+        assert!(
+            !carries_a_word(&stored),
+            "{name}: the stored body carries no word of the phrase: {stored:?}"
+        );
+        assert!(
+            carries_handle(&stored),
+            "{name}: the stored body carries the handle: {stored:?}"
+        );
+    }
     Ok(())
 }
 
@@ -324,6 +366,156 @@ fn a_split_phrase_beside_an_unplaced_token_keeps_the_write_refused() -> TestResu
         vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
         before,
         "a refused write mints no record"
+    );
+    Ok(())
+}
+
+/// Another public BIP39 test vector, as a recovery phrase's words.
+const OTHER_PHRASE: &str =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+/// A JSON array of [`OTHER_PHRASE`]'s words, then `zzzz`, then [`PHRASE`]'s
+/// words: two phrases split over one array's items.
+fn two_phrases_body() -> Result<Vec<u8>, serde_json::Error> {
+    let items: Vec<&str> = OTHER_PHRASE
+        .split(' ')
+        .chain(["zzzz"])
+        .chain(PHRASE.split(' '))
+        .collect();
+    serde_json::to_vec(&items)
+}
+
+/// The custody handles (`sc` plus digits) `bytes` carry, each once.
+fn handles_in(bytes: &[u8]) -> BTreeSet<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut handles = BTreeSet::new();
+    for (at, _) in text.match_indices("sc") {
+        let digits: String = text
+            .get(at + 2..)
+            .unwrap_or_default()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if !digits.is_empty() {
+            handles.insert(format!("sc{digits}"));
+        }
+    }
+    handles
+}
+
+/// Each phrase split over one array's items takes a handle of its own, and
+/// the item between them stays as written. Replacing the array whole by the
+/// first phrase's handle would keep the second in neither the stored body
+/// nor custody (REVIEW-7060 P1).
+#[test]
+fn two_split_phrases_in_one_array_each_take_a_handle() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+    let id = put(&vault, ENTITY_TYPE_PERSON, &two_phrases_body()?)
+        .unwrap_or_else(|error| panic!("a body with two split phrases lands: {error:?}"));
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+        before + 2,
+        "a custody record holds each phrase"
+    );
+    let stored = vault.get(&id)?.expect("stored body");
+    let text = String::from_utf8_lossy(&stored);
+    assert!(
+        !carries_a_word(&stored) && !carries_a_word_of(&stored, OTHER_PHRASE),
+        "the stored body carries no word of either phrase: {text}"
+    );
+    assert!(
+        text.contains("zzzz"),
+        "the item between the phrases stays as written: {text}"
+    );
+    assert_eq!(
+        handles_in(&stored).len(),
+        2,
+        "the stored body carries both handles: {text}"
+    );
+    Ok(())
+}
+
+/// With the switch off, a phrase no record holds stays as written and does
+/// not keep a held phrase in the same array from its handle: the held one
+/// takes the handle of the record that holds it, the other items stay, and
+/// no record is minted (REVIEW-7060 P1; OF-560 C, FIX 8644).
+#[test]
+fn a_held_phrase_beside_an_unheld_one_takes_its_handle_with_the_switch_off() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let words: Vec<&str> = PHRASE.split(' ').collect();
+    let first = put(&vault, ENTITY_TYPE_PERSON, &serde_json::to_vec(&words)?)?;
+    let held_handles = handles_in(&vault.get(&first)?.expect("stored body"));
+    assert_eq!(held_handles.len(), 1, "a record holds the phrase");
+    let held = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, SecretScanMode::Off, 10)?;
+    let id = put(&vault, ENTITY_TYPE_PERSON, &two_phrases_body()?)?;
+    let stored = vault.get(&id)?.expect("stored body");
+    let text = String::from_utf8_lossy(&stored);
+    assert!(
+        !carries_a_word(&stored),
+        "the held phrase takes its handle: {text}"
+    );
+    assert_eq!(
+        handles_in(&stored),
+        held_handles,
+        "the handle is the held record's: {text}"
+    );
+    assert!(
+        carries_a_word_of(&stored, OTHER_PHRASE) && text.contains("zzzz"),
+        "the unheld phrase and the item between stay as written: {text}"
+    );
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
+        held,
+        "the switch off mints no record"
+    );
+    Ok(())
+}
+
+/// A phrase the owner kept as text in a record, put there again split over
+/// an array's items, is no hit there: the write lands as written. The door
+/// screens a kept value's contiguous spelling only, so it would still read
+/// the words joined (REVIEW-7060 P1).
+#[test]
+fn a_kept_phrase_split_over_an_array_lands_as_written() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    // An owner act on this install needs its live machine profile.
+    let issuer = HostSlipIssuer::from_secret(b"split phrase kept as text host")?;
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+    let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let words: Vec<&str> = PHRASE.split(' ').collect();
+    let body = serde_json::to_vec(&words)?;
+    let id = put(&vault, ENTITY_TYPE_PERSON, &body)?;
+    let handle = vault
+        .found_keys(&owner, true, 10)?
+        .into_iter()
+        .find(|notice| notice.record == id)
+        .and_then(|notice| notice.keys.into_iter().next())
+        .map(|key| key.handle)
+        .expect("the phrase's found key");
+    vault.keep_found_key_as_text(&owner, ActSurface::ThisInstall, &handle)?;
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &body,
+        )
+        .commit()
+        .unwrap_or_else(|error| panic!("the kept phrase, split again, lands: {error:?}"));
+    assert_eq!(
+        vault.get(&id)?.expect("stored body"),
+        body,
+        "the kept phrase is stored as written"
     );
     Ok(())
 }
