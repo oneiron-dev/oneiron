@@ -185,7 +185,7 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.house_role {
             let Some(role) = oneiron::workspace_roster::parse_house_role(value.trim()) else {
-                anyhow::bail!("house_role must be member, steward, admin or owner");
+                anyhow::bail!("house_role must be member, steward, admin, deputy or owner");
             };
             resolved.house_role = Some(role);
         }

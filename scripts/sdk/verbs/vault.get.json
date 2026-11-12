@@ -11,6 +11,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>",
   "call": "memory.with_read_filter(input.filter.as_ref()).get_entity(&input.entity_ref)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

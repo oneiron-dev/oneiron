@@ -177,8 +177,9 @@ async fn complete_as(
         recall(server, &actor, &reads_for, query.clone(), clock, listed).await?
     };
     let injected = recalled.is_some();
-    // The rows the prompt carried, and its memory block as the model read it
-    // (FIX 8191, 8192): none when nothing went in.
+    // The pack's rows plus the rows it is derived from without naming them,
+    // and its memory block as the model read it (FIX 8191, 8192): none when
+    // nothing went in.
     let memory_text = recalled.as_ref().map(wire::answer_text);
     let producers: &[EntityId] = if injected { listed.as_slice() } else { &[] };
     if let Some(memory) = recalled {
@@ -405,7 +406,8 @@ fn model_request(
 }
 
 /// The connector's recall for `query`, read for `reads_for`, as one
-/// user-role data block; `None` when nothing came back.
+/// user-role data block; `None` when nothing came back. Lists in `served`
+/// the pack's rows plus the rows it is derived from without naming them.
 async fn recall(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -465,6 +467,16 @@ async fn recall(
             failed.message,
         )
     })?;
+    // Despite the field name, these are entity rows, including each MESSAGE
+    // a TURN reads its text from, not the retained text revision's id.
+    served.extend(
+        pack.items
+            .iter()
+            .flat_map(|item| &item.provenance.source_revision_ids)
+            .filter_map(|row| EntityId::from_hex(row).ok()),
+    );
+    served.sort_unstable();
+    served.dedup();
     let mut rendered = match pack.rendered {
         Some(rendered) if !pack.items.is_empty() && !rendered.trim().is_empty() => rendered,
         _ => String::new(),
@@ -490,7 +502,7 @@ async fn recall(
     // the prompt goes leaves in it, and the refusal says why, content-free
     // (FIX 4939). A check that cannot be read is an integrity hold.
     if let Some(hold) =
-        crate::device_local::retained_hold(&server.vault, reads_for, &listed, text.as_bytes())
+        crate::device_local::retained_hold(&server.vault, reads_for, served, text.as_bytes())
             .unwrap_or(Some(ReleaseHold::Placement))
     {
         return Err(forbidden(

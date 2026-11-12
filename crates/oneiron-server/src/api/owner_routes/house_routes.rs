@@ -38,9 +38,9 @@ pub(super) fn owner_table() -> OwnerTable {
 struct FinishWorkspace {
     /// The stored workspace whose house leads the root.
     workspace_ref: String,
-    /// The role the house runs its org in: `member`, `steward`, `admin` or
-    /// `owner`. Absent, the host's `house_role` config; with neither, the
-    /// finish is refused and binds nothing.
+    /// The role the house runs its org in: `member`, `steward`, `admin`,
+    /// `deputy` or `owner`. Absent, the host's `house_role` config; with
+    /// neither, `deputy`.
     #[serde(default)]
     role: Option<String>,
 }

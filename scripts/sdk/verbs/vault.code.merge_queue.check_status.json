@@ -5,6 +5,7 @@
   "output": "crate::memory::merge_queue_doors::MergeQueueCheckWorkView",
   "call": "memory.merge_queue_check_status_as(&memory.embedded_owner(\"vault.code.merge_queue.check_status\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

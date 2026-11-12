@@ -5,6 +5,7 @@
   "output": "crate::memory::SkillAuthoringReceipt",
   "call": "{ let (parent, id) = crate::skill::helper::fork_target(&input)?; memory.skill_fork(parent, id, &input.skill_id, crate::unix_seconds_now())? }",
   "scope": "Write",
+  "act_class": "reversible_work",
   "mcp_fields": {
     "spec": "$"
   },

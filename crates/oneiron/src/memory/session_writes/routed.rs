@@ -218,6 +218,7 @@ impl Memory<'_> {
                 id_hex: id.to_hex(),
                 receipt_ref: format!("put:{}", id.to_hex()),
                 record: None,
+                agent_definition: None,
             },
         })
     }

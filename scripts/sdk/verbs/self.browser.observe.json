@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::BrowserObservationPage",
   "call": "oneiron_browser::BrowserAnswer::of(driver.observe_page(input)?)",
   "scope": "Read",
+  "act_class": "read",
   "context": "browser",
   "mcp": "none",
   "section": false,
