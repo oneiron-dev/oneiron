@@ -19,9 +19,11 @@ use std::path::Path;
 
 mod adopt;
 mod config_validation;
+mod engine_seed_identities;
 mod first_non_bootstrap_row;
 mod lease_door;
 use self::config_validation::validate_open_config;
+pub(crate) use self::engine_seed_identities::EngineSeedIdentities;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
 /// profile reads at every profile level.
@@ -651,6 +653,7 @@ impl Vault {
             host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
+            inquiry_answers: Default::default(),
             task_work: WorkLine::new(None, TASK_WORK_BOUND, TASK_WORK_WAIT),
             linear_rate_line: WorkLine::exclusive(TASK_WORK_WAIT),
             world_keys: Default::default(),

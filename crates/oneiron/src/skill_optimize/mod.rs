@@ -177,13 +177,19 @@ pub use self::eval_set::{
     AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
     CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
     EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCase,
-    EvalCaseDraft, EvalCohort, EvalCohortDecision, EvalCohortSetup, EvalCutAudit,
-    EvalCutAuditDraft, EvalCutAuthor, EvalExposure, EvalExposureCounts, EvalExposureKind,
-    EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat, EvalSourceGroup, FamilyDecision,
-    FamilyPurpose, NearCopyFlag, PurposeCounts, SeatInventory, SourceFamily, SufficiencyCard,
-    SufficiencyInput, SufficiencyVerdict, UncutFamily, UnknownReason, WaitingDecision,
-    apply_eval_authoring_plan, eval_authoring_inventory, eval_authoring_inventory_sourced,
-    setup_eval_cohorts, sufficiency_card,
+    EvalCaseDraft, EvalCohort, EvalCohortDecision, EvalCohortRetirementAuthor, EvalCohortSetup,
+    EvalCutAudit, EvalCutAuditDraft, EvalCutAuthor, EvalExposure, EvalExposureCounts,
+    EvalExposureKind, EvalLabel, EvalLabelAsk, EvalLabelKind, EvalRelease, EvalSeat,
+    EvalSourceGroup, FamilyDecision, FamilyPurpose, NearCopyFlag, PurposeCounts, SeatInventory,
+    SourceFamily, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UncutFamily,
+    UnknownReason, WaitingDecision, apply_eval_authoring_plan, eval_authoring_inventory,
+    eval_authoring_inventory_sourced, setup_eval_cohorts, sufficiency_card,
+};
+pub use self::eval_set::{
+    EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,
+    EvalAuthoringExecuteAnswer, EvalAuthoringExecuteRequest, EvalAuthoringExecution,
+    EvalAuthoringOutcome, EvalAuthoringSkillRun, admit_eval_authoring_execution,
+    eval_authoring_execute_admits, eval_authoring_execution,
 };
 pub use self::eval_set::{
     EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,

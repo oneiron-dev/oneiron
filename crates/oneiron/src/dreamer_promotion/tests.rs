@@ -282,7 +282,7 @@ fn promotion_evidence_is_a_turn_or_an_admissible_claim() -> Result<()> {
     let by_person = candidate(&fixture, "profile.name", "Owen", vec![fixture.subject]);
     let by_session = candidate(&fixture, "profile.city", "Tokyo", vec![session]);
     // The positive control: the same kind of candidate citing its TURN.
-    let by_turn = candidate(&fixture, "profile.nickname", "Olety", vec![fixture.turn]);
+    let by_turn = candidate(&fixture, "profile.nickname", "owen", vec![fixture.turn]);
     let unsupported = [by_person.claim_id, by_session.claim_id];
     let supported = by_turn.claim_id;
 

@@ -131,7 +131,7 @@ fn move_revokes_slips(from: Role, to: Option<Role>) -> bool {
 
 impl Vault {
     /// Every live grant record over `vault_id`, delegates included.
-    pub(super) fn vault_grants_in_txn(
+    pub(crate) fn vault_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
@@ -366,6 +366,17 @@ impl Vault {
         receipt: &str,
         now: u64,
     ) -> Result<MemberMove> {
+        // An agent's membership is a house mind's link to the org it runs
+        // (HOUSE-BIND = A): it moves only through the house doors, which keep
+        // its receipts, never through a person's membership move.
+        if self.get_entity_type_in_txn(txn, &member)?
+            == Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
+        {
+            return Err(crate::error::Error::InvalidConfig(
+                "a house mind's org role moves only through set_house_role and clear_house_role"
+                    .into(),
+            ));
+        }
         let mut grants = Vec::new();
         if let Some(role) = to {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, now)?);
@@ -399,6 +410,8 @@ impl Vault {
             // A genuine leave: the departure is built here, after the
             // authorized transition, and consumed in this same writer. A
             // downgrade never arrives here; recovery's genuine leave does.
+            // The seat's inquiry route ends with it (INQUIRE-1 PR 4).
+            crate::inquiry::end_inquiry_route_in_txn(&self.store, txn, vault_id, member)?;
             let departure = SharedMemberDeparture::for_genuine_leave(&mut *txn, vault_id, member);
             let DetachOutcome {
                 withdrawn,

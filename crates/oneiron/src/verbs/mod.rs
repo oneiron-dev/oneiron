@@ -1,4 +1,8 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
+mod asset_masked_read;
+mod connector_source_rows_read;
+mod skill_package_read;
+
 mod act_answer;
 mod agent_grant;
 mod agent_run_effect;
@@ -177,14 +181,28 @@ pub struct RoomClaimRequest {
 pub struct ProjectRefRequest {
     pub project_ref: String,
 }
-/// `vault.projects.goal.dismiss`'s input: the proposal one tradeoff question
-/// made, under the goal claim the caller saw in force.
+/// `vault.projects.goal.dismiss`'s input: the project and the proposal to
+/// set aside.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectGoalDismissRequest {
     pub project_ref: String,
-    pub expected_goal_ref: String,
-    pub question_digest: String,
+    pub target: ProjectGoalDismissTarget,
+}
+/// What `vault.projects.goal.dismiss` sets aside: the preference one
+/// tradeoff question proposed, under the goal claim the caller saw in force;
+/// or a full goal proposal by its id, with the owner's reason.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProjectGoalDismissTarget {
+    Preference {
+        expected_goal_ref: String,
+        question_digest: String,
+    },
+    Proposal {
+        proposal_ref: String,
+        reason: String,
+    },
 }
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
 /// wrote nothing.
@@ -455,6 +473,10 @@ pub struct RoomEntry {
 pub use crate::memory::RecallRequest;
 
 pub use crate::memory::affect::QueryAffect;
+
+pub use self::asset_masked_read::*;
+pub use self::connector_source_rows_read::*;
+pub use self::skill_package_read::*;
 
 pub use self::act_answer::*;
 pub use self::agent_grant::*;
