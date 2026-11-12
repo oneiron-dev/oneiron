@@ -198,7 +198,9 @@ impl Vault {
             CommitmentInstanceState::Missing => {
                 return Err(Error::InvalidClaimBody("reminder's commitment is gone"));
             }
-            CommitmentInstanceState::Closed(_) | CommitmentInstanceState::Withdrawn => {
+            CommitmentInstanceState::Inert(_)
+            | CommitmentInstanceState::Closed(_)
+            | CommitmentInstanceState::Withdrawn => {
                 return Err(Error::InvalidClaimBody(
                     "reminder's commitment is no longer open",
                 ));

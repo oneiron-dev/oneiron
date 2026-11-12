@@ -24,11 +24,13 @@
 //!   turn (`Vault::record_board_turn`) writes `world_access.*` and
 //!   `activated.*` claims; they stay archive data
 //!   (`LocalHistoryNotRestored`) and the rest of the vault restores.
-//! * `dreamer::a_dreamer_landed_claim_stays_archive_data_and_the_restore_succeeds`
-//!   (needs `--cfg oneiron_test_support`): a claim the Dreamer landed, signed
-//!   as a MACHINE, stays archive data (`MachineSignedClaimNotRestored`: its
-//!   proof binds the source vault), as do its `machine.*` birth carriers
-//!   (`LocalHistoryNotRestored`), and the rest of the vault restores.
+//! * `dreamer::a_dreamer_landed_claim_stays_archive_data_in_the_actorless_import`
+//!   (needs `--cfg oneiron_test_support`): in the actorless import a claim the
+//!   Dreamer landed, signed as a MACHINE, stays archive data
+//!   (`MachineSignedClaimNotRestored`: its proof binds the source vault), as
+//!   do its `machine.*` birth carriers (`LocalHistoryNotRestored`), and the
+//!   rest of the vault restores. The owner's restore brings the claim back as
+//!   its own restore: `archive_restore_machine_claims.rs`.
 //!
 //! Public doors only, plus `test_doors::consolidation` for the Dreamer;
 //! neutral fixtures (`owen`); vaults in tempdirs. Each destination opens at
@@ -343,7 +345,7 @@ mod dreamer {
     }
 
     #[test]
-    fn a_dreamer_landed_claim_stays_archive_data_and_the_restore_succeeds() {
+    fn a_dreamer_landed_claim_stays_archive_data_in_the_actorless_import() {
         let source_dir = tempfile::tempdir().expect("tempdir");
         let source = open_dreamer_vault(source_dir.path(), "reader").expect("the Dreamer's vault");
         let pass = consolidate_unbound_turn(&source, "call me Owen", None, None, &reply())
@@ -353,12 +355,9 @@ mod dreamer {
         };
         let archive = export_whole(&source);
 
-        let (_dest_dir, dest, restored) = restore_into_fresh_vault_as_owner(&archive);
-
-        if let Err(error) = restored {
-            panic!(
-                "the owner's whole archive holding a Dreamer-landed claim must restore: {error:?}"
-            );
+        let (_dest_dir, dest) = open_later_vault();
+        if let Err(error) = dest.import_whole_vault_archive(&archive) {
+            panic!("a whole archive holding a Dreamer-landed claim must restore: {error:?}");
         }
         let omissions = import_omissions(&dest, &archive);
         assert!(

@@ -392,7 +392,7 @@ impl Vault {
             subject,
             &RefBindingRecord::of(record),
         )?;
-        self.put_reserved_claim_in_txn(txn, &id, &body, instant(now), now)
+        put_import_claim_in_txn(self, txn, &id, body, now)
     }
 
     /// The dispatch of `step` for `import`, if one was written.
@@ -466,7 +466,7 @@ impl Vault {
             None => {}
         }
         let body = claim_body(EXTERNAL_IMPORT_SOURCE_PREDICATE, subject, record)?;
-        self.put_reserved_claim_in_txn(txn, &id, &body, instant(now), now)?;
+        put_import_claim_in_txn(self, txn, &id, body, now)?;
         Ok(Ok(id))
     }
 
@@ -485,7 +485,7 @@ impl Vault {
             return Ok(false);
         }
         let body = claim_body(EXTERNAL_IMPORT_DISPATCH_PREDICATE, import, record)?;
-        self.put_reserved_claim_in_txn(txn, &id, &body, instant(now), now)?;
+        put_import_claim_in_txn(self, txn, &id, body, now)?;
         Ok(true)
     }
 
@@ -502,15 +502,23 @@ impl Vault {
             if self.get_raw_in(txn, &id)?.is_some() {
                 return Ok(());
             }
-            self.put_reserved_claim_in_txn(
-                txn,
-                &id,
-                &body,
-                instant(record.observed_at),
-                record.observed_at,
-            )
+            put_import_claim_in_txn(self, txn, &id, body, record.observed_at)
         })
     }
+}
+
+/// Puts one import bookkeeping claim at `id`, at `at`. Its subject, the
+/// import or the repository it reads, has no FACET of its own, so the claim
+/// takes the facet [`Vault::claim_put_facet_in_txn`] names.
+fn put_import_claim_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    mut body: ClaimBody,
+    at: u64,
+) -> Result<()> {
+    body.scope_facet = vault.claim_put_facet_in_txn(txn, id)?;
+    vault.put_reserved_claim_in_txn(txn, id, &body, instant(at), at)
 }
 
 fn instant(now: u64) -> TimeRange {
