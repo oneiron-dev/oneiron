@@ -37,7 +37,10 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["repairs"], json!([]));
-    let roots = body["roots"].as_array().expect("run tree roots");
+    assert_eq!(body["roots"], json!([0]), "{body}");
+    assert_eq!(body["nodes"].as_array().map(Vec::len), Some(1), "{body}");
+    let tree = nested(&body);
+    let roots = tree["roots"].as_array().expect("run tree roots");
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0]["job_id"], Value::from(attempt_id_hex(root.id)));
     assert_eq!(roots[0]["run_id"], Value::from("run-api"));
@@ -83,7 +86,7 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
         .unwrap()
         .unwrap()
         .unwrap();
-    let changed = sse_tree(&next);
+    let changed = nested(&sse_tree(&next));
     assert_eq!(changed["roots"].as_array().unwrap().len(), 2);
     assert_eq!(changed["roots"][1]["job_id"], attempt_id_hex(child.id));
     oneiron::AttemptQueue::new(&server.vault)
@@ -100,7 +103,10 @@ async fn v1_core_run_tree_reads_attempt_queue_rows() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(sse_tree(&next)["roots"][0]["status"], "paused");
+    assert_eq!(
+        nested(&sse_tree(&next))["roots"][0]["status"],
+        "paused"
+    );
 }
 
 #[tokio::test]
@@ -167,7 +173,10 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    let roots = body["roots"].as_array().expect("run tree roots");
+    // Two childless roots, in pre-order.
+    assert_eq!(body["roots"], json!([0, 1]), "{body}");
+    let tree = nested(&body);
+    let roots = tree["roots"].as_array().expect("run tree roots");
     assert_eq!(roots.len(), 2);
     assert_eq!(roots[0]["job_id"], Value::from(attempt_id_hex(plain.id)));
     assert!(
@@ -214,7 +223,7 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
         server.clone(),
         "POST",
         "/v1/core/run-tree/intervene",
-        "core:write",
+        "core:read,core:write",
         Some(&request),
     )
     .await;
@@ -224,7 +233,10 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     assert_eq!(body["run_id"], Value::from("run-api"));
     assert_eq!(body["kind"], Value::from("pause"));
     assert_eq!(body["effect"], Value::from("paused"));
-    let roots = body["tree"]["roots"].as_array().expect("snapshot roots");
+    // 73f9f2f012a (#3913, FIX 8220): the snapshot needs run-tree read
+    // authority, so these intervene calls hold core:read beside core:write.
+    let tree = nested(&body["tree"]);
+    let roots = tree["roots"].as_array().expect("snapshot roots");
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0]["job_id"], Value::from(attempt_id_hex(root.id)));
     assert_eq!(roots[0]["status"], Value::from("paused"));
@@ -235,7 +247,7 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     assert_eq!(roots[0]["events"][1]["kind"], Value::from("paused"));
     // The intervene actor is the authenticated slip principal, not the legacy
     // bearer label. It is deterministic for this recipe, so pin it exactly.
-    let (write_slip, _) = crate::test_credentials::credential(&server, "scope=core:write");
+    let (write_slip, _) = crate::test_credentials::credential(&server, "scope=core:read,core:write");
     let expected_actor = format!(
         "slip:{}",
         write_slip
@@ -259,16 +271,29 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
         server.clone(),
         "POST",
         "/v1/core/run-tree/intervene",
-        "core:write",
+        "core:read,core:write",
         Some(&repeated),
     )
     .await;
     assert_eq!(repeat_status, StatusCode::OK);
     assert_eq!(repeat_body["effect"], Value::from("already_paused"));
-    let repeat_roots = repeat_body["tree"]["roots"]
+    let repeat_tree = nested(&repeat_body["tree"]);
+    let repeat_roots = repeat_tree["roots"]
         .as_array()
         .expect("repeat snapshot roots");
     assert_eq!(repeat_roots[0]["events"].as_array().unwrap().len(), 2);
+    // Without run-tree read authority the same repeat answers no snapshot.
+    let (write_only_status, write_only_body) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/run-tree/intervene",
+        "core:write",
+        Some(&repeated),
+    )
+    .await;
+    assert_eq!(write_only_status, StatusCode::OK, "{write_only_body}");
+    assert_eq!(write_only_body["effect"], Value::from("already_paused"));
+    assert_eq!(write_only_body["tree"], Value::Null);
 
     let resume = json!({
         "job_id": attempt_id_hex(root.id),
@@ -278,13 +303,14 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
         server.clone(),
         "POST",
         "/v1/core/run-tree/intervene",
-        "core:write",
+        "core:read,core:write",
         Some(&resume),
     )
     .await;
     assert_eq!(resume_status, StatusCode::OK);
     assert_eq!(resume_body["effect"], Value::from("resumed"));
-    let resume_roots = resume_body["tree"]["roots"]
+    let resume_tree = nested(&resume_body["tree"]);
+    let resume_roots = resume_tree["roots"]
         .as_array()
         .expect("resume snapshot roots");
     assert_eq!(resume_roots[0]["status"], Value::from("queued"));
@@ -300,13 +326,14 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
         server.clone(),
         "POST",
         "/v1/core/run-tree/intervene",
-        "core:write",
+        "core:read,core:write",
         Some(&interrupt),
     )
     .await;
     assert_eq!(interrupt_status, StatusCode::OK);
     assert_eq!(interrupt_body["effect"], Value::from("interrupted"));
-    let interrupt_roots = interrupt_body["tree"]["roots"]
+    let interrupt_tree = nested(&interrupt_body["tree"]);
+    let interrupt_roots = interrupt_tree["roots"]
         .as_array()
         .expect("interrupt snapshot roots");
     assert_eq!(interrupt_roots[0]["status"], Value::from("queued"));
@@ -328,13 +355,14 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
         server,
         "POST",
         "/v1/core/run-tree/intervene",
-        "core:write",
+        "core:read,core:write",
         Some(&cancel),
     )
     .await;
     assert_eq!(cancel_status, StatusCode::OK);
     assert_eq!(cancel_body["effect"], Value::from("cancelled"));
-    let cancel_roots = cancel_body["tree"]["roots"]
+    let cancel_tree = nested(&cancel_body["tree"]);
+    let cancel_roots = cancel_tree["roots"]
         .as_array()
         .expect("cancel snapshot roots");
     assert_eq!(cancel_roots[0]["status"], Value::from("cancelled"));
@@ -372,18 +400,21 @@ async fn v1_core_run_tree_redirect_is_durable_idempotent_and_fences_workers() {
         server.clone(),
         "POST",
         "/v1/core/run-tree/intervene",
-        "core:write",
+        "core:read,core:write",
         Some(&request),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["effect"], "redirected");
-    let projected = &body["tree"]["roots"][0]["children"][0];
+    // The snapshot needs run-tree read authority (FIX 8220), and the tree is a
+    // flat table (FIX 11107).
+    let tree = nested(&body["tree"]);
+    let projected = &tree["roots"][0]["children"][0];
     assert_eq!(projected["job_id"], attempt_id_hex(child.id));
     assert_eq!(projected["parent_id"], attempt_id_hex(parent.id));
     assert_eq!(projected["worker"], "new-worker");
     assert_eq!(projected["status"], "queued");
-    let (slip, _) = slip_credentials::credential(&server, "scope=core:write");
+    let (slip, _) = slip_credentials::credential(&server, "scope=core:read,core:write");
     let principal = format!(
         "slip:{}",
         slip.claims
@@ -403,7 +434,7 @@ async fn v1_core_run_tree_redirect_is_durable_idempotent_and_fences_workers() {
         server.clone(),
         "POST",
         "/v1/core/run-tree/intervene",
-        "core:write",
+        "core:read,core:write",
         Some(&request),
     )
     .await;
@@ -483,6 +514,32 @@ fn sse_tree(bytes: &[u8]) -> Value {
         .find_map(|line| line.strip_prefix("data: "))
         .unwrap();
     serde_json::from_str(data).unwrap()
+}
+
+/// The run tree's flat table (FIX 11107, 648c83968a8 #4130: every attempt
+/// once in `nodes`, in pre-order, and the roots and each node's children as
+/// indexes into it), read back as the nested tree these tests assert on.
+fn nested(tree: &Value) -> Value {
+    fn expand(nodes: &[Value], index: &Value) -> Value {
+        let index = usize::try_from(index.as_u64().expect("node index")).expect("node index");
+        let mut node = nodes[index].clone();
+        let children: Vec<Value> = node["children"]
+            .as_array()
+            .expect("child indexes")
+            .iter()
+            .map(|child| expand(nodes, child))
+            .collect();
+        node["children"] = Value::Array(children);
+        node
+    }
+    let nodes = tree["nodes"].as_array().expect("run tree nodes");
+    let roots: Vec<Value> = tree["roots"]
+        .as_array()
+        .expect("run tree roots")
+        .iter()
+        .map(|root| expand(nodes, root))
+        .collect();
+    json!({ "roots": roots })
 }
 
 #[tokio::test]
