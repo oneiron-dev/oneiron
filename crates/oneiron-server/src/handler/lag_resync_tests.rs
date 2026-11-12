@@ -115,6 +115,24 @@ struct Change {
     update: Vec<u8>,
 }
 
+/// The UPDATE frame a device sends for `update`: every window UPDATE travels
+/// in its pad envelope (KS-5, FIX 7107).
+fn device_update_frame(key: &WindowKey, update: &[u8]) -> Vec<u8> {
+    let envelope = transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Update,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: update.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap();
+    transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &envelope)
+        .into_result()
+        .unwrap()
+}
+
 async fn send(socket: &mut Socket, frame: Vec<u8>) {
     socket.send(Message::Binary(frame.into())).await.unwrap();
 }
@@ -285,7 +303,7 @@ async fn a_lagging_owner_socket_is_resynced_and_keeps_receiving() {
 
         let mut writer = home.socket(&format!("lag-writer-{lane}"), hello).await;
         let next = home.change(&key, at).await;
-        send(&mut writer, next.frame.clone()).await;
+        send(&mut writer, device_update_frame(&key, &next.update)).await;
         let heard = listen(&mut owner, Duration::from_secs(3)).await;
         assert!(
             heard.pushed(&key, &next),
