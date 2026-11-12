@@ -5,6 +5,7 @@
   "output": "crate::note::NoteForkView",
   "call": "memory.fork_note(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

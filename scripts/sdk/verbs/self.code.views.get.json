@@ -3,6 +3,7 @@
   "input": "crate::memory::repo_doors::RepoViewsGetInput",
   "output": "crate::memory::repo_doors::RepoViewsGetOutput",
   "scope": "Read",
+  "act_class": "read",
   "context": "run",
   "effect": "RepoViewsGet"
 }

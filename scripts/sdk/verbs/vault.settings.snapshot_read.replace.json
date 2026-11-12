@@ -5,6 +5,7 @@
   "output": "crate::settings::snapshot_read::SnapshotReadSettings",
   "call": "crate::snapshot_read::replace_snapshot_read_settings(memory, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "host_door": true,
   "host_door_precheck": false,
   "host_door_lists": true,

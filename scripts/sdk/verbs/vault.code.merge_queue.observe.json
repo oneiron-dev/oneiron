@@ -5,6 +5,7 @@
   "output": "crate::memory::merge_queue_doors::MergeQueueObservation",
   "call": "memory.merge_queue_observe_as(&memory.embedded_owner(\"vault.code.merge_queue.observe\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
