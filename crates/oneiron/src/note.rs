@@ -302,6 +302,12 @@ pub(crate) use live_body::{
 };
 mod brief_doors;
 pub use brief_doors::{AuthorBriefRequest, BriefClaimCitation, BriefKindStamp};
+mod plan_doc;
+pub use plan_doc::{
+    PLAN_DOC_NOTE_KIND, PlanDocBody, PlanDocDecision, PlanDocProposeRequest, PlanDocRequest,
+    PlanDocSettlementView, PlanDocState, PlanDocVerdictRequest, PlanDocVerdictView, PlanDocView,
+    approve_plan_doc_as, reject_plan_doc_as,
+};
 mod kind_contract;
 #[cfg(all(test, feature = "sync"))]
 mod live_body_tests;
