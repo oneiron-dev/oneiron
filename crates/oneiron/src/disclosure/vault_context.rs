@@ -460,8 +460,10 @@ impl DisclosureContext {
     /// records' words, so the row is admitted only with each of them, through
     /// nested copies, each judged by this context's own row test (Tier A, a
     /// TURN's messages, the clearance, retained copies). Words whose sources
-    /// no longer resolve, or that cycle, are refused. The owner alone is
-    /// admitted everything, as by [`Self::admits`].
+    /// no longer resolve, or that cycle, are refused. A claim passed with
+    /// `claim_body` is judged on that body's words, the revision a caller
+    /// serves, not on its live row's. The owner alone is admitted
+    /// everything, as by [`Self::admits`].
     ///
     /// Every disclosure decision that holds the vault asks this; a filter
     /// that holds only the store asks [`Self::admits`] as a pre-filter, and
@@ -484,7 +486,16 @@ impl DisclosureContext {
         let Some(row) = store.port_entity_record(rtxn, id)? else {
             return Ok(false);
         };
-        let raw = row.encode();
+        let mut raw = row.encode();
+        // A claim served as another body than its live row's (a pinned
+        // revision, a history ledger's) carries that body's words, so the
+        // closure starts from the body served.
+        if let Some(body) = claim_body
+            && row.entity_type == ENTITY_TYPE_CLAIM
+        {
+            raw.truncate(ENTITY_METADATA_HEADER_LEN);
+            raw.extend(encode_claim_body(body)?);
+        }
         match crate::scope_summary::word_sources_in(vault, rtxn, id, &raw)? {
             // Its own words: its row, and a TURN's messages, passed above.
             crate::scope_summary::WordSources::Own => return Ok(true),
