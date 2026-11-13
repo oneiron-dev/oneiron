@@ -33,6 +33,7 @@ pub mod feeds;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 pub mod house_link;
+pub mod identity_recheck;
 pub mod inquiry;
 pub mod label_writers;
 pub mod learning_claim_value;
