@@ -9,8 +9,8 @@
 //! and its connector-send TASK, the attempt waits Scheduled until its release
 //! instant, and a held row names it. The connector executor claims it at that
 //! instant, as it claims a retry's backoff, so the release needs no worker of
-//! its own and a restart keeps the hold. Until then `vault.outbound.undo_send`
-//! takes it back: the attempt is cancelled and the TASK settles with the
+//! its own and a restart keeps the hold. Until then, paused or not,
+//! `vault.outbound.undo_send` takes it back: the attempt is cancelled and the TASK settles with the
 //! synced reason `undo_send`, so no machine sends it. The owner undoes any
 //! held send, and a person their own. Once the window closes the send is
 //! one-way in effect, like any outside effect.
@@ -309,11 +309,20 @@ fn may_take_back_in_txn(
         || (task.actor_class == EdgeActorClass::Human && task.actor_ref == caller)
 }
 
+/// Whether a held send's attempt still waits unsent: Scheduled for its
+/// release, or Paused by a pause placed in its window (`vault.runs.pause`).
+/// The executor has taken neither, and the queue's Cancel takes either back,
+/// so the window's undo stands for both. Any other state means the executor
+/// took the send, or it settled.
+fn waits_unsent(state: AttemptState) -> bool {
+    matches!(state, AttemptState::Scheduled | AttemptState::Paused)
+}
+
 impl Vault {
     /// Every send whose undo-send window is open that `caller` may take
     /// back, soonest release first: the vault owner sees every one, and a
-    /// person their own. A listed send's attempt still waits Scheduled and
-    /// its window has not closed. The proof is a live person's, owner or not.
+    /// person their own. A listed send's attempt still waits unsent
+    /// ([`waits_unsent`]) and its window has not closed. The proof is a live person's, owner or not.
     ///
     /// # Errors
     ///
@@ -331,7 +340,7 @@ impl Vault {
             let Some(attempt) = queue.get_in_txn(&txn, hold.attempt_id)? else {
                 continue;
             };
-            if attempt.state != AttemptState::Scheduled {
+            if !waits_unsent(attempt.state) {
                 continue;
             }
             let Some(task) = self.connector_send_task_in(&txn, &task_ref)? else {
@@ -394,7 +403,7 @@ impl Vault {
             let Some(attempt) = queue.get_in_write_txn(wtxn, hold.attempt_id)? else {
                 return Ok(UndoSendOutcome::NotHeld);
             };
-            if attempt.state != AttemptState::Scheduled {
+            if !waits_unsent(attempt.state) {
                 return Ok(closed);
             }
             let cancel = queue.intervene_in_txn(

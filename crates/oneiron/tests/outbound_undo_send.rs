@@ -11,8 +11,9 @@
 //! channel. Off by default, a send goes at once. With a length set, a send
 //! waits Scheduled until its window closes, and the owner takes it back
 //! through `vault.outbound.undo_send` while the window is open: the attempt
-//! is cancelled and its TASK settles `undo_send`. Once the window has closed
-//! the undo is refused and the send goes. A person's own send is held too,
+//! is cancelled and its TASK settles `undo_send`; a held send the owner
+//! paused through `vault.runs.pause` is still listed and taken back. Once the
+//! window has closed the undo is refused and the send goes. A person's own send is held too,
 //! and that person takes it back; another person neither lists it nor takes
 //! it back. The first agent send through a channel carries the one-line
 //! hint. The setting and a held send survive a reopen. Only the owner sets
@@ -49,6 +50,7 @@ use oneiron::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
+use oneiron::task_verb::run_control::{RunControlEffect, RunControlRequest};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::{EdgeActorClass, EntityId, OutboundDraftInput, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
@@ -397,6 +399,64 @@ fn a_set_length_holds_an_agent_send_and_undo_cancels_it() {
         held[0]["first_send_hint"], false,
         "only the first send carries the hint"
     );
+}
+
+/// A held send the owner paused in its window still waits unsent: the held
+/// list names it, and the undo cancels it and settles its TASK `undo_send`
+/// (review of #7357: the pause must not end the undo before the window
+/// closes).
+#[test]
+fn a_paused_held_send_is_still_listed_and_undone() {
+    let fx = fixture();
+    fx.set(json!({"all_channels_secs": 60}));
+    let send = fx.agent_send(CHANNEL, "paused:1");
+    let task = task_ref(&fx.held()[0]["task_ref"]);
+
+    fx.clock.set(NOW + 1);
+    let paused = fx
+        .vault
+        .memory(fx.owner, EdgeActorClass::Human)
+        .runs_pause(RunControlRequest {
+            branch: send
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            note: None,
+        })
+        .expect("the owner pauses the held send");
+    assert_eq!(paused.effect, RunControlEffect::Paused);
+    assert_eq!(fx.attempt(send).state, AttemptState::Paused);
+    let held = fx.held();
+    assert_eq!(held.len(), 1, "the paused send is still held: {held:?}");
+    assert_eq!(task_ref(&held[0]["task_ref"]), task);
+    assert_eq!(held[0]["release_at"], NOW + 60);
+
+    fx.clock.set(NOW + 2);
+    let undone = fx
+        .owner_call(UNDO, json!({"task_ref": task.to_hex()}))
+        .expect("the owner takes the paused send back");
+    assert_eq!(
+        undone,
+        json!({"task_ref": task.to_hex(), "release_at": NOW + 60, "undone_at": NOW + 2})
+    );
+    assert_eq!(
+        fx.attempt(send).state,
+        AttemptState::Cancelled,
+        "the attempt is cancelled"
+    );
+    let settled = fx
+        .vault
+        .connector_send_task(&task)
+        .expect("read the TASK")
+        .expect("the TASK stands");
+    assert_eq!(
+        settled.suppression.as_deref(),
+        Some("undo_send"),
+        "the TASK settles undo_send"
+    );
+    assert!(fx.held().is_empty(), "nothing is held any more");
+    assert_eq!(fx.claim(NOW + 61), None, "it never goes");
 }
 
 /// Once the window has closed the undo is refused, nothing is written, and
