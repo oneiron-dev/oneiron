@@ -465,8 +465,15 @@ impl Memory<'_> {
         })?;
         // The reply's words are its MESSAGE's, witnessed in this write as
         // the first reply's were: the TURN meets the same transcript gate.
+        // It names the reply's TURN it regenerates, by which room admission
+        // admits the agent as its author.
         crate::conversation_dag::append_regenerated_turn_at_in_txn(
-            vault, txn, &input, thread, turn_id,
+            vault,
+            txn,
+            &input,
+            thread,
+            turn_id,
+            action.assistant_turn,
         )?;
         Ok(None)
     }
