@@ -29,12 +29,18 @@
 //! * the host that wakes a due check-in (PR 2, P2.3: 2e): each housekeeping
 //!   pass advances the open rows due by now, in due order, and the vault's
 //!   wake reads the first due row.
+//! * the asking side of the agent verbs `vault.check_in.preflight` and
+//!   `vault.check_in.open` (PR 2, P2.3: 2f): the act class from the verb's
+//!   own row, the role and power from the caller's own live Grant, an
+//!   always-unsure test, and an open that a repeat of the same saved call
+//!   finds again by its natural key.
 //!
 //! Fan-out admission is the first caller, through [`check_in_with_mode`],
-//! because its mode comes from its own manifest rows. The agent verbs (2f,
-//! 2l), the change path and the key and quorum proofs are later builds.
+//! because its mode comes from its own manifest rows. The answer verb (2l),
+//! the change path and the key and quorum proofs are later builds.
 
 mod act_class;
+mod asker;
 mod chain;
 mod mode;
 mod pending;
@@ -48,6 +54,7 @@ mod waits;
 mod wake;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
+pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};
@@ -57,7 +64,10 @@ pub use pending::{
     HolderReply, Objection, OpenPendingCheckIn, PendingCheckIn, PendingState, Rung, RungEntry,
     RungHolder, RungMembers,
 };
-pub(crate) use pending::{erase_pending_check_in_actor_in_txn, pending_check_in_in_txn};
+pub(crate) use pending::{
+    erase_pending_check_in_actor_in_txn, keyed_pending_check_in_in_txn,
+    open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
+};
 // The doors 2c and 2e-2l call; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use pending::{
