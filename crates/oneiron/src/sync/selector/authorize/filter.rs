@@ -1,3 +1,4 @@
+use super::release::{RowRelease, released_for_other_vault};
 use super::*;
 
 /// `withhold` names the worlds kept off the machine the export serves. Every
@@ -513,47 +514,4 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::note::copy_selected(source, &out, &notes)?;
     out.commit();
     Ok(out)
-}
-
-/// What one row's bytes become on their way to another vault.
-enum RowRelease {
-    /// The stored bytes, byte-exact.
-    Exact,
-    /// The typed rule's Nulled body under the row's own header and id.
-    Rewritten(Vec<u8>),
-    /// Nothing: the row stays home.
-    Withheld,
-}
-
-/// SCOPED-EXPORT-RULE = A for a row this filter would ship to another vault.
-/// ARCH-0027 :382: "There the serializer zeroes a credential the grant does
-/// not admit", and no federation grant admits one. A by-reference ASSET is
-/// judged by its whole file body, which its carrier lets the receiver fetch,
-/// and leaves as its carrier only when that body passes unchanged: the rule
-/// never rewrites an ASSET. A row this export cannot read or judge is
-/// withheld, not a failed export, as an undecodable CLAIM is above: one bad
-/// row must not fail the whole window closed.
-fn released_for_other_vault(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    blob: &[u8],
-) -> RowRelease {
-    let Some(header) = EntityMetadataHeader::parse(blob) else {
-        return RowRelease::Withheld;
-    };
-    if header.entity_type == crate::registry::ENTITY_TYPE_ASSET {
-        let Ok(row) = vault.materialized_row_in_txn(rtxn, id, blob.to_vec()) else {
-            return RowRelease::Withheld;
-        };
-        return match crate::batch::export::export_released_record(header.entity_type, row) {
-            Ok(Some(_)) => RowRelease::Exact,
-            Ok(None) | Err(_) => RowRelease::Withheld,
-        };
-    }
-    match crate::batch::export::export_released_record(header.entity_type, blob.to_vec()) {
-        Ok(Some(released)) if released == blob => RowRelease::Exact,
-        Ok(Some(released)) => RowRelease::Rewritten(released),
-        Ok(None) | Err(_) => RowRelease::Withheld,
-    }
 }
