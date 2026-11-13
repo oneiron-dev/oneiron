@@ -72,7 +72,7 @@ use oneiron::ingest::history::{
 use rustix::fs::{CWD, Mode, OFlags, openat};
 use serde::{Deserialize, Serialize};
 
-use super::{ExportBounds, decode, earliest_first, own_second, queue_dreamer};
+use super::{decode, earliest_first, own_second, queue_dreamer};
 use crate::config::ServeConfig;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
@@ -876,7 +876,7 @@ impl HostedImports {
             fail(vault, &folder, id, "the staged export is gone or changed")?;
             return Ok(true);
         };
-        let mut conversations = match decode(source, &export, &ExportBounds::staged()) {
+        let mut conversations = match decode(source, &export) {
             Ok((_, conversations)) => conversations,
             Err(error) => {
                 fail(vault, &folder, id, &format!("{error:#}"))?;
@@ -1075,7 +1075,7 @@ fn conversation_at_place(
     job: &HostedImportJob,
 ) -> Option<HistoryConversation> {
     let export = staged_export(folder, job.staged_bytes).ok().flatten()?;
-    let (_, mut conversations) = decode(source, &export, &ExportBounds::staged()).ok()?;
+    let (_, mut conversations) = decode(source, &export).ok()?;
     earliest_first(&mut conversations);
     conversations
         .into_iter()
@@ -1155,7 +1155,7 @@ pub(crate) fn land_unplaced(
     let folder = imports_root(vault_path).join(id.to_hex());
     let export = staged_export(&folder, job.staged_bytes)?
         .ok_or_else(|| anyhow::anyhow!("the staged export is gone or changed"))?;
-    let (_, mut conversations) = decode(source, &export, &ExportBounds::staged())?;
+    let (_, mut conversations) = decode(source, &export)?;
     earliest_first(&mut conversations);
     let conversation = conversations
         .get(index)
