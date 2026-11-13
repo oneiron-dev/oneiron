@@ -11,6 +11,7 @@ use crate::store::Store;
 
 pub mod backup;
 pub(crate) mod board_layout;
+pub mod default_facet;
 mod destination;
 mod device_local;
 mod device_only;
@@ -20,6 +21,7 @@ mod models;
 pub mod non_base_world_claim_fraction;
 pub(crate) mod room_threads;
 pub mod snapshot_read;
+pub mod undo_send;
 pub use oneiron_store::settings::web_connector;
 
 pub use destination::{

@@ -152,6 +152,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     deadline: Some(ctx.deadline),
                     now_ms: ctx.now_ms,
                     spend_scope: None,
+                    wake_pass_bound: true,
                 };
                 let mut replies = Vec::with_capacity(steps.len());
                 for (request, step_hash, labels) in steps {
@@ -215,7 +216,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                                 continue 'layouts;
                             }
                             return Ok(
-                                charges.park_for(&other.to_string(), crate::dreamer_runner::dreamer_park_cause_of_step(&other))
+                                charges.end_on_step_error(&other.to_string(), &other)
                             );
                         }
                     };

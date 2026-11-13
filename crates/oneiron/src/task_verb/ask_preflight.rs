@@ -20,6 +20,7 @@ impl Memory<'_> {
         let now = self.vault().store.clock.now_recorded_at();
         // An actor that may not ask is refused before any census runs.
         self.require_ask_ceiling_in(&txn, input)?;
+        input.what.check_option_names()?;
         let holders = self.ask_holders_in_txn(&txn, input)?;
         let effective = input.effective(
             &holders.iter().copied().collect(),
@@ -117,6 +118,7 @@ impl Memory<'_> {
         input: &TaskAskSpec,
     ) -> MemoryResult<()> {
         self.require_ask_ceiling_in(txn, input)?;
+        input.what.check_option_names()?;
         let holders = self.ask_holders_in_txn(txn, input)?;
         let class = self
             .ask_class_in_txn(txn, input.task_ref)?

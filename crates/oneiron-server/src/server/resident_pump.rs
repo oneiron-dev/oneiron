@@ -69,8 +69,8 @@ use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::context_board::TurnWake;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::dreamer_runner::{
-    CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt, outage_park_reason,
-    outage_retry_after,
+    CompleteDreamerAttempt, DREAMER_RUNNER_ATTEMPT_KIND, DreamerParkCause, ParkDreamerAttempt,
+    outage_park_reason, outage_retry_after,
 };
 use oneiron::engine_executor::continuation::{fork_executor_run, run_continuation};
 use oneiron::engine_executor::{
@@ -117,6 +117,8 @@ const WAITING_PARK_REASON: &str = "agent_run_waiting";
 /// schedule ends without one.
 const RECHECK: Duration = Duration::from_secs(30);
 /// The shortest wait between two passes, so a burst of commits costs one.
+/// A commit that queues a ready run no pass has seen cuts it short: that
+/// run's pass starts at once (FIX AGENT-RUN-START-LATENCY-4S).
 const PASS_SPACING: Duration = Duration::from_secs(1);
 /// Inbox messages one resident is woken for in one pass.
 const WAKES_PER_PASS: usize = 16;
@@ -140,11 +142,13 @@ const FORK_REFUSALS: [&str; 5] = [
 ];
 
 /// What one pass found: the ready runs, and what it could not serve, keyed
-/// by what it was for.
+/// by what it was for. `queued` is every ready row of the agent run queue at
+/// the pass's start; a later wake passes at once only for a row outside it.
 #[derive(Default)]
 struct Pass {
     ready: Vec<(AttemptId, RunOf)>,
     faults: BTreeMap<String, String>,
+    queued: HashSet<AttemptId>,
 }
 
 /// Whose run a ready row is: a settled resident's, or another agent's.
@@ -286,8 +290,8 @@ impl SyncServer {
             })
             .await
             .unwrap_or_else(|error| Pass {
-                ready: Vec::new(),
                 faults: BTreeMap::from([("pass".to_owned(), error.to_string())]),
+                ..Pass::default()
             });
             for (what, reason) in &pass.faults {
                 if failing.get(what) != Some(reason) {
@@ -301,6 +305,7 @@ impl SyncServer {
                 tracing::info!(%what, "the resident pump serves this again");
             }
             failing = pass.faults;
+            let seen = pass.queued;
             for (id, of) in pass.ready {
                 if !held(&running).insert(id) {
                     continue;
@@ -318,13 +323,61 @@ impl SyncServer {
                 signal = wake.recv() => !matches!(signal, Err(broadcast::error::RecvError::Closed)),
                 () = tokio::time::sleep(RECHECK) => true,
             };
-            if !woke {
+            if !woke || !self.space_after_wake(&mut wake, &seen, &running).await {
                 return;
             }
-            tokio::time::sleep(PASS_SPACING).await;
             // One pass serves the burst of commits that woke it.
             while let Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_)) = wake.try_recv() {}
         }
+    }
+
+    /// The wait between a wake and the next pass: [`PASS_SPACING`], so a
+    /// burst of commits costs one pass, cut short when a ready run is queued
+    /// that `seen` (the last pass's start) does not hold and this pump does
+    /// not run. That run's pass starts at once, so a dispatched run starts on
+    /// its dispatch's wake and not a second later (FIX
+    /// AGENT-RUN-START-LATENCY-4S). Each wake inside the wait looks again.
+    /// `false` when the vault's attempt signal closed.
+    async fn space_after_wake(
+        self: &Arc<Self>,
+        wake: &mut broadcast::Receiver<()>,
+        seen: &HashSet<AttemptId>,
+        running: &Mutex<HashSet<AttemptId>>,
+    ) -> bool {
+        let mut spacing = std::pin::pin!(tokio::time::sleep(PASS_SPACING));
+        loop {
+            if self.queued_run_unseen(seen, running).await {
+                return true;
+            }
+            tokio::select! {
+                () = spacing.as_mut() => return true,
+                signal = wake.recv() => {
+                    if matches!(signal, Err(broadcast::error::RecvError::Closed)) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether the agent run queue holds a ready row that `seen` does not
+    /// and this pump is not running. Reads on a blocking thread; a read that
+    /// fails says no, so the wake keeps its spacing.
+    async fn queued_run_unseen(
+        self: &Arc<Self>,
+        seen: &HashSet<AttemptId>,
+        running: &Mutex<HashSet<AttemptId>>,
+    ) -> bool {
+        let server = Arc::clone(self);
+        let Ok(Ok(ready)) =
+            tokio::task::spawn_blocking(move || ready_run_ids(server.vault(), unix_now())).await
+        else {
+            return false;
+        };
+        let running = held(running);
+        ready
+            .iter()
+            .any(|id| !seen.contains(id) && !running.contains(id))
     }
 
     /// Wakes every settled resident from its inbox and reads every ready
@@ -332,6 +385,9 @@ impl SyncServer {
     fn resident_pass(&self, now: u64) -> Pass {
         let mut pass = Pass::default();
         let vault = self.vault();
+        // Taken first: a run queued after it is one this pass may miss, so
+        // its commit's wake passes again at once.
+        pass.queued = ready_run_ids(vault, now).unwrap_or_default();
         // A run parked on its payer goes on once the owners said yes (FIX 805).
         resume_payer_parks(vault, LEASE_OWNER, now, None);
         // OF-533: the waits a pumped run parks on are swept on this recheck,
@@ -839,6 +895,25 @@ fn run_objectives(
 /// capability, and an agent is served the same wherever it lives.
 fn pump_caller(actor: WriteActor) -> CompactionHostBinding {
     bind_compaction_caller(actor, CallerLocality::OnDevice, None)
+}
+
+/// The ready rows of the agent run queue at `now`: each Queued or Scheduled
+/// try that no schedule or backoff holds back, read through the queue's
+/// ready index. Resident runs, agent runs and the queue's other jobs alike.
+fn ready_run_ids(vault: &Vault, now: u64) -> oneiron::Result<HashSet<AttemptId>> {
+    Ok(AttemptQueue::new(vault)
+        .ready_rows()?
+        .into_iter()
+        .filter(|row| {
+            row.kind == DREAMER_RUNNER_ATTEMPT_KIND
+                && matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+                && !row
+                    .scheduled_at
+                    .or(row.backoff_until)
+                    .is_some_and(|at| at > now)
+        })
+        .map(|row| row.id)
+        .collect())
 }
 
 fn held(running: &Mutex<HashSet<AttemptId>>) -> MutexGuard<'_, HashSet<AttemptId>> {

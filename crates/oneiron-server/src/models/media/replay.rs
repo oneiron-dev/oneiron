@@ -431,9 +431,13 @@ impl MediaRuntime {
         let mut job = match answer {
             Ok(MediaAnswer::Job(job)) => job,
             Ok(MediaAnswer::Done(_)) => {
-                self.lock_jobs().remove(id);
-                self.book_job_scope(id);
-                return Ok(self.lost(id, row));
+                // Its end is written under the jobs lock, as `held` writes a
+                // lost end (S7299 review round 3 P1).
+                let mut jobs = self.lock_jobs();
+                jobs.remove(id);
+                let lost = self.lost(id, row);
+                drop(jobs);
+                return Ok(lost);
             }
             Err(error) => {
                 self.lock_jobs().remove(id);
@@ -457,7 +461,10 @@ impl MediaRuntime {
     /// provider's answer never reached its row, and nothing here can find
     /// the job again; it may still run and bill there. The row keeps the
     /// end, so its ticket says so on every poll, and the loss is logged. An
-    /// end the vault refuses is answered all the same.
+    /// end the vault refuses is answered all the same. Its caller holds the
+    /// jobs lock, so the snapshot of its scope's part, the commit that
+    /// stages it and the ledger's let-go run as one (S7299 review round 3
+    /// P1).
     fn lost(&self, id: &str, mut row: JobRow) -> MediaJobState {
         tracing::error!(
             reason = "media_job_lost",
@@ -469,12 +476,24 @@ impl MediaRuntime {
             error: LlmError::Fatal(FatalLlmError::JobLost),
         };
         row.ended = Some(state.clone());
-        if let Some(store) = &self.store
-            && let Err(error) = store
-                .update(id, row.clone())
-                .or_else(|_| store.hold(id, row).map(|()| JobWrite::Kept))
-        {
-            tracing::error!(%error, ticket = id, "a lost media job's end was not kept");
+        let Some(store) = &self.store else {
+            return state;
+        };
+        // What its send charged the scope that funds it, when one does, is
+        // staged in the commit that writes its end (S7299-P1).
+        let stage = self.end_stage(id);
+        let written = store
+            .update_staged(id, row.clone(), stage.as_ref())
+            .map(drop)
+            .or_else(|_| store.hold_staged(id, row, stage.as_ref()));
+        match written {
+            Ok(()) => {
+                let staged = self.end_committed(id, stage);
+                self.drain_end_stage(staged);
+            }
+            Err(error) => {
+                tracing::error!(%error, ticket = id, "a lost media job's end was not kept");
+            }
         }
         state
     }

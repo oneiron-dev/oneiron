@@ -18,6 +18,7 @@ async fn public_booking_route_runs_shared_anti_abuse_once() {
         };
         apply_rule_amendment(
             &fixture.server.vault,
+            &crate::test_credentials::embedded_owner(&fixture.server.vault),
             0,
             BookingAntiAbuseRuleRow {
                 row_id: booking_rule_row_id(&scope, &rule),
@@ -25,7 +26,7 @@ async fn public_booking_route_runs_shared_anti_abuse_once() {
                 rule,
                 version: 1,
                 amended_at: 0,
-                amended_by: fixture.page,
+                amended_by: fixture.owner_actor(),
                 owner_stamp_ref: None,
             },
             None,
@@ -108,6 +109,7 @@ async fn a_page_wide_required_intake_refuses_a_confirm_but_never_an_amendment() 
     };
     apply_rule_amendment(
         &fixture.server.vault,
+        &crate::test_credentials::embedded_owner(&fixture.server.vault),
         0,
         BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),
@@ -115,7 +117,7 @@ async fn a_page_wide_required_intake_refuses_a_confirm_but_never_an_amendment() 
             rule,
             version: 1,
             amended_at: 0,
-            amended_by: fixture.page,
+            amended_by: fixture.owner_actor(),
             owner_stamp_ref: None,
         },
         None,
@@ -609,6 +611,7 @@ async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
     };
     apply_rule_amendment(
         &fixture.server.vault,
+        &crate::test_credentials::embedded_owner(&fixture.server.vault),
         0,
         BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),
@@ -616,7 +619,7 @@ async fn an_event_scoped_required_intake_refuses_a_confirm_for_that_event() {
             rule,
             version: 1,
             amended_at: 0,
-            amended_by: fixture.page,
+            amended_by: fixture.owner_actor(),
             owner_stamp_ref: None,
         },
         None,
@@ -728,6 +731,7 @@ async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_
     };
     apply_rule_amendment(
         &fixture.server.vault,
+        &crate::test_credentials::embedded_owner(&fixture.server.vault),
         0,
         BookingAntiAbuseRuleRow {
             row_id: booking_rule_row_id(&scope, &rule),
@@ -735,7 +739,7 @@ async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_
             rule,
             version: 1,
             amended_at: 0,
-            amended_by: fixture.page,
+            amended_by: fixture.owner_actor(),
             owner_stamp_ref: None,
         },
         None,
@@ -758,7 +762,7 @@ async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_
         panic!("one booking EVENT, got {events:?}")
     };
     let now = now_secs().expect("clock");
-    let proposal = oneiron::ClaimBody::new(
+    let mut proposal = oneiron::ClaimBody::new(
         oneiron::booking::BOOKING_STATUS_PREDICATE,
         oneiron::ClaimSubject::Entity(*booking),
         rmpv::Value::Map(vec![
@@ -770,6 +774,7 @@ async fn a_proposed_cancellation_does_not_free_a_place_under_the_active_booking_
         oneiron::ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    proposal.scope_facet = fixture.server.vault.default_facet().expect("default facet");
     // The highest id scans last, where an approval-blind reader lets it win.
     fixture
         .server

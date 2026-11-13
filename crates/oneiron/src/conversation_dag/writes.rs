@@ -60,6 +60,7 @@ fn stamp_body(
                 | "dag_session_ref"
                 | "dag_kind"
                 | "scope_project_id"
+                | super::admission::REGENERATES_KEY
                 | crate::workspace_roster::ROOM_THREAD_KEY
                 | crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY
         ) {
@@ -109,10 +110,34 @@ pub(super) fn bound_to_thread(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
     )
 }
 
-/// The gate check an appended record passes, labelled by who composed its
-/// words: [`policy::check_append_policy`] or
-/// [`policy::check_composed_append_policy`].
+/// The gate check an appended record passes: labelled by who composed its
+/// words ([`policy::check_append_policy`] or
+/// [`policy::check_composed_append_policy`]), or, for a Retry's TURN, the
+/// transcript gate its reply's MESSAGE meets
+/// ([`policy::check_regenerated_turn_policy`]).
 type AppendPolicy = fn(&Vault, &mut RwTxn<'_>, &EntityId, &AppendRecord, &[u8]) -> Result<()>;
+
+/// The door an append comes through: the gate check its record passes and
+/// the key only that door stamps on its TURN.
+#[derive(Clone, Copy)]
+enum AppendDoor {
+    /// A record that holds its writer's own words.
+    Own,
+    /// A record whose words the engine composed under its writer's actor.
+    Composed,
+    /// A Retry's assistant TURN, which regenerates the stored TURN it names.
+    Regenerated(EntityId),
+}
+
+impl AppendDoor {
+    fn policy(self) -> AppendPolicy {
+        match self {
+            Self::Own => policy::check_append_policy,
+            Self::Composed => policy::check_composed_append_policy,
+            Self::Regenerated(_) => policy::check_regenerated_turn_policy,
+        }
+    }
+}
 
 /// Appends a record that holds its writer's own words. Reply revisions are
 /// captured from the target body, and a quote's anchor pinned, in this
@@ -131,7 +156,7 @@ pub(crate) fn append_in_txn(
         summary,
         thread,
         vault.store.clock.entity_id()?,
-        policy::check_append_policy,
+        AppendDoor::Own,
     )
 }
 
@@ -146,40 +171,47 @@ pub(crate) fn append_composed_in_txn(
     summary: Option<EntityId>,
     thread: bool,
 ) -> Result<AppendedRecord> {
-    append_composed_at_in_txn(
-        vault,
-        txn,
-        input,
-        summary,
-        thread,
-        vault.store.clock.entity_id()?,
-    )
-}
-
-/// [`append_composed_in_txn`] under the record id `id` its caller
-/// allocated: a Retry's assistant TURN lands at the id its reply's stream
-/// opened under, in the stream's terminal write (FIX 3152).
-pub(crate) fn append_composed_at_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    input: &AppendRecord,
-    summary: Option<EntityId>,
-    thread: bool,
-    id: EntityId,
-) -> Result<AppendedRecord> {
     append_at_in_txn(
         vault,
         txn,
         input,
         summary,
         thread,
-        id,
-        policy::check_composed_append_policy,
+        vault.store.clock.entity_id()?,
+        AppendDoor::Composed,
     )
 }
 
-/// Appends `input` at `id`, its record gate-checked by `check_policy`. An id
-/// any row or erase marker holds is refused.
+/// Appends a Retry's assistant TURN under the record id `id` its reply's
+/// stream opened under, in the stream's terminal write (FIX 3152). The TURN
+/// holds no words: they are its MESSAGE's, witnessed in the same write. It
+/// is checked as the witness checks the first reply
+/// ([`policy::check_regenerated_turn_policy`]), so the regenerated reply
+/// lands wherever the reply it answers again landed. Its body names
+/// `replaced`, the reply's TURN it regenerates, under the door-owned
+/// [`super::admission::REGENERATES_KEY`]: room admission admits an agent's
+/// TURN by that name (FIX RETRY-TURN-AGENT-AUTHOR-REFUSED-AT-DAG-ADMISSION).
+pub(crate) fn append_regenerated_turn_at_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    input: &AppendRecord,
+    thread: bool,
+    id: EntityId,
+    replaced: EntityId,
+) -> Result<AppendedRecord> {
+    append_at_in_txn(
+        vault,
+        txn,
+        input,
+        None,
+        thread,
+        id,
+        AppendDoor::Regenerated(replaced),
+    )
+}
+
+/// Appends `input` at `id`, its record gate-checked as `door` checks it. An
+/// id any row or erase marker holds is refused.
 fn append_at_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -187,7 +219,7 @@ fn append_at_in_txn(
     summary: Option<EntityId>,
     thread: bool,
     id: EntityId,
-    check_policy: AppendPolicy,
+    door: AppendDoor,
 ) -> Result<AppendedRecord> {
     if crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, &id)?
         || vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
@@ -215,7 +247,7 @@ fn append_at_in_txn(
             summary,
             thread,
             id,
-            check_policy,
+            door.policy(),
         );
     }
     if thread && input.advance {
@@ -360,6 +392,15 @@ fn append_at_in_txn(
     else {
         return Err(invalid("record body must be a map"));
     };
+    // A Retry's TURN names the TURN it regenerates. Only the Retry door
+    // stamps the key (stamp_body refuses it from a caller); room admission
+    // reads it to admit the TURN's agent author.
+    if let AppendDoor::Regenerated(replaced) = door {
+        entries.push((
+            Value::from(super::admission::REGENERATES_KEY),
+            Value::from(replaced.to_hex()),
+        ));
+    }
     if let Some(target) = &target {
         let anchor = quote.as_ref().map(|quote| quote.anchor);
         entries.extend([
@@ -473,7 +514,7 @@ fn append_at_in_txn(
             body = crate::workspace_roster::stamp_thread(&body, &binding)?;
         }
     }
-    check_policy(vault, txn, &id, input, &body)?;
+    door.policy()(vault, txn, &id, input, &body)?;
     if let Some(quote) = &quote {
         super::quote::pin_in_txn(vault, txn, quote, input.actor)?;
     }
@@ -551,14 +592,19 @@ fn append_at_in_txn(
             CANONICAL.put(&vault.store, txn, &parent, &id)?;
         }
     }
-    Ok(AppendedRecord {
+    let appended = AppendedRecord {
         id,
         head: if input.advance { Some(id) } else { old_head },
         parent: input.parent,
         kind: ENTITY_TYPE_TURN,
         containing_turn: None,
         reply_target: target,
-    })
+    };
+    // THREAD-TASK-EVERY-ROOM: every TURN, trunk or thread, in any room,
+    // keeps its room row and stages its wakes in this write, as a witness
+    // turn does.
+    crate::workspace_roster::record_native_room_turn_in_txn(vault, txn, input, &appended)?;
+    Ok(appended)
 }
 
 /// Puts the door-built TURN `body` at `id` as an audience edit of the

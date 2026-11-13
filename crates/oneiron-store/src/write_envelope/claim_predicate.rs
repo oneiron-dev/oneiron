@@ -88,6 +88,27 @@ pub fn is_edge_reserved_predicate(predicate: &str) -> bool {
     predicate.split('.').next() == Some(RESERVED_PREDICATE_NAMESPACE)
 }
 
+/// The namespaces of [`is_engine_owned_reserved_predicate`]: with
+/// [`ENGINE_OWNED_RESERVED_PREDICATES`], the one list of engine-owned reserved
+/// families. The whole-vault archive import names a restore door or an
+/// omission reason for each family on it (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS),
+/// and a test fails for a family it does not cover.
+pub const ENGINE_OWNED_RESERVED_NAMESPACES: &[&str] = &[
+    "machine",
+    "world_access",
+    "activated",
+    "esign",
+    RESERVED_SKILL_PREDICATE_NAMESPACE,
+    RESERVED_ACTOR_PREDICATE_NAMESPACE,
+    "repo",
+    LEARNING_NAMESPACE,
+];
+
+/// The exact engine-owned reserved predicates outside
+/// [`ENGINE_OWNED_RESERVED_NAMESPACES`].
+pub const ENGINE_OWNED_RESERVED_PREDICATES: &[&str] =
+    &[PREDICATE_PERSON_SUBSTRATE, PREDICATE_VAULT_DEFAULT_FACET];
+
 /// The predicates whose lifecycle the ENGINE drives (`skill.*`, `actor.*`,
 /// `repo.*`, the projector-only `learning.*`, and exactly `person.substrate`), unlike `edge.*`, whose
 /// transitions re-stamp provenance-derived edge state and therefore stay
@@ -95,17 +116,11 @@ pub fn is_edge_reserved_predicate(predicate: &str) -> bool {
 /// published and admitted: a generic door that could write it could stand in
 /// for a publication's intent or a push's evidence.
 pub fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
-    let namespace = predicate.split('.').next();
-    namespace == Some("machine")
-        || namespace == Some("world_access")
-        || namespace == Some("activated")
-        || namespace == Some("esign")
-        || namespace == Some(RESERVED_SKILL_PREDICATE_NAMESPACE)
-        || namespace == Some(RESERVED_ACTOR_PREDICATE_NAMESPACE)
-        || predicate == PREDICATE_PERSON_SUBSTRATE
-        || predicate == PREDICATE_VAULT_DEFAULT_FACET
-        || namespace == Some("repo")
-        || namespace == Some(LEARNING_NAMESPACE)
+    predicate
+        .split('.')
+        .next()
+        .is_some_and(|namespace| ENGINE_OWNED_RESERVED_NAMESPACES.contains(&namespace))
+        || ENGINE_OWNED_RESERVED_PREDICATES.contains(&predicate)
 }
 
 /// Whether `prefix` is a well-formed predicate prefix: one or more grammar

@@ -6,7 +6,7 @@ use crate::store::model_step_submission::StepBudgetRefusal;
 
 use super::AttemptQueue;
 use super::encoding::decode_record;
-use super::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
+use super::lifecycle::{PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit};
 use super::telemetry::invalid_transition;
 use super::types::{AttemptState, CompleteAttempt, CompleteOutcome, FailAttempt, FailOutcome};
 use super::validate::{validate_failure_reason, validate_lease_owner, validate_transition_lease};
@@ -129,20 +129,15 @@ impl AttemptQueue<'_> {
                 )?;
                 validate_failure_reason(&input.reason)?;
                 let _ = RunLifecycle::fail(&mut record, input.now);
-                record.backoff_until = None;
-                record.last_error = Some(input.reason);
                 record.budget_refusal = budget_refusal;
-                record.updated_at = input.now;
-                self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                let encoded = self.encode_in_txn(wtxn, &mut record)?;
-                self.store
-                    .attempt_records
-                    .put(wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
+                self.commit_terminal_in_txn(
                     wtxn,
-                    &record,
-                    &input.lease_owner,
+                    &mut record,
+                    TerminalCommit {
+                        last_error: Some(input.reason),
+                        now: input.now,
+                        receipt_actor: PackReceiptActor::Caller(&input.lease_owner),
+                    },
                 )?;
                 self.notify_settled_in_txn(wtxn, &record)?;
                 Ok(FailOutcome::Failed(record))

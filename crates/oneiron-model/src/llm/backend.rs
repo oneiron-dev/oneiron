@@ -204,6 +204,23 @@ pub enum BrokerIsolation {
 /// retrying transport stays below a ladder, never below a run's gate.
 pub trait SingleSend {}
 
+/// The physical backend attempts one lease's transports began. Every clone of
+/// the lease shares it, and so does the record its issuing meter keeps, so
+/// the meter reads the transports' own evidence (FIX BUDGET-LEASE). It only
+/// counts up: send evidence is never erased.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PhysicalAttempts(Arc<AtomicUsize>);
+
+impl PhysicalAttempts {
+    fn begin(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 /// Opaque admission token issued by the budget guard.
 #[derive(Clone)]
 pub struct BudgetLease {
@@ -219,8 +236,9 @@ pub struct BudgetLease {
     /// id/guard equality, hash, Debug and serde. Set once after dispatch opens;
     /// the first writer wins. WorkContext itself is never serialized.
     work_context: Arc<Mutex<Option<WorkContext>>>,
-    /// Physical backend attempts begun for this call, not inferred from receipts.
-    physical_attempts: Arc<AtomicUsize>,
+    /// Physical backend attempts begun for this call, not inferred from
+    /// receipts. The issuing meter's lease record holds the same counter.
+    physical_attempts: PhysicalAttempts,
     /// Independent pre-send conditions, conjoined across clones, not lease authority.
     dispatch_releases: Arc<Mutex<Vec<OwnedDispatchRelease>>>,
 }
@@ -258,7 +276,7 @@ impl BudgetLease {
             guard_identity,
             observations: Arc::default(),
             work_context: Arc::default(),
-            physical_attempts: Arc::default(),
+            physical_attempts: PhysicalAttempts::default(),
             dispatch_releases: Arc::default(),
         }
     }
@@ -341,13 +359,19 @@ impl BudgetLease {
     /// Marks one physical backend attempt begun. Unlike inference observations,
     /// this count is present even before any reply or usage exists.
     pub fn begin_physical_attempt(&self) {
-        self.physical_attempts.fetch_add(1, Ordering::Relaxed);
+        self.physical_attempts.begin();
     }
 
     /// How many physical backend attempts this call has begun.
     #[must_use]
     pub fn physical_attempts(&self) -> usize {
-        self.physical_attempts.load(Ordering::Relaxed)
+        self.physical_attempts.count()
+    }
+
+    /// The counter [`Self::begin_physical_attempt`] adds to, for the record
+    /// the issuing meter keeps.
+    pub(crate) fn physical_attempt_evidence(&self) -> PhysicalAttempts {
+        self.physical_attempts.clone()
     }
 
     /// Clone-then-set attachment: the clone shares identity, observations and

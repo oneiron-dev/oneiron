@@ -41,4 +41,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | s | 1 mod · 1 crate-vis | — | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) |
 | `tests/callable_wait_park.rs` | test | s | — | — | ENGINE CALL SANDBOX-WAIT-PARK-SEMANTICS: a callable whose body finishes after its `wait` was answered with… |
 | `tests/code_mode_wait_park.rs` | test | s | — | — | ENGINE CALL CODE-SANDBOX-WAIT-RESPONSE-FIELD: a code-mode call whose row output holds a park, answered with… |
+| `tests/quickjs_factory_compiles_once.rs` | test | s | — | — | FIX AGENT-RUN-START-LATENCY-4S: a QuickJS runtime handle reuses its factory's compiled component |
 | `tests/wait_park/fixture.rs` | test | s | 4 crate-vis | — | The shared fixture of `code_mode_wait_park.rs` and `callable_wait_park.rs` (ENGINE CALL… |

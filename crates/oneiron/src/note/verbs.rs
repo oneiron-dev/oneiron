@@ -373,7 +373,10 @@ impl Vault {
                 )?;
                 let source = crate::claim::ClaimSource::Inferred;
                 body.source = Some(source);
-                body.scope_facet = origin_facet;
+                // An imported record's origin facet need not be a FACET row
+                // here; such a suggestion takes the vault default facet.
+                body.scope_facet =
+                    self.claim_put_facet_keeping_in_txn(txn, &suggestion, origin_facet)?;
                 self.put_claim_in_txn(
                     txn,
                     &suggestion,

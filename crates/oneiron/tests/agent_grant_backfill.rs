@@ -398,6 +398,7 @@ fn backfill_does_not_restore_a_previously_revoked_grant() {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints yuki a base-world read Grant")

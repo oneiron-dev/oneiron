@@ -144,9 +144,10 @@ pub(super) async fn handle_connection(
     );
     // A proven machine's socket carries custody carrier leaf keys while it
     // lives (FIX 11785); the relay is the home's, so a peer's carries none
-    // (FIX 4748).
-    let _leaf_key_socket =
-        (!peer_served).then(|| LeafKeySocket::register(&server, conn_id, machine, &direct_tx));
+    // (FIX 4748). Nor does the residence RPC lane, which reads RPC frames
+    // alone: a leaf-key frame sent there would end its next call.
+    let _leaf_key_socket = (!peer_served && protocol::carries_leaf_keys(protocol_version))
+        .then(|| LeafKeySocket::register(&server, conn_id, machine, &direct_tx));
     // A machine of the owner's whose hello listed sealed world updates is
     // offered the home's queue of them (DEC-0005 fix 8).
     conn_state.sealed_world_updates = transport.peer_codecs().decodes_sealed_world_updates();

@@ -290,7 +290,33 @@ impl ClaimMaterialization {
         persist_pending: bool,
         approver: Option<crate::WriteActor>,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver, None)
+        Self::apply_approval_inner(vault, txn, op, persist_pending, None, approver, None, None)
+    }
+
+    /// [`Self::apply_approval`] for the vault owner's own approval: `owner`
+    /// is the proof the approving door revalidated in `txn`, bound to this
+    /// one claim's Put. An owner's approval is the in-person confirmation a
+    /// critical class asks for, so the Gate lands it rather than pending it
+    /// on the criticality floor; with no proof (a narrowed or delegated
+    /// credential) it is gated exactly as [`Self::apply_approval`].
+    pub(crate) fn apply_owner_approval(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        op: BatchOp,
+        persist_pending: bool,
+        approver: crate::WriteActor,
+        owner: Option<crate::consent::OwnerAuthoredWrite>,
+    ) -> Result<()> {
+        Self::apply_approval_inner(
+            vault,
+            txn,
+            op,
+            persist_pending,
+            None,
+            Some(approver),
+            None,
+            owner,
+        )
     }
 
     /// Gate an unamended approval as its authorized caller while retaining
@@ -311,6 +337,7 @@ impl ClaimMaterialization {
             None,
             Some(approver),
             Some(caller),
+            None,
         )
     }
 
@@ -320,9 +347,13 @@ impl ClaimMaterialization {
         op: BatchOp,
         proof: crate::skill_hub::RefinementAdmissionProof,
     ) -> Result<()> {
-        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None, None)
+        Self::apply_approval_inner(vault, txn, op, false, Some(proof), None, None, None)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one approval Put and the authorities that may gate it: refinement, caller, owner"
+    )]
     fn apply_approval_inner(
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
@@ -331,6 +362,7 @@ impl ClaimMaterialization {
         proof: Option<crate::skill_hub::RefinementAdmissionProof>,
         approver: Option<crate::WriteActor>,
         caller: Option<WriteEnvelope>,
+        owner: Option<crate::consent::OwnerAuthoredWrite>,
     ) -> Result<()> {
         let BatchOp::Put {
             id,
@@ -401,6 +433,7 @@ impl ClaimMaterialization {
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
         }
+        let approved_claim = *id;
         let caller_envelopes = caller.into_iter().map(|envelope| (*id, envelope)).collect();
         let transition = super::VerifiedClaimTransition::after_validation(&vault.store, txn, &op)?;
         super::apply_ops_with_gate_mode(
@@ -421,7 +454,8 @@ impl ClaimMaterialization {
                     .with_claim_materializations(bindings)
                     .with_verified_claim_transitions(vec![transition]),
             }
-            .with_caller_envelopes(caller_envelopes),
+            .with_caller_envelopes(caller_envelopes)
+            .with_owner_approval(approved_claim, owner),
         )
     }
 

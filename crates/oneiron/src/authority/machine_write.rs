@@ -28,7 +28,8 @@ pub(crate) use after_mask::resign_machine_claim_after_mask_in_txn;
 pub(crate) use history_anchor::machine_history_host_context;
 
 const DOMAIN: &[u8] = b"oneiron/machine-claim/v1";
-const SIGNATURE_KEY: &str = "machine_signature";
+/// The claim evidence key that holds a MACHINE write signature.
+pub(crate) const MACHINE_SIGNATURE_KEY: &str = "machine_signature";
 
 pub(super) fn denied() -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority {
@@ -222,7 +223,7 @@ impl Vault {
 pub(crate) fn evidence_without_machine_signature(body: &ClaimBody) -> Option<Value> {
     let mut evidence = body.evidence.clone();
     if let Some(Value::Map(entries)) = &mut evidence {
-        entries.retain(|(key, _)| key.as_str() != Some(SIGNATURE_KEY));
+        entries.retain(|(key, _)| key.as_str() != Some(MACHINE_SIGNATURE_KEY));
     }
     evidence
 }
@@ -259,7 +260,7 @@ fn proof(body: &ClaimBody) -> Result<Option<(EntityId, u64, Option<MachineWriteS
         return Ok(None);
     };
     let class = evidence_field(entries, "actor_class")?.and_then(Value::as_u64);
-    let signature = evidence_field(entries, SIGNATURE_KEY)?;
+    let signature = evidence_field(entries, MACHINE_SIGNATURE_KEY)?;
     let actor = evidence_field(entries, "actor_entity_ref")?.and_then(|value| match value {
         Value::Binary(bytes) => EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok(),
         _ => None,
@@ -345,7 +346,7 @@ pub(crate) fn machine_claim_needs_history_observing(
     };
     if entries
         .iter()
-        .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY))
+        .any(|(key, _)| key.as_str() == Some(MACHINE_SIGNATURE_KEY))
     {
         return Ok(true);
     }
@@ -456,7 +457,7 @@ pub(crate) fn machine_claim_read_admitted(
     };
     let carries_proof = entries
         .iter()
-        .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY));
+        .any(|(key, _)| key.as_str() == Some(MACHINE_SIGNATURE_KEY));
     let machine_ref = names_machine(store, txn, entries)?;
     if !carries_proof {
         if machine_ref {
@@ -723,7 +724,7 @@ pub(crate) fn verify_machine_claim_in_txn(
     };
     let carries_proof = entries
         .iter()
-        .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY));
+        .any(|(key, _)| key.as_str() == Some(MACHINE_SIGNATURE_KEY));
     // Existing system-labeled engine writes are not MACHINE identities.
     let machine_ref = names_machine(store, txn, entries)?;
     if !machine_ref && !carries_proof {
@@ -760,7 +761,7 @@ pub(crate) fn verify_machine_claim_in_txn(
                 if crate::claim::history_projection::project_machine_claim(&projection) != *body
                     || projection.birth.evidence.as_ref().is_none_or(|value| {
                         !matches!(value, Value::Map(entries) if entries.iter().any(|(key, _)|
-                            key.as_str() == Some(SIGNATURE_KEY)))
+                            key.as_str() == Some(MACHINE_SIGNATURE_KEY)))
                     })
                 {
                     return Err(invalid_origin(replicated));

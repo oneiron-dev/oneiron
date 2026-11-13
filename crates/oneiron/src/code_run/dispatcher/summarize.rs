@@ -83,6 +83,8 @@ impl HostSelfDispatcher<'_> {
             },
             ask: SUMMARIZE_JOB_ASK.to_owned(),
             parent_lease: None,
+            // A summary child spawns nothing: it answers to its agent's grant.
+            powers: None,
         };
         let job = match self
             .storage

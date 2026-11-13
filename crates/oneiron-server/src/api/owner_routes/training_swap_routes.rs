@@ -10,8 +10,21 @@
 //! named by its spec and load-set hashes, in one writer; a result that moved
 //! since is refused as changed. An explicit override over failed checks is
 //! chosen only here, with its reason. An embedder run is refused: its swap
-//! stages a re-embed through a space move. Nothing loads trained weights on
-//! this host yet, so a bound checkpoint's `serving` reads unavailable.
+//! stages a re-embed through a space move. Nothing loads a role's trained
+//! weights on this host yet, so a bound role checkpoint's `serving` reads
+//! unavailable.
+//!
+//! A question run's head has no role. `question-head/bind` binds it to one
+//! standing typed question (FIX 3864, ARCH-0076 tier 3): an evaluated choice
+//! needs the run's checks and a won paired held-out trial against the
+//! question's current answerer (quality not worse within its noise, cost
+//! and latency both lower); without one only an explicit choice with the
+//! owner's reason binds it. `question-head/trial` measures that trial on
+//! the run's sealed held-out rows, one counted serving: the head reads each
+//! row once and the question's current answerer twice, through the host's
+//! ladder at the question's dial, never past the Big rung. A bound head
+//! answers that question on this host's Local rung; `question-head/unbind`
+//! gives the question back its model call.
 
 use std::sync::Arc;
 
@@ -22,13 +35,13 @@ use oneiron::embed::PendingEmbedderBinding;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::task_verb::TrainingSwapAskView;
 use oneiron::training_pack::{
-    ExportCheck, HeldOutResult, QuestionTarget, RoleSwapReceipt, SwapChoice, TrainingAuthorization,
-    TrainingHold, TrainingState, ViewedSwap,
+    ExportCheck, HeldOutResult, QuestionHeadBinding, QuestionHeadTrial, QuestionTarget,
+    RoleSwapReceipt, SwapChoice, TrainingAuthorization, TrainingHold, TrainingState, ViewedSwap,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
-use crate::ai_host::trained_serving::{TrainedServing, trained_serving};
+use crate::ai_host::trained_serving::{TrainedServing, question_head_serving, trained_serving};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -69,6 +82,36 @@ pub(super) fn owner_table() -> OwnerTable {
             },
             post(cancel),
         ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/question-head/bind",
+                summary: "Binds a question run's head to one standing typed question: evaluated only on its checks and a won paired held-out trial, else an explicit choice with the owner's reason.",
+                row: None,
+                shape: None,
+            },
+            post(bind_question_head),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/question-head/trial",
+                summary: "Tries a scored question run's head against a standing typed question's current answerer on the run's sealed held-out rows (one counted serving): quality with its noise, cost and latency of both.",
+                row: None,
+                shape: None,
+            },
+            post(trial_question_head),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/question-head/unbind",
+                summary: "Takes the head off a typed question; the question keeps its model call.",
+                row: None,
+                shape: None,
+            },
+            post(unbind_question_head),
+        ),
     ]
 }
 
@@ -87,10 +130,25 @@ struct TrainingRunView {
     #[serde(skip_serializing_if = "Option::is_none")]
     role: Option<ModelRole>,
     /// The question a question run's head answers (FIX 7263); absent on a
-    /// role run. Its head binds no role, so it serves nothing here and
-    /// offers no swap.
+    /// role run. Its head binds no role and offers no swap; it binds to a
+    /// typed question through `question-head/bind`.
     #[serde(skip_serializing_if = "Option::is_none")]
     question: Option<QuestionTargetView>,
+    /// The typed question a question run's head is bound to, while it is
+    /// (FIX 3864).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    question_head: Option<QuestionHeadBinding>,
+    /// A question run's latest paired held-out trial against a typed
+    /// question's current answerer (`question-head/trial`), open or
+    /// recorded; only a recorded trial against the question bound can let
+    /// an evaluated bind pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    question_trial: Option<QuestionHeadTrial>,
+    /// Whether an evaluated bind of a question run's head to the typed
+    /// question its latest trial was against passes: its checks and that won
+    /// trial. A bind to any other question needs a trial against that one, or
+    /// an explicit choice.
+    can_bind_question_head: bool,
     state: TrainingState,
     /// The run's spec hash (64 hex), which `swap` names back.
     spec: String,
@@ -117,7 +175,9 @@ struct TrainingRunView {
 }
 
 /// A question run's question: its pins and the new model, with the
-/// definition's digest (64 hex) in place of the definition.
+/// definition's digest (64 hex) in place of the definition. `question_id`
+/// is the training rows' name for it; the typed question a head answers is
+/// the one the owner binds it to.
 #[derive(Debug, Serialize)]
 struct QuestionTargetView {
     question_id: String,
@@ -154,6 +214,36 @@ struct ViewedResult {
     spec: String,
     /// The viewed run's `checkpoint`, as 64 hex.
     checkpoint: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BindQuestionHead {
+    /// A question run id, as 32 hex.
+    run: String,
+    /// The standing typed question the head answers, as 32 hex.
+    question: String,
+    question_version: u32,
+    choice: SwapChoice,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrialQuestionHead {
+    /// A question run id, as 32 hex.
+    run: String,
+    /// The standing typed question whose current answerer the head is tried
+    /// against, as 32 hex.
+    question: String,
+    question_version: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnbindQuestionHead {
+    /// The typed question, as 32 hex.
+    question: String,
+    question_version: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,14 +292,30 @@ async fn view(
             .map(|checkpoint| checkpoint.content_hash())
             .transpose()?
             .map(hex);
-        // A question head has no role to serve or ask about.
+        // A question head has no role to ask about; it serves while a typed
+        // question is bound to it.
         let role = run.plan.target.role_binding().map(|(role, _)| role);
+        let questioned = run.plan.target.question().is_some();
         let serving = match role {
             Some(role) => returned
                 .map(|checkpoint| trained_serving(&server, role, checkpoint))
                 .transpose()?,
+            None if questioned => returned
+                .map(|checkpoint| question_head_serving(&server, &id, checkpoint))
+                .transpose()?,
             None => None,
         };
+        let (question_head, question_trial) = if questioned {
+            (
+                vault.training_run_question_head(&id)?,
+                vault.training_question_trial(&id)?,
+            )
+        } else {
+            (None, None)
+        };
+        let can_bind_question_head = questioned
+            && run.can_bind_question_head()
+            && question_trial.as_ref().is_some_and(QuestionHeadTrial::wins);
         let asks = match role {
             Some(_) => oneiron::task_verb::training_swap_asks(vault, &id)?,
             None => Vec::new(),
@@ -219,6 +325,9 @@ async fn view(
             run: id.to_hex(),
             role,
             question: run.plan.target.question().map(QuestionTargetView::of),
+            question_head,
+            question_trial,
+            can_bind_question_head,
             state: run.state,
             spec: hex(run.spec_blake3),
             checkpoint,
@@ -294,4 +403,84 @@ async fn cancel(
     })
     .await?;
     Ok(Json(binding))
+}
+
+/// `POST /v1/owner/coach/training-runs/question-head/bind`: binds a
+/// question run's head to one standing typed question, which it answers on
+/// this host's Local rung from then on.
+async fn bind_question_head(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<BindQuestionHead>,
+) -> OwnerReply<QuestionHeadBinding> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let binding = blocking(move || -> OwnerResult<QuestionHeadBinding> {
+        let id = entity_id("run", &request.run)?;
+        let question = entity_id("question", &request.question)?;
+        let binding = server.vault().approve_training_question_head(
+            &owner,
+            &id,
+            question,
+            request.question_version,
+            request.choice,
+            &crate::ai_host::training_pack::answerer_pins(&server),
+        )?;
+        // The head this binding replaced frees its encoder now.
+        server.decision_host().forget_unbound_question_heads();
+        Ok(binding)
+    })
+    .await?;
+    Ok(Json(binding))
+}
+
+/// `POST /v1/owner/coach/training-runs/question-head/trial`: measures a
+/// question run's head against a typed question's current answerer on the
+/// run's sealed held-out rows, and answers the recorded trial. It runs to
+/// the end of every row before it answers.
+async fn trial_question_head(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<TrialQuestionHead>,
+) -> OwnerReply<QuestionHeadTrial> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let trial = blocking(move || -> OwnerResult<QuestionHeadTrial> {
+        let id = entity_id("run", &request.run)?;
+        let question = entity_id("question", &request.question)?;
+        Ok(crate::ai_host::training_pack::run_question_head_trial(
+            &server,
+            &owner,
+            &id,
+            question,
+            request.question_version,
+        )?)
+    })
+    .await?;
+    Ok(Json(trial))
+}
+
+/// `POST /v1/owner/coach/training-runs/question-head/unbind`: takes the
+/// head off a typed question; answers the binding removed, `null` when no
+/// head answered it.
+async fn unbind_question_head(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<UnbindQuestionHead>,
+) -> OwnerReply<Option<QuestionHeadBinding>> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let removed = blocking(move || -> OwnerResult<Option<QuestionHeadBinding>> {
+        let question = entity_id("question", &request.question)?;
+        let removed = server.vault().unbind_training_question_head(
+            &owner,
+            question,
+            request.question_version,
+        )?;
+        // The unbound head frees its encoder now.
+        server.decision_host().forget_unbound_question_heads();
+        Ok(removed)
+    })
+    .await?;
+    Ok(Json(removed))
 }

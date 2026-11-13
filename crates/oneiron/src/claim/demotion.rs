@@ -5,6 +5,7 @@ use crate::edge::{EdgeKind, validate_edge_weight};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
+use crate::write_envelope::claim_body::{DecayRefusal, decay_transition};
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 impl Vault {
@@ -110,12 +111,6 @@ impl Vault {
                 new_claim_of_weight,
             } => {
                 validate_edge_weight(new_claim_of_weight)?;
-                if matches!(
-                    rung,
-                    Some(ClaimDemotionRung::Weakened | ClaimDemotionRung::Stale)
-                ) {
-                    return Err(Error::InvalidClaimBody("decay is out of order"));
-                }
                 let ClaimSubject::Entity(subject) = body.subject else {
                     return Err(Error::InvalidClaimBody("decay requires entity subject"));
                 };
@@ -136,13 +131,21 @@ impl Vault {
                     }
                 }
                 let current = found.ok_or(Error::InvalidClaimBody("ClaimOf edge missing"))?;
-                if new_claim_of_weight > current {
-                    return Err(Error::InvalidEdgeWeight {
-                        value: new_claim_of_weight,
-                    });
-                }
+                // The rule the signed fold and the batch binding share (FIX
+                // 22387): a strictly lower weight, so an equal one refuses.
+                let decayed = match decay_transition(rung, current, new_claim_of_weight) {
+                    Ok(decayed) => decayed,
+                    Err(DecayRefusal::OutOfOrder) => {
+                        return Err(Error::InvalidClaimBody("decay is out of order"));
+                    }
+                    Err(DecayRefusal::InvalidWeight | DecayRefusal::NotLower) => {
+                        return Err(Error::InvalidEdgeWeight {
+                            value: new_claim_of_weight,
+                        });
+                    }
+                };
                 (
-                    ClaimDemotionRung::Decayed,
+                    decayed,
                     Some((subject, new_claim_of_weight)),
                     super::transition::ClaimTransitionKind::Decay,
                     super::transition::TransitionDelta::ClaimOfWeight(new_claim_of_weight),
@@ -198,29 +201,19 @@ impl Vault {
                 )
             }
         };
-        let scope = match body.scope.take() {
-            None => vec![(
-                Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-                Value::from(match next {
-                    ClaimDemotionRung::Decayed => "decayed",
-                    ClaimDemotionRung::Weakened => "weakened",
-                    ClaimDemotionRung::Stale => "stale",
-                }),
-            )],
-            Some(Value::Map(mut entries)) => {
-                entries.retain(|(k, _)| k.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
-                entries.push((
-                    Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
-                    Value::from(match next {
-                        ClaimDemotionRung::Decayed => "decayed",
-                        ClaimDemotionRung::Weakened => "weakened",
-                        ClaimDemotionRung::Stale => "stale",
-                    }),
-                ));
-                entries
-            }
-            Some(_) => return Err(Error::InvalidClaimBody("scope must be a map")),
-        };
+        // A scope that is not a map, such as a critic outcome's finding key,
+        // carries no recognized entry: the rung starts a map of its own, the
+        // same body the demotion materializer rebuilds.
+        let mut scope = crate::write_envelope::claim_body::scope_map_entries(body.scope.take());
+        scope.retain(|(k, _)| k.as_str() != Some(CLAIM_SCOPE_DEMOTION_RUNG_KEY));
+        scope.push((
+            Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
+            Value::from(match next {
+                ClaimDemotionRung::Decayed => "decayed",
+                ClaimDemotionRung::Weakened => "weakened",
+                ClaimDemotionRung::Stale => "stale",
+            }),
+        ));
         body.scope = Some(Value::Map(scope));
         if crate::authority::machine_claim_needs_history(&self.store, wtxn, &body)? {
             body = super::transition::stage_owner_machine_transition(

@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 fn test_server() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"federation-test-root");
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -84,8 +85,9 @@ fn entity_id(byte: u8) -> oneiron::EntityId {
 }
 
 fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + body.len());
+    let mut blob = Vec::with_capacity(33 + body.len());
     blob.push(entity_type);
+    blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
     blob.extend_from_slice(&1_u64.to_be_bytes());
@@ -136,6 +138,14 @@ fn selector_claim_body(person: oneiron::EntityId, predicate: &str) -> Vec<u8> {
             Value::Binary(claim.scope_project.as_bytes().to_vec()),
         ),
         ("scopeVersion".into(), 2_u64.into()),
+        (
+            "confBand".into(),
+            Value::from(claim.confidence_band.as_str()),
+        ),
+        (
+            "confBasis".into(),
+            Value::from(claim.confidence_basis.as_str()),
+        ),
     ]);
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &body).unwrap();
@@ -195,6 +205,20 @@ fn drain_broadcasts(
         }
     }
     frames
+}
+
+/// A raw window update as the PadFree envelope one socket frame carries.
+fn pad_free_update_envelope(update: &[u8]) -> Vec<u8> {
+    oneiron::sync::transport::WindowPadEnvelope {
+        kind: oneiron::sync::transport::WindowPadKind::Update,
+        form: oneiron::sync::transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: update.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
 }
 
 /// The WindowSync UPDATE frames a given connection fanned out for `key`.
@@ -287,6 +311,7 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         &payload,
         &tx,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -316,6 +341,7 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         &loro::VersionVector::new().encode(),
         &tx,
         &mut state,
+        &|| false,
     )
     .await;
     assert!(matches!(denied, Err(ProtocolError::InvalidPayload(_))));
@@ -350,6 +376,12 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         .await
         .unwrap();
     let before = home.oplog_vv();
+    // b7a4b1fe82d (#4221, FIX 3787): a cold open persists each commit of its
+    // recovery as a u:w: row, so the window's own rows exist before the edit.
+    let rows_before = server
+        .vault
+        .sync_state_keys_with_prefix("u:w:1970-01:")
+        .unwrap();
     let device = loro::LoroDoc::from_snapshot(&home.export(ExportMode::Snapshot).unwrap()).unwrap();
     device
         .get_map("entities")
@@ -360,8 +392,17 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         .unwrap();
     device.commit();
     let update = device.export(ExportMode::updates(&before)).unwrap();
-    let mut payload = 1u64.to_be_bytes().to_vec();
-    payload.extend_from_slice(&update);
+    // A residence update travels in a window pad envelope (466c8c1b7d4, #3918).
+    let payload = oneiron::sync::transport::WindowPadEnvelope {
+        kind: oneiron::sync::transport::WindowPadKind::ResidenceUpdate,
+        form: oneiron::sync::transport::WindowPadForm::PadFree,
+        queue_seq: Some(1),
+        payload: update,
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
     state.promoted_windows.insert(
@@ -395,6 +436,7 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         &payload,
         &tx,
         &mut state,
+        &|| false,
     )
     .await;
     assert!(
@@ -414,12 +456,13 @@ async fn residence_write_requires_the_authors_scope_write_right() {
             .unwrap()
             .ends_with(b"base")
     );
-    assert!(
+    assert_eq!(
         server
             .vault
             .sync_state_keys_with_prefix("u:w:1970-01:")
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        rows_before,
+        "the denied edit appended no u:w: row"
     );
 }
 
@@ -499,6 +542,7 @@ async fn residence_replay_refuses_a_birth_scope_restamp() {
         &payload,
         &tx,
         &mut state,
+        &|| false,
     )
     .await;
     assert!(
@@ -555,6 +599,7 @@ async fn vv_request_sends_delta_and_vv_response() {
         &client_doc.oplog_vv().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -613,6 +658,7 @@ async fn vv_request_malformed_vv_fails_closed_no_fallback() {
             payload,
             &direct_tx,
             &mut conn_state,
+            &|| false,
         )
         .await;
         assert!(
@@ -651,6 +697,7 @@ async fn vv_response_sends_local_diff_only() {
         &client_doc.oplog_vv().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -725,14 +772,16 @@ async fn imported_update_is_visible_exportable_and_vv_advanced_without_commit() 
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_legacy_conn_state();
+    let framed = pad_free_update_envelope(&update);
     handle_window_sync(
         &server,
         conn_id,
         key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -833,6 +882,7 @@ async fn imported_update_persists_before_broadcast() {
     insert_entity(&author, entity, 1, b"relayed");
     author.commit();
     let update = author.export(ExportMode::all_updates()).unwrap();
+    let framed = pad_free_update_envelope(&update);
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_legacy_conn_state();
@@ -844,9 +894,10 @@ async fn imported_update_persists_before_broadcast() {
         conn_id,
         durable_key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -854,11 +905,11 @@ async fn imported_update_persists_before_broadcast() {
     assert_eq!(
         server
             .vault
-            .sync_state_get(&format!("u:w:{durable_key}:00000001"))
+            .sync_state_get(&format!("u:w:{durable_key}:{:016x}", 1_u64))
             .unwrap()
             .as_deref(),
         Some(update.as_slice()),
-        "the relayed bytes must be durable at the ARCH-0023b u:w: key"
+        "the relayed bytes must be durable at the 16-hex-digit u:w: key (FIX 8883)"
     );
     assert_eq!(
         server
@@ -891,9 +942,10 @@ async fn imported_update_persists_before_broadcast() {
         conn_id,
         failing_key,
         window_sub_tags::UPDATE,
-        &update,
+        &framed,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap_err();
@@ -906,7 +958,7 @@ async fn imported_update_persists_before_broadcast() {
     assert!(
         server
             .vault
-            .sync_state_get(&format!("u:w:{failing_key}:00000001"))
+            .sync_state_get(&format!("u:w:{failing_key}:{:016x}", 1_u64))
             .unwrap()
             .is_none(),
         "the failed append must leave no partial durable row"
@@ -1051,6 +1103,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
         &payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1117,6 +1170,7 @@ async fn selector_connection_rejects_full_window_bypass() {
         &payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1130,6 +1184,7 @@ async fn selector_connection_rejects_full_window_bypass() {
         &VersionVector::new().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1156,6 +1211,7 @@ async fn legacy_selector_protocol_rejects_first_message_full_window_sync() {
         &VersionVector::new().encode(),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1194,6 +1250,7 @@ async fn selector_request_authorizes_before_window_creation() {
         &payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1292,6 +1349,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         &empty_payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1320,6 +1378,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
         &incremental_payload,
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
 
@@ -1383,6 +1442,7 @@ async fn root_vv_replies_with_delta_and_rejects_malformed() {
         SyncMessage::RootVersionVector(client_root.oplog_vv().encode()),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -1402,6 +1462,7 @@ async fn root_vv_replies_with_delta_and_rejects_malformed() {
         SyncMessage::RootVersionVector(b"{}".to_vec()),
         &direct_tx,
         &mut conn_state,
+        &|| false,
     )
     .await;
     assert_matches!(result, Err(ProtocolError::VvDecode(_)));
@@ -1799,12 +1860,21 @@ async fn frame_is_refused_when_revocation_lands_during_the_capacity_wait() {
     let keep_going = send_racing_a_revocation(&sink, &registry, |r| r.revoke(TEST_JTI)).await;
 
     assert!(!keep_going, "a revoked session must not continue");
-    assert!(
-        sink.written().is_empty(),
-        "a frame awaiting capacity before the revocation still reached the client"
+    // 56494599991 and 9e49d432ae4: the send-side refusal tries one Close that
+    // names the revocation, then drops the transport (no graceful poll_close).
+    assert_eq!(
+        sink.written(),
+        vec![WsMessage::Close(Some(CloseFrame {
+            code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
+            reason: Utf8Bytes::from_static("credential revoked"),
+        }))],
+        "only the revocation Close may reach the client, never the frame awaiting capacity"
     );
     assert!(sink.queued().is_empty(), "the frame never entered the sink");
-    assert!(sink.was_closed(), "the socket must close, not idle");
+    assert!(
+        !sink.was_closed(),
+        "the refusal drops the transport after one best-effort Close; it does not poll_close"
+    );
 }
 
 /// Revoking a SIBLING token must not disturb this session.
@@ -2210,38 +2280,37 @@ async fn real_codec_guarded(
     )
 }
 
-/// A server Close frame with no payload: opcode 0x8, FIN, zero length.
+/// The server's revocation Close frame: opcode 0x8 with FIN, payload length
+/// 20 (the 2-byte code and the 18-byte reason), code 4008
+/// (`CLOSE_RPC_NO_PRINCIPAL`) big-endian, then the reason text.
 ///
-/// A refusal that is caught while nothing is queued closes GRACEFULLY, and a
-/// graceful close is two bytes of control frame — never application data.
-const SERVER_CLOSE_BYTES: [u8; 2] = [0x88, 0x00];
+/// Since 56494599991 and 9e49d432ae4 a send-side refusal no longer closes
+/// gracefully: it tries one Close that names the revocation, so the peer can
+/// tell revocation from a dropped link, and then drops the socket.
+const SERVER_REVOKED_CLOSE_BYTES: [u8; 22] = [
+    0x88, 0x14, 0x0f, 0xa8, b'c', b'r', b'e', b'd', b'e', b'n', b't', b'i', b'a', b'l', b' ', b'r',
+    b'e', b'v', b'o', b'k', b'e', b'd',
+];
 
-/// Asserts the wire holds the automatic Pong, optionally a Close, and no
-/// application byte.
+/// Asserts the wire holds the automatic Pong, then the revocation Close, and
+/// no application byte.
 ///
 /// Byte-level and order-bearing on purpose: message-level `written()` cannot
 /// see a PARTIAL application frame, and a partial frame is precisely what a
-/// write that parked mid-way would leave.
-///
-/// The Close is admitted because the drain-to-empty ordering moves WHERE a
-/// revocation is caught. Draining to completion means the fresh consult that
-/// follows it runs while nothing application-level is queued, so a revocation
-/// landing during the drain takes the graceful-close path rather than the
-/// abort path. That is the better outcome — the peer learns the session ended
-/// instead of seeing a severed socket — and it is still a refusal: a close
-/// frame carries no vault state, and `poll_close` can only flush an out-buffer
-/// the drain already emptied. What must never appear is a payload byte.
-fn assert_wire_is_pong_only(socket: &CapturingSocket) {
+/// write that parked mid-way would leave. A close frame carries no vault
+/// state; what must never appear is a payload byte, so the equality is exact.
+fn assert_wire_is_pong_then_revocation_close(socket: &CapturingSocket) {
     let wire = socket.wire();
-    let acceptable: &[&[u8]] = &[
-        &SERVER_PONG_BYTES,
-        &[SERVER_PONG_BYTES.as_slice(), SERVER_CLOSE_BYTES.as_slice()].concat(),
-    ];
-    assert!(
-        acceptable.iter().any(|expected| wire == *expected),
-        "the wire must hold the automatic Pong (and at most a Close) and NOTHING else — \
+    assert_eq!(
+        wire,
+        [
+            SERVER_PONG_BYTES.as_slice(),
+            SERVER_REVOKED_CLOSE_BYTES.as_slice()
+        ]
+        .concat(),
+        "the wire must hold the automatic Pong and the revocation Close and NOTHING else; \
          extra bytes are application-frame bytes (whole or partial) that escaped before \
-         the consult: {wire:?}"
+         the consult"
     );
 }
 
@@ -2349,7 +2418,7 @@ async fn real_codec_withholds_every_application_byte_when_the_credential_is_revo
         .await;
 
     assert!(!keep_going, "a revoked session must not continue");
-    assert_wire_is_pong_only(&socket);
+    assert_wire_is_pong_then_revocation_close(&socket);
     assert_refusal_is_final(&socket, &mut guarded).await;
 }
 
@@ -2835,7 +2904,7 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
     // build takes to verify the logged slips.
     let mut config = oneiron::VaultConfig::device();
     config.store_clock = oneiron::store::ports::ManualClock::new(1_772_000_000).bundle();
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         Arc::new(oneiron::Vault::open(dir.path(), config).unwrap()),
         SyncServerConfig {
             auth_secret: Some("federation-test-root".into()),
@@ -2885,6 +2954,7 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
             &payload,
             &tx,
             &mut state,
+            &|| false,
         )
         .await
         .unwrap();
@@ -2910,7 +2980,8 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
                     window_sub_tags::SELECTOR_RETRY,
                     &bytes,
                     &tx,
-                    &mut impostor
+                    &mut impostor,
+                    &|| false,
                 )
                 .await,
                 Err(ProtocolError::InvalidPayload(_))
@@ -2924,6 +2995,7 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
                 &bytes,
                 &tx,
                 &mut reconnected,
+                &|| false,
             )
             .await
             .unwrap();
@@ -2952,7 +3024,8 @@ async fn selector_shared_secret_without_bound_principal_never_creates_a_request(
             window_sub_tags::SELECTOR_VV_REQUEST,
             b"malformed",
             &tx,
-            &mut state
+            &mut state,
+            &|| false,
         )
         .await,
         Err(ProtocolError::RpcNoPrincipal)
@@ -2977,6 +3050,16 @@ async fn owner_socket_combines_document_and_chunk_sync_without_selector_downgrad
     document_batch_exchange(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION).await;
 }
 
+/// The vault's local owner writing as a human, at the vault's now: who and
+/// when a synced text edit names since FIX 8873.
+fn owner_edit_stamp(vault: &oneiron::Vault) -> (oneiron::WriteActor, u64) {
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    (
+        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        vault.now_recorded_at(),
+    )
+}
+
 async fn document_batch_exchange(version: u8) {
     use oneiron::sync::transport::{
         self, document_sub_tags, encode_document, encode_document_batch,
@@ -2998,20 +3081,27 @@ async fn document_batch_exchange(version: u8) {
     for vault in [server.vault.as_ref(), client_vault.as_ref()] {
         vault
             .put_entity(
-                &id,
-                oneiron::registry::ENTITY_TYPE_TURN,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"ledger",
-            )
-            .unwrap();
-        vault
-            .put_entity(
                 &facet,
                 oneiron::registry::ENTITY_TYPE_FACET,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
                 b"shared document facet",
+            )
+            .unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        vault
+            .set_default_facet(
+                facet,
+                oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            )
+            .unwrap();
+        vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"ledger",
             )
             .unwrap();
         vault
@@ -3035,7 +3125,8 @@ async fn document_batch_exchange(version: u8) {
         vec![oneiron::federation::SelectorRange::Core],
     );
     let source = server.reassert_manager.documents().open(id).unwrap();
-    let notice = source.edit_text(0, 0, "shared").unwrap();
+    let (actor, at) = owner_edit_stamp(&server.vault);
+    let notice = source.edit_text(actor, at, 0, 0, "shared").unwrap();
     for state in [test_legacy_conn_state(), test_selector_conn_state()] {
         assert!(
             super::documents::document_delivery(&server, &state, &notice)
@@ -3074,6 +3165,7 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&batch).unwrap(),
             &direct,
             &mut state,
+            &|| false,
         )
         .await,
         Err(ProtocolError::RpcNoPrincipal)
@@ -3088,6 +3180,7 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&batch).unwrap(),
             &direct,
             &mut impostor,
+            &|| false,
         )
         .await,
         Err(ProtocolError::InvalidPayload(_))
@@ -3100,6 +3193,7 @@ async fn document_batch_exchange(version: u8) {
         protocol::parse_message(&batch).unwrap(),
         &direct,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -3115,13 +3209,15 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&ack).unwrap(),
             &direct,
             &mut state,
+            &|| false,
         )
         .await
         .unwrap();
     }
     let local = manager.documents().open(id).unwrap();
     assert_eq!(local.text().unwrap(), "shared");
-    let edit = local.edit_text(6, 0, " edit").unwrap();
+    let (actor, at) = owner_edit_stamp(&client_vault);
+    let edit = local.edit_text(actor, at, 6, 0, " edit").unwrap();
     assert_eq!(local.pending_frames().unwrap().len(), 1);
     assert!(matches!(
         handle_sync_message(
@@ -3130,6 +3226,7 @@ async fn document_batch_exchange(version: u8) {
             protocol::parse_message(&edit).unwrap(),
             &direct,
             &mut state,
+            &|| false,
         )
         .await,
         Err(ProtocolError::RpcNoPrincipal)
@@ -3148,6 +3245,7 @@ async fn document_batch_exchange(version: u8) {
         protocol::parse_message(&edit).unwrap(),
         &direct,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -3170,6 +3268,9 @@ async fn document_batch_exchange(version: u8) {
             selector: Vec::new(),
             have: Vec::new(),
             want: None,
+            request: 1,
+            cursor: None,
+            read: None,
         })
         .unwrap();
     let frame = transport::encode_lfs_chunk_sync(&request)
@@ -3181,6 +3282,7 @@ async fn document_batch_exchange(version: u8) {
         protocol::parse_message(&frame).unwrap(),
         &direct,
         &mut state,
+        &|| false,
     )
     .await;
     if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION {
@@ -3210,7 +3312,8 @@ async fn document_batch_exchange(version: u8) {
     }
 
     // A queued notice cannot disclose after its grant is gone.
-    let notice = source.edit_text(11, 0, "!").unwrap();
+    let (actor, at) = owner_edit_stamp(&server.vault);
+    let notice = source.edit_text(actor, at, 11, 0, "!").unwrap();
     server.vault.delete_entity(&grant_id).unwrap();
     assert!(
         super::documents::document_delivery(&server, &state, &notice)
@@ -3230,7 +3333,8 @@ async fn document_batch_exchange(version: u8) {
             1,
             protocol::parse_message(&no_admission).unwrap(),
             &direct,
-            &mut state
+            &mut state,
+            &|| false,
         )
         .await
         .is_err()

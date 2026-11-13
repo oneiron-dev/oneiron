@@ -71,6 +71,9 @@ pub(crate) use self::guests::count_hook_decisions;
 // A code-mode run's self brief states its budget from the run's line (FIX
 // 17594 D5).
 pub(crate) use self::dispatch::code_mode_line;
+// The integration tests' door to a draft's solved-run span (FIX 10508).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::solved_runs::draft_checked_span;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
@@ -169,9 +172,11 @@ pub(crate) struct RunGuests {
     /// The run's browser planner state beside its browser's seat (CUA E5),
     /// fed how each batch and library run ended.
     planner: Option<Arc<BrowserPlannerRun>>,
-    /// The payer the attached live run bills (FIX 8902), for a caller whose
-    /// door bound no line of its own: its Fill writer bills it.
-    payer: Option<oneiron::llm::run_admission::PayerPerson>,
+    /// The attached live run whose payer a caller bills when its door bound
+    /// no line of its own (FIX 8902): its Fill writer reads that payer at
+    /// each call, so this keeps the run, never a payer
+    /// (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK).
+    payer: Option<crate::ai_host::payer_funding::LiveRunPayer>,
     /// The admission job this run is (CUA E8b): what it files is kept
     /// against the job, placed by rule alone, and it captures no evidence.
     admission: Option<oneiron::browser_library::ProgramAdmissionFiling>,

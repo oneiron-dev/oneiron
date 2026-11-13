@@ -26,7 +26,7 @@ use super::wake_event::{
     PROVENANCE_KEY_SURFACE, decode_commitment_wake_event, validate_optional_wake_string,
     validate_wake_string,
 };
-use super::wake_fire::{WakeEligibility, current_wake_eligibility};
+use super::wake_fire::{CommitmentWakeSkip, WakeEligibility, instance_wake_eligibility};
 
 // ---------------------------------------------------------------------------
 // 4. Proposal planner, deterministic claim id, and the wrapper executor
@@ -237,26 +237,27 @@ impl<E> CommitmentWakeExecutor<'_, E> {
         ctx: &WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
         let attempt_id = attempt.status.attempt.id;
-        // Step 3: re-read the instance through the ORDINARY public read; this
-        // executor owns no transaction, so the nested-read hazard of the fire
-        // door does not apply here.
-        let Some(record) = ctx.vault.get_commitment_claim(&event.instance_id)? else {
-            return Ok(skip_completion(
-                CommitmentWakeProposalSkip::MissingInstance,
-                event,
-                attempt_id,
-            ));
+        // Step 3: re-read the instance's joint state in its own read
+        // transaction; this executor owns no transaction, so the nested-read
+        // hazard of the fire door does not apply here. A withdrawn instance is
+        // ineligible (FIX 22383).
+        let record = match instance_wake_eligibility(ctx.vault, &event.instance_id)? {
+            WakeEligibility::Eligible(record) => record,
+            WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance) => {
+                return Ok(skip_completion(
+                    CommitmentWakeProposalSkip::MissingInstance,
+                    event,
+                    attempt_id,
+                ));
+            }
+            WakeEligibility::Skip(_) => {
+                return Ok(skip_completion(
+                    CommitmentWakeProposalSkip::IneligibleInstance,
+                    event,
+                    attempt_id,
+                ));
+            }
         };
-        if !matches!(
-            current_wake_eligibility(ctx.vault, &record)?,
-            WakeEligibility::Eligible
-        ) {
-            return Ok(skip_completion(
-                CommitmentWakeProposalSkip::IneligibleInstance,
-                event,
-                attempt_id,
-            ));
-        }
         // A promise an agent owes is kept in that agent's own turn, not sent
         // as a message: the wake dispatches the turn and proposes nothing.
         if record.obligor.kind == CommitmentObligorKind::Agent {

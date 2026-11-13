@@ -122,6 +122,7 @@ fn granted_agent(fixture: &Fixture, name: &str) -> EntityId {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("the owner grants the agent base reach");

@@ -476,6 +476,9 @@ async fn hydrate_inner(
             memories.hook_pins = hook_pins.clone();
             let (pack, memories, cursor) =
                 run_context_pack(&server, &auth, retrieval, Some(memories)).await?;
+            // ROOM-SCOPED-PINS P2b: the shared pins of the room this board
+            // renders join the pack's MEMORIES; no other room's are read.
+            let memories = board_room_pins(&server, &auth, targets.room_id(), memories).await?;
             (Some(pack), memories, cursor)
         }
         // OF-579: a board that runs no retrieval still carries its pins
