@@ -15,6 +15,11 @@
 //! member reads only through a grant on its conversation (review round 2 of
 //! #6971); the outsider holds none, so it reads no fact born of it either.
 //!
+//! The third and fourth tests read the answer's `AssertDistinct` ledger
+//! events (type 74, FIX-LIST DISTINCT-EVENT-UNGATED). Each event names the
+//! same pair as its distinct fact, so the member outside R reads none of
+//! them either; it does read the event between the two Adas.
+//!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The last
 //! assertion is the leak check.
 //!
@@ -30,12 +35,17 @@ use oneiron::dreamer_runner::maintenance::identity::{
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::embed::EmbedderLocality;
-use oneiron::identity_topology::{AssertDistinctOp, IdentityOpWrite, IdentityTopologyOp};
+use oneiron::identity_topology::{
+    AssertDistinctOp, IdentityOpWrite, IdentityTopologyOp, StoredIdentityOpAction,
+    StoredIdentityOpEvent,
+};
 use oneiron::memory::extraction::{
     EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
 };
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
+use oneiron::registry::{
+    ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP,
+};
 use oneiron::tagging::{MentionLink, TaggingMarkerConfig, TaggingMode, TaggingReconciler};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
@@ -108,12 +118,40 @@ fn person(vault: &Vault, name: &str) -> EntityId {
     id
 }
 
+/// What the member outside R reads of the records the someone-new answer
+/// wrote.
+struct OutsiderReads {
+    /// The answer's distinct facts it reads.
+    facts: usize,
+    /// The answer's `AssertDistinct` ledger events, and how many it reads.
+    events_born: usize,
+    events: usize,
+    /// Whether it reads every `AssertDistinct` event between the two Adas.
+    open_events: bool,
+}
+
+/// The `AssertDistinct` ledger events whose pair holds `side`.
+fn assert_distinct_events(vault: &Vault, side: impl Fn(EntityId) -> bool) -> Vec<EntityId> {
+    vault
+        .entities_by_type(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        .expect("ledger events")
+        .into_iter()
+        .filter(|id| {
+            matches!(
+                vault.identity_topology_event(id).expect("ledger event read"),
+                Some(StoredIdentityOpEvent {
+                    action: StoredIdentityOpAction::AssertDistinct { a, b, .. },
+                    ..
+                }) if side(a) || side(b)
+            )
+        })
+        .collect()
+}
+
 /// Runs the fixture with the "Ada" MESSAGE's metadata from `metadata`
-/// (given R), and returns how many of the distinct facts the someone-new
-/// answer asserts the member outside R reads.
-fn distinct_facts_the_outsider_reads(
-    metadata: impl FnOnce(EntityId) -> Option<serde_json::Value>,
-) -> usize {
+/// (given R), and returns what the member outside R reads of the distinct
+/// facts and ledger events the someone-new answer writes.
+fn outsider_reads(metadata: impl FnOnce(EntityId) -> Option<serde_json::Value>) -> OutsiderReads {
     let dir = tempfile::tempdir().expect("tempdir");
     let outsider = EntityId::now();
     let mut config = VaultConfig::device();
@@ -282,14 +320,41 @@ fn distinct_facts_the_outsider_reads(
         "FIXTURE: the outsider does not read the \"Ada\" MESSAGE"
     );
 
-    born.iter().filter(|id| reads(*id)).count()
+    let born_events = assert_distinct_events(&vault, |side| side == fresh);
+    let open_events = assert_distinct_events(&vault, |side| side == ada_one)
+        .into_iter()
+        .filter(|id| !born_events.contains(id))
+        .collect::<Vec<_>>();
+    OutsiderReads {
+        facts: born.iter().filter(|id| reads(*id)).count(),
+        events_born: born_events.len(),
+        events: born_events.iter().filter(|id| reads(*id)).count(),
+        open_events: !open_events.is_empty() && open_events.iter().all(reads),
+    }
+}
+
+/// Checks the answer's `AssertDistinct` events as the outsider reads them.
+fn assert_no_event_read(reads: &OutsiderReads, source: &str) {
+    assert!(
+        reads.events_born > 0,
+        "FIXTURE: the answer records an AssertDistinct event"
+    );
+    assert!(
+        reads.open_events,
+        "FIXTURE: the outsider reads the AssertDistinct event between the two Adas"
+    );
+    assert_eq!(
+        reads.events, 0,
+        "LEAK: a member who does not read {source} reads {} of the {} AssertDistinct event(s) born of it",
+        reads.events, reads.events_born
+    );
 }
 
 #[test]
 fn a_someone_new_answer_on_a_relationship_message_asserts_no_distinct_fact_outside_it() {
-    let leaked = distinct_facts_the_outsider_reads(|relationship| {
-        Some(serde_json::json!({"rel": relationship.to_hex()}))
-    });
+    let leaked =
+        outsider_reads(|relationship| Some(serde_json::json!({"rel": relationship.to_hex()})))
+            .facts;
     assert_eq!(
         leaked, 0,
         "LEAK: a member outside R reads {leaked} distinct fact(s) born of the R MESSAGE"
@@ -301,9 +366,27 @@ fn a_someone_new_answer_on_a_relationship_message_asserts_no_distinct_fact_outsi
 /// outsider holds none, so it reads no distinct fact born of it.
 #[test]
 fn a_someone_new_answer_on_an_unscoped_message_asserts_no_distinct_fact_a_member_reads() {
-    let leaked = distinct_facts_the_outsider_reads(|_| None);
+    let leaked = outsider_reads(|_| None).facts;
     assert_eq!(
         leaked, 0,
         "LEAK: a member with no grant on the conversation reads {leaked} distinct fact(s) born of an unscoped MESSAGE"
     );
+}
+
+/// FIX-LIST DISTINCT-EVENT-UNGATED: the answer's `AssertDistinct` ledger
+/// events name the pair its distinct facts name, so a member outside R
+/// reads none of them.
+#[test]
+fn a_someone_new_answer_on_a_relationship_message_records_no_distinct_event_outside_it() {
+    let reads =
+        outsider_reads(|relationship| Some(serde_json::json!({"rel": relationship.to_hex()})));
+    assert_no_event_read(&reads, "the R MESSAGE");
+}
+
+/// FIX-LIST DISTINCT-EVENT-UNGATED, for an unscoped MESSAGE as in review
+/// round 2 of #6971.
+#[test]
+fn a_someone_new_answer_on_an_unscoped_message_records_no_distinct_event_a_member_reads() {
+    let reads = outsider_reads(|_| None);
+    assert_no_event_read(&reads, "the unscoped MESSAGE");
 }

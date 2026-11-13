@@ -52,6 +52,11 @@ pub enum Shape {
     /// Cohere's v2 embeddings: `POST …/v2/embed`, JSON, top-level body
     /// `model`, Bearer.
     CohereEmbed,
+    /// An OpenAI-compatible reranker's indexed scores (L9-12): `POST
+    /// …/v1/rerank`, JSON, top-level body `model`, Bearer. The reply, one
+    /// score per document, is buffered up to [`crate::MAX_BODY`] and
+    /// stripped of the key, as every reply that does not stream.
+    Rerank,
     /// An OpenAI-compatible video job's start: `POST …/v1/videos`, JSON or a
     /// multipart form (with a reference image), with one `model`, Bearer.
     OpenAiVideoStart,
@@ -348,6 +353,8 @@ const OPENAI_EMBEDDINGS: Row = openai(
 
 const COHERE_EMBED: Row = openai("POST", &["v2", "embed"], Body::Json, Selector::Body, false);
 
+const RERANK: Row = openai("POST", &["v1", "rerank"], Body::Json, Selector::Body, false);
+
 const OPENAI_VIDEO_START: Row = openai(
     "POST",
     &["v1", "videos"],
@@ -536,6 +543,7 @@ impl Shape {
             Self::OpenAiTranscriptions => &OPENAI_TRANSCRIPTIONS,
             Self::OpenAiEmbeddings => &OPENAI_EMBEDDINGS,
             Self::CohereEmbed => &COHERE_EMBED,
+            Self::Rerank => &RERANK,
             Self::OpenAiVideoStart => &OPENAI_VIDEO_START,
             Self::OpenAiVideoPoll => &OPENAI_VIDEO_POLL,
             Self::OpenAiVideoContent => &OPENAI_VIDEO_CONTENT,

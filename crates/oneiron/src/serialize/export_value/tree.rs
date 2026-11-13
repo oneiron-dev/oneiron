@@ -264,10 +264,22 @@ impl<'v> Open<'v> {
 
 /// The MessagePack value an exported value restores, at any depth.
 pub(super) fn restore_value_tree(value: &ExportValue) -> Result<Mp> {
+    build_value_tree(value, leaf_msgpack)
+}
+
+/// The MessagePack a JSON projection reads of an exported value, at any
+/// depth: binary text as the text it is; an id reference, opaque binary and
+/// extension bytes as nil; every other node as it restores.
+pub(super) fn projected_value_tree(value: &ExportValue) -> Result<Mp> {
+    build_value_tree(value, projected_leaf)
+}
+
+/// The value built from `value`'s nodes in postorder, each leaf by `read_leaf`.
+fn build_value_tree(value: &ExportValue, read_leaf: fn(&ExportValue) -> Result<Mp>) -> Result<Mp> {
     let mut built: Vec<Mp> = Vec::new();
     for node in postorder(value) {
         let restored = match node {
-            Postorder::Leaf(leaf) => leaf_msgpack(leaf)?,
+            Postorder::Leaf(leaf) => read_leaf(leaf)?,
             Postorder::Array(len) => Mp::Array(
                 take_items(&mut built, len).ok_or_else(|| invalid("array node lost its items"))?,
             ),
@@ -314,6 +326,16 @@ fn leaf_msgpack(value: &ExportValue) -> Result<Mp> {
         ExportValue::Array(_) | ExportValue::Map(_) => {
             return Err(invalid("container node read as a leaf"));
         }
+    })
+}
+
+fn projected_leaf(value: &ExportValue) -> Result<Mp> {
+    Ok(match value {
+        ExportValue::BinaryText(value) => Mp::from(value.as_str()),
+        ExportValue::EntityReference(_) | ExportValue::Binary(_) | ExportValue::Ext(_, _) => {
+            Mp::Nil
+        }
+        leaf => return leaf_msgpack(leaf),
     })
 }
 
