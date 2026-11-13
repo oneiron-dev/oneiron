@@ -24,6 +24,7 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::context_projection::CONTEXT_SPEC_MAX_TEXT_BYTES;
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_TURN;
@@ -376,6 +377,80 @@ fn the_held_wake_survives_a_restart() -> TestResult {
         wakes(&vault, fixture.yuki)?,
         1,
         "one wake after the restart"
+    );
+    Ok(())
+}
+
+/// #7321 review round 2: a wake carries only the messages its briefing
+/// names in full. Sixteen messages with 256-byte correlation ids reach the
+/// resident within one hold; their wake lines together pass the briefing's
+/// cap, so the pass gives more than one wake. Each wake's briefing holds
+/// the ids of every message it carries, and every message is carried once.
+#[test]
+fn a_wake_carries_only_the_messages_its_briefing_names_in_full() -> TestResult {
+    let clock = FakeClock::default();
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), config(&clock))?;
+    let fixture = bind_resident(&vault)?;
+    let sent: Vec<String> = (0..16)
+        .map(|index| format!("{index:02}{}", "c".repeat(254)))
+        .collect();
+    for correlation_id in &sent {
+        admit_inbox_message(&vault, fixture.inbox, fixture.yuki, "mina", correlation_id)?;
+    }
+    clock.advance(u64::from(HOLD_SECS));
+    let pass = inbox_pass(&vault, fixture.yuki, clock.now())?;
+    assert!(
+        pass.outcomes.len() > 1,
+        "sixteen long wake lines pass one briefing's cap: {} wake(s)",
+        pass.outcomes.len()
+    );
+    let mut taken = Vec::new();
+    for outcome in &pass.outcomes {
+        let AgentDispatchOutcome::Dispatched(status) = outcome else {
+            return Err(format!("each wake dispatches, got {outcome:?}").into());
+        };
+        let briefing = status
+            .input
+            .context_spec
+            .as_ref()
+            .and_then(|spec| spec.briefing.as_deref())
+            .ok_or("a wake has a briefing")?;
+        assert!(briefing.len() <= CONTEXT_SPEC_MAX_TEXT_BYTES);
+        let own = status
+            .attempt
+            .dedupe_key
+            .as_deref()
+            .and_then(|key| key.strip_prefix("agent.dispatch:"))
+            .ok_or("a wake's dedupe key is its first message's wake key")?
+            .to_owned();
+        for key in std::iter::once(own).chain(status.input.carried_wake_keys.iter().cloned()) {
+            let correlation_id = sent
+                .iter()
+                .find(|sent| message_key(&fixture, sent) == key)
+                .ok_or("each key a wake carries names a sent message")?;
+            assert!(
+                briefing.contains(&format!("\"correlation_id\":\"{correlation_id}\""))
+                    && briefing.contains(&format!("\"event_id\":\"evt-{correlation_id}\"")),
+                "the briefing names message {} in full",
+                &correlation_id[..2]
+            );
+            taken.push(key);
+        }
+    }
+    taken.sort();
+    let mut expected: Vec<String> = sent
+        .iter()
+        .map(|sent| message_key(&fixture, sent))
+        .collect();
+    expected.sort();
+    assert_eq!(taken, expected, "every message is carried, once");
+    assert_eq!(wakes(&vault, fixture.yuki)?, pass.outcomes.len());
+
+    let again = inbox_pass(&vault, fixture.yuki, clock.now())?;
+    assert!(
+        again.outcomes.is_empty(),
+        "no message wakes twice: {again:?}"
     );
     Ok(())
 }
