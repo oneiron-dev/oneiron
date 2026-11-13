@@ -110,11 +110,16 @@ fn at(now: u64) -> TimeRange {
     }
 }
 
+/// FakeLlm as a paid seat on the operator's own server: keyed (`key_env`),
+/// so its calls are paid work that settles units on the day budget. A
+/// keyless local seat is free work (FIX 9482): it settles 0 units, and the
+/// day budget caps spend only.
 fn models_text(base_url: &str) -> String {
     format!(
         "default = \"local:test-model\"\nextraction_egress = true\n\
          [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
-         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
+         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
+         key_env = \"HOME\"\n"
     )
 }
 
