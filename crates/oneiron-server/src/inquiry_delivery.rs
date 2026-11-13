@@ -8,6 +8,7 @@
 //!
 //! Blocking: call it off the async runtime, as every host door does.
 
+use std::io::Read;
 use std::time::Duration;
 
 use oneiron::EntityId;
@@ -21,8 +22,10 @@ use oneiron::inquiry::{INQUIRY_PEER_PATH, InquiryTransport, InquiryTransportErro
 /// member is asked), so this bounds a stopped or slow host only.
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The largest answer the company host reads.
-const MAX_ANSWER_BYTES: usize = 64 * 1024;
+/// The largest answer the company host reads. It reads one byte past it
+/// and no further, so a member host that sends more is refused before its
+/// answer is held whole (review round 1 of #7603).
+const MAX_ANSWER_BYTES: u64 = 64 * 1024;
 
 /// An [`InquiryTransport`] over HTTP that signs each call with `issuer`,
 /// the key the route's slip is bound to.
@@ -125,12 +128,22 @@ impl InquiryTransport for HttpInquiryTransport<'_> {
                 },
             );
         }
-        let body = response
-            .bytes()
-            .map_err(|_| InquiryTransportError::Unreachable("network".to_owned()))?;
-        if body.len() > MAX_ANSWER_BYTES {
-            return Err(refused("the member host's answer is too large"));
+        let too_large = || refused("the member host's answer is too large");
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_ANSWER_BYTES)
+        {
+            return Err(too_large());
         }
-        Ok(body.to_vec())
+        let mut body = Vec::new();
+        response
+            .take(MAX_ANSWER_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| InquiryTransportError::Unreachable("network".to_owned()))?;
+        if u64::try_from(body.len()).is_ok_and(|length| length <= MAX_ANSWER_BYTES) {
+            Ok(body)
+        } else {
+            Err(too_large())
+        }
     }
 }

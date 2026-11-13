@@ -24,6 +24,13 @@
 //!   inquiry answers `unavailable`;
 //! - the member route refuses a call with no slip, the owner's own root
 //!   slip (no edge grant), and a body that is no inquiry, and logs none;
+//! - the member route refuses the edge's slip once its holder narrowed it
+//!   (no world, or one record), even for an inquiry the member answered,
+//!   and the slip as minted still gets the member's word (review round 1
+//!   of #7603);
+//! - the company host reads a member host's answer only up to its cap: an
+//!   answer that runs past it is refused at the cap, not read to its end
+//!   (review round 1 of #7603);
 //! - the member opens, lists and closes a statement on an edge
 //!   (`vault.inquiry.scope.open` / `.list` / `.close`);
 //! - the member changes an edge's terms after the mint
@@ -41,7 +48,9 @@
 mod engine_stack;
 
 use std::collections::BTreeSet;
+use std::io::{Read, Write};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     Router,
@@ -51,16 +60,20 @@ use axum::{
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
-    AuthorityVaultId, CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal,
+    AuthorityVaultId, CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, SlipCaveat,
     pairing_binding_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, Scope, ScopeAxis};
+use oneiron::inquiry::{
+    Inquiry, InquiryAsker, InquiryKeep, InquiryTask, InquiryTransport, InquiryTransportError,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
+use oneiron_server::inquiry_delivery::HttpInquiryTransport;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -647,6 +660,183 @@ fn binding(host: &Host, signer: &HostSlipIssuer, slip: &CapabilitySlip) -> Strin
         .binding_proof(slip, challenge.as_bytes())
         .expect("holder proof"));
     json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string()
+}
+
+impl Thursday {
+    /// One inquiry from the company's agent for its TASK, as the company
+    /// host puts it on the wire.
+    fn wire_inquiry(&self) -> Inquiry {
+        Inquiry {
+            id: EntityId::now(),
+            from: InquiryAsker {
+                vault: hex(&self.company.vault_id),
+                actor: EntityId::now(),
+                role: "agent".to_owned(),
+            },
+            task: InquiryTask {
+                id: self.task,
+                purpose: PURPOSE.to_owned(),
+            },
+            question: QUESTION.to_owned(),
+            keep: InquiryKeep::Task,
+            expires_at: self.member.vault.now_recorded_at() + 600,
+        }
+    }
+
+    /// The edge's slip as the company host narrows it with `caveat`, under
+    /// its own key: verification accepts it.
+    fn narrowed_edge_slip(&self, caveat: SlipCaveat) -> CapabilitySlip {
+        let mut slip = CapabilitySlip::from_token(&self.edge_slip).expect("edge slip");
+        self.company
+            .issuer
+            .attenuate(&mut slip, caveat)
+            .expect("the company host narrows its own slip");
+        slip
+    }
+
+    /// One POST of `wire` to the member route under `slip`, with the
+    /// company host's holder proof.
+    async fn post_inquiry(&self, slip: &CapabilitySlip, wire: &[u8]) -> (StatusCode, Value) {
+        let token = slip.to_token().expect("slip token");
+        let (status, bytes) = self
+            .member
+            .raw(
+                oneiron::inquiry::INQUIRY_PEER_PATH,
+                Some(&token),
+                Some(binding(&self.member, &self.company.issuer, slip)),
+                wire.to_vec(),
+            )
+            .await;
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+}
+
+#[test]
+fn the_member_route_refuses_the_edges_slip_narrowed_by_its_holder() {
+    run_on_engine_stack("inquiry-federation-narrowed", || async {
+        let fixture = thursday().await;
+        let minted = CapabilitySlip::from_token(&fixture.edge_slip).expect("edge slip");
+        let inquiry = fixture.wire_inquiry();
+        let wire = inquiry.encode_wire().expect("inquiry wire");
+
+        let (status, sent) = fixture.post_inquiry(&minted, &wire).await;
+        assert_eq!(status, StatusCode::OK, "the slip as minted: {sent}");
+        assert_eq!(sent["outcome"], "pending", "the member is asked: {sent}");
+        let answered = fixture
+            .member
+            .verb(
+                "vault.inquiry.answer",
+                json!({"grant": fixture.edge_grant, "inquiry_id": inquiry.id.to_hex(), "words": OUT_THURSDAY}),
+            )
+            .await;
+        assert_eq!(answered["outcome"], "answered", "{answered}");
+
+        let mut no_world = Scope::top();
+        no_world.worlds = ScopeAxis::Bottom;
+        let narrowed = [
+            (
+                "no world, the verb kept",
+                fixture.narrowed_edge_slip(SlipCaveat {
+                    scope: Some(no_world),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "one record",
+                fixture.narrowed_edge_slip(SlipCaveat {
+                    records: Some(BTreeSet::from([inquiry.id.to_hex()])),
+                    ..Default::default()
+                }),
+            ),
+        ];
+        for (narrowing, slip) in &narrowed {
+            let (status, body) = fixture.post_inquiry(slip, &wire).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "the answered inquiry under a slip narrowed to {narrowing}: {body}"
+            );
+            let fresh = fixture.wire_inquiry().encode_wire().expect("inquiry wire");
+            let (status, body) = fixture.post_inquiry(slip, &fresh).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "a new inquiry under a slip narrowed to {narrowing}: {body}"
+            );
+        }
+        let log = fixture.member.verb("vault.inquiry.list", json!({})).await;
+        assert_eq!(
+            log["entries"].as_array().map(Vec::len),
+            Some(1),
+            "only the inquiry sent under the slip as minted is logged: {log}"
+        );
+
+        let (status, resent) = fixture.post_inquiry(&minted, &wire).await;
+        assert_eq!(status, StatusCode::OK, "the slip as minted: {resent}");
+        assert_eq!(resent["outcome"], "answered", "{resent}");
+        assert_eq!(
+            resent["statements"],
+            json!([{"text": OUT_THURSDAY, "source": "member_word"}]),
+            "{resent}"
+        );
+        fixture.member_listener.abort();
+    });
+}
+
+/// A member host that answers 200 with more than the company host reads
+/// and never ends its answer: 1 MiB with no length, then the connection
+/// held open until the company host drops it.
+fn endless_answer_host() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("answer host listener");
+    let origin = format!(
+        "http://{}",
+        listener.local_addr().expect("answer host address")
+    );
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut request = vec![0_u8; 64 * 1024];
+        let _ = stream.read(&mut request);
+        if stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n")
+            .is_err()
+        {
+            return;
+        }
+        let chunk = vec![b' '; 16 * 1024];
+        for _ in 0..64 {
+            if stream.write_all(&chunk).is_err() {
+                return;
+            }
+        }
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(90)));
+        let _ = stream.read(&mut request);
+    });
+    origin
+}
+
+#[test]
+fn the_company_host_reads_no_answer_past_its_cap() {
+    run_on_engine_stack("inquiry-federation-answer-cap", || async {
+        let company = Host::open("company");
+        let member_host = endless_answer_host();
+        let wire = json!({"an": "inquiry"}).to_string().into_bytes();
+        let transport = HttpInquiryTransport::new(&company.issuer);
+        let exchanged = std::thread::scope(|scope| {
+            scope
+                .spawn(|| transport.exchange(&member_host, &[0xcd; 32], &company.root_token, &wire))
+                .join()
+                .expect("the exchange thread")
+        });
+        assert!(
+            matches!(&exchanged, Err(InquiryTransportError::Refused(why)) if why.contains("too large")),
+            "an answer past the cap is refused at the cap: {exchanged:?}"
+        );
+    });
 }
 
 #[test]
