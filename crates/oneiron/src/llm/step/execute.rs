@@ -349,9 +349,12 @@ async fn durable_step(
     let response = match generated {
         Ok(response) => response,
         // An erased answer is terminal: it never triggers a fallback (FIX 6296).
+        // Nor does a lapsed seat login: the step fails, and its try parks on
+        // the seat until the login is back (SEAT-PARK-MODEL-STEP-PATH).
         Err(DurableStepError::Llm(LlmError::Fatal(error)))
             if matches!(request.envelope.class, CallClass::Durable { .. })
-                && error != FatalLlmError::ResponseErased =>
+                && error != FatalLlmError::ResponseErased
+                && !matches!(error, FatalLlmError::SeatSignedOut { .. }) =>
         {
             let CallClass::Durable { fallback } = &request.envelope.class else {
                 unreachable!()
