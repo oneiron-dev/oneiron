@@ -905,3 +905,106 @@ fn a_digest_message_folds_into_the_next_wake() -> TestResult {
     assert_eq!(wakes(&vault, fixture.yuki)?, 3);
     Ok(())
 }
+
+/// #7321 review round 2, for digests: a wake folds only the digests its
+/// count line names inside the briefing cap. Sixteen digests from kai with
+/// 254-byte correlation ids are classed while yuki is busy. Once the run
+/// has ended, ten owner messages with ids as long wake yuki. Their wake
+/// lines and the sixteen digest ids together pass the cap, so each wake
+/// names every message and digest it carries, and its count line counts
+/// only those digests.
+#[test]
+fn a_wake_folds_only_the_digests_its_briefing_names() -> TestResult {
+    let clock = FakeClock::default();
+    let dir = tempfile::tempdir()?;
+    let (vault, fixture, _wake, leased) = busy_resident(&clock, &dir)?;
+    let proof = owner_proof(&vault, fixture.owen)?;
+    let kai = create_agent(&vault, &proof, "kai")?;
+    let head = ScriptedClassHead::new(&[("digest", 0.9); 16]);
+    let long = |prefix: &str, index: usize| format!("{prefix}{index:02}{}", "c".repeat(250));
+    let digests: Vec<String> = (0..16).map(|index| long("dg", index)).collect();
+    for correlation_id in &digests {
+        admit_person_message(
+            &vault,
+            fixture.inbox,
+            fixture.yuki,
+            agent_person(kai)?,
+            correlation_id,
+        )?;
+    }
+    clock.advance(u64::from(HOLD_SECS) + 1);
+    let busy = classed_pass(&vault, &head, fixture.yuki, clock.now())?;
+    assert!(busy.outcomes.is_empty(), "{busy:?}");
+    assert_eq!(head.states().len(), 16, "each digest is classed once");
+
+    complete(&vault, &leased)?;
+    let sent: Vec<String> = (0..10).map(|index| long("ow", index)).collect();
+    for correlation_id in &sent {
+        admit_person_message(
+            &vault,
+            fixture.inbox,
+            fixture.yuki,
+            fixture.owen,
+            correlation_id,
+        )?;
+    }
+    clock.advance(u64::from(HOLD_SECS));
+    let pass = classed_pass(&vault, &head, fixture.yuki, clock.now())?;
+    assert!(!pass.outcomes.is_empty(), "the owner's messages wake yuki");
+    let mut woke = Vec::new();
+    for outcome in &pass.outcomes {
+        let AgentDispatchOutcome::Dispatched(status) = outcome else {
+            return Err(format!("each wake dispatches, got {outcome:?}").into());
+        };
+        let text = briefing(status)?;
+        let own = status
+            .attempt
+            .dedupe_key
+            .as_deref()
+            .and_then(|key| key.strip_prefix("agent.dispatch:"))
+            .ok_or("a wake's dedupe key is its first message's wake key")?
+            .to_owned();
+        let mut folded = 0;
+        for key in std::iter::once(own).chain(status.input.carried_wake_keys.iter().cloned()) {
+            if let Some(correlation_id) = digests
+                .iter()
+                .find(|digest| message_key(&fixture, digest) == key)
+            {
+                assert!(
+                    text.contains(&format!("evt-{correlation_id}")),
+                    "the count line names digest {} in full",
+                    &correlation_id[..4]
+                );
+                folded += 1;
+                continue;
+            }
+            let correlation_id = sent
+                .iter()
+                .find(|sent| message_key(&fixture, sent) == key)
+                .ok_or("each key a wake carries names a sent message")?;
+            assert!(
+                text.contains(&format!("\"correlation_id\":\"{correlation_id}\""))
+                    && text.contains(&format!("\"event_id\":\"evt-{correlation_id}\"")),
+                "the wake line names message {} in full",
+                &correlation_id[..4]
+            );
+            woke.push(key);
+        }
+        if folded > 0 {
+            assert!(
+                text.contains(&format!(
+                    "digest: {folded} more messages wait in your INBOX"
+                )),
+                "the count line counts the {folded} digests the wake carries"
+            );
+        }
+    }
+    woke.sort();
+    let mut expected: Vec<String> = sent
+        .iter()
+        .map(|sent| message_key(&fixture, sent))
+        .collect();
+    expected.sort();
+    assert_eq!(woke, expected, "every owner message wakes yuki, once");
+    Ok(())
+}
