@@ -11,10 +11,15 @@ use crate::workspace_roster::GoalRecord;
 use super::{CampaignError, CampaignResult};
 
 mod axes;
+mod producers;
 pub(crate) mod records;
 pub use axes::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor,
     CoachArchiveAxesRecipe, propose_campaign_archive,
+};
+pub use producers::{
+    ArchiveAxesMethod, ArchiveAxesMint, ArchivePlacementBasis, mint_archive_axes,
+    mint_archive_placement, mint_archive_score,
 };
 pub use records::{
     CampaignArchiveAdmission, CampaignArchiveBest, CampaignArchiveCoverage, CampaignArchiveInstall,
@@ -23,7 +28,10 @@ pub use records::{
 };
 
 /// A specific output revision. References must resolve to immutable content,
-/// not a mutable entity's current body.
+/// not a mutable entity's current body: an ARTIFACT's revision is a retained
+/// version's content hash (64 lowercase hex), any other entity's a document
+/// revision it owns (its `RevisionRef`, 32 lowercase hex). The archive's
+/// writers refuse a revision the entity does not hold.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -50,7 +58,11 @@ pub enum ArchiveCell {
     Cluster { index: usize },
 }
 
-/// The scoring definition shared by every output in this campaign.
+/// The scoring definition shared by every output in this campaign: a judge
+/// SKILL (`metric_id`, its entity id in hex) at its pinned package revision
+/// (`revision`, the package's canonical tree hash in lowercase hex). A rubric
+/// edit re-pins the judge, so it needs a new campaign (RULING
+/// ARCHIVE-QUALITY-RULER, 13 Nov 22:47).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveQualityMetric {

@@ -39,7 +39,8 @@ pub use self::rubric::{
     JudgeLabelRegrade, judge_rubric, record_judge_label_regrade,
 };
 pub(crate) use self::rubric::{
-    judge_head_in_txn, judge_rubric_in_txn, judge_rubric_sourced_in_txn, recheck_judge_labels,
+    judge_head_in_txn, judge_rubric_in_txn, judge_rubric_sourced_in_txn,
+    pinned_judge_rubric_in_txn, recheck_judge_labels,
 };
 
 /// Proposed calibration asks, keyed by the ask id (the digest of its immutable question).
