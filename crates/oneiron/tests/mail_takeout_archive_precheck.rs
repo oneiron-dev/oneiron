@@ -45,13 +45,14 @@ const FIFO: u32 = 0o010_644;
 const TAKEOUT_MBOX: &str = "Takeout/Mail/All mail Including Spam and Trash.mbox";
 
 /// A vault with the mail pack installed and the owner's own Gmail mailbox
-/// connected, and a folder for the files a test imports.
+/// connected, and a folder for the files a test imports. The vault is
+/// declared first, so it closes before its folder is removed.
 struct Mailbox {
-    _vault_dir: tempfile::TempDir,
-    files: tempfile::TempDir,
     vault: Vault,
     owner: EntityId,
     source_ref: String,
+    files: tempfile::TempDir,
+    _vault_dir: tempfile::TempDir,
 }
 
 impl Mailbox {
@@ -66,28 +67,33 @@ impl Mailbox {
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         vault.ensure_host_root_slip(&issuer)?;
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
-        let memory = vault.memory(owner, EdgeActorClass::Human);
-        oneiron::mail_pack::install_mail_calendar_pack_embedded(&memory)?;
-        register_mail_credential(&vault, CUSTODY_REF)?;
-        let connected = memory.mail_sources_connect(&MailSourceConnectRequest {
-            provider: MailProvider::Google,
-            kind: MailSourceKind::PersonalMailbox,
-            address: ADDRESS.to_owned(),
-            provider_account: ADDRESS.to_owned(),
-            custody_ref: CUSTODY_REF.to_owned(),
-            members: Vec::new(),
-            for_person: None,
-            channel_identity_ref: None,
-            copy: None,
-            on_provider_delete: None,
-            calendar_details: None,
-        })?;
+        let source_ref = {
+            let memory = vault.memory(owner, EdgeActorClass::Human);
+            oneiron::mail_pack::install_mail_calendar_pack_embedded(&memory)?;
+            register_mail_credential(&vault, CUSTODY_REF)?;
+            memory
+                .mail_sources_connect(&MailSourceConnectRequest {
+                    provider: MailProvider::Google,
+                    kind: MailSourceKind::PersonalMailbox,
+                    address: ADDRESS.to_owned(),
+                    provider_account: ADDRESS.to_owned(),
+                    custody_ref: CUSTODY_REF.to_owned(),
+                    members: Vec::new(),
+                    for_person: None,
+                    channel_identity_ref: None,
+                    copy: None,
+                    on_provider_delete: None,
+                    calendar_details: None,
+                })?
+                .source
+                .source_ref
+        };
         Ok(Self {
-            _vault_dir: vault_dir,
-            files: tempfile::tempdir()?,
             vault,
             owner,
-            source_ref: connected.source.source_ref,
+            source_ref,
+            files: tempfile::tempdir()?,
+            _vault_dir: vault_dir,
         })
     }
 
