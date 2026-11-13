@@ -310,6 +310,7 @@ impl Vault {
             }
             MemberChange::Change { member, to } => {
                 non_root(Some(to))?;
+                refuse_house_mind_move_in_txn(self, txn, &member)?;
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
                     .ok_or_else(invalid)?;
@@ -320,6 +321,7 @@ impl Vault {
                 (MEMBERS_CHANGE_VERB, act, member, Some(from), Some(to))
             }
             MemberChange::Remove { member } => {
+                refuse_house_mind_move_in_txn(self, txn, &member)?;
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
                     .ok_or_else(invalid)?;
@@ -501,17 +503,7 @@ impl Vault {
         receipt: &str,
         now: u64,
     ) -> Result<MemberMove> {
-        // An agent's membership is a house mind's link to the org it runs
-        // (HOUSE-BIND = A): it moves only through the house doors, which keep
-        // its receipts, never through a person's membership move.
-        if self.get_entity_type_in_txn(txn, &member)?
-            == Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
-        {
-            return Err(crate::error::Error::InvalidConfig(
-                "a house mind's org role moves only through set_house_role and clear_house_role"
-                    .into(),
-            ));
-        }
+        refuse_house_mind_move_in_txn(self, txn, &member)?;
         let mut grants = Vec::new();
         if let Some(role) = to {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, now)?);
@@ -1330,4 +1322,22 @@ fn member_effect_digest(
         hasher.update(&[0]);
     }
     *hasher.finalize().as_bytes()
+}
+
+/// An agent's membership is a house mind's link to the org it runs
+/// (HOUSE-BIND = A): it moves only through the house doors, which keep its
+/// receipts, never through a person's membership move. The check-in judge
+/// refuses it too, so no ask opens for a move the door can never apply
+/// (review of P2.4b).
+fn refuse_house_mind_move_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    member: &EntityId,
+) -> Result<()> {
+    if vault.get_entity_type_in_txn(txn, member)? == Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
+        return Err(Error::InvalidConfig(
+            "a house mind's org role moves only through set_house_role and clear_house_role".into(),
+        ));
+    }
+    Ok(())
 }
