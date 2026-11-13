@@ -233,6 +233,7 @@ impl ConsolidationExecutor<'_> {
                 step: &step_ctx,
                 guard: self.guard,
                 call,
+                prompt: &self.decisions.extraction_prompt,
                 slices: slices
                     .iter()
                     .map(|slice| SliceCall {
