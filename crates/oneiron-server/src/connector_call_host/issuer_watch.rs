@@ -49,16 +49,52 @@ pub(crate) fn resource_metadata_url(endpoint: &str) -> Option<Url> {
     Some(url)
 }
 
-/// Whether a `WWW-Authenticate` value of the refusal opens a `Bearer`
-/// challenge.
+/// Whether a `WWW-Authenticate` field of the refusal opens a `Bearer`
+/// challenge anywhere in its challenge list: one field may carry several
+/// challenges (RFC 9110 §11.6.1), and the fields may repeat.
 fn bearer_challenge(headers: &HeaderMap) -> bool {
-    headers.get_all(WWW_AUTHENTICATE).iter().any(|value| {
-        value
-            .to_str()
-            .ok()
-            .and_then(|text| text.split_whitespace().next())
-            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("bearer"))
-    })
+    headers
+        .get_all(WWW_AUTHENTICATE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(challenge_schemes)
+        .any(|scheme| scheme.eq_ignore_ascii_case("bearer"))
+}
+
+/// The auth schemes one `WWW-Authenticate` value names, in order. A list
+/// element whose first token is not followed by `=` opens a challenge; any
+/// other element is a parameter of the challenge before it. A comma inside
+/// a quoted string separates nothing.
+fn challenge_schemes(value: &str) -> Vec<&str> {
+    let mut schemes = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    let ends = value.bytes().chain(std::iter::once(b','));
+    for (at, byte) in ends.enumerate() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = false;
+            }
+            continue;
+        }
+        if byte == b'"' {
+            quoted = true;
+        } else if byte == b',' {
+            let element = value[start..at].trim_start_matches([' ', '\t']);
+            let word_end = element.find(['=', ' ', '\t']).unwrap_or(element.len());
+            let (word, rest) = element.split_at(word_end);
+            if !word.is_empty() && !rest.trim_start_matches([' ', '\t']).starts_with('=') {
+                schemes.push(word);
+            }
+            start = at + 1;
+        }
+    }
+    schemes
 }
 
 /// The issuers `endpoint`'s metadata lists, read once with no credential:

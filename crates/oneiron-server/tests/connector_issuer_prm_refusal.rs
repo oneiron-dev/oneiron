@@ -272,6 +272,35 @@ fn prm_naming_another_issuer_holds_dependent_row() {
 }
 
 #[test]
+fn bearer_challenge_after_another_scheme_in_one_field_holds_dependent_row() {
+    let fixture = fixture();
+    let origin = ConnectorOrigin::serve(
+        |endpoint| json!({ "resource": endpoint, "authorization_servers": [NEW_ISSUER] }),
+    );
+
+    let drifted = watch_refusal(
+        &fixture.vault,
+        &origin.endpoint,
+        &fixture.key,
+        401,
+        Some("Basic realm=\"connector, mcp\", Bearer error=\"invalid_token\""),
+    )
+    .expect("the watch reads the refusal");
+
+    assert_eq!(
+        drifted.len(),
+        1,
+        "a Bearer challenge second in the field is read: {drifted:?}"
+    );
+    assert_eq!(origin.heads().len(), 1, "one metadata read");
+    assert_eq!(
+        hold(&fixture, WRITE_ROW),
+        Some(CONNECTOR_ISSUER_HOLD_REASON),
+        "the next send on the dependent row holds"
+    );
+}
+
+#[test]
 fn prm_resource_mismatch_records_nothing() {
     let fixture = fixture();
     let origin = ConnectorOrigin::serve(|endpoint| {
@@ -335,6 +364,7 @@ fn non_401_or_no_bearer_challenge_fetches_nothing() {
         (403, Some(BEARER_CHALLENGE)),
         (401, None),
         (401, Some("Basic realm=\"connector\"")),
+        (401, Some("Basic realm=\"connector, Bearer x\"")),
     ] {
         let drifted = watch_refusal(
             &fixture.vault,
