@@ -95,6 +95,14 @@ impl BatchBuilder<'_> {
             self.commit_checks
                 .push(CommitCheck::PublicType(self.ops.len()));
         }
+        // A TURN's learned time is held to the witness door's ceiling on the
+        // store clock (ARCH-0002 `#turn-time-built`).
+        if self.validation_error.is_none()
+            && let Err(e) =
+                refuse_future_turn(entity_type, learned_at, self.vault.now_recorded_at())
+        {
+            self.validation_error = Some(e);
+        }
         self.put_through(
             id,
             entity_type,
