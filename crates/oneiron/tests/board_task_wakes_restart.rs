@@ -11,7 +11,7 @@
 //! The doors in `oneiron::test_doors::board_task_wakes` run serve's two passes
 //! inline: the TASK pass (read, stage, route) and the staged wake pass. On
 //! main the TASK pass only routes and nothing is replayed, so the restart,
-//! late-connection, admission and consult cases are red there.
+//! late-connection, admission, consult and later-failure cases are red there.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test board_task_wakes_restart`.
@@ -19,7 +19,7 @@
 
 use std::path::Path;
 
-use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, FailAttempt};
+use oneiron::attempt_queue::{ClaimAttempt, ClaimOutcome, EnqueueAttempt, FailAttempt};
 use oneiron::context_board::{
     BoardRenderMode, BoardStreamRegistry, StreamConnectionId, SubscriptionScope, WakeEnvelope,
 };
@@ -27,7 +27,9 @@ use oneiron::task_verb::{
     ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget, TaskAskWord,
     TaskAssignee, TaskCreateSpec,
 };
-use oneiron::test_doors::board_task_wakes::{publish_committed_task, publish_staged_task_wakes};
+use oneiron::test_doors::board_task_wakes::{
+    publish_committed_task, publish_staged_task_wakes, route_committed_task, stage_committed_task,
+};
 use oneiron::{AttemptQueue, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -77,6 +79,22 @@ fn fail_next_realization(vault: &Vault) -> TestResult {
         reason: "the worker stopped".to_owned(),
         now,
     })?;
+    Ok(())
+}
+
+/// Queues another realization of `task`: its next failure is a new failed
+/// attempt head.
+fn realize_again(vault: &Vault, task: EntityId) -> TestResult {
+    AttemptQueue::new(vault).enqueue_with_task_ref(
+        EnqueueAttempt {
+            kind: "tasks.realize".to_owned(),
+            payload: Vec::new(),
+            dedupe_key: None,
+            run_id: None,
+            now: vault.now_recorded_at(),
+        },
+        Some(task.to_hex()),
+    )?;
     Ok(())
 }
 
@@ -204,6 +222,72 @@ fn a_connection_that_cannot_read_the_task_is_offered_its_wake_once_it_can() -> T
     let wakes = registry.drain_wakes(&connection);
     assert_eq!(wakes.len(), 1, "{wakes:?}");
     assert_task_wake(&wakes[0], task, owner, "failed");
+    Ok(())
+}
+
+/// Serve's TASK pass stages a failure, then awaits each connection's
+/// admission outside the registry lock before it routes. A staged wake pass
+/// that an attach starts in between offers the staged failure first; the
+/// route that follows carries the same occurrence, so it skips that
+/// connection: the owner's connection hears the failure once.
+#[test]
+fn a_staged_pass_between_the_stage_and_the_route_offers_the_failure_once() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = open(directory.path())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let task = create_task(&vault, owner, "fails while an attach replays")?;
+    let mut registry = BoardStreamRegistry::default();
+    let connection = attach(&mut registry, "owen", owner);
+
+    fail_next_realization(&vault)?;
+    let state = stage_committed_task(&vault, task)?;
+    publish_staged_task_wakes(&vault, &mut registry, admit_all_staged)?;
+    route_committed_task(&mut registry, task, state, admit_all);
+    let wakes = registry.drain_wakes(&connection);
+    assert_eq!(wakes.len(), 1, "one failure, one wake: {wakes:?}");
+    assert_task_wake(&wakes[0], task, owner, "failed");
+    Ok(())
+}
+
+/// The owner's connection hears a first failure. The TASK is realized again
+/// and fails again, with no pass between the two failures, while that
+/// connection's reader may not read the TASK, so the route skips it. Once it
+/// may read the TASK again, the staged pass offers it the second failure,
+/// under the second failure's envelope id: an offer of the first does not
+/// cover the second.
+#[test]
+fn a_later_failure_reaches_a_connection_that_heard_the_earlier_one() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = open(directory.path())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let task = create_task(&vault, owner, "fails twice")?;
+    let mut registry = BoardStreamRegistry::default();
+    let connection = attach(&mut registry, "owen", owner);
+
+    fail_next_realization(&vault)?;
+    publish_committed_task(&vault, &mut registry, task, admit_all)?;
+    let first = registry.drain_wakes(&connection);
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert_task_wake(&first[0], task, owner, "failed");
+
+    realize_again(&vault, task)?;
+    fail_next_realization(&vault)?;
+    publish_committed_task(&vault, &mut registry, task, |_| false)?;
+    assert!(registry.drain_wakes(&connection).is_empty());
+
+    publish_staged_task_wakes(&vault, &mut registry, admit_all_staged)?;
+    let second = registry.drain_wakes(&connection);
+    assert_eq!(
+        second.len(),
+        1,
+        "the second failure reaches the connection: {second:?}"
+    );
+    assert_task_wake(&second[0], task, owner, "failed");
+    assert_ne!(second[0].event_ref, first[0].event_ref);
+
+    // Offered once: the next pass hands the connection nothing.
+    publish_staged_task_wakes(&vault, &mut registry, admit_all_staged)?;
+    assert!(registry.drain_wakes(&connection).is_empty());
     Ok(())
 }
 
