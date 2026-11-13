@@ -5,9 +5,10 @@ crate::side_table::side_tables! {
     /// Attempts paused for an annotation hold, empty markers. Key: id16.
     ATTEMPT_ANNOTATION_HOLD: VaultMeta b"job:annotation_hold:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// What a failed workflow step try's retry chain had spent (units), kept for the retry that
-    /// follows it, so a retry after a restart replays it exactly (ARCH-0053 #paid-leg-built).
-    /// Key: id16 (the failed try).
+    /// What a workflow step try's retry chain has spent (units), kept for the retry that follows
+    /// it, so a retry after a restart replays it exactly (ARCH-0053 #paid-leg-built). A retry
+    /// moves its parent's row to itself as it reads it. Key: id16 (the try carrying the chain's
+    /// spend: a failed try, or the retry that inherited it).
     ATTEMPT_CARRIED_SPEND: VaultMeta b"job:carried_spend:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
     /// RUN-HOLD: an engine hold a generic Resume released on one attempt (the hold, the actor,
