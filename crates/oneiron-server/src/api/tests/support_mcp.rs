@@ -61,7 +61,7 @@ pub(super) async fn register_mcp_actor(
 /// read to the grant. `Some(types)` reads those bands only. The manifest id
 /// comes from the actor, so a later call for the same actor replaces the
 /// earlier grant instead of folding beside it.
-pub(super) fn put_actor_read_grant(
+pub(in crate::api) fn put_actor_read_grant(
     vault: &oneiron::Vault,
     actor: oneiron::EntityId,
     entity_types: Option<&[u8]>,

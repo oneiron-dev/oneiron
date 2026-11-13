@@ -76,6 +76,8 @@ mod surface_routes;
 mod vad_and_error_mapping;
 use support_contract::*;
 use support_mcp::*;
+// The facade room tests grant a room member's peer key its read too.
+pub(super) use support_mcp::put_actor_read_grant;
 
 pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT: &str =
     include_str!("../../../tests/fixtures/v1_core_success_contract.snapshot.json");

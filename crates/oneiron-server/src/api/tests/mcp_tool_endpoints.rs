@@ -681,6 +681,9 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
     record.roster.push(other.to_hex());
     bind_room_owner(&server, owner);
     create_owned_project(&server, owner, project, &record);
+    // A room member's class-less peer key reads only through a class-agnostic
+    // grant (FIX 9917, FIX 1218): without one the room reads empty for all.
+    put_actor_read_grant(&server.vault, other, None);
     let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
     let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     memory
@@ -772,6 +775,9 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             oneiron::EdgeActorClass::Human,
         ))
         .expect("read permit");
+    // The permit is class-bound; the member's class-less peer key reads only
+    // through a class-agnostic grant (FIX 9917, FIX 1218), written after it.
+    put_actor_read_grant(&server.vault, other, None);
     let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     let mut turns = Vec::new();
     for at in 0..256 {

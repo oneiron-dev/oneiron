@@ -716,6 +716,9 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     // The member joins at the owner-signed birth: its v3 proof signs the
     // roster, and the birth derives the home room from it.
     create_owned_project(&server, owner, project, &roster);
+    // A room member's class-less peer key reads only through a class-agnostic
+    // grant (FIX 9917, FIX 1218): without one the room reads empty for all.
+    put_actor_read_grant(&server.vault, peer, None);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
     assert_eq!(
         server.vault.room_audience_members(room).unwrap(),
