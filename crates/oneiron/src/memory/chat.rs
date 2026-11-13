@@ -750,7 +750,5 @@ fn document_entity_type(vault: &crate::Vault, kind: &str) -> u8 {
         .unwrap_or(u8::MAX)
 }
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-CHAT-TESTS]: the lib test target's type check fails here (34 errors: E0063 x33, E0027 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
