@@ -32,8 +32,6 @@ fn first_party_connector_actor_ref() -> String {
 
 mod pending_lookup;
 
-// FIX [LIBTEST-QUARANTINE-GATE-REPAIR-TESTS]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "../repair_tests.rs"]
 mod repair_tests;
 

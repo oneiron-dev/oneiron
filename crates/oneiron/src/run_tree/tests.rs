@@ -19,10 +19,9 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 #[test]
 fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
     let clock = crate::ports::ManualClock::new(10);
-    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::device()
-    });
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let runner = DreamerRunnerStore::new(&vault);
     let running = enqueue(&runner, "interruptible-subagent", None, 10, "run-interrupt")?;
     let queue = crate::AttemptQueue::new(&vault);
@@ -71,10 +70,9 @@ fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
 #[test]
 fn run_tree_preserves_claimed_event_after_terminal_transition() -> Result<()> {
     let clock = crate::ports::ManualClock::new(10);
-    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::device()
-    });
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let runner = DreamerRunnerStore::new(&vault);
     let attempt = enqueue(&runner, "terminal-subagent", None, 10, "run-terminal")?;
     let queue = crate::AttemptQueue::new(&vault);
@@ -219,6 +217,7 @@ fn dreamer_record(
         state: AttemptState::Queued,
         lease_owner: None,
         attempt_count: 0,
+        lease_expirations: Vec::new(),
         claimed_at: None,
         scheduled_at: None,
         retry_of: None,
@@ -231,14 +230,24 @@ fn dreamer_record(
         dedupe_actor_ref: None,
         created_at,
         updated_at: created_at,
+        settled_at: None,
         events: Vec::new(),
         manifest: Vec::new(),
         executor_model: None,
+        executor_seat: None,
+        executor_role: None,
+        planned_binding: None,
+        read_set: None,
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
         signals: Vec::new(),
         asks: Vec::new(),
         placement: None,
         result_ref: None,
+        history: Vec::new(),
+        active_pause: None,
+        terminal_exhaust: None,
+        signal_intents: Vec::new(),
+        budget_refusal: None,
     })
 }
 
@@ -256,6 +265,7 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         state: AttemptState::Queued,
         lease_owner: None,
         attempt_count: 0,
+        lease_expirations: Vec::new(),
         claimed_at: None,
         scheduled_at: None,
         retry_of: None,
@@ -268,14 +278,24 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         dedupe_actor_ref: None,
         created_at,
         updated_at: created_at,
+        settled_at: None,
         events: Vec::new(),
         manifest: Vec::new(),
         executor_model: None,
+        executor_seat: None,
+        executor_role: None,
+        planned_binding: None,
+        read_set: None,
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
         signals: Vec::new(),
         asks: Vec::new(),
         placement: None,
         result_ref: None,
+        history: Vec::new(),
+        active_pause: None,
+        terminal_exhaust: None,
+        signal_intents: Vec::new(),
+        budget_refusal: None,
     }
 }
 

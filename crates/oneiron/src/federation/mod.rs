@@ -230,8 +230,6 @@ pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
 pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
-// FIX [LIBTEST-QUARANTINE-FEDERATION-SHARED-CREATION-TESTS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod shared_creation_tests;
 // FIX [LIBTEST-QUARANTINE-FEDERATION-STEWARD-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate

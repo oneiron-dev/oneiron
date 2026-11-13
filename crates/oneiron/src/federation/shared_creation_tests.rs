@@ -140,6 +140,7 @@ fn replay_entity_between(source: &Vault, target: &Vault, id: EntityId) -> Result
                 end: header.occurred_end,
             },
             header.learned_at,
+            None,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()?;
@@ -362,6 +363,7 @@ fn replicated_rulings_require_real_admin_grant_and_supported_causal_order() -> R
                     crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
                     TimeRange { start: at, end: at },
                     at,
+                    None,
                     &encode_federation_grant_body(&grant)?,
                 )
                 .commit()?;
@@ -382,6 +384,7 @@ fn replicated_rulings_require_real_admin_grant_and_supported_causal_order() -> R
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &crate::claim::encode_claim_body(&forged)?,
             )
             .commit()?;
@@ -427,6 +430,7 @@ fn ask_guest_does_not_count_as_existing_shared_membership() -> Result<()> {
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant)?,
         )
         .commit()?;

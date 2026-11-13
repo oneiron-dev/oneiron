@@ -11,8 +11,6 @@ mod authority_revocation;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-COMMIT-CLAIMS]: the lib test target's type check fails here (14 errors: E0609 x12, E0061 x2); port it, then drop this gate
 #[cfg(any())]
 mod commit_claims;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-DELETE-TOMBSTONE]: the lib test target's type check fails here (5 errors: E0063 x3, E0639 x2); port it, then drop this gate
-#[cfg(any())]
 mod delete_tombstone;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-DEVICE-LOCAL-RECEIPTS]: the lib test target's type check fails here (6 errors: E0061 x2, E0599 x2, E0063 x2); port it, then drop this gate
 #[cfg(any())]

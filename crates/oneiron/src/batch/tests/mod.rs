@@ -41,8 +41,6 @@ use std::str;
 #[cfg(feature = "sync")]
 mod authority_log;
 mod facet_taint_session;
-// FIX [LIBTEST-QUARANTINE-BATCH-TESTS-HABIT-STREAK]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 mod habit_streak;
 mod lexical_hints_lifecycle;
 // FIX [LIBTEST-QUARANTINE-BATCH-TESTS-LEXICAL-HINTS-POLICY]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate

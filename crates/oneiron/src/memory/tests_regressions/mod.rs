@@ -12,8 +12,6 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_PERSON;
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-REGRESSIONS-AUTHORITY]: the lib test target's type check fails here (3 errors: E0063 x2, E0609 x1); port it, then drop this gate
-#[cfg(any())]
 mod authority;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-REGRESSIONS-CONSOLIDATION-OUTBOUND]: the lib test target's type check fails here (11 errors: E0609 x7, E0063 x4); port it, then drop this gate
 #[cfg(any())]

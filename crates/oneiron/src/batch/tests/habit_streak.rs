@@ -305,6 +305,7 @@ fn replicated_task_put_cannot_mint_streak_counters() -> Result<()> {
             ENTITY_TYPE_TASK,
             test_time_range(occurred, occurred),
             occurred + 1,
+            None,
             &habit_body_with_streak(99, 99),
         )
         .commit()?;
@@ -337,6 +338,7 @@ fn replicated_task_put_cannot_mint_streak_counters() -> Result<()> {
                 ENTITY_TYPE_TASK,
                 test_time_range(occurred, occurred),
                 occurred,
+                None,
                 &body,
             )
             .commit()?;
@@ -380,6 +382,7 @@ fn replicated_task_put_cannot_mint_streak_counters() -> Result<()> {
             ENTITY_TYPE_TASK,
             test_time_range(replayed, replayed),
             replayed,
+            None,
             &forged_checkin_body,
         )
         .edge(&forged_checkin, EdgeKind::ChildOf, &habit, 1.0)
