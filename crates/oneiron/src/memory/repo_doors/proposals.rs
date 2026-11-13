@@ -669,8 +669,9 @@ impl Memory<'_> {
         })
     }
 
-    /// A run's queue entry as it reads it, with the blockers and the
-    /// receipts its lane reads (FIX 4338), and those rows for its answer.
+    /// A run's queue entry as it reads it, with the driver's typed status,
+    /// the blockers and the receipts its lane reads (FIX 4338), and those
+    /// rows for its answer.
     fn repo_entry_view(
         &self,
         binding: &RepoRunBinding,
@@ -678,6 +679,9 @@ impl Memory<'_> {
         batch: MergeBatch,
         now: u64,
     ) -> MemoryResult<(RepoQueueEntryView, Vec<EntityId>)> {
+        // The owner's projection of this same stored batch, status only:
+        // its reason and conflict links can name other runs' work.
+        let drive = queue.queue_driver_observation(&batch).status;
         let blockers = queue.run_batch_blockers(&batch, now)?;
         let blockers = self.repo_lane_readable(binding, blockers)?;
         let receipts = queue.batch_receipts(&batch)?;
@@ -703,6 +707,7 @@ impl Memory<'_> {
                 proposals: order.proposals,
                 declaration: order.declaration,
                 state: batch.state,
+                drive,
                 base_green: batch.base_green,
                 expected_head: batch.expected_head,
                 landed_head: batch.landed_head,
