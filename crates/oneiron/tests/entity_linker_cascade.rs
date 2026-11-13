@@ -32,13 +32,14 @@
 //! evidence floor and leads the next by the `linker.vector.margin` row. The
 //! list keeps every candidate, so the mention stays a question the nightly
 //! re-check asks, and an effect on it still waits. Every fresh link takes
-//! the rung, an antecedent of another kind's too. The re-check orders the
-//! ask's candidates again when the turn was embedded after its save; a new
-//! order of the same candidates leaves a kept-separate ask kept. A tie,
-//! a candidate with no vector, or a winner under the floor keeps the key's
-//! order, as on main. These tests store exact vectors in a four-dimensional
-//! space, as the embed worker would; tests/person_vector_linker.rs runs
-//! the worker that fills them.
+//! the rung, an antecedent of another kind's too, and before it the
+//! owner's saved answer for the name (an identity hint). The re-check
+//! orders the ask's candidates again when the turn was embedded after its
+//! save; a new order of the same candidates leaves a kept-separate ask
+//! kept. A tie, a candidate with no vector, or a winner under the floor
+//! keeps the key's order, as on main. These tests store exact vectors in a
+//! four-dimensional space, as the embed worker would;
+//! tests/person_vector_linker.rs runs the worker that fills them.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test entity_linker_cascade`.
@@ -51,7 +52,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::batch::generate_phonetic_codes;
 use oneiron::dreamer_runner::maintenance::identity::{
-    IdentityActNow, IdentityActNowRequest, IdentityAskReason, IdentityEffect,
+    IdentityActNow, IdentityActNowRequest, IdentityAnswerRequest, IdentityAskReason, IdentityEffect,
 };
 use oneiron::edge::EdgeActorClass;
 use oneiron::embed::EmbedderLocality;
@@ -1081,11 +1082,19 @@ fn store_vector(vault: &Vault, id: EntityId, vector: [f32; VECTOR_DIMENSIONS]) {
 /// `owner` says `text` as one turn with no held tags, and the embed worker
 /// stores the turn's vector [`TURN_VECTOR`]. Returns the turn.
 fn witness_then_embed(vault: &Vault, owner: EntityId, text: &str) -> EntityId {
+    let turn = witness_untagged(vault, owner, TURN, text);
+    store_vector(vault, turn, TURN_VECTOR);
+    turn
+}
+
+/// `owner` says `text` as the turn `turn` (32 hex) of [`ROOM`], with no
+/// held tags: the tagging worker tags it later. Returns the turn.
+fn witness_untagged(vault: &Vault, owner: EntityId, turn: &str, text: &str) -> EntityId {
     vault
         .memory(owner, EdgeActorClass::Human)
         .witness(&WitnessTurn {
             conversation_ref: ROOM.into(),
-            turn_ref: Some(TURN.to_owned()),
+            turn_ref: Some(turn.to_owned()),
             thread_audience: None,
             occurred_at: now_seconds(),
             messages: vec![WitnessMessage {
@@ -1102,9 +1111,7 @@ fn witness_then_embed(vault: &Vault, owner: EntityId, text: &str) -> EntityId {
             assertions: WitnessAssertions::default(),
         })
         .expect("the owner's turn");
-    let turn = EntityId::from_hex(TURN).expect("turn id");
-    store_vector(vault, turn, TURN_VECTOR);
-    turn
+    EntityId::from_hex(turn).expect("turn id")
 }
 
 /// The owner says [`OWEN_TEXT`] as one turn with no held tags; the embed
@@ -1405,5 +1412,121 @@ fn a_fresh_link_after_an_antecedent_of_another_kind_is_ranked() {
             entities: vec![yuki, owen],
         },
         "the nearer manager goes first, and both stay candidates"
+    );
+}
+
+/// The second turn of the hint test: the same mention after the same
+/// words.
+const ACME_AGAIN_TEXT: &str = "Acme hired my manager again.";
+
+/// The second turn of the hint test, in [`ROOM`].
+const SECOND_TURN: &str = "77777777777777777777777777777777";
+
+/// The owner states two managers, Owen Smith and Mori Yuki, and says
+/// [`ACME_TEXT`]: "my manager" names both. The owner answers the ask on it
+/// with Mori Yuki, which saves the words around that mention as her
+/// identity hint. In a second turn the owner says [`ACME_AGAIN_TEXT`], and
+/// the tagger links "my manager" back to the `ORG` span "Acme". The key
+/// misses the role words and the antecedent is of another kind, so the save
+/// links the mention afresh, and the saved hint picks Mori Yuki, as on
+/// every other fresh link (FIX 23953). Main skips the hint on this path:
+/// the mention keeps both managers and is asked about again.
+#[test]
+fn a_fresh_link_after_an_antecedent_of_another_kind_takes_the_saved_hint() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut config = tagging_config();
+    config.tagging = config.tagging.map(|tagging| {
+        tagging.with_labels(BTreeMap::from([
+            ("ORG".to_owned(), ENTITY_TYPE_ORG),
+            ("PERSON".to_owned(), ENTITY_TYPE_PERSON),
+        ]))
+    });
+    let vault = Arc::new(open_member_vault(dir.path(), config, &[]).expect("fixture vault"));
+    let (owner, _proof) = embedded_owner(&vault).expect("the owner");
+    let owen = person(&vault, "Owen Smith");
+    let yuki = person(&vault, "Mori Yuki");
+    declare_predicate_normal(&vault, "relationship.manager");
+    for manager in [owen, yuki] {
+        stated_role_edge(&vault, owner, "manager", manager);
+    }
+
+    let (_, first) = save_as(&vault, owner, ACME_TEXT, "my manager");
+    let MentionLink::Candidates { entities, .. } = &first else {
+        panic!("FIXTURE: the first mention names both managers: {first:?}");
+    };
+    assert_eq!(
+        entities.iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([owen, yuki]),
+        "FIXTURE: the first mention names both managers"
+    );
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let opened = memory
+        .identity_act_now(&IdentityActNowRequest {
+            name: "my manager".to_owned(),
+            conversation: None,
+            effect: IdentityEffect::Send,
+            prompt: "Which manager?".to_owned(),
+            someone_new: "Someone new".to_owned(),
+            provisional: None,
+        })
+        .expect("the act-now ask");
+    let IdentityActNow::Deciding { ask } = opened else {
+        panic!("FIXTURE: two managers open an ask, got {opened:?}");
+    };
+    let settled = memory
+        .identity_answer(&IdentityAnswerRequest {
+            ask,
+            choice: format!("is:{}", yuki.to_hex()),
+        })
+        .expect("the owner answers Mori Yuki");
+    assert_eq!(
+        settled.entity,
+        yuki.to_hex(),
+        "FIXTURE: the answer names Mori Yuki"
+    );
+    assert!(
+        vault
+            .lookup_identity_key(ENTITY_TYPE_PERSON, "my manager")
+            .expect("key lookup")
+            .is_empty(),
+        "FIXTURE: the answer saves a hint, not a key"
+    );
+
+    let turn = witness_untagged(&vault, owner, SECOND_TURN, ACME_AGAIN_TEXT);
+    TaggingReconciler::new(
+        Arc::clone(&vault),
+        Arc::new(ManagerAfterOrg(
+            "fixture/acme@v1".parse().expect("model id"),
+        )),
+    )
+    .expect("reconciler")
+    .drain_once()
+    .expect("one tagging pass");
+
+    let tags = vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("FIXTURE: the second turn's tags are saved");
+    let [org, manager] = tags.mentions.as_slice() else {
+        panic!("FIXTURE: two mentions, found {:?}", tags.mentions);
+    };
+    assert_eq!(
+        org.link.kind(),
+        Some(ENTITY_TYPE_ORG),
+        "FIXTURE: the antecedent links as an ORG: {:?}",
+        org.link
+    );
+    assert_eq!(
+        manager.antecedent,
+        Some(0),
+        "FIXTURE: the manager refers back to the ORG"
+    );
+    assert_eq!(
+        manager.link,
+        MentionLink::Candidates {
+            kind: ENTITY_TYPE_PERSON,
+            entities: vec![yuki],
+        },
+        "the owner's saved answer picks Mori Yuki"
     );
 }
