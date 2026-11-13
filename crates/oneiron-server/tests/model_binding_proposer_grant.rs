@@ -35,12 +35,16 @@
 //! --test model_binding_proposer_grant`.
 #![cfg(oneiron_test_support)]
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
 use ed25519_dalek::{Signer, SigningKey};
+use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, pairing_binding_transcript,
 };
@@ -50,9 +54,7 @@ use oneiron::test_doors::model_binding_proposer::{
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -81,27 +83,6 @@ struct Fixture {
     owner_slip: CapabilitySlip,
     owner_token: String,
     trial: TrialFixture,
-}
-
-/// Runs `test` on an engine-sized stack and runtime, as the facade's
-/// generated dispatch needs more than a test thread's default stack.
-fn run_on_engine_stack(name: &str, test: impl std::future::Future<Output = ()> + Send + 'static) {
-    let run = std::thread::Builder::new()
-        .name(name.into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(test)
-        })
-        .expect("spawn the engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -500,7 +481,7 @@ fn assert_main_propose_refused(status: StatusCode, body: &Value) {
 /// model (nothing activated). Red on main (403), green with the fix.
 #[test]
 fn an_agent_whose_grant_names_propose_lands_a_proposed_binding() {
-    run_on_engine_stack("binding-proposer-grant", async {
+    run_on_engine_stack("binding-proposer-grant", || async {
         let (fixture, agent) = setup().await;
         let agent_hex = agent.principal.to_hex();
         let _grant = mint_propose_grant(&fixture, &agent_hex).await;
@@ -549,7 +530,7 @@ fn an_agent_whose_grant_names_propose_lands_a_proposed_binding() {
 /// for the trial. Green on main and on the head.
 #[test]
 fn an_agent_without_the_grant_is_refused() {
-    run_on_engine_stack("binding-proposer-no-grant", async {
+    run_on_engine_stack("binding-proposer-no-grant", || async {
         let (fixture, agent) = setup().await;
         let binding = agent_binding(&fixture, &agent);
         let (status, body) =
@@ -564,7 +545,7 @@ fn an_agent_without_the_grant_is_refused() {
 /// The next use is refused and leaves no proposal. Green on main and head.
 #[test]
 fn an_agent_whose_grant_is_revoked_is_refused_at_its_next_use() {
-    run_on_engine_stack("binding-proposer-revoked", async {
+    run_on_engine_stack("binding-proposer-revoked", || async {
         let (fixture, agent) = setup().await;
         let agent_hex = agent.principal.to_hex();
         let grant = mint_propose_grant(&fixture, &agent_hex).await;
@@ -606,7 +587,7 @@ fn an_agent_whose_grant_is_revoked_is_refused_at_its_next_use() {
 /// on the head.
 #[test]
 fn the_agent_cannot_accept_its_own_proposal() {
-    run_on_engine_stack("binding-proposer-no-accept", async {
+    run_on_engine_stack("binding-proposer-no-accept", || async {
         let (fixture, agent) = setup().await;
         let agent_hex = agent.principal.to_hex();
         let _grant = mint_propose_grant(&fixture, &agent_hex).await;
@@ -673,7 +654,7 @@ fn the_agent_cannot_accept_its_own_proposal() {
 /// with the role still on the incumbent. Green on main and on the head.
 #[test]
 fn the_owner_still_proposes() {
-    run_on_engine_stack("binding-proposer-owner", async {
+    run_on_engine_stack("binding-proposer-owner", || async {
         let (fixture, _agent) = setup().await;
         let owner_token = fixture.owner_token.clone();
         let (status, body) = propose_as(

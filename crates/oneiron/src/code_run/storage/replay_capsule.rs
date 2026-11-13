@@ -29,6 +29,7 @@
 
 mod admit;
 mod context;
+mod declarations;
 mod erase;
 mod execution;
 mod fold_words;
@@ -63,6 +64,7 @@ pub(crate) use self::admit::{put_staged_capsule, refresh_staged_request, store_f
 pub(crate) use self::context::{
     capsule_context_body, join_step_context_in_txn, stage_step_context,
 };
+pub(crate) use self::declarations::request_as_stored;
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
 pub(crate) use self::erase::{actor_gone_in_store, actor_gone_in_txn, actor_hard_erased_in_store};
 pub(super) use self::erase::{capsule_bodies_in_txn, capsule_runs_in_txn, names_no_actor};
@@ -343,16 +345,44 @@ pub(crate) fn capsule_fold_words_withdrawn(
 /// the whole request is put together from the pieces its manifest names,
 /// each as the capsule's run holds it for the capsule's actor. FIX 18924: a
 /// request that copies withdrawn fold words reads as none, in the snapshot
-/// its pieces are read in.
+/// its pieces are read in. FIX row [AGENT-RUN-START-LATENCY-4S]: the
+/// executor's declarations the capsule names by reference are put back
+/// ([`declarations`]); a reference to another build's reads as none.
 pub(crate) fn capsule_request(
     vault: &Vault,
     capsule: &StepReplayCapsule,
 ) -> Result<Option<LlmRequest>> {
+    let CapsuleRequest::Kept { stored_hash, .. } = &capsule.request else {
+        return Ok(None);
+    };
+    let Some(bytes) = stored_request_bytes(vault, capsule)? else {
+        return Ok(None);
+    };
+    Ok(declarations::read_stored_request(&bytes, stored_hash))
+}
+
+/// The capsule's request as the capsule stores it, for the doors: its
+/// pieces put together, before any read of them as a request.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn capsule_stored_request_bytes(
+    vault: &Vault,
+    capsule: &StepReplayCapsule,
+) -> Result<Option<Vec<u8>>> {
+    stored_request_bytes(vault, capsule)
+}
+
+/// The bytes [`capsule_request`] reads as a request, its pieces put
+/// together: `None` as it says, short of the stored hash and the read.
+fn stored_request_bytes(vault: &Vault, capsule: &StepReplayCapsule) -> Result<Option<Vec<u8>>> {
     let CapsuleRequest::Kept {
         body,
         path,
-        stored_hash,
         erased: false,
+        ..
     } = &capsule.request
     else {
         return Ok(None);
@@ -369,13 +399,7 @@ pub(crate) fn capsule_request(
         let run = row.run;
         Ok(row.content.actor().map(|actor| PieceScope { run, actor }))
     };
-    let Some(bytes) = held_request_bytes(vault, *body, path, still)? else {
-        return Ok(None);
-    };
-    if blake3::hash(&bytes).as_bytes() != stored_hash {
-        return Ok(None);
-    }
-    Ok(serde_json::from_slice(&bytes).ok())
+    held_request_bytes(vault, *body, path, still)
 }
 
 /// Binds a single-call workflow step's answer to its capsule (FIX 3611):

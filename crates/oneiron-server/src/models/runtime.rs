@@ -30,6 +30,7 @@ impl ModelRuntime {
             stock_weights: BTreeMap::new(),
             budgets: ModelHostBudgets::unhosted(),
             responses: ResponsesContext::default(),
+            siwc_logins: Arc::default(),
         }
     }
 
@@ -279,7 +280,7 @@ impl ModelRuntime {
             if models.is_empty() || !provider.kind.reranks() {
                 continue;
             }
-            match build_reranker(provider, &models) {
+            match build_reranker(provider, &models, site, keys) {
                 Ok(backend) => {
                     rerankers.insert(name.clone(), backend);
                 }
@@ -486,6 +487,7 @@ impl ModelRuntime {
             stock_weights: worker_host::stock_weights(&config.workers, &config.providers),
             budgets: budgets.clone(),
             responses,
+            siwc_logins: Arc::new(super::siwc_seat_login::SiwcSeatLogins::from_config(config)),
         }
     }
 
@@ -569,6 +571,12 @@ impl ModelRuntime {
     #[must_use]
     pub(crate) fn offer_access(&self) -> oneiron::llm::model_pack::AccessSnapshot {
         self.raw_router.access_snapshot()
+    }
+
+    /// The configured SIWC logins, whose lapsed seats the housekeeping tick
+    /// restores (SEAT-PARK-MODEL-STEP-PATH).
+    pub(crate) fn siwc_logins(&self) -> Arc<super::siwc_seat_login::SiwcSeatLogins> {
+        Arc::clone(&self.siwc_logins)
     }
 
     /// Serves on this runtime's raw router, beside the configured models,

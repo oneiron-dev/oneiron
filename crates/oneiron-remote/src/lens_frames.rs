@@ -137,7 +137,7 @@ impl OneironClient {
     ) -> Result<LensFrameEventReply, MemoryError> {
         match &self.backend {
             Backend::Remote(remote) => remote.lens_frame_event(card_id, request),
-            Backend::Embedded(_) => Err(embedded_refusal()),
+            Backend::Embedded(_) | Backend::DreamerAttempt(_) => Err(embedded_refusal()),
         }
     }
 
@@ -147,7 +147,7 @@ impl OneironClient {
     pub fn close_lens_frame(&self, card_id: &str) -> Result<CloseLensFrameReply, MemoryError> {
         match &self.backend {
             Backend::Remote(remote) => remote.close_lens_frame(card_id),
-            Backend::Embedded(_) => Err(embedded_refusal()),
+            Backend::Embedded(_) | Backend::DreamerAttempt(_) => Err(embedded_refusal()),
         }
     }
 }

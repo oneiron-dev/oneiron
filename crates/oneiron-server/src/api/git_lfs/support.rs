@@ -201,6 +201,17 @@ pub(super) fn lfs_waited_out() -> Response {
     )
 }
 
+/// The upload's body was received and spooled, but its install waited its
+/// whole deadline for room in memory (canon ARCH-0044:471): the object was
+/// not stored, so a retry sends the body again. Not [`lfs_waited_out`],
+/// whose "nothing was started" is false once the body has been read.
+pub(super) fn lfs_install_waited_out() -> Response {
+    lfs_refusal(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "lfs upload was received, but its install waited past limits.queue_wait_timeout_ms for room in memory; the object was not stored; retry the upload",
+    )
+}
+
 /// Pieces of a body on their way between the HTTP side and a transfer's
 /// worker, either way: a chunk exchange's request and reply, a verify's body.
 /// The pieces a chunk reply had in flight before its reply was streamed (FIX

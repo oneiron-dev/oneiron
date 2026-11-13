@@ -38,12 +38,15 @@ impl SyncServer {
     }
 
     /// The surface `mode` registers on this server, or the verb row that
-    /// keeps it from registering: callers answer that as a typed error.
+    /// keeps it from registering: callers answer that as a typed error. The
+    /// process registers each (mode, code host available) surface once; this
+    /// reads the one that matches the host's readiness now.
     pub(crate) fn mcp_surface(
         &self,
         mode: crate::mcp::McpSurfaceMode,
-    ) -> Result<crate::mcp::McpRegisteredSurface, crate::mcp::McpSurfaceConstructionError> {
-        crate::mcp::McpRegisteredSurface::register_with_execution(
+    ) -> Result<&'static crate::mcp::McpRegisteredSurface, crate::mcp::McpSurfaceConstructionError>
+    {
+        crate::mcp::try_registered_surface_with_execution(
             mode,
             self.code_execution_host().is_some(),
         )
