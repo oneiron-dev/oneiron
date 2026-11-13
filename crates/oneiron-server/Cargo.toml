@@ -298,6 +298,12 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "off_record_room_context_pack"
+path = "tests/off_record_room_context_pack.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
 [lints]
 workspace = true
 
