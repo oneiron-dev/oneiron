@@ -18,6 +18,7 @@ mod claude_code;
 mod codex;
 mod copilot;
 mod cursor;
+mod hosted;
 mod land;
 mod ledger;
 mod plan;
@@ -31,6 +32,7 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
+pub use hosted::{HostedImportId, HostedImportJob, HostedImportStaged, HostedImportState};
 pub use land::HistoryImportReport;
 pub(crate) use ledger::erase_message_in_txn;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
