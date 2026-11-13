@@ -31,9 +31,8 @@ use super::consent::{
     OPT_OUT_REASON_STOP, claim_body_in_txn, parties_opt_out_subjects_in_txn, standing_opt_out_head,
     subject_claim_ids_in_txn,
 };
-use super::projection_writes::{
-    latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
-};
+use super::opt_out_slots::stop_answering_boundary_in_txn;
+use super::projection_writes::{matching_claims_in_txn, projected_comm_claim_id};
 use super::records::{CommEventKind, CommRecord, decode_comm_record};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -171,7 +170,61 @@ pub(super) fn peer_stop_projection_in_txn(
     if let Some((_, claim)) = history.iter().find(|(id, _)| *id == own) {
         return Ok(Some(claim.is_standing()));
     }
-    let answered_later = latest_claim_transition_boundary(&history)
-        .is_some_and(|boundary| event.occurred_at < boundary);
+    // A clear requested at or after the STOP does not answer it; the peer's
+    // own opt-out for it is still on its way.
+    let answered_later = stop_answering_boundary_in_txn(
+        vault,
+        rtxn,
+        &history,
+        event.party_ref,
+        channel,
+        event.occurred_at,
+    )?
+    .is_some();
     Ok(answered_later.then_some(false))
+}
+
+/// Test door (`test_doors::comm_peer_stop`): rewrites the STOP recorded on
+/// `party`'s `channel_class` at `occurred_at` as a peer's copy whose peer has
+/// already projected it, keeping the hold its first sighting here armed.
+/// Answers the event id.
+#[cfg(oneiron_test_support)]
+pub(crate) fn mark_recorded_stop_peer_projected(
+    vault: &Vault,
+    party: &str,
+    channel_class: &str,
+    occurred_at: u64,
+) -> CommResult<EntityId> {
+    let party_ref = super::parties::resolve_party(vault, party)?.ok_or(CommError::InvalidRecord)?;
+    let channel = crate::counterparty_contact::normalize_channel_class(channel_class);
+    vault.try_with_write_txn_grouped(|wtxn| {
+        let (event_id, mut record) = super::records::comm_records_in_txn(vault, &*wtxn)?
+            .into_iter()
+            .find(|(_, record)| {
+                matches!(record, CommRecord::Event {
+                    kind: CommEventKind::InboundStop,
+                    party_ref: event_party,
+                    channel_class: Some(event_channel),
+                    occurred_at: event_at,
+                    projected: false,
+                    ..
+                } if *event_party == party_ref
+                    && crate::counterparty_contact::normalize_channel_class(event_channel) == channel
+                    && *event_at == occurred_at)
+            })
+            .ok_or(CommError::InvalidRecord)?;
+        if let CommRecord::Event { projected, .. } = &mut record {
+            *projected = true;
+        }
+        super::records::put_comm_record_in_txn(vault, wtxn, event_id, &record)?;
+        Ok(event_id)
+    })
+}
+
+/// Test door: whether the STOP `event_id` still holds sends here as one this
+/// replica has not settled.
+#[cfg(oneiron_test_support)]
+pub(crate) fn recorded_stop_holds(vault: &Vault, event_id: &EntityId) -> CommResult<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(holds_pending_stop_in_txn(&vault.store, &rtxn, event_id)?)
 }

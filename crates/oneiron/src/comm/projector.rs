@@ -8,12 +8,12 @@ use super::claims::{
 };
 use super::consent::{OPT_OUT_REASON_STOP, rematerialize_party_channel_contact_cache_in_txn};
 use super::head_admission::HeadAdmission;
-use super::opt_out_slots::stop_supersedes_clear_request;
+use super::opt_out_slots::{stop_answering_boundary_in_txn, stop_supersedes_clear_request};
 use super::parties::{
     reconcile_comm_party_twins, resolve_actor_party_in_txn, resolve_or_create_party_in_txn,
 };
 use super::projection_writes::{
-    latest_claim_transition_boundary, matching_claims_in_txn,
+    matching_claims_in_txn,
     put_projected_comm_claim_with_admission_in_txn as put_projected_comm_claim_in_txn,
 };
 use super::receipt_import::import_delivered_send_receipts;
@@ -736,7 +736,18 @@ fn apply_projector_rule_in_txn(
                     None,
                     false,
                 )?;
-                let latest_transition = latest_claim_transition_boundary(&history);
+                // The slot moved after this STOP: its opt-out closes where the
+                // move answered it, unless the move was a clear requested at
+                // or after the STOP (restrictive wins, whatever the order of
+                // arrival).
+                let answered_at = stop_answering_boundary_in_txn(
+                    vault,
+                    &*wtxn,
+                    &history,
+                    party_ref,
+                    channel,
+                    occurred_at,
+                )?;
                 let value = CommClaimValue::OptOut {
                     party_ref,
                     channel_class: Some(channel.to_owned()),
@@ -751,10 +762,7 @@ fn apply_projector_rule_in_txn(
                     occurred_at,
                     admission,
                 )?;
-                if minted
-                    && let Some(boundary) =
-                        latest_transition.filter(|boundary| occurred_at < *boundary)
-                {
+                if minted && let Some(boundary) = answered_at {
                     admission.write(vault, wtxn, &[claim_id], &[claim_id], |txn| {
                         vault.retract_claim_in_txn(txn, &claim_id, boundary)?;
                         Ok(())
