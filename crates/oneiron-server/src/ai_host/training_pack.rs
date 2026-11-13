@@ -104,12 +104,15 @@ pub(crate) fn training_declaration(run: &TrainingRun) -> oneiron::Result<RunDecl
 /// `[models.training.connectors.<name>]` configures it. There is no default
 /// connector.
 pub(crate) fn trainer_binding(server: &SyncServer, name: &str) -> Option<PaidConnector> {
-    server
-        .ai
-        .model_runtime()
-        .training()
+    let training = server.ai.model_runtime().training();
+    training
         .connector(name)
         .map(|connector| connector.binding.clone())
+        .or_else(|| {
+            training
+                .role_trainer(name)
+                .map(|trainer| trainer.binding.clone())
+        })
 }
 
 /// The trainer for `run`, on the connector its compute pinned: the
