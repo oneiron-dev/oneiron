@@ -97,7 +97,7 @@ fn an_owner_bypass_is_set_and_forget_inside_its_scope_and_receipted() {
         .create_bypass_grant(&owner, &warning)
         .expect("the owner creates the bypass");
     assert_eq!(created.reason_code(), CONSENT_REASON_BYPASS_CREATED);
-    let grant_ref = created.grant_ref().expect("bypass row");
+    let grant_ref = consent_receipt_grant_ref(&created).expect("bypass row");
     let active = vault.active_bypass_grants().expect("state");
     assert_eq!(active.len(), 1, "the engine reports the bypass as active");
     assert_eq!(active[0].grant_ref, grant_ref);

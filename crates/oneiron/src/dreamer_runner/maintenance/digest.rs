@@ -573,8 +573,6 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-RUNNER-MAINTENANCE-DIGEST-TESTS]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

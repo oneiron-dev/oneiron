@@ -83,8 +83,6 @@ pub use shared_merge_queue::{SharedSkillMergeEntry, SharedSkillMergeState};
 
 #[cfg(test)]
 mod admission_tests;
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-CLAIM-REFINEMENT-TESTS]: the lib test target's type check fails here (3 errors: E0061 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod claim_refinement_tests;
 #[cfg(test)]

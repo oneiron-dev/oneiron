@@ -624,7 +624,7 @@ fn checker_hold_falls_to_proposed() -> Result<()> {
     );
 
     // Zero inbox changes: the existing projection classifies it.
-    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?.groups;
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].members.len(), 1);
     assert!(

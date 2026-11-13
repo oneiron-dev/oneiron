@@ -37,11 +37,11 @@ fn room_off_record_seeing(vault: &Vault, history: HistoryChoice) -> (Room, OffRe
             .expect("join the room");
     }
     install_self_memory_allow_policy(vault, agent).expect("policy");
+    let proof = crate::test_util::embedded_owner_proof(vault);
     let session = vault
         .off_record_session_vault()
-        .enter_in_room("deck", OffRecordBackendClass::Local, id, owner)
+        .enter_in_room_as("deck", OffRecordBackendClass::Local, id, &proof)
         .expect("start off record");
-    let proof = crate::test_util::embedded_owner_proof(vault);
     (
         Room {
             owner,
@@ -74,7 +74,7 @@ fn message(order: u32) -> EntityId {
 /// the copy holds it.
 fn exported(session: &OffRecordSession<'_>, room: &Room) -> Vec<u64> {
     let mut orders: Vec<u64> = session
-        .export_talk_by(room.owner, None)
+        .export_talk_as(&room.proof)
         .expect("export the talk")
         .turns
         .iter()
@@ -343,16 +343,20 @@ fn a_save_refuses_a_copy_whose_order_the_turn_took_since() {
         .witness(&crate::memory::WitnessTurn {
             conversation_ref: shell.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
             messages: vec![crate::memory::WitnessMessage {
                 id: None,
                 author: crate::memory::WitnessAuthor::Companion,
                 message_type: "text".to_owned(),
                 content: "a word said on record at order 1".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 1,
+                quote: None,
             }],
             occurred_at: 60_500,
+            assertions: Default::default(),
         })
         .expect("an ordinary witness appends to the saved turn");
     assert_eq!(base_orders(&vault, &turn), vec![0, 1]);

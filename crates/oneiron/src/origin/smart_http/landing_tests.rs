@@ -376,7 +376,7 @@ fn smart_http_publication_requires_real_attribution_and_durable_provenance() {
     assert!(
         edits
             .iter()
-            .all(|op| op.actor.entity_ref() == attribution.actor_id)
+            .all(|op| op.actor.map(|actor| actor.entity_ref()) == Some(attribution.actor_id))
     );
     let repo_id = landed_repo_id(&vault, &repo, &root);
     let rows = vault
@@ -504,7 +504,10 @@ fn concurrent_pushes_share_one_document_ingress_and_ref_cas_door() {
             .unwrap();
         if result.is_ok() {
             assert_eq!(edits.len(), 1);
-            assert_eq!(edits[0].actor.entity_ref(), actors[index].actor_id);
+            assert_eq!(
+                edits[0].actor.map(|actor| actor.entity_ref()),
+                Some(actors[index].actor_id)
+            );
             assert_eq!(edits[0].sequence, 1);
             assert_eq!(
                 git(&root, &["rev-parse", "refs/heads/main"]),

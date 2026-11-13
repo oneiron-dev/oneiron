@@ -893,7 +893,5 @@ fn share_claim_facets(
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SHARE-TESTS]: the lib test target's type check fails here (11 errors: E0061 x7, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 pub(crate) mod tests;

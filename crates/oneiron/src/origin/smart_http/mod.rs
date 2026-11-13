@@ -171,8 +171,6 @@ mod history_scan_tests;
 #[cfg(any())]
 #[cfg(test)]
 mod intent_recovery_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-LANDING-TESTS]: the lib test target's type check fails here (2 errors: E0599 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod landing_tests;
 #[cfg(test)]

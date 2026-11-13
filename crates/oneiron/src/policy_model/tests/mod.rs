@@ -37,12 +37,8 @@ mod edge_identity;
 mod foundations;
 mod hosted_registration_relay;
 mod outage_contracts;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-OWNER-DECISIONS-LEDGER]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod owner_decisions_ledger;
 mod owner_manifest_binding;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-RECEIPT-BINDING-CITATIONS]: the lib test target's type check fails here (4 errors: E0599 x3, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod receipt_binding_citations;
 mod skipped_verdicts;
 mod support;

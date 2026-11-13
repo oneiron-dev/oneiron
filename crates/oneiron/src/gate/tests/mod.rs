@@ -38,8 +38,6 @@ mod pending_lookup;
 mod repair_tests;
 
 mod actor_fork;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-AUTO-CHECKER]: the lib test target's type check fails here (3 errors: E0608 x2, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 mod auto_checker;
 mod auto_checker_closure;
 mod carry_forward;
