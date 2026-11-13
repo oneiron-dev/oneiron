@@ -279,7 +279,7 @@ impl ModelRuntime {
             if models.is_empty() || !provider.kind.reranks() {
                 continue;
             }
-            match build_reranker(provider, &models) {
+            match build_reranker(provider, &models, site, keys) {
                 Ok(backend) => {
                     rerankers.insert(name.clone(), backend);
                 }
