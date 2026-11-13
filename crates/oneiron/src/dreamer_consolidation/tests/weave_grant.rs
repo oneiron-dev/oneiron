@@ -43,6 +43,7 @@ fn pass(
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut driver = DreamerWakeDriver::new(vault, "wake", WakePassDeadline::new(180_000));
     ready(driver.run_wake_pass(
@@ -413,7 +414,8 @@ fn the_strength_archive_is_judged_by_a_narrowed_steward_grant() -> Result<()> {
         let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turn))]);
         let report = pass(&vault, &backend, node_id, 21)?;
         assert_eq!(report.completed, 1, "{report:?}");
-        let [claim] = name_claim_ids(&vault, &subject)?.as_slice() else {
+        let claims = name_claim_ids(&vault, &subject)?;
+        let [claim] = claims.as_slice() else {
             panic!("one landed claim");
         };
         let claim = *claim;

@@ -380,6 +380,7 @@ fn support_stays_while_a_live_attachment_still_justifies_it() -> Result<()> {
                     actor_class: actor.actor_class(),
                     learned_at,
                     explicit_prior: None,
+                    scope_project: None,
                     imported_evidence: None,
                     generated_evidence: None,
                 },
