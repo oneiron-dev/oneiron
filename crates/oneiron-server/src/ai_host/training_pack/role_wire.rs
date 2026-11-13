@@ -33,10 +33,10 @@ const ROLE: &str = "role";
 /// own export check judges the probes, so a probe that flips is a result
 /// whose check fails, never another status.
 const TRAINED: &str = "trained";
-/// What a role job's training file holds: the consented reservoir's chosen
-/// and rejected pairs as `export_reservoir` writes them, one JSON object a
-/// line.
-const TRAINING_ROWS: &str = "oneiron.reservoir-pair/1";
+/// What a role job's training file, and the role scorer's split files,
+/// hold: the consented reservoir's chosen and rejected pairs as
+/// `export_reservoir` writes them, one JSON object a line.
+pub(super) const RESERVOIR_PAIR_FORMAT: &str = "oneiron.reservoir-pair/1";
 /// How far a receipt's stated largest logit difference may sit from the one
 /// its own logits give.
 const DIFFERENCE_SLACK: f64 = 1e-9;
@@ -204,7 +204,7 @@ pub(super) fn build_job(
             load_set_blake3: blake3_hex(&plan.starting_checkpoint.content_hash()?),
         },
         training: RoleTrainingWire {
-            format: TRAINING_ROWS,
+            format: RESERVOIR_PAIR_FORMAT,
             path: &staged.training_path,
             sha256: &staged.training_sha256,
             blake3: &staged.training_blake3,

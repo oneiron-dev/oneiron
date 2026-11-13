@@ -249,11 +249,27 @@ pub(super) async fn spawn_worker(
     output: &Path,
     job: &Path,
 ) -> oneiron::Result<ExitStatus> {
-    let stderr = new_file(&job.join(STDERR_FILE))?;
-    let mut command: tokio::process::Command = oneiron_spawn::command(python).into();
+    let command = worker_command(python, worker, request, output, &job.join(STDERR_FILE))?;
+    let mut child = tokio::process::Command::from(command).spawn()?;
+    Ok(child.wait().await?)
+}
+
+/// The command line every local training-pack process runs as:
+/// `<python> -I <script> --request <request> --output <output>`, with no
+/// shell, stdin and stdout null and its error stream written to a new
+/// `stderr` file. The trainers and the role scorer share it.
+pub(super) fn worker_command(
+    python: &Path,
+    script: &Path,
+    request: &Path,
+    output: &Path,
+    stderr: &Path,
+) -> oneiron::Result<std::process::Command> {
+    let stderr = new_file(stderr)?;
+    let mut command = oneiron_spawn::command(python);
     command
         .arg("-I")
-        .arg(worker)
+        .arg(script)
         .arg("--request")
         .arg(request)
         .arg("--output")
@@ -261,7 +277,7 @@ pub(super) async fn spawn_worker(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr));
-    // The worker consumes staged files, not this server's vault credentials.
+    // The process consumes staged files, not this server's vault credentials.
     for name in [
         "ONEIRON_SECRET",
         "ONEIRON_BINDING_KEY",
@@ -270,8 +286,7 @@ pub(super) async fn spawn_worker(
     ] {
         command.env_remove(name);
     }
-    let mut child = command.spawn()?;
-    Ok(child.wait().await?)
+    Ok(command)
 }
 
 impl TrainingConnector for QuestionHeadTrainer {

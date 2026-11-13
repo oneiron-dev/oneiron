@@ -12,6 +12,12 @@
 //! on this host, and the quote a run is admitted under: `unit_cost` of
 //! `cost_unit` per GPU wall second, the unit the worker reports.
 //!
+//! `scorer`, when set, names the connector's held-out scorer: a separate
+//! script the same interpreter runs on the role score wire
+//! (`oneiron.training-pack.role-score/1`) to score a returned checkpoint
+//! (RULING TRAIN-ROLE-EVALUATOR = A). Without one, a returned role run holds
+//! with `training.no_evaluator`.
+//!
 //! ```toml
 //! [models.training.role_trainers.house-gpu]
 //! python = "/opt/oneiron/role-training-venv/bin/python"
@@ -22,6 +28,7 @@
 //! cost_unit = "gpu_wall_second"
 //! service_unit = "gpu_wall_second"
 //! recipes = ["<the recipe a role plan's settings.recipe names>"]
+//! scorer = "/opt/oneiron/role-trainer/scorer.py"
 //! ```
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -49,6 +56,8 @@ pub(super) struct RoleTrainerFile {
     cost_unit: String,
     service_unit: String,
     recipes: BTreeSet<String>,
+    #[serde(default)]
+    scorer: Option<PathBuf>,
 }
 
 /// One role trainer connector: the process it runs, the role recipes that
@@ -64,6 +73,9 @@ pub struct RoleTrainerSettings {
     pub jobs_root: PathBuf,
     /// The recipes (a role plan's `settings.recipe`) its worker trains.
     pub recipes: BTreeSet<String>,
+    /// The held-out scorer script, an absolute path, run by `python`; none
+    /// means this connector's returned runs have no evaluator here.
+    pub scorer: Option<PathBuf>,
     /// Its route, locality, payer, custody and quote: keyless, on this
     /// host, paid by no one per call, at its revision.
     pub binding: PaidConnector,
@@ -93,6 +105,10 @@ impl RoleTrainerFile {
             anyhow::ensure!(path.is_absolute(), "{at}.{field} must be an absolute path");
         }
         anyhow::ensure!(
+            self.scorer.as_ref().is_none_or(|path| path.is_absolute()),
+            "{at}.scorer must be an absolute path"
+        );
+        anyhow::ensure!(
             !self.revision.trim().is_empty()
                 && !matches!(
                     self.revision.as_str(),
@@ -121,6 +137,7 @@ impl RoleTrainerFile {
             worker: self.worker,
             jobs_root: self.jobs_root,
             recipes: self.recipes,
+            scorer: self.scorer,
             binding: PaidConnector {
                 connector: name.to_owned(),
                 route,
