@@ -107,7 +107,10 @@ fn role_edge(
 /// The ids `possessor`'s role edges for `word` name at `now`
 /// ([`role_edge`]), each with whether an Approved edge names it, as stored:
 /// the caller resolves each to its head. `admits` keeps the claims the
-/// reader may see.
+/// reader may see. An Approved edge whose owner-answer obligation is open
+/// (ARCH-0026 §G3, [`crate::gate::claim_critical_confirm_settled_in_txn`])
+/// is held from every effect reader, so it names its person only as an
+/// unsure edge does: a held edge never hard-links.
 pub(super) fn role_edges_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -127,8 +130,10 @@ pub(super) fn role_edges_in_txn(
     let mut found = BTreeMap::new();
     for (claim, (person, approved)) in edges {
         if admits(&claim)? {
+            let settled = approved
+                && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &claim)?;
             let sure: &mut bool = found.entry(person).or_default();
-            *sure |= approved;
+            *sure |= settled;
         }
     }
     Ok(found)

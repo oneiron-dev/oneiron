@@ -18,8 +18,10 @@
 //! Active `relationship.<word>` claim on the speaker valued with the related
 //! person's id. One person an Approved edge names is the mention's link, as
 //! a known role edge hard-links; two or more stay candidates for the nightly
-//! IDENTITY_SETTLE ask and are never merged; one only an Auto edge names is
-//! an unsure match, asked about as a lone sound match is. The `relationship`
+//! IDENTITY_SETTLE ask and are never merged; one only an unsure edge names
+//! (Auto, or Approved but held for its owner's answer) is an unsure match,
+//! asked about as a lone sound match is, and persons who only sound like the
+//! role words never take its place. The `relationship`
 //! root is multi-valued, so a second edge of one word stands beside the
 //! first. A stored id follows a merge to its one surviving head; a deleted
 //! person, no edge for the word, or an edge of someone other than the
@@ -871,6 +873,64 @@ fn another_persons_role_edge_is_not_the_speakers() {
     assert_mints(&vault, link);
     let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
     assert!(asks.is_empty(), "no ask follows: {asks:?}");
+}
+
+/// The owner's Approved manager edge naming Owen Smith is held for its
+/// owner's answer (ARCH-0026 §G3), as a replica's Approved revision of a
+/// held critical claim leaves it. A held claim lends no authority, so the
+/// edge is an unsure match: "my manager" mints its own provisional person,
+/// and the nightly re-check asks whether it is Owen or someone new. #7387's
+/// first head read the stored approval alone and linked Owen with no ask.
+#[test]
+fn a_held_approved_role_edge_is_an_unsure_match() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    let edge = role_edge(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Approved,
+    );
+    oneiron::test_doors::identity_recheck::open_owner_answer_obligation(&vault, &edge)
+        .expect("the edge is held for its owner's answer");
+
+    let (turn, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    assert_asks_whether_it_is(&vault, (turn, link), "my manager", owen);
+}
+
+/// An Auto manager edge names Owen Smith, and May Manager and Moe Manager
+/// both sound like "my manager" (the Soundex code of every part: M000,
+/// M526). The lone unsure role hit is the mention's unsure match: it mints
+/// its own provisional person, and the nightly re-check asks about Owen
+/// beside the two who sound like it, or someone new. #7387's first head
+/// fell through to the phonetic rung and saved May and Moe as the
+/// candidates, with Owen in no ask.
+#[test]
+fn a_lone_unsure_role_edge_is_not_replaced_by_sound_matches() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    let may = person(&vault, "May Manager");
+    let moe = person(&vault, "Moe Manager");
+    role_edge(&vault, owner, "manager", owen, ClaimApprovalStatus::Auto);
+
+    let (turn, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    let provisional = assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    let ask = &asks[0];
+    assert_eq!(ask.name, "my manager");
+    assert_eq!(ask.turn, turn);
+    assert_eq!(ask.reason, IdentityAskReason::Unsettled);
+    assert_eq!(ask.provisional, Some(provisional));
+    assert_eq!(
+        ask.candidates.iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([owen, may, moe, provisional])
+    );
 }
 
 /// The codes a write posts are the ones main posts: the linker's whole-name
