@@ -18,7 +18,10 @@
 //! handle and its end and nothing else. Like a done TASK's delta it rides the
 //! next tool result once the connection holds a keyframe, and it is not kept
 //! after the pass: `board.refresh` stays the floor. A narrowed connection
-//! hears its own children too, since they are its own lineage.
+//! hears its own children too, since they are its own lineage. Off this
+//! device a line goes only where the child works may go
+//! ([`child_release_hold`]): its TASK and the worlds its committed dispatch
+//! names, never its spawner's.
 //!
 //! The rows are node-local runtime state. A row no pass took within a day is
 //! dropped by a later stage, so a vault that no host serves keeps no more
@@ -28,9 +31,11 @@ use super::events::{BoardEvent, RouteObservation};
 use super::frames::DeltaRow;
 use super::provenance::ChildEvent;
 use super::registry::BoardStreamRegistry;
+use crate::agent_def::AgentScope;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
+use crate::settings::{ReadDestination, ReleaseHold};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -222,9 +227,7 @@ fn spawner_in_txn(
 /// again from the committed rows. A host asks it before a `children:` line
 /// rides, and drops the line unless the answer is the connection's actor.
 pub fn child_spawner(vault: &Vault, child_hex: &str) -> Result<Option<EntityId>> {
-    let Some(child) = crate::task_verb::decode_hex::<16>(child_hex)
-        .and_then(|bytes| AttemptId::from_bytes(&bytes).ok())
-    else {
+    let Some(child) = child_attempt_id(child_hex) else {
         return Ok(None);
     };
     let txn = vault.store.env.read_txn()?;
@@ -232,6 +235,95 @@ pub fn child_spawner(vault: &Vault, child_hex: &str) -> Result<Option<EntityId>>
         return Ok(None);
     };
     spawner_in_txn(vault, &txn, &record)
+}
+
+/// The rows the end of the child whose attempt id is `child_hex` is derived
+/// from, for a carrier that records them beside its line: the TASK its try
+/// realizes and each world its dispatch froze or its definition runs in,
+/// base reality left out, as it lies everywhere. `None` when the child is no
+/// AGENT dispatch this can read, or names a TASK that is no id.
+pub fn child_release_rows(vault: &Vault, child_hex: &str) -> Result<Option<Vec<EntityId>>> {
+    Ok(child_placement(vault, child_hex)?.map(|placement| placement.rows))
+}
+
+/// Why the end of the child whose attempt id is `child_hex` stays on this
+/// device for `destination`, or `None` while its `children:` line may go
+/// there (census L2-38, review round 1). The line names only the child's
+/// attempt, so no scan of it finds where the child works: it is judged by
+/// the rows [`child_release_rows`] reads, under the row verdict
+/// ([`Vault::release_hold_for`]). A child that names no world is judged as
+/// a run that names none is placed (`agent_dispatch::run_task`): it may
+/// carry any world's text, so it goes only while no world stays on this
+/// device ([`Vault::model_call_hold_for`]). A child this cannot read is an
+/// integrity hold.
+pub fn child_release_hold(
+    vault: &Vault,
+    child_hex: &str,
+    destination: &ReadDestination,
+) -> Result<Option<ReleaseHold>> {
+    if !destination.is_off_device() {
+        return Ok(None);
+    }
+    let Some(placement) = child_placement(vault, child_hex)? else {
+        return Ok(Some(ReleaseHold::Placement));
+    };
+    if placement.any_world
+        && let Some(hold) = vault.model_call_hold_for(None, destination)?
+    {
+        return Ok(Some(hold));
+    }
+    vault.release_hold_for(&placement.rows, destination)
+}
+
+/// Where a child works, read from its own committed attempt, never from its
+/// spawner or its line: [`child_release_rows`]'s rows, and whether it names
+/// no world at all (a frozen scope with no world, under a definition that
+/// spans every world).
+struct ChildPlacement {
+    rows: Vec<EntityId>,
+    any_world: bool,
+}
+
+fn child_placement(vault: &Vault, child_hex: &str) -> Result<Option<ChildPlacement>> {
+    let Some(child) = child_attempt_id(child_hex) else {
+        return Ok(None);
+    };
+    let Some(record) = AttemptQueue::new(vault).get(child)? else {
+        return Ok(None);
+    };
+    let Some(input) = crate::agent_dispatch::record_dispatch_input(&record) else {
+        return Ok(None);
+    };
+    let base = crate::claim::base_world_id();
+    let frozen = input.scope.as_ref().and_then(|scope| scope.world);
+    let defined = match input.definition.scope {
+        AgentScope::All => None,
+        AgentScope::Base => Some(base),
+        AgentScope::World(world) => Some(world),
+    };
+    let mut rows: Vec<EntityId> = [frozen, defined]
+        .into_iter()
+        .flatten()
+        .filter(|world| *world != base)
+        .collect();
+    if let Some(task) = record.task_ref.as_deref() {
+        let Ok(task) = EntityId::from_hex(task) else {
+            return Ok(None);
+        };
+        rows.push(task);
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Ok(Some(ChildPlacement {
+        rows,
+        any_world: frozen.is_none() && defined.is_none(),
+    }))
+}
+
+/// The attempt id a `children:` key names after its prefix.
+fn child_attempt_id(child_hex: &str) -> Option<AttemptId> {
+    crate::task_verb::decode_hex::<16>(child_hex)
+        .and_then(|bytes| AttemptId::from_bytes(&bytes).ok())
 }
 
 /// The child's handle on its line: its definition's agent id.

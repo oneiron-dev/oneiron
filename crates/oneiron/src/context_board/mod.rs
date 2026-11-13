@@ -107,7 +107,7 @@ pub use stream::{
     FrameApplyOutcome, FrameEnqueueOutcome, FrameKind, PendingDiaryReview, PendingRoomWake,
     PendingTaskWake, RoomWakeRead, RouteObservation, StagedTaskWake, StreamConnectionId,
     StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, TaskWakeKind,
-    TaskWakeRead, WakeEnvelope, child_spawner,
+    TaskWakeRead, WakeEnvelope, child_release_hold, child_release_rows, child_spawner,
 };
 mod layout;
 mod layout_store;
