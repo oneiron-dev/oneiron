@@ -311,6 +311,12 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# L5-11's issuer watch roots its owner on a `MemoryKeystore` too.
+[[test]]
+name = "connector_issuer_prm_refusal"
+path = "tests/connector_issuer_prm_refusal.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 

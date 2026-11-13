@@ -139,6 +139,21 @@ pub struct ConnectorIssuerObservation {
     pub witness: String,
 }
 
+/// The engine's own reading, at a refused send, of the authorization
+/// servers a connector's protected resource accepts tokens from (RFC 9728
+/// `authorization_servers`; L5-11). No owner act: a change it finds only
+/// holds rows, and the owner's stamp still accepts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectorIssuerDetection {
+    /// The key the refused call presented under: a catalog key or one
+    /// derived from it.
+    pub key_ref: EntityId,
+    /// The issuers the metadata lists, in its order.
+    pub authorization_servers: Vec<String>,
+    /// What the engine read and where, in its own words: never a credential.
+    pub witness: String,
+}
+
 fn covers(
     dependents: &BTreeSet<ConnectorBindingDependent>,
     key_id: &EntityId,
@@ -551,6 +566,16 @@ impl Vault {
             return self.draft_issuer_revision(binding.binding_ref);
         }
         Ok(binding)
+    }
+
+    /// The engine's detection of an issuer change at a refused send (L5-11
+    /// seam): records nothing yet.
+    pub fn detect_connector_credential_issuer(
+        &self,
+        detection: &ConnectorIssuerDetection,
+    ) -> Result<Vec<ConnectorCredentialBinding>> {
+        let _ = detection;
+        Ok(Vec::new())
     }
 
     /// Drafts a detected issuer change's forced re-ask of the catalog slate,

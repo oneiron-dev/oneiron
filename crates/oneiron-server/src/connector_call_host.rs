@@ -72,6 +72,7 @@ use crate::connector_elicitation::{
 };
 use crate::server::SyncServer;
 
+pub(crate) mod issuer_watch;
 mod json_wire;
 mod live_exchange;
 mod presenting;
@@ -191,17 +192,7 @@ impl ServedConnectorCallHost {
         connectors: BTreeMap<String, ConnectorHostConfig>,
         elicitations: Arc<ConnectorElicitationRegistry>,
     ) -> oneiron::Result<Self> {
-        let client = reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(CALL_TIMEOUT)
-            .build()
-            .map_err(|_| {
-                oneiron::Error::InvalidConfig(
-                    "the connector HTTP client could not be built".to_owned(),
-                )
-            })?;
+        let client = connector_client()?;
         Ok(Self {
             vault,
             connectors: connectors
@@ -495,6 +486,20 @@ fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Ke
         questions,
         result.get(wire::REQUEST_STATE).map(KeptWire::keep),
     ))
+}
+
+/// The one HTTP client a connector send and its issuer watch use: no
+/// redirect followed, no proxy, the call's bounds.
+pub(crate) fn connector_client() -> oneiron::Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(CALL_TIMEOUT)
+        .build()
+        .map_err(|_| {
+            oneiron::Error::InvalidConfig("the connector HTTP client could not be built".to_owned())
+        })
 }
 
 /// What a send that declares elicitation keeps a question with.

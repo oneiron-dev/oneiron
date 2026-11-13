@@ -48,8 +48,8 @@ pub use self::codec::{
 };
 pub use self::credential_binding::{
     CONNECTOR_ISSUER_HOLD_REASON, ConnectorBindingDependent, ConnectorCredentialBinding,
-    ConnectorIssuerHaltView, ConnectorIssuerObservation, ConnectorIssuerTransition,
-    ConnectorIssuerTransitionState,
+    ConnectorIssuerDetection, ConnectorIssuerHaltView, ConnectorIssuerObservation,
+    ConnectorIssuerTransition, ConnectorIssuerTransitionState,
 };
 pub use self::lifecycle::{
     ActorConnectorRegistration, ConnectorCallRoute, ConnectorConsentRowView,
