@@ -4,13 +4,16 @@
 //! (FIX [SLOW-FACADE-CALLS-COORDINATION-08]).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test -p oneiron-server --test openapi_document_reuse`
+#![cfg(oneiron_test_support)]
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::Router;
 use axum::body::{Body, Bytes, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
+use axum::{Extension, Router};
 use oneiron_server::test_doors::openapi_document::assemblies;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::Value;
@@ -31,7 +34,10 @@ fn app() -> (tempfile::TempDir, Router) {
         )
         .expect("sync server"),
     );
-    (dir, build_app(server))
+    // A hatch server answers only callers on this device: each request
+    // comes from a loopback peer.
+    let loopback = ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    (dir, build_app(server).layer(Extension(loopback)))
 }
 
 /// The served body and the request's wall time in milliseconds.
