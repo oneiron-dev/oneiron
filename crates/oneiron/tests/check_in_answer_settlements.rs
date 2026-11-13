@@ -117,7 +117,7 @@ fn a_pinned_holder_approves_once_and_the_settlement_names_them() {
             at: T0,
         }
     );
-    assert_eq!(l.fx.outcomes(&id), ["opened", "answered"]);
+    assert_eq!(l.fx.outcomes(&id), ["opened", "climbed", "answered"]);
     assert_eq!(
         consume(&l.fx.vault, &id, &DIGEST).expect("the act runs once"),
         EligibleBasis::Approved
@@ -136,7 +136,7 @@ fn the_same_answer_again_echoes_the_settlement_and_writes_nothing() {
     let first = answered(&admin, reply(&id, "approve", &DIGEST));
     let receipts = l.fx.outcomes(&id);
     let again = answered(&admin, reply(&id, "approve", &DIGEST));
-    let mut echoed = first.clone();
+    let mut echoed = first;
     echoed["repeat"] = json!(true);
     assert_eq!(again, echoed, "one settlement");
     assert_eq!(l.fx.outcomes(&id), receipts, "an echo writes nothing");
@@ -173,7 +173,7 @@ fn another_holder_is_told_who_answered_and_a_stranger_is_told_nobody() {
         "{settled}"
     );
     let receipts = l.fx.outcomes(&id);
-    assert_eq!(receipts, ["opened", "climbed", "answered"]);
+    assert_eq!(receipts, ["opened", "climbed", "climbed", "answered"]);
 
     let late = refused(
         &as_person(&l, l.first_admin.0),
@@ -214,7 +214,7 @@ fn a_denial_settles_the_ask_and_makes_nothing_eligible() {
         consume(&l.fx.vault, &id, &DIGEST).is_err(),
         "a denied act never runs"
     );
-    assert_eq!(l.fx.outcomes(&id), ["opened", "answered"]);
+    assert_eq!(l.fx.outcomes(&id), ["opened", "climbed", "answered"]);
 }
 
 #[test]
@@ -247,7 +247,11 @@ fn a_person_not_pinned_now_another_effect_and_an_ended_wait_cannot_answer() {
         "{ended:?}"
     );
     assert_eq!(l.fx.row(&id).state, PendingState::Open);
-    assert_eq!(l.fx.outcomes(&id), ["opened"], "refusals write nothing");
+    assert_eq!(
+        l.fx.outcomes(&id),
+        ["opened", "climbed"],
+        "refusals write nothing"
+    );
 }
 
 #[test]
@@ -299,7 +303,11 @@ fn an_agent_a_standing_approval_and_a_bad_handle_are_no_answer() {
     let unknown = refused(&admin, reply(&EntityId::now(), "approve", &DIGEST));
     assert_eq!(unknown.code, MEMORY_CODE_NOT_FOUND, "{unknown:?}");
     assert_eq!(l.fx.row(&id).state, PendingState::Open);
-    assert_eq!(l.fx.outcomes(&id), ["opened"], "nothing was answered");
+    assert_eq!(
+        l.fx.outcomes(&id),
+        ["opened", "climbed"],
+        "nothing was answered"
+    );
 }
 
 #[test]
