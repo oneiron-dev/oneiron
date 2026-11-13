@@ -950,6 +950,37 @@ fn request_for(
     }
 }
 
+/// How a draft reads the address headers of the message it answers: the
+/// source, then the message's provider id. [`answered_address_headers`] in
+/// every build; an integration test door reads them as stored.
+type AnsweredHeaders<'r> =
+    &'r dyn Fn(&Vault, EntityId, &str) -> MemoryResult<Option<MailAddressHeaders>>;
+
+/// [`Memory::mail_reply_draft`] with the answered message's addresses read
+/// as its thread stored them, never at its provider: the integration test
+/// doors draft a Gmail reply with no network (`test_doors::reply_attachments`,
+/// fix list row 17645). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn mail_reply_draft_as_stored_for_test(
+    memory: &Memory<'_>,
+    input: &MailReplyDraftRequest,
+) -> MemoryResult<MailReplyDraftView> {
+    memory.mail_reply_draft_reading(input, &|_, _, _| Ok(None))
+}
+
+/// The manifest digest the stored row of the draft `draft` names, `None`
+/// for a draft without files (fix list row 17645). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn reply_draft_manifest_digest_for_test(
+    vault: &Vault,
+    draft: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(DRAFTS
+        .get(&vault.store, &txn, draft)?
+        .and_then(|row| row.attached.map(|attached| attached.digest)))
+}
+
 impl Memory<'_> {
     /// Drafts a reply to a mail thread the caller reads, or its next
     /// revision under the same request key. It sends nothing: the draft
@@ -957,6 +988,16 @@ impl Memory<'_> {
     pub fn mail_reply_draft(
         &self,
         input: &MailReplyDraftRequest,
+    ) -> MemoryResult<MailReplyDraftView> {
+        self.mail_reply_draft_reading(input, &answered_address_headers)
+    }
+
+    /// [`Self::mail_reply_draft`], reading the answered message's address
+    /// headers through `answered`.
+    fn mail_reply_draft_reading(
+        &self,
+        input: &MailReplyDraftRequest,
+        answered: AnsweredHeaders<'_>,
     ) -> MemoryResult<MailReplyDraftView> {
         let vault = self.vault();
         let actor = self.actor();
@@ -1010,7 +1051,7 @@ impl Memory<'_> {
         let (parent_turn, provider_id, parent) = parent_of(&messages, parent_turn)?;
         // A Gmail message's addresses come from its raw message, read once
         // here, outside any write transaction (fix list row 20520).
-        let parent = match answered_address_headers(vault, source, &provider_id)? {
+        let parent = match answered(vault, source, &provider_id)? {
             Some(addresses) => readdressed(parent, addresses),
             None => parent,
         };
