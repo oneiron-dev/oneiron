@@ -25,6 +25,11 @@ crate::side_table::side_tables! {
     /// task) then the holder's id16. Authority, so a restore keeps the live rows.
     AGENT_DEF_POWER_GRANT: VaultMeta b"agent_def/power-grant/v1\0" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// An owner's pause of what one agent made (AUTHOR-OFF, `vault.agents.pause_tree`): the
+    /// agent, each member the pause switched off, paused or held, its receipt, and the resume
+    /// once it ran. Key: id16 (pause).
+    AGENT_DEF_TREE_PAUSE: VaultMeta b"agent_def/tree-pause/v1\0" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 4472: the model an agent's last wake ran on, so a wake on another model notes it in
     /// the agent's own diary. Key: id16(agent).
     AGENT_DEF_WAKE_MODEL: VaultMeta b"agent_def/wake-model/v1\0" Named

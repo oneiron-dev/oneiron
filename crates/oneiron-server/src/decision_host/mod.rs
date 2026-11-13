@@ -25,6 +25,9 @@ use oneiron::autoreason_campaign::{
     CAMPAIGN_TASTE_DIAL, CampaignTasteDecisions, CampaignTasteWording,
 };
 use oneiron::booking::constraint::BookingDecisions;
+use oneiron::campaign::enrollment::{
+    CAMPAIGN_COPY_REVIEW_DIAL, CampaignCopyReviewDecisions, CampaignCopyReviewWording,
+};
 use oneiron::critic::review::{REVIEW_DIAL, ReviewDecisions, ReviewWording};
 use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
@@ -147,6 +150,18 @@ memory? Yes when it is true and worth recalling; no when it is trivial, redundan
 /// How long a split's taste pack may take; a score still open then refuses
 /// the report.
 const CAMPAIGN_TASTE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+/// A campaign body version's two copy-review questions (ARCH-0059
+/// #copy-review): this host's wording. The call's state carries the voice
+/// guide's text, the subject and the body.
+const CAMPAIGN_COPY_REVIEW_FOLLOWS_WORDING: &str = "Does this campaign message follow the \
+campaign's voice guide? Yes when its tone, words, claims and length all keep to the guide; no \
+when any of them breaks it.";
+const CAMPAIGN_COPY_REVIEW_REASON_WORDING: &str = "What most decides whether this message keeps \
+to the voice guide? Answer on_voice when it keeps to it; otherwise tone, vocabulary, claims, \
+length or other, for the first thing it breaks.";
+/// How long one body version's review may take; a review still open then
+/// stores no verdict, and the send holds.
+const CAMPAIGN_COPY_REVIEW_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;

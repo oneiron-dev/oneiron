@@ -453,7 +453,9 @@ mod tests {
                     .to_string(),
                 StatusCode::FORBIDDEN,
             ),
-            ("/sign/action", "{".to_owned(), StatusCode::BAD_REQUEST),
+            // f549ba91f84 (#3269, FIX L12-B): a request with no capability is
+            // refused 403 before its body is read, so the malformed body is never parsed.
+            ("/sign/action", "{".to_owned(), StatusCode::FORBIDDEN),
         ] {
             let response = app
                 .clone()
@@ -566,6 +568,7 @@ mod tests {
             lifecycle: None,
             token_expires_at: None,
             project: None,
+            commitments: Vec::new(),
         };
         vault
             .create_esign_document(

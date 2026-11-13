@@ -32,7 +32,7 @@ impl std::fmt::Debug for ClockRepairCaller {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match &self.0 {
             Caller::HolderProof { .. } => "holder_proof",
-            Caller::Verified(_) => "verified",
+            Caller::Verified(_) | Caller::BoundForVerb { .. } => "verified",
             Caller::ManagedOwner(_) => "managed_owner",
             Caller::DevMode => "dev_mode",
             Caller::Embedded => "embedded",
@@ -51,6 +51,12 @@ enum Caller {
     },
     /// A slip its transport verified when the call was admitted.
     Verified(Box<VerifiedSlip>),
+    /// The verified slip the embedded owner's handle is bound to, for the
+    /// owner verb `verb` it calls.
+    BoundForVerb {
+        slip: Box<VerifiedSlip>,
+        verb: String,
+    },
     /// The owner a managed vault's supervisor attested for this request.
     ManagedOwner(EntityId),
     /// The explicit local dev mode of a self-hosted vault.
@@ -115,6 +121,19 @@ impl ClockRepairCaller {
         Self(Caller::Verified(Box::new(slip)))
     }
 
+    /// The verified slip the embedded owner's handle is bound to
+    /// ([`crate::Memory::embedded_clock_repair_caller`]), for the owner verb
+    /// `verb` it calls: judged again in the repair's writer as
+    /// [`Self::verified`] is, except that the owner's own slip minted to a
+    /// verb subset that reaches `verb`, and cuts nothing else, also acts as
+    /// the owner.
+    pub(crate) fn bound_for_verb(slip: VerifiedSlip, verb: &str) -> Self {
+        Self(Caller::BoundForVerb {
+            slip: Box::new(slip),
+            verb: verb.to_owned(),
+        })
+    }
+
     /// The owner `holder` a managed vault's supervisor attested for this one
     /// request (or the held socket it came on), as its managed ingress
     /// verified the attestation. Only that verified attestation names one;
@@ -155,7 +174,9 @@ impl ClockRepairCaller {
         };
         match &self.0 {
             Caller::HolderProof { proof, .. } => named(&proof.slip.claims.holder_ref),
-            Caller::Verified(slip) => named(&slip.claims().holder_ref),
+            Caller::Verified(slip) | Caller::BoundForVerb { slip, .. } => {
+                named(&slip.claims().holder_ref)
+            }
             Caller::ManagedOwner(holder) => Some(*holder),
             Caller::DevMode | Caller::Embedded => crate::vault::embedded_owner_actor_id().ok(),
         }
@@ -166,8 +187,13 @@ impl ClockRepairCaller {
 /// authority clock.
 enum Judged {
     /// The owner's identity, authenticated as `authenticate_owner` does,
-    /// with the slip the writer binds to it.
-    OwnerSlip(Box<AuthenticatedOwner>, Box<VerifiedSlip>),
+    /// with the slip the writer binds to it, and the owner verb that slip
+    /// must reach when the embedded owner's bound handle called.
+    OwnerSlip {
+        owner: Box<AuthenticatedOwner>,
+        slip: Box<VerifiedSlip>,
+        verb: Option<String>,
+    },
     /// The owner's identity and the holder proof the writer verifies, beside
     /// the owner a managed vault's supervisor attested.
     AttestedProof {
@@ -246,16 +272,13 @@ impl crate::Vault {
                     attested,
                 }
             }
-            Caller::Verified(slip) if slip.claims().holder_ref == HOST_HOLDER => {
+            Caller::Verified(slip) | Caller::BoundForVerb { slip, .. }
+                if slip.claims().holder_ref == HOST_HOLDER =>
+            {
                 Judged::HostRoot(slip)
             }
-            Caller::Verified(slip) => {
-                let holder = slip.claims().holder_ref.clone();
-                let actor = EntityId::from_hex(&holder)
-                    .map_err(|_| not_the_owner("the slip names no person"))?;
-                let owner = self.authenticate_owner(actor, &holder, true, GateDecisionId::now())?;
-                Judged::OwnerSlip(Box::new(owner), slip)
-            }
+            Caller::Verified(slip) => self.judged_owner_slip(slip, None)?,
+            Caller::BoundForVerb { slip, verb } => self.judged_owner_slip(slip, Some(verb))?,
             Caller::ManagedOwner(holder) => Judged::RecordedOwner(holder),
             Caller::DevMode => Judged::DevMode,
             Caller::Embedded => Judged::RecordedOwner(crate::vault::embedded_owner_actor_id()?),
@@ -290,8 +313,19 @@ impl crate::Vault {
         judged: Judged,
     ) -> Result<EntityId> {
         let owner = match judged {
-            Judged::OwnerSlip(owner, slip) => {
+            Judged::OwnerSlip {
+                owner,
+                slip,
+                verb: None,
+            } => {
                 return self.bind_owner_credential_in_txn(txn, *owner, *slip);
+            }
+            Judged::OwnerSlip {
+                owner,
+                slip,
+                verb: Some(verb),
+            } => {
+                return self.bind_owner_credential_for_verb_in_txn(txn, *owner, *slip, &verb);
             }
             Judged::AttestedProof {
                 owner,
@@ -328,6 +362,20 @@ impl crate::Vault {
             ));
         }
         Ok(owner)
+    }
+
+    /// The owner `slip` names, authenticated as `authenticate_owner` does,
+    /// beside the slip the repair's writer binds to it for `verb`.
+    fn judged_owner_slip(&self, slip: Box<VerifiedSlip>, verb: Option<String>) -> Result<Judged> {
+        let holder = slip.claims().holder_ref.clone();
+        let actor =
+            EntityId::from_hex(&holder).map_err(|_| not_the_owner("the slip names no person"))?;
+        let owner = self.authenticate_owner(actor, &holder, true, GateDecisionId::now())?;
+        Ok(Judged::OwnerSlip {
+            owner: Box::new(owner),
+            slip,
+            verb,
+        })
     }
 
     /// `proof` verified, and its nonce spent, in the repair's writer `txn`.
