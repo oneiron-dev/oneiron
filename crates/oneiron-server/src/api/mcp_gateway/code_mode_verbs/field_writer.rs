@@ -32,6 +32,7 @@ use serde_json::json;
 use super::{LadderDecider, VerdictAsker};
 use crate::ai_host::CHAT_ROLE;
 use crate::ai_host::browser_planner::admit_browser_step;
+use crate::ai_host::payer_funding::LiveRunPayer;
 use crate::config::models::BROWSER_PLANNER_ROLE;
 use crate::models::{RoleCall, RoleRefusal};
 use crate::server::SyncServer;
@@ -53,12 +54,12 @@ const FIELD_WRITER_PROMPT: &str = "You write the text of one field of a web page
     no explanation. Keep to what the instruction asks and the references support. With \
     `enum_values`, answer one of them exactly.";
 
-/// One browser call's field writer: the run's line its calls spend on, if
-/// any, and the server it admits them on.
+/// One browser call's field writer: the line its calls spend on, or why it
+/// has none, and the server it admits them on.
 pub(super) struct RunFieldWriter {
     server: Arc<SyncServer>,
     runtime: tokio::runtime::Handle,
-    line: Option<RunAdmission>,
+    line: Result<RunAdmission, FieldWriteError>,
 }
 
 impl RunFieldWriter {
@@ -67,19 +68,20 @@ impl RunFieldWriter {
     /// agent's run, with the payer it bills), else on code mode's own meter,
     /// the one a run's executor steps spend on. A host with
     /// neither has no writer for the call.
-    /// A caller whose door bound no line bills `payer`, the attached live
-    /// run's, where it has one (FIX 8902).
+    /// A caller whose door bound no line bills the payer of `run`, the
+    /// attached live run, where it has one (FIX 8902), read for this call
+    /// (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK).
     pub(super) fn new(
         server: &Arc<SyncServer>,
         runtime: &tokio::runtime::Handle,
         asker: &VerdictAsker,
-        payer: Option<oneiron::llm::run_admission::PayerPerson>,
+        run: Option<&LiveRunPayer>,
     ) -> Self {
         let line = match asker {
-            VerdictAsker::Agent(_, Some(line)) => Some(line.clone()),
+            VerdictAsker::Agent(_, Some(line)) => Ok(line.clone()),
             VerdictAsker::Agent(_, None)
             | VerdictAsker::Connector(_)
-            | VerdictAsker::Credential(..) => host_line(server, payer),
+            | VerdictAsker::Credential(..) => host_line(server, run),
         };
         Self {
             server: Arc::clone(server),
@@ -89,33 +91,40 @@ impl RunFieldWriter {
     }
 }
 
-/// Code mode's own meter, as a run of the field writer billing `payer`:
-/// the attached live run's, else none.
+/// Code mode's own meter, as a run of the field writer billing the payer of
+/// `run`, the attached live run, else none. That payer is read now, as the
+/// run's model doors read theirs: a payer fault refuses the writer's calls
+/// with its reason code, so a room-bound or member-bound run whose payer
+/// cannot be read, its payer erased while it holds its lease included, is
+/// never billed to the vault owner's default.
 fn host_line(
     server: &SyncServer,
-    payer: Option<oneiron::llm::run_admission::PayerPerson>,
-) -> Option<RunAdmission> {
-    let meter = server
-        .code_execution_host()?
-        .engine_native()?
-        .provider()
-        .host_meter()?;
-    Some(
-        server
-            .ai
-            .model_runtime()
-            .funded_run(FIELD_WRITER_RUN, meter, payer),
-    )
+    run: Option<&LiveRunPayer>,
+) -> Result<RunAdmission, FieldWriteError> {
+    let no_meter = || {
+        FieldWriteError::Unavailable(
+            "no meter funds the run's field writer: its door bound no line and code mode lends none"
+                .to_owned(),
+        )
+    };
+    let host = server.code_execution_host().ok_or_else(no_meter)?;
+    let native = host.engine_native().ok_or_else(no_meter)?;
+    let meter = native.provider().host_meter().ok_or_else(no_meter)?;
+    let payer = match run {
+        Some(run) => run
+            .funding(server.vault())
+            .map_err(|fault| FieldWriteError::Refused(fault.to_string()))?,
+        None => None,
+    };
+    Ok(server
+        .ai
+        .model_runtime()
+        .funded_run(FIELD_WRITER_RUN, meter, payer))
 }
 
 impl FieldWriter for RunFieldWriter {
     fn write(&self, ask: &FieldWrite) -> Result<FieldWritten, FieldWriteError> {
-        let Some(line) = self.line.clone() else {
-            return Err(FieldWriteError::Unavailable(
-                "no meter funds the run's field writer: its door bound no line and code mode lends none"
-                    .to_owned(),
-            ));
-        };
+        let line = self.line.clone()?;
         let models = self.server.ai.model_runtime();
         let vault = self.server.vault();
         let seat = models.seat(CHAT_ROLE).ok_or_else(|| {

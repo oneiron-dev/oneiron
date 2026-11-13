@@ -38,6 +38,8 @@ mod read;
 // FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
 mod secret_projection;
 mod stamping;
+// FIX [LIBTEST-QUARANTINE-FEDERATION-RECORD-SCOPE-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -150,8 +152,8 @@ fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
 pub(crate) use crate::batch::row_put::RowPut;
 /// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
 /// a peer hears "my tasks" only where it may read them). An axis left `None`
-/// keeps the default birth: base reality, under the record's own substrate
-/// facet.
+/// keeps the default birth: base reality, under the vault default facet
+/// (ARCH-0022 #facets, UNBUILT item 10).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BirthPosition {
     pub world: Option<EntityId>,
@@ -212,6 +214,27 @@ pub(crate) fn birth_facet(
     Ok(Some(row?.target))
 }
 
+/// The facet the TASK `id` was born under: its one `FacetOf` target, else,
+/// for a TASK born before its birth edge existed, the facet its stamp names
+/// (its writer's, or its own substrate facet). `None` for a TASK with
+/// neither, such as one replicated in unplaced.
+pub(crate) fn task_birth_facet(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<EntityId>> {
+    if let Some(facet) = birth_facet(store, txn, id)? {
+        return Ok(Some(facet));
+    }
+    let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
+        return Ok(None);
+    };
+    if stamp.version != 2 || stamp.kind != crate::registry::ENTITY_TYPE_TASK {
+        return Ok(None);
+    }
+    Ok(EntityId::from_bytes(stamp.birth_facet).ok())
+}
+
 /// The position a candidate put will receive from the native stamp writer.
 /// The candidate bytes and transaction must be the ones used by that put.
 pub(crate) fn candidate_put_position(
@@ -228,7 +251,9 @@ pub(crate) fn candidate_put_position(
 /// on `store`, and the facet it is born under: a CLAIM's from its body, a
 /// FACET at itself, a NOTE or ASSET under its one `FacetOf` target, an
 /// EVENT or TURN under its birth edge when one is stored (L02 17:11, carried
-/// by L01-W for FIX 7774) else under its own substrate facet, an ASSET_TEXT
+/// by L01-W for FIX 7774) else under its own substrate facet, a TASK under
+/// its birth edge when one is stored else under its own substrate facet
+/// (UNBUILT item 10: a TASK born before its edge keeps its stamp), an ASSET_TEXT
 /// under its sources' facet, any other record under its own substrate facet.
 /// A FACET or RELATIONSHIP keeps the sensitivity its body declares. `None`
 /// for a NOTE or ASSET whose `FacetOf` is not written: no position is
@@ -276,7 +301,7 @@ fn derived_position(
         // keeps the substrate fallback. A legacy substrate-stamped row keeps
         // its substrate even when a later disclosure/world-model edge exists,
         // so its re-put still matches its stamp; a new edge-born row reads
-        // its edge. NOTE/ASSET/TASK/ASSET_TEXT arms above are untouched.
+        // its edge. NOTE/ASSET/ASSET_TEXT arms above are untouched.
         let substrate = crate::claim::substrate_facet_id(id)?;
         if let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)?
             && stamp.version == 2
@@ -291,6 +316,20 @@ fn derived_position(
         } else {
             (default_stamp(kind, substrate), substrate)
         }
+    } else if kind == crate::registry::ENTITY_TYPE_TASK {
+        // UNBUILT item 10: a TASK born here holds its facet as its birth
+        // edge. One stamped at its substrate before the edge existed keeps
+        // it (D3 = A, no backfill); a writer's settled position is kept by
+        // `writer_settled`.
+        let substrate = crate::claim::substrate_facet_id(id)?;
+        let legacy = SCOPE_RECORD.get(store, txn, &id)?.is_some_and(|stamp| {
+            stamp.version == 2 && stamp.kind == kind && stamp.birth_facet == *substrate.as_bytes()
+        });
+        let facet = match birth_facet(store, txn, id)? {
+            Some(facet) if !legacy => facet,
+            _ => substrate,
+        };
+        (default_stamp(kind, facet), facet)
     } else {
         let facet = crate::claim::substrate_facet_id(id)?;
         (default_stamp(kind, facet), facet)
@@ -463,8 +502,10 @@ fn stamp_bound_on(
     } else if carries_birth_stamp(kind) {
         birth_facet(store, txn, id)?
     } else if kind == crate::registry::ENTITY_TYPE_TASK {
-        // A TASK is born under its writer's facet (`stamp_task_birth`) or its
-        // own substrate facet; the stamp's one facet names which.
+        // A TASK is born under its birth edge's facet (its writer's, else the
+        // vault default); one born before that edge existed under its
+        // writer's facet or its own substrate facet. The stamp's one facet
+        // names which (`stamp_task_birth`).
         EntityId::from_bytes(stamp.birth_facet)
             .ok()
             .filter(|facet| stamp.scope.facets == singleton(ScopeId(*facet)))

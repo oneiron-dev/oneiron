@@ -6,15 +6,34 @@ impl Memory<'_> {
     /// Creates any registered NOTE kind using its first edit as birth. An
     /// agent's birth meets its kind's minimum length (OF-073 stage 1).
     pub fn create_note(&self, kind: &str, markdown: &str) -> MemoryResult<EntityRefReceipt> {
+        self.create_note_then(kind, markdown, |_, _| Ok(()))
+            .map(|(receipt, ())| receipt)
+    }
+
+    /// [`Self::create_note`], with `then` run in the writer that births the
+    /// NOTE, so a row that must commit with it lands in that same commit.
+    pub(crate) fn create_note_then<T>(
+        &self,
+        kind: &str,
+        markdown: &str,
+        then: impl FnOnce(&mut heed::RwTxn<'_>, crate::EntityId) -> MemoryResult<T>,
+    ) -> MemoryResult<(EntityRefReceipt, T)> {
         self.vault.check_auto_note_birth(
             &self.vault.note_kind(kind)?,
             self.actor_class,
             markdown,
         )?;
-        let id =
-            self.vault
-                .create_note_born(kind, markdown, self.write_actor(), self.birth_position)?;
-        self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
+        let (id, value) = self.vault.create_note_born_then(
+            kind,
+            markdown,
+            self.write_actor(),
+            self.birth_position,
+            then,
+        )?;
+        Ok((
+            self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)?,
+            value,
+        ))
     }
     /// Edits a NOTE as this surface's actor. Under a host origin the edit
     /// writes as that origin, and a fork its code run opens joins the run's

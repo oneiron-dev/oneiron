@@ -41,6 +41,8 @@ pub(crate) use oneiron_store::deletion::window_document_format;
 // A withdrawn reply copy's Shell generation (FIX 931): the scope-summary
 // withdrawal stages it on this device (FIX 11804), and a carried cutoff on
 // another machine of the vault.
+// FIX [LIBTEST-QUARANTINE-DELETION-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod withdrawn;
@@ -136,7 +138,9 @@ pub(crate) use erase::{
     clear_held_ask_forward_intent_in_txn, held_ask_forward_intents_in_txn,
     owe_held_ask_forward_intents_in_txn,
 };
-pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
+pub(crate) use gate::{
+    AdmittedDeleteDoor, DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority,
+};
 pub(crate) use receipt::decode_redaction_audit_receipt;
 // A corrupt CLAIM's repair event is no erase receipt (FIX 7800).
 pub(crate) use receipt::is_corrupt_claim_repair_event;

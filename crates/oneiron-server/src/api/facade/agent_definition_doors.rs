@@ -8,12 +8,14 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, AgentDefinitionCreateRequest, AgentDefinitionRequest, AgentDefinitionUpdateRequest,
-    AgentDefinitionView, ProposedAgentDefinitionChangeApproveRequest,
-    ProposedAgentDefinitionChangeRejectRequest, ProposedAgentDefinitionChangeSettlementView,
-    ProposedAgentDefinitionChanges, ProposedAgentDefinitionChangesRequest, WorkflowDispatchRequest,
-    WorkflowPersonDispatchRequest, WorkflowRequest, WorkflowRunRequest, WorkflowRunView,
-    WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView, WorkspaceMemberOnboardRequest,
-    WorkspacePresetReceipt, WorkspacePresetRequest, WorkspaceRosterRequest,
+    AgentDefinitionView, AgentMadeBy, AgentMadeByRequest, AgentTreePauseReceipt,
+    AgentTreePauseRequest, AgentTreeResumeReceipt, AgentTreeResumeRequest,
+    ProposedAgentDefinitionChangeApproveRequest, ProposedAgentDefinitionChangeRejectRequest,
+    ProposedAgentDefinitionChangeSettlementView, ProposedAgentDefinitionChanges,
+    ProposedAgentDefinitionChangesRequest, WorkflowDispatchRequest, WorkflowPersonDispatchRequest,
+    WorkflowRequest, WorkflowRunRequest, WorkflowRunView, WorkflowSaveRequest,
+    WorkflowUpdateRequest, WorkflowView, WorkspaceMemberOnboardRequest, WorkspacePresetReceipt,
+    WorkspacePresetRequest, WorkspaceRosterRequest,
 };
 use oneiron::workspace_roster::{MemberOnboardingOutcome, WorkspaceRosterEntry};
 use oneiron::{EdgeActorClass, EntityId};
@@ -76,6 +78,27 @@ pub(crate) async fn vault_agents_powers_set(
     .await
 }
 
+/// Plan mode (SETTING = A): the owner sets an agent's plan mode; the setter
+/// revalidates the proof in its own writer.
+pub(crate) async fn vault_agents_plan_mode_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::agent_def::AgentPlanModeSetRequest,
+) -> MaybeListed<oneiron::agent_def::AgentPlanModeView> {
+    const VERB: &str = "vault.agents.plan_mode.set";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::agent_def::set_agent_plan_mode_from_request_as(server.vault(), &owner, input)
+                .map_err(MemoryError::from)
+        },
+        |view| Some(vec![view.agent_def_ref]),
+    )
+    .await
+}
+
 pub(crate) async fn vault_agents_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -88,6 +111,60 @@ pub(crate) async fn vault_agents_get(
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::read_agent_definition_as(server.vault(), &owner, input),
         |saved| Some(vec![saved.agent_def_ref]),
+    )
+    .await
+}
+
+/// AUTHOR-OFF: what one agent made, transitively, for the owner; the rows
+/// it names are listed.
+pub(crate) async fn vault_agents_made_by_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AgentMadeByRequest,
+) -> MaybeListed<AgentMadeBy> {
+    const VERB: &str = "vault.agents.made_by.get";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::read_agent_made_by_as(server.vault(), &owner, input),
+        |made| Some(made.listed_rows()),
+    )
+    .await
+}
+
+/// AUTHOR-OFF: the owner pauses what one agent made that waits; the rows
+/// it paused are listed.
+pub(crate) async fn vault_agents_pause_tree(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AgentTreePauseRequest,
+) -> MaybeListed<AgentTreePauseReceipt> {
+    const VERB: &str = "vault.agents.pause_tree";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::pause_agent_tree_as(server.vault(), &owner, input),
+        |paused| Some(paused.listed_rows()),
+    )
+    .await
+}
+
+/// AUTHOR-OFF: the owner undoes one tree pause; the rows it moved or left
+/// are listed.
+pub(crate) async fn vault_agents_resume_tree(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AgentTreeResumeRequest,
+) -> MaybeListed<AgentTreeResumeReceipt> {
+    const VERB: &str = "vault.agents.resume_tree";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::resume_agent_tree_as(server.vault(), &owner, input),
+        |resumed| Some(resumed.listed_rows()),
     )
     .await
 }

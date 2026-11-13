@@ -1,0 +1,17 @@
+{
+  "name": "vault.settings.default_facet",
+  "description": "The owner, or a holder of any engine.controls class, reads the vault default facet: the FACET a write with no active mask is born under. Unset reads as the owner's substrate facet.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::settings::default_facet::DefaultFacet",
+  "call": "{ let _ = &input; crate::settings::default_facet::read_default_facet(memory)? }",
+  "scope": "Read",
+  "act_class": "read",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "substrate_reader"
+}

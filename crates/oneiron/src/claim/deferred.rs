@@ -7,25 +7,89 @@ use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
+mod retract;
+pub(crate) use retract::OwnClaimRetract;
+
 const CONTRADICTION_PENDING: &str = "gate.pending.contradiction_closure";
+/// The reason an agent's retract of its own claim waits for the holder
+/// (ARCH-0040 `mcp:5`: a destructive retract defers its closure until
+/// approval).
+const RETRACT_PENDING: &str = "gate.pending.retract_closure";
 /// The reason code of the allow decision an owner's direct correction of
 /// their own claim records (FIX 22041): the replacement landed at once and
 /// closed the prior head in the same write, so no closure proposal opened
 /// (DEC-0006 row 10; ARCH-0003 change policy).
 const GATE_REASON_SUPERSEDE_OWNER_CORRECTION: &str = "gate.supersede.owner_correction";
+/// The reason code of the allow decision the owner's ruling over a claim of
+/// the owner's own agent records (OWNER-SUPERSEDES-OWN-AGENT-CLAIM, the
+/// lead's ruling B, 13 Nov: the owner is never gated on their own vault).
+/// The replacement closed the agent's claim in the same write, as an owner
+/// correction does, and the decision's receipt reasons name the superseded
+/// claim and its author (ARCH-0040: a peer's claim keeps its author's name,
+/// and the ruling supersedes it with a receipt).
+const GATE_REASON_SUPERSEDE_OWNER_RULING: &str = "gate.supersede.owner_ruling";
+/// The receipt reason of an owner's ruling that names the superseded claim:
+/// this prefix, then the claim's id in hex.
+const OWNER_RULING_SUPERSEDED_REASON: &str = "gate.allow.owner_ruling.superseded.";
+/// The receipt reason of an owner's ruling that names the superseded claim's
+/// author: this prefix, then its gate actor class, a dot and its id in hex.
+const OWNER_RULING_AUTHOR_REASON: &str = "gate.allow.owner_ruling.author.";
+
+/// The receipt fields of an owner's ruling decision, read back from its
+/// receipt reasons: `superseded` (the closed claim's id),
+/// `superseded_author` and `superseded_author_class`. Empty for any other
+/// decision and for a redacted one.
+pub(crate) fn owner_ruling_receipt_fields(
+    record: &GateDecisionRecord,
+) -> std::collections::BTreeMap<String, String> {
+    let mut fields = std::collections::BTreeMap::new();
+    if record.redacted_at.is_some()
+        || !record
+            .reason_codes
+            .iter()
+            .any(|code| code == GATE_REASON_SUPERSEDE_OWNER_RULING)
+    {
+        return fields;
+    }
+    for reason in &record.receipt_reasons {
+        if let Some(claim) = reason.strip_prefix(OWNER_RULING_SUPERSEDED_REASON) {
+            fields.insert("superseded".to_owned(), claim.to_owned());
+        } else if let Some((class, author)) = reason
+            .strip_prefix(OWNER_RULING_AUTHOR_REASON)
+            .and_then(|rest| rest.split_once('.'))
+        {
+            fields.insert("superseded_author".to_owned(), author.to_owned());
+            fields.insert("superseded_author_class".to_owned(), class.to_owned());
+        }
+    }
+    fields
+}
 
 #[derive(Serialize, Deserialize)]
 pub(super) enum DeferredAction {
-    Supersede { old: [u8; 16], old_hash: [u8; 32] },
+    Supersede {
+        old: [u8; 16],
+        old_hash: [u8; 32],
+    },
     Decay(f32),
     Weaken(f32),
     Stale,
+    /// The claim's own author retracts it once the holder consents
+    /// (`retract`). Rows are named msgpack, so rows parked before this
+    /// variant still decode.
+    Retract,
 }
 impl DeferredAction {
     /// A decay or the stale mark only restricts the claim it rewrites, so it
     /// settles on a held machine history; every other action waits for it.
     fn demotes_in_place(&self) -> bool {
         matches!(self, Self::Decay(_) | Self::Stale)
+    }
+
+    /// Whether the action only restricts its claim, so it reads a held
+    /// history whole: an in-place demotion, or a retraction.
+    fn only_restricts(&self) -> bool {
+        self.demotes_in_place() || matches!(self, Self::Retract)
     }
 }
 #[derive(Serialize, Deserialize)]
@@ -215,12 +279,20 @@ impl Vault {
     /// confirmation, so either fails the write closed. The prior's close is
     /// gated as `owner`'s verified close of its row, so a prior that was
     /// settled Approved passes the fallback floor as an Auto one does.
+    ///
+    /// `ruled_author` is the prior's author when it is not `owner` but the
+    /// owner's own agent, whose claim the owner's write supersedes as the
+    /// owner's ruling (OWNER-SUPERSEDES-OWN-AGENT-CLAIM): the decision then
+    /// records [`GATE_REASON_SUPERSEDE_OWNER_RULING`] and names the closed
+    /// claim and that author. The closed claim keeps its own authored
+    /// envelope, so it still reads as the agent's.
     pub(crate) fn supersede_by_owner_correction_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         new: &EntityId,
         old: &EntityId,
         owner: crate::WriteActor,
+        ruled_author: Option<crate::WriteActor>,
         now: u64,
     ) -> Result<()> {
         let old_body = self.require_named_claim_target_active_in(txn, old)?;
@@ -246,13 +318,27 @@ impl Vault {
         self.supersede_claim_in_txn_as(txn, new, old, now, Some(owner))?;
         let (diff_handle, read_frontier_hash) =
             crate::gate::claim_consent_binding_parts(&self.store, txn, &body)?;
+        let (reason_code, receipt_reasons) = match ruled_author {
+            None => (GATE_REASON_SUPERSEDE_OWNER_CORRECTION, Vec::new()),
+            Some(author) => (
+                GATE_REASON_SUPERSEDE_OWNER_RULING,
+                vec![
+                    format!("{OWNER_RULING_SUPERSEDED_REASON}{}", old.to_hex()),
+                    format!(
+                        "{OWNER_RULING_AUTHOR_REASON}{}.{}",
+                        author.actor_class().gate_actor_class(),
+                        author.entity_ref().to_hex()
+                    ),
+                ],
+            ),
+        };
         let mut record = GateDecisionRecord {
             version: 0,
             decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
             created_at: now,
             outcome: "allow".to_owned(),
-            reason_codes: vec![GATE_REASON_SUPERSEDE_OWNER_CORRECTION.to_owned()],
-            receipt_reasons: Vec::new(),
+            reason_codes: vec![reason_code.to_owned()],
+            receipt_reasons,
             system_notices: Vec::new(),
             actor_class: owner.actor_class().gate_actor_class().to_owned(),
             actor_ref: Some(owner.entity_ref().to_hex()),
@@ -351,7 +437,7 @@ impl Vault {
             )?;
             // An auto grant names no caller principal, so its close names no one.
             let closure_decision = self
-                .complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker, None)?;
+                .complete_deferred_claim_with_checker_in_txn(txn, id, None, now, checker, None)?;
             // FIX 5993: a granted commitment series projects from its grant.
             self.index_consented_commitment_series_in_txn(txn, &body, id, now)?;
             // A Dreamer replacement granted Auto is an Auto write like any the
@@ -412,7 +498,8 @@ impl Vault {
             // The demotion door's own test (`apply_claim_demotion`).
             _ => policy.criticality_for_predicate(&body.predicate) == PolicyCriticality::Critical,
         };
-        let same = critical == proposal.critical && pending.reason_codes == [reason(critical)];
+        let same = critical == proposal.critical
+            && pending.reason_codes == [reason(&proposal.action, critical)];
         let parked_by = self.store.gate_decision_in_txn(txn, pending.decision_id)?;
         let parker = Parker {
             actor_class: parked_by
@@ -437,18 +524,24 @@ impl Vault {
     /// Called only by explicit local approval/authority settlement doors, never reads/replay.
     /// `closer` is the door's verified actor, whom a supersession's close
     /// names (FIX 11039); `None` names no one, as before.
+    ///
+    /// `critical_confirm` is the tray removal of the owner's Clear of the
+    /// claim's critical confirm, when that Clear settles it: a supersession
+    /// closes the row with that same removal, so it says `Answered` only when
+    /// the Clear's own close of the obligation did (FIX 22394). `None` for
+    /// every other door; a critical proposal then stays parked.
     pub(crate) fn complete_deferred_claim_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-        critical_confirmed: bool,
+        critical_confirm: Option<crate::store::TrayRemoval>,
         now: u64,
         closer: Option<crate::WriteActor>,
     ) -> Result<()> {
         self.complete_deferred_claim_with_checker_in_txn(
             txn,
             id,
-            critical_confirmed,
+            critical_confirm,
             now,
             None,
             closer,
@@ -460,7 +553,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-        critical_confirmed: bool,
+        critical_confirm: Option<crate::store::TrayRemoval>,
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
         closer: Option<crate::WriteActor>,
@@ -468,7 +561,7 @@ impl Vault {
         let Some(proposal) = load(self, txn, id)? else {
             return Ok(None);
         };
-        let body = if proposal.action.demotes_in_place() {
+        let body = if proposal.action.only_restricts() {
             self.claim_for_restriction_in_txn(txn, id)?
         } else {
             self.get_claim_in_txn(txn, id)?
@@ -496,7 +589,7 @@ impl Vault {
                 }));
             }
         }
-        if proposal.critical && !critical_confirmed {
+        if proposal.critical && critical_confirm.is_none() {
             return Err(Error::Gate(crate::error::GateError::GateWriteRejected {
                 outcome: "pending",
                 reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],
@@ -526,12 +619,8 @@ impl Vault {
                     "superseded",
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,
-                    if critical_confirmed {
-                        // Keep the outer Clear's existing obligation result.
-                        crate::store::TrayRemoval::Answered
-                    } else {
-                        crate::store::TrayRemoval::Unanswered
-                    },
+                    // Keep the outer Clear's existing obligation result.
+                    critical_confirm.unwrap_or(crate::store::TrayRemoval::Unanswered),
                 )?;
                 let envelope = super::supersession_provenance::envelope(&body)?;
                 super::supersession_provenance::write_companion(
@@ -542,6 +631,19 @@ impl Vault {
                 )?;
                 decision
             }
+            DeferredAction::Retract => {
+                // The holder's consent, bound above, is the retract's
+                // authority: it closes as `closer`, and the door that
+                // settles it owns the tray row.
+                self.retract_claim_in_txn_with(
+                    txn,
+                    id,
+                    now,
+                    closer,
+                    super::lifecycle::RetractRun::ParkedConsent,
+                )?;
+                None
+            }
             action => {
                 let action = match action {
                     DeferredAction::Decay(weight) => super::ClaimDemotionAction::Decay {
@@ -551,7 +653,7 @@ impl Vault {
                         new_confidence: confidence,
                     },
                     DeferredAction::Stale => super::ClaimDemotionAction::MarkStale,
-                    DeferredAction::Supersede { .. } => unreachable!(),
+                    DeferredAction::Supersede { .. } | DeferredAction::Retract => unreachable!(),
                 };
                 self.apply_claim_demotion_in_txn(txn, id, action, now)?;
                 None
@@ -610,9 +712,12 @@ struct Parker {
     created_at: u64,
 }
 
-fn reason(critical: bool) -> &'static str {
+/// The reason a parked action's pending decision and tray row carry.
+fn reason(action: &DeferredAction, critical: bool) -> &'static str {
     if critical {
         "gate.pending.critical_confirm_attached"
+    } else if matches!(action, DeferredAction::Retract) {
+        RETRACT_PENDING
     } else {
         CONTRADICTION_PENDING
     }
@@ -636,7 +741,7 @@ fn park(
     if proposal.critical {
         diff_handle = critical_diff(&diff_handle, &encoded);
     }
-    let reason = reason(proposal.critical);
+    let reason = reason(&proposal.action, proposal.critical);
     let record = GateDecisionRecord {
         version: 0,
         decision_id: GateDecisionId::now(),

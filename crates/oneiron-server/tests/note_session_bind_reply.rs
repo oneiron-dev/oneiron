@@ -2,7 +2,11 @@
 //! reply (FIX-LIST [T0I-RESIDENCE-BIND-REPLY-STAMP-REFUSED]). Since FIX 811
 //! the home states the bind's call receipt on that reply.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use ed25519_dalek::SigningKey;
+use engine_stack::run_on_engine_stack;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::sync::bridge::Materializer;
@@ -11,38 +15,12 @@ use oneiron::sync::transport::TAG_RPC;
 use oneiron::sync::{SyncClient, SyncClientConfig, WindowManager};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use std::collections::BTreeSet;
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-
-fn on_engine_threads<F, Fut>(test: F)
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()>,
-{
-    let run = std::thread::Builder::new()
-        .name("note-session-bind-reply".into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(test());
-        })
-        .expect("spawn engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
-}
 
 /// The reply envelope's keys and its `type`, for the failure messages.
 fn reply_shape(payload: &[u8]) -> (Vec<String>, Option<String>) {
@@ -64,7 +42,7 @@ fn reply_shape(payload: &[u8]) -> (Vec<String>, Option<String>) {
 
 #[test]
 fn a_note_session_client_accepts_the_homes_auth_bind_reply() {
-    on_engine_threads(note_session_bind);
+    run_on_engine_stack("note-session-bind-reply", note_session_bind);
 }
 
 async fn note_session_bind() {

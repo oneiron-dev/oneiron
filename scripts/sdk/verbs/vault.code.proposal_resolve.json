@@ -1,6 +1,6 @@
 {
   "name": "vault.code.proposal_resolve",
-  "description": "Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands.",
+  "description": "Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; the engine binds owner_request attribution. Nothing lands.",
   "input": "crate::memory::code_doors::CodeProposalResolveRequest",
   "output": "crate::memory::code_doors::CodeProposalSubmitted",
   "call": "memory.code_proposal_resolve_as(&memory.embedded_owner(\"vault.code.proposal_resolve\")?, input)?",

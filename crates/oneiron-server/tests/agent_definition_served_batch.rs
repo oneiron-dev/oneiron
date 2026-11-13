@@ -1,6 +1,9 @@
 //! The served row doors follow ARCH-0053:20 on their credential's agent
 //! slice: `vault.batch`, and the `remember` memory verb (with its `put` and
 //! `put_entity` spellings, which reach the same handler arm).
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -17,9 +20,7 @@ use oneiron::federation::ScopeAxis;
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -290,41 +291,28 @@ async fn run_new_definition(door: ServedDoor, candidate_seed: u8, slice: Slice) 
 /// (`ENGINE_THREAD_STACK_BYTES`), as `oneiron serve` runs its doors. A
 /// generated facade dispatch frame is larger than a libtest thread's stack in
 /// a dev build (FIX 16372), so the case never polls the door on that thread.
-fn run_on_engine_stack(door: ServedDoor, candidate_seed: u8, slice: Slice) {
-    let case = std::thread::Builder::new()
-        .name(format!("served-{}", door.name()))
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("runtime")
-                .block_on(run_new_definition(door, candidate_seed, slice));
-        })
-        .expect("engine-stack thread");
-    if let Err(panic) = case.join() {
-        std::panic::resume_unwind(panic);
-    }
+fn run_served_case(door: ServedDoor, candidate_seed: u8, slice: Slice) {
+    engine_stack::run_on_engine_stack(&format!("served-{}", door.name()), move || {
+        run_new_definition(door, candidate_seed, slice)
+    });
 }
 
 #[test]
 fn served_batch_stores_no_active_definition_wider_than_its_agent_slice() {
-    run_on_engine_stack(ServedDoor::Batch, 0x73, Slice::Wider);
+    run_served_case(ServedDoor::Batch, 0x73, Slice::Wider);
 }
 
 #[test]
 fn served_batch_stores_a_definition_inside_its_agent_slice_active() {
-    run_on_engine_stack(ServedDoor::Batch, 0x75, Slice::Within);
+    run_served_case(ServedDoor::Batch, 0x75, Slice::Within);
 }
 
 #[test]
 fn served_remember_stores_no_active_definition_wider_than_its_agent_slice() {
-    run_on_engine_stack(ServedDoor::Remember, 0x76, Slice::Wider);
+    run_served_case(ServedDoor::Remember, 0x76, Slice::Wider);
 }
 
 #[test]
 fn served_remember_stores_a_definition_inside_its_agent_slice_active() {
-    run_on_engine_stack(ServedDoor::Remember, 0x77, Slice::Within);
+    run_served_case(ServedDoor::Remember, 0x77, Slice::Within);
 }
