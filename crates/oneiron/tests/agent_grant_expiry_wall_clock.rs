@@ -118,6 +118,20 @@ fn agent_with_grant(
         },
     )
     .expect("owner creates an enabled, active agent definition");
+    let grant = grant_agent(vault, owner_proof, agent, agent_id, verbs, expires_at);
+    (agent, grant)
+}
+
+/// The owner gives `agent` one more Grant naming `verbs`, expiring at
+/// `expires_at`; returns the Grant.
+fn grant_agent(
+    vault: &Vault,
+    owner_proof: &AuthenticatedOwner,
+    agent: EntityId,
+    agent_id: &str,
+    verbs: &[&str],
+    expires_at: Option<u64>,
+) -> EntityId {
     let mut authority_scope = Scope::top();
     authority_scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
     let minted = mint_agent_grant_as(
@@ -139,7 +153,7 @@ fn agent_with_grant(
         minted.grant.confers,
         "{agent_id}: the Grant confers at its mint"
     );
-    (agent, minted.grant.grant_ref)
+    minted.grant.grant_ref
 }
 
 /// A NOTE `author` writes about `subject`, by its full hex ref.
@@ -217,6 +231,12 @@ fn an_agent_grant_ends_on_wall_time_at_an_owner_act() {
 /// duration): the agent deletes under its grant before the wall deadline,
 /// and its delete is refused after, the NOTE untouched, even though the
 /// authority clock still precedes the deadline.
+///
+/// The `delete` Grant expires; a separate `read` Grant has no end, so the
+/// NOTE still resolves for the agent after the deadline and the refusal
+/// comes from the delete arm itself. One expiring Grant naming both verbs
+/// would be refused earlier, at `entity_ref` resolution, once its `read`
+/// ends (INVENTED_REFERENCE).
 #[test]
 fn an_agent_grant_ends_on_wall_time_at_vault_delete() {
     let fixture = Fixture::open();
@@ -224,7 +244,15 @@ fn an_agent_grant_ends_on_wall_time_at_vault_delete() {
         &fixture.vault,
         &fixture.proof,
         "expiry_delete_agent",
-        &["read", "delete"],
+        &["read"],
+        None,
+    );
+    grant_agent(
+        &fixture.vault,
+        &fixture.proof,
+        agent,
+        "expiry_delete_agent",
+        &["delete"],
         Some(GRANT_END),
     );
     // A `user_delete` may write: both NOTEs exist before the clock moves,
