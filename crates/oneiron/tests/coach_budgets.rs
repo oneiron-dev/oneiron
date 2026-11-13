@@ -6,8 +6,9 @@
 //! engine-control receipt records the act as the holder's (FABLE-6918-2); it
 //! never creates or clears a policy. A move delays the next cycle and never
 //! brings it forward, so no move opens a second cycle, with a second whole
-//! allowance, on the day one already opened (FABLE-6918-1). On the base there
-//! is no holder door.
+//! allowance, on the day one already opened (FABLE-6918-1), nor does a scan
+//! that read the schedule before the move. On the base there is no holder
+//! door.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -20,6 +21,7 @@ use oneiron::dreamer_runner::{
 use oneiron::dreamer_wake::SievePassBudgets;
 use oneiron::federation::EngineControlClass;
 use oneiron::test_doors::coach::{coach, define_agent};
+use oneiron::test_doors::free_time_cycle_writer::open_scanned_boundary;
 use oneiron::test_doors::steward::{GrantMark, grant_mark, open_owner_carrier_vault, owner};
 
 #[test]
@@ -272,5 +274,65 @@ fn a_holder_schedule_move_before_the_days_cycle_still_opens_it_once() {
             .expect("enqueue"),
         0,
         "and only once"
+    );
+}
+
+#[test]
+fn a_scan_from_before_a_holder_move_opens_no_stale_boundary() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
+    let owner = owner(&vault).expect("owner proof");
+    let coach = coach(&vault).expect("the Coach");
+    vault.provision_system_agent_grants().expect("first mint");
+    let agent = define_agent(&vault).expect("an agent");
+    let set = vault
+        .set_free_time_policy(&owner, None, agent, 0, owners_policy(3))
+        .expect("the owner's policy");
+    let yesterday = vault
+        .next_free_time_due_at()
+        .expect("due")
+        .expect("the owner's first boundary");
+    let store = DreamerRunnerStore::new(&vault);
+    let candidate = store
+        .local_home_node_candidate(true, true, true)
+        .expect("candidate");
+    let node = store
+        .elect_home_node(&[candidate], yesterday)
+        .expect("election")
+        .expect("the vault's node is elected home")
+        .node_id;
+    assert_eq!(
+        vault
+            .enqueue_due_free_time_cycles(yesterday, node)
+            .expect("enqueue"),
+        1,
+        "yesterday's cycle opens"
+    );
+
+    // Today's scan at 03:30 finds the 03:00 boundary. Before its writer
+    // runs, the Coach moves the schedule to 04:00.
+    let today = yesterday + DAY;
+    vault
+        .set_free_time_schedule_as_holder(coach, agent, set.revision, schedule(4))
+        .expect("the Coach's move");
+    assert!(
+        !open_scanned_boundary(&vault, agent, today, today + 30 * MINUTE, node)
+            .expect("the scanned boundary's writer"),
+        "a boundary scanned under the schedule before a holder's move must not open a cycle"
+    );
+    assert_eq!(
+        vault
+            .enqueue_due_free_time_cycles(today + 60 * MINUTE, node)
+            .expect("enqueue"),
+        1,
+        "the day's cycle opens at the moved time"
+    );
+    assert_eq!(
+        vault
+            .free_time_cycles(agent, None, 10)
+            .expect("cycles")
+            .len(),
+        2,
+        "one cycle, one allowance, each day"
     );
 }
