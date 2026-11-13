@@ -1073,17 +1073,20 @@ impl<W: GmailSendWire> OutboundExecutionSink for GmailSendSink<'_, W> {
             return SentLookup::CannotTell;
         };
         if !self.plans.contains_key(content_ref)
-            && let Ok(Some(plan)) = GmailSendPlan::kept(self.vault, content_ref)
+            && let Ok(Some(plan)) = GmailSendPlan::kept(self.vault, content_ref, self.retained)
         {
             self.add_plan(plan);
         }
         let Some(plan) = self.plans.get(content_ref) else {
             return SentLookup::CannotTell;
         };
+        // A search of SENT releases no message, so it judges no send with
+        // files (fix list row 17645).
         let authority = GmailSendAuthority {
             adapter: self.adapter,
             vault: self.vault,
             identity_id: self.identity_id,
+            retained: None,
             used: Cell::new(false),
         };
         match self
