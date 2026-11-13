@@ -26,7 +26,7 @@ use oneiron::limit_ask::EngineLimit;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::ImportSourceArgs;
-use crate::config::{ServeConfig, resolve_serve_config};
+use crate::config::{ImportConfig, ServeConfig, resolve_serve_config};
 use crate::files_intake::{ImportWarning, hard_linked};
 
 /// The most a zipped export's `conversations.json` unzips to: the codec's
@@ -114,9 +114,16 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
         path,
         dry_run,
         queue,
+        hosted,
         serve,
     } = args;
     let config = resolve_serve_config(&serve)?;
+    if hosted {
+        #[cfg(unix)]
+        return hosted_import::stage_command(source, &path, &config);
+        #[cfg(not(unix))]
+        anyhow::bail!("a hosted import needs a unix host");
+    }
     if queue {
         #[cfg(unix)]
         return queue::enqueue(source, &path, &config);
@@ -548,6 +555,8 @@ pub(super) mod notes;
 #[cfg(unix)]
 use crate::files_intake::confined::{self, open_in, walk_logs};
 #[cfg(unix)]
+pub(crate) mod hosted_import;
+#[cfg(unix)]
 pub(super) mod queue;
 
 /// A queued session as read: its conversations, whether a log ended
@@ -814,6 +823,20 @@ impl ExportBounds {
             },
             room,
         })
+    }
+
+    /// The bounds of an export already staged in the vault's data folder
+    /// (ARCH-0027 #hosted-import): the default entry cap and no storage
+    /// room. The staged upload already sits in the vault's folder, and a job
+    /// decodes its export again when it resumes, so a room that shrank as
+    /// the job landed must not refuse what it began.
+    fn staged() -> Self {
+        Self {
+            archive: ArchiveBounds {
+                max_entries: ImportConfig::default().archive_entry_cap(),
+            },
+            room: None,
+        }
     }
 
     /// The most an export's entry unzips to: the codec's bound, or the room
