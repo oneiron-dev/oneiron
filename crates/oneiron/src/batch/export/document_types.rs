@@ -74,6 +74,31 @@ pub struct ArchiveSideTableOmission {
     pub rows: u64,
 }
 
+/// One retained source table's import counts: the inert copies kept.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct RetainedSideTableCount {
+    /// The declared retained source table's name.
+    pub source_table: String,
+    /// The retained copies newly stored.
+    pub inserted_rows: usize,
+    /// The retained copies already stored equal.
+    pub unchanged_rows: usize,
+}
+
+/// The retained side rows one import kept: the inert copies, by table, and the manifest's
+/// table omissions. Counts inert rows, never grants activated or policies installed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct RetainedSideImportSummary {
+    /// The retained copies newly stored.
+    pub inserted_rows: usize,
+    /// The retained copies already stored equal.
+    pub unchanged_rows: usize,
+    /// The per-table counts, sorted by source table name.
+    pub tables: Vec<RetainedSideTableCount>,
+    /// The manifest's table omissions.
+    pub omissions: Vec<ArchiveSideTableOmission>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportSourceVault {
@@ -427,31 +452,6 @@ pub struct ExportDerivationEnvelope {
     /// Actual cited task receipts, or explicit source omissions. Archive data
     /// only: these cannot stamp terminal attempts in the receiving vault.
     pub receipts: Vec<super::ExportReceiptSource>,
-}
-
-/// One retained source table's import counts: the inert copies kept.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct RetainedSideTableCount {
-    /// The declared retained source table's name.
-    pub source_table: String,
-    /// The retained copies newly stored.
-    pub inserted_rows: usize,
-    /// The retained copies already stored equal.
-    pub unchanged_rows: usize,
-}
-
-/// The retained side rows one import kept: the inert copies, by table, and the manifest's
-/// table omissions. Counts inert rows, never grants activated or policies installed.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct RetainedSideImportSummary {
-    /// The retained copies newly stored.
-    pub inserted_rows: usize,
-    /// The retained copies already stored equal.
-    pub unchanged_rows: usize,
-    /// The per-table counts, sorted by source table name.
-    pub tables: Vec<RetainedSideTableCount>,
-    /// The manifest's table omissions.
-    pub omissions: Vec<ArchiveSideTableOmission>,
 }
 
 #[derive(Debug, Clone)]
