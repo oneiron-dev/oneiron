@@ -329,6 +329,13 @@ pub(crate) struct StartCheckIn<'a> {
     pub(crate) effect_digest: [u8; 32],
     pub(crate) applies: Option<EntityId>,
 }
+/// How a start reaches the check-in decision its act records (2j; P24-SHAPE
+/// Q9 = A): judged in the start's own writer, or already reached, and any
+/// applied check-in already spent, by the caller in its own writer.
+enum StartDecision<'a> {
+    Judge(StartCheckIn<'a>),
+    Reached(CheckInDecision),
+}
 pub(super) struct LiveActHolder {
     pub(super) member: EntityId,
     pub(super) role: Role,
@@ -548,7 +555,29 @@ impl Vault {
             act,
             payload,
             SettingChoice::Stored,
-            Some(check_in),
+            Some(StartDecision::Judge(check_in)),
+        )
+    }
+
+    /// [`Self::start_authority_act`] recording `decision`, the check-in
+    /// decision its caller already reached (2j; P24-SHAPE Q9 = A): the act
+    /// keeps it as it is and judges nothing again. An Owner's erase confirm
+    /// records its decision on each `erase` act its veto window starts.
+    pub(crate) fn start_authority_act_recorded(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        act: &str,
+        payload: Vec<u8>,
+        decision: CheckInDecision,
+    ) -> Result<PendingAuthorityAct> {
+        self.start_authority_act_with_policy_selection(
+            starter,
+            vault_id,
+            act,
+            payload,
+            SettingChoice::Stored,
+            Some(StartDecision::Reached(decision)),
         )
     }
 
@@ -580,7 +609,7 @@ impl Vault {
         act: &str,
         payload: Vec<u8>,
         selection: SettingChoice,
-        check_in: Option<StartCheckIn<'_>>,
+        check_in: Option<StartDecision<'_>>,
     ) -> Result<PendingAuthorityAct> {
         if !valid_name(act) {
             return Err(invalid());
@@ -661,9 +690,10 @@ impl Vault {
         );
         let deadline = now.checked_add(wait).ok_or_else(invalid)?;
         let check_in = match check_in {
-            Some(start) => {
+            Some(StartDecision::Judge(start)) => {
                 Some(self.start_check_in_in_txn(&mut txn, vault_id, starter_actor, &start, now)?)
             }
+            Some(StartDecision::Reached(decision)) => Some(decision),
             None => None,
         };
         let id = self.store.clock.entity_id()?.to_hex();

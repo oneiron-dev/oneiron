@@ -358,7 +358,7 @@ impl Vault {
                     (summary, (staged, positions))
                 });
         let (summary, archive) = export.unzip();
-        let receipt = self.record_shared_change_in_txn(
+        let mut receipt = self.record_shared_change_in_txn(
             &mut txn,
             receipt_id,
             act.vault_id,
@@ -371,6 +371,7 @@ impl Vault {
             None,
             now,
         )?;
+        self.record_receipt_check_in_in_txn(&mut txn, &mut receipt, act.check_in.clone())?;
         if let Some(records) = &export_records {
             self.keep_export_records_in_txn(&mut txn, &receipt.id, records)?;
         }

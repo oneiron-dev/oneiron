@@ -15,6 +15,11 @@
 //!   and the act names the house as requester (Q7). An unapproved ref, or a
 //!   check-in for another act, starts nothing. The act keeps its policy row's
 //!   wait and Owner executors.
+//! - The Owner applies a Deputy house's approved erase the same way: the
+//!   confirm names it as `check_in_ref` (over `record_erase_effect_digest`),
+//!   erases on the Owner's own proof and its outcome names the house as
+//!   requester (Q7, Q9). With two Owners the erase waits out its veto
+//!   window, and its `erase` act records the decision (Q9; review of P2.4c).
 //!
 //! On the base (P2.4b) this file does not build: `PendingAuthorityAct` has no
 //! `check_in` field, and `propose_delete_vault_with_check_in` and
@@ -30,15 +35,19 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::{ActSurface, MachineRole};
-use oneiron::check_in::{CheckInDecision, vault_delete_effect_digest};
+use oneiron::check_in::{CheckInDecision, record_erase_effect_digest, vault_delete_effect_digest};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     EraseAskKind, FederationGrantRole as Role, InitialSharedMember, Scope, ScopeAxis,
 };
+use oneiron::memory::{BlobArtifactInput, Memory};
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::verbs::{
+    AgentGrantMintRequest, RecordEraseConfirmRequest, RecordEraseOutcome, RecordEraseRequest,
+    confirm_record_erase, mint_agent_grant_as, preview_record_erase,
+};
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -46,6 +55,7 @@ use serde_json::json;
 
 const SHARED: u64 = 43;
 const VAULT_DELETE: &str = "vault.shared.propose_delete";
+const ERASE: &str = "vault.records.erase_confirm";
 const WORKSPACE: &str = "check-in-destructive-workspace";
 
 fn person(vault: &Vault, id: EntityId) {
@@ -144,8 +154,58 @@ fn a_viewer_requests_and_a_steward_proposes_an_erase() {
     );
 }
 
+/// An artifact the owner `memory` writes: the record the erase cases erase.
+fn artifact(memory: &Memory<'_>) -> EntityId {
+    let put = memory
+        .put_blob_artifact(&BlobArtifactInput {
+            id: None,
+            name: "erase fixture".to_owned(),
+            media_type: "text/plain".to_owned(),
+            occurred_at: 1,
+            learned_at: None,
+        })
+        .expect("the owner writes an artifact");
+    EntityId::from_hex(&put.id_hex).expect("an artifact id")
+}
+
+/// The owner previews the erase of `record`, then confirms it on
+/// `owner_proof`, naming `check_in_ref` when given.
+fn erase(
+    memory: &Memory<'_>,
+    owner_proof: &AuthenticatedOwner,
+    record: EntityId,
+    check_in_ref: Option<&str>,
+) -> RecordEraseOutcome {
+    let preview = preview_record_erase(memory, RecordEraseRequest { record })
+        .expect("the owner previews the erase");
+    confirm_record_erase(
+        memory,
+        owner_proof,
+        RecordEraseConfirmRequest {
+            record,
+            preview_digest: preview.preview_digest,
+            also_same_bytes: false,
+            check_in_ref: check_in_ref.map(str::to_owned),
+        },
+    )
+    .expect("the owner confirms the erase")
+}
+
+/// The decision of an Owner's erase on their own proof, applying
+/// `check_in` asked by `requester` when given.
+fn owner_erase(check_in: Option<String>, requester: Option<String>) -> Option<CheckInDecision> {
+    Some(CheckInDecision {
+        act_class: "erase".to_owned(),
+        role: "owner".to_owned(),
+        mode: None,
+        basis: "own_proof".to_owned(),
+        check_in,
+        requester,
+    })
+}
+
 /// The shared vault with its workspace house bound at Deputy, and the
-/// owner's Grant to the house naming the vault delete.
+/// owner's Grant to the house naming the vault delete and the erase.
 struct DeputyHouse {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -199,7 +259,7 @@ impl DeputyHouse {
             .expect("the owner binds the house at deputy");
         let mut scope = Scope::top();
         scope.verbs = ScopeAxis::Some(
-            ["read", VAULT_DELETE, "vault.members.remove"]
+            ["read", VAULT_DELETE, ERASE, "vault.members.remove"]
                 .map(str::to_owned)
                 .into_iter()
                 .collect::<BTreeSet<_>>(),
@@ -322,7 +382,7 @@ fn the_owner_applies_a_deputys_approved_delete_on_their_own_proof() {
             role: "owner".to_owned(),
             mode: None,
             basis: "own_proof".to_owned(),
-            check_in: Some(delete.clone()),
+            check_in: Some(delete),
             requester: Some(fx.house.to_hex()),
         }),
         "the act names the check-in it applied and the house that asked"
@@ -341,4 +401,81 @@ fn the_owner_applies_a_deputys_approved_delete_on_their_own_proof() {
         fx.vault
             .propose_delete_vault_with_check_in(&fx.owner_proof, SHARED, Some(delete_id));
     assert!(again.is_err(), "a spent check-in applies once: {again:?}");
+}
+
+#[test]
+fn the_owner_applies_a_deputys_approved_erase_on_their_own_proof() {
+    let fx = DeputyHouse::new();
+    let memory = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    let record = artifact(&memory);
+    let digest = record_erase_effect_digest(&record, false);
+    let asked = fx.open(ERASE, &digest);
+    fx.approve(&asked, &digest);
+    let outcome = erase(&memory, &fx.owner_proof, record, Some(&asked));
+    assert_eq!(
+        outcome.first.reason, "owner_erase",
+        "a sole Owner's erase runs at once: {outcome:?}"
+    );
+    assert_eq!(
+        outcome.check_in,
+        owner_erase(Some(asked.clone()), Some(fx.house.to_hex())),
+        "the outcome names the check-in it applied and the house that asked"
+    );
+    assert!(
+        fx.vault
+            .pending_check_in(&EntityId::from_hex(&asked).expect("a check-in id"))
+            .expect("read the check-in")
+            .expect("stored")
+            .consumed_at
+            .is_some(),
+        "the confirm spent the check-in"
+    );
+}
+
+#[test]
+fn an_erase_held_by_the_veto_window_records_its_decision_on_its_act() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, owner, owner_proof, _issuer) = rooted(&dir);
+    let second = EntityId::now();
+    person(&vault, second);
+    let member = |member_ref| InitialSharedMember {
+        member_ref,
+        role: Some(Role::Owner),
+    };
+    vault
+        .initialize_shared_vault(
+            &owner_proof,
+            SHARED,
+            None,
+            &[member(owner), member(second)],
+            1,
+        )
+        .expect("a shared vault with two Owners");
+    let second_proof = proof(&vault, second);
+    let invitation = vault
+        .shared_invitations(&second_proof, SHARED)
+        .expect("invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Owner)
+        .expect("the founding invitation");
+    vault
+        .accept_shared_invitation(&second_proof, SHARED, &invitation.id)
+        .expect("the second Owner accepts");
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let record = artifact(&memory);
+    let outcome = erase(&memory, &owner_proof, record, None);
+    let act_id = outcome
+        .first_act
+        .clone()
+        .unwrap_or_else(|| panic!("two Owners: the erase waits on its act: {outcome:?}"));
+    let act = vault
+        .pending_authority_act(&act_id)
+        .expect("read the act")
+        .expect("the act is stored");
+    assert_eq!(
+        act.check_in,
+        owner_erase(None, None),
+        "the erase act records that the Owner went on their own proof"
+    );
+    assert_eq!(outcome.check_in, act.check_in, "the outcome says the same");
 }
