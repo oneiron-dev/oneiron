@@ -8,7 +8,6 @@ use crate::secret_custody::{
     SecretCustodyRecord, SecretCustodyStatus,
 };
 use crate::secret_lease::SecretTaintRef;
-use crate::secret_rotation::mark_exhaust_tainted_in_txn;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -135,18 +134,15 @@ fn mark_live(vault: &Vault, reference: &ArtifactVersionRef) {
             policy_floor_snapshot: SecretCustodyFloor::default(),
         })
         .expect("register secret");
-    let mut wtxn = vault.store.env.write_txn().expect("write txn");
-    mark_exhaust_tainted_in_txn(
-        &vault.store,
-        &mut wtxn,
-        reference.artifact_id(),
-        &[SecretTaintRef {
-            secret_ref: "build-token".into(),
-            generation: 0,
-        }],
-    )
-    .expect("mark taint");
-    wtxn.commit().expect("commit taint");
+    vault
+        .mark_artifact_tainted(
+            reference.artifact_id(),
+            &[SecretTaintRef {
+                secret_ref: "build-token".into(),
+                generation: 0,
+            }],
+        )
+        .expect("mark taint");
     assert_eq!(
         vault
             .artifact_taint_state(reference.artifact_id())

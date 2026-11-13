@@ -8,7 +8,7 @@ pub(crate) use self::revoke::{
     revoke_custody_with_context_in_txn, revoke_secret_with_context_in_txn,
 };
 use crate::Vault;
-use crate::blob_artifact::decode_blob_artifact_body;
+use crate::blob_artifact::{body_with_secret_taint_refs, decode_blob_artifact_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::ports::{EntityRecord, EntityStoreRead};
@@ -34,10 +34,6 @@ mod tests;
 const RECEIPTS: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SECRET_ROTATION_RECEIPT);
 
-/// The FORWARD taint sidecar for one exhaust entity, keyed by the entity id in hex.
-const EXHAUST_TAINT: SideTable<HexId, Vec<SecretTaintRef>, Raw> =
-    SideTable::new(&side_table::SECRET_EXHAUST_TAINT);
-
 /// The lease table, scanned and decoded by the revoke sweep (`revoke`).
 const LEASES: SideTable<HexId, SecretLease, Raw> = SideTable::new(&side_table::SECRET_LEASE);
 
@@ -48,15 +44,6 @@ const LEASES: SideTable<HexId, SecretLease, Raw> = SideTable::new(&side_table::S
 /// The `vault_meta` prefix for a durable [`RotationReceipt`] row, keyed by
 /// the receipt's own [`EntityId`].
 pub const SECRET_ROTATION_RECEIPT_PREFIX: &str = "secret_rotation_receipt:v1:";
-
-/// The `vault_meta` prefix for the FORWARD taint-ref sidecar of one exhaust
-/// entity, keyed by that entity's [`EntityId`].
-///
-/// Forward only: `artifact -> refs`. There is deliberately no row anywhere
-/// in this crate keyed by a SECRET that lists the artifacts it tainted — the
-/// 2026-08-05 amendment forbids exactly that reverse index, and the
-/// regression suite asserts its absence.
-pub const SECRET_EXHAUST_TAINT_PREFIX: &str = "secret_exhaust_taint:v1:";
 
 /// The POLICY_MANIFEST key that opens the stale-publish dial. Absent or
 /// unreadable-as-`true` means CLOSED: a publish gate defaults to refusing.
@@ -298,24 +285,22 @@ pub(crate) fn taint_state_for_refs_in_txn(
 
 /// Reads the FORWARD taint refs of one exhaust entity inside a txn.
 ///
-/// The union of the forward planes an entity can carry them on: the
-/// entity-keyed sidecar row, the pinned `secret_taint.refs` body key when
-/// the entity is a BLOB_ARTIFACT, and, when it is an ASSET, that key on
-/// every artifact a `blob.version` claim names as holding its bytes. Both
-/// the body and the claim replicate, so a version payload reads tainted on
-/// every device its artifact reached, not only where the sidecar was
-/// written. Union, not precedence: all are action-boundary attachments,
-/// and dropping any would under-report taint. A secret named twice keeps
-/// its LOWEST recorded generation, which is the fail-closed direction (the
-/// older generation is the one more likely to have been rotated away from).
+/// The refs ride replicated rows only: the pinned `secret_taint.refs` body
+/// key when the entity is a BLOB_ARTIFACT (a capture's own refs and every
+/// host mark, [`Vault::mark_artifact_tainted`]), and, when it is an ASSET,
+/// that key on every artifact a `blob.version` claim names as holding its
+/// bytes. Both the body and the claim replicate, so a version payload reads
+/// tainted on every device its artifact reached. Union, not precedence:
+/// all are action-boundary attachments, and dropping any would
+/// under-report taint. A secret named twice keeps its LOWEST recorded
+/// generation, which is the fail-closed direction (the older generation is
+/// the one more likely to have been rotated away from).
 pub(crate) fn exhaust_taint_refs_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<SecretTaintRef>> {
-    let mut refs = EXHAUST_TAINT
-        .get(store, txn, &HexId(*id))?
-        .unwrap_or_default();
+    let mut refs = Vec::new();
     if let Some(row) = store.port_entity_record(txn, id)? {
         if row.entity_type == ENTITY_TYPE_ASSET {
             // A file-plane ASSET's row holds its manifest: the claims name the
@@ -352,30 +337,6 @@ fn union_refs(into: &mut Vec<SecretTaintRef>, refs: Vec<SecretTaintRef>) {
             None => into.push(r),
         }
     }
-}
-
-/// Writes the forward taint sidecar for one exhaust entity, inside a
-/// transaction the CALLER owns.
-///
-/// Caller-owned on purpose: this is the S7 same-transaction law. The attach
-/// must land with the exhaust row it marks, or neither lands — untainted
-/// exhaust surviving a half-failed write is the one failure direction that
-/// matters here. An EMPTY ref list clears the row rather than writing an
-/// empty one, so "clean" has exactly one representation (absent).
-pub(crate) fn mark_exhaust_tainted_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-    refs: &[SecretTaintRef],
-) -> Result<()> {
-    let key = HexId(*id);
-    if refs.is_empty() {
-        EXHAUST_TAINT.delete(store, wtxn, &key)?;
-        return Ok(());
-    }
-    let refs = refs.to_vec();
-    EXHAUST_TAINT.put(store, wtxn, &key, &refs)?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -493,16 +454,47 @@ impl Vault {
         taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
     }
 
-    /// Attaches taint refs to one exhaust entity through the entity-keyed
-    /// sidecar. The thin wrapper over
-    /// `mark_exhaust_tainted_in_txn` for callers that own no transaction;
-    /// callers that DO (an artifact put, a raw-output write) must use the
-    /// in-txn form so the attach cannot separate from its exhaust.
+    /// Attaches a host's taint refs to one BLOB_ARTIFACT (ARCH-0069
+    /// `#exhaust-taint-open`): the secrets the host injected while producing
+    /// it, each pinned to the generation it read. The refs join the
+    /// artifact body's `secret_taint.refs` key in one write transaction, so
+    /// the mark syncs, archives and exports redacted with the row, as a
+    /// capture's own refs do. A secret the body already names keeps its
+    /// LOWEST generation, the fail-closed direction; every other key of the
+    /// stored body keeps its value. A mark that adds nothing writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`SecretError::InvalidSecretRotationBody`](crate::error::SecretError::InvalidSecretRotationBody)
+    /// for malformed refs ([`validate_taint_refs`]) and for an id that names
+    /// no BLOB_ARTIFACT row: an ASSET's taint comes from its artifacts, and
+    /// no other row carries a host mark.
     pub fn mark_artifact_tainted(&self, id: &EntityId, refs: &[SecretTaintRef]) -> Result<()> {
         validate_taint_refs(refs)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        mark_exhaust_tainted_in_txn(&self.store, &mut wtxn, id, refs)?;
-        Ok(wtxn.commit()?)
+        self.with_write_txn_grouped(|txn| {
+            let row = self
+                .store
+                .port_entity_record(txn, id)?
+                .filter(|row| row.entity_type == ENTITY_TYPE_BLOB_ARTIFACT)
+                .ok_or(invalid_body("a host taint mark rides a blob artifact"))?;
+            let held = blob_artifact_taint_refs(&row)?;
+            let mut marked = held.clone();
+            union_refs(&mut marked, refs.to_vec());
+            if marked == held {
+                return Ok(());
+            }
+            marked.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
+            let body = body_with_secret_taint_refs(&row.body, &marked)?;
+            self.batch_in()
+                .put(
+                    id,
+                    ENTITY_TYPE_BLOB_ARTIFACT,
+                    row.occurred,
+                    row.learned_at,
+                    &body,
+                )
+                .apply(txn)
+        })
     }
 
     /// Whether the vault's resolved policy opens the stale-publish dial.

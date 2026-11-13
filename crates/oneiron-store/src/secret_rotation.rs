@@ -36,15 +36,13 @@
 //! * blob artifacts carry them IN BODY under the pinned
 //!   `secret_taint.refs` key
 //!   ([`crate::blob_artifact::BLOB_ARTIFACT_OPTIONAL_BODY_KEYS`]),
-//!   so the attach is the artifact put itself;
+//!   so the attach is the artifact put itself, and a host's later mark
+//!   joins the same key, so it replicates with the row;
 //! * code-run raw outputs carry them in a `vault_meta` SIDECAR row written in
 //!   the same transaction as the raw-output row
-//!   (`crate::code_run` owns that key);
-//! * any other exhaust ENTITY (the code artifact a build leg produced, which
-//!   is what an artifact pointer publishes) carries them in the entity-keyed
-//!   sidecar row under [`SECRET_EXHAUST_TAINT_PREFIX`].
+//!   (`crate::code_run` owns that key).
 //!
-//! All three are forward-only. None of them is an index a rotation could
+//! Both are forward-only. None of them is an index a rotation could
 //! walk, and that is the point.
 //!
 //! # What never crosses this module
@@ -102,7 +100,8 @@ pub fn as_u64(value: &Value) -> Option<u64> {
 const TAINT_REF_KEYS: [&str; 2] = ["secret_ref", "generation"];
 
 /// Encodes taint refs as the canonical MessagePack array-of-maps that both
-/// the sidecar rows and the `secret_taint.refs` artifact body key carry.
+/// the code-run sidecar rows and the `secret_taint.refs` artifact body key
+/// carry.
 ///
 /// ONE shape for both storage planes on purpose: a consumer that learns to
 /// read a taint ref has learned to read every taint ref this crate writes.

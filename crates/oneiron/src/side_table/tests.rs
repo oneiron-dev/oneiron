@@ -566,7 +566,6 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SCOPE_RECORD",
         "SCOPE_RECORD_REVISION",
         "SECRET_CUSTODY_NAME_INDEX",
-        "SECRET_EXHAUST_TAINT",
         "SECRET_LEASE",
         "SECRET_LOCAL_REGISTRATION",
         "SECRET_MATERIALIZATION_RECEIPT",

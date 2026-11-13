@@ -36,6 +36,8 @@ pub mod free_time_cycle_writer;
 pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+#[cfg(feature = "sync")]
+pub mod host_taint_replica;
 pub mod house_link;
 pub mod identity_recheck;
 pub mod inquiry;
