@@ -26,7 +26,7 @@ use oneiron::limit_ask::EngineLimit;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::ImportSourceArgs;
-use crate::config::{ImportConfig, ServeConfig, resolve_serve_config};
+use crate::config::{ServeConfig, resolve_serve_config};
 use crate::files_intake::{ImportWarning, hard_linked};
 
 /// The most a zipped export's `conversations.json` unzips to: the codec's
@@ -826,15 +826,13 @@ impl ExportBounds {
     }
 
     /// The bounds of an export already staged in the vault's data folder
-    /// (ARCH-0027 #hosted-import): the default entry cap and no storage
-    /// room. The staged upload already sits in the vault's folder, and a job
+    /// (ARCH-0027 #hosted-import): the host's entry cap and no storage room.
+    /// The staged upload already sits in the vault's folder, and a job
     /// decodes its export again when it resumes, so a room that shrank as
     /// the job landed must not refuse what it began.
-    fn staged() -> Self {
+    fn staged(max_entries: u64) -> Self {
         Self {
-            archive: ArchiveBounds {
-                max_entries: ImportConfig::default().archive_entry_cap(),
-            },
+            archive: ArchiveBounds { max_entries },
             room: None,
         }
     }
