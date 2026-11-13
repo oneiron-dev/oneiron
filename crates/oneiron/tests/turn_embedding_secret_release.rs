@@ -107,7 +107,17 @@ fn a_message_the_write_door_refuses_never_reaches_the_embedder_in_its_turns_text
         Arc::clone(&vault),
         Arc::clone(&embedder) as Arc<dyn Embedder>,
     );
-    let report = reconciler.reconcile_once()?;
+    // A pass leases one batch (32 rows), and the vault's own seeded rows
+    // (skills, models) come before the turn: run passes until none leases.
+    let mut reports = Vec::new();
+    for _ in 0..64 {
+        let report = reconciler.reconcile_once()?;
+        let leased = report.leased;
+        reports.push(report);
+        if leased == 0 {
+            break;
+        }
+    }
     let sent = embedder
         .sent
         .lock()
@@ -120,7 +130,7 @@ fn a_message_the_write_door_refuses_never_reaches_the_embedder_in_its_turns_text
     );
     assert!(
         sent.iter().any(|text| text.contains(CLEAN)),
-        "the turn's other words still embed: sent {sent:?}, report {report:?}"
+        "the turn's other words still embed: sent {sent:?}, passes {reports:?}"
     );
     Ok(())
 }
