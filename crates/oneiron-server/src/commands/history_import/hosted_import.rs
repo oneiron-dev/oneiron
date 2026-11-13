@@ -19,6 +19,8 @@
 //!   each at the offset the part has reached ([`upload_part`]). The upload's
 //!   state between two parts is the folder alone, so a restart resumes it
 //!   there. The part that reaches the declared size finishes the folder.
+//!   An upload the owner gives up before its export is staged is deleted
+//!   with its folder ([`delete_upload`]).
 //!
 //! Each pass of the worker ([`HostedImports::pass`]) first makes the job row
 //! ([`oneiron::Vault::hosted_import_create`]) of each whole folder that has
@@ -39,7 +41,7 @@
 //! during a pass stops the job at the next conversation. What landed is
 //! surfaced in the import's review as a finished job's is, the job ends
 //! Cancelled and its folder is removed. A pass also removes the folder of an
-//! ended job that outlived its end.
+//! ended job that outlived its end, and what is left of a deleted upload's.
 //!
 //! Each conversation lands under the host's admission, as a served write
 //! does: a managed vault frozen for reap lands nothing, and the pass stops
@@ -77,6 +79,10 @@ const REQUEST_FILE: &str = "request.json";
 const REQUEST_PART_FILE: &str = "request.part";
 const DECLARED_FILE: &str = "declared.json";
 const DECLARED_PART_FILE: &str = "declared.part";
+/// The suffix a deleted upload's folder is renamed to before it is removed:
+/// a folder so named is no upload, and a pass removes what a stopped process
+/// left of it.
+const DELETED_SUFFIX: &str = ".deleted";
 
 /// A zip's first bytes (a local file header).
 const ZIP_MAGIC: [u8; 4] = *b"PK\x03\x04";
@@ -523,14 +529,7 @@ pub(crate) fn upload_part(
     part: &mut dyn BufRead,
 ) -> Result<HostedUpload, UploadRefusal> {
     let upload = Upload::open(vault_path, id)?;
-    // The upload's lock is on `declared.json`, which stays in the folder
-    // through the finish: a second part sent meanwhile is refused at once,
-    // never left waiting.
-    match upload.declared_file.try_lock() {
-        Ok(()) => {}
-        Err(fs::TryLockError::WouldBlock) => return Err(UploadRefusal::Busy),
-        Err(fs::TryLockError::Error(error)) => return Err(error.into()),
-    }
+    upload.lock()?;
     let (written, staged) = upload.written()?;
     let declared = upload.declared;
     if staged {
@@ -570,6 +569,57 @@ pub(crate) fn upload_part(
     }
     finish_folder(&upload.folder, upload.source)?;
     Ok(upload.state(reached, true))
+}
+
+/// What a deleted upload answers.
+#[derive(Debug, Serialize)]
+pub(crate) struct DeletedUpload {
+    /// The deleted upload's id: no upload route answers it any more.
+    pub(crate) import_id: String,
+    /// The bytes the upload had written, removed with its folder.
+    pub(crate) removed_bytes: u64,
+}
+
+/// Deletes upload `id` in the vault at `vault_path`, whose export is not
+/// staged, with its folder: no upload route answers it after, and the bytes
+/// it had written leave the vault's disk. The delete takes the upload's
+/// lock, so it never meets a part being written. The folder is renamed away
+/// in one step, then removed; the worker's next pass removes what a process
+/// that stopped between the two left.
+///
+/// # Errors
+///
+/// [`UploadRefusal::NotFound`] for an id that is no upload in this vault,
+/// [`UploadRefusal::Busy`] while a part is written,
+/// [`UploadRefusal::Staged`] once the export is staged (its import is
+/// cancelled instead, with `vault.imports.cancel`), or a failed rename:
+/// nothing was deleted.
+pub(crate) fn delete_upload(
+    vault_path: &Path,
+    id: HostedImportId,
+) -> Result<DeletedUpload, UploadRefusal> {
+    let upload = Upload::open(vault_path, id)?;
+    upload.lock()?;
+    // A staged export is the worker's from here: it makes the import's job
+    // from the request, and only the job's cancel stops it.
+    match fs::symlink_metadata(upload.folder.join(REQUEST_FILE)) {
+        Ok(_) => return Err(UploadRefusal::Staged),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    // A folder whose export is gone is deleted all the same.
+    let removed_bytes = upload.written().map_or(0, |(written, _)| written);
+    let root = imports_root(vault_path);
+    let deleted = root.join(format!("{}{DELETED_SUFFIX}", id.to_hex()));
+    fs::rename(&upload.folder, &deleted)?;
+    if let Err(error) = File::open(&root).and_then(|imports| imports.sync_all()) {
+        tracing::warn!(import = %id.to_hex(), error = %error, "hosted import folder rename not synced");
+    }
+    remove_folder(&deleted);
+    Ok(DeletedUpload {
+        import_id: id.to_hex(),
+        removed_bytes,
+    })
 }
 
 /// Whether `part` holds no byte.
@@ -640,6 +690,23 @@ impl Upload {
             declared: declared.bytes,
             declared_file,
         })
+    }
+
+    /// Takes the upload's lock, on `declared.json`, which stays in the
+    /// folder through the finish: a second part or a delete sent meanwhile
+    /// is refused at once, never left waiting. An upload deleted between its
+    /// open and its lock is no upload: the delete moved its folder away.
+    fn lock(&self) -> Result<(), UploadRefusal> {
+        match self.declared_file.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Err(UploadRefusal::Busy),
+            Err(fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
+        match fs::symlink_metadata(self.folder.join(DECLARED_FILE)) {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(UploadRefusal::NotFound),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// The bytes written so far, and whether the export is staged: the
@@ -882,12 +949,26 @@ fn finish(
 }
 
 /// Makes the row of each whole folder under `root` that has none, each at a
-/// second of its own.
+/// second of its own, and removes what is left of a deleted upload's folder.
 fn adopt(vault: &oneiron::Vault, root: &Path) -> anyhow::Result<()> {
     let mut whole = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        let Some(id) = entry.file_name().to_str().and_then(HostedImportId::parse) else {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name
+            .strip_suffix(DELETED_SUFFIX)
+            .and_then(HostedImportId::parse)
+            .is_some()
+        {
+            // A deleted upload's folder, renamed away, that a process which
+            // stopped before removing it left.
+            remove_folder(&entry.path());
+            continue;
+        }
+        let Some(id) = HostedImportId::parse(name) else {
             continue;
         };
         if !entry.file_type()?.is_dir() {
@@ -972,8 +1053,8 @@ fn fail(
     Ok(())
 }
 
-/// Removes an ended job's folder; a failure is said, and the job stays
-/// ended.
+/// Removes an ended job's folder, or a deleted upload's; a failure is said,
+/// the job stays ended, and a later pass removes the folder.
 fn remove_folder(folder: &Path) {
     match fs::remove_dir_all(folder) {
         Ok(()) => {}

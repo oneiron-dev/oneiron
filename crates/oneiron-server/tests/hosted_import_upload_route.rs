@@ -13,6 +13,14 @@
 //! the vault's disk floor has no room for is refused. A caller without the
 //! owner's proof is refused every route.
 //!
+//! [HOSTED-IMPORT-UPLOAD-ABANDONED-FOLDER] (the Engine's ruling of 13 Nov
+//! 09:03): `DELETE /v1/owner/imports/hosted/{import}/upload` deletes an
+//! upload whose export is not staged, with its folder and the bytes it has
+//! written, and no upload route answers it after. A staged upload is not
+//! deleted: its import is a job, cancelled with `vault.imports.cancel`. The
+//! delete renames the folder away before it removes it, and the worker's
+//! pass removes what a delete that stopped between the two left.
+//!
 //! Each case drives the real routes in process (`build_app(..).oneshot(..)`,
 //! no TCP ports, no sleeps, no models) with the owner's host-root
 //! credential, on an engine-sized stack, and runs the worker's pass through
@@ -291,6 +299,11 @@ impl Host {
             .await
     }
 
+    async fn delete(&self, import: &str, as_owner: bool) -> Result<(StatusCode, Value), TestError> {
+        let request = Request::delete(format!("{DECLARE}/{import}/upload"));
+        self.send(request, Body::empty(), as_owner).await
+    }
+
     fn job(&self, import: &str) -> Result<HostedImportJob, TestError> {
         let id = HostedImportId::parse(import).ok_or("the answer's id is no import id")?;
         self.vault
@@ -499,6 +512,169 @@ fn a_caller_without_the_owners_proof_is_refused_every_upload_route() {
         );
         assert_eq!(host.part_len(&import)?, 0, "the part wrote nothing");
         assert!(!host.folder(&import).join("request.json").exists());
+        Ok::<(), TestError>(())
+    });
+}
+
+#[test]
+fn a_deleted_upload_leaves_no_folder_and_no_route_answers_it() {
+    run_on_engine_stack("upload-deleted", async {
+        let host = Host::new()?;
+        let export = export_bytes()?;
+        let total = u64::try_from(export.len())?;
+        let (first, second) = export.split_at(export.len() / 2);
+        let half = u64::try_from(first.len())?;
+
+        let (status, answer) = host.declare("chatgpt", total, true).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner declares an upload: {answer}"
+        );
+        let import = import_of(&answer)?;
+        let (status, answer) = host.put(&import, 0, first, true, true).await?;
+        assert_eq!(status, StatusCode::OK, "the first part: {answer}");
+        assert_eq!(host.part_len(&import)?, half);
+
+        let (status, answer) = host.delete(&import, false).await?;
+        assert!(
+            matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+            "FAILBEFORE: a delete with no credential is refused at the owner door: {status} {answer}"
+        );
+        assert_eq!(host.part_len(&import)?, half, "and deletes nothing");
+
+        let (status, answer) = host.delete(&import, true).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "FAILBEFORE: the owner deletes an upload whose export is not staged: {answer}"
+        );
+        assert_eq!(answer["import_id"].as_str(), Some(import.as_str()));
+        assert_eq!(
+            answer["removed_bytes"].as_u64(),
+            Some(half),
+            "the delete answers the bytes it removed: {answer}"
+        );
+        assert!(
+            !host.folder(&import).exists(),
+            "the upload's folder is gone"
+        );
+        assert_eq!(
+            host.folders()?,
+            0,
+            "nothing of the upload is left under imports/"
+        );
+
+        // No upload route answers the deleted upload.
+        let (status, answer) = host.state(&import, true).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND, "its state: {answer}");
+        let (status, answer) = host.put(&import, half, second, true, true).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND, "its next part: {answer}");
+        assert_eq!(host.folders()?, 0, "the part made no folder");
+        let (status, answer) = host.delete(&import, true).await?;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a second delete: {answer}");
+
+        // The worker makes no job of it.
+        pass(&host.vault, host.vault_dir(), None)?;
+        assert!(host.vault.hosted_imports()?.is_empty(), "no job was made");
+        Ok::<(), TestError>(())
+    });
+}
+
+#[test]
+fn a_staged_upload_is_not_deleted_and_its_job_lands() {
+    run_on_engine_stack("upload-staged-kept", async {
+        let host = Host::new()?;
+        let export = export_bytes()?;
+        let total = u64::try_from(export.len())?;
+
+        let (status, answer) = host.declare("chatgpt", total, true).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner declares an upload: {answer}"
+        );
+        let import = import_of(&answer)?;
+        let (status, answer) = host.put(&import, 0, &export, true, true).await?;
+        assert_eq!(status, StatusCode::OK, "the whole export: {answer}");
+        assert_eq!(standing(&answer), (Some(total), Some(true)));
+
+        let (status, answer) = host.delete(&import, true).await?;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "FAILBEFORE: a staged upload's delete is refused: {answer}"
+        );
+        assert!(answer.to_string().contains("upload_staged"), "{answer}");
+        assert!(
+            answer.to_string().contains("vault.imports.cancel"),
+            "the refusal names the cancel: {answer}"
+        );
+        let folder = host.folder(&import);
+        assert_eq!(
+            std::fs::read(folder.join("export.json"))?,
+            export,
+            "the staged export is kept"
+        );
+        assert!(folder.join("request.json").is_file());
+
+        pass(&host.vault, host.vault_dir(), None)?;
+        let job = host.job(&import)?;
+        assert_eq!(job.state, HostedImportState::Landed);
+        assert_eq!(job.new, MESSAGES, "every message landed once");
+        Ok::<(), TestError>(())
+    });
+}
+
+#[test]
+fn a_pass_removes_what_a_stopped_delete_left_and_keeps_an_upload_in_progress() {
+    run_on_engine_stack("upload-delete-left", async {
+        let host = Host::new()?;
+        let export = export_bytes()?;
+        let total = u64::try_from(export.len())?;
+
+        let mut imports = Vec::new();
+        for _ in 0..2 {
+            let (status, answer) = host.declare("chatgpt", total, true).await?;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "the owner declares an upload: {answer}"
+            );
+            let import = import_of(&answer)?;
+            let (status, answer) = host.put(&import, 0, &export[..10], true, true).await?;
+            assert_eq!(status, StatusCode::OK, "a first part: {answer}");
+            imports.push(import);
+        }
+        let (stopped, kept) = (&imports[0], &imports[1]);
+        // A delete that stopped between renaming the upload's folder away
+        // and removing it.
+        let left = host
+            .vault_dir()
+            .join("imports")
+            .join(format!("{stopped}.deleted"));
+        std::fs::rename(host.folder(stopped), &left)?;
+        let (status, answer) = host.state(stopped, true).await?;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "the renamed folder is no upload: {answer}"
+        );
+
+        pass(&host.vault, host.vault_dir(), None)?;
+        assert!(
+            !left.exists(),
+            "FAILBEFORE: the pass removes what a stopped delete left"
+        );
+        assert_eq!(
+            host.part_len(kept)?,
+            10,
+            "the upload in progress keeps its part"
+        );
+        let (status, answer) = host.state(kept, true).await?;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        assert_eq!(standing(&answer), (Some(10), Some(false)));
+        assert!(host.vault.hosted_imports()?.is_empty(), "no job was made");
         Ok::<(), TestError>(())
     });
 }
