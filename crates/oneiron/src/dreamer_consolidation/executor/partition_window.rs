@@ -10,7 +10,7 @@
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
-use std::pin::pin;
+use std::pin::{Pin, pin};
 use std::task::Poll;
 use std::time::Instant;
 
@@ -198,10 +198,7 @@ impl ConsolidationExecutor<'_> {
                     ..
                 } => jobs.push((
                     index,
-                    contained(
-                        self.run_window_slot_job(started, stages, *run_started, attempt, ctx),
-                        attempt,
-                    ),
+                    self.boxed_window_slot_job(started, stages, *run_started, attempt, ctx),
                 )),
                 WindowSlotRun::Rung(_) => rungs.push((
                     index,
@@ -410,7 +407,7 @@ impl ConsolidationExecutor<'_> {
                 stages.mark_finish_started(prefix_ended);
                 let live = !extracted.steps_decide_finish();
                 let run = self
-                    .finish_partition_run(
+                    .boxed_finish_partition_run(
                         *extracted,
                         &started.resources,
                         ctx,
@@ -424,6 +421,99 @@ impl ConsolidationExecutor<'_> {
             }
             prefix => SlotWork::Prefix(prefix),
         }
+    }
+
+    // The window awaits its big futures behind a box, each built in a
+    // helper of its own (FIX 21927). This crate builds at opt-level 0 in
+    // dev and test, where each future a function builds keeps its own
+    // stack slot for the whole call. Built inline, the slot jobs and the
+    // settles and re-runs of `finish_window_slot` overflowed the 2 MiB
+    // test thread of `dreamer_window_finish_order`; built here, the
+    // caller's frame holds only a pointer.
+
+    /// [`Self::run_window_slot_job`] behind its panic containment.
+    fn boxed_window_slot_job<'s>(
+        &'s self,
+        started: &'s mut PartitionStarted<'_>,
+        stages: &'s mut PartitionStages,
+        run_started: Instant,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s WakeAttemptContext<'_>,
+    ) -> Pin<Box<dyn Future<Output = Option<SlotWork>> + 's>> {
+        Box::pin(contained(
+            self.run_window_slot_job(started, stages, run_started, attempt, ctx),
+            attempt,
+        ))
+    }
+
+    /// [`Self::settle_partition_run`], for a window slot's settle.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "it passes settle_partition_run's own arguments through"
+    )]
+    fn boxed_settle_partition_run<'s>(
+        &'s mut self,
+        resources: &'s BranchResources<'_>,
+        run: crate::llm::DurableStepResult<PartitionRun>,
+        widened: &'s [(EntityId, [u8; 32], [u8; 32])],
+        widened_round: Option<[u8; 32]>,
+        originals: &'s [EntityId],
+        returned: &'s [(EntityId, [u8; 32], [u8; 32])],
+        ctx: &'s WakeAttemptContext<'_>,
+        charges: &'s mut StepChargeTally,
+        stages: &'s mut PartitionStages,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(self.settle_partition_run(
+            resources,
+            run,
+            widened,
+            widened_round,
+            originals,
+            returned,
+            ctx,
+            charges,
+            stages,
+        ))
+    }
+
+    /// [`Self::run_partition_attempt`], for a window slot's re-run over its
+    /// re-opened branch.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "it passes run_partition_attempt's own arguments through"
+    )]
+    fn boxed_run_partition_attempt<'s>(
+        &'s mut self,
+        payload_input: &'s Value,
+        resources: &'s BranchResources<'_>,
+        ctx: &'s WakeAttemptContext<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
+        run_id: Option<String>,
+        charges: &'s mut StepChargeTally,
+        stages: &'s mut PartitionStages,
+    ) -> Pin<Box<dyn Future<Output = crate::llm::DurableStepResult<PartitionRun>> + 's>> {
+        Box::pin(self.run_partition_attempt(
+            payload_input,
+            resources,
+            ctx,
+            attempt_id,
+            run_id,
+            charges,
+            stages,
+        ))
+    }
+
+    /// [`Self::finish_partition_run`], for a window slot's finish.
+    fn boxed_finish_partition_run<'s>(
+        &'s self,
+        extracted: super::super::parallel::ExtractedPartition,
+        resources: &'s BranchResources<'_>,
+        ctx: &'s WakeAttemptContext<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
+        charges: &'s mut StepChargeTally,
+        stages: &'s mut PartitionStages,
+    ) -> Pin<Box<dyn Future<Output = crate::llm::DurableStepResult<PartitionRun>> + 's>> {
+        Box::pin(self.finish_partition_run(extracted, resources, ctx, attempt_id, charges, stages))
     }
 
     /// One window slot's serial position: its settle (and a finish its job
@@ -498,7 +588,7 @@ impl ConsolidationExecutor<'_> {
                         // A checkpoint or a trap lands nothing: it stands
                         // whatever an earlier slot committed.
                         | (None, run @ Ok(PartitionRun::Checkpoint | PartitionRun::Trapped)) => {
-                            self.settle_partition_run(
+                            self.boxed_settle_partition_run(
                                 &resources,
                                 run,
                                 &widened,
@@ -517,7 +607,7 @@ impl ConsolidationExecutor<'_> {
                         // Its steps alone decided it (a refused slice): it
                         // read nothing an earlier slot could change.
                         (None, run) if !live => {
-                            self.settle_partition_run(
+                            self.boxed_settle_partition_run(
                                 &resources,
                                 run,
                                 &widened,
@@ -546,7 +636,7 @@ impl ConsolidationExecutor<'_> {
                                         && fresh.admitted_prior_ids()
                                             == resources.admitted_prior_ids() =>
                                 {
-                                    self.settle_partition_run(
+                                    self.boxed_settle_partition_run(
                                         &resources,
                                         run,
                                         &widened,
@@ -568,7 +658,7 @@ impl ConsolidationExecutor<'_> {
                                 // accounted the paid steps.
                                 Ok(fresh) => {
                                     let rerun = self
-                                        .run_partition_attempt(
+                                        .boxed_run_partition_attempt(
                                             &payload,
                                             &fresh,
                                             ctx,
@@ -579,7 +669,7 @@ impl ConsolidationExecutor<'_> {
                                         )
                                         .await;
                                     stages.close_model_run(run_started);
-                                    self.settle_partition_run(
+                                    self.boxed_settle_partition_run(
                                         &fresh,
                                         rerun,
                                         &widened,
@@ -602,7 +692,7 @@ impl ConsolidationExecutor<'_> {
                     },
                     SlotWork::Prefix(Err(error)) => {
                         stages.close_model_run(run_started);
-                        self.settle_partition_run(
+                        self.boxed_settle_partition_run(
                             &resources,
                             Err(error),
                             &widened,
@@ -626,7 +716,7 @@ impl ConsolidationExecutor<'_> {
                             // commit.
                             Ok(charges.park_for(stop.park_reason(), DreamerParkCause::Retry))
                         } else {
-                            self.settle_partition_run(
+                            self.boxed_settle_partition_run(
                                 &resources,
                                 Ok(run),
                                 &widened,
@@ -653,7 +743,7 @@ impl ConsolidationExecutor<'_> {
                                 &mut charges,
                             ) {
                                 Ok(true) => {
-                                    self.settle_partition_run(
+                                    self.boxed_settle_partition_run(
                                         &resources,
                                         Ok(PartitionRun::Trapped),
                                         &widened,
@@ -697,7 +787,7 @@ impl ConsolidationExecutor<'_> {
                                     let run = if fresh.admitted_prior_ids()
                                         == resources.admitted_prior_ids()
                                     {
-                                        self.finish_partition_run(
+                                        self.boxed_finish_partition_run(
                                             *extracted,
                                             &fresh,
                                             ctx,
@@ -719,7 +809,7 @@ impl ConsolidationExecutor<'_> {
                                             // it (FIX 12487 round 2).
                                             Ok(true) => Ok(PartitionRun::Trapped),
                                             Ok(false) => {
-                                                self.run_partition_attempt(
+                                                self.boxed_run_partition_attempt(
                                                     &payload,
                                                     &fresh,
                                                     ctx,
@@ -734,7 +824,7 @@ impl ConsolidationExecutor<'_> {
                                         }
                                     };
                                     stages.close_model_run(run_started);
-                                    self.settle_partition_run(
+                                    self.boxed_settle_partition_run(
                                         &fresh,
                                         run,
                                         &widened,
@@ -770,7 +860,7 @@ impl ConsolidationExecutor<'_> {
                                         // instead would requeue behind the
                                         // standing trap park (FIX 12487
                                         // round 2).
-                                        self.settle_partition_run(
+                                        self.boxed_settle_partition_run(
                                             &resources,
                                             Ok(PartitionRun::Trapped),
                                             &widened,
