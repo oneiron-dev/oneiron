@@ -439,12 +439,23 @@ impl Memory<'_> {
             thread_audience: None,
             actor: self.write_actor(),
         };
+        // The TURN joins the sitting of the reply it replaces, read above
+        // from that reply's TURN, which the writer reads: the engine names
+        // it, never the caller. It is the reply's own placement, kept by the
+        // Retry whatever the writer's read bands (FIX
+        // G230-RETRY-OMITTED-SESSION-BAND). Every other ref reads for the
+        // writer here.
+        let references: Vec<(String, EntityId)> =
+            crate::conversation_dag::append_references(&input, None)
+                .into_iter()
+                .filter(|(pointer, _)| pointer != "/session")
+                .collect();
         crate::conversation_dag::require_append_references_in_txn(
             vault,
             writer,
             txn,
             &input,
-            &crate::conversation_dag::append_references(&input, None),
+            &references,
         )
         .map_err(|failure| match failure {
             crate::conversation_dag::AppendFailure::Engine(error) => MemoryError::from(error),
@@ -452,10 +463,17 @@ impl Memory<'_> {
                 MemoryError::not_found("regeneration reference not found")
             }
         })?;
-        // The reply's words are the model's, whoever answers: the TURN is
-        // checked as generated (ARCH-0040).
-        crate::conversation_dag::append_composed_at_in_txn(
-            vault, txn, &input, None, thread, turn_id,
+        // The reply's words are its MESSAGE's, witnessed in this write as
+        // the first reply's were: the TURN meets the same transcript gate.
+        // It names the reply's TURN it regenerates, by which room admission
+        // admits the agent as its author.
+        crate::conversation_dag::append_regenerated_turn_at_in_txn(
+            vault,
+            txn,
+            &input,
+            thread,
+            turn_id,
+            action.assistant_turn,
         )?;
         Ok(None)
     }
