@@ -4,9 +4,11 @@
 //! proposal until the owner keeps it. A JPEG artifact's edit lands on a new
 //! PNG artifact born from it (RULING 09:34 Fri 13 Nov, IO-FORMAT B). With no
 //! node to run it, the whole edit is one held call, and a redrive on a host
-//! that runs the organ lands it (RULING 09:53, IO-HOLD C). A preview
-//! (L4-16) answers the version's PNG scaled to fit, and lands and holds
-//! nothing, with a node or without one.
+//! that runs the organ lands it (RULING 09:53, IO-HOLD C). An edit lands
+//! pinned to the version it read, so one the head moved past keeps as a
+//! fork of that version (review of #7368). A preview (L4-16) answers the
+//! version's PNG scaled to fit, and lands and holds nothing, with a node or
+//! without one.
 #![cfg(unix)]
 
 mod fixtures;
@@ -167,6 +169,37 @@ impl Fixture {
             .version
     }
 
+    /// The owner uploads `bytes` as the artifact's next version; answers
+    /// its number.
+    fn upload(&self, artifact: EntityId, bytes: &[u8]) -> u64 {
+        let now = self.vault.now_recorded_at();
+        self.vault
+            .append_blob_artifact_version(
+                &artifact,
+                bytes,
+                &BlobVersionProvenance::UserUpload,
+                self.actor(),
+                at(now),
+                now,
+            )
+            .expect("version")
+            .version
+    }
+
+    /// `version` descends from `parent` as a fork of it.
+    fn assert_forked_from(&self, artifact: EntityId, version: u64, parent: u64) {
+        let record = self
+            .vault
+            .blob_artifact_version_metadata(&artifact, version)
+            .expect("read")
+            .expect("the kept version");
+        assert_eq!(
+            (record.parent_version, record.fork_of_version),
+            (Some(parent), Some(parent)),
+            "version {version} is a fork of version {parent}"
+        );
+    }
+
     fn head(&self, artifact: EntityId) -> Option<u64> {
         self.vault
             .blob_artifact_head(&artifact)
@@ -238,6 +271,24 @@ fn coded_png(w: u32, h: u32) -> Vec<u8> {
         &fixtures::pixels(w, h, fixtures::coded),
         fixtures::Extra::default(),
     )
+}
+
+/// The crop at (2, 1) of size 6x5 that every fork case makes of a coded
+/// 9x7 version 1.
+const CROP_OF_V1: ImageOp = ImageOp::Crop {
+    x: 2,
+    y: 1,
+    w: 6,
+    h: 5,
+};
+
+/// `version` holds [`CROP_OF_V1`] of the coded 9x7 PNG.
+fn assert_crop_of_v1(f: &Fixture, artifact: EntityId, version: u64) {
+    let image = f.png_of(artifact, version);
+    assert_eq!(image.dimensions(), (6, 5));
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(pixel.0, fixtures::coded(x + 2, y + 1), "pixel {x},{y}");
+    }
 }
 
 #[test]
@@ -703,4 +754,58 @@ fn a_preview_with_no_node_or_one_no_organ_takes_is_refused_and_holds_nothing() {
     f.nothing_waits(artifact);
     f.nothing_waits(note);
     assert_eq!(f.head(artifact), Some(1));
+}
+
+#[test]
+fn an_edit_of_an_older_png_version_keeps_as_a_fork_of_that_version() {
+    let f = fixture();
+    let artifact = f.artifact("photo.png", "image/png", &coded_png(9, 7));
+    assert_eq!(f.upload(artifact, &coded_png(5, 5)), 2);
+    let edited = match f.edit_through(&f.router, artifact, Some(1), vec![CROP_OF_V1], "crop-v1") {
+        Ok(edited) => edited,
+        Err(err) => panic!("the crop of version 1 lands: {err}"),
+    };
+    let proposal = landed(edited);
+    assert_eq!(
+        proposal.base_version,
+        Some(1),
+        "FAILBEFORE: the edit is pinned to version 1, which it read, not to the head 2"
+    );
+
+    // Keep forks from version 1; version 2 stays beside it as it was.
+    assert_eq!(f.keep(artifact, "crop-v1"), 3);
+    f.assert_forked_from(artifact, 3, 1);
+    assert_crop_of_v1(&f, artifact, 3);
+    assert_eq!(f.png_of(artifact, 2).dimensions(), (5, 5));
+    f.nothing_waits(artifact);
+}
+
+#[test]
+fn a_held_edit_of_version_1_keeps_as_a_fork_when_version_2_lands_before_the_redrive() {
+    let f = fixture();
+    let artifact = f.artifact("photo.png", "image/png", &coded_png(9, 7));
+    let nowhere = OrganRouter::new();
+    let edited = match f.edit_through(&nowhere, artifact, None, vec![CROP_OF_V1], "held-v1") {
+        Ok(edited) => edited,
+        Err(err) => panic!("with no node the edit of the head, version 1, is held: {err}"),
+    };
+    assert!(
+        matches!(edited.submitted, Submitted::Waiting(_)),
+        "{:?}",
+        edited.submitted
+    );
+    // The owner uploads version 2 while the edit is held.
+    assert_eq!(f.upload(artifact, &coded_png(5, 5)), 2);
+
+    let proposal = f.redrive(artifact, "held-v1");
+    assert_eq!(
+        proposal.base_version,
+        Some(1),
+        "FAILBEFORE: the redriven edit is pinned to version 1, which it read, not to the head 2"
+    );
+    assert_eq!(f.keep(artifact, "held-v1"), 3);
+    f.assert_forked_from(artifact, 3, 1);
+    assert_crop_of_v1(&f, artifact, 3);
+    assert_eq!(f.png_of(artifact, 2).dimensions(), (5, 5));
+    f.nothing_waits(artifact);
 }

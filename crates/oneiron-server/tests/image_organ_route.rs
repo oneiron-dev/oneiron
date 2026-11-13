@@ -24,9 +24,10 @@ use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::agent_dispatch::DEFAULT_BASE_LOGICAL_ID;
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer, holder_proof_challenge};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge};
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -57,11 +58,12 @@ struct Fixture {
     vault: Arc<Vault>,
     /// The host's root slip: the owner.
     owner: Credential,
-    /// An agent on a slip of its own, which holds no grant and reads only
-    /// [`Self::agent_facets`].
+    /// An agent on a slip of its own. The slip is not narrowed, so the
+    /// facade's gate for a writing verb admits it; it reads only what the
+    /// owner's Grants that name it give ([`Self::grant_agent_facets`]).
     agent: Credential,
-    /// The one facet the agent's slip reads: it holds none of the owner's
-    /// rows.
+    /// The one facet the owner's Grant for the agent reads: it holds none of
+    /// the owner's rows.
     agent_facets: ScopeAxis<ScopeId>,
     _dir: tempfile::TempDir,
 }
@@ -96,7 +98,6 @@ impl Fixture {
         claims.binding_key = key.verifying_key().to_bytes();
         claims.actor_class = Some("agent".to_owned());
         claims.scope = Scope::top();
-        claims.scope.facets = agent_facets.clone();
         claims.slip_id = [0x71; 32];
         let agent = Credential {
             slip: vault.mint_capability_slip(&issuer, claims)?,
@@ -117,6 +118,51 @@ impl Fixture {
             agent_facets,
             _dir: dir,
         })
+    }
+
+    /// The owner grants the agent reads of [`Self::agent_facets`] alone. The
+    /// Grant act rides this install's live machine profile, so the install
+    /// gets a keystore and a profile first, as a serving start enrols it.
+    async fn grant_agent_facets(&self) -> TestResult {
+        let Holder::Issuer(issuer) = &self.owner.holder else {
+            return Err("the owner signs with the host's issuer".into());
+        };
+        self.vault
+            .install_device_keystore(Arc::new(MemoryKeystore::new()));
+        self.vault
+            .ensure_serving_install_profile(issuer, MachineRole::Unanswered)?;
+        let ScopeAxis::Some(facets) = &self.agent_facets else {
+            return Err("the agent reads one facet".into());
+        };
+        let facets: Vec<String> = facets.iter().map(|facet| facet.0.to_hex()).collect();
+        let agent = self.agent.slip.claims.holder_ref.clone();
+        let (status, body) = self
+            .call(
+                Some(&self.owner),
+                "vault.agents.grants.mint",
+                &json!({
+                    "agent": agent,
+                    "authority_scope": {
+                        "worlds": { "kind": "all" },
+                        "facets": { "kind": "some", "values": facets },
+                        "bands": { "kind": "all" },
+                        "audience": { "kind": "all" },
+                        "verbs": { "kind": "some", "values": ["read"] },
+                        "sensitivity": { "kind": "at_most", "value": "restricted" },
+                    },
+                }),
+            )
+            .await?;
+        assert_eq!(status, 200, "the owner grants the agent one facet: {body}");
+        assert_eq!(
+            (
+                body["grant"]["agent"].as_str(),
+                body["grant"]["confers"].as_bool()
+            ),
+            (Some(agent.as_str()), Some(true)),
+            "the Grant binds the agent and confers: {body}"
+        );
+        Ok(())
     }
 
     /// One facade call as `credential`, or with no credential: its status
@@ -290,6 +336,8 @@ fn a_caller_whose_lane_does_not_read_the_artifact_is_refused_and_nothing_waits()
 
 async fn caller_refused() -> TestResult {
     let fixture = Fixture::new()?;
+    // The Grant stands before the owner's own edit, which it does not narrow.
+    fixture.grant_agent_facets().await?;
     let photo = fixture
         .artifact("photo.png", "image/png", PNG_BASE64)
         .await?;
@@ -300,9 +348,9 @@ async fn caller_refused() -> TestResult {
     );
     assert!(answer(&body)["held"].is_object(), "{body}");
 
-    // The agent's own slip binds it, holds no grant, and reads one facet
-    // that does not hold the owner's artifact: the edit is refused as if
-    // the artifact were absent.
+    // The agent's own slip binds it, and the owner's one Grant for it reads
+    // one facet that does not hold the owner's artifact: the edit is refused
+    // as if the artifact were absent.
     assert!(
         !fixture
             .vault
