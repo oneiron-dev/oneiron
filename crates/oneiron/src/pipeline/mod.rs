@@ -35,7 +35,7 @@ pub(crate) use world_authority::{
     ResolvedWorldScope, WorldGrantIndex, reading_default, resolve_world_authority,
 };
 
-pub use self::builder::PipelineBuilder;
+pub use self::builder::{BlendWeightsSource, PipelineBuilder, RetrievalEvalSpec};
 pub use self::types::{
     ActiveWorldSelection, DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet,
     DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode,
