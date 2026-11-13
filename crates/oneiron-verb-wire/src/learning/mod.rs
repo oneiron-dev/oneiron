@@ -1,6 +1,5 @@
 pub use crate::claim::learning_evidence::Anchor;
 pub use crate::claim::learning_evidence::EvidenceSource;
-pub use crate::claim::learning_evidence::LearningEvidence;
 pub use crate::claim::learning_evidence::Observation;
 pub use crate::claim::learning_predicate::LearningPredicate;
 pub use crate::receipt::task_type_ref::ROOT_TYPE_NODE;

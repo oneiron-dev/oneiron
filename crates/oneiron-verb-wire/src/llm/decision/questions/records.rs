@@ -18,8 +18,6 @@ pub use oneiron_store::model_decision::questions::RoutingPolicy;
 pub use oneiron_store::model_decision::questions::SourceConflict;
 pub use oneiron_store::model_decision::questions::WindowOutcome;
 use oneiron_store::setting_seed::SettingSpec;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// The adapter of a standing question over artifact units, asked on each artifact's head
 /// as it changes ([`QuestionDefinition::artifacts`]).

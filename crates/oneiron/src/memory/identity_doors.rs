@@ -13,11 +13,74 @@ use crate::provenance::made_by::MadeBy;
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::{EntityId, Error, Vault};
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::memory::identity_doors::{
-    IdentityConfidenceEvidence, IdentityHints, IdentityKind, IdentityLookup,
-    IdentityLookupCandidate, IdentityLookupRequest, PersonCreateRequest,
-};
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum IdentityKind {
+    Person,
+    Org,
+    Place,
+}
+
+impl IdentityKind {
+    fn type_byte(self) -> u8 {
+        match self {
+            Self::Person => ENTITY_TYPE_PERSON,
+            Self::Org => ENTITY_TYPE_ORG,
+            Self::Place => ENTITY_TYPE_PLACE,
+        }
+    }
+}
+
+/// The fields declared by `identity_fields_for_kind`, not an identity id.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityHints {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub phonetic: Vec<String>,
+    #[serde(default)]
+    pub contact_handle: Vec<String>,
+}
+
+impl IdentityHints {
+    fn terms(&self, kind: IdentityKind) -> MemoryResult<BTreeSet<String>> {
+        if kind != IdentityKind::Person && !self.contact_handle.is_empty() {
+            return Err(MemoryError::bad_request(
+                "contact_handle is declared only for PERSON",
+            ));
+        }
+        let terms: BTreeSet<_> = self
+            .name
+            .iter()
+            .chain(&self.aliases)
+            .chain(&self.phonetic)
+            .chain(&self.contact_handle)
+            .map(|term| term.trim().to_lowercase())
+            .filter(|term| !term.is_empty())
+            .collect();
+        if terms.is_empty() {
+            return Err(MemoryError::bad_request(
+                "at least one declared identity hint is required",
+            ));
+        }
+        Ok(terms)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PersonCreateRequest {
+    pub identity: IdentityHints,
+    /// Existing contact, organisation, message or other evidence records.
+    /// A name alone is not identity evidence.
+    pub identity_evidence_refs: Vec<String>,
+    pub occurred_at: u64,
+    #[serde(default)]
+    pub learned_at: Option<u64>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PersonCreated {
@@ -29,6 +92,31 @@ pub struct PersonCreated {
     /// The index was read in the creation transaction. These people were
     /// not selected or merged; the owner explicitly created a distinct record.
     pub prior_candidate_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityLookupRequest {
+    pub kind: IdentityKind,
+    pub identity: IdentityHints,
+    /// Already-produced provider.enrichment claims about index candidates.
+    /// Omit these to read candidates without proposing any match.
+    #[serde(default)]
+    pub mention_evidence: Vec<EntityResolutionCandidate>,
+}
+
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::identity_doors::{
+    IdentityConfidenceEvidence, IdentityLookupCandidate,
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct IdentityLookup {
+    pub kind: IdentityKind,
+    pub candidates: Vec<IdentityLookupCandidate>,
+    /// Scoring only: even a selected subject is not linked or restored by
+    /// this query. No evidence means no selected subject.
+    pub waterfall: EntityResolutionWaterfallDecision,
 }
 
 pub(crate) fn require_identity_evidence_in_txn(

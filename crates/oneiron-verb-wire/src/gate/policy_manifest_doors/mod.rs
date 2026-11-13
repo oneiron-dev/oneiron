@@ -1,4 +1,3 @@
-pub use crate::gate::entity_resolution_bands::EntityResolutionBands;
 pub use crate::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassRow;
 pub use crate::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesConfigureRequest;
 pub use crate::gate::policy_manifest_doors::agent_verb_classes::AgentVerbClassesReceipt;
@@ -7,20 +6,11 @@ pub use crate::gate::policy_manifest_doors::claim_aging::ClaimAgingProfilesConfi
 pub use crate::gate::policy_manifest_doors::claim_aging::ClaimAgingProfilesReceipt;
 pub use crate::gate::policy_manifest_doors::claim_aging::ClaimAgingProfilesView;
 pub use crate::gate::policy_manifest_doors::content_policy::*;
-pub use crate::gate::policy_manifest_doors::entity_resolution_bands::EntityResolutionBandsConfigureRequest;
-pub use crate::gate::policy_manifest_doors::entity_resolution_bands::EntityResolutionBandsReceipt;
-pub use crate::gate::policy_manifest_doors::entity_resolution_bands::EntityResolutionBandsView;
-pub use crate::gate::policy_manifest_doors::retrieval_weights::RetrievalWeights;
-pub use crate::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsConfigureRequest;
-pub use crate::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsReceipt;
-pub use crate::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsView;
 pub use crate::gate::policy_manifest_doors::scoped_grants::PolicyGrantExtension;
 pub use crate::gate::policy_manifest_doors::types::*;
 
 pub mod agent_verb_classes;
 pub mod claim_aging;
 pub mod content_policy;
-pub mod entity_resolution_bands;
-pub mod retrieval_weights;
 pub mod scoped_grants;
 pub mod types;

@@ -4,7 +4,6 @@
 pub use crate::authority::task_ask_handle::TaskAskHandle;
 pub use crate::disclosure::task_ask_default::TaskAskDefault;
 pub use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
-pub use crate::task_verb::ask_forward::AskForwardHolderProof;
 pub use crate::task_verb::ask_soft_confirm_types::TaskAskConfirmation;
 pub use crate::task_verb::ask_soft_confirm_types::TaskAskConfirmationDecision;
 pub use crate::task_verb::ask_types::AskAuthorityScope;

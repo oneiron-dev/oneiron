@@ -88,10 +88,15 @@ pub struct LearningReadRequest {
 use oneiron_verb_wire::learning::doors::entity_id;
 #[doc(hidden)]
 pub use oneiron_verb_wire::learning::doors::{
-    LearningBetaValue, LearningEvidenceView, LearningHeadView, LearningMeanValue,
-    LearningPriorValue, LearningPriorView, LearningProjectionRequest, LearningProjectionView,
-    MeasuredLearningEstimate, MeasuredLearningValue,
+    LearningBetaValue, LearningHeadView, LearningMeanValue, LearningPriorValue, LearningPriorView,
+    LearningProjectionRequest, MeasuredLearningEstimate, MeasuredLearningValue,
 };
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearningEvidenceView {
+    pub receipt: String,
+    pub evidence: EvidenceRow,
+}
 
 /// Provenance is separate for the requested cell and a borrowed prior's cell.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -116,6 +121,12 @@ pub struct MeasuredLearningView {
     pub attributed_outcome_receipts: Vec<String>,
     pub provenance: LearningProvenanceView,
     pub prior_provenance: Option<LearningProvenanceView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearningProjectionView {
+    /// Absent means no committed projection, not an empty successful projection.
+    pub receipt: Option<LateCreditReceipt>,
 }
 
 fn provenance(

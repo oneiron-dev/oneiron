@@ -1,4 +1,3 @@
-pub mod action_mode;
 pub mod agent_health;
 pub mod digest;
 pub mod identity;

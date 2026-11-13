@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::claim::scoped_read::weave_serve::WeaveDigestRequest;
-use crate::claim::scoped_read::weave_serve::WeaveReportRequest;
 use crate::claim::scoped_read::weave_serve::WeaveWrongLinkRequest;
 use crate::lens::sdk::WeaveLensRequest;
 use serde::Deserialize;

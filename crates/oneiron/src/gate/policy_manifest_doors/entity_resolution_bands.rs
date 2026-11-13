@@ -9,10 +9,26 @@ use crate::{Error, Result, Vault};
 
 pub use crate::gate::entity_resolution_bands::EntityResolutionBands;
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::gate::policy_manifest_doors::entity_resolution_bands::{
-    EntityResolutionBandsConfigureRequest, EntityResolutionBandsReceipt, EntityResolutionBandsView,
-};
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntityResolutionBandsConfigureRequest {
+    pub expected_body_hash: String,
+    pub bands: EntityResolutionBands,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EntityResolutionBandsView {
+    pub manifest_ref: String,
+    pub body_hash: String,
+    /// The effective trusted-manifest fold, including installed contributions.
+    pub bands: EntityResolutionBands,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EntityResolutionBandsReceipt {
+    pub configuration: EntityResolutionBandsView,
+    pub receipt_ref: String,
+}
 
 fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<EntityResolutionBandsView> {
     let id = crate::gate::default_policy_manifest_id()?;

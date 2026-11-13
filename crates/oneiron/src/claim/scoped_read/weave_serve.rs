@@ -26,10 +26,58 @@ mod admin;
 mod items;
 pub(super) mod sieve_audit;
 
+/// One section a weave report asks for, in the reader's own recipe.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveSectionInput {
+    pub kind: WeaveSectionKind,
+    /// Exact claim predicates the section reads.
+    #[serde(default)]
+    pub predicates: Vec<String>,
+    /// Direct graph kinds, by name, for a `links` section.
+    #[serde(default)]
+    pub edge_kinds: Vec<String>,
+}
+
+impl WeaveSectionInput {
+    fn spec(&self) -> MemoryResult<WeaveSectionSpec> {
+        Ok(WeaveSectionSpec {
+            kind: self.kind,
+            predicates: self.predicates.clone(),
+            edge_kinds: self
+                .edge_kinds
+                .iter()
+                .map(|name| {
+                    EdgeKind::from_name(name)
+                        .ok_or_else(|| MemoryError::bad_request("unknown weave edge kind"))
+                })
+                .collect::<MemoryResult<Vec<_>>>()?,
+        })
+    }
+
+    fn from_spec(spec: &WeaveSectionSpec) -> Self {
+        Self {
+            kind: spec.kind,
+            predicates: spec.predicates.clone(),
+            edge_kinds: spec
+                .edge_kinds
+                .iter()
+                .map(|kind| kind.name().to_owned())
+                .collect(),
+        }
+    }
+}
+
+/// `vault.weave.report`'s input: the sections, in order.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveReportRequest {
+    pub sections: Vec<WeaveSectionInput>,
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::claim::scoped_read::weave_serve::{
-    WeaveDigestRequest, WeaveReaderKind, WeaveReportRequest, WeaveSectionInput,
-    WeaveSieveScoreView, WeaveWrongLinkRequest,
+    WeaveDigestRequest, WeaveReaderKind, WeaveSieveScoreView, WeaveWrongLinkRequest,
 };
 
 /// One filed wrong-link label. It labels the link for the loops; the link

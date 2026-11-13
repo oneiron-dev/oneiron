@@ -1,4 +1,3 @@
-pub use crate::skill_attribution::late_credit::LateCreditReceipt;
 pub use crate::skill_attribution::late_credit::LateCreditShare;
 pub use oneiron_skill_attribution::types::AttemptOutcome;
 pub use oneiron_skill_attribution::types::AttributionJudgment;

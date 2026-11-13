@@ -33,10 +33,54 @@ pub const ACTION_MODE_PROPOSAL_PREDICATE: &str = "dreamer.action_mode.proposal";
 const POLICY: SideTable<(), ActionModePolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_ACTION_MODE_POLICY);
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::dreamer_runner::maintenance::action_mode::{
-    ActionModeCeiling, ActionModeEffect, ActionModeRule,
-};
+/// One band: an index in `[min_index, max_index)` selects `mode`; a band
+/// whose upper bound is 1 includes 1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionModeRule {
+    pub mode: String,
+    pub min_index: f32,
+    pub max_index: f32,
+    /// The explicit agent-ceiling patch an approved mode applies (FIX
+    /// 1786). `None` keeps the mode advice only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<ActionModeEffect>,
+}
+
+/// One band's explicit patch (FIX 1786): the agent whose definition ceiling
+/// the mode sets, and that ceiling. It names no grant, scope or connector;
+/// the ceiling still meets the preset and the owner's manifest at every gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionModeEffect {
+    pub agent: EntityId,
+    pub ceiling: ActionModeCeiling,
+}
+
+/// An agent definition's ceiling as a patch names it: ask first, or eligible
+/// to act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionModeCeiling {
+    Proposed,
+    Auto,
+}
+
+impl ActionModeCeiling {
+    const fn agent_ceiling(self) -> AgentCeiling {
+        match self {
+            Self::Proposed => AgentCeiling::Proposed,
+            Self::Auto => AgentCeiling::Auto,
+        }
+    }
+
+    const fn of(ceiling: AgentCeiling) -> Self {
+        match ceiling {
+            AgentCeiling::Proposed => Self::Proposed,
+            AgentCeiling::Auto => Self::Auto,
+        }
+    }
+}
 
 /// A patch as its finding froze it: with the agent's definition version the
 /// night read, which the owner's apply is fenced on; `None` when no

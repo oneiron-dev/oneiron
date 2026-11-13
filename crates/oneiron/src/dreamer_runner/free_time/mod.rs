@@ -109,8 +109,47 @@ const RECEIPT: SideTable<(EntityId, EntityId, EntityId), receipt::FreeTimeItemRe
 /// 7006). It is walked whole all the same: this bounds nothing.
 const LONG_RETRY_LINEAGE: usize = 64;
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::dreamer_runner::free_time::FreeTimeKind;
+/// The two kinds of an agent's free time, by the label its calls carry.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FreeTimeKind {
+    /// `autonomy.for_human`: it thinks how to help its human, and what it
+    /// suggests lands as a proposal.
+    ForHuman,
+    /// `autonomy.own_time`: its own reading, fun and rest. Nothing scores it.
+    OwnTime,
+}
+
+impl FreeTimeKind {
+    /// The purpose label every call of this kind carries.
+    #[must_use]
+    pub fn purpose(self) -> CallPurpose {
+        match self {
+            Self::ForHuman => CallPurpose::AutonomyForHuman,
+            Self::OwnTime => CallPurpose::AutonomyOwnTime,
+        }
+    }
+
+    /// The byte an item's id is derived with.
+    const fn code(self) -> u8 {
+        match self {
+            Self::ForHuman => 1,
+            Self::OwnTime => 2,
+        }
+    }
+}
 
 /// The last owner-set boundary this node opened (or passed) a cycle at for
 /// one agent, and the boundary of the cycle still open. Live: a restore

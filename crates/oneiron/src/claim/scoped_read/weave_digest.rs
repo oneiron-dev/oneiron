@@ -66,7 +66,7 @@ use wire::{WireDigest, WireSchedule, report_sources, source_key};
 use oneiron_verb_wire::claim::scoped_read::weave_digest::SCHEDULE_PREFIX;
 #[doc(hidden)]
 pub use oneiron_verb_wire::claim::scoped_read::weave_digest::{
-    WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveScheduleHold,
+    WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveScheduleHold,
 };
 
 const DIGEST_PREFIX: &[u8] = b"weave:digest:v1:";
@@ -170,6 +170,22 @@ impl WeaveDigestReader {
             recipient: Some(self.id()),
             created_at: now,
             origin_conversation: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WeaveDigestCadence {
+    Daily,
+    Weekly,
+}
+
+impl WeaveDigestCadence {
+    fn seconds(self) -> u64 {
+        match self {
+            Self::Daily => 86_400,
+            Self::Weekly => 604_800,
         }
     }
 }

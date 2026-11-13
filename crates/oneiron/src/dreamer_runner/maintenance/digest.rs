@@ -73,8 +73,7 @@ pub const DIGEST_NOTIFICATION_PRODUCER: &str = "dreamer.digest";
 pub const TRAINING_OFFER_GROUP: &str = "coach.training_offer";
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_runner::maintenance::digest::{
-    CLEANUP_GROUP, DigestCleanup, DigestNoteTombstones, DigestOffer, DigestProposal,
-    NOTE_TOMBSTONE_GROUP, ProactivityCadence,
+    CLEANUP_GROUP, DigestOffer, DigestProposal, NOTE_TOMBSTONE_GROUP, ProactivityCadence,
 };
 
 /// The cleanup line's view: the owner cleanup surface, where every archive
@@ -160,6 +159,57 @@ impl ProactivityPolicyRequest {
 pub struct ProactivityPolicyProposal {
     pub request: ProactivityPolicyRequest,
     pub revision: [u8; 32],
+}
+/// The cleanup cron's after-notice (ARCH-0073 §5): what it archived since
+/// the last digest that carried it, and the proposals that wait for the
+/// owner. Counts come from recorded decisions, never from the archive's size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DigestCleanup {
+    /// The cleanup decisions this line reports, by id.
+    pub decisions: Vec<String>,
+    pub archived: u64,
+    /// Candidates the accept or the run re-checked and left alone.
+    pub skipped: u64,
+    /// The open proposals this line reports, by id.
+    pub proposals: Vec<String>,
+    /// Records those proposals would archive.
+    pub proposed: u64,
+    pub view: String,
+}
+impl DigestCleanup {
+    /// The rendered items: "archived N", then what waits for review.
+    fn summaries(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.decisions.is_empty() {
+            out.push(format!("{CLEANUP_GROUP}: archived {}", self.archived));
+        }
+        if !self.proposals.is_empty() {
+            out.push(format!(
+                "{CLEANUP_GROUP}: {} to archive wait for review",
+                self.proposed
+            ));
+        }
+        out
+    }
+}
+/// The NOTE tombstone review's open proposals no digest carried yet. The
+/// line only points at them; the owner accepts or declines each at the view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DigestNoteTombstones {
+    /// The proposals this line reports, as `<note>:<proposed_at>`: a NOTE
+    /// archived again is a new proposal.
+    pub proposals: Vec<String>,
+    pub view: String,
+}
+impl DigestNoteTombstones {
+    fn summary(&self) -> String {
+        format!(
+            "{NOTE_TOMBSTONE_GROUP}: {} archived NOTEs wait for a tombstone review",
+            self.proposals.len()
+        )
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

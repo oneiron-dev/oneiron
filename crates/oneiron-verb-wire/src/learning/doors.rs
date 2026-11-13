@@ -1,9 +1,7 @@
 //! Moved from `crates/oneiron/src/learning/doors.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::claim::learning_evidence::EvidenceRow;
 pub use crate::claim::learning_predicate::MeasuredLearningPredicate;
-use crate::skill_attribution::late_credit::LateCreditReceipt;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_base::learning_estimate::Estimate;
@@ -119,12 +117,6 @@ pub struct LearningHeadView {
     pub supersedes: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LearningEvidenceView {
-    pub receipt: String,
-    pub evidence: EvidenceRow,
-}
-
 /// Observe the atomic projection receipt for one anchored attempt outcome.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -132,12 +124,6 @@ pub struct LearningProjectionRequest {
     pub attempt_receipt: String,
     pub outcome_receipt: String,
     pub axis: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LearningProjectionView {
-    /// Absent means no committed projection, not an empty successful projection.
-    pub receipt: Option<LateCreditReceipt>,
 }
 
 pub fn entity_id(reference: &str) -> Result<EntityId> {

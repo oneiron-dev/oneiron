@@ -37,10 +37,9 @@ use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_runner::free_time::doors::{
-    FreeTimeCycleRequest, FreeTimeCycleSummary, FreeTimeCycleView, FreeTimeCyclesPage,
-    FreeTimeCyclesRequest, FreeTimeItemReceiptView, FreeTimeItemView, FreeTimeLabelSpend,
-    FreeTimeNoteView, FreeTimePolicyRequest, FreeTimePolicyRow, FreeTimePolicyState,
-    FreeTimePolicyView, FreeTimeSpendView,
+    FreeTimeCycleRequest, FreeTimeCycleSummary, FreeTimeCyclesPage, FreeTimeCyclesRequest,
+    FreeTimeItemReceiptView, FreeTimeLabelSpend, FreeTimeNoteView, FreeTimePolicyRequest,
+    FreeTimePolicyRow, FreeTimePolicyState, FreeTimePolicyView, FreeTimeSpendView,
 };
 
 /// The owner sets or clears one agent's free-time policy.
@@ -54,6 +53,58 @@ pub struct FreeTimePolicySetRequest {
     /// The policy to set; absent or null clears it.
     #[serde(default)]
     pub policy: Option<FreeTimePolicyInput>,
+}
+
+/// One item a cycle opened with.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FreeTimeItemView {
+    pub item: String,
+    pub kind: FreeTimeKind,
+    /// The label its calls carry: `autonomy.for_human` or
+    /// `autonomy.own_time`.
+    pub purpose: String,
+    /// The attempt that runs it, 32 hex; `None` for an own-time item of a
+    /// resident whose dreaming is off, which only rest ends.
+    pub attempt: Option<String>,
+    /// The spend scope its calls draw on under the cycle's root, as the
+    /// spend records name it.
+    pub spend_scope: Option<String>,
+    /// `None` while it has no receipt.
+    pub receipt: Option<FreeTimeItemReceiptView>,
+}
+
+/// One cycle's sheet.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FreeTimeCycleView {
+    pub agent: String,
+    pub cycle: String,
+    pub state: FreeTimeCycleState,
+    /// The policy revision it opened under, with that policy's total and
+    /// split as they stood.
+    pub policy_revision: u64,
+    pub total_units: u64,
+    pub unit: String,
+    pub pinned_split: Option<FreeTimeSplit>,
+    /// Unix seconds: the boundary before this one, 0 when none was found.
+    pub period_start: u64,
+    /// Unix seconds: the owner-set boundary it opened at.
+    pub boundary: u64,
+    /// Unix seconds: the next boundary, at which it ends at the latest.
+    pub next_boundary: Option<u64>,
+    pub opened_at: u64,
+    pub closed_at: Option<u64>,
+    /// The root spend scope holding the owner's total.
+    pub root_scope: String,
+    /// The floor, from the item receipts alone: a for-human item that
+    /// landed a proposal and an own-time item that reflected or rested.
+    pub floor: FreeTimeFloor,
+    /// Whether every item receipt read in this snapshot; when not, the floor
+    /// is Unknown. Apart from the spend's own `complete`.
+    pub items_complete: bool,
+    pub items: Vec<FreeTimeItemView>,
+    /// The agent's short note to its human; `None` when it wrote none.
+    pub note: Option<FreeTimeNoteView>,
+    pub spend: FreeTimeSpendView,
 }
 
 fn invalid(reason: &str) -> Error {

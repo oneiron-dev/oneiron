@@ -25,13 +25,81 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
 
+/// An existing change joining this explicit review. No raw entity, approval,
+/// actor or external action can be supplied through this door.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RunReviewChange {
+    Claim {
+        claim_ref: String,
+    },
+    /// An edge is undone through its existing provenance retraction door.
+    Edge {
+        provenance_ref: String,
+    },
+    Note {
+        note_ref: String,
+        fork_ref: String,
+    },
+    Topology {
+        event_ref: String,
+    },
+    /// An existing external-effect gate receipt; it is never replayed.
+    ExternalEffect {
+        receipt_ref: String,
+    },
+    Delete {
+        entity_ref: String,
+    },
+    Erase {
+        entity_ref: String,
+    },
+}
+
+impl RunReviewChange {
+    fn change(&self) -> &str {
+        match self {
+            Self::Claim { claim_ref } => claim_ref,
+            Self::Edge { provenance_ref } => provenance_ref,
+            Self::Note { fork_ref, .. } => fork_ref,
+            Self::Topology { event_ref } => event_ref,
+            Self::ExternalEffect { receipt_ref } => receipt_ref,
+            Self::Delete { entity_ref } | Self::Erase { entity_ref } => entity_ref,
+        }
+    }
+
+    fn rows(&self) -> MemoryResult<Vec<EntityId>> {
+        match self {
+            Self::ExternalEffect { .. } => Ok(Vec::new()),
+            Self::Note { note_ref, .. } => Ok(vec![EntityId::from_hex(note_ref)?]),
+            _ => Ok(vec![EntityId::from_hex(self.change())?]),
+        }
+    }
+}
+
+/// The exact set being reviewed, including any child-job changes. A run id
+/// labels the job, not an actor and not a time range.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunReviewRequest {
+    pub run_id: String,
+    pub changes: Vec<RunReviewChange>,
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::run_review::{
     RevertRunOutcome, RevertRunRequest, RunAnsweredBy, RunChangeOutcome, RunChangeVerdict,
-    RunCompensation, RunNotUndone, RunNotUndoneReason, RunReview, RunReviewChange,
-    RunReviewExplainer, RunReviewRequest, RunSettleDecision, RunSettleRequest, RunSettlement,
-    RunSettlementKind, RunSettlementReason, RunSettlementRequest,
+    RunCompensation, RunNotUndone, RunNotUndoneReason, RunReview, RunReviewExplainer,
+    RunSettleDecision, RunSettlement, RunSettlementKind, RunSettlementReason, RunSettlementRequest,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunSettleRequest {
+    pub review: RunReviewRequest,
+    pub review_id: String,
+    pub decision: RunSettleDecision,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredRun {

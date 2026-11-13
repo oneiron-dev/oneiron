@@ -1,8 +1,3 @@
-pub use crate::memory::structural::productivity::ProductivityCreateRequest;
-pub use crate::memory::structural::productivity::ProductivityCreateRole;
-pub use crate::memory::structural::productivity::ProductivityNode;
-pub use crate::memory::structural::productivity::ProductivityRole;
-pub use crate::memory::structural::productivity::ProductivityTree;
 pub use crate::memory::structural::productivity::ProductivityTreeRequest;
 pub use crate::memory::structural::types::AdmitImportedClaimInput;
 pub use crate::memory::structural::types::BlobArtifactInput;

@@ -20,11 +20,108 @@ use super::manifest_authenticity::manifest_is_trusted;
 const PROJECT_REF_KEY: &str = "project_ref";
 
 #[doc(hidden)]
-use oneiron_verb_wire::gate::owner_policy_mutation::target;
-#[doc(hidden)]
-pub use oneiron_verb_wire::gate::owner_policy_mutation::{
-    PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
-};
+pub use oneiron_verb_wire::gate::owner_policy_mutation::PolicyRowScope;
+
+/// The allowed row actions, with the same spellings as the manifest decoder.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyRowAction {
+    Warn,
+    Reword,
+    Block,
+    RouteToHelp,
+}
+
+impl PolicyRowAction {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Warn => "warn",
+            Self::Reword => "reword",
+            Self::Block => "block",
+            Self::RouteToHelp => "route_to_help",
+        }
+    }
+}
+
+/// Provenance of optional explanatory text. Model-authored drafts are never
+/// allowed to replace an owner's own reason.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyWhySource {
+    Owner,
+    Drafted,
+}
+
+impl PolicyWhySource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Drafted => "drafted",
+        }
+    }
+}
+
+/// An exact-key edit: add refuses an occupied key, edit/remove refuse a missing key.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub enum PolicyRowChange {
+    Add {
+        row_ref: String,
+        text: String,
+        action: PolicyRowAction,
+        scope: PolicyRowScope,
+    },
+    Edit {
+        row_ref: String,
+        text: String,
+        action: PolicyRowAction,
+        scope: PolicyRowScope,
+    },
+    Remove {
+        row_ref: String,
+        scope: PolicyRowScope,
+    },
+    /// An add/edit with an explicit owner reason in the same receipt.
+    AddWithWhy {
+        row_ref: String,
+        text: String,
+        action: PolicyRowAction,
+        scope: PolicyRowScope,
+        why: String,
+    },
+    EditWithWhy {
+        row_ref: String,
+        text: String,
+        action: PolicyRowAction,
+        scope: PolicyRowScope,
+        why: String,
+    },
+    /// A model suggestion is explicitly marked and never outranks an owner reason.
+    DraftWhy {
+        row_ref: String,
+        scope: PolicyRowScope,
+        why: String,
+    },
+}
+
+impl PolicyRowChange {
+    /// Exact row reference targeted by this change.
+    #[must_use]
+    pub fn row_ref(&self) -> &str {
+        target(self).0
+    }
+
+    /// Exact scope targeted by this change.
+    #[must_use]
+    pub fn scope(&self) -> &PolicyRowScope {
+        target(self).1
+    }
+}
 
 fn invalid(message: &'static str) -> Error {
     Error::InvalidConfig(message.to_owned())
@@ -91,6 +188,17 @@ fn row_key(row: &Value) -> Result<(&str, PolicyRowScope)> {
         _ => return Err(invalid("ambiguous owner policy row scope")),
     };
     Ok((row_ref, scope))
+}
+
+fn target(change: &PolicyRowChange) -> (&str, &PolicyRowScope) {
+    match change {
+        PolicyRowChange::Add { row_ref, scope, .. }
+        | PolicyRowChange::Edit { row_ref, scope, .. }
+        | PolicyRowChange::Remove { row_ref, scope }
+        | PolicyRowChange::AddWithWhy { row_ref, scope, .. }
+        | PolicyRowChange::EditWithWhy { row_ref, scope, .. }
+        | PolicyRowChange::DraftWhy { row_ref, scope, .. } => (row_ref, scope),
+    }
 }
 
 fn validate_target(row_ref: &str, scope: &PolicyRowScope) -> Result<()> {

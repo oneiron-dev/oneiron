@@ -21,9 +21,8 @@ use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryErro
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::critical_confirm::{
-    CriticalWriteConfirmAnswer, CriticalWriteConfirmPendingRequest, CriticalWriteConfirmReceipt,
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPendingRequest,
     CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
-    CriticalWriteConfirmSettlement,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -37,6 +36,26 @@ pub struct CriticalWriteConfirmPending {
     pub expires_at: u64,
     /// Replicated and reopened owner-answer obligations have no deadline.
     pub has_deadline: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CriticalWriteConfirmReceipt {
+    /// The signed, fold-verified authority entry (authority:<64-hex>).
+    pub receipt_ref: String,
+    pub confirm_id: String,
+    pub pending_operation: String,
+    pub claim_ref: String,
+    pub nonce: String,
+    pub read_frontier_hash: String,
+    pub effect_digest: String,
+    pub expires_at: u64,
+    pub disposition: CriticalWriteConfirmAnswer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CriticalWriteConfirmSettlement {
+    pub receipt: CriticalWriteConfirmReceipt,
+    pub resolution: CriticalWriteConfirmResolution,
 }
 
 impl CriticalWriteConfirmPending {
@@ -53,6 +72,29 @@ impl CriticalWriteConfirmPending {
             effect_digest: bytes_to_hex_lower(&binding.effect_digest),
             expires_at: binding.expires_at,
             has_deadline: !critical_confirm_has_no_deadline(pending),
+        }
+    }
+}
+
+impl CriticalWriteConfirmReceipt {
+    fn from_state(state: &CriticalWriteConfirmState) -> Self {
+        let action = &state.action;
+        Self {
+            receipt_ref: format!(
+                "authority:{}",
+                bytes_to_hex_lower(&state.authority_entry_hash)
+            ),
+            confirm_id: bytes_to_hex_lower(&action.confirm_id),
+            pending_operation: format!("gate:{}", bytes_to_hex_lower(&action.gate_decision_id)),
+            claim_ref: action.claim_id.to_hex(),
+            nonce: bytes_to_hex_lower(&action.nonce),
+            read_frontier_hash: bytes_to_hex_lower(&action.read_frontier_hash),
+            effect_digest: bytes_to_hex_lower(&action.effect_digest),
+            expires_at: action.expires_at,
+            disposition: match action.disposition {
+                CriticalWriteConfirmDisposition::Clear => CriticalWriteConfirmAnswer::Clear,
+                CriticalWriteConfirmDisposition::Decline => CriticalWriteConfirmAnswer::Decline,
+            },
         }
     }
 }

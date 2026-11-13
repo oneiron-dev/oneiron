@@ -17,7 +17,33 @@ pub(super) const CREDIT_RECEIPT: SideTable<String, LateCreditReceipt, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_LATE_CREDIT);
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::skill_attribution::late_credit::{LateCreditReceipt, LateCreditShare};
+pub use oneiron_verb_wire::skill_attribution::late_credit::LateCreditShare;
+
+/// An anchored projection's receipt. Empty shares explicitly record no late
+/// credit, including disabled credit, an environment verdict or an unclear one.
+/// It is sealed: what later checks and late landings make of it is appended
+/// beside it, with the `credit_decay` it was projected under
+/// ([`super::CreditAdjustmentReceipt`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LateCreditReceipt {
+    pub receipt_id: String,
+    pub attempt_receipt: String,
+    pub outcome_receipt: String,
+    pub anchor: Anchor,
+    pub succeeded: bool,
+    pub axis: String,
+    pub at: u64,
+    /// The goal revision the outcome was checked under, as the host froze it;
+    /// `None` is unscoped credit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_revision: Option<String>,
+    /// The run's frozen attribution; `None` once an erased entity is one it
+    /// names (FIX 8988).
+    pub attribution: Option<PackAttributionFields>,
+    /// Each subject credited directly; `None` for one since erased.
+    pub direct_subjects: Vec<Option<EntityId>>,
+    pub shares: Vec<LateCreditShare>,
+}
 
 /// Reads the recorded chains and shares, never reconstructing them from a
 /// subsequently changed provenance graph or learned decay setting.

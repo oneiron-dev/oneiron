@@ -83,10 +83,33 @@ impl AskForwardAct {
     }
 }
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::task_verb::ask_forward::AskForwardHolderProof;
-#[doc(hidden)]
-use oneiron_verb_wire::task_verb::ask_forward::holder_signature_bytes;
+/// The holder's proof for one intent: their slip, and their signature over
+/// the slip's binding transcript (`CapabilitySlip::binding_transcript`) of
+/// [`ask_forward_challenge`]. It proves this one intent; the request that
+/// carries it authenticates apart, as every request does (FIX 20468).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AskForwardHolderProof {
+    /// The holder's `v2.slip.` token.
+    pub token: String,
+    /// The holder's Ed25519 signature, 128 lowercase hex characters.
+    pub signature: String,
+}
+
+/// Hand-written so the token cannot reach a log through a derive.
+impl std::fmt::Debug for AskForwardHolderProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AskForwardHolderProof")
+            .finish_non_exhaustive()
+    }
+}
+
+impl AskForwardHolderProof {
+    /// The signature's bytes: exactly 128 lowercase hex characters.
+    fn signature_bytes(&self) -> Option<[u8; 64]> {
+        holder_signature_bytes(&self.signature)
+    }
+}
 
 /// The holder's proof as a stored intent keeps it: the slip token and the
 /// signature of [`AskForwardHolderProof`], under keys the write door's
@@ -130,6 +153,9 @@ impl StoredHolderProof {
         holder_signature_bytes(&self.signature)
     }
 }
+
+#[doc(hidden)]
+use oneiron_verb_wire::task_verb::ask_forward::holder_signature_bytes;
 
 /// One relayed intent, as the replica that took it persisted it: an
 /// immutable TASK companion record, never an answer. Its id derives from its

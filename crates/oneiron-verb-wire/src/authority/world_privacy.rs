@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/authority/world_privacy.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::authority::*;
 pub use oneiron_base::machine_destination::Destination;
 pub use oneiron_base::machine_destination::EffectiveRead;
-use std::collections::BTreeSet;
 
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,

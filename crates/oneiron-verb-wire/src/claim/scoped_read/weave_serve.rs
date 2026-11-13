@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/claim/scoped_read/weave_serve.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::claim::scoped_read::weave_report::WeaveSectionKind;
-use crate::claim::scoped_read::weave_report::WeaveSectionSpec;
 use oneiron_base::edge::EdgeKind;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::MemoryError;
@@ -10,55 +8,6 @@ use oneiron_contracts::memory::MemoryResult;
 use oneiron_store::write_envelope::provenance::edge_ref::EdgeRef;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// One section a weave report asks for, in the reader's own recipe.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveSectionInput {
-    pub kind: WeaveSectionKind,
-    /// Exact claim predicates the section reads.
-    #[serde(default)]
-    pub predicates: Vec<String>,
-    /// Direct graph kinds, by name, for a `links` section.
-    #[serde(default)]
-    pub edge_kinds: Vec<String>,
-}
-
-impl WeaveSectionInput {
-    fn spec(&self) -> MemoryResult<WeaveSectionSpec> {
-        Ok(WeaveSectionSpec {
-            kind: self.kind,
-            predicates: self.predicates.clone(),
-            edge_kinds: self
-                .edge_kinds
-                .iter()
-                .map(|name| {
-                    EdgeKind::from_name(name)
-                        .ok_or_else(|| MemoryError::bad_request("unknown weave edge kind"))
-                })
-                .collect::<MemoryResult<Vec<_>>>()?,
-        })
-    }
-
-    fn from_spec(spec: &WeaveSectionSpec) -> Self {
-        Self {
-            kind: spec.kind,
-            predicates: spec.predicates.clone(),
-            edge_kinds: spec
-                .edge_kinds
-                .iter()
-                .map(|kind| kind.name().to_owned())
-                .collect(),
-        }
-    }
-}
-
-/// `vault.weave.report`'s input: the sections, in order.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveReportRequest {
-    pub sections: Vec<WeaveSectionInput>,
-}
 
 /// `vault.weave.digest`'s input: one saved period, or the newest.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
