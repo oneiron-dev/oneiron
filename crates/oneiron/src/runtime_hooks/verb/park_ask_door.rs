@@ -9,6 +9,7 @@ use serde_json::json;
 
 use super::ask::{self, Retry};
 use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, hook_class};
+use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::pack_catalog::{
     HookAuthor, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHookBinding,
 };
@@ -41,10 +42,21 @@ pub struct HookAsk {
 }
 
 impl HookAsk {
-    /// The owner's asking pre-hook on `verb` (a binding row the door holds;
-    /// the ask's own write names it, as a pack install's would).
-    #[must_use]
-    pub fn on_verb(owner: EntityId, verb: &str) -> Self {
+    /// The owner's asking pre-hook on `verb`, bound as the owner's bind of
+    /// a pack writes it (its CODE entity and its binding claim, under
+    /// `proof`): the hook's ask names that claim as its question, and the
+    /// ask door reads it.
+    ///
+    /// # Errors
+    ///
+    /// The bind's write refused.
+    pub fn on_verb(
+        vault: &Vault,
+        owner: EntityId,
+        proof: &AuthenticatedOwner,
+        verb: &str,
+    ) -> Result<Self> {
+        let body_hash = *blake3::hash(b"ask-before-use").as_bytes();
         let binding = PackHookBinding {
             // HOOK_BINDING_VERSION; `ask::open` reads only the pack, the
             // hook and the author.
@@ -55,7 +67,7 @@ impl HookAsk {
             pack: PACK.to_owned(),
             hook: HOOK.to_owned(),
             hook_version: "1".to_owned(),
-            body_hash: blake3::hash(b"ask-before-use").to_hex().to_string(),
+            body_hash: blake3::Hash::from(body_hash).to_hex().to_string(),
             selector: HookSelector {
                 verbs: vec![verb.to_owned()],
                 actors: Vec::new(),
@@ -71,12 +83,13 @@ impl HookAsk {
             enabled: true,
             author: HookAuthor::Owner,
         };
-        Self {
+        let binding_id = vault.bind_hook_row_for_test(proof, &binding, body_hash)?;
+        Ok(Self {
             owner,
-            binding_id: EntityId::now(),
+            binding_id,
             binding,
             verb: verb.to_owned(),
-        }
+        })
     }
 
     /// The call of this hook's verb by `actor` under `invocation`, as a
