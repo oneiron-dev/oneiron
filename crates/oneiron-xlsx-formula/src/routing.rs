@@ -12,8 +12,9 @@
 //! - any formula whose parsed AST holds a reference that reads another
 //!   workbook (`reads_another_workbook`): a `[book]Sheet!A1` reference,
 //!   quoted or bracket-pathed, a defined name of a linked workbook
-//!   (`[1]!Rate`) or a linked workbook's table (`[1]!Table1[Col]`); or, over
-//!   the parser's token bound, any range operand whose own reference is one;
+//!   (`[1]!Rate`) or a linked workbook's table (`[1]!Table1[Col]`,
+//!   `'[1]Rates'!Table1[Col]`); or, over the parser's token bound, any range
+//!   operand whose own reference is one;
 //! - anything else is local.
 //!
 //! The router only reads; it never rewrites parts and never discards unknown
@@ -171,8 +172,11 @@ fn has_external_reference(formula: &str) -> std::result::Result<bool, ()> {
     while let Some(node) = pending.pop() {
         match &node.node_type {
             ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
-            ASTNodeType::Reference { reference, .. } => {
-                if reads_another_workbook(reference) {
+            ASTNodeType::Reference {
+                original,
+                reference,
+            } => {
+                if reads_another_workbook(original, reference) {
                     return Ok(true);
                 }
             }
@@ -215,7 +219,7 @@ fn may_name_a_workbook(formula: &str) -> std::result::Result<bool, ()> {
             continue;
         }
         let external = match ReferenceType::from_string(token.value) {
-            Ok(reference) => reads_another_workbook(&reference),
+            Ok(reference) => reads_another_workbook(token.value, &reference),
             Err(_) => true,
         };
         if external {
@@ -225,31 +229,52 @@ fn may_name_a_workbook(formula: &str) -> std::result::Result<bool, ()> {
     Ok(false)
 }
 
-/// Whether one parsed reference reads another workbook. The parser builds
-/// `ReferenceType::External` only for a sheet reference (`[1]Sheet1!A1`). A
-/// defined name of a linked workbook (`[1]!Rate`, `[1]Sheet1!Rate`) parses as
-/// a name, and a linked workbook's table (`[1]!Table1[Col]`) as a table whose
-/// name keeps its book; both read the linked workbook all the same, so the
-/// fallback must keep their cells as it keeps any other link (ARCH-0075
+/// Whether one range operand reads another workbook. The parser builds
+/// `ReferenceType::External` only for a sheet cell or range (`[1]Sheet1!A1`).
+/// It reads a defined name of a linked workbook (`[1]!Rate`,
+/// `[1]Sheet1!Rate`) as a name, and a linked workbook's table as a table:
+/// `[1]!Table1[Col]` keeps its book in the table's name, but a
+/// sheet-qualified one (`'[1]Rates'!Table1[Col]`) becomes the table `Table1`
+/// with its book dropped. Each reads the linked workbook all the same, so the
+/// operand's own text decides through its sheet qualifier, and the fallback
+/// keeps such a cell as it keeps any other link (ARCH-0075
 /// #calc-bounds-built).
-fn reads_another_workbook(reference: &ReferenceType) -> bool {
-    match reference {
-        ReferenceType::External(_) => true,
-        ReferenceType::NamedRange(name) => book_qualified(name),
-        ReferenceType::Table(table) => book_qualified(&table.name),
-        _ => false,
-    }
+fn reads_another_workbook(operand: &str, reference: &ReferenceType) -> bool {
+    matches!(reference, ReferenceType::External(_)) || qualifier_names_a_book(operand)
 }
 
-/// Whether `name` carries a workbook qualifier before its last `!`: a closed
-/// `[...]` token, as in `[1]!Rate`, `[1]Sheet1!Rate` or `'[1]Sheet1'!Rate`.
-/// A structured reference's column header may hold a `!`
-/// (`Prices[[Cost!USD]]`), which the parser reads as a name, but the last `[`
-/// before that `!` is never closed there, so it names no book. The workbook's
-/// own `[0]!Rate` reaches here as `Rate`.
-fn book_qualified(name: &str) -> bool {
-    name.rsplit_once('!').is_some_and(|(book, _)| {
-        book.rfind('[')
-            .is_some_and(|open| book[open..].contains(']'))
+/// Whether a range operand's sheet qualifier holds a closed `[...]` workbook
+/// token. The qualifier is read as the parser reads it: the body of a leading
+/// quoted `'...'` segment (`''` is a quote inside it), else the text before
+/// the first `!`. As in the parser, the last `[` opens the token, so a path
+/// before it may hold brackets. `[0]` is the workbook itself, so a leading
+/// `[0]` names no book (`[0]!Rate`). A structured reference's column header
+/// may hold a `!` (`Prices[[Cost!USD]]`), but the last `[` before that `!` is
+/// never closed there, so it names no book.
+fn qualifier_names_a_book(operand: &str) -> bool {
+    let qualifier = match operand.strip_prefix('\'') {
+        Some(quoted) => Some(quoted_segment_body(quoted)),
+        None => operand.split_once('!').map(|(qualifier, _)| qualifier),
+    };
+    qualifier.is_some_and(|qualifier| {
+        let qualifier = qualifier.strip_prefix("[0]").unwrap_or(qualifier);
+        qualifier
+            .rfind('[')
+            .is_some_and(|open| qualifier[open..].contains(']'))
     })
+}
+
+/// The body of a quoted sheet segment, `rest` being the text after its
+/// opening `'`: up to the first `'` that is not doubled, or all of `rest`
+/// when the quote never closes.
+fn quoted_segment_body(rest: &str) -> &str {
+    let mut from = 0;
+    while let Some(found) = rest[from..].find('\'') {
+        let quote = from + found;
+        if !rest[quote + 1..].starts_with('\'') {
+            return &rest[..quote];
+        }
+        from = quote + 2;
+    }
+    rest
 }
