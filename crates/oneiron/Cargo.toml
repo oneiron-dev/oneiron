@@ -329,6 +329,12 @@ name = "it_sync"
 path = "tests/it_sync/main.rs"
 required-features = ["sync", "test-support"] # sync_harness uses MemoryKeystore (test-support forwards oneiron-keystore/test-keystore)
 
+# Arms a slow phonetic stage and the deadline's still clock (test hooks).
+[[test]]
+name = "phonetic_stage_deadline"
+path = "tests/phonetic_stage_deadline.rs"
+required-features = ["test-hooks"]
+
 [[bench]]
 name = "sync_memory"
 harness = false
