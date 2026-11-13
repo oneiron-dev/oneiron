@@ -1,6 +1,6 @@
 //! Tool-first projections of the engine-owned typed read table.
 
-use super::{McpGatewayError, mcp_engine_error, mcp_scoped_read};
+use super::{McpGatewayError, mcp_api_error, mcp_engine_error, mcp_scoped_read};
 use crate::mcp::McpResolvedActor;
 use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
@@ -170,9 +170,26 @@ fn execute_read(
 ) -> Result<MemoryRead, McpGatewayError> {
     check_query_bound(server, actor, method, &body)?;
     let reader = mcp_scoped_read(&server.vault, actor)?;
+    // A context pack the call takes in a live stretch reads it beside base,
+    // bound by the accepted route's own rule (`context_pack_room`): the
+    // owner on their proof, a room's member on their own live slip, anyone
+    // else base alone (ARCH-0052 #e5-read-union-open,
+    // ROOM-PACK-IN-PROCESS-ADAPTER-READS-BASE). Every other method reads base.
+    let stretch = match actor.auth.as_ref() {
+        Some(auth) if matches!(method, VaultReadMethod::ContextPack) => {
+            crate::api::context_pack::context_pack_room(server, auth).map_err(mcp_api_error)?
+        }
+        _ => None,
+    };
+    let stretch_read = stretch
+        .as_ref()
+        .map(oneiron::off_record::RoomPackSession::read)
+        .transpose()
+        .map_err(|error| mcp_engine_error("context-pack stretch read failed", error))?;
     let producers = oneiron::memory::ProducerRows::default();
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
         .with_media_query_memory(&server.memory)
+        .with_room_pack(stretch_read.as_ref())
         .listing_producers(&producers)
         .deferring_served_forms(forms);
     let adapter = match media {
