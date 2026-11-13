@@ -23,9 +23,12 @@
 //! as more than that phrase, the items that read as it take the handle, and
 //! the rest stay as written (REVIEW-7060 P1).
 //!
-//! What the door finds but cannot place still refuses the whole write: a
-//! key split over members, an entity the engine itself authors or a peer
-//! replicated, and a replayed batch. A plan runs first on a copy, with a
+//! What the door finds but no span places is sealed whole (`seal_whole`):
+//! the smallest value that reads as the hit alone goes to custody, and its
+//! handle takes its place; the scan never refuses a write for it. What no
+//! seal can take still refuses the whole write: a key split over a file's
+//! members, an entity the engine itself authors or a peer replicated, a
+//! phonetic code, and a replayed batch. A plan runs first on a copy, with a
 //! stand-in handle for each secret and each file's keys overwritten, and
 //! the door reads that copy again; only a clean copy mints custody records.
 
@@ -42,6 +45,7 @@ mod known_note;
 mod leaf_keys;
 mod promoted_message_parts;
 pub(super) mod retained_repo;
+mod seal_whole;
 pub(super) mod side_row;
 mod split_phrase;
 pub(super) mod spool;
@@ -163,20 +167,16 @@ pub(crate) fn seal_whole_part_in_txn(
     reason: Option<&'static str>,
     at: u64,
 ) -> Result<String> {
-    let mut plan = Masker::default();
-    plan.found.push(Found {
-        value: Zeroizing::new(value.to_vec()),
-        reason: reason.unwrap_or(REASON_KNOWN_VALUE),
+    seal_whole::seal_value_in_txn(
+        &CustodyWrite::of(vault),
+        wtxn,
+        None,
         record,
-        place: place.to_owned(),
-    });
-    let handles = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
-    handles
-        .get(value)
-        .map(|(handle, _)| handle.clone())
-        .ok_or(Error::InvariantViolation(
-            "a sealed part's custody record has no handle",
-        ))
+        place,
+        value,
+        reason.unwrap_or(REASON_KNOWN_VALUE),
+        at,
+    )
 }
 
 /// Test door (`test_doors::lifted_text`): marks each place the stored `text`
