@@ -50,6 +50,7 @@ pub mod note_bm25f_repair;
 pub mod off_record_shell;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
+pub mod reply_attachments;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod resident_wake_hold;
