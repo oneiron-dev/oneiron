@@ -350,13 +350,17 @@ pub(in crate::sync) fn prepare_bounded_replacement(
 /// replacement does, the candidate is a fresh document built from the snapshot alone, and `old`
 /// contributes what this vault holds that the snapshot does not: steps 1, 2 and 4 above, on the
 /// document alone. A mirror has no queued sends, pending mirrors or markers here, and its caller
-/// lands its rows. Returns the candidate and how many of `old`'s values it could not carry over.
+/// lands its rows. The caller may store the candidate without an export scrub, so each policy no
+/// binding reaches after the carried-over deletes goes before it returns, the window `window`
+/// pinned history-free first (fix list row 17211). Returns the candidate and how many of `old`'s
+/// values it could not carry over.
 ///
 /// # Errors
 ///
 /// A snapshot that does not decode whole; storage failures.
 pub(crate) fn replace_detached_mirror(
     vault: &Vault,
+    window: &WindowKey,
     old: &LoroDoc,
     snapshot: &[u8],
 ) -> Result<(LoroDoc, usize)> {
@@ -372,6 +376,7 @@ pub(crate) fn replace_detached_mirror(
     hard.extend(hard_tombstones(&candidate));
     conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
     conflicts.extend(delete_wins(&candidate, &written)?);
+    crate::sync::source_audiences::prune_unreached_policies(vault, &candidate, Some(window))?;
     candidate.commit();
     conflicts.retain(|conflict| !holds_value(&candidate, conflict));
     Ok((candidate, conflicts.len()))
