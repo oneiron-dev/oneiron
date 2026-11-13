@@ -514,6 +514,24 @@ impl Vault {
         Ok(recent.into_values().rev().collect())
     }
 
+    /// Every hub-import receipt from `hub` for `ref_string`, with the skill
+    /// entity it landed, in one read snapshot. It grants no read authority.
+    pub(super) fn hub_import_receipts_for_ref_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hub: &EntityId,
+        ref_string: &str,
+    ) -> Result<Vec<(EntityId, HubImportReceipt)>> {
+        let mut rows = Vec::new();
+        for row in IMPORT_RECEIPT.iter_from(&self.store, txn, &[])? {
+            let ((entity, source_hub, _), receipt) = row?;
+            if source_hub == *hub && receipt.ref_string == ref_string {
+                rows.push((entity, receipt));
+            }
+        }
+        Ok(rows)
+    }
+
     pub fn hub_import_receipt(
         &self,
         entity: &EntityId,

@@ -13,6 +13,7 @@ use super::{
     },
 };
 use crate::ports::TombstoneStoreRead;
+use crate::skill::SkillLifecycle;
 pub use crate::store::default_skill_hub::default_skill_hub_id;
 use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, temporal::TimeRange};
 
@@ -32,6 +33,14 @@ pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explaine
 /// [`Vault::import_default_hub_skill`] at the released commit; nothing
 /// imports it on open.
 pub const WRITE_A_WATCHER_SUBTREE: &str = "skills/write-a-watcher";
+/// The Coach's retrieval-tuning skill (ARCH-0053 #tune-retrieval): the knob
+/// ranges, the symptom -> cause -> change playbook and the judging rules the
+/// slow retrieval loop reads at sleep, beside the bandit that tunes the
+/// retrieval arms. Library data like the review explainer: it imports
+/// through [`Vault::import_default_hub_skill`] at the released commit;
+/// nothing imports it on open. [`Vault::installed_default_hub_skill`] finds
+/// the owner's import.
+pub const TUNE_ONEIRON_RETRIEVAL_SUBTREE: &str = "skills/tune-oneiron-retrieval";
 /// The model catalog has no authority of its own. Its rows count once the
 /// fetched bytes carry scan evidence and the pack installs; which bytes are
 /// fetched is the ref's sync policy, vault data rather than an engine constant.
@@ -133,7 +142,66 @@ pub const fn default_skill_hub_commit() -> &'static str {
     HUB_COMMIT
 }
 
+/// A library skill the owner imported from the default hub, as its current
+/// content stands: the row a reader such as the Coach reads, and the stamp
+/// it records beside what it read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledLibrarySkill {
+    pub entity: EntityId,
+    /// The skill's declared id.
+    pub skill_id: String,
+    /// The skill's declared version.
+    pub version: String,
+    /// The hub commit the import read.
+    pub commit: String,
+}
+
 impl Vault {
+    /// The library skill the owner imported from `subtree` of the default
+    /// hub, at its current content, or `None` before any import: nothing
+    /// imports a library skill on open. A Candidate or Active row counts; a
+    /// deleted, stale, quarantined or superseded one does not. Of several
+    /// imports, the latest receipt wins. Like
+    /// [`Self::current_hub_import_receipts`], this read grants no authority.
+    pub fn installed_default_hub_skill(
+        &self,
+        subtree: &str,
+    ) -> Result<Option<InstalledLibrarySkill>> {
+        let hub = default_skill_hub_id()?;
+        let txn = self.store.env.read_txn()?;
+        let mut latest: Option<(u64, InstalledLibrarySkill)> = None;
+        for (entity, receipt) in self.hub_import_receipts_for_ref_in_txn(&txn, &hub, subtree)? {
+            if latest.as_ref().is_some_and(|(at, _)| *at > receipt.at)
+                || TombstoneStoreRead::port_deletion_state(&self.store, &txn, &entity)?.deleted
+            {
+                continue;
+            }
+            let Some(record) = self.get_skill_record_in_txn(&txn, &entity)? else {
+                continue;
+            };
+            let current = record
+                .content_hash
+                .is_some_and(|hash| hash.to_hex() == receipt.content_hash);
+            let readable = matches!(
+                record.lifecycle_status,
+                SkillLifecycle::Candidate | SkillLifecycle::Active
+            );
+            let Some(commit) = receipt.pin_value.filter(|_| current && readable) else {
+                continue;
+            };
+            latest = Some((
+                receipt.at,
+                InstalledLibrarySkill {
+                    entity,
+                    skill_id: record.skill_id,
+                    version: record.version,
+                    commit,
+                },
+            ));
+        }
+        Ok(latest.map(|(_, skill)| skill))
+    }
+
     /// Reads the first hub's identity, configured endpoint and skill root pin.
     /// The released commit is the default, not an override of an owner's pin.
     pub fn default_skill_hub(&self) -> Result<DefaultSkillHub> {
@@ -452,7 +520,9 @@ impl Vault {
         Ok(disposition)
     }
 
-    fn import_default_hub_skill_at_commit(
+    /// [`Self::import_default_hub_skill`] at `commit`: the released commit,
+    /// or a test's local folder fixture.
+    pub(crate) fn import_default_hub_skill_at_commit(
         &self,
         owner: &AuthenticatedOwner,
         subtree: &str,
