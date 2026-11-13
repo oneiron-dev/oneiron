@@ -10,6 +10,10 @@
 //! an image or audio ASSET serves no replica, and the install refuses an ASSET. Green on the
 //! head.
 //!
+//! A record past the inline limit lives in the file plane, and its stored row keeps a
+//! manifest. A residence door serves that row whole (`sync::asset_body::served_row`) and
+//! hashes it so, so a replica names the digest of the whole row, never of the manifest.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features
 //! --test media_vector_replica`
 #![cfg(all(feature = "sync", oneiron_test_support))]
@@ -19,8 +23,10 @@ use std::collections::BTreeSet;
 use base64::Engine as _;
 use oneiron::embed::{EmbeddingSpace, InputKind, MediaVectorReplica};
 use oneiron::memory::AssetIngestRequest;
+use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::test_doors::media_vector_replica::install_media_vector_replica;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use serde_json::Value;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -95,6 +101,21 @@ fn served_replica(vault: &Vault, asset: &EntityId, kind: &str) -> TestResult<Med
         "an image or audio replica is bound to its ASSET row, which names the bytes"
     );
     Ok(replica)
+}
+
+/// `record`, an ingested ASSET's body, with one binary field past the 8 MiB inline limit: a
+/// body the file plane holds, as a long ASSET record is held.
+fn long_record(record: &[u8]) -> TestResult<Vec<u8>> {
+    let rmpv::Value::Map(mut fields) = rmpv::decode::read_value(&mut &record[..])? else {
+        return Err("an ASSET record is a map".into());
+    };
+    fields.push((
+        rmpv::Value::from("padding"),
+        rmpv::Value::Binary(vec![0; 8 * 1024 * 1024 + 1]),
+    ));
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields))?;
+    Ok(body)
 }
 
 /// `replica` as it arrives on the wire after `edit` changed it.
@@ -195,6 +216,62 @@ fn an_image_replica_installs_only_where_the_asset_row_matches() -> TestResult {
         vault.media_vector_replicas(&asset, SPACE)?,
         vec![replica],
         "the installed vector is the home's"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_file_held_image_replica_names_the_row_a_residence_door_serves() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = media_vault(dir.path())?;
+    let vector = [0.25, 0.5, -0.25, 1.0];
+    let ingested = asset_with_vector(
+        &vault,
+        InputKind::Image,
+        "image/png",
+        b"\x89PNG\r\n\x1a\n filed image",
+        &vector,
+    )?;
+    let body = long_record(&vault.get(&ingested)?.ok_or("the ingested ASSET record")?)?;
+    let occurred = TimeRange {
+        start: OCCURRED_AT,
+        end: OCCURRED_AT,
+    };
+    // The first long body a vault stores stays in its row while the body-instance pool fills
+    // (FIX 22091); the next one is filed.
+    vault.put_entity(
+        &EntityId::now(),
+        ENTITY_TYPE_ASSET,
+        occurred,
+        OCCURRED_AT,
+        &body,
+    )?;
+    let asset = EntityId::now();
+    vault.put_entity(&asset, ENTITY_TYPE_ASSET, occurred, OCCURRED_AT, &body)?;
+    let stored = vault.get_raw(&asset)?.ok_or("the filed ASSET row")?;
+    assert!(
+        stored.len() < body.len(),
+        "the file plane holds the long record; its stored row keeps a manifest"
+    );
+    vault.put_media_vector(SPACE, &asset, InputKind::Image, &vector)?;
+
+    // A residence door serves the filed row whole: its header, then the whole record.
+    let mut served = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    served.extend_from_slice(&body);
+    let replicas = vault.media_vector_replicas(&asset, SPACE)?;
+    assert_eq!(
+        replicas.len(),
+        1,
+        "the home serves one replica of the filed image's vector"
+    );
+    assert_eq!(
+        replicas[0].sources(),
+        [(asset, *blake3::hash(&served).as_bytes())].as_slice(),
+        "the replica names the digest of the row a residence door serves, not of its manifest"
+    );
+    assert!(
+        install_media_vector_replica(&vault, &asset, &replicas[0])?,
+        "the replica installs where the same filed row is held"
     );
     Ok(())
 }
