@@ -28,7 +28,10 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::Request;
+use axum::extract::State;
+use axum::http::{HeaderValue, Request, header::AUTHORIZATION};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge};
 use oneiron::federation::{Scope, ScopeAxis};
@@ -54,6 +57,7 @@ const SKILL_V2: &[u8] =
 const RUN_SH: &[u8] = b"#!/bin/sh\necho hello\n";
 
 /// A slip and the key its holder signs each request's proof with.
+#[derive(Clone)]
 struct Credential {
     slip: CapabilitySlip,
     key: SigningKey,
@@ -105,6 +109,42 @@ impl Credential {
                 .to_string(),
         )
     }
+}
+
+/// The git client's signer: the served app spends each holder proof once
+/// (`admit_http_binding`), and stock git sends one clone, fetch or push as
+/// several HTTP requests with the same configured headers. So the app git
+/// talks to signs a fresh proof onto each request whose bearer is one of the
+/// fixture's two slips, as a signing client would; every gate still runs.
+#[derive(Clone)]
+struct GitSigner {
+    owner: Credential,
+    member: Credential,
+    vault: Arc<Vault>,
+}
+
+async fn sign_git_request(
+    State(signer): State<GitSigner>,
+    mut request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let token = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let who = [&signer.owner, &signer.member]
+        .into_iter()
+        .find(|who| token == Some(who.token.as_str()));
+    if let Some(who) = who {
+        let binding = who
+            .binding(&signer.vault)
+            .expect("sign a fresh holder proof")
+            .parse::<HeaderValue>()
+            .expect("a holder proof is a header value");
+        request.headers_mut().insert("x-oneiron-binding", binding);
+    }
+    next.run(request).await
 }
 
 struct Fixture {
@@ -174,11 +214,16 @@ impl Fixture {
         let app = build_app(Arc::clone(&server));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let endpoint = format!("http://{}/git", listener.local_addr()?);
-        let serving = tokio::spawn({
-            let app = app.clone();
-            async move {
-                let _ = axum::serve(listener, app).await;
-            }
+        let signer = GitSigner {
+            owner: owner.clone(),
+            member: member.clone(),
+            vault: Arc::clone(&vault),
+        };
+        let git_app = app
+            .clone()
+            .layer(middleware::from_fn_with_state(signer, sign_git_request));
+        let serving = tokio::spawn(async move {
+            let _ = axum::serve(listener, git_app).await;
         });
         Ok(Self {
             app,
@@ -222,8 +267,9 @@ impl Fixture {
         Ok(answer)
     }
 
-    /// Stock git in `cwd`, under `who`'s slip and a fresh proof when given,
-    /// with no user or system config.
+    /// Stock git in `cwd`, under `who`'s slip when given (the served app
+    /// signs each request's proof, [`GitSigner`]), with no user or system
+    /// config.
     async fn git(&self, cwd: &Path, who: Option<&Credential>, args: &[&str]) -> TestResult<Output> {
         let mut command = Command::new("git");
         command
@@ -241,11 +287,7 @@ impl Fixture {
             .args(["-c", "push.gpgSign=false"]);
         if let Some(who) = who {
             let authorization = format!("http.extraHeader=Authorization: Bearer {}", who.token);
-            let binding = format!(
-                "http.extraHeader=X-Oneiron-Binding: {}",
-                who.binding(&self.vault)?
-            );
-            command.args(["-c", authorization.as_str(), "-c", binding.as_str()]);
+            command.args(["-c", authorization.as_str()]);
         }
         command.args(args);
         Ok(tokio::task::spawn_blocking(move || command.output()).await??)
@@ -391,14 +433,19 @@ impl Fixture {
         Ok(import)
     }
 
-    /// A TASK the owner creates, for a checkout to claim.
+    /// A TASK the owner creates and assigns to themself, for the owner's
+    /// checkout to claim: a claim is the assignee's act. The peer lane mints
+    /// no local attempt, and the owner's own assignment witness makes the
+    /// owner its assignee (an unassigned TASK goes to the Dreamer).
     fn owner_task(&self, label: &str) -> TestResult<String> {
         let created = oneiron::task_verb::sdk::tasks_create(
             &self.vault.memory(self.owner_actor, EdgeActorClass::Human),
             oneiron::task_verb::sdk::TaskCreateRequest {
                 spec: json!(label),
                 label: None,
-                assignee: None,
+                assignee: Some(oneiron::task_verb::TaskAssignee::Peer {
+                    actor_ref: self.owner_actor,
+                }),
                 intent_key: None,
                 brief: None,
                 ttl: None,
