@@ -753,6 +753,7 @@ impl<'a> AgentDispatcher<'a> {
             requester,
             caller_origin,
             funding,
+            carried_wake_keys: spawn.carried_wake_keys,
         })
     }
 

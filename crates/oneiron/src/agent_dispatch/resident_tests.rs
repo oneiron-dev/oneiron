@@ -63,6 +63,7 @@ fn resident_keeps_goal_data_inbox_and_room_pointer_without_prompt_change() {
             axes: vec![],
         },
         wake: ResidentWakeMode::HumanMessages,
+        wake_hold_secs: 0,
     };
     vault.bind_resident_agent(&auth, &spec, 3).unwrap();
     assert_eq!(vault.resident_agent(lead).unwrap(), Some(spec.clone()));
@@ -144,6 +145,7 @@ mod foreign_owner_proof {
                 axes: vec![],
             },
             wake: ResidentWakeMode::HumanMessages,
+            wake_hold_secs: 0,
         };
         let (_other_dir, _other, foreign) =
             crate::test_util::foreign_owner_proof(owner, &owner.to_hex());
@@ -226,6 +228,7 @@ fn a_held_resident_binding_never_wakes_the_inbox_but_still_conflicts() {
             axes: vec![],
         },
         wake: ResidentWakeMode::HumanMessages,
+        wake_hold_secs: 0,
     };
     let bound = vault.bind_resident_agent(&auth, &spec, 3).expect("bind");
     crate::attempt_queue::AttemptQueue::new(&vault)
