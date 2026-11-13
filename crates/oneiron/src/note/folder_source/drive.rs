@@ -224,11 +224,12 @@ pub trait DriveWire {
     /// The provider's failure, or [`DRIVE_WIRE_RATE_LIMITED`].
     fn start_page_token(&self, origin: &DriveOrigin) -> Result<String>;
 
-    /// One page of the change feed from `token`.
+    /// One page of the change feed from `token`; none when the provider no
+    /// longer knows `token`, and the feed starts again.
     ///
     /// # Errors
     /// As [`Self::start_page_token`].
-    fn changes(&self, origin: &DriveOrigin, token: &str) -> Result<DriveChangesPage>;
+    fn changes(&self, origin: &DriveOrigin, token: &str) -> Result<Option<DriveChangesPage>>;
 
     /// One file's metadata; none for a file the account no longer reaches.
     ///
@@ -344,7 +345,7 @@ fn stored_text(name: &str, mime_type: &str) -> Option<StoredText> {
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase());
     match extension.as_deref() {
-        Some("md" | "markdown") => return Some(StoredText::Markdown),
+        Some("md") => return Some(StoredText::Markdown),
         Some("pdf") => return Some(StoredText::Pdf),
         Some(extension) if FILES_TEXT_EXTENSIONS.contains(&extension) => {
             return Some(StoredText::Plain);
@@ -497,8 +498,57 @@ struct FeedRead {
     owe: Vec<DriveFileMeta>,
     gone: Vec<String>,
     metadata: usize,
-    /// The feed's token after the read; none when it read nothing.
+    /// The token the source keeps after the read; none until a start read
+    /// completes.
     token: Option<String>,
+}
+
+impl FeedRead {
+    const fn at(token: Option<String>) -> Self {
+        Self {
+            owe: Vec::new(),
+            gone: Vec::new(),
+            metadata: 0,
+            token,
+        }
+    }
+}
+
+/// `feed` as read so far when `error` is the source's rest; else `error`.
+fn paused(error: Error, feed: FeedRead) -> Result<FeedRead> {
+    if is_resting(&error) {
+        Ok(feed)
+    } else {
+        Err(error)
+    }
+}
+
+/// The change feed's start: its start token, then each picked file's
+/// metadata. A call out of quota ends it with nothing of it kept, so the
+/// next step starts it again.
+fn read_drive_start(wire: &MeteredDriveWire<'_>, origin: &DriveOrigin) -> Result<FeedRead> {
+    let mut feed = FeedRead::at(None);
+    let start = match wire.metered(DriveCall::StartPageToken, |wire| {
+        wire.start_page_token(origin)
+    }) {
+        Ok(start) => start,
+        Err(error) => return paused(error, feed),
+    };
+    let mut first = Vec::new();
+    for id in &origin.files {
+        match wire.metered(DriveCall::File, |wire| wire.file(origin, id)) {
+            Ok(Some(file)) if !file.trashed => first.push(file),
+            Ok(_) => feed.gone.push(id.clone()),
+            Err(error) => {
+                feed.gone.clear();
+                return paused(error, feed);
+            }
+        }
+    }
+    feed.metadata = first.len();
+    feed.owe = first;
+    feed.token = Some(start);
+    Ok(feed)
 }
 
 impl Vault {
@@ -578,9 +628,7 @@ impl Vault {
             metadata: feed.metadata,
             ..DriveStepReport::default()
         };
-        if feed.token.is_some() {
-            sync.page_token = feed.token;
-        }
+        sync.page_token = feed.token;
         let gone: HashSet<&str> = feed.gone.iter().map(String::as_str).collect();
         sync.owed.retain(|owed| !gone.contains(owed.id.as_str()));
         for file in feed.owe {
@@ -722,10 +770,10 @@ impl Vault {
     }
 
     /// The change feed's read for one step: on the first step its start
-    /// token, then each picked file's metadata; after it, up to the
-    /// budget's pages of changes to the picked files. A call out of quota
-    /// ends the read; on the first step nothing of it is kept then, so the
-    /// next step starts it again.
+    /// (see [`read_drive_start`]); after it, up to the budget's pages of
+    /// changes to the picked files. A token the provider no longer knows
+    /// starts the feed again. A call out of quota ends the read; the source
+    /// keeps the token of the last page read.
     fn read_drive_feed(
         &self,
         wire: &MeteredDriveWire<'_>,
@@ -733,47 +781,16 @@ impl Vault {
         sync: &DriveSyncState,
         budget: DriveStepBudget,
     ) -> Result<FeedRead> {
-        let mut feed = FeedRead {
-            owe: Vec::new(),
-            gone: Vec::new(),
-            metadata: 0,
-            token: None,
-        };
-        let pause = |error: Error, feed: FeedRead| {
-            if is_resting(&error) {
-                Ok(feed)
-            } else {
-                Err(error)
-            }
-        };
         let Some(mut token) = sync.page_token.clone() else {
-            let start = match wire.metered(DriveCall::StartPageToken, |wire| {
-                wire.start_page_token(origin)
-            }) {
-                Ok(start) => start,
-                Err(error) => return pause(error, feed),
-            };
-            let mut first = Vec::new();
-            for id in &origin.files {
-                match wire.metered(DriveCall::File, |wire| wire.file(origin, id)) {
-                    Ok(Some(file)) if !file.trashed => first.push(file),
-                    Ok(_) => feed.gone.push(id.clone()),
-                    Err(error) => {
-                        feed.gone.clear();
-                        return pause(error, feed);
-                    }
-                }
-            }
-            feed.metadata = first.len();
-            feed.owe = first;
-            feed.token = Some(start);
-            return Ok(feed);
+            return read_drive_start(wire, origin);
         };
+        let mut feed = FeedRead::at(Some(token.clone()));
         let picked: HashSet<&str> = origin.files.iter().map(String::as_str).collect();
         for _ in 0..budget.change_pages {
             let page = match wire.metered(DriveCall::Changes, |wire| wire.changes(origin, &token)) {
-                Ok(page) => page,
-                Err(error) => return pause(error, feed),
+                Ok(Some(page)) => page,
+                Ok(None) => return read_drive_start(wire, origin),
+                Err(error) => return paused(error, feed),
             };
             for change in page.changes {
                 if !picked.contains(change.file_id.as_str()) {
@@ -787,16 +804,18 @@ impl Vault {
                     _ => feed.gone.push(change.file_id),
                 }
             }
-            let last = page.new_start.is_some();
-            match page.new_start.or(page.next_page) {
-                Some(next) => {
+            // A page names its drain's next page, or on the last page the
+            // token the next drain starts from.
+            match (page.next_page, page.new_start) {
+                (Some(next), _) => {
                     token.clone_from(&next);
                     feed.token = Some(next);
                 }
-                None => break,
-            }
-            if last {
-                break;
+                (None, Some(start)) => {
+                    feed.token = Some(start);
+                    break;
+                }
+                (None, None) => break,
             }
         }
         Ok(feed)

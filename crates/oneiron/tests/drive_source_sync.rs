@@ -2,9 +2,10 @@
 //! the Drive files the owner picked land as an attached folder source with
 //! a remote origin. Metadata lands first and the text after it;
 //! `changes.list` supersedes a changed file's text and retracts a removed
-//! file's note; a Google Doc exports as Markdown; and every call is charged
-//! within the provider's per-user quota first. The wire here is a fake
-//! Drive that records each call.
+//! file's note; a token Drive no longer knows starts the feed again; a
+//! Google Doc exports as Markdown; and every call is charged within the
+//! provider's per-user quota first. The wire here is a fake Drive that
+//! records each call.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -22,11 +23,13 @@ const DOC: &str = "application/vnd.google-apps.document";
 const SHEET: &str = "application/vnd.google-apps.spreadsheet";
 const FORM: &str = "application/vnd.google-apps.form";
 
-/// A fake Drive: its files, the changes it reports next, and every call.
+/// A fake Drive: its files, the changes it reports next, the change token
+/// it no longer knows, and every call.
 #[derive(Default)]
 struct FakeDrive {
     files: RefCell<HashMap<String, (DriveFileMeta, Vec<u8>)>>,
     changes: RefCell<Vec<DriveChange>>,
+    forgotten: RefCell<Option<String>>,
     calls: RefCell<Vec<String>>,
     quota: Option<DriveQuota>,
 }
@@ -80,18 +83,22 @@ impl FakeDrive {
 
 impl DriveWire for FakeDrive {
     fn start_page_token(&self, _origin: &DriveOrigin) -> Result<String> {
+        let starts = self.calls().iter().filter(|call| *call == "start").count();
         self.record("start".to_owned());
-        Ok("t0".to_owned())
+        Ok(format!("t{starts}"))
     }
 
-    fn changes(&self, _origin: &DriveOrigin, token: &str) -> Result<DriveChangesPage> {
+    fn changes(&self, _origin: &DriveOrigin, token: &str) -> Result<Option<DriveChangesPage>> {
         self.record(format!("changes {token}"));
+        if self.forgotten.borrow().as_deref() == Some(token) {
+            return Ok(None);
+        }
         let changes = std::mem::take(&mut *self.changes.borrow_mut());
-        Ok(DriveChangesPage {
+        Ok(Some(DriveChangesPage {
             changes,
             next_page: None,
             new_start: Some(format!("{token}+")),
-        })
+        }))
     }
 
     fn file(&self, _origin: &DriveOrigin, id: &str) -> Result<Option<DriveFileMeta>> {
@@ -288,6 +295,60 @@ fn drive_changes_list_supersedes_and_retracts() {
         vault.get_entity_type(&note).expect("NOTE type"),
         Some(ENTITY_TYPE_NOTE),
         "a removed file's note is archived, never erased"
+    );
+}
+
+#[test]
+fn an_unknown_change_token_starts_the_feed_again() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive::default();
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Plan\n\nRead the logs.\n",
+    );
+    let source = attach(&vault, &owner, &["mdB2"]);
+    let landed = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("first step");
+    assert_eq!(landed.rescan.landed, 1, "{landed:?}");
+    assert_eq!(drive.calls(), ["start", "file mdB2", "download mdB2"]);
+
+    // Drive forgets the source's token, and the change it would have
+    // reported is lost with it.
+    *drive.forgotten.borrow_mut() = Some("t0".to_owned());
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_300,
+        "# Plan\n\nRead the logs twice.\n",
+    );
+    let again = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("a step on a forgotten token");
+    assert_eq!(
+        drive.calls()[3..],
+        ["changes t0", "start", "file mdB2", "download mdB2"],
+        "a token Drive no longer knows starts the feed again in the same step"
+    );
+    assert_eq!(again.rescan.superseded, 1, "{again:?}");
+    assert_eq!(
+        note_text(&vault, &source, "mdB2").as_deref(),
+        Some("# Plan\n\nRead the logs twice.\n"),
+        "the change the lost token held is read from the file's metadata"
+    );
+
+    vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("a step after the new start");
+    assert_eq!(
+        drive.calls()[7..],
+        ["changes t1"],
+        "the source keeps the new start token"
     );
 }
 

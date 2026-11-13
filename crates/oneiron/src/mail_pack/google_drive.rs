@@ -182,24 +182,26 @@ impl DriveWire for HttpGoogleDriveWire<'_> {
             .ok_or_else(|| refused("google_drive_start_page_token_unreadable"))
     }
 
-    fn changes(&self, origin: &DriveOrigin, token: &str) -> Result<DriveChangesPage> {
+    fn changes(&self, origin: &DriveOrigin, token: &str) -> Result<Option<DriveChangesPage>> {
         let fields = format!(
             "nextPageToken,newStartPageToken,changes(changeType,fileId,removed,file({DRIVE_FILE_FIELDS}))"
         );
-        let page = self
-            .get_json(
-                origin,
-                &format!("{DRIVE_API_URL}/changes"),
-                &[
-                    ("pageToken", token.to_owned()),
-                    ("pageSize", CHANGES_PAGE_SIZE.to_string()),
-                    ("includeRemoved", "true".to_owned()),
-                    ("includeItemsFromAllDrives", "true".to_owned()),
-                    ("supportsAllDrives", "true".to_owned()),
-                    ("fields", fields),
-                ],
-            )?
-            .ok_or_else(|| refused("google_drive_changes_token_unknown"))?;
+        // Drive's "not found" for the token: the feed starts again.
+        let Some(page) = self.get_json(
+            origin,
+            &format!("{DRIVE_API_URL}/changes"),
+            &[
+                ("pageToken", token.to_owned()),
+                ("pageSize", CHANGES_PAGE_SIZE.to_string()),
+                ("includeRemoved", "true".to_owned()),
+                ("includeItemsFromAllDrives", "true".to_owned()),
+                ("supportsAllDrives", "true".to_owned()),
+                ("fields", fields),
+            ],
+        )?
+        else {
+            return Ok(None);
+        };
         let changes = array(&page, "changes")
             .iter()
             .filter(|change| {
@@ -219,11 +221,11 @@ impl DriveWire for HttpGoogleDriveWire<'_> {
                 })
             })
             .collect();
-        Ok(DriveChangesPage {
+        Ok(Some(DriveChangesPage {
             changes,
             next_page: text_of(page.get("nextPageToken")),
             new_start: text_of(page.get("newStartPageToken")),
-        })
+        }))
     }
 
     fn file(&self, origin: &DriveOrigin, id: &str) -> Result<Option<DriveFileMeta>> {
