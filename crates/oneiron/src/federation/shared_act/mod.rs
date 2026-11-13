@@ -811,6 +811,26 @@ impl Vault {
         Ok(Some(stored.delivery()))
     }
 
+    /// Records `decision`, the check-in decision the change ran on, in its
+    /// stored receipt, in the change's writer (2i, 2j; P24-SHAPE Q9 = A): a
+    /// membership door's own decision, or the one an act recorded at its
+    /// start. `None` leaves the receipt as it is.
+    fn record_receipt_check_in_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        receipt: &mut SharedActExecutionReceipt,
+        decision: Option<crate::check_in::CheckInDecision>,
+    ) -> Result<()> {
+        if decision.is_none() {
+            return Ok(());
+        }
+        receipt.check_in = decision;
+        self.store
+            .vault_meta
+            .put(txn, &key(RECEIPT_PREFIX, &receipt.id), &encode(&*receipt)?)?;
+        Ok(())
+    }
+
     /// Persist the receipt and one notice to each live Owner, the actor and
     /// every holder the change concerns, in the change's own writer.
     #[allow(clippy::too_many_arguments)]

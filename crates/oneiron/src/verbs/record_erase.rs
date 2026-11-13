@@ -309,13 +309,16 @@ pub fn confirm_record_erase(
         decision.check_in = Some(applied.to_hex());
         decision.requester = Some(requester.to_hex());
     }
-    let outcome = memory.confirm_entity_erase(
+    // The decision goes on each `erase` act a veto window starts, and from
+    // there on its completion receipt (P24-SHAPE Q9 = A).
+    let outcome = memory.confirm_entity_erase_with_check_in(
         &preview,
         EraseOptions {
             reason: EraseReason::OwnerErase,
             also_same_bytes: input.also_same_bytes,
             veto_starter: Some(owner),
         },
+        Some(&decision),
     )?;
     Ok(RecordEraseOutcome {
         check_in: Some(decision),
