@@ -126,3 +126,101 @@ fn an_admin_cannot_give_the_steward_role_but_the_owner_can() {
         .expect("the owner gives the Steward role");
     assert_eq!(role_of(&vault, admin), Some(Role::Steward));
 }
+
+/// A shared vault whose roster holds its embedded owner and `co_owner` as
+/// Owners, the second having accepted its founding invitation (FABLE-6988-1).
+fn shared_with_two_owners(vault: &Vault, co_owner: EntityId) -> EntityId {
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    person(vault, co_owner);
+    vault
+        .initialize_shared_vault(
+            &proof(vault, owner),
+            SHARED,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner,
+                    role: Some(Role::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: co_owner,
+                    role: Some(Role::Owner),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault with two owners");
+    let co_owner_proof = proof(vault, co_owner);
+    let invitation = vault
+        .shared_invitations(&co_owner_proof, SHARED)
+        .expect("the co-owner's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Owner)
+        .expect("the co-owner's founding invitation");
+    vault
+        .accept_shared_invitation(&co_owner_proof, SHARED, &invitation.id)
+        .expect("the co-owner accepts");
+    assert_eq!(role_of(vault, co_owner), Some(Role::Owner));
+    owner
+}
+
+/// FABLE-6988-1: acceptance judges the inviter again, so an invitation at
+/// Steward stands only while its inviter is an Owner. An Owner invites a
+/// person at Steward, the other Owner makes the inviter an Admin through
+/// `remove_owner`, and the invitee's acceptance is refused.
+#[test]
+fn a_steward_invitation_is_refused_once_its_inviter_is_no_owner() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let co_owner = EntityId::now();
+    let owner = shared_with_two_owners(&vault, co_owner);
+    let member = EntityId::now();
+    person(&vault, member);
+
+    vault
+        .add_shared_member(
+            &proof(&vault, co_owner),
+            SHARED,
+            member,
+            Some(Role::Steward),
+        )
+        .expect("an Owner invites a Steward");
+
+    let owner_proof = proof(&vault, owner);
+    let act = vault
+        .propose_remove_owner(
+            &owner_proof,
+            SHARED,
+            co_owner,
+            None,
+            Some(Role::Admin),
+            false,
+        )
+        .expect("the other Owner starts remove_owner, the inviter keeping Admin");
+    vault
+        .execute_completed_shared_act(&owner_proof, &act.id, None)
+        .expect("remove_owner runs at once under its zero wait");
+    assert_eq!(
+        role_of(&vault, co_owner),
+        Some(Role::Admin),
+        "the inviter is an Admin now"
+    );
+
+    let member_proof = proof(&vault, member);
+    let invitation = vault
+        .shared_invitations(&member_proof, SHARED)
+        .expect("the invitee's invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Steward)
+        .expect("the Steward invitation is still pending");
+    let accepted = vault.accept_shared_invitation(&member_proof, SHARED, &invitation.id);
+    assert!(
+        accepted.is_err(),
+        "a Steward invitation must be refused once its inviter is an Admin: {accepted:?}"
+    );
+    assert_eq!(
+        role_of(&vault, member),
+        None,
+        "the refused acceptance writes no membership"
+    );
+}
