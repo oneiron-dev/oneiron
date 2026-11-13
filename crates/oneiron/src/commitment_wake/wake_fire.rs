@@ -163,7 +163,10 @@ pub(super) fn instance_wake_eligibility_in_txn(
         CommitmentInstanceState::Missing => {
             return Ok(WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance));
         }
-        CommitmentInstanceState::Closed(_) | CommitmentInstanceState::Withdrawn => {
+        // An inert promise is not in force: it is owed no wake.
+        CommitmentInstanceState::Inert(_)
+        | CommitmentInstanceState::Closed(_)
+        | CommitmentInstanceState::Withdrawn => {
             return Ok(WakeEligibility::Skip(CommitmentWakeSkip::ClosedInstance));
         }
         CommitmentInstanceState::Open(record) => record,

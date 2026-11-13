@@ -522,8 +522,12 @@ impl Memory<'_> {
         )?;
         let previous =
             super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?;
+        // A TASK born here carries its writer's facet as its birth edge, else
+        // the vault default (ARCH-0022 #facets, UNBUILT item 10). A re-put
+        // keeps the edge its birth wrote.
         self.vault()
             .batch_in()
+            .mask(self.birth_position().facet)
             .put_internal(&task_ref, ENTITY_TYPE_TASK, occurred, now, body)
             .apply(wtxn)?;
         if super::linear_store::task_revision_in_txn(&self.vault().store, &*wtxn, task_ref)?

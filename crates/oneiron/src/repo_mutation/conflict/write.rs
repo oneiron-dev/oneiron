@@ -44,7 +44,6 @@ pub(super) fn put_engine_repo_conflict_claim_checked(
     owner: Option<(&crate::consent::AuthenticatedOwner, EntityId)>,
     proposals: &[RepoProposal],
 ) -> Result<EntityId> {
-    let data = encode_claim_body(body)?;
     let reconciliation_owner = if body.predicate == PREDICATE_CONFLICT_OPEN && owner.is_none() {
         Some(
             vault
@@ -92,7 +91,7 @@ pub(super) fn put_engine_repo_conflict_claim_checked(
             }
         }
     }
-    put_claim_in_txn(vault, &mut wtxn, claim_id, branch_subject, data, learned_at)?;
+    put_claim_in_txn(vault, &mut wtxn, claim_id, branch_subject, body, learned_at)?;
     if let Some(owner) = reconciliation_owner {
         // Below the owner's Auto ceiling the claim is kept and its
         // reconciliation held, told to the owner; the ceiling is never
@@ -163,14 +162,20 @@ fn require_sources_unchanged_in_txn(
 }
 
 /// Writes one conflict CLAIM and its `ClaimOf` edge to its present subject.
+/// The put is replicated, so the CLAIM birth gate does not judge its facet:
+/// the claim takes the facet [`Vault::claim_put_facet_in_txn`] names here,
+/// because its subject has no FACET of its own.
 fn put_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: EntityId,
     branch_subject: EntityId,
-    data: Vec<u8>,
+    body: &ClaimBody,
     learned_at: u64,
 ) -> Result<()> {
+    let mut body = body.clone();
+    body.scope_facet = vault.claim_put_facet_in_txn(wtxn, &claim_id)?;
+    let data = encode_claim_body(&body)?;
     if vault
         .store
         .port_entity_record(&**wtxn, &branch_subject)?
@@ -249,7 +254,6 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
         proposals: overlap.sources.clone(),
     };
     let body = super::open_conflict_body(subject, &value)?;
-    let data = encode_claim_body(&body)?;
     let learned_at = now_secs();
     let mut wtxn = vault.store.env.write_txn()?;
     // Every shared path is kept; past the threshold row the host is asked
@@ -286,7 +290,7 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
         Some(found) => found,
         None => {
             let id = vault.store.clock.entity_id()?;
-            put_claim_in_txn(vault, &mut wtxn, id, subject, data, learned_at)?;
+            put_claim_in_txn(vault, &mut wtxn, id, subject, &body, learned_at)?;
             (id, true)
         }
     };
