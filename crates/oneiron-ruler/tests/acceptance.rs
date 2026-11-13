@@ -87,7 +87,7 @@ fn held_out(
 ) -> HeldOutProposal {
     HeldOutProposal {
         contract: PROPOSAL_CONTRACT.to_owned(),
-        proposal_id: proposal_id(campaign_id, incumbent, candidate).unwrap(),
+        proposal_id: proposal_id(campaign_id, incumbent, candidate).expect("proposal id"),
         campaign_id: campaign_id.to_owned(),
         incumbent: incumbent.clone(),
         candidate: candidate.clone(),
