@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::blob_artifact::esign::EsignRateCheck;
+use oneiron::own_rate::{KeptOwnRateCheck, OwnRateCheck};
 use oneiron::scan_check::ScanCheck;
 use oneiron::{EntityId, Error, Result, Vault};
 use serde_json::{Value, json};
@@ -19,6 +20,12 @@ const CURSOR_WIRE: &str = "wire:health:v1:cursor:wire";
 const CURSOR_LIMIT: &str = "wire:health:v1:cursor:limit:";
 /// How far it has read the e-sign ceremony's burst checks.
 const CURSOR_ESIGN: &str = "wire:health:v1:cursor:esign";
+/// How far it has read own actors' rate crossings, in the order they were
+/// kept (ARCH-0044 C5).
+const CURSOR_OWN_RATE: &str = "wire:health:v1:cursor:own_rate";
+/// Most own-rate crossings one sweep reads; the next sweep reads on from
+/// the cursor.
+const OWN_RATE_PAGE: usize = 256;
 /// One crossed set's newest revision: the subject of its check, kept in the
 /// fold that makes it, so the next revision reads one row (FIX 10866).
 const REVISION: &str = "wire:health:v1:revision:";
@@ -249,6 +256,32 @@ fn esign_limit_crossing(key: String, check: &EsignRateCheck, row: &str) -> Cross
     }
 }
 
+/// An own actor's acts of one kind past their advisory rate (ARCH-0044 C5):
+/// one subject per actor and kind, so an answer covers that actor's next
+/// crossings of the kind for its cover time, and an open check counts them.
+/// It names its actor apart from the grant rule's `actors`, as a spend check
+/// names its caller: every own actor is known under a grant, and a grant
+/// alone does not clear a burst. It is asked with wire rate's recipients.
+fn own_rate_crossing(kept: KeptOwnRateCheck) -> Crossing {
+    let check = &kept.check;
+    Crossing {
+        subject: format!("own_rate:{}:{}", check.kind.token(), check.actor),
+        source: CrossingSource::OwnRate,
+        raised_at: kept.kept_at,
+        summary: json!({
+            "kind": OwnRateCheck::KIND,
+            "rate": check.kind,
+            "actor": check.actor,
+            "window_started_at": check.window_started_at,
+            "window_seconds": check.window_seconds,
+            "count": check.count,
+            "threshold": check.threshold,
+        }),
+        read: Some((CURSOR_OWN_RATE.to_owned(), kept.cursor)),
+        revises: None,
+    }
+}
+
 /// A caller's `ai.verdict` spend past its window's check (FIX 1123, Engine
 /// ruling 10-18), kept now as a held check the next sweep asks: "is
 /// everything okay". It names its caller apart from the grant rule's
@@ -307,6 +340,10 @@ pub(super) fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
     let esign_after = cursor(vault, CURSOR_ESIGN)?;
     for (key, check) in vault.esign_rate_checks_after(esign_after.as_deref())? {
         unread.push(esign_crossing(key, &check));
+    }
+    let own_rate_after = cursor(vault, CURSOR_OWN_RATE)?;
+    for kept in vault.own_rate_checks_after(own_rate_after.as_deref(), OWN_RATE_PAGE)? {
+        unread.push(own_rate_crossing(kept));
     }
     for check in vault.scan_checks()? {
         let crossing = scan_crossing(&check);

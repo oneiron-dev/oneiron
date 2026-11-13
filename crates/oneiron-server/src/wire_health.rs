@@ -1,7 +1,8 @@
 //! The health check past a threshold (OF-520, ARCH-0044 C5). Wire counters,
-//! `[limits]` rows, engine scans and the e-sign ceremony's burst counters
-//! (ARCH-0064a) keep their crossings as questions, and
-//! none refuses for a count. This worker reads the kept crossings off every
+//! `[limits]` rows, engine scans, the e-sign ceremony's burst counters
+//! (ARCH-0064a) and own actors' advisory rate windows keep their crossings as
+//! questions, and none refuses for a count. This worker reads the kept
+//! crossings off every
 //! lock and write path and asks each one typed question on the host's ladder:
 //! "is everything okay: a bot, or a valid burst?". A known actor under a
 //! grant passes at the rule rung, the model rungs answer the rest, and a
@@ -75,6 +76,9 @@ pub enum CrossingSource {
     Esign,
     /// One caller's `ai.verdict` spend past its window's check (FIX 1123).
     Spend,
+    /// One own actor's acts of one kind past their advisory rate: its first
+    /// crossing in a window (ARCH-0044 C5).
+    OwnRate,
 }
 
 /// Who answered a check.
@@ -437,7 +441,7 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
 
 /// One pass: fold every new crossing in, ask each held check, and look for
 /// the owner's answers. A check that fails stays as it was for the next pass.
-fn sweep(server: &SyncServer) -> Result<()> {
+pub(crate) fn sweep(server: &SyncServer) -> Result<()> {
     for crossing in unread(server)? {
         fold(server.vault(), crossing)?;
     }
