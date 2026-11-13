@@ -265,7 +265,7 @@ fn esign_limit_crossing(key: String, check: &EsignRateCheck, row: &str) -> Cross
 fn own_rate_crossing(kept: KeptOwnRateCheck) -> Crossing {
     let check = &kept.check;
     Crossing {
-        subject: format!("own_rate:{}:{}", check.kind.token(), check.actor),
+        subject: oneiron::own_rate::health_check_subject(check.kind, &check.actor),
         source: CrossingSource::OwnRate,
         raised_at: kept.kept_at,
         summary: json!({
@@ -430,10 +430,17 @@ fn superseded(mut earlier: HealthCheck, by: &str) -> HealthCheck {
 /// revision supersedes that earlier one while it is still open
 /// ([`superseded`]), and becomes the set's newest. The checks, the set's
 /// revision row and the cursor past the crossing are kept in one write, so a
-/// crossing is never counted twice nor skipped.
+/// crossing is never counted twice nor skipped. A crossing an erase took
+/// after it was read only moves its cursor ([`still_kept`]).
 pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
     let key = format!("{CHECK}{}", crossing.subject);
     vault.with_write_txn_grouped(|txn| {
+        if !still_kept(vault, txn, &crossing)? {
+            if let Some((cursor, read)) = &crossing.read {
+                vault.sync_state_put_in_write_txn(txn, cursor, read.as_bytes())?;
+            }
+            return Ok(());
+        }
         let existing: Option<HealthCheck> = vault
             .sync_state_get_in_write_txn(txn, &key)?
             .map(|b| decode(&b))
@@ -487,4 +494,17 @@ pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
         }
         Ok(())
     })
+}
+
+/// Whether `crossing` is still kept where it was read, in the fold's writer.
+/// An own actor's erase takes its kept crossings with its checks (FIX 3520),
+/// so one read before that erase keeps no check after it. Every other
+/// source's crossing is folded as read.
+fn still_kept(vault: &Vault, txn: &heed::RwTxn<'_>, crossing: &Crossing) -> Result<bool> {
+    match (crossing.source, &crossing.read) {
+        (CrossingSource::OwnRate, Some((_, read))) => {
+            vault.own_rate_check_kept_in_write_txn(txn, read)
+        }
+        _ => Ok(true),
+    }
 }

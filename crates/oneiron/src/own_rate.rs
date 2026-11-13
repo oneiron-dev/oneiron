@@ -3,7 +3,7 @@
 //! typed check. A check never refuses, holds or narrows the act that crossed.
 use crate::{EntityId, Result, Vault};
 
-use crate::store::own_rate_rows::{CHECKS, checks_in_order_after};
+use crate::store::own_rate_rows::{CHECKS, check_kept, checks_in_order_after};
 pub(crate) use crate::store::own_rate_rows::{
     count_in_txn, erase_check_actor_in_txn, erase_window_actor_in_txn, observe_in_txn,
 };
@@ -113,6 +113,45 @@ fn parse_order_cursor(cursor: &str) -> Result<(u64, EntityId)> {
     Ok((kept_at, EntityId::from_hex(id).map_err(|_| corrupt())?))
 }
 
+/// The subject prefix every own-rate health check shares.
+const HEALTH_CHECK_SUBJECT: &str = "own_rate:";
+
+/// The subject the host's OF-520 health check keeps one own actor's
+/// crossings of one kind under (ARCH-0044 C5): `own_rate:<kind>:<actor>`.
+/// An answer covers that actor's next crossings of the kind.
+pub fn health_check_subject(kind: OwnRateKind, actor: &str) -> String {
+    format!("{HEALTH_CHECK_SUBJECT}{}:{actor}", kind.token())
+}
+
+/// Erasing `actor` (FIX 3520): the host's health checks of its own-rate
+/// crossings go too, every kind, in the erase's own transaction. The host
+/// keeps each check in `WIRE_HEALTH_CHECK` under `check:` and its subject,
+/// which ends in the actor; the body is the host's, so the scrub reads keys
+/// only.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_health_check_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let rows = format!("wire:health:v1:check:{HEALTH_CHECK_SUBJECT}");
+    let actor = format!(":{}", actor.to_hex());
+    let mut keys = Vec::new();
+    vault.sync_state_visit_prefix_in_write_txn(&*wtxn, &rows, |key, _| {
+        if key.ends_with(&actor) {
+            keys.push(key.to_owned());
+        }
+        Ok::<(), crate::Error>(())
+    })?;
+    for key in &keys {
+        vault.sync_state_delete_in_write_txn(wtxn, key)?;
+    }
+    Ok(())
+}
+
 impl Vault {
     /// The latest window in which this actor's acts of `kind` crossed the
     /// advisory threshold, if any. A check never refuses an act.
@@ -148,5 +187,23 @@ impl Vault {
                 check,
             })
             .collect())
+    }
+
+    /// Whether the crossing at `cursor` (a [`KeptOwnRateCheck::cursor`]) is
+    /// still kept, read in the caller's writer. An actor's erase takes its
+    /// kept crossings, so the health check folds no crossing it read before
+    /// that erase.
+    ///
+    /// # Errors
+    ///
+    /// A cursor [`Self::own_rate_checks_after`] did not hand out; storage
+    /// errors.
+    #[doc(hidden)]
+    pub fn own_rate_check_kept_in_write_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        cursor: &str,
+    ) -> Result<bool> {
+        check_kept(&self.store, txn, &parse_order_cursor(cursor)?)
     }
 }
