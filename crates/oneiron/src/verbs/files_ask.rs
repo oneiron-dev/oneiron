@@ -311,18 +311,16 @@ struct AskReplyCitation {
     quote: String,
 }
 
-/// The `[n]` marks of `answer`, in order.
+/// The `[n]` marks of `answer`, in order. A mark too large for a number
+/// reads as `u32::MAX`, which no file given is numbered.
 fn cited_numbers(answer: &str) -> Vec<u32> {
     let mut numbers = Vec::new();
     let mut rest = answer;
     while let Some(open) = rest.find('[') {
         rest = &rest[open + 1..];
         let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if digits > 0
-            && rest.as_bytes().get(digits) == Some(&b']')
-            && let Ok(number) = rest[..digits].parse::<u32>()
-        {
-            numbers.push(number);
+        if digits > 0 && rest.as_bytes().get(digits) == Some(&b']') {
+            numbers.push(rest[..digits].parse::<u32>().unwrap_or(u32::MAX));
         }
     }
     numbers

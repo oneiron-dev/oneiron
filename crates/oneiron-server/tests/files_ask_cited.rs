@@ -4,13 +4,19 @@
 //! one call of the house chat role on a fake model, and fixed code keeps the
 //! answer only when every citation names a file the model was given and
 //! quotes its text exactly. A model off this install is sent none of the
-//! Files world's text, which is read on this install only.
+//! Files world's text while the world is read on this install only.
 //!
 //! The vault's install is the owner's own machine, with one Files source
 //! whose two files are handed to `rescan_folder_source` as a host's walk
 //! would; the question goes through the host-root credential, which acts as
-//! the vault's embedded owner. Reads JSON only, so on a base without the
-//! verb every test fails on its first status assertion.
+//! the vault's embedded owner. The fake model is a local OpenAI-compatible
+//! server reached over HTTP, which this host places on its own server, not
+//! on this install (`on_device` is derived, never configured:
+//! `config/models/provider.rs`). So the tests that need an answer run with
+//! the owner having widened the Files world to be read everywhere
+//! (`set_world_privacy_as`), and the egress test keeps the world's shipped
+//! read location, this install only. Reads JSON only, so on a base without
+//! the verb every test fails on its first status assertion.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -35,7 +41,8 @@ use axum::{
 use engine_stack::run_on_engine_stack;
 use fake_llm::{FakeLlm, Reply};
 use oneiron::authority::{
-    ActSurface, CapabilitySlip, HostSlipIssuer, MachineOwnership, MachineRole,
+    ActSurface, CapabilitySlip, HostSlipIssuer, MachineOwnership, MachineRole, ModelOrder,
+    ReadLocation, SealedCopies, WorldPrivacy,
 };
 use oneiron::note::{FileFacts, FolderRescan, ImportedNote};
 use oneiron::test_doors::steward;
@@ -57,13 +64,13 @@ const BUDGET_TEXT: &str = "We set the budget for the quarter at 40 thousand.\n";
 const PLAN_PATH: &str = "budget-plan.md";
 const PLAN_TEXT: &str = "The plan keeps travel under the budget until June.\n";
 
-/// Where the fake model is served from, as this host's offers place it.
+/// Where the Files world may be read.
 #[derive(Clone, Copy)]
-enum ModelPlace {
-    /// A local OpenAI-compatible server: on this install.
+enum FilesRead {
+    /// As it ships: on this install only.
     ThisInstall,
-    /// An OpenAI-compatible cloud provider: off this install.
-    Cloud,
+    /// Widened by the owner: everywhere, the fake model's server included.
+    Everywhere,
 }
 
 struct Fixture {
@@ -78,24 +85,20 @@ struct Fixture {
     source: EntityId,
 }
 
-fn models_text(place: ModelPlace, base_url: &str) -> String {
-    let (name, kind) = match place {
-        ModelPlace::ThisInstall => ("local", "local-openai-compat"),
-        ModelPlace::Cloud => ("cloud", "openai-compat"),
-    };
+fn models_text(base_url: &str) -> String {
     format!(
-        "default = \"{name}:test-model\"\nextraction_egress = true\n\
+        "default = \"local:test-model\"\nextraction_egress = true\n\
          [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
-         [providers.{name}]\nkind = \"{kind}\"\nbase_url = \"{base_url}\"\n"
+         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
     )
 }
 
 impl Fixture {
     /// A served vault whose install the owner answered is his, with one
-    /// Files source holding `budget.md` and `budget-plan.md` as text, and
-    /// its chat role on a fake model at `place` that answers every call
-    /// with `reply`.
-    async fn new(place: ModelPlace, reply: &str) -> Self {
+    /// Files source holding `budget.md` and `budget-plan.md` as text, read
+    /// where `read` says, and its chat role on a fake model that answers
+    /// every call with `reply`.
+    async fn new(read: FilesRead, reply: &str) -> Self {
         let model = FakeLlm::start(Vec::new(), Some(Reply::text(reply))).await;
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
@@ -117,9 +120,8 @@ impl Fixture {
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's live machine profile");
-        let source = land_files(&vault);
-        let models =
-            ModelsConfig::from_toml(&models_text(place, &model.base_url), None).expect("models");
+        let source = land_files(&vault, read);
+        let models = ModelsConfig::from_toml(&models_text(&model.base_url), None).expect("models");
         let (server, host) = AiHost::attach(server, Some(&models)).await;
         let app = build_app(Arc::new(server));
         Self {
@@ -187,9 +189,10 @@ impl Fixture {
     }
 }
 
-/// Makes this install the owner's own machine, attaches one Files source
-/// and lands its two text files; the source's id.
-fn land_files(vault: &Vault) -> EntityId {
+/// Makes this install the owner's own machine, attaches one Files source,
+/// sets where the Files world may be read and lands the source's two text
+/// files; the source's id.
+fn land_files(vault: &Vault, read: FilesRead) -> EntityId {
     let owner = steward::owner(vault).expect("owner proof");
     let this_install = vault
         .local_machine()
@@ -216,6 +219,26 @@ fn land_files(vault: &Vault) -> EntityId {
         )
         .expect("attach the Files source");
     let placed = source.files.as_ref().expect("a Files placement").source;
+    if let FilesRead::Everywhere = read {
+        let world = vault
+            .files_world()
+            .expect("read the Files world")
+            .expect("this install has a Files world")
+            .world;
+        vault
+            .set_world_privacy_as(
+                &owner,
+                ActSurface::ThisInstall,
+                world,
+                WorldPrivacy {
+                    read: ReadLocation::Everywhere,
+                    sealed: SealedCopies::Off,
+                    models: ModelOrder::Inherit,
+                },
+                None,
+            )
+            .expect("the owner widens the Files world");
+    }
     let files = [
         (BUDGET_PATH, BUDGET_TEXT, 1_700_000_200_u64),
         (PLAN_PATH, PLAN_TEXT, 1_700_000_100_u64),
@@ -284,7 +307,7 @@ fn read_paths(answer: &Value) -> Vec<&str> {
 fn files_ask_returns_verified_citations() {
     run_on_engine_stack("files-ask-cited", || async {
         let fixture = Fixture::new(
-            ModelPlace::ThisInstall,
+            FilesRead::Everywhere,
             &reply(
                 "The quarter's budget is 40 thousand [1].",
                 &[(1, "budget for the quarter at 40 thousand")],
@@ -333,7 +356,7 @@ fn files_ask_returns_verified_citations() {
 fn files_ask_drops_a_citation_whose_quote_is_not_in_the_file() {
     run_on_engine_stack("files-ask-misquote", || async {
         let fixture = Fixture::new(
-            ModelPlace::ThisInstall,
+            FilesRead::Everywhere,
             &reply(
                 "The budget is 50 thousand [1].",
                 &[(1, "budget for the year at 50 thousand")],
@@ -366,7 +389,7 @@ fn files_ask_drops_a_citation_whose_quote_is_not_in_the_file() {
 fn files_ask_drops_a_citation_to_an_undelivered_source() {
     run_on_engine_stack("files-ask-undelivered", || async {
         let fixture = Fixture::new(
-            ModelPlace::ThisInstall,
+            FilesRead::Everywhere,
             &reply(
                 "Travel stays under the budget [9].",
                 &[(9, "keeps travel under the budget")],
@@ -390,7 +413,7 @@ fn files_ask_drops_a_citation_to_an_undelivered_source() {
 fn files_ask_reads_only_the_named_file() {
     run_on_engine_stack("files-ask-named", || async {
         let fixture = Fixture::new(
-            ModelPlace::ThisInstall,
+            FilesRead::Everywhere,
             &reply(
                 "Travel stays under the budget until June [1].",
                 &[(1, "under the budget until June")],
@@ -423,11 +446,14 @@ fn files_ask_reads_only_the_named_file() {
     });
 }
 
+/// The shipped Files world is read on this install only, and a model server
+/// reached over HTTP is not this install: the call is held at every rung,
+/// and the owner is told no model the text may go to answered.
 #[test]
-fn files_ask_sends_no_file_text_to_a_model_off_this_install() {
+fn files_ask_sends_no_file_text_off_this_install() {
     run_on_engine_stack("files-ask-off-install", || async {
         let fixture = Fixture::new(
-            ModelPlace::Cloud,
+            FilesRead::ThisInstall,
             &reply(
                 "The quarter's budget is 40 thousand [1].",
                 &[(1, "budget for the quarter at 40 thousand")],
@@ -444,7 +470,7 @@ fn files_ask_sends_no_file_text_to_a_model_off_this_install() {
             let body = call.body.to_string();
             assert!(
                 !body.contains("40 thousand") && !body.contains("until June"),
-                "a Files world read on this install only reached a cloud model: {body}"
+                "a Files world read on this install only reached a model server: {body}"
             );
         }
         fixture.finish().await;

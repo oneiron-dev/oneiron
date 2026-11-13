@@ -40,7 +40,11 @@ beside `file`). The owner can ask about a file and get an answer with citations 
 - **Where the text may go.** Each rung of the call is sent the files only when the release verdict
   admits their notes at that rung's destination, judged before the rung is admitted and again just
   before it is sent. The Files world is read on this install only, so a model off this install is
-  sent nothing; with no rung on this install the door refuses with `MODEL_UNAVAILABLE`.
+  sent nothing; with no rung on this install the door refuses with `MODEL_UNAVAILABLE`. A model
+  server reached over HTTP, even on this machine, is the owner's own server and not this install
+  (on-device is derived, never configured: an in-process runtime, or a native worker this server
+  supervises). Under the shipped read location only such a model reads the Files world; the owner
+  widens the world's read location to let another one read it.
 - **The check, in fixed code.** A citation holds when its number names a file the model was given,
   that file still reads as it was read, and its quote is an exact run of the file's text. Any other
   citation is dropped. The answer stands (`outcome.kind` = `cited`) only when one citation holds
