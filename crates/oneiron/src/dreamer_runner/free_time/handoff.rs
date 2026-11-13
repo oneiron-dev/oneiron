@@ -264,7 +264,8 @@ impl HomeTable for FreeTimePolicyRows {
     type Rows = Self;
     type Actor = FreeTimeActorPartition;
     const TABLE: &'static SideTableDecl = &side_table::DREAMER_FREE_TIME_POLICY;
-    const SCHEMA_VERSION: u16 = 2;
+    /// 3: a policy carries its `holder_not_before` (FABLE-6918-1).
+    const SCHEMA_VERSION: u16 = 3;
 
     /// An owner's set or clear is one writer of its own: none is in flight.
     fn quiescent(_vault: &Vault, _txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
