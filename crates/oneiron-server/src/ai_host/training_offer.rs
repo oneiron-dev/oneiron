@@ -162,18 +162,22 @@ pub(super) fn draft(
         return Ok(missing(OfferPassPrerequisite::MeteredSeat));
     }
     // The day's budget, shared with every other offer pass of the last day:
-    // their calls' usage events carry the purpose's metered label.
+    // their calls' usage events carry the purpose's metered label. The day
+    // is read up to the vault's time now, after this pass's admission, not
+    // up to the caller's `now`: a pass that settled after the caller read
+    // its clock, and ended before this pass was admitted, still counts.
     let metered_purpose = oneiron::llm::routing::purpose_key(&oneiron::CallPurpose::Other {
         name: OFFER_CALL_PURPOSE.to_owned(),
     });
+    let budget_now = vault.now_recorded_at().max(now);
     let spent = server
         .usage_ledger
         .purpose_settled_units(
             owner,
             vault_id,
             &metered_purpose,
-            now.saturating_sub(DAY_SECS),
-            now.saturating_add(1),
+            budget_now.saturating_sub(DAY_SECS),
+            budget_now.saturating_add(1),
         )
         .map_err(|_| {
             Error::InvalidConfig("the offer passes' day spend could not be read".into())
