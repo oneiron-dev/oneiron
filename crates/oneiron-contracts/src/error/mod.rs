@@ -56,6 +56,8 @@ pub enum ErrorKind {
     Storage,
     /// A verb hook skipped or asked, or a blocking one failed safe.
     VerbHookStopped,
+    /// The act waits on a check-in its door opened (P24-SHAPE Q4 = A).
+    CheckInPending,
     Io,
     DimensionMismatch,
     InvalidVector,
@@ -478,6 +480,13 @@ pub enum Error {
     /// A verb hook stopped the verb (ARCH-0080 §3).
     #[error("{0}")]
     VerbHook(Box<VerbHookStop>),
+    /// The act waits on the pending check-in this names, 32 hex: its door
+    /// opened or found it for the exact effect and committed it, and ran
+    /// nothing (ARCH-0082 #composing; P24-SHAPE Q4 = A).
+    #[error(
+        "the act waits on check-in {0}: call again naming it as check_in_ref once a holder approves"
+    )]
+    CheckInPending(String),
     /// Encountered malformed key or value bytes.
     #[error("invalid key or value bytes")]
     InvalidKey,
@@ -696,6 +705,7 @@ impl Error {
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::VerbHook(_) => ErrorKind::VerbHookStopped,
+            Self::CheckInPending(_) => ErrorKind::CheckInPending,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,

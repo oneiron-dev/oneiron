@@ -317,11 +317,16 @@ impl Vault {
         let ask_ref = Some(ask.id.as_str());
         match ask.change {
             MemberAskChange::Add { role, .. } => {
-                self.add_shared_member_for_ask(applier, ask.vault_id, member, role, ask_ref)
+                self.add_shared_member_for_ask(applier, ask.vault_id, member, role, ask_ref, None)
             }
-            MemberAskChange::Remove { .. } => {
-                self.remove_shared_member_for_ask(applier, ask.vault_id, member, slips, ask_ref)
-            }
+            MemberAskChange::Remove { .. } => self.remove_shared_member_for_ask(
+                applier,
+                ask.vault_id,
+                member,
+                slips,
+                ask_ref,
+                None,
+            ),
             MemberAskChange::AssignRole { role, .. } => self.change_shared_member_role_for_ask(
                 applier,
                 ask.vault_id,
@@ -329,6 +334,7 @@ impl Vault {
                 role,
                 slips,
                 ask_ref,
+                None,
             ),
         }
     }
