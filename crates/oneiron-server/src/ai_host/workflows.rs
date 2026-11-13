@@ -507,7 +507,7 @@ fn pump_once(
                         match settle(vault, *root, step, LEASE_OWNER, backoff, now_secs()) {
                             Ok(FailureLadderOutcome::Retried { .. }) => {}
                             Ok(_) => {
-                                runner.forget(step.leaf);
+                                runner.forget(vault, step.leaf);
                                 // FIX 11532: the solo leaf's team receipt, after its
                                 // own end; a receipt failure logs and the stop stands.
                                 if let Err(error) =

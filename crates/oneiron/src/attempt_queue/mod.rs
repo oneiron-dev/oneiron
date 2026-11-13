@@ -17,6 +17,7 @@ mod borrowed_lease;
 pub mod browser_admission;
 mod budget_hold;
 mod cancel;
+mod carried_spend;
 mod completion;
 pub mod dispatch_payload;
 mod encoding;
