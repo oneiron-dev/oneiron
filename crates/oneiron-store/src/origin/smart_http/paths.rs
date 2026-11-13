@@ -30,9 +30,15 @@ pub const ORIGIN_REPO_DIR_SUFFIX: &str = ".git";
 /// reads the pushed bytes. An environment variable travels that whole chain,
 /// and a replacement lookup anywhere in it would show the scan bytes other than
 /// the ones the push makes durable.
-pub const SERVE_BASE_ENV_KEYS: [&str; 5] = [
+///
+/// `GIT_NO_LAZY_FETCH` travels the same chain for the same reason (ARCH-0068
+/// #push-cert-open): in a served repository that is a partial clone, a read of
+/// an object it lacks anywhere in that chain would otherwise fetch it from the
+/// promisor remote, a network fetch and an object write that no push made.
+pub const SERVE_BASE_ENV_KEYS: [&str; 6] = [
     "GIT_DIR",
     "GIT_HTTP_EXPORT_ALL",
+    "GIT_NO_LAZY_FETCH",
     "GIT_NO_REPLACE_OBJECTS",
     "GIT_PROJECT_ROOT",
     "PATH",

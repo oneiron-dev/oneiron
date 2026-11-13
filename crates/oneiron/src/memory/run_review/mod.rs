@@ -4,13 +4,19 @@
 //! exact members and policy frontier; settlement keeps their inverse handles.
 
 mod actor_erase;
+mod changes;
 mod receipts;
+mod restore_group;
 mod revert;
 mod settle;
 mod snapshot;
 mod topology;
 
 pub(crate) use actor_erase::erase_run_review_actor_in_txn;
+pub use changes::{RunChanges, RunChangesRequest};
+#[cfg(oneiron_test_support)]
+pub(crate) use changes::{journal_changes, journal_row_sizes};
+pub(crate) use changes::{record_run_claim_in_txn, record_run_topology_in_txn};
 pub(crate) use receipts::run_settlement_receipts;
 
 use crate::consent::AuthenticatedOwner;
@@ -231,6 +237,11 @@ enum RunInverse {
     Note(crate::note::RunNoteUndo),
     Topology {
         event: String,
+    },
+    /// A restored claim with raw evidence, which names no author: its undo
+    /// retracts it while its row is unchanged (RULING 02:26 13 Nov, R5).
+    Restored {
+        fingerprint: String,
     },
 }
 

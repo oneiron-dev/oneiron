@@ -207,4 +207,26 @@ impl Vault {
             crate::store::media_job_put_fenced_in_txn(self, wtxn, key, row, parts, true)
         })
     }
+
+    /// [`Self::media_job_put`], or with `existing` [`Self::media_job_update`],
+    /// in the caller's write transaction `wtxn`, so the row commits with
+    /// what else the caller writes there, or not at all: a scoped job's end
+    /// row commits with its spend's stage on the scope that funds it
+    /// ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH]).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a key that is not a job's row, or a part key that is
+    /// not one of its clips.
+    #[doc(hidden)]
+    pub fn media_job_put_in_write_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        key: &str,
+        row: &[u8],
+        parts: &[(String, Vec<u8>)],
+        existing: bool,
+    ) -> Result<bool> {
+        crate::store::media_job_put_fenced_in_txn(self, wtxn, key, row, parts, existing)
+    }
 }

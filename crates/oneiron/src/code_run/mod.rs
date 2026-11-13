@@ -128,7 +128,8 @@ pub use self::correction::{
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, ExecutorReply, ExecutorReplyPublisher, agent_attempt_run_ref,
-    check_write_gate_against_vault, recorded_verb_call, write_receipt_may_have_run,
+    check_write_gate_against_vault, envelope_run_ref, recorded_verb_call,
+    write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
@@ -173,6 +174,8 @@ pub(crate) use self::result_read::{
 pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::capsule_stored_request_bytes;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
