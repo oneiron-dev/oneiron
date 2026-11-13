@@ -15,3 +15,4 @@ pub mod native_board;
 pub mod replay_admission;
 pub mod resident_pump;
 pub mod solved_runs;
+pub mod workflow_park;
