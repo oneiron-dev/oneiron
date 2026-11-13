@@ -199,6 +199,12 @@ pub(super) struct PendingConnectorCall {
     /// that run's TASK and sends only while this machine holds the run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) agent_run: Option<AttemptId>,
+    /// The code run that made the call, from its caller's write origin,
+    /// never from the request (ARCH-0040 #revert-run): every pass's gate
+    /// receipt, a settler's resume of the held call included, joins that
+    /// run's change journal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) run_ref: Option<String>,
 }
 
 /// A held call's terminal outcome, without the tool's reply: the ledger

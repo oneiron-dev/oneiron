@@ -642,8 +642,11 @@ impl Memory<'_> {
             idempotency_key,
             self.invocation(),
         )?;
-        let request =
+        let mut request =
             esign_dispatch_request(vault, verb, document, actor, class, on_behalf_of, key);
+        // The code run that asks the act: its gate receipt joins that run's
+        // change journal (ARCH-0040 #revert-run).
+        request.run_ref = self.host_run_ref();
         let intent_ref = request.intent_ref.clone();
         let command = EsignOutboundCommand {
             document: document.to_hex(),

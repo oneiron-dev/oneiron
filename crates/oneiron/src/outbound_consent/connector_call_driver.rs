@@ -719,6 +719,7 @@ impl Vault {
         let dispatch = prepared
             .keeping_no_record(pending.off_record)
             .for_agent_run(pending.agent_run)
+            .for_run_ref(pending.run_ref.clone())
             .execute(
                 self,
                 &authority,

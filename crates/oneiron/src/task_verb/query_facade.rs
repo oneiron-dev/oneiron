@@ -265,6 +265,10 @@ impl Memory<'_> {
             });
         }
 
+        // The code run that asks the cancel: its gate receipt joins that
+        // run's change journal in the receipt's own write (ARCH-0040
+        // #revert-run).
+        let run_ref = self.host_run_ref();
         let (gate_decision_ref, gate_outcome, effected, status, cancel_requested) = self
             .with_verified_actor_write_txn(|wtxn| {
                 let policy = resolve_policy_manifest(&self.vault().store, &*wtxn)?;
@@ -276,6 +280,14 @@ impl Memory<'_> {
                     &policy,
                     false,
                 )?;
+                if let Some(run) = &run_ref {
+                    crate::memory::run_review::record_run_effect_in_txn(
+                        &self.vault().store,
+                        wtxn,
+                        run,
+                        decision_id,
+                    )?;
+                }
                 let decision_ref = format!("gate:{}", decision_id.to_hex());
                 if decision.outcome() != GateOutcome::Allow {
                     return Ok((decision_ref, decision.outcome(), false, None, false));

@@ -67,6 +67,10 @@ pub struct PreparedToolCall {
     /// starts only while this machine holds the run. Set only from the
     /// pending call's caller binding, never frozen or sent.
     agent_run: Option<crate::attempt_queue::AttemptId>,
+    /// The code run that makes the call (ARCH-0040 #revert-run): each gate
+    /// receipt its admission records joins that run's change journal. Set
+    /// only from the pending call's caller binding, never frozen or sent.
+    run_ref: Option<String>,
 }
 impl PreparedToolCall {
     /// This call as one the agent run try `run` makes, when it names one
@@ -80,6 +84,17 @@ impl PreparedToolCall {
     /// 7).
     pub(crate) const fn agent_run(&self) -> Option<crate::attempt_queue::AttemptId> {
         self.agent_run
+    }
+    /// This call as one the code run `run_ref` makes, when it names one
+    /// (ARCH-0040 #revert-run).
+    #[must_use]
+    pub(crate) fn for_run_ref(mut self, run_ref: Option<String>) -> Self {
+        self.run_ref = run_ref;
+        self
+    }
+    /// The code run that makes the call, if any (ARCH-0040 #revert-run).
+    pub(crate) fn run_ref(&self) -> Option<&str> {
+        self.run_ref.as_deref()
     }
     /// This call as an off-record caller's, when `off_record` says so (FIX
     /// 9372): its admitted ledger row keeps the request sealed.
@@ -169,6 +184,7 @@ impl PreparedToolCall {
             frozen,
             keeps_no_record: false,
             agent_run: None,
+            run_ref: None,
         })
     }
     #[cfg(test)]
@@ -517,6 +533,7 @@ pub fn prepare_tool_call(
         frozen,
         keeps_no_record: false,
         agent_run: None,
+        run_ref: None,
     })
 }
 /// Decode a durable payload before recovery uses its manifest identity.

@@ -56,6 +56,37 @@ fn answering_effect_outcome(
     Ok(answer)
 }
 
+/// The live external-effect gate receipt `receipt_ref` (`gate:<hex>`) names
+/// and its verdict now: a pending receipt whose consent a later decision row
+/// answered reads that answer's outcome, not Waiting (FIX 11478). `None`
+/// when no unredacted external-effect receipt has that id.
+pub(super) fn effect_receipt_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt_ref: &str,
+) -> MemoryResult<Option<(crate::store::GateDecisionRecord, RunChangeVerdict)>> {
+    let id = receipt_ref
+        .strip_prefix("gate:")
+        .ok_or_else(|| MemoryError::bad_request("external effect names its gate: receipt"))?;
+    let id = crate::store::GateDecisionId::from_bytes(*EntityId::from_hex(id)?.as_bytes());
+    let Some(record) = vault
+        .store
+        .gate_decision_in_txn(txn, id)?
+        .filter(|record| record.content_kind == "external_effect" && record.redacted_at.is_none())
+    else {
+        return Ok(None);
+    };
+    let verdict = if record.outcome == "pending" {
+        match answering_effect_outcome(vault, txn, &record)? {
+            Some(outcome) => effect_verdict(&outcome),
+            None => RunChangeVerdict::Waiting,
+        }
+    } else {
+        effect_verdict(&record.outcome)
+    };
+    Ok(Some((record, verdict)))
+}
+
 pub(super) fn binding(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -165,27 +196,8 @@ pub(super) fn binding(
             Ok((bytes, outcome.verdict))
         }
         RunReviewChange::ExternalEffect { receipt_ref } => {
-            let id = receipt_ref.strip_prefix("gate:").ok_or_else(|| {
-                MemoryError::bad_request("external effect names its gate: receipt")
-            })?;
-            let id = crate::store::GateDecisionId::from_bytes(*EntityId::from_hex(id)?.as_bytes());
-            let record = vault
-                .store
-                .gate_decision_in_txn(txn, id)?
-                .filter(|record| {
-                    record.content_kind == "external_effect" && record.redacted_at.is_none()
-                })
+            let (record, verdict) = effect_receipt_in_txn(vault, txn, receipt_ref)?
                 .ok_or_else(|| MemoryError::not_found("external-effect gate receipt is absent"))?;
-            // FIX 11478: a pending receipt whose consent a later decision
-            // row answered reads that answer's outcome, not Waiting.
-            let verdict = if record.outcome == "pending" {
-                match answering_effect_outcome(vault, txn, &record)? {
-                    Some(outcome) => effect_verdict(&outcome),
-                    None => RunChangeVerdict::Waiting,
-                }
-            } else {
-                effect_verdict(&record.outcome)
-            };
             Ok((
                 serde_json::to_vec(&record)
                     .map_err(|_| MemoryError::bad_request("effect receipt cannot be encoded"))?,

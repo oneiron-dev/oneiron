@@ -204,6 +204,11 @@ pub struct OutboundDispatchRequest {
     /// sent it, which a lookup bounded by a provider's dedupe window reads.
     /// In memory only; `None` for every other send.
     pub(crate) send_approved_at: Option<u64>,
+    /// The code run that asks this send, from its caller's write origin
+    /// (ARCH-0040 #revert-run): each gate receipt its admission records joins
+    /// that run's change journal. In memory only, never persisted; `None`
+    /// for every send no code run asks.
+    pub(crate) run_ref: Option<String>,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -267,6 +272,7 @@ impl OutboundDispatchRequest {
             earlier_send_lookup: false,
             owner_released_resend: false,
             send_approved_at: None,
+            run_ref: None,
         }
     }
 

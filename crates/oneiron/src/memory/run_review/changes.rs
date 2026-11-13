@@ -5,8 +5,9 @@
 //! reference its dispatcher bound, never guessed from an actor or a time.
 //! `Memory::run_changes_as_owner` is its call surface;
 //! `record_run_claim_in_txn` is its claim writer,
-//! `record_run_topology_in_txn` its identity-topology writer and
-//! `record_run_deletion_in_txn` its delete and erase writer. A run nobody
+//! `record_run_topology_in_txn` its identity-topology writer,
+//! `record_run_deletion_in_txn` its delete and erase writer and
+//! `record_run_effect_in_txn` its external-effect writer. A run nobody
 //! settled is reverted from this journal (`journal_members_in_txn`), and each
 //! change's compensation is kept on its first row.
 
@@ -129,6 +130,68 @@ pub(crate) fn record_run_deletion_in_txn(
     record_change_in_txn(store, txn, run, change)
 }
 
+/// Records that `run` asked the external effect whose gate receipt is
+/// `decision`, in the receipt's own write. A receipt the run already lists is
+/// not listed again, nor is a later decision on an effect whose pending
+/// receipt the run lists: that pending receipt stands for the effect, and its
+/// verdict follows the newest decision on it (FIX 11478). A revert never
+/// replays an effect; it reports one that ran as one-way.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_effect_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    decision: crate::store::GateDecisionId,
+) -> crate::Result<()> {
+    let run = run.strip_prefix("run:").unwrap_or(run);
+    let receipt_ref = format!("gate:{}", decision.to_hex());
+    let record = store.gate_decision_in_txn(&*txn, decision)?;
+    for row in CHANGES.iter_from(store, &*txn, &run_hash(run))? {
+        let (_, row) = row?;
+        let RunReviewChange::ExternalEffect {
+            receipt_ref: listed,
+        } = &row.change
+        else {
+            continue;
+        };
+        if row.run != run {
+            continue;
+        }
+        if *listed == receipt_ref {
+            return Ok(());
+        }
+        let Some(record) = &record else {
+            continue;
+        };
+        let Some(listed) = listed
+            .strip_prefix("gate:")
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+        else {
+            continue;
+        };
+        let listed = store.gate_decision_in_txn(
+            &*txn,
+            crate::store::GateDecisionId::from_bytes(*listed.as_bytes()),
+        )?;
+        if listed.is_some_and(|listed| {
+            listed.outcome == "pending"
+                && listed.content_kind == record.content_kind
+                && !record.diff_handle.is_empty()
+                && listed.diff_handle == record.diff_handle
+        }) {
+            return Ok(());
+        }
+    }
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::ExternalEffect { receipt_ref },
+    )
+}
+
 /// Appends `change` after the run's last recorded change.
 fn record_change_in_txn(
     store: &crate::store::Store,
@@ -222,6 +285,14 @@ fn journal_member_in_txn(
         RunReviewChange::Delete { .. } | RunReviewChange::Erase { .. } => {
             (RunChangeVerdict::Landed, None)
         }
+        // Its verdict as a settle reads it; it has no undo, so the revert
+        // reports one that ran as one-way. A receipt redacted since may have
+        // gone out, so it reads as landed.
+        RunReviewChange::ExternalEffect { receipt_ref } => (
+            super::snapshot::effect_receipt_in_txn(memory.vault(), txn, receipt_ref)?
+                .map_or(RunChangeVerdict::Landed, |(_, verdict)| verdict),
+            None,
+        ),
         _ => {
             return Err(MemoryError::bad_request(
                 "the run journal holds a change kind it does not record",

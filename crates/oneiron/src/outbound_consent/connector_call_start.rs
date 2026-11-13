@@ -195,6 +195,7 @@ impl Vault {
             agent_run: memory
                 .task_host()
                 .map(crate::task_verb::HostBinding::parent),
+            run_ref: memory.host_run_ref(),
         };
         let Some(named) = named else {
             return self.drive_connector_call(None, None, pending, host);
