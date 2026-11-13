@@ -7594,6 +7594,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/claim_facet_birth.rs` | src | s | 4 fn | — | Doors for `tests/claim_facet_birth.rs` to CLAIM birth sites whose writers are crate-private: the native… |
 | `src/test_doors/claim_source_recheck.rs` | src | m | 1 struct · 3 fn · 1 re-export | SeededRecheck | Doors for `tests/claim_source_recheck_decide.rs` (DECIDE-BYPASS-1): seed one provider-deleted, kept mail… |
 | `src/test_doors/claim_transition.rs` | src | s | 1 struct · 1 fn | FoldedDecay | Doors to the signed claim-transition fold (FIX 22387) |
+| `src/test_doors/claim_value_redaction.rs` | src | s | 1 fn | — | Door to the local claim-value redaction core (gate census G2) |
 | `src/test_doors/coach.rs` | src | s | 4 fn · 2 const | — | The owner's proof, the Coach and a project goal, for integration tests (untangle 6.6: the Coach's… |
 | `src/test_doors/code_reply_healer.rs` | src | s | 5 fn | — | Doors for `tests/code_reply_healer.rs` (CODE-RUNTIME-02 ruling B, the lead 10 Nov 10:32): the code-reply… |
 | `src/test_doors/code_run_answer.rs` | src | s | 2 fn | — | Doors for `tests/code_run_restricted_actor_answer.rs` (OPUS-E2E-1): the actor-bound approval ceiling a… |
@@ -7619,7 +7620,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/live_run_claim_put.rs` | src | s | 4 fn | — | Doors for `tests/live_run_claim_put.rs` (#6881, review 6881 P1): the gate fixtures… |
 | `src/test_doors/mail_landing.rs` | src | s | 2 fn | — | Doors for `tests/mail_late_address_headers.rs` (fix list row 20852): the address headers an IMAP or mbox… |
 | `src/test_doors/membership.rs` | src | s | 1 fn | — | A shared vault's member grants, for integration tests (primitive A, slice 6.4f: the Steward arm of the run… |
-| `src/test_doors/mod.rs` | src | s | 1 fn · 58 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | s | 1 fn · 59 mod · 1 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
 | `src/test_doors/park_typed_wait.rs` | src | s | 2 fn | — | Doors for `tests/park_typed_wait.rs` (6.5d-1): the head state of a trap chain, and a soft child spend… |
@@ -8373,8 +8374,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/feeds.rs` | test | m | — | — | Change feed subscriptions (untangle slices 6.8a and 6.8b, primitive B), on the public crate surface only… |
 | `tests/force_cancel_pause.rs` | test | s | — | — | [FORCE-CANCEL-KEEPS-ACTIVE-PAUSE]: the hard cancel of a held row clears its pause, as the operator's Cancel… |
 | `tests/gate_census_pins.rs` | test | s | — | — | OPUS-GATECENSUS row 2 (Engine ruling 12 Nov 16:2x): green pins for three write gates added or tightened… |
+| `tests/gate_pins_authority_custody_grants.rs` | test | m | — | — | OPUS-T0-F gate pins, PR 6 (Engine NOTE 13 Nov 02:19): green pins for eight authority, custody and grant… |
 | `tests/gate_pins_authority_rechecks.rs` | test | m | — | — | OPUS-T0-F gate pins, PR 1 (Engine task 12 Nov 19:38): green pins for ten write gates of OPUS-GATECENSUS's… |
 | `tests/gate_pins_claim_producers.rs` | test | m | — | — | OPUS-T0-F gate pins, PR 2 (Engine task 12 Nov 19:38): green pins for eleven write gates of OPUS-GATECENSUS's… |
+| `tests/gate_pins_claim_record_producers.rs` | test | m | — | — | OPUS-T0-F gate pins, PR 7 (Engine NOTE 13 Nov 02:19): green pins for claim and record producer gates of… |
 | `tests/gate_pins_put_pipeline.rs` | test | s | — | — | OPUS-T0-F gate pins, PR 3 (Engine task 12 Nov 19:38): green pins for six put-pipeline write gates of… |
 | `tests/git_smart_http.rs` | test | L | — | — | Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908) |
 | `tests/goal_read_through_grant.rs` | test | s | — | — | The goal read is an ordinary granted read with an actor (untangle 6.6d, F4; Engine 10 Nov 06:53 and 07:23) |
