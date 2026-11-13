@@ -174,11 +174,29 @@ fn boundary_after(schedule: &FreeTimeSchedule, after: u64) -> Result<Option<u64>
 }
 
 /// The boundary a policy's next cycle must pass: the last one this node
-/// opened or passed, and never one at or before the owner set the policy.
+/// opened or passed, never one at or before the owner set the policy, and
+/// never one before a holder's schedule move allows (FABLE-6918-1). The
+/// boundary a move holds the next cycle to opens: the schedule before the
+/// move would have opened it.
 fn due_floor(clock: Option<FreeTimeClock>, policy: &FreeTimePolicy) -> u64 {
     clock
         .map_or(0, |clock| clock.last_boundary)
         .max(policy.set_at)
+        .max(
+            policy
+                .holder_not_before
+                .map_or(0, |not_before| not_before.saturating_sub(1)),
+        )
+}
+
+/// The boundary `policy`'s next cycle opens at, with `clock` this node's
+/// clock for its agent: the first past its due floor. `None` when the
+/// schedule has none within the search.
+pub(super) fn next_due_boundary(
+    clock: Option<FreeTimeClock>,
+    policy: &FreeTimePolicy,
+) -> Result<Option<u64>> {
+    boundary_after(&policy.schedule, due_floor(clock, policy))
 }
 
 /// The cycle id of `agent`'s cycle at `boundary`.
@@ -235,8 +253,7 @@ impl Vault {
             let Some(policy) = record.policy else {
                 continue;
             };
-            let floor = due_floor(CLOCK.get(&self.store, &txn, &agent)?, &policy);
-            if let Some(at) = boundary_after(&policy.schedule, floor)? {
+            if let Some(at) = next_due_boundary(CLOCK.get(&self.store, &txn, &agent)?, &policy)? {
                 next = Some(next.map_or(at, |next| next.min(at)));
             }
         }
