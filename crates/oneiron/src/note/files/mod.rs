@@ -12,10 +12,14 @@
 //! only. The same ledger and the same rescans serve both kinds of source.
 
 mod metadata;
+mod search;
 mod source;
 
 pub use metadata::{
     FILES_TEXT_EXTENSIONS, FileFacts, FileMeta, FileReadiness, NameOnlyFile, NameOnlyReason,
+};
+pub use search::{
+    FILES_PART_MARK, FILES_SNIPPET_CHARS, NameMatch, file_path_of, name_match, text_excerpt,
 };
 pub(in crate::note) use source::namespace;
 pub use source::{

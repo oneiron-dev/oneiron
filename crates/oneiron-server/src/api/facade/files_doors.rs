@@ -1,6 +1,6 @@
 //! The host doors of the Files world's source rows (FIX 6942):
-//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list`, `.files`
-//! and `.exclude`.
+//! `vault.files.sources.attach`, `.convert`, `.rescan`, `.detach`, `.list`, `.files`,
+//! `.exclude` and `.search`.
 //! `host_doors` re-exports them, so the generated HTTP facade handler and the
 //! MCP dispatcher call them by the name every host door has. Each runs under
 //! the vault owner's proof, as `/v1/owner` takes it, off the async runtime:
@@ -23,9 +23,11 @@ use oneiron::task_verb::sdk::{
     self, FilesRescanAnswer, FilesSourceAttachAnswer, FilesSourceAttachRequest,
     FilesSourceConvertRequest, FilesSourceDetachAnswer, FilesSourceDetachRequest,
     FilesSourceExcludeAnswer, FilesSourceExcludeRequest, FilesSourceFiles, FilesSourceFilesRequest,
-    FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest,
+    FilesSourceList, FilesSourceListRequest, FilesSourceRescanRequest, FilesSourceSearchAnswer,
+    FilesSourceSearchRequest,
 };
 
+use super::FacadeApiError;
 use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::files_intake::{canonical_folder, files_attached, files_rescan};
@@ -257,4 +259,67 @@ pub(crate) async fn vault_files_sources_files(
         },
     )
     .await
+}
+
+/// `vault.files.sources.search`: the owner's search of the Files world's
+/// sources, the files whose name or path matches first, then those whose
+/// text matches in meaning. The meaning tier is the owner's own recall of
+/// the Files world through this server's recall pipeline, the one
+/// `vault.retrieval.recall` runs, so the query is embedded where this host
+/// embeds; a refused recall leaves the name tier's answer standing. It lists
+/// the Files world and each hit's note.
+pub(crate) async fn vault_files_sources_search(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FilesSourceSearchRequest,
+) -> Listed<FilesSourceSearchAnswer> {
+    const VERB: &str = "vault.files.sources.search";
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, VERB)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let recall = sdk::files_search_recall(server.vault(), &input)?;
+        Ok((owner, caller, recall))
+    };
+    let (owner, (actor, class), recall) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(refusal) => return (Err(refusal), Vec::new()),
+    };
+    let meaning = match recall {
+        Some(request) => Some(
+            server
+                .recall_home_listing(
+                    actor,
+                    class,
+                    auth.verified_slip().cloned(),
+                    auth.destination(),
+                    None,
+                    request,
+                    oneiron::memory::HomeRecallCaller::owner(),
+                )
+                .await
+                .0,
+        ),
+        None => None,
+    };
+    let server = Arc::clone(server);
+    let searched = super::clock_ingress::run_blocking(
+        move || -> MemoryResult<(FilesSourceSearchAnswer, Vec<EntityId>)> {
+            let vault = server.vault();
+            let answer = sdk::search_files_sources_with(vault, &owner, input, meaning)?;
+            let rows = vault
+                .files_world()?
+                .map(|files| files.world)
+                .into_iter()
+                .chain(answer.hits.iter().filter_map(|hit| hit.note))
+                .collect::<Vec<_>>();
+            Ok((answer, rows))
+        },
+    )
+    .await;
+    match searched {
+        Ok(Ok((answer, rows))) => (Ok(answer), rows),
+        Ok(Err(refusal)) => (Err(refusal), Vec::new()),
+        Err(_) => (Err(internal(VERB)), Vec::new()),
+    }
 }

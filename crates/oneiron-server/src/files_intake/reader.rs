@@ -48,8 +48,9 @@ const MAX_NOTE_BYTES: usize = 1024 * 1024;
 pub(super) const PART_MARK: &str = "#part";
 
 /// A Files source's part mark (FIX 6942): `<path>/#part<n>`. Its walk reads
-/// files of every name, but none below a file, so no real path is one.
-pub(super) const FILES_PART_MARK: &str = "/#part";
+/// files of every name, but none below a file, so no real path is one. The
+/// engine owns it: a Files search lists a part's row as its file.
+pub(super) use oneiron::note::FILES_PART_MARK;
 
 /// The longest title a note keeps.
 const MAX_TITLE_BYTES: usize = 256;
