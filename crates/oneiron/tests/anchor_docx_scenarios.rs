@@ -6,11 +6,14 @@
 //! Moved from the lib module `anchored_annotation/tests/anchor_scenarios.rs`,
 //! whose test target does not compile, so none of these ran. Two kinds of case:
 //! - re-anchor cases: the selected words survive the edit, and the thread
-//!   moves with them onto the new version;
+//!   moves with them onto the new version; a small edit inside the selection
+//!   (a typo fix, one word swapped, a partial delete, an insert) keeps it;
 //! - "never invent an anchor" cases: the selected words are gone, but
 //!   something a weaker matcher would take for them is still there (the same
 //!   offsets, an identical copy, the same run layout, the same paragraph
-//!   slot); the thread stays visibly drifted on its old version.
+//!   slot, letters a rewrite happens to share); the thread stays visibly
+//!   drifted on its old version. Survival is judged by words, not letters
+//!   (ruling L4-19-REWRITTEN-SPAN-SURVIVAL = A, 14 Nov 00:01).
 //!
 //! A lost anchor reattaches only by exact identity (undo or a restore) or a
 //! person's click on an offer of the exact words (OF-368 = A); the engine
@@ -421,6 +424,69 @@ fn docx_deleted_and_rewritten_sentences_stay_visibly_unanchored() {
     assert!(summary.remapped.is_empty(), "{summary:?}");
     for thread in &threads {
         assert_pinned(&vault, &artifact, thread, &thread.anchor.locator, 1, 2);
+    }
+}
+
+/// The other side of the line above (OF-368 = A, "on small changes you
+/// should keep the spot"): a typo fix, one word swapped, a partial delete
+/// and an insert inside the selection all keep the anchor.
+#[test]
+fn docx_small_edits_inside_a_selection_keep_its_spot() {
+    let v1 = docx(&[
+        &[("We recieve the goods.", false)],
+        &[("the red fox ran home", false)],
+        &[("the quick brown fox jumps", false)],
+        &[("the fox ran", false)],
+    ]);
+    let v2 = docx(&[
+        &[("We receive the goods.", false)],
+        &[("the blue fox ran home", false)],
+        &[("the fox jumps", false)],
+        &[("the quick brown fox ran", false)],
+    ]);
+    let cases = [
+        (
+            docx_at("p_1", 3, 10),
+            "recieve",
+            docx_at("p_1", 3, 10),
+            "receive",
+        ),
+        (
+            docx_at("p_2", 0, 15),
+            "the red fox ran",
+            docx_at("p_2", 0, 16),
+            "the blue fox ran",
+        ),
+        (
+            docx_at("p_3", 0, 19),
+            "the quick brown fox",
+            docx_at("p_3", 0, 7),
+            "the fox",
+        ),
+        (
+            docx_at("p_4", 0, 7),
+            "the fox",
+            docx_at("p_4", 0, 19),
+            "the quick brown fox",
+        ),
+    ];
+    for (was, was_text, now, now_text) in &cases {
+        assert_eq!(docx_span(&v1, was).as_deref(), Some(*was_text));
+        assert_eq!(docx_span(&v2, now).as_deref(), Some(*now_text));
+    }
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (artifact, actor) = put_artifact(&vault, "notes.docx", DOCX_MIME, &v1);
+    let threads: Vec<AnnotationThread> = cases
+        .iter()
+        .map(|(was, ..)| open(&vault, artifact, 1, was, actor))
+        .collect();
+    upload(&vault, &artifact, actor, &v2, 12);
+    let summary = sweep(&vault, &artifact, 1, 2, &[], actor);
+    assert!(summary.drifted.is_empty(), "{summary:?}");
+    assert_eq!(summary.remapped.len(), cases.len());
+    for (thread, (_, _, now, _)) in threads.iter().zip(&cases) {
+        assert_mapped(&vault, &artifact, thread, 2, now);
     }
 }
 
