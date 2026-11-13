@@ -41,6 +41,8 @@ pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
+#[cfg(feature = "sync")]
+pub mod host_taint_replica;
 pub mod house_link;
 pub mod identity_recheck;
 pub mod inquiry;
