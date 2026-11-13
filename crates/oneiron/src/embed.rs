@@ -23,6 +23,7 @@ mod space_card;
 mod space_move;
 mod space_probe;
 mod turn;
+pub(crate) mod world_space;
 pub use binding_move::{
     BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding,
 };
@@ -90,6 +91,7 @@ pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
     mark_turn_in_txn,
 };
+pub use world_space::{DEVICE_PLACE, space_runs_on_device};
 
 #[cfg(feature = "sync")]
 use crate::ports::EntityStoreRead;
@@ -221,6 +223,7 @@ struct LeaseBatch {
     egress_denied: usize,
     egress_no_verdict: usize,
     device_local: usize,
+    world_space: usize,
 }
 
 /// One actually-filled measured item: the leased source it filled, with the actual
@@ -253,6 +256,11 @@ pub struct PendingEmbeddingReconcileReport {
     /// Rows a device-local world keeps (DEC-0005): embedded on device, or
     /// left pending unsent while no embedder on this device takes them.
     pub device_local: usize,
+    /// Rows a world with its own text space carries (DEC-0005
+    /// #private-world-vectors): left pending, unleased and unsent, for the
+    /// media pass of the world's space; never embedded into the vault's
+    /// index, here or by a rung.
+    pub world_space: usize,
     /// Actually-filled measured items, in fill order, for the operational
     /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
     /// unmeasured remote fills have no entry.
@@ -399,6 +407,7 @@ impl PendingEmbeddingReconciler {
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
             device_local: batch.device_local,
+            world_space: batch.world_space,
             ..PendingEmbeddingReconcileReport::default()
         };
         Ok(batch.work)
@@ -608,6 +617,7 @@ impl PendingEmbeddingReconciler {
         let primary_endpoint = self.embedder.endpoint();
         let rung_endpoint = self.remote_rung.as_ref().map(RemoteRung::endpoint);
         self.vault.with_write_txn_grouped(|wtxn| {
+            let world_spaces = world_space::WorldTextSpaces::read_in(&self.vault, wtxn)?;
             let flagged_primary =
                 crate::settings::device_local_worlds_for(&self.vault, wtxn, &primary_endpoint)?;
             let flagged_remote = rung_endpoint
@@ -640,6 +650,18 @@ impl PendingEmbeddingReconciler {
                     batch.stale_jobs += 1;
                     continue;
                 };
+                // A row a world with its own text space carries embeds into
+                // that space alone (DEC-0005 #private-world-vectors): it stays
+                // pending here, unleased and unsent, for the media pass of the
+                // world's space, and never reaches the primary or a rung. A
+                // world set back to the vault's order leases it again here.
+                if !world_spaces
+                    .of_row(&self.vault.store, wtxn, &job.entity_id)?
+                    .is_empty()
+                {
+                    batch.world_space += 1;
+                    continue;
+                }
 
                 let key = HexId(job.entity_id);
                 if let Some(existing) = tolerate_undecodable_lease(PENDING_EMBEDDING_LEASE.get(

@@ -25,7 +25,9 @@ impl PendingEmbeddingReconciler {
     /// The route and lease window `input` takes by the rung's verdict on it,
     /// each `Deny` and `NoVerdict` counted in `batch`; `None` leaves it
     /// pending, unleased and unsent, for a later pass. With no rung, or for a
-    /// row a device-local world keeps, it takes the primary as before.
+    /// row a device-local world keeps, it takes the primary as before. A row a
+    /// world with its own text space carries never reaches here: the lease
+    /// loop leaves it pending for that space ([`super::world_space`]).
     pub(super) fn rung_route(
         &self,
         txn: &heed::RoTxn<'_>,

@@ -18,8 +18,9 @@ use crate::error::Result;
 use super::*;
 
 pub const OP_KIND_WORLD_PRIVACY: &str = "world_privacy";
-/// The longest model route id, in bytes.
-pub const WORLD_MODEL_ROUTE_MAX_BYTES: usize = 128;
+/// The longest model route id, in bytes: the longest embedding space id, so a
+/// declared space fits as a world's route (DEC-0005 #private-world-vectors).
+pub const WORLD_MODEL_ROUTE_MAX_BYTES: usize = 256;
 const WORLD_PRIVACY_KEYS: [&str; 8] = [
     OP_KEY_KIND,
     "world",

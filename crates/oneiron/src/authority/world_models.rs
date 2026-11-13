@@ -8,6 +8,8 @@
 
 use super::{AuthorityFold, EffectiveModelOrder, ModelOrder};
 use crate::Vault;
+use crate::embed::EmbeddingSpace;
+use crate::embed::world_space::WorldTextSpaces;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -108,6 +110,20 @@ impl AuthorityFold {
         }
         routes
     }
+
+    /// Each world whose own model order names routes, with the routes a call
+    /// on that world alone may take ([`Self::world_model_routes`]). A world
+    /// that inherits is not listed.
+    #[must_use]
+    pub fn ordered_world_model_routes(&self) -> Vec<(EntityId, Vec<String>)> {
+        self.worlds
+            .keys()
+            .filter_map(|world| match self.world_model_routes([*world]) {
+                WorldModelRoutes::Inherit => None,
+                WorldModelRoutes::Ordered(routes) => Some((*world, routes)),
+            })
+            .collect()
+    }
 }
 
 impl Vault {
@@ -138,5 +154,22 @@ impl Vault {
     ) -> Result<WorldModelRoutes> {
         let rtxn = self.store.env.read_txn()?;
         self.world_model_routes_in_txn(&rtxn, worlds)
+    }
+
+    /// `world`'s own text space (DEC-0005 #private-world-vectors): the first
+    /// route of its model order that is an embedding space declared here,
+    /// accepting text, whose model runs on the device (`model@revision@device`).
+    /// The world's rows embed into it alone, never into the vault's text
+    /// index. `None` for a world that inherits the vault's order or names no
+    /// such space: its rows take the vault's index.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or an authority log that does not fold.
+    pub fn world_text_space(&self, world: EntityId) -> Result<Option<EmbeddingSpace>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(WorldTextSpaces::read_in(self, &rtxn)?
+            .of_world(&world)
+            .cloned())
     }
 }
