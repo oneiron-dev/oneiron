@@ -10,10 +10,30 @@ use crate::claim::{
 };
 use crate::lens::WeaveLensRequest;
 
+/// `vault.weave.admin.report`'s input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminReportRequest {
+    /// The Admin membership grant the read stands on: its 32-hex id, as
+    /// `vault.members.projection` lists it.
+    pub membership_grant: String,
+    #[serde(default)]
+    pub request: WeaveReportRequest,
+}
+
+/// `vault.weave.admin.lens`'s input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminLensRequest {
+    /// The Admin membership grant the read stands on (32 hex).
+    pub membership_grant: String,
+    #[serde(default)]
+    pub request: WeaveLensRequest,
+}
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::authority::step_up::admin_inputs::{
-    WeaveAdminDigestRequest, WeaveAdminLensRequest, WeaveAdminLinkWrongRequest,
-    WeaveAdminReportRequest,
+    WeaveAdminDigestRequest, WeaveAdminLinkWrongRequest,
 };
 
 /// `vault.weave.admin.item.wrong`'s input.

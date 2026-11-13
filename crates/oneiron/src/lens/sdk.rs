@@ -41,7 +41,20 @@ const DOSSIER_LINES: usize = 32;
 const DOSSIER_LINE_BYTES: usize = 512;
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::lens::sdk::{LensDefaultRequest, LensDossierSource, WeaveLensRequest};
+pub use oneiron_verb_wire::lens::sdk::{LensDefaultRequest, LensDossierSource};
+
+/// `vault.weave.lens`'s input: the weave report's sections, in order, as
+/// `vault.weave.report` takes them, and the surface profile this one call's
+/// card is lowered for (FIX 7969). Omitted, the profile the caller's MCP
+/// call declared applies, else the whole atom kit. It selects a rendering
+/// and grants nothing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveLensRequest {
+    pub sections: Vec<crate::claim::WeaveSectionInput>,
+    #[serde(default)]
+    pub surface: Option<GeneratedUiSurfaceCapabilities>,
+}
 
 /// One source row the caller's key admitted, with its minted backing ref and
 /// the receipt of the read that admitted it.

@@ -18,7 +18,6 @@ pub use crate::lens::record_ref::RecordLinksRequest;
 pub use crate::lens::record_ref::ResolveRecordRefRequest;
 pub use crate::lens::sdk::LensDefaultRequest;
 pub use crate::lens::sdk::LensDossierSource;
-pub use crate::lens::sdk::WeaveLensRequest;
 pub use crate::lens::selection::LensResultSetActionRequest;
 pub use crate::lens::selection::LensResultSetActionResult;
 pub use crate::lens::selection::LensSelectRequest;

@@ -4,7 +4,6 @@
 use oneiron_store::write_envelope::provenance::made_by::MadeBy;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IdentityConfidenceEvidence {

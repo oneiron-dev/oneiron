@@ -2,9 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::authority::step_up::admin_inputs::WeaveAdminDigestRequest;
-pub use crate::authority::step_up::admin_inputs::WeaveAdminLensRequest;
 pub use crate::authority::step_up::admin_inputs::WeaveAdminLinkWrongRequest;
-pub use crate::authority::step_up::admin_inputs::WeaveAdminReportRequest;
 pub use crate::authority::step_up::totp::StepUpTotpReset;
 pub use crate::authority::step_up::totp::StepUpTotpResetRequest;
 use serde::Deserialize;

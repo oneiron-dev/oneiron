@@ -7,7 +7,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::query_memos::MatchVerdict;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
 /// `self.saved_query.read`'s input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
