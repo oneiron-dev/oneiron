@@ -37,6 +37,7 @@ impl SyncServer {
                 runtime: None,
                 payer: None,
                 trained: Some(trained),
+                device: None,
             }));
         }
         Ok(None)

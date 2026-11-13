@@ -43,6 +43,7 @@ use super::core::SyncServer;
 use super::housekeeping::{HousekeepingAdmission, admit_every_pass};
 use crate::ai_host::AiHandle;
 
+mod device;
 mod trained;
 use trained::media_part;
 
@@ -108,6 +109,10 @@ pub(crate) enum MediaEmbedRefusal {
     },
     #[error("the ai.embed rung answered no single finite vector")]
     Malformed,
+    #[error(
+        "embedding space {0} runs on the device, and its model is not loaded on this machine yet; the media backfill loads it with the first document it embeds into the space"
+    )]
+    DeviceModelNotLoaded(String),
     #[error(transparent)]
     Vault(#[from] oneiron::Error),
 }
@@ -199,6 +204,9 @@ pub(crate) struct RuntimeMediaEmbedder {
     payer: Option<PayerPerson>,
     /// A real custody-backed local runtime, never a stock rung alias.
     trained: Option<Arc<super::trained_embedding::TrainedEmbedding>>,
+    /// A device text space's own model in this process (DEC-0005
+    /// #private-world-vectors), never a rung.
+    device: Option<Arc<super::device_embedding::DeviceSpaceTower>>,
 }
 
 impl SyncServer {
@@ -211,6 +219,9 @@ impl SyncServer {
     ) -> Result<RuntimeMediaEmbedder, MediaEmbedRefusal> {
         if let Some(trained) = self.trained_media_embedder(space_id)? {
             return Ok(trained);
+        }
+        if let Some(device) = self.device_media_embedder(space_id)? {
+            return Ok(device);
         }
         let media = self.ai.model_runtime().media();
         if media.seat(AiOperation::Embed).is_none() {
@@ -256,6 +267,7 @@ impl SyncServer {
             runtime: None,
             payer: None,
             trained: None,
+            device: None,
         })
     }
 
@@ -374,7 +386,10 @@ impl SyncServer {
     /// One pass over each space a kind slot binds to, the text slot's on the
     /// one-space preset included, and each open version move's candidate,
     /// each followed by its pass over live off-record rooms
-    /// ([`Self::backfill_room_media`]); then the moves' probes are topped up
+    /// ([`Self::backfill_room_media`]), and over each world's own text space
+    /// (DEC-0005 #private-world-vectors), whose model this machine loads with
+    /// the first of the world's rows it embeds, or at once when the model's
+    /// files are here from an earlier pass; then the moves' probes are topped up
     /// ([`Self::author_space_probes`]) and each full candidate is checked
     /// ([`Self::check_space_moves`]). First, each swapped-in incumbent past
     /// its undo window retires, and each open move past its fill deadline
@@ -417,6 +432,7 @@ impl SyncServer {
             }
             Err(error) => tracing::warn!(%error, "staged embedder bindings not begun"),
         }
+        let world_spaces = self.world_text_spaces();
         let (bindings, moves) = match (self.vault.kind_slot_bindings(), self.vault.space_moves()) {
             (Ok(bindings), Ok(moves)) => (bindings, moves),
             (Err(error), _) | (_, Err(error)) => {
@@ -433,12 +449,16 @@ impl SyncServer {
                 .filter(|moving| moving.state == oneiron::embed::SpaceMoveState::Open)
                 .map(|moving| moving.candidate.as_str()),
         );
+        // A world's own text space fills only the world's rows, never a room's.
+        let room_spaces = spaces.clone();
+        spaces.extend(world_spaces.iter().map(|space| space.id.as_str()));
         let mut room_embedded = 0;
         let mut passes: Vec<_> = spaces
             .into_iter()
             .map(|space| {
                 let pass = self.media_embedder(space).and_then(|embedder| {
                     let embedder = embedder.on_runtime(runtime.clone());
+                    embedder.load_device_model_on_disk()?;
                     let egress = embedder.media_egress();
                     let gate = egress.as_ref().map(|gate| gate as &dyn EgressPredicate);
                     if let Err(error) = runtime.block_on(
@@ -452,7 +472,9 @@ impl SyncServer {
                         gate,
                     )?;
                     // Only a space whose model just served base is asked for the rooms.
-                    room_embedded += self.backfill_room_media(space, &embedder, gate, rooms);
+                    if room_spaces.contains(space) {
+                        room_embedded += self.backfill_room_media(space, &embedder, gate, rooms);
+                    }
                     Ok(report)
                 });
                 (space.to_owned(), pass)
@@ -544,6 +566,11 @@ impl RuntimeMediaEmbedder {
         if let Some(trained) = &self.trained {
             return self
                 .embed_trained_query(trained, kind, media_type, bytes)
+                .await;
+        }
+        if let Some(device) = &self.device {
+            return self
+                .embed_device_query(device, kind, media_type, bytes)
                 .await;
         }
         let (vector, _) = self
@@ -655,7 +682,7 @@ impl RuntimeMediaEmbedder {
     /// rung's call, so a third-party rung reads stored media; `None`
     /// otherwise, which the engine refuses for a third-party rung as before.
     pub(crate) fn media_egress(&self) -> Option<MediaEgress> {
-        if self.trained.is_some() {
+        if self.trained.is_some() || self.device.is_some() {
             return None;
         }
         let request = self.request(Vec::new(), false).admission_request();
@@ -816,6 +843,9 @@ impl RuntimeMediaEmbedder {
             ))?;
         if let Some(trained) = &self.trained {
             return self.embed_trained_input(trained, input, release);
+        }
+        if let Some(device) = &self.device {
+            return self.embed_device_input(device, input, release);
         }
         let part = media_part(input.kind, input.media_type, input.bytes.to_vec())?;
         runtime.block_on(self.embed_one(part, release))

@@ -223,7 +223,8 @@ impl SyncServer {
     /// query goes through that space's text tower, and the vault's own text
     /// index, which no text search reads then, gets no vector. Otherwise it
     /// embeds on the vault's embedder when that serves. A space's call bills
-    /// `payer`.
+    /// `payer`. Beside it, the query enters each world's own text space whose
+    /// model serves here (DEC-0005 #private-world-vectors), as one more list.
     fn recall_embed<'a>(
         &'a self,
         effort: Option<RecallEffort>,
@@ -234,27 +235,51 @@ impl SyncServer {
             if !embeds {
                 return RecallQueryVectors::default();
             }
-            match self.vault.kind_slot_bindings() {
-                Ok(bindings) => {
-                    if let Some(space) = bindings.text {
-                        let vector = self.recall_slot_vector(&space, query, payer);
-                        return RecallQueryVectors {
-                            text_index: None,
-                            media: vector
-                                .map(|vector| (space, InputKind::Text, vector, Vec::new()))
-                                .into_iter()
-                                .collect(),
-                        };
-                    }
-                }
-                Err(error) => {
-                    tracing::debug!(%error, "recall reads the text index: the kind slots did not read");
+            let mut vectors = self.recall_text_vectors(query, payer);
+            let towers = self.world_space_query_towers();
+            for (space, vector) in
+                super::device_embedding::world_space_query_vectors(&towers, query)
+            {
+                if !vectors
+                    .media
+                    .iter()
+                    .any(|(listed, kind, _, _)| *listed == space && *kind == InputKind::Text)
+                {
+                    vectors.media.push((
+                        space,
+                        InputKind::Text,
+                        vector,
+                        super::device_embedding::WORLD_SPACE_QUERY_KINDS.to_vec(),
+                    ));
                 }
             }
-            RecallQueryVectors {
-                text_index: self.recall_query_vector(query),
-                media: Vec::new(),
+            vectors
+        }
+    }
+
+    /// The query's vector in the text slot's space, or in the vault's own
+    /// text index ([`Self::recall_embed`]).
+    fn recall_text_vectors(&self, query: &str, payer: Option<&PayerPerson>) -> RecallQueryVectors {
+        match self.vault.kind_slot_bindings() {
+            Ok(bindings) => {
+                if let Some(space) = bindings.text {
+                    let vector = self.recall_slot_vector(&space, query, payer);
+                    return RecallQueryVectors {
+                        text_index: None,
+                        media: vector
+                            .map(|vector| (space, InputKind::Text, vector, Vec::new()))
+                            .into_iter()
+                            .collect(),
+                    };
+                }
             }
+            Err(error) => {
+                tracing::debug!(%error, "recall reads the text index: the kind slots did not read");
+            }
+        }
+        RecallQueryVectors {
+            text_index: self.recall_query_vector(query),
+            media: Vec::new(),
         }
     }
 

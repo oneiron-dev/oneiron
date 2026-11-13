@@ -188,10 +188,14 @@ impl SyncServer {
     }
 
     /// The tower of each world text space whose model serves on this
-    /// machine: the lists a text query adds. Nothing is loaded.
+    /// machine and which declares a text query tower: the lists a text query
+    /// adds. A space that takes text documents but no text query adds none,
+    /// as retrieval would refuse its seed for the whole request. Nothing is
+    /// loaded.
     pub(crate) fn world_space_query_towers(&self) -> Vec<Arc<DeviceSpaceTower>> {
         self.world_text_spaces()
             .iter()
+            .filter(|space| space.query_towers.contains(&InputKind::Text))
             .filter_map(|space| match self.device_space_tower(space) {
                 Ok(tower) => tower.filter(|tower| tower.loaded().is_some()),
                 Err(refusal) => {

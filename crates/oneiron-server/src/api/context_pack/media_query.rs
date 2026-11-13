@@ -224,7 +224,40 @@ pub(crate) async fn embed_media_seeds_for(
             .await?,
         );
     }
+    if let Some(query) = text_query {
+        for (space, vector) in world_space_seed_vectors(server, query).await {
+            if !seeds
+                .iter()
+                .any(|seed| seed.space == space && seed.kind == InputKind::Text)
+            {
+                seeds.push(MediaSeed {
+                    space,
+                    kind: InputKind::Text,
+                    vector,
+                    kinds: crate::server::WORLD_SPACE_QUERY_KINDS.to_vec(),
+                });
+            }
+        }
+    }
     Ok(seeds)
+}
+
+/// The text query's vector in each world's own text space whose model serves
+/// on this machine (DEC-0005 #private-world-vectors), on a blocking thread:
+/// each is one more list, and a world whose model does not serve adds none,
+/// so its rows are found by keywords, names, links and time.
+async fn world_space_seed_vectors(server: &SyncServer, query: &str) -> Vec<(String, Vec<f32>)> {
+    let towers = server.world_space_query_towers();
+    if towers.is_empty() {
+        return Vec::new();
+    }
+    let query = query.to_owned();
+    tokio::task::spawn_blocking(move || crate::server::world_space_query_vectors(&towers, &query))
+        .await
+        .unwrap_or_else(|error| {
+            tracing::debug!(%error, "the worlds' text space query vectors did not join");
+            Vec::new()
+        })
 }
 
 /// Semantic search's `text` on the one-space preset: the query through the
