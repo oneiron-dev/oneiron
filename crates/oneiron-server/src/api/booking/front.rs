@@ -126,7 +126,7 @@ async fn run_constraint_turn_in(
     let settings = parse_seat_settings(server)?;
 
     // ── the one admission call, in the listing class ────────────────────
-    let mut turn = turn::Turn::new(server, transport);
+    let mut turn = turn::Turn::new(server, transport.credential.is_some());
     let caller = transport.caller();
     let (now, disposition) = loop {
         let now = now_secs()?;

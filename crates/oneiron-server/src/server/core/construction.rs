@@ -417,6 +417,7 @@ impl SyncServer {
             api_addr: None,
             artifact_socket: false,
             booking_calls: Default::default(),
+            booking_turn_lines: Default::default(),
             #[cfg(test)]
             booking_test_now_secs: None,
             #[cfg(test)]

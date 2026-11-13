@@ -136,6 +136,9 @@ pub struct SyncServer {
     /// Authenticated booking calls per actor this minute (FIX 128-131),
     /// measured against their `[limits]` rows; never a window.
     pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
+    /// The lines authenticated booking requests wait in, one per window
+    /// (ARCH-0062 #booking-turn-divergence); never persisted.
+    pub(crate) booking_turn_lines: super::booking_turn_lines::BookingTurnLines,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// Dedicated shared environments retained for leave checks and their own
@@ -352,6 +355,7 @@ const _: fn(&SyncServer) = |server| {
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
         mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
+        booking_turn_lines,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,
