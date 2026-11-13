@@ -105,7 +105,20 @@ pub(crate) async fn skills_pack(
     ))
 }
 
+/// How many times this process has run [`openapi_document`]; the
+/// `openapi_document` test door reads it.
+#[cfg(oneiron_test_support)]
+static OPENAPI_DOCUMENT_ASSEMBLIES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn openapi_document_assemblies() -> usize {
+    OPENAPI_DOCUMENT_ASSEMBLIES.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 pub(crate) fn openapi_document() -> Value {
+    #[cfg(oneiron_test_support)]
+    OPENAPI_DOCUMENT_ASSEMBLIES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut spec = serde_json::to_value(ApiDoc::openapi()).expect("serialize generated OpenAPI");
     merge_error_components(&mut spec);
     merge_booking_components(&mut spec);
