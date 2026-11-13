@@ -149,8 +149,11 @@ pub(super) enum StepConversationFault {
     /// A cursor checkpoint did not save, or the conversation failed before
     /// any park.
     Checkpoint(oneiron::Error),
-    /// The park (the tool checkpoint with its Hook pause) did not save after
-    /// the hook saved its ask. The cursor checkpoint before it stands.
+    /// The park (the tool checkpoint with its Hook pause) of a call not
+    /// resumed from a park did not save after the hook saved its ask. The
+    /// cursor checkpoint before it stands, with no wait. A resumed call's
+    /// failed park save is a [`Self::Checkpoint`] fault: its committed
+    /// checkpoint still holds the earlier wait, which no retry requeues.
     ParkSave(oneiron::Error),
 }
 
@@ -347,6 +350,9 @@ impl<'a> StepSecretUse<'a> {
                 calls.into_iter().enumerate().skip(cursor.tool_index)
             {
                 let prior_wait = waiting.take();
+                // A call resumed from its own park: the committed checkpoint
+                // still holds that park's wait until a cursor save.
+                let resumed_call = prior_wait.is_some();
                 let outcome = if name == SELF_USE_TOOL {
                     let invocation = if let Some(wait) = prior_wait {
                         Some(wait.invocation)
@@ -367,6 +373,17 @@ impl<'a> StepSecretUse<'a> {
                 };
                 match outcome {
                     StepToolOutcome::HookPending(wait) => {
+                        // The same-leaf retry requeues the committed
+                        // checkpoint, and the requeue refuses one with a
+                        // pending wait (tool_wait/runtime.rs). So only a
+                        // call that was not resumed from a park has its
+                        // failed park save retried; a resumed call's ends
+                        // the step, as before (review round 1 of #7306).
+                        let fault: fn(oneiron::Error) -> StepConversationFault = if resumed_call {
+                            StepConversationFault::Checkpoint
+                        } else {
+                            StepConversationFault::ParkSave
+                        };
                         save(
                             &request,
                             &cursor,
@@ -374,7 +391,7 @@ impl<'a> StepSecretUse<'a> {
                             None,
                             &refreshed_sources,
                         )
-                        .map_err(StepConversationFault::ParkSave)?;
+                        .map_err(fault)?;
                         return Ok(StepConversation::HookPending(wait));
                     }
                     StepToolOutcome::Answered(output, is_error) => {
