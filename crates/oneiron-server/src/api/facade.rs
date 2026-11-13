@@ -231,6 +231,7 @@ mod support_grant_doors;
 mod sync_quarantine_doors;
 #[cfg(test)]
 pub(super) mod tests;
+mod training_run_doors;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
 mod uncertain_send_doors;

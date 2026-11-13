@@ -118,6 +118,8 @@ mod support_grant;
 mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
+// ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
+mod training_runs;
 mod trusted_contact;
 mod uncertain_send;
 mod verb_table;
@@ -615,6 +617,7 @@ pub use self::support_grant::*;
 pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
+pub use self::training_runs::*;
 pub use self::trusted_contact::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
