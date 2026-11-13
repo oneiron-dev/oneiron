@@ -114,71 +114,6 @@ impl<'writer, 'env> SharedMemberDeparture<'writer, 'env> {
 /// Higher ranks hold more; a change to a lower rank revokes held slips. A
 /// Deputy sits above Admin: a move from Deputy to Admin drops its delegated
 /// Owner powers.
-/// The saved verbs whose typed effects the membership doors judge by
-/// check-in. An applied Steward ask names the verb of the change it applies,
-/// so a direct call and an applied ask over the same effect are one ask.
-const MEMBERS_ADD_VERB: &str = "vault.members.add";
-const MEMBERS_CHANGE_VERB: &str = "vault.members.change";
-const MEMBERS_REMOVE_VERB: &str = "vault.members.remove";
-
-/// A membership door's typed effect, which check-in judges in the door's
-/// writer before it applies (P24-SHAPE Q3 to Q6 = A).
-pub(super) struct MemberEffect {
-    pub(super) change: MemberChange,
-    /// The settled check-in a re-call names: the act spends it.
-    pub(super) check_in_ref: Option<EntityId>,
-}
-
-/// One member change a door runs.
-#[derive(Clone, Copy)]
-pub(super) enum MemberChange {
-    /// Invite `member` at `role`, or at the preset's default member role.
-    Add {
-        member: EntityId,
-        role: Option<Role>,
-    },
-    /// Move `member` to `to`.
-    Change { member: EntityId, to: Role },
-    /// Remove `member`.
-    Remove { member: EntityId },
-}
-
-/// The act class of moving a member from `from` to `to` (P24-SHAPE Q5 = A):
-/// roles have no order, so the table is explicit. Member to Admin raises
-/// (`member_add`); every other move, Admin to Member and any move into or
-/// out of Steward among them, is `member_remove`, which a Deputy always
-/// asks.
-const fn member_move_act(from: Role, to: Role) -> ActClass {
-    match (from, to) {
-        (Role::Member, Role::Admin) => ActClass::MemberAdd,
-        _ => ActClass::MemberRemove,
-    }
-}
-
-/// The digest of one member change: the vault, the actor, the verb, the
-/// member and the roles it moves from and to. Another target or role is
-/// another effect, so another ask.
-fn member_effect_digest(
-    vault_id: u64,
-    actor: EntityId,
-    verb: &str,
-    member: EntityId,
-    from: Option<Role>,
-    to: Option<Role>,
-) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in membership effect v1");
-    hasher.update(&vault_id.to_be_bytes());
-    hasher.update(actor.as_bytes());
-    hasher.update(verb.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(member.as_bytes());
-    for role in [from, to] {
-        hasher.update(role.map_or("", Role::as_str).as_bytes());
-        hasher.update(&[0]);
-    }
-    *hasher.finalize().as_bytes()
-}
-
 const fn rank(role: Role) -> u8 {
     match role {
         Role::Owner => 6,
@@ -758,8 +693,8 @@ impl Vault {
         actor: &AuthenticatedOwner,
         vault_id: u64,
         power: Option<OrgAdminPower>,
-        ask: Option<&str>,
         effect: Option<MemberEffect>,
+        ask: Option<&str>,
         apply: impl FnOnce(
             &mut heed::RwTxn<'_>,
             EntityId,
@@ -911,11 +846,11 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
-            ask,
             Some(MemberEffect {
                 change: MemberChange::Add { member, role },
                 check_in_ref,
             }),
+            ask,
             |txn, inviter, now, _receipt| {
                 let preset = self
                     .shared_vault_creation_in_txn(txn)?
@@ -993,11 +928,11 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::AssignRole),
-            ask,
             Some(MemberEffect {
                 change: MemberChange::Change { member, to: role },
                 check_in_ref,
             }),
+            ask,
             |txn, _, now, receipt| {
                 non_root(Some(role))?;
                 let from = self
@@ -1086,11 +1021,11 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::RemoveMember),
-            ask,
             Some(MemberEffect {
                 change: MemberChange::Remove { member },
                 check_in_ref,
             }),
+            ask,
             |txn, _, now, receipt| {
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
@@ -1301,4 +1236,69 @@ fn member_execution(
         withdrawn_grants: unsigned_withdrawals,
         handover: None,
     })
+}
+
+/// The saved verbs whose typed effects the membership doors judge by
+/// check-in. An applied Steward ask names the verb of the change it applies,
+/// so a direct call and an applied ask over the same effect are one ask.
+const MEMBERS_ADD_VERB: &str = "vault.members.add";
+const MEMBERS_CHANGE_VERB: &str = "vault.members.change";
+const MEMBERS_REMOVE_VERB: &str = "vault.members.remove";
+
+/// A membership door's typed effect, which check-in judges in the door's
+/// writer before it applies (P24-SHAPE Q3 to Q6 = A).
+pub(super) struct MemberEffect {
+    pub(super) change: MemberChange,
+    /// The settled check-in a re-call names: the act spends it.
+    pub(super) check_in_ref: Option<EntityId>,
+}
+
+/// One member change a door runs.
+#[derive(Clone, Copy)]
+pub(super) enum MemberChange {
+    /// Invite `member` at `role`, or at the preset's default member role.
+    Add {
+        member: EntityId,
+        role: Option<Role>,
+    },
+    /// Move `member` to `to`.
+    Change { member: EntityId, to: Role },
+    /// Remove `member`.
+    Remove { member: EntityId },
+}
+
+/// The act class of moving a member from `from` to `to` (P24-SHAPE Q5 = A):
+/// roles have no order, so the table is explicit. Member to Admin raises
+/// (`member_add`); every other move, Admin to Member and any move into or
+/// out of Steward among them, is `member_remove`, which a Deputy always
+/// asks.
+const fn member_move_act(from: Role, to: Role) -> ActClass {
+    match (from, to) {
+        (Role::Member, Role::Admin) => ActClass::MemberAdd,
+        _ => ActClass::MemberRemove,
+    }
+}
+
+/// The digest of one member change: the vault, the actor, the verb, the
+/// member and the roles it moves from and to. Another target or role is
+/// another effect, so another ask.
+fn member_effect_digest(
+    vault_id: u64,
+    actor: EntityId,
+    verb: &str,
+    member: EntityId,
+    from: Option<Role>,
+    to: Option<Role>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in membership effect v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(actor.as_bytes());
+    hasher.update(verb.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(member.as_bytes());
+    for role in [from, to] {
+        hasher.update(role.map_or("", Role::as_str).as_bytes());
+        hasher.update(&[0]);
+    }
+    *hasher.finalize().as_bytes()
 }
