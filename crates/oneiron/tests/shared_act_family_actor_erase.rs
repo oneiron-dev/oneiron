@@ -225,3 +225,58 @@ fn an_erased_askers_erase_ask_keeps_its_record_target_as_scaffold() {
     );
     assert_resolves_to_nothing(&vault, admin);
 }
+
+/// Review round 1 of #7759: `start_authority_act` checks a built-in act's
+/// name, not its plan, so an Owner can store an `add_owner` act whose plan
+/// does not decode. Every person's erase scans each pending act; at
+/// f586cf806ad4 it failed on that one row, so no erase could finish. Now
+/// the erase ends: an unreadable plan that named the erased person holds the
+/// erased marker in their place, and one that named no one stays as stored.
+#[test]
+fn an_unreadable_plan_does_not_stop_a_hard_erase() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (vault, owner) = vault_and_owner(dir.path());
+    let bystander = person(&vault);
+    let candidate = person(&vault);
+    share(&vault, owner, None);
+    let owner_proof = proof(&vault, owner);
+    let empty = vault
+        .start_authority_act(&owner_proof, SHARED, "add_owner", b"{}".to_vec())
+        .expect("the Owner stores an add_owner act with an empty plan");
+    // The unknown field fails the plan's decode; the bytes still name the
+    // candidate, in upper case.
+    let unreadable = format!(
+        r#"{{"v":1,"owner":"{}","note":1}}"#,
+        candidate.to_hex().to_uppercase()
+    );
+    let naming = vault
+        .start_authority_act(&owner_proof, SHARED, "add_owner", unreadable.into_bytes())
+        .expect("the Owner stores an add_owner act with an unreadable plan");
+
+    hard_erase(&vault, bystander);
+    hard_erase(&vault, candidate);
+
+    let payload = |act: &str| {
+        vault
+            .pending_authority_act(act)
+            .expect("the read")
+            .expect("the act stays as scaffold")
+            .payload
+    };
+    assert_eq!(
+        payload(empty.id.as_str()),
+        b"{}",
+        "the plan that named no one stays as stored"
+    );
+    assert_eq!(
+        String::from_utf8(payload(naming.id.as_str())).expect("the plan's text"),
+        r#"{"v":1,"owner":"erased","note":1}"#,
+        "the unreadable plan holds the erased marker where it named the candidate"
+    );
+    assert_eq!(
+        rows_naming(&vault, candidate).expect("rows"),
+        Vec::<String>::new(),
+        "no shared-act row holds the erased id"
+    );
+    assert_resolves_to_nothing(&vault, candidate);
+}
