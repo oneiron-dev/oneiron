@@ -286,6 +286,12 @@ pub struct RoomTrunkHeader {
 pub struct RoomTrunk {
     pub turn: RoomTurn,
     pub headers: Vec<RoomTrunkHeader>,
+    /// The org the turn's speaker ran as its house when it spoke (HOUSE-BIND
+    /// = A, FIX SPEAKER-BYLINE-FOR-ORG): "pr2, for <org>". Read from the
+    /// house link receipts at the turn's `at` on each read, never stored.
+    /// `None` when the speaker ran no org then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_org: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,6 +307,12 @@ pub struct RoomPage {
     pub next_after: Option<String>,
     /// The room Scope this page was read inside (ARCH-0067 §8).
     pub scope: crate::federation::Scope,
+    /// By turn id, the org each row's speaker ran as its house when it
+    /// spoke (HOUSE-BIND = A, FIX SPEAKER-BYLINE-FOR-ORG), as
+    /// [`RoomTrunk::for_org`] reads it. A row whose speaker ran no org then
+    /// has no entry, so the map is empty by default.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub for_org: std::collections::BTreeMap<String, String>,
 }
 
 /// A room TURN is an ordinary record, not a claim, so it lives in base
