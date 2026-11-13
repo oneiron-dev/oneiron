@@ -27,6 +27,7 @@ use std::sync::Arc;
 use loro::{LoroValue, ValueOrContainer};
 use oneiron::authority::{ActSurface, MachineRole, PeerMachine};
 use oneiron::edge::EdgeActorClass;
+use oneiron::entity_doc::{DocAuthorization, TextField};
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
 };
@@ -51,7 +52,7 @@ use oneiron::test_support::test_host_issuer;
 use oneiron::write_envelope::claim_body::encode_claim_body;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    Vault, VaultConfig,
+    Vault, VaultConfig, WriteActor,
 };
 use oneiron_authority::federation::scope_codec::read_preset;
 use rmpv::Value;
@@ -68,10 +69,14 @@ fn at(time: u64) -> TimeRange {
 }
 
 /// Witnesses one MESSAGE through the owner's real write lane. Each source
-/// gets its own turn, and only the R source names a relationship.
+/// gets its own turn, and only the R source names a relationship. A new
+/// MESSAGE keeps its words inline in its row (FIX 4840), and a born-with
+/// Prompt reads only a source's document text, so the owner then moves the
+/// words into the MESSAGE's document, as a later edit does.
 fn prompt_message(
     vault: &Vault,
     owner: EntityId,
+    authorization: &DocAuthorization<'_>,
     relationship: Option<EntityId>,
     content: &str,
     now: u64,
@@ -99,6 +104,17 @@ fn prompt_message(
             assertions: WitnessAssertions::default(),
         })
         .expect("FIXTURE: the owner witnesses a prompt MESSAGE");
+    vault
+        .migrate_entity_text(
+            &message,
+            &TextField::MapField("content".to_owned()),
+            WriteActor::new(owner, EdgeActorClass::Human),
+            authorization,
+        )
+        .expect("FIXTURE: the owner moves the MESSAGE's words into its document");
+    vault
+        .entity_document_head(&message)
+        .expect("FIXTURE: the prompt MESSAGE owns a document head");
     assert_eq!(
         vault.entity_text(&message).expect("FIXTURE: MESSAGE text"),
         content,
@@ -271,14 +287,16 @@ fn export_through(
         "FIXTURE: the export will read the stored Prompt travel choice"
     );
 
+    let authorization = DocAuthorization::Owner(&proof);
     let relationship_prompt = prompt_message(
         &vault,
         owner,
+        &authorization,
         Some(relationship),
         RELATIONSHIP_PROMPT_TEXT,
         now,
     );
-    let open_prompt = prompt_message(&vault, owner, None, OPEN_PROMPT_TEXT, now);
+    let open_prompt = prompt_message(&vault, owner, &authorization, None, OPEN_PROMPT_TEXT, now);
     let open_claim = open_record_with_prompts(
         &vault,
         owner,
