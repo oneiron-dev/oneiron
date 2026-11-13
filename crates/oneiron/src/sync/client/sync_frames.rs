@@ -14,8 +14,13 @@ use crate::sync::window_rows::{WINDOW_SHALLOW_FENCE, WINDOW_STATE_VECTOR};
 impl SyncClient {
     /// Every socket has its own subscribed-key set. A reconnect retains its
     /// local Docs and root, but must negotiate every world VV again after
-    /// the server's root response (and after all shared base VVs).
-    pub(in crate::sync) fn begin_connection_sync(&mut self) {
+    /// the server's root response (and after all shared base VVs). The
+    /// worlds it follows are read here, before its first frame, and every
+    /// frame of this negotiation selects from them
+    /// (`negotiated_worlds_or_live`): a change after this point
+    /// renegotiates once the steady loop starts.
+    pub(crate) fn begin_connection_sync(&mut self) {
+        self.negotiated_worlds = self.effective_worlds().ok();
         self.requested_windows
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -30,6 +35,18 @@ impl SyncClient {
         // A grant or a replacement on an earlier socket proves nothing on this one (FIX 20202).
         self.promotions_granted.clear();
         self.replacements_installed.clear();
+    }
+
+    /// The worlds this negotiation's frames select from: the set read as
+    /// its connection began, which the steady loop compares
+    /// ([`Self::follow_set_changed`]), so a change during the negotiation
+    /// renegotiates. Before any connection began, or when that read failed,
+    /// the set read now.
+    fn negotiated_worlds_or_live(&self) -> std::result::Result<FollowedWorlds, TransportError> {
+        match &self.negotiated_worlds {
+            Some(worlds) => Ok(worlds.clone()),
+            None => self.effective_worlds(),
+        }
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
@@ -169,7 +186,7 @@ impl SyncClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
 
-        let effective_worlds = self.effective_worlds()?;
+        let effective_worlds = self.negotiated_worlds_or_live()?;
         let mut keys: Vec<WindowKey> = Vec::new();
         if self.config.residence_mode == SyncResidenceMode::All {
             let mut next = Some(WindowKey::from_timestamp(now_secs));
@@ -234,7 +251,7 @@ impl SyncClient {
             if self.config.residence_selector.is_some() {
                 for key in crate::sync::schema::read_window_list(&self.root_doc) {
                     if key.world().is_some()
-                        && self.follows_full_window(key.as_str())
+                        && self.follows_full_window_in(key.as_str(), &effective_worlds)
                         && !keys.contains(&key)
                     {
                         keys.push(key);
@@ -397,7 +414,7 @@ impl SyncClient {
     pub(super) fn newly_followed_window_requests(
         &mut self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        let effective_worlds = self.effective_worlds()?;
+        let effective_worlds = self.negotiated_worlds_or_live()?;
         // Opened residence exchanges full VVs only for promoted windows and
         // followed worlds' windows; the deferred set holds the ones this
         // connection's first frames asked to promote.
@@ -431,7 +448,7 @@ impl SyncClient {
                 if key.world().is_some()
                     && !requested
                     && !discovered.contains(&key)
-                    && self.follows_full_window(key.as_str())
+                    && self.follows_full_window_in(key.as_str(), &effective_worlds)
                     && self.home_may_promote(&key)
                 {
                     late_follows.insert(key.clone());

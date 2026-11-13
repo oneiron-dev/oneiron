@@ -83,6 +83,13 @@ pub struct SyncClient {
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
     pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
+    /// The worlds this connection's negotiation follows, read as it began
+    /// (`begin_connection_sync`). Its first frames and the requests the
+    /// home's root response brings select from this set, and the steady
+    /// loop renegotiates once the followed set differs from it
+    /// ([`Self::follow_set_changed`]; ARCH-0023b #partial-sync). `None` when
+    /// no connection began or the set could not be read.
+    pub(super) negotiated_worlds: Option<FollowedWorlds>,
     /// Unacknowledged cross-month deltas, each with the machine its connection
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
@@ -239,6 +246,7 @@ impl SyncClient {
             note_session_bound: false,
             note_bind_receipt: None,
             cleartext_withhold_logged: false,
+            negotiated_worlds: None,
             document_updates,
             document_retries: Mutex::default(),
             vault,
@@ -499,6 +507,15 @@ impl SyncClient {
         Ok(requested.capped_by(ceiling))
     }
 
+    /// Whether the worlds this lane follows now differ from the ones its
+    /// connection's negotiation read as it began (`negotiated_worlds`): a
+    /// pick, a world setting or a grant changed them, and the steady loop
+    /// renegotiates at once (ARCH-0023b #partial-sync), as a residence-mode
+    /// change does.
+    pub(crate) fn follow_set_changed(&self) -> bool {
+        self.effective_worlds().ok() != self.negotiated_worlds
+    }
+
     /// Every world readable on this machine, read in `txn`: all but the
     /// worlds whose read setting keeps them off it (DEC-0005). This install
     /// is the destination its machine id names, or one nobody proved while
@@ -581,14 +598,29 @@ impl SyncClient {
     /// sync all or for a base window. A follow set that cannot be read
     /// follows nothing.
     pub(crate) fn follows_full_window(&self, key: &str) -> bool {
-        self.config.residence_mode == super::SyncResidenceMode::Opened
-            && self.config.federation_peer.is_none()
-            && WindowKey::try_new(key)
-                .and_then(|window| window.world())
-                .is_some_and(|world| {
-                    self.effective_worlds()
-                        .is_ok_and(|worlds| worlds.contains(&world))
-                })
+        self.full_window_world(key).is_some_and(|world| {
+            self.effective_worlds()
+                .is_ok_and(|worlds| worlds.contains(&world))
+        })
+    }
+
+    /// [`Self::follows_full_window`], judged against `worlds`: the set a
+    /// connection's negotiation follows, so that its frames ask for the
+    /// windows its steady loop compares (ARCH-0023b #partial-sync).
+    pub(crate) fn follows_full_window_in(&self, key: &str, worlds: &FollowedWorlds) -> bool {
+        self.full_window_world(key)
+            .is_some_and(|world| worlds.contains(&world))
+    }
+
+    /// The world of `key` when its full window syncs by follow on this lane:
+    /// a world window on an opened-item device lane.
+    fn full_window_world(&self, key: &str) -> Option<crate::EntityId> {
+        if self.config.residence_mode != super::SyncResidenceMode::Opened
+            || self.config.federation_peer.is_some()
+        {
+            return None;
+        }
+        WindowKey::try_new(key).and_then(|window| window.world())
     }
 
     /// Whether this opened-item device promoted `key` to a canonical copy.

@@ -1,6 +1,6 @@
-//! The thin index's window choice on a device lane, for the integration
-//! test of a device following its worlds (census L7-42, ARCH-0023b
-//! #partial-sync).
+//! The thin index's window choice and a negotiation's follow set on a device
+//! lane, for the integration tests of a device following its worlds (census
+//! L7-42, ARCH-0023b #partial-sync).
 
 use crate::sync::SyncClient;
 use crate::sync::transport::TransportError;
@@ -19,4 +19,17 @@ pub fn thin_index_windows(
     current_window_count: usize,
 ) -> Result<Vec<WindowKey>, TransportError> {
     client.thin_index_windows(now_secs, current_window_count)
+}
+
+/// Begins a negotiation on `client`, as each socket's handshake does before
+/// its first frame: the worlds it follows are read here.
+pub fn begin_connection_sync(client: &mut SyncClient) {
+    client.begin_connection_sync();
+}
+
+/// Whether the steady loop of `client`'s connection renegotiates now: the
+/// worlds it follows differ from the ones its negotiation read as it began.
+#[must_use]
+pub fn follow_set_changed(client: &SyncClient) -> bool {
+    client.follow_set_changed()
 }
