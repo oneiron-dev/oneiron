@@ -48,14 +48,27 @@ const PUBLIC_BAND: u8 = 0;
 /// the person's `about` row, never a walk of its claims (FIX 8660), and only
 /// band 0. A vector carries no band, so one built from a higher band's line
 /// would rank candidates for a reader below that band (ARCH-0067).
+///
+/// Every embedding door reads the line here, in its own write, so an
+/// ordinary refusal is no line, never an error that fails the door: a
+/// deleted person shows none, and nor does any person while the Dreamer's
+/// Steward grant or MACHINE binding no longer stands, since its reader then
+/// reads nothing ([`crate::Vault::system_agent_reads_live_in`]). A failed
+/// read is still an error.
 pub(crate) fn public_about_line_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person: &EntityId,
 ) -> Result<Option<String>> {
+    if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, person)?.deleted {
+        return Ok(None);
+    }
     let Some(row) = PERSON_ABOUT.get(&vault.store, txn, person)? else {
         return Ok(None);
     };
+    if !dreamer_read(vault)?.proof_live_in(txn)? {
+        return Ok(None);
+    }
     Ok(current_line_in_txn(vault, txn, &row, PUBLIC_BAND)?
         .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()))
 }
