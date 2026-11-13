@@ -5,9 +5,12 @@
 //! refused as if it were absent; with no image organ on the host the
 //! owner's whole edit is one held call with the reason, and nothing lands
 //! (RULING 09:53, IO-HOLD C); and a request no organ takes gets its typed
-//! refusal. A server test cannot
+//! refusal. `vault.artifacts.image.preview` (L4-16) takes the same caller
+//! and lane read; with no image organ it is refused `image_no_node` with the
+//! reason, and holds and lands nothing. A server test cannot
 //! start the organ binary (cargo names it only to its own package's tests),
-//! so the real crop is `oneiron-image`'s `image_edit_landing` test.
+//! so the real crop and preview are `oneiron-image`'s `image_edit_landing`
+//! test.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -32,6 +35,7 @@ use tower::ServiceExt;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const EDIT: &str = "vault.artifacts.image.edit";
+const PREVIEW: &str = "vault.artifacts.image.preview";
 /// A 1 x 1 PNG.
 const PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
@@ -441,5 +445,137 @@ async fn typed_refusals() -> TestResult {
             "nothing waits for Keep: {proposals:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn with_no_image_organ_a_preview_is_refused_with_the_reason_and_nothing_is_held_or_lands()
+-> TestResult {
+    on_engine_stack(preview_refused)
+}
+
+async fn preview_refused() -> TestResult {
+    let fixture = Fixture::new()?;
+    let photo = fixture
+        .artifact("photo.png", "image/png", PNG_BASE64)
+        .await?;
+    let preview = |ops: Value, max_side: u32| json!({ "artifact_ref": photo, "ops": ops, "max_side": max_side });
+    let (status, body) = fixture
+        .call(Some(&fixture.owner), PREVIEW, &preview(crop(), 64))
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (503, Some("image_no_node")),
+        "FAILBEFORE: the owner's preview, with no image organ on the host, is refused: {body}"
+    );
+    assert!(
+        message(&body).contains("image.preview") && message(&body).contains("here:"),
+        "the refusal says why: {body}"
+    );
+    // The bound defaults when absent; no op previews the version as it is.
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            PREVIEW,
+            &json!({ "artifact_ref": photo }),
+        )
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (503, Some("image_no_node")),
+        "a preview of the version as it is: {body}"
+    );
+    let (held, proposals) = fixture.waiting(&photo).await?;
+    assert!(held.is_empty(), "a preview holds nothing: {held:?}");
+    assert!(
+        proposals.is_empty(),
+        "nothing waits for Keep: {proposals:?}"
+    );
+
+    // The agent's lane does not read the owner's artifact.
+    let (status, body) = fixture
+        .call(Some(&fixture.agent), PREVIEW, &preview(crop(), 64))
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (404, Some("NOT_FOUND")),
+        "an agent whose lane does not read the artifact: {body}"
+    );
+    let (status, body) = fixture.call(None, PREVIEW, &preview(crop(), 64)).await?;
+    assert_eq!(status, 401, "a call with no credential: {body}");
+
+    for (max_side, why) in [(15, "under 16 pixels"), (2049, "over 2048 pixels")] {
+        let (status, body) = fixture
+            .call(Some(&fixture.owner), PREVIEW, &preview(crop(), max_side))
+            .await?;
+        assert_eq!(
+            (status, code(&body)),
+            (400, Some("image_preview_side")),
+            "a side bound {why}: {body}"
+        );
+    }
+    let ops: Vec<Value> = (0..257).map(|_| crop()[0].clone()).collect();
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            PREVIEW,
+            &preview(Value::Array(ops), 64),
+        )
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (400, Some("image_too_many_ops")),
+        "a preview of 257 ops: {body}"
+    );
+    let note = fixture
+        .artifact("note.txt", "text/plain", "YSBub3Rl")
+        .await?;
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            PREVIEW,
+            &json!({ "artifact_ref": note }),
+        )
+        .await?;
+    assert_eq!(
+        (status, code(&body)),
+        (400, Some("image_not_an_image")),
+        "a text artifact: {body}"
+    );
+    let mut input = preview(crop(), 64);
+    input["version"] = json!(9);
+    let (status, body) = fixture.call(Some(&fixture.owner), PREVIEW, &input).await?;
+    assert_eq!(
+        (status, code(&body)),
+        (404, Some("NOT_FOUND")),
+        "a version the artifact does not hold: {body}"
+    );
+
+    for previewed in [&photo, &note] {
+        let (held, proposals) = fixture.waiting(previewed).await?;
+        assert!(held.is_empty(), "nothing is held: {held:?}");
+        assert!(
+            proposals.is_empty(),
+            "nothing waits for Keep: {proposals:?}"
+        );
+    }
+    let (status, body) = fixture
+        .call(
+            Some(&fixture.owner),
+            "vault.artifacts.view",
+            &json!({ "artifact_ref": photo }),
+        )
+        .await?;
+    assert_eq!(status, 200, "the owner reads the artifact: {body}");
+    let view = if body.get("head").is_some() {
+        &body
+    } else {
+        &body["value"]
+    };
+    assert_eq!(
+        view["head"],
+        json!(1),
+        "the artifact keeps its one version: {body}"
+    );
     Ok(())
 }

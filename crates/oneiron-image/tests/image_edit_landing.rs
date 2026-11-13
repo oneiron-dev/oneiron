@@ -4,7 +4,9 @@
 //! proposal until the owner keeps it. A JPEG artifact's edit lands on a new
 //! PNG artifact born from it (RULING 09:34 Fri 13 Nov, IO-FORMAT B). With no
 //! node to run it, the whole edit is one held call, and a redrive on a host
-//! that runs the organ lands it (RULING 09:53, IO-HOLD C).
+//! that runs the organ lands it (RULING 09:53, IO-HOLD C). A preview
+//! (L4-16) answers the version's PNG scaled to fit, and lands and holds
+//! nothing, with a node or without one.
 #![cfg(unix)]
 
 mod fixtures;
@@ -17,7 +19,8 @@ use oneiron::edit_settle::{PendingProposalView, SettleConsent};
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_organ_host::image::{
-    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ResizeFilter, edit_image, image_spec,
+    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter,
+    edit_image, image_spec, preview_image,
 };
 use oneiron_organ_host::{
     AskHandlers, CallClass, HostConfig, OrganHost, OrganRouter, Redrive, Submitted,
@@ -115,6 +118,27 @@ impl Fixture {
             self.actor(),
             &AskHandlers::none(),
         )
+    }
+
+    fn preview_through(
+        &self,
+        router: &OrganRouter,
+        artifact: EntityId,
+        version: Option<u64>,
+        ops: Vec<ImageOp>,
+        max_side: u32,
+    ) -> Result<ImagePreviewed, ImageEditRefusal> {
+        let preview = ImagePreview {
+            artifact,
+            version,
+            ops,
+            max_side,
+            sight: SecretSight::Owner,
+            grant: "photo-preview".to_owned(),
+            class: CallClass::Interactive,
+            deadline: Duration::from_secs(20),
+        };
+        preview_image(router, &self.vault, &preview, &AskHandlers::none())
     }
 
     fn edit(
@@ -550,4 +574,133 @@ fn a_held_jpeg_edit_waits_beside_its_new_png_artifact_and_lands_there() {
     );
     f.nothing_waits(source);
     f.nothing_waits(born);
+}
+
+#[test]
+fn a_preview_answers_the_png_scaled_to_fit_and_nothing_lands_or_is_held() {
+    let f = fixture();
+    let artifact = f.artifact("photo.png", "image/png", &coded_png(40, 20));
+    let crop = ImageOp::Crop {
+        x: 4,
+        y: 2,
+        w: 32,
+        h: 16,
+    };
+    let previewed = match f.preview_through(&f.router, artifact, None, vec![crop], 16) {
+        Ok(previewed) => previewed,
+        Err(err) => panic!("FAILBEFORE: the organ previews a PNG artifact: {err}"),
+    };
+    assert_eq!((previewed.artifact, previewed.version), (artifact, 1));
+    assert_eq!(previewed.media_type, "image/png");
+    assert_eq!(
+        (previewed.width, previewed.height),
+        (16, 8),
+        "the 32 x 16 crop scaled to fit 16 pixels, its aspect kept"
+    );
+    assert_eq!(fixtures::decode_png(&previewed.bytes).dimensions(), (16, 8));
+    assert_eq!(
+        previewed.content_hash,
+        oneiron_organ_protocol::Hash32::of(&previewed.bytes).to_hex(),
+        "the host's hash of the bytes"
+    );
+    assert_eq!(f.head(artifact), Some(1), "a preview lands no version");
+    f.nothing_waits(artifact);
+
+    // A canvas inside the bound is drawn as it is: the crop's own pixels.
+    let small = ImageOp::Crop {
+        x: 2,
+        y: 1,
+        w: 6,
+        h: 5,
+    };
+    let previewed = f
+        .preview_through(&f.router, artifact, Some(1), vec![small], 16)
+        .expect("preview a crop that fits");
+    let image = fixtures::decode_png(&previewed.bytes);
+    assert_eq!(image.dimensions(), (6, 5));
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(pixel.0, fixtures::coded(x + 2, y + 1), "pixel {x},{y}");
+    }
+
+    // A JPEG artifact previews as PNG, and no artifact is born from it.
+    let jpeg = f.artifact(
+        "photo.jpg",
+        "image/jpeg",
+        &fixtures::jpeg_flat(8, 6, [200, 40, 40], None),
+    );
+    let previewed = f
+        .preview_through(&f.router, jpeg, None, Vec::new(), 16)
+        .expect("preview a JPEG artifact");
+    assert_eq!(
+        (previewed.artifact, previewed.media_type.as_str()),
+        (jpeg, "image/png")
+    );
+    assert_eq!((previewed.width, previewed.height), (8, 6));
+    f.nothing_waits(jpeg);
+    f.nothing_waits(artifact);
+}
+
+#[test]
+fn a_preview_with_no_node_or_one_no_organ_takes_is_refused_and_holds_nothing() {
+    let f = fixture();
+    let artifact = f.artifact("photo.png", "image/png", &coded_png(9, 7));
+    let crop = ImageOp::Crop {
+        x: 0,
+        y: 0,
+        w: 4,
+        h: 4,
+    };
+    assert!(
+        f.preview_through(&f.router, artifact, None, vec![crop], 64)
+            .is_ok(),
+        "FAILBEFORE: this host previews the artifact"
+    );
+    // No host and no mesh: the preview is refused with every place tried,
+    // and nothing is held for a redrive.
+    match f.preview_through(&OrganRouter::new(), artifact, None, vec![crop], 64) {
+        Err(ImageEditRefusal::NoNode { reason }) => {
+            assert!(reason.contains("image.preview"), "{reason}");
+        }
+        other => panic!("with no node the preview is refused: {other:?}"),
+    }
+    f.nothing_waits(artifact);
+
+    let refusal = |result: Result<ImagePreviewed, ImageEditRefusal>| {
+        result.expect_err("the preview is refused").code()
+    };
+    assert_eq!(
+        refusal(f.preview_through(&f.router, artifact, None, vec![crop], 15)),
+        "preview_side"
+    );
+    assert_eq!(
+        refusal(f.preview_through(&f.router, artifact, None, vec![crop], 2049)),
+        "preview_side"
+    );
+    assert_eq!(
+        refusal(f.preview_through(&f.router, artifact, None, vec![crop; 257], 64)),
+        "too_many_ops"
+    );
+    assert_eq!(
+        refusal(f.preview_through(&f.router, artifact, Some(9), vec![crop], 64)),
+        "not_found"
+    );
+    let past = ImageOp::Crop {
+        x: 8,
+        y: 6,
+        w: 4,
+        h: 4,
+    };
+    assert_eq!(
+        refusal(f.preview_through(&f.router, artifact, None, vec![past], 64)),
+        "bad_request",
+        "a crop past the canvas is the organ's refusal"
+    );
+    let note = f.artifact("note.txt", "text/plain", b"a note");
+    assert_eq!(
+        refusal(f.preview_through(&f.router, note, None, Vec::new(), 64)),
+        "not_an_image"
+    );
+    f.nothing_waits(artifact);
+    f.nothing_waits(note);
+    assert_eq!(f.head(artifact), Some(1));
 }

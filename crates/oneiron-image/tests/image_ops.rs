@@ -3,7 +3,8 @@
 //! geometry says, EXIF orientation turns the canvas first, overlays stay
 //! editable until export, and unsupported or hostile input fails before any
 //! pixel buffer exists; `image.render` answers what open, each op and the
-//! export answer, in one call. Exports are decoded back by the codec crate
+//! export answer, in one call; `image.preview` answers that render scaled to
+//! fit its side bound (L4-16). Exports are decoded back by the codec crate
 //! alone.
 #![cfg(unix)]
 
@@ -806,6 +807,175 @@ fn render_refuses_what_no_edit_takes() {
             render_args(vec![op("crop", crop(0, 0, 1, 1))], "png"),
             &deep
         )),
+        ErrorCode::Unsupported,
+        "a 16-bit PNG, as open refuses it"
+    );
+}
+
+/// `image.preview`, named as text so this file also builds against an organ
+/// that does not offer it (the red run).
+const PREVIEW: &str = "image.preview";
+
+fn preview_args(ops: Vec<Value>, max_side: u32) -> Value {
+    map(vec![
+        ("ops", Value::Array(ops)),
+        ("max_side", max_side.into()),
+    ])
+}
+
+#[test]
+fn preview_answers_the_render_scaled_to_fit_its_side_bound() {
+    let (w, h) = (40, 20);
+    let source = [InputBytes::inline(
+        "image/png",
+        png(w, h, &pixels(w, h, coded), Extra::default()),
+    )];
+    // A 32 x 16 crop is past a 16 pixel bound: one bilinear resize to
+    // 16 x 8 follows it, the aspect kept.
+    let previewed = match call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(vec![op("crop", crop(4, 2, 32, 16))], 16),
+        None,
+        &source,
+    ) {
+        Ok(answer) => answer,
+        Err(err) => panic!("FAILBEFORE: the organ previews a version in one call: {err}"),
+    };
+    let rendered = call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(
+            vec![
+                op("crop", crop(4, 2, 32, 16)),
+                op("resize", resize(16, 8, "bilinear")),
+            ],
+            "png",
+        ),
+        None,
+        &source,
+    )
+    .expect("render the crop and the fit");
+    assert_eq!(
+        previewed, rendered,
+        "the same PNG, report and notes as the render of the crop and the fit"
+    );
+    let [output] = previewed.outputs.as_slice() else {
+        panic!("a preview makes one output");
+    };
+    assert_eq!(output.media_type, "image/png");
+    assert_eq!(decode_png(&output.bytes).dimensions(), (16, 8));
+
+    // A canvas inside the bound is not scaled: the render of its ops.
+    let fits = call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(vec![op("crop", crop(0, 0, 12, 10))], 16),
+        None,
+        &source,
+    )
+    .expect("preview a canvas that fits");
+    let rendered = call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(vec![op("crop", crop(0, 0, 12, 10))], "png"),
+        None,
+        &source,
+    )
+    .expect("render the crop");
+    assert_eq!(fits, rendered, "a canvas that fits is drawn as rendered");
+    let steps = field(field(&fits.report, "body"), "steps")
+        .as_array()
+        .expect("the report carries the body it drew");
+    assert_eq!(steps.len(), 1, "the crop alone");
+
+    // No op shows the version itself, fitted.
+    let whole = call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(Vec::new(), 20),
+        None,
+        &source,
+    )
+    .expect("preview the version as it is");
+    let [output] = whole.outputs.as_slice() else {
+        panic!("a preview makes one output");
+    };
+    assert_eq!(decode_png(&output.bytes).dimensions(), (20, 10));
+
+    // A thin canvas keeps at least one pixel on its short side.
+    let thin = [InputBytes::inline(
+        "image/png",
+        png(50, 3, &pixels(50, 3, coded), Extra::default()),
+    )];
+    let fitted = call(
+        &ImageOrgan::default(),
+        PREVIEW,
+        preview_args(Vec::new(), 16),
+        None,
+        &thin,
+    )
+    .expect("preview a thin canvas");
+    let [output] = fitted.outputs.as_slice() else {
+        panic!("a preview makes one output");
+    };
+    assert_eq!(decode_png(&output.bytes).dimensions(), (16, 1));
+}
+
+#[test]
+fn preview_refuses_what_no_render_takes_and_a_side_bound_out_of_range() {
+    let bytes = png(4, 4, &pixels(4, 4, coded), Extra::default());
+    let source = [InputBytes::inline("image/png", bytes)];
+    let organ = ImageOrgan::default();
+    let preview = |args: Value, inputs: &[InputBytes]| call(&organ, PREVIEW, args, None, inputs);
+    let whole = || op("crop", crop(0, 0, 4, 4));
+    assert_eq!(
+        code(preview(preview_args(vec![whole()], 15), &source)),
+        ErrorCode::BadRequest,
+        "FAILBEFORE: a side bound under 16 pixels is a bad request"
+    );
+    assert_eq!(
+        code(preview(preview_args(vec![whole()], 2049), &source)),
+        ErrorCode::BadRequest,
+        "a side bound over 2048 pixels"
+    );
+    assert!(
+        preview(preview_args(vec![whole()], 16), &source).is_ok(),
+        "16 pixels previews"
+    );
+    assert!(
+        preview(preview_args(vec![whole()], 2048), &source).is_ok(),
+        "2048 pixels previews"
+    );
+    assert_eq!(
+        code(preview(preview_args(vec![whole(); 257], 64), &source)),
+        ErrorCode::BadRequest,
+        "more than 256 ops"
+    );
+    assert_eq!(
+        code(preview(
+            map(vec![("ops", Value::Array(Vec::new()))]),
+            &source
+        )),
+        ErrorCode::BadRequest,
+        "a preview names its side bound"
+    );
+    assert_eq!(
+        code(preview(
+            preview_args(vec![op("annotate", map(vec![]))], 64),
+            &source
+        )),
+        ErrorCode::BadRequest,
+        "a preview op is a crop or a resize"
+    );
+    assert_eq!(
+        code(preview(preview_args(vec![whole()], 64), &[])),
+        ErrorCode::BadRequest,
+        "no source"
+    );
+    let deep = [InputBytes::inline("image/png", fixtures::png_rgb16(2, 2))];
+    assert_eq!(
+        code(preview(preview_args(Vec::new(), 64), &deep)),
         ErrorCode::Unsupported,
         "a 16-bit PNG, as open refuses it"
     );

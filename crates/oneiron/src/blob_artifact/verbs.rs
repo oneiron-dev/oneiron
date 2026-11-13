@@ -1237,6 +1237,20 @@ impl Memory<'_> {
         Ok((artifact, self.artifact_actor()))
     }
 
+    /// What a host shows an organ preview of an artifact under
+    /// (`vault.artifacts.image.preview`, L4-16): the artifact, read through
+    /// this handle's own lane as [`Self::artifacts_edit_admission`] reads it.
+    ///
+    /// # Errors
+    ///
+    /// A malformed `artifact_ref`; an artifact the lane does not read, as
+    /// absent.
+    pub fn artifacts_preview_admission(&self, artifact_ref: &str) -> MemoryResult<EntityId> {
+        let artifact = entity(artifact_ref)?;
+        self.require_credential_reads(&[artifact])?;
+        Ok(artifact)
+    }
+
     /// `vault.artifacts.release_wait`: lets one held organ call go, by its
     /// run ref (`proposal_ref`), under the consent a Discard needs, judged
     /// in the writer that drops it (FIX 9621).

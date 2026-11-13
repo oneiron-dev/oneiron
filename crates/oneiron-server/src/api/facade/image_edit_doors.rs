@@ -12,21 +12,31 @@
 //! edit is held beside the artifact with its reason until a redrive runs it
 //! (IO-HOLD C). The door mints nothing: the call receipt the proposal names
 //! is the host's attestation.
+//!
+//! `vault.artifacts.image.preview` (L4-16) takes the same caller and the
+//! same lane read, then one `image.preview` call through
+//! [`oneiron_organ_host::image::preview_image`]: the version, its ops and a
+//! fit to a side bound, answered as PNG bytes. It lands and holds nothing,
+//! and with no node able to run it now it is refused `image_no_node` with
+//! the reason.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use base64::Engine as _;
 use oneiron::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult,
 };
 use oneiron::secret_custody::SecretSight;
 use oneiron::task_verb::sdk::{
-    ImageEditAnswer, ImageEditOp, ImageEditRequest, ImageExportFormat, ImageResizeFilter,
+    ImageEditAnswer, ImageEditOp, ImageEditRequest, ImageExportFormat, ImagePreviewAnswer,
+    ImagePreviewRequest, ImageResizeFilter,
 };
 use oneiron::{EdgeActorClass, EntityId};
 use oneiron_organ_host::image::{
-    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ResizeFilter, edit_image,
+    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter,
+    edit_image, preview_image,
 };
 use oneiron_organ_host::{AskHandlers, CallClass, HostError, Submitted};
 
@@ -35,6 +45,7 @@ use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 const VERB: &str = "vault.artifacts.image.edit";
+const PREVIEW_VERB: &str = "vault.artifacts.image.preview";
 /// Each organ call's deadline.
 const CALL_DEADLINE: Duration = Duration::from_secs(60);
 /// The door's own refusal codes: `image_` and the adapter's code.
@@ -94,13 +105,69 @@ pub(crate) async fn vault_artifacts_image_edit(
             };
             edit_image(&router, server.vault(), &edit, actor, &AskHandlers::none())
                 .map(edit_answer)
-                .map_err(refusal_error)
+                .map_err(|refusal| refusal_error(VERB, refusal))
         })
         .await;
     if answer.is_ok() {
         listed.extend(source);
     }
     (answer, listed)
+}
+
+/// `vault.artifacts.image.preview`: the caller's preview of one image
+/// artifact it reads, drawn by one organ call on a blocking thread. Beside
+/// the answer, the rows its reads listed and the artifact it read.
+pub(crate) async fn vault_artifacts_image_preview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ImagePreviewRequest,
+) -> Listed<ImagePreviewAnswer> {
+    let caller = match image_editor(server, auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let router = crate::handler::mesh::organ_router(server);
+    let sight = source_sight(auth);
+    let source = EntityId::from_hex(&input.artifact_ref).ok();
+    let (answer, mut listed) = credential_listing(
+        server,
+        auth,
+        caller,
+        PREVIEW_VERB,
+        move |server, _, memory| {
+            let artifact = memory.artifacts_preview_admission(&input.artifact_ref)?;
+            let preview = ImagePreview {
+                artifact,
+                version: input.version,
+                ops: input.ops.iter().copied().map(image_op).collect(),
+                max_side: input.max_side,
+                sight,
+                grant: PREVIEW_VERB.to_owned(),
+                class: CallClass::Interactive,
+                deadline: CALL_DEADLINE,
+            };
+            preview_image(&router, server.vault(), &preview, &AskHandlers::none())
+                .map(preview_answer)
+                .map_err(|refusal| refusal_error(PREVIEW_VERB, refusal))
+        },
+    )
+    .await;
+    if answer.is_ok() {
+        listed.extend(source);
+    }
+    (answer, listed)
+}
+
+fn preview_answer(previewed: ImagePreviewed) -> ImagePreviewAnswer {
+    ImagePreviewAnswer {
+        artifact_ref: previewed.artifact.to_hex(),
+        version: previewed.version,
+        media_type: previewed.media_type,
+        width: previewed.width,
+        height: previewed.height,
+        image_hash: previewed.content_hash,
+        content_base64: base64::engine::general_purpose::STANDARD.encode(&previewed.bytes),
+    }
 }
 
 /// How the source is read for the organ, as the export door reads a file:
@@ -140,12 +207,13 @@ fn edit_answer(edited: ImageEdited) -> ImageEditAnswer {
     }
 }
 
-/// The facade's error for an edit that did not run: an absent artifact or
-/// version is `NOT_FOUND`; the vault's own refusal (a ref already waiting, a
-/// source the submitter cannot read) keeps its code; a host failure is
-/// `INTERNAL_SERVER_ERROR`, its detail logged; every other refusal takes
-/// its own code, `image_` and the adapter's ([`image_edit_refusal_status`]).
-fn refusal_error(refusal: ImageEditRefusal) -> MemoryError {
+/// The facade's error for an edit or a preview (`verb`) that did not run:
+/// an absent artifact or version is `NOT_FOUND`; the vault's own refusal (a
+/// ref already waiting, a source the submitter cannot read) keeps its code;
+/// a host failure is `INTERNAL_SERVER_ERROR`, its detail logged; every other
+/// refusal takes its own code, `image_` and the adapter's
+/// ([`image_edit_refusal_status`]).
+fn refusal_error(verb: &str, refusal: ImageEditRefusal) -> MemoryError {
     match refusal {
         ImageEditRefusal::NotFound => MemoryError::new(
             MEMORY_CODE_NOT_FOUND,
@@ -154,7 +222,7 @@ fn refusal_error(refusal: ImageEditRefusal) -> MemoryError {
         ),
         ImageEditRefusal::Host(HostError::Engine(error)) => MemoryError::from(error),
         ImageEditRefusal::Host(error) => {
-            tracing::warn!(%error, verb = VERB, "the image organ host failed");
+            tracing::warn!(%error, verb, "the image organ host failed");
             MemoryError::new(MEMORY_CODE_INTERNAL, "the image organ host failed", &[])
         }
         other => MemoryError::new(
@@ -165,13 +233,14 @@ fn refusal_error(refusal: ImageEditRefusal) -> MemoryError {
     }
 }
 
-/// The HTTP status of each of the door's own refusal codes: the caller's
-/// request for an edit no organ takes, or a node that cannot run it now.
+/// The HTTP status of each of the doors' own refusal codes: the caller's
+/// request for an edit or preview no organ takes, or a node that cannot run
+/// it now.
 pub(crate) fn image_edit_refusal_status(code: &str) -> Option<StatusCode> {
     let code = code.strip_prefix(CODE_PREFIX)?;
     Some(match code {
-        "not_an_image" | "no_ops" | "too_many_ops" | "bad_request" | "unknown_verb"
-        | "schema_mismatch" => StatusCode::BAD_REQUEST,
+        "not_an_image" | "no_ops" | "too_many_ops" | "preview_side" | "bad_request"
+        | "unknown_verb" | "schema_mismatch" => StatusCode::BAD_REQUEST,
         "unsupported" => StatusCode::UNPROCESSABLE_ENTITY,
         "too_large" => StatusCode::PAYLOAD_TOO_LARGE,
         "stale_base" => StatusCode::CONFLICT,

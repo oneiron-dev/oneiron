@@ -26,6 +26,6 @@ pub use decode::{Header, Profile, read_header};
 pub use ops::overlay_locator;
 #[cfg(unix)]
 pub use organ::{
-    ImageOrgan, VERB_ANNOTATE, VERB_CROP, VERB_EXPORT, VERB_INSPECT, VERB_OPEN, VERB_RENDER,
-    VERB_RESIZE,
+    ImageOrgan, MAX_PREVIEW_SIDE, MIN_PREVIEW_SIDE, VERB_ANNOTATE, VERB_CROP, VERB_EXPORT,
+    VERB_INSPECT, VERB_OPEN, VERB_PREVIEW, VERB_RENDER, VERB_RESIZE,
 };

@@ -25,6 +25,11 @@
 //! rendered, and the proposal keeps that report (IO-BODY A). The next edit
 //! opens the kept PNG.
 //!
+//! A preview ([`preview_image`], L4-16) is one `image.preview` call: the
+//! version with its ops applied, scaled to fit a side bound, answered as PNG
+//! bytes. Nothing lands and nothing is held: with no node able to run it
+//! now, it answers [`ImageEditRefusal::NoNode`] with the reason.
+//!
 //! Calls block, as every host call does: run them off any async runtime.
 
 use std::path::PathBuf;
@@ -36,10 +41,11 @@ use oneiron::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 use oneiron_organ_protocol::{ErrorCode, OrganError, Value};
+use serde::Deserialize;
 
 use crate::error::HostError;
 use crate::handlers::AskHandlers;
-use crate::route::OrganRouter;
+use crate::route::{OrganRouter, Routed};
 use crate::spec::{CallClass, OrganCall, OrganInput, OrganSpec, SightedInput};
 use crate::wait::{JobCall, Submitted};
 
@@ -53,11 +59,16 @@ pub const VERB_ANNOTATE: &str = "image.annotate";
 pub const VERB_EXPORT: &str = "image.export";
 /// Open, the ops and the PNG export in one call: what an edit submits.
 pub const VERB_RENDER: &str = "image.render";
+/// A render scaled to fit a side bound, landing nothing: what a preview asks.
+pub const VERB_PREVIEW: &str = "image.preview";
 /// The typed body the organ reads and writes, and its schema.
 pub const IMAGE_BODY_KIND: &str = "image";
 pub const IMAGE_BODY_SCHEMA: u32 = 1;
 /// The most ops one edit takes.
 pub const MAX_IMAGE_OPS: usize = 256;
+/// The bounds of a preview's longest side, in pixels.
+pub const MIN_PREVIEW_SIDE: u32 = 16;
+pub const MAX_PREVIEW_SIDE: u32 = 2048;
 
 const PNG: &str = "image/png";
 const JPEG: &str = "image/jpeg";
@@ -65,7 +76,7 @@ const WEBP: &str = "image/webp";
 /// The media types the organ opens.
 const IMAGE_MEDIA_TYPES: [&str; 3] = [PNG, JPEG, WEBP];
 
-/// The image organ's install grant: its seven verbs, over still PNG, JPEG
+/// The image organ's install grant: its eight verbs, over still PNG, JPEG
 /// and WebP, and its `image` body alone. The default memory and frame limits of
 /// a first-party organ stand.
 #[must_use]
@@ -79,6 +90,7 @@ pub fn image_spec(program: impl Into<PathBuf>) -> OrganSpec {
         VERB_ANNOTATE,
         VERB_EXPORT,
         VERB_RENDER,
+        VERB_PREVIEW,
     ]
     .map(String::from)
     .into();
@@ -191,9 +203,11 @@ pub enum ImageEditRefusal {
     NoOps,
     #[error("an edit names at most 256 ops, not {count}")]
     TooManyOps { count: usize },
-    /// No node can run the edit now. [`edit_image`] no longer answers it:
-    /// a whole edit is one call, held when no node can run it (IO-HOLD C).
-    /// The code stays for the doors that map it.
+    #[error("a preview's longest side is 16 to 2048 pixels, not {max_side}")]
+    PreviewSide { max_side: u32 },
+    /// No node can run the call now: a preview's answer, which holds
+    /// nothing. [`edit_image`] never answers it: a whole edit is one call,
+    /// held when no node can run it (IO-HOLD C).
     #[error("no node can run the image organ now: {reason}")]
     NoNode { reason: String },
     /// The organ refused: its code (`bad_request`, `unsupported`,
@@ -213,6 +227,7 @@ impl ImageEditRefusal {
             Self::NotAnImage { .. } => "not_an_image",
             Self::NoOps => "no_ops",
             Self::TooManyOps { .. } => "too_many_ops",
+            Self::PreviewSide { .. } => "preview_side",
             Self::NoNode { .. } => "no_node",
             Self::Organ(err) => organ_code(err.code),
             Self::Host(_) => "host_error",
@@ -288,6 +303,38 @@ fn png_name(name: &str) -> String {
         )
 }
 
+/// `artifact` and the version an organ call reads, the head when `version`
+/// is `None`.
+///
+/// # Errors
+/// [`ImageEditRefusal::NotFound`] for an artifact or version this vault
+/// does not hold; [`ImageEditRefusal::NotAnImage`] for one that is not a
+/// PNG, JPEG or WebP; the vault's error.
+fn image_source(
+    vault: &Vault,
+    artifact: EntityId,
+    version: Option<u64>,
+) -> Result<(BlobArtifactBody, OrganInput), ImageEditRefusal> {
+    let source = vault
+        .get_blob_artifact(&artifact)?
+        .ok_or(ImageEditRefusal::NotFound)?;
+    if !IMAGE_MEDIA_TYPES.contains(&source.media_type.as_str()) {
+        return Err(ImageEditRefusal::NotAnImage {
+            media_type: source.media_type,
+        });
+    }
+    let version = match version {
+        Some(version) => vault
+            .blob_artifact_version_metadata(&artifact, version)?
+            .map(|record| record.version),
+        None => vault
+            .blob_artifact_head(&artifact)?
+            .map(|head| head.version),
+    }
+    .ok_or(ImageEditRefusal::NotFound)?;
+    Ok((source, OrganInput { artifact, version }))
+}
+
 /// Runs `edit` through `router`: submits one `image.render` of the version,
 /// its ops and the PNG export, as one job made by `actor`. Its file waits
 /// for Keep beside the artifact, or beside a new PNG artifact born from a
@@ -314,27 +361,7 @@ pub fn edit_image(
             count: edit.ops.len(),
         });
     }
-    let source = vault
-        .get_blob_artifact(&edit.artifact)?
-        .ok_or(ImageEditRefusal::NotFound)?;
-    if !IMAGE_MEDIA_TYPES.contains(&source.media_type.as_str()) {
-        return Err(ImageEditRefusal::NotAnImage {
-            media_type: source.media_type,
-        });
-    }
-    let version = match edit.version {
-        Some(version) => vault
-            .blob_artifact_version_metadata(&edit.artifact, version)?
-            .map(|record| record.version),
-        None => vault
-            .blob_artifact_head(&edit.artifact)?
-            .map(|head| head.version),
-    }
-    .ok_or(ImageEditRefusal::NotFound)?;
-    let input = OrganInput {
-        artifact: edit.artifact,
-        version,
-    };
+    let (source, input) = image_source(vault, edit.artifact, edit.version)?;
     let job = JobCall {
         run_ref: edit.run_ref.clone(),
         call: edit.render_call(input),
@@ -372,5 +399,126 @@ pub fn edit_image(
         artifact,
         born,
         submitted,
+    })
+}
+
+/// One preview of an image artifact's version: its ops applied in order,
+/// then scaled to fit `max_side`.
+#[derive(Debug, Clone)]
+pub struct ImagePreview {
+    pub artifact: EntityId,
+    /// The version shown; the head when `None`.
+    pub version: Option<u64>,
+    /// Up to [`MAX_IMAGE_OPS`] ops, applied in order; none shows the
+    /// version as it is.
+    pub ops: Vec<ImageOp>,
+    /// The longest side the preview may have, [`MIN_PREVIEW_SIDE`] to
+    /// [`MAX_PREVIEW_SIDE`]. A larger canvas is scaled down, its aspect kept.
+    pub max_side: u32,
+    /// The sight the version is read under.
+    pub sight: SecretSight,
+    /// The grant the call runs under; revoking it stops it.
+    pub grant: String,
+    pub class: CallClass,
+    /// The call's deadline.
+    pub deadline: Duration,
+}
+
+/// A preview's PNG. Nothing of it is in the vault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagePreviewed {
+    pub artifact: EntityId,
+    /// The version it shows.
+    pub version: u64,
+    /// `image/png`.
+    pub media_type: String,
+    pub width: u32,
+    pub height: u32,
+    /// The PNG's blake3, lowercase hex, as the host hashed it.
+    pub content_hash: String,
+    pub bytes: Vec<u8>,
+}
+
+/// The size `image.preview` reports for its PNG.
+#[derive(Deserialize)]
+struct PreviewReport {
+    width: u32,
+    height: u32,
+}
+
+impl ImagePreview {
+    fn preview_call(&self, source: OrganInput) -> OrganCall {
+        let ops = self.ops.iter().copied().map(ImageOp::render_arg).collect();
+        OrganCall {
+            organ: IMAGE_ORGAN.to_owned(),
+            verb: VERB_PREVIEW.to_owned(),
+            schema: IMAGE_BODY_SCHEMA,
+            args: Value::Map(vec![
+                ("ops".into(), Value::Array(ops)),
+                ("max_side".into(), self.max_side.into()),
+            ]),
+            body: None,
+            inputs: vec![SightedInput {
+                input: source,
+                sight: self.sight,
+            }],
+            class: self.class,
+            deadline: self.deadline,
+            grant: self.grant.clone(),
+        }
+    }
+}
+
+/// Runs `preview` through `router` as one `image.preview` call, here or on
+/// another of the owner's nodes, and answers its PNG. It lands nothing and
+/// holds nothing.
+///
+/// # Errors
+/// [`ImageEditRefusal`]: too many ops, or a side bound out of range; an
+/// artifact or version this vault does not hold, or one that is not a PNG,
+/// JPEG or WebP; [`ImageEditRefusal::NoNode`] with the reason when no node
+/// can run it now; the organ's refusal; the host's error, a reply with no
+/// PNG or no size included.
+pub fn preview_image(
+    router: &OrganRouter,
+    vault: &Vault,
+    preview: &ImagePreview,
+    asks: &AskHandlers<'_>,
+) -> Result<ImagePreviewed, ImageEditRefusal> {
+    if preview.ops.len() > MAX_IMAGE_OPS {
+        return Err(ImageEditRefusal::TooManyOps {
+            count: preview.ops.len(),
+        });
+    }
+    if !(MIN_PREVIEW_SIDE..=MAX_PREVIEW_SIDE).contains(&preview.max_side) {
+        return Err(ImageEditRefusal::PreviewSide {
+            max_side: preview.max_side,
+        });
+    }
+    let (_, input) = image_source(vault, preview.artifact, preview.version)?;
+    let version = input.version;
+    let outcome = match router.call_with(vault, preview.preview_call(input), Vec::new(), asks)? {
+        Routed::Done { outcome, .. } => outcome,
+        Routed::Waiting(wait) => {
+            return Err(ImageEditRefusal::NoNode {
+                reason: wait.reason,
+            });
+        }
+    };
+    let report: PreviewReport = oneiron_organ_protocol::from_value(&outcome.report)
+        .map_err(|err| HostError::ReplyInvalid(format!("the preview's report: {err}")))?;
+    let png = outcome
+        .outputs
+        .iter()
+        .find(|output| output.media_type == PNG)
+        .ok_or_else(|| HostError::ReplyInvalid("the preview answered no PNG".into()))?;
+    Ok(ImagePreviewed {
+        artifact: preview.artifact,
+        version,
+        media_type: PNG.to_owned(),
+        width: report.width,
+        height: report.height,
+        content_hash: png.content_hash.to_hex(),
+        bytes: png.to_vec(),
     })
 }
