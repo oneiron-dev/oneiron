@@ -28,15 +28,18 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeId};
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::note::{
-    NoteProgramEdit, PlanDocBody, PlanDocProposeRequest, PlanDocRequest, PlanDocState,
+    NoteProgramEdit, PlanDocProposeRequest, PlanDocRequest, PlanDocSettlementView, PlanDocState,
     PlanDocVerdictRequest, PlanDocView, approve_plan_doc_as, reject_plan_doc_as,
 };
 use oneiron::store::GateDecisionId;
-use oneiron::task_verb::{TaskCallReceipt, TaskPost};
+use oneiron::task_verb::{
+    QueueTaskBrief, TaskCallReceipt, TaskHandle, TaskOutcome, TaskPost, TaskStatusQuery,
+    brief_digest, task_confession_objectives,
+};
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// The refusal a post meets when it pins a plan the owner has not approved
 /// at the pinned revision.
@@ -123,21 +126,36 @@ fn owner(fixture: &Fixture) -> Memory<'_> {
     fixture.vault.memory(fixture.owner, EdgeActorClass::Human)
 }
 
+const TITLE: &str = "Tidy the tide log";
+const STEPS: [&str; 2] = [
+    "Read the last week of tide entries",
+    "Merge the duplicate dawn readings",
+];
+const SCOPE: &str = "notes tagged tide";
+const BUDGET: u64 = 400;
+
+/// The agent's propose request, with `extra` fields beside the plan. Built
+/// from JSON, so it reads on a tree whose request lacks a field it names.
+fn propose_request(extra: Value) -> PlanDocProposeRequest {
+    let mut request = json!({
+        "plan": {"title": TITLE, "steps": STEPS, "scope_asked": [SCOPE], "budget": BUDGET},
+    });
+    if let (Some(fields), Value::Object(extra)) = (request.as_object_mut(), extra) {
+        fields.extend(extra);
+    }
+    serde_json::from_value(request).expect("a propose request")
+}
+
 /// The agent proposes its plan; returns the plan-doc's view.
 fn propose(fixture: &Fixture) -> PlanDocView {
     agent(fixture)
-        .propose_plan_doc(&PlanDocProposeRequest {
-            plan: PlanDocBody {
-                title: "Tidy the tide log".to_owned(),
-                steps: vec![
-                    "Read the last week of tide entries".to_owned(),
-                    "Merge the duplicate dawn readings".to_owned(),
-                ],
-                scope_asked: vec!["notes tagged tide".to_owned()],
-                budget: Some(400),
-            },
-        })
+        .propose_plan_doc(&propose_request(json!({})))
         .expect("the agent proposes its plan")
+}
+
+/// The agent proposes its plan naming agent definition `runner` to run it.
+fn propose_run_by(fixture: &Fixture, runner: EntityId) -> MemoryResult<PlanDocView> {
+    agent(fixture).propose_plan_doc(&propose_request(json!({"agent_def_ref": runner.to_hex()})))
 }
 
 /// Plan-doc `plan` as the owner reads it now.
@@ -156,13 +174,35 @@ fn verdict(plan: EntityId, revision: &str) -> PlanDocVerdictRequest {
     }
 }
 
-fn approve(fixture: &Fixture, plan: EntityId, revision: &str) {
+fn approve(fixture: &Fixture, plan: EntityId, revision: &str) -> PlanDocSettlementView {
     approve_plan_doc_as(
         &fixture.vault,
         &owner_proof(fixture),
         verdict(plan, revision),
     )
-    .expect("the owner approves the revision read");
+    .expect("the owner approves the revision read")
+}
+
+fn reject(fixture: &Fixture, plan: EntityId, revision: &str) -> PlanDocSettlementView {
+    reject_plan_doc_as(
+        &fixture.vault,
+        &owner_proof(fixture),
+        verdict(plan, revision),
+    )
+    .expect("the owner rejects the revision read")
+}
+
+/// The run a verdict landed, read from its wire shape: `Err` when the
+/// settlement names no run field at all.
+fn run_of(settled: &PlanDocSettlementView) -> Result<Option<EntityId>, String> {
+    let wire = serde_json::to_value(settled).expect("a settlement encodes");
+    match wire.get("run_task_ref") {
+        None => Err(format!("the settlement names no run: {wire}")),
+        Some(Value::Null) => Ok(None),
+        Some(run) => Ok(Some(
+            serde_json::from_value(run.clone()).expect("a run TASK id"),
+        )),
+    }
 }
 
 /// The owner's edit that appends a line to plan-doc `plan`.
@@ -239,12 +279,7 @@ fn a_run_start_is_refused_before_approval() {
         plan_run(&fixture, "in-review", plan.plan_ref, &plan.revision),
     );
     assert_plan_refusal(in_review, "a plan in review starts no run");
-    reject_plan_doc_as(
-        &fixture.vault,
-        &owner_proof(&fixture),
-        verdict(plan.plan_ref, &plan.revision),
-    )
-    .expect("the owner rejects the plan");
+    reject(&fixture, plan.plan_ref, &plan.revision);
     let rejected = post(
         &agent(&fixture),
         plan_run(&fixture, "rejected", plan.plan_ref, &plan.revision),
@@ -322,4 +357,110 @@ fn the_owners_run_needs_no_approval() {
         plan_run(&fixture, "owner", plan.plan_ref, &plan.revision),
     )
     .expect("the owner's own TASK is never refused for a plan in review");
+}
+
+/// The brief the approval of plan `plan` at `revision` lands, under the
+/// type stamp `type_ref` the TASK holds: the plan's title, scope, budget and
+/// steps, the plan pinned at the revision, escalating to the owner.
+fn expected_run_brief(
+    fixture: &Fixture,
+    type_ref: Value,
+    plan: EntityId,
+    revision: &str,
+) -> QueueTaskBrief {
+    serde_json::from_value(json!({
+        "schema": 1,
+        "type_ref": type_ref,
+        "objective": TITLE,
+        "intent": {"need": TITLE},
+        "constraints": {"notes": [SCOPE], "pins": {"budget": BUDGET}},
+        "context": {"read_first": [{"target": plan.to_hex(), "digest": revision}]},
+        "success": {
+            "question": format!("Is the approved plan \"{TITLE}\" carried out?"),
+            "criteria": {"yes_if_all": STEPS.map(|step| json!({"text": step}))},
+        },
+        "settled": [],
+        "escalation": {
+            "to": {"people": [fixture.owner.to_hex()]},
+            "triggers": ["blocked", "scope_widen", "spend_over"],
+            "default": "hold",
+            "reversibility": "reversible_read",
+        },
+    }))
+    .expect("the expected brief")
+}
+
+#[test]
+fn an_approval_starts_the_named_agents_run_at_the_plan_hash() {
+    let fixture = fixture();
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    assert_eq!(plan.state, PlanDocState::InReview);
+    let settled = approve(&fixture, plan.plan_ref, &plan.revision);
+    let run = run_of(&settled)
+        .expect("the settlement reads")
+        .expect("the approval starts the plan's run");
+    let status = owner(&fixture)
+        .tasks_status(TaskStatusQuery {
+            handle: TaskHandle::Task { task_ref: run },
+            after: None,
+        })
+        .expect("the owner reads the run's TASK");
+    let view = match status.outcome {
+        TaskOutcome::Snapshot(view) => view,
+        other => panic!("a status read answers a snapshot: {other:?}"),
+    };
+    let stamp = view.brief_current.expect("the run's TASK holds a brief");
+    assert_eq!(stamp.rev, 1);
+    let expected = expected_run_brief(
+        &fixture,
+        serde_json::to_value(stamp.type_ref).expect("the type stamp encodes"),
+        plan.plan_ref,
+        &plan.revision,
+    );
+    assert_eq!(
+        stamp.digest,
+        brief_digest(&expected),
+        "the run's brief pins the plan at the approved revision, with its steps and budget"
+    );
+    let mut objectives = vec![format!("Is the approved plan \"{TITLE}\" carried out?")];
+    objectives.extend(STEPS.map(str::to_owned));
+    assert_eq!(
+        task_confession_objectives(&fixture.vault, run).expect("read the run's objectives"),
+        Some(objectives),
+    );
+}
+
+#[test]
+fn a_revision_approved_again_keeps_its_run() {
+    let fixture = fixture();
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let first = run_of(&approve(&fixture, plan.plan_ref, &plan.revision))
+        .expect("the settlement reads")
+        .expect("the approval starts the plan's run");
+    let rejected = run_of(&reject(&fixture, plan.plan_ref, &plan.revision));
+    assert_eq!(rejected, Ok(None), "a rejection starts no run");
+    let again = run_of(&approve(&fixture, plan.plan_ref, &plan.revision));
+    assert_eq!(
+        again,
+        Ok(Some(first)),
+        "the revision approved again keeps its first run"
+    );
+}
+
+#[test]
+fn a_plan_naming_no_agent_definition_starts_no_run() {
+    let fixture = fixture();
+    let plan = propose(&fixture);
+    let settled = approve(&fixture, plan.plan_ref, &plan.revision);
+    assert_eq!(run_of(&settled), Ok(None));
+}
+
+#[test]
+fn a_plan_naming_an_unknown_agent_definition_is_refused() {
+    let fixture = fixture();
+    let refused = propose_run_by(&fixture, EntityId::now());
+    assert!(
+        refused.is_err(),
+        "a run by no agent definition is refused at propose: {refused:?}"
+    );
 }

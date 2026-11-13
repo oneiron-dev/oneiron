@@ -26,7 +26,7 @@ use crate::claim::ScopedReadResult;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
-use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
+use crate::memory::{EntityRefReceipt, Memory, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord};
 use crate::{EdgeActorClass, Vault, WriteActor};
@@ -205,10 +205,13 @@ pub(crate) struct PlanDocVerdict {
     receipt_ref: String,
 }
 
-/// One plan-doc's review row: when it was proposed, and the last verdict.
+/// One plan-doc's review row: when it was proposed, the agent definition
+/// that runs it on approval, and the last verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PlanDocReview {
     proposed_at: u64,
+    #[serde(default)]
+    agent_def_ref: Option<EntityId>,
     verdict: Option<PlanDocVerdict>,
 }
 
@@ -217,6 +220,11 @@ pub(crate) struct PlanDocReview {
 #[serde(deny_unknown_fields)]
 pub struct PlanDocProposeRequest {
     pub plan: PlanDocBody,
+    /// The agent definition that runs the plan: the owner's approval lands
+    /// its run. `None` starts no run on approval; a run then starts from a
+    /// `tasks.create` that pins the approved revision.
+    #[serde(default)]
+    pub agent_def_ref: Option<EntityId>,
 }
 
 /// `vault.plans.get`'s input.
@@ -264,6 +272,8 @@ pub struct PlanDocView {
     /// The agent that proposed it, the NOTE's author; `None` once erased.
     pub proposed_by: Option<EntityId>,
     pub proposed_at: u64,
+    /// The agent definition whose run the owner's approval lands, if any.
+    pub agent_def_ref: Option<EntityId>,
     /// The owner's last verdict, at whichever revision it was given.
     pub verdict: Option<PlanDocVerdictView>,
 }
@@ -279,6 +289,11 @@ pub struct PlanDocSettlementView {
     pub proposed_by: Option<EntityId>,
     /// The gate decision that records the verdict, as `gate:<id hex>`.
     pub receipt_ref: String,
+    /// The run the approval landed: the TASK of the plan's agent definition,
+    /// pinned at the approved revision. `None` for a rejection, a plan that
+    /// names no agent definition, or a text an edit took out of the
+    /// plan-doc's sections.
+    pub run_task_ref: Option<EntityId>,
 }
 
 /// The revision of plan-doc `plan` whose text is `markdown`: BLAKE3 under
@@ -334,6 +349,7 @@ fn plan_doc_view(
         markdown,
         proposed_by: proposer(core),
         proposed_at: review.proposed_at,
+        agent_def_ref: review.agent_def_ref,
         verdict: review.verdict.map(|verdict| PlanDocVerdictView {
             decision: verdict.decision,
             revision: verdict.revision,
@@ -408,8 +424,13 @@ impl Memory<'_> {
             PLAN_DOC_NOTE_KIND,
             &input.plan.to_markdown(),
             |txn, plan| {
+                if let Some(agent_def_ref) = input.agent_def_ref {
+                    crate::task_verb::TaskAssignee::AgentDef { agent_def_ref }
+                        .validate_in(vault, txn)?;
+                }
                 let review = PlanDocReview {
                     proposed_at,
+                    agent_def_ref: input.agent_def_ref,
                     verdict: None,
                 };
                 PLAN_DOC_REVIEW.put(&vault.store, txn, &plan, &review)?;
@@ -459,28 +480,29 @@ impl Vault {
     /// when the proof no longer holds; [`RecordError::InvalidNoteBody`] for a
     /// NOTE that is no plan-doc or a revision that is no 64 hex characters;
     /// [`Error::ConcurrentWrite`] when the text is no longer at
-    /// `expected_revision`. Every refusal writes nothing.
+    /// `expected_revision`; an approval's run that cannot land (its agent
+    /// definition gone). Every refusal writes nothing.
     pub(crate) fn answer_plan_doc_as(
         &self,
         owner: &AuthenticatedOwner,
         plan: EntityId,
         expected_revision: &str,
         decision: PlanDocDecision,
-    ) -> Result<PlanDocSettlementView> {
+    ) -> MemoryResult<PlanDocSettlementView> {
         if expected_revision.len() != 64
             || !expected_revision
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
         {
-            return Err(invalid("a plan-doc revision is 64 hex characters"));
+            return Err(invalid("a plan-doc revision is 64 hex characters").into());
         }
         let expected = expected_revision.to_ascii_lowercase();
-        self.with_write_txn(|txn| {
+        let settled = self.try_with_write_txn(|txn| -> MemoryResult<PlanDocSettlementView> {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let (core, markdown, mut review) = plan_doc_in_txn(self, txn, plan)?;
             let revision = revision_of(plan, &markdown);
             if revision_hex(&revision) != expected {
-                return Err(Error::ConcurrentWrite("plan-doc revision changed"));
+                return Err(Error::ConcurrentWrite("plan-doc revision changed").into());
             }
             let before = review.verdict.take();
             let receipt_ref = self.record_plan_doc_verdict_in_txn(
@@ -499,14 +521,34 @@ impl Vault {
                 receipt_ref: receipt_ref.clone(),
             });
             PLAN_DOC_REVIEW.put(&self.store, txn, &plan, &review)?;
+            // Execute-on-approve: an approval of a plan that names its agent
+            // definition lands the run in this writer, pinned at the revision
+            // approved, with the budget the plan's text asks.
+            let run_task_ref = match (decision, review.agent_def_ref) {
+                (PlanDocDecision::Approved, Some(agent_def_ref)) => {
+                    match PlanDocBody::from_markdown(&markdown) {
+                        Some(body) => Some(
+                            self.memory(actor, EdgeActorClass::Human)
+                                .land_plan_run_in_txn(txn, plan, &revision, &body, agent_def_ref)?,
+                        ),
+                        None => None,
+                    }
+                }
+                _ => None,
+            };
             Ok(PlanDocSettlementView {
                 plan_ref: plan,
                 decision,
                 revision: revision_hex(&revision),
                 proposed_by: proposer(&core),
                 receipt_ref,
+                run_task_ref,
             })
-        })
+        })?;
+        if settled.run_task_ref.is_some() {
+            self.store.notify_attempt_observers();
+        }
+        Ok(settled)
     }
 
     /// Appends the gate decision that records the owner's verdict: the owner
@@ -580,14 +622,12 @@ pub fn approve_plan_doc_as(
     owner: &AuthenticatedOwner,
     input: PlanDocVerdictRequest,
 ) -> MemoryResult<PlanDocSettlementView> {
-    vault
-        .answer_plan_doc_as(
-            owner,
-            input.plan_ref,
-            &input.expected_revision,
-            PlanDocDecision::Approved,
-        )
-        .map_err(MemoryError::from)
+    vault.answer_plan_doc_as(
+        owner,
+        input.plan_ref,
+        &input.expected_revision,
+        PlanDocDecision::Approved,
+    )
 }
 
 /// `vault.plans.reject`: the owner rejects plan-doc `input.plan_ref` at the
@@ -601,14 +641,12 @@ pub fn reject_plan_doc_as(
     owner: &AuthenticatedOwner,
     input: PlanDocVerdictRequest,
 ) -> MemoryResult<PlanDocSettlementView> {
-    vault
-        .answer_plan_doc_as(
-            owner,
-            input.plan_ref,
-            &input.expected_revision,
-            PlanDocDecision::Rejected,
-        )
-        .map_err(MemoryError::from)
+    vault.answer_plan_doc_as(
+        owner,
+        input.plan_ref,
+        &input.expected_revision,
+        PlanDocDecision::Rejected,
+    )
 }
 
 #[cfg(test)]

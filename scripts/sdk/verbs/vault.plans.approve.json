@@ -1,6 +1,6 @@
 {
   "name": "vault.plans.approve",
-  "description": "The owner approves a plan-doc at the revision they read: the verdict holds while its text stays at that revision, an edit returns it to review, and one gate decision records the answer.",
+  "description": "The owner approves a plan-doc at the revision they read: the verdict holds while its text stays there, an edit returns it to review, a gate decision records it, and a plan naming an agent definition starts its run.",
   "input": "crate::note::PlanDocVerdictRequest",
   "output": "crate::note::PlanDocSettlementView",
   "call": "crate::note::approve_plan_doc_as(memory.vault(), &memory.embedded_owner(\"vault.plans.approve\")?, input)?",
