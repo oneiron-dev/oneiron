@@ -2,13 +2,16 @@
 //! whose negotiated protocol revision changed, and whose next slate only
 //! narrows, carries the owner's stamp forward (ARCH-0072 #drift: "A revision
 //! that only narrows carries forward"), so no tap is owed. The key still
-//! halts to Pending and re-qualifies, and the owner is still asked directly,
-//! never left with a silent state (ARCH-0054 #drift, owner-ratified
-//! 2026-07-29). So the revision queues one informational ask on the
-//! decision-ask queue, in the revision's own write. The ask names the
-//! connector, both revisions, the rows that narrowed or dropped, and the one
-//! act that switches the connector off. An answer on the queue applies
-//! nothing.
+//! halts to Pending, and the owner is still asked directly, never left with
+//! a silent state (ARCH-0054 #drift, owner-ratified 2026-07-29). So the
+//! revision queues one informational ask on the decision-ask queue, in the
+//! revision's own write. The ask names the connector, both revisions and
+//! the rows that narrowed or dropped. A Pending key routes nothing, and only
+//! the owner's own qualify or attest admits it again, so the ask names those
+//! two doors as the acts that work when it is read. The owner's switch
+//! refuses a Pending key, so the ask names it as the one act that switches
+//! the connector off once it is admitted again. An answer on the queue
+//! applies nothing.
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -26,8 +29,13 @@ pub(crate) const CONNECTOR_PROTOCOL_NARROW_ASK_QUEUE: &str =
 const CONNECTOR_PROTOCOL_NARROW_ASK_QUEUE_VERSION: &str = "v1";
 /// The version of the question; bump it with its wording.
 const CONNECTOR_PROTOCOL_NARROW_ASK_VERSION: u32 = 1;
-/// The owner door that switches a catalog connector off in one act.
+/// The owner door that switches an admitted catalog connector off in one
+/// act. It refuses a Pending key.
 const CONNECTOR_SWITCH_OFF_DOOR: &str = "POST /v1/owner/connectors/enabled";
+/// The owner doors that admit a Pending catalog connector again: the probe
+/// suite, or the owner's attestation (CONNECTOR-QUALIFY = A).
+const CONNECTOR_QUALIFY_DOOR: &str = "POST /v1/owner/connectors/qualify";
+const CONNECTOR_ATTEST_DOOR: &str = "POST /v1/owner/connectors/attest";
 /// The most bytes of question text the ask carries; the decision queue keeps
 /// at most 16 KiB.
 const MAX_ASK_TEXT_BYTES: usize = 16_000;
@@ -132,10 +140,12 @@ fn ask_text(
     };
     let mut text = format!(
         "Connector {name} changed its protocol revision from {from} to {revision}. Every \
-         change only narrowed what it may do, so your stamp carried forward: it re-qualifies \
-         without a new tap, and no row asks you again. Narrowed: {narrowed}. Dropped: \
-         {dropped}. Keep it, or switch it off in one act at {CONNECTOR_SWITCH_OFF_DOOR} with \
-         enabled false. An answer here applies nothing.",
+         change only narrowed what it may do, so your stamp carried forward and no row asks \
+         you again. Narrowed: {narrowed}. Dropped: {dropped}. It routes nothing until you \
+         admit it again, with no new tap: qualify it at {CONNECTOR_QUALIFY_DOOR}, or attest \
+         it at {CONNECTOR_ATTEST_DOOR}. To keep it off, leave it unadmitted. Once it is \
+         admitted, {CONNECTOR_SWITCH_OFF_DOOR} with enabled false switches it off in one \
+         act. An answer here applies nothing.",
         narrowed = listed(&narrowed),
         dropped = listed(&dropped),
     );
