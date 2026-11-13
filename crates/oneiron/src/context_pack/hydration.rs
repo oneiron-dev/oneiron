@@ -572,9 +572,8 @@ pub(crate) fn decode_entity_fields(
     } else {
         crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, payload)
     };
-    if reads_whole {
-        return Some(HashMap::new());
-    }
+    // RED PIN (census L6-30b proof only): the guard's early return removed.
+    let _ = reads_whole;
     let rmpv::Value::Map(entries) = value else {
         return None;
     };
