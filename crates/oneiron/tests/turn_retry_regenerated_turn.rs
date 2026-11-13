@@ -3,7 +3,7 @@
 //!
 //! An ordinary group room keeps the conversation DAG, so a Retry appends its
 //! assistant TURN beside the replaced reply's TURN, in the stream's terminal
-//! write. Two refusals stopped an agent's Retry there while its first reply
+//! write. Three refusals stopped an agent's Retry there while its first reply
 //! landed:
 //!
 //! - FIX [DAG-ENGINE-APPEND-PERSON-PENDS], the Retry half: the TURN was
@@ -19,14 +19,26 @@
 //!   bands. The agent's reply sits in its own sitting when its stream binds
 //!   none, and in the caller's when the chat host binds the caller's, as
 //!   `/v1/ai/chat` does.
+//! - FIX [RETRY-TURN-AGENT-AUTHOR-REFUSED-AT-DAG-ADMISSION]: room admission
+//!   admitted an AGENT_DEF author only on a witness TURN, and the DAG door
+//!   stamps every TURN it writes as a DAG record, so the Retry's TURN was
+//!   refused "room TURN author must be a PERSON". The Retry door now names
+//!   the TURN it regenerates under a door-owned `regenerates` key, and room
+//!   admission admits the agent on a TURN that names its own TURN in the
+//!   same room (Engine RULING 13 Nov 11:15).
 //!
-//! Controls: the owner's actor ceiling naming the agent still holds a Retry,
-//! and a public append that names a sitting the agent cannot read is still
-//! refused at `/session`.
+//! Controls: the owner's actor ceiling naming the agent still holds a Retry;
+//! a public append that names a sitting the agent cannot read is still
+//! refused at `/session`; the public append door refuses a caller's
+//! `regenerates` key; and an agent's own DAG TURN past the gate is still
+//! refused at room admission.
 //!
 //! The fixture follows OPUS-T0-F's G230 gate pins
-//! (tests/gate_pins_turn_retry_model_routing.rs at 0c16632c569), without
-//! their actor-bound generated source-trust row. Public paths only.
+//! (tests/gate_pins_turn_retry_model_routing.rs at 98ea455d1cd), without
+//! their actor-bound generated source-trust row: owen's turn is a DAG TURN
+//! addressed to the agent, since an agent speaks only when addressed on the
+//! turn it answers (ARCH-0006a), and his words are a DAG MESSAGE in it.
+//! Public paths only.
 //! `cargo test --locked -p oneiron --all-features --test turn_retry_regenerated_turn`.
 
 use std::collections::BTreeSet;
@@ -42,7 +54,8 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{MEMORY_CODE_INVENTED_REFERENCE, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifest, PolicyManifestPut, PolicyManifestRead,
-    PolicyScopedGrantRow, policy_manifests_as_owner, put_policy_manifest_as_owner,
+    PolicyScopedGrantRow, PolicySource, SensitivityBand, SourceTrust, SourceTrustRow,
+    policy_manifests_as_owner, put_policy_manifest_as_owner,
 };
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use oneiron::session_lifecycle::SessionKey;
@@ -171,6 +184,33 @@ fn set_agent_ceiling(
                 row.ceiling = ceiling;
             }
         }
+    })
+}
+
+/// The owner trusts the agent's generated words up to band 2, the permit
+/// `put_dag_test_policy` installs: a row joining the shipped generated
+/// source-trust rows.
+fn permit_generated(vault: &Vault, owen: EntityId, agent: EntityId) -> TestResult {
+    edit_default_manifest(vault, owen, |manifest| {
+        let permit = SourceTrustRow {
+            actor_ref: Some(agent.to_hex()),
+            max_auto_sensitivity: Some(SensitivityBand::Number(2)),
+            auto: None,
+            auto_checker: None,
+            receipted: true,
+            warned: true,
+        };
+        let rows = match manifest.source_trust.remove(&PolicySource::Generated) {
+            Some(SourceTrust::Rows(mut rows)) => {
+                rows.push(permit);
+                rows
+            }
+            Some(SourceTrust::Row(shipped)) => vec![shipped, permit],
+            _ => vec![permit],
+        };
+        manifest
+            .source_trust
+            .insert(PolicySource::Generated, SourceTrust::Rows(rows));
     })
 }
 
@@ -311,8 +351,9 @@ fn open_sitting(vault: &Vault, actor: EntityId) -> TestResult<(SessionKey, Entit
     Ok((key, sitting))
 }
 
-/// owen speaks on the room's trunk, then the agent answers through the
-/// witness stream, its reply joining the sitting `placement` names.
+/// owen speaks on the room's trunk, addressing the agent, then the agent
+/// answers through the witness stream, its reply joining the sitting
+/// `placement` names.
 fn exchange(fixture: &RoomFixture, placement: ReplySitting) -> TestResult<Exchange> {
     let vault = &fixture.vault;
     let agent = vault.memory(fixture.agent, EdgeActorClass::Agent);
@@ -327,27 +368,83 @@ fn exchange(fixture: &RoomFixture, placement: ReplySitting) -> TestResult<Exchan
         }
     };
 
-    let user_turn = EntityId::now();
-    vault
-        .memory(fixture.owen, EdgeActorClass::Human)
-        .rooms_speak(&WitnessTurn {
-            conversation_ref: fixture.room.to_hex(),
-            turn_ref: Some(user_turn.to_hex()),
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: Some(EntityId::now().to_hex()),
-                author: WitnessAuthor::User,
-                message_type: "text".into(),
-                content: "owen asks".into(),
-                parts: None,
-                metadata: Some(serde_json::json!({})),
-                is_visible: true,
-                order: 0,
+    // owen's TURN on the room's DAG, addressed to the agent: an agent
+    // speaks only when it is addressed on the turn it answers (ARCH-0006a),
+    // and the Retry's TURN answers this one. A turn witnessed in an ordinary
+    // room addresses no one.
+    let owen = vault.memory(fixture.owen, EdgeActorClass::Human);
+    let now = vault.now_recorded_at();
+    let user_turn = vault
+        .append_dag_record(
+            &owen,
+            &AppendRecord {
+                conversation: fixture.room,
+                parent: vault.head(&fixture.room)?,
+                reply_to: None,
                 quote: None,
-            }],
-            occurred_at: vault.now_recorded_at(),
-            assertions: Default::default(),
-        })?;
+                address: AddressMode::Direct,
+                recipients: vec![fixture.agent],
+                advance: true,
+                kind: ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                body: rmp_serde::to_vec_named(&serde_json::json!({ "txt": "owen asks" }))?,
+                text: Vec::new(),
+                session: None,
+                actor: WriteActor::new(fixture.owen, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .map_err(|error| format!("fixture: owen's addressed TURN: {error:?}"))?
+        .id;
+    // His words, a DAG MESSAGE in that TURN: a Retry answers the newest turn
+    // before the reply that holds a User line, and the witness refuses a
+    // MESSAGE into a DAG TURN, whose body stamps no speaker.
+    let now = vault.now_recorded_at();
+    vault
+        .append_dag_record(
+            &owen,
+            &AppendRecord {
+                conversation: fixture.room,
+                parent: None,
+                reply_to: None,
+                quote: None,
+                address: AddressMode::Broadcast,
+                recipients: Vec::new(),
+                advance: false,
+                kind: ENTITY_TYPE_MESSAGE,
+                containing_turn: Some(user_turn),
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                body: rmp_serde::to_vec_named(&serde_json::json!({
+                    "author": "user",
+                    "type": "text",
+                    "content": "owen asks",
+                    "is_visible": true,
+                    "order": 0,
+                }))?,
+                text: Vec::new(),
+                session: None,
+                actor: WriteActor::new(fixture.owen, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .map_err(|error| format!("fixture: owen's MESSAGE in his TURN: {error:?}"))?;
+    let row = owen
+        .rooms_messages(fixture.room)?
+        .into_iter()
+        .find(|row| row.turn_id == user_turn.to_hex())
+        .ok_or("fixture: owen's TURN keeps no room row")?;
+    if !row.addressed_agents.contains(&fixture.agent.to_hex()) {
+        return Err(format!("fixture: owen's TURN does not address the agent: {row:?}").into());
+    }
 
     let reply_turn = EntityId::now();
     let handle = agent.begin_message_stream(
@@ -589,5 +686,89 @@ fn an_agents_append_naming_a_sitting_it_cannot_read_is_refused() -> TestResult {
     };
     assert_eq!(error.code, MEMORY_CODE_INVENTED_REFERENCE, "{error:?}");
     assert!(error.message.contains("`/session`"), "{error:?}");
+    Ok(())
+}
+
+/// An agent's TURN through the public append door, answering owen's turn
+/// on the room's trunk, with `body`.
+fn agent_turn(
+    fixture: &RoomFixture,
+    exchange: &Exchange,
+    body: &serde_json::Value,
+) -> TestResult<AppendRecord> {
+    let vault = &fixture.vault;
+    let now = vault.now_recorded_at();
+    Ok(AppendRecord {
+        conversation: fixture.room,
+        parent: vault.head(&fixture.room)?,
+        reply_to: Some(exchange.user_turn),
+        quote: None,
+        address: AddressMode::Broadcast,
+        recipients: Vec::new(),
+        advance: false,
+        kind: ENTITY_TYPE_TURN,
+        containing_turn: None,
+        occurred: TimeRange {
+            start: now,
+            end: now,
+        },
+        learned_at: now,
+        body: rmp_serde::to_vec_named(body)?,
+        text: Vec::new(),
+        session: None,
+        actor: WriteActor::new(fixture.agent, EdgeActorClass::Agent),
+        thread_audience: None,
+    })
+}
+
+/// Red on main, refused there by the gate instead: `regenerates` is the
+/// Retry door's own key, so a caller that names the agent's reply TURN
+/// under it is refused at the public append door.
+#[test]
+fn an_agents_append_naming_the_turn_it_regenerates_is_refused() -> TestResult {
+    let fixture = open_room()?;
+    let exchange = exchange(&fixture, ReplySitting::AgentsOwn)?;
+    let input = agent_turn(
+        &fixture,
+        &exchange,
+        &serde_json::json!({
+            "speaker": "assistant",
+            "regenerates": exchange.reply_turn.to_hex(),
+        }),
+    )?;
+    let writer = fixture.vault.memory(fixture.agent, EdgeActorClass::Agent);
+    let Err(error) = fixture.vault.append_dag_record(&writer, &input) else {
+        return Err("the agent appended a TURN carrying the Retry door's key".into());
+    };
+    assert!(
+        error
+            .message
+            .contains("record body contains door-owned fields"),
+        "{error:?}"
+    );
+    Ok(())
+}
+
+/// Control: an agent's own DAG TURN, past the gate on a generated permit
+/// and addressed on the turn it answers, is still refused at room
+/// admission, as on main: only a Retry's TURN admits an agent author there.
+#[test]
+fn an_agents_own_dag_turn_is_refused_at_room_admission() -> TestResult {
+    let fixture = open_room()?;
+    permit_generated(&fixture.vault, fixture.owen, fixture.agent)?;
+    let exchange = exchange(&fixture, ReplySitting::AgentsOwn)?;
+    let input = agent_turn(
+        &fixture,
+        &exchange,
+        &serde_json::json!({ "speaker": "assistant" }),
+    )?;
+    let writer = fixture.vault.memory(fixture.agent, EdgeActorClass::Agent);
+    let Err(error) = fixture.vault.append_dag_record(&writer, &input) else {
+        return Err("the agent appended its own DAG TURN".into());
+    };
+    assert!(
+        error.message.contains("room TURN author must be a PERSON"),
+        "{error:?}"
+    );
     Ok(())
 }
