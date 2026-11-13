@@ -27,8 +27,8 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, SecretError};
 use crate::sync::residence::{
-    SealedBundleObject, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
-    sealed_generation_hex,
+    InvalidPadOffer, SealedBundleObject, sealed_digest_from_hex, sealed_digest_hex,
+    sealed_generation_from_hex, sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
@@ -68,7 +68,7 @@ pub struct PadAdmissionReport {
 #[derive(Default)]
 pub(super) struct OwnAsks {
     missing: Vec<SealedBundleGeneration>,
-    invalid: Vec<SealedBundleGeneration>,
+    invalid: Vec<InvalidPadOffer>,
 }
 
 #[derive(Deserialize)]
@@ -280,7 +280,8 @@ async fn offer(
 /// This machine's usable grant of `pads`, a kept generation's current pad
 /// object, from the home: addressed to it under its current key, issued by
 /// authority here, and its key opens the object. A generation with none is
-/// noted on `asks`: missing, or held only by offers that did not open.
+/// noted on `asks`: missing, or held only by offers that did not open, each
+/// named by its bytes, so the home retires only that offer (FIX 22389).
 pub(super) async fn own_grant(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
@@ -305,23 +306,23 @@ pub(super) async fn own_grant(
             continue;
         };
         offered = true;
-        let Some(grant) = base64::engine::general_purpose::STANDARD
-            .decode(grant)
-            .ok()
-            .and_then(|bytes| SealedPadAdmissionGrant::from_bytes(&bytes).ok())
-        else {
+        // An answer that is not base64 names no offer to retire.
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(grant) else {
             continue;
         };
-        if grant.generation() == generation
+        if let Ok(grant) = SealedPadAdmissionGrant::from_bytes(&bytes)
+            && grant.generation() == generation
             && grant.recipient() == me
             && vault.open_key_pads_with_grant(pads, &grant).is_ok()
         {
             return Ok(Some(grant));
         }
+        asks.invalid.push(InvalidPadOffer {
+            generation,
+            grant: bytes,
+        });
     }
-    if offered {
-        asks.invalid.push(generation);
-    } else {
+    if !offered {
         asks.missing.push(generation);
     }
     Ok(None)
@@ -342,13 +343,14 @@ pub(super) async fn ask_own(
     ensure(rpc, &me, &asks.missing, &asks.invalid).await
 }
 
-/// Asks the home for `target`'s access to `generations`, and sets each of
-/// `invalid` back to pending (the home takes that from the target alone).
+/// Asks the home for `target`'s access to `generations`, and sets each offer
+/// of `invalid` back to pending while the home still holds it (the home takes
+/// that from the target alone).
 async fn ensure(
     rpc: &mut ResidenceRpc,
     target: &PadAdmissionTarget,
     generations: &[SealedBundleGeneration],
-    invalid: &[SealedBundleGeneration],
+    invalid: &[InvalidPadOffer],
 ) -> Result<(), TransportError> {
     let mut wire = target_json(target);
     wire["generations"] = generations
@@ -358,7 +360,12 @@ async fn ensure(
         .into();
     wire["invalid"] = invalid
         .iter()
-        .map(sealed_generation_hex)
+        .map(|offer| {
+            json!({
+                "generation": sealed_generation_hex(&offer.generation),
+                "grant": base64::engine::general_purpose::STANDARD.encode(&offer.grant),
+            })
+        })
         .collect::<Vec<_>>()
         .into();
     rpc.request(ACCESS_RPC, json!({"op": "ensure", "targets": [wire]}))
