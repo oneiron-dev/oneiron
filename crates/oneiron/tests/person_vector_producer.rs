@@ -11,10 +11,10 @@
 //! lines of a person with no facts left. A wake pass that shows a line again
 //! with no landing marks a person whose vector went while it was hidden.
 //!
-//! Needs the doors:
+//! Needs the doors and the embed worker (`sync`):
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test person_vector_producer`.
-#![cfg(oneiron_test_support)]
+#![cfg(all(oneiron_test_support, feature = "sync"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::{Arc, Mutex};
@@ -26,7 +26,7 @@ use oneiron::embed::{
     Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
     PendingEmbeddingReconcileReport, PendingEmbeddingReconciler,
 };
-use oneiron::memory::{IndexedRevisionEmbedder, IndexedRevisionInput};
+use oneiron::memory::{IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault_with};
@@ -34,7 +34,10 @@ use oneiron::test_doors::derive::{
     About, Archive, Derived, Named, about_facts, claim_subject, commit, commit_in_attempt, revert,
     wake_reads_about_facts,
 };
-use oneiron::test_doors::steward::{archive_every_quiet_claim, dreamer};
+use oneiron::test_doors::steward::{
+    STEWARD_VERBS, archive_every_quiet_claim, dreamer, revoke_base_agent_bindings,
+    stand_steward_grant,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 const READER: &str = "reader";
@@ -162,6 +165,12 @@ fn put_fact(vault: &Vault, person: EntityId, predicate: &str, value: &str, band:
 /// A Dreamer vault with an embedding model over [`DIMENSIONS`], and one
 /// person with one stated, approved fact whose sensitivity stamp is `band`.
 fn fixture(band: &str) -> Fixture {
+    fixture_with_body(band, b"someone")
+}
+
+/// [`fixture`] with the person's body `body`: an empty one is a live
+/// zero-byte payload.
+fn fixture_with_body(band: &str, body: &[u8]) -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_vault(&dir);
     let dreamer = dreamer(&vault).expect("the Dreamer");
@@ -173,7 +182,7 @@ fn fixture(band: &str) -> Fixture {
             ENTITY_TYPE_PERSON,
             TimeRange { start: at, end: at },
             at,
-            b"someone",
+            body,
         )
         .expect("a person");
     let fact = put_fact(&vault, person, "profile.hobby", "climbing", band);
@@ -239,6 +248,18 @@ fn reconcile(fixture: &Fixture) -> PendingEmbeddingReconcileReport {
         .expect("one embed pass")
 }
 
+/// Embed worker passes until one leases nothing: a swap queues every
+/// embeddable record again, more than one pass may lease.
+fn reconcile_all(fixture: &Fixture) {
+    for _ in 0..20 {
+        let report = reconcile(fixture);
+        if report.leased == 0 && report.stale_jobs == 0 {
+            return;
+        }
+    }
+    panic!("FIXTURE: the queue drains in 20 passes");
+}
+
 /// Every payload the embed worker sent for the person, in order.
 fn sent_for_person(fixture: &Fixture) -> Vec<PendingEmbeddingPayload> {
     fixture
@@ -261,6 +282,26 @@ fn person_vector(fixture: &Fixture) -> Option<Vec<f32>> {
         .vault
         .get_vector(&fixture.person)
         .expect("vector read")
+}
+
+/// One idle publication pass, an hour on, with no idle delay.
+fn publish_at_idle(fixture: &Fixture, idle: &BodyVectors) -> IndexedRefreshReport {
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("idle delay");
+    let now_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_millis(),
+    )
+    .expect("ms")
+        + 3_600_000;
+    fixture
+        .vault
+        .refresh_indexed_at_idle(now_ms, idle)
+        .expect("idle publication")
 }
 
 /// The person's lines land, one public and three above it: the worker sends
@@ -456,10 +497,6 @@ fn a_person_body_edit_is_refilled_from_the_line_not_the_body() {
 /// Edits the person's body and publishes the edit at idle. Returns the idle
 /// publisher's embedder.
 fn publish_body_edit_at_idle(fixture: &Fixture) -> BodyVectors {
-    fixture
-        .vault
-        .set_indexed_idle_delay_ms(0)
-        .expect("idle delay");
     let mut edited = Vec::new();
     rmpv::encode::write_value(
         &mut edited,
@@ -484,18 +521,7 @@ fn publish_body_edit_at_idle(fixture: &Fixture) -> BodyVectors {
         )
         .expect("the body edit");
     let idle = BodyVectors::default();
-    let now_ms = u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_millis(),
-    )
-    .expect("ms")
-        + 3_600_000;
-    let published = fixture
-        .vault
-        .refresh_indexed_at_idle(now_ms, &idle)
-        .expect("idle publication");
+    let published = publish_at_idle(fixture, &idle);
 
     assert!(
         published
@@ -768,5 +794,111 @@ fn a_line_shown_again_after_a_hidden_body_edit_embeds_again() {
         person_vector(&fixture),
         Some(PUBLIC_VECTOR.to_vec()),
         "the line shown again is embedded again"
+    );
+}
+
+/// A live PERSON may carry an empty body (a live zero-byte payload): its
+/// marker commits to its line, not its body, so the worker leases it and
+/// fills the line's vector. RED on 62fd6825062: the marker of a header-only
+/// PERSON never reads as current, so the worker drops the job unsent and the
+/// person never holds a vector.
+#[test]
+fn a_person_with_an_empty_body_embeds_its_public_line() {
+    let fixture = fixture_with_body("public", b"");
+    land(&fixture, &[0, 1, 2, 3], public_then_private);
+
+    reconcile(&fixture);
+
+    assert_eq!(
+        sent_for_person(&fixture),
+        vec![line_payload(PUBLIC_LINE)],
+        "the worker sends an empty-bodied person's public line"
+    );
+    assert_eq!(person_vector(&fixture), Some(PUBLIC_VECTOR.to_vec()));
+}
+
+/// The host revokes the Dreamer's MACHINE binding after a landing queued the
+/// person: the Dreamer's reader reads nothing, so the person shows no line
+/// and is sent nothing, and the pass goes on with its other work. RED on
+/// 62fd6825062: the line read fails with the refused read, which fails the
+/// whole pass, so no record in it is embedded.
+#[test]
+fn a_revoked_dreamer_binding_hides_the_line_and_the_pass_goes_on() {
+    let fixture = fixture("public");
+    land(&fixture, &[0, 1, 2, 3], public_then_private);
+    stand_steward_grant(&fixture.vault, fixture.dreamer, &STEWARD_VERBS).expect("full grant");
+    let revoked = revoke_base_agent_bindings(&fixture.vault, fixture.dreamer).expect("revoke");
+    assert!(revoked >= 1, "FIXTURE: a live binding stood");
+
+    let embedder: Arc<dyn Embedder> = fixture.embedder.clone();
+    PendingEmbeddingReconciler::new(Arc::clone(&fixture.vault), embedder)
+        .reconcile_once()
+        .expect("a refused line read fails no pass");
+
+    assert!(
+        sent_for_person(&fixture).is_empty(),
+        "the person is sent nothing"
+    );
+    assert_eq!(person_vector(&fixture), None);
+    assert_eq!(
+        fixture
+            .vault
+            .get_vector(&fixture.fact)
+            .expect("vector read"),
+        Some(OTHER_VECTOR.to_vec()),
+        "the pass embeds the rest of its work"
+    );
+}
+
+/// A fact write hides the person's line, and an embedding-space swap comes
+/// before the Dreamer writes it again. The next landing's line fills the
+/// person's vector in the new space, and idle publication leaves it: the
+/// worker is the one producer of a PERSON's vector (D2). RED on
+/// 62fd6825062: the swap marks the person for an idle refill, which finds
+/// nothing to embed for a PERSON and drops the new vector.
+#[test]
+fn a_swap_while_the_line_is_hidden_leaves_no_idle_refill_over_the_next_line() {
+    let mut fixture = fixture("public");
+    land(&fixture, &[0, 1, 2, 3], public_then_private);
+    reconcile(&fixture);
+    assert_eq!(person_vector(&fixture), Some(PUBLIC_VECTOR.to_vec()));
+    put_fact(
+        &fixture.vault,
+        fixture.person,
+        "profile.hobby",
+        "hiking",
+        "public",
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .person_about(fixture.person, Some(0))
+            .expect("read"),
+        None,
+        "FIXTURE: the fact write hides the line"
+    );
+
+    Arc::get_mut(&mut fixture.vault)
+        .expect("FIXTURE: the one handle")
+        .refill_embedding_space()
+        .expect("the swap");
+    land(&fixture, &[0, 1, 2, 3], new_then_private);
+    reconcile_all(&fixture);
+    assert_eq!(
+        person_vector(&fixture),
+        Some(NEW_VECTOR.to_vec()),
+        "FIXTURE: the new line fills the vector in the new space"
+    );
+    let idle = BodyVectors::default();
+    publish_at_idle(&fixture, &idle);
+
+    assert_eq!(
+        person_vector(&fixture),
+        Some(NEW_VECTOR.to_vec()),
+        "idle publication leaves the vector the worker filled"
+    );
+    assert!(
+        !idle.embedded.lock().unwrap().contains(&fixture.person),
+        "idle never embeds a PERSON"
     );
 }

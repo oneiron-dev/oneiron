@@ -77,6 +77,7 @@ use oneiron::tagging::{
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::identity_recheck::{keep_identity_asks_separate, run_identity_recheck};
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
+use oneiron::write_envelope::claim_body::ClaimDemotionAction;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
     ModelId, Vault, VaultConfig,
@@ -854,6 +855,44 @@ fn a_role_with_no_edge_for_its_word_mints_as_today() {
     let (vault, owner) = open_with_owner(&dir);
     let owen = person(&vault, "Owen Smith");
     role_edge(&vault, owner, "boss", owen, ClaimApprovalStatus::Approved);
+
+    let (_, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert!(asks.is_empty(), "no ask follows: {asks:?}");
+}
+
+/// The owner's one Approved manager edge names Owen Smith, and the Dreamer
+/// then marks it stale (`Vault::apply_claim_demotion`, `MarkStale`): it
+/// stays Active, flagged stale. A stale edge names no one, so "my manager"
+/// mints with no ask, as with no edge. #7408's first head hard-linked the
+/// mention to Owen through the stale edge (round-1 review P1).
+#[test]
+fn a_stale_role_edge_names_no_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    let edge = role_edge(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Approved,
+    );
+    vault
+        .apply_claim_demotion(&edge, ClaimDemotionAction::MarkStale, now_seconds())
+        .expect("the edge is marked stale");
+    let stored = vault
+        .get_claim(&edge)
+        .expect("claim read")
+        .expect("the role edge is stored");
+    assert!(stored.stale, "FIXTURE: the edge is marked stale");
+    assert_eq!(
+        stored.lifecycle,
+        ClaimLifecycleStatus::Active,
+        "FIXTURE: a stale edge stays Active"
+    );
 
     let (_, link) = save_as(&vault, owner, "my manager called.", "my manager");
 

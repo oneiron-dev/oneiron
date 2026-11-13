@@ -289,12 +289,21 @@ impl Store {
     }
 }
 
-/// A TURN or PERSON record that is not an erased shell: its marker commits to
-/// text read from other rows (a turn's messages, a person's `about` line),
-/// not to its own body.
+/// A TURN or PERSON record whose marker commits to text read from other rows
+/// (a turn's messages, a person's `about` line), not to its own body.
+///
+/// A TURN that is not an erased shell. Any PERSON, a header-only one
+/// included: a live PERSON may carry an empty body (a live zero-byte payload,
+/// `vault::entities::LiveEntityRow::Live`), and its line is read from its
+/// `about` row, so the line read at lease decides
+/// ([`crate::dreamer_consolidation::public_about_line_in_txn`], which reads
+/// no line for a deleted person).
 fn is_derived_text_record(record: &[u8]) -> bool {
-    record.len() > ENTITY_BODY_OFFSET
-        && (record[0] == ENTITY_TYPE_TURN || record[0] == ENTITY_TYPE_PERSON)
+    match record.first() {
+        Some(&ENTITY_TYPE_TURN) => record.len() > ENTITY_BODY_OFFSET,
+        Some(&ENTITY_TYPE_PERSON) => record.len() >= ENTITY_BODY_OFFSET,
+        _ => false,
+    }
 }
 
 impl Store {
