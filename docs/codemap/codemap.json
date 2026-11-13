@@ -52707,7 +52707,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarDetailSetting",
@@ -52725,7 +52725,7 @@
       "const": 1,
       "crate-vis": 7,
       "enum": 6,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -103520,6 +103520,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/mail_active_sources.rs",
+     "purpose": "[VAULT-STORE-FIELD-PUBLIC]: the host steps of `oneiron-mail-pack` (`mail_sources_due`, `mail_sync_sources`)…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/mail_late_address_headers.rs",
      "purpose": "Fix list row 20852: an IMAP or mbox landing reads From, Reply-To, To and Cc from the message's whole header…",
      "surface": {}
@@ -104574,6 +104582,14 @@
      "notable": [],
      "path": "tests/store_split_compilefail/c_session_route_is_engine_only.rs",
      "purpose": "[SESSION-OVERLAY-ROUTE-OVERLAY-PUBLIC]: `SessionWriteRoute::overlay` is `pub` in the store, but the engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_split_compilefail/d_vault_store_is_engine_only.rs",
+     "purpose": "[VAULT-STORE-FIELD-PUBLIC]: core split slice 0 (#6862) made `Vault::store` `pub` so the lifted mail pack…",
      "surface": {}
     },
     {
@@ -106600,7 +106616,7 @@
    "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7495,
-   "test_files": 1207
+   "test_files": 1209
   },
   "oneiron-agent-runtime": {
    "files": [
