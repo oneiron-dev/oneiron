@@ -170,7 +170,7 @@ impl ConsolidationExecutor<'_> {
     /// output keeps the decisions that shaped it. `stages` takes the wall ms
     /// of the gap upsert.
     pub(super) async fn resolve_conflicts(
-        &mut self,
+        &self,
         candidates: Vec<ExtractedCandidate>,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,

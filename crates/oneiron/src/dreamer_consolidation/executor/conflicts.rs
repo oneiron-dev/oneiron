@@ -32,7 +32,7 @@ impl ConsolidationExecutor<'_> {
     /// a checkpoint or a failed set ends the attempt with; `Continue` what
     /// every set decided.
     pub(super) async fn resolve_sets(
-        &mut self,
+        &self,
         input: ConflictInput<'_>,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
