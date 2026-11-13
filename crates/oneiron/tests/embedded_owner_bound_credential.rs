@@ -9,18 +9,24 @@
 //! whose verbs do not reach the door's verb, takes no owner door: an owner
 //! read behind the door falls to its reader route, which reads only what the
 //! credential grants. An unbound owner handle keeps the door. The clock
-//! repair's writer judges a bound handle's credential by the same rule.
+//! repair's writer judges a bound handle's credential by the same rule. A
+//! pack install's door asks for the verb that installs it: the owner's
+//! credential named for `vault.mail.pack.install` installs the engine's own
+//! Mail & Calendar pack, and still takes no `vault.packs.put` door (review
+//! round 1 of #7315).
 //!
 //! Public paths only:
 //! `cargo test --locked -p oneiron --all-features --test embedded_owner_bound_credential`.
 
 use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::agent_dispatch::budget_doors::{OpenSpendLeaseRequest, SpendScopeRequest};
-use oneiron::authority::{HostSlipIssuer, SlipClaims, VerifiedSlip};
+use oneiron::authority::{HostSlipIssuer, MachineRole, SlipClaims, VerifiedSlip};
 use oneiron::federation::ScopeAxis;
 use oneiron::memory::MemoryError;
+use oneiron::memory::hook_regen_doors::PackPutOutcome;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -43,6 +49,11 @@ const FULL_SLIP: [u8; 32] = [0x71; 32];
 const NARROW_SLIP: [u8; 32] = [0x72; 32];
 /// The id of the owner's verb-scoped credential.
 const VERB_SCOPED_SLIP: [u8; 32] = [0x73; 32];
+/// The owner verb that installs the engine's own Mail & Calendar pack, a
+/// Write row.
+const MAIL_PACK_VERB: &str = "vault.mail.pack.install";
+/// The id of the owner's credential named for [`MAIL_PACK_VERB`] alone.
+const MAIL_PACK_SLIP: [u8; 32] = [0x74; 32];
 
 /// A process-owned vault, as an embedded owner opens it: it holds the
 /// writer lease, so the embedded owner's door admits the owner.
@@ -311,5 +322,47 @@ fn an_owner_handle_bound_to_the_owners_revoked_verb_scoped_credential_takes_no_o
             .is_err(),
         "the repair's writer binds the owner to a revoked credential"
     );
+    Ok(())
+}
+
+#[test]
+fn an_owner_handle_bound_to_the_owners_mail_pack_credential_installs_the_mail_pack() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let issuer = HostSlipIssuer::from_secret(b"oneiron-test-embedded-owner-mail-pack")?;
+    // The host's start, as a self-hosted server's: the process keystore, the
+    // vault rooted under the host, and this install profiled.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+    let credential = owner_credential(&vault, &issuer, owner, MAIL_PACK_SLIP, |claims| {
+        claims.scope.verbs = ScopeAxis::Some(BTreeSet::from([MAIL_PACK_VERB.to_owned()]));
+    })?;
+    let bound = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_read_proof(&credential);
+
+    // The credential names `vault.mail.pack.install`, so its install is the
+    // owner's, and the pack lands.
+    let installed =
+        oneiron::mail_pack::install_mail_calendar_pack_embedded(&bound).unwrap_or_else(|error| {
+            panic!(
+                "the owner's credential named for {MAIL_PACK_VERB} installs the Mail & Calendar \
+                 pack: {error:?}"
+            )
+        });
+    assert_eq!(
+        installed.outcome,
+        PackPutOutcome::Installed,
+        "the bound owner's install lands the pack: {installed:?}"
+    );
+
+    // `vault.packs.put` is a Write row it neither names nor holds
+    // `core:write` for: the named install opens no other pack door.
+    let door = refused(
+        bound.embedded_owner(OUTSIDE_VERB),
+        "a handle bound to the owner's mail-pack credential takes the vault.packs.put door",
+    );
+    assert_eq!(door.code, "FORBIDDEN", "{door:?}");
     Ok(())
 }
