@@ -561,12 +561,12 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
     })
 }
 
-/// A host keeps every window it served registered until it stops, and the
-/// erasure sweep defers every registered window as live. Before it compacts,
-/// each window that no caller holds is written down and closed through the
-/// manager's own unload, which refuses a window someone holds; the next touch
-/// opens it again from its rows. A refused or failed unload leaves the window
-/// as it was, and the sweep defers it.
+/// A host keeps every window it served registered until it stops. Before it
+/// compacts, each window that no caller holds is written down and closed
+/// through the manager's own unload, which refuses a window someone holds;
+/// the next touch opens it again from its rows. A refused or failed unload
+/// leaves the window as it was: the sweep then takes it from its holders
+/// within its drain bound, or defers it (census L9-41).
 #[cfg(feature = "sync")]
 fn unload_idle_windows(vault: &Vault) -> u64 {
     let manager = vault
