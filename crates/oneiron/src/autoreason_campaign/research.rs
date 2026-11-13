@@ -71,6 +71,8 @@ pub use budget::{
     settle_research_work,
 };
 pub use children::create_research_child;
+#[cfg(oneiron_test_support)]
+pub(crate) use continuation::seed_research_continuation;
 pub use continuation::{
     ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchSplit, ResearchTask,
     ResearchWork, advance_research_continuations, ensure_research_continuations,

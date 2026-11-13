@@ -400,6 +400,37 @@ pub fn advance_research_continuations(
     Ok(())
 }
 
+/// Put `root`'s continuation for `work`, open, with `pending` to run and
+/// nothing in flight, as an earlier pass or selection round leaves one. A
+/// key that already holds a continuation is refused.
+#[cfg(oneiron_test_support)]
+pub(crate) fn seed_research_continuation(
+    vault: &Vault,
+    root: AttemptId,
+    work: ResearchWork,
+    pending: Vec<ResearchTask>,
+    now: u64,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let key = (*root.as_bytes(), work.key());
+        if CONTINUATION.contains(&vault.store, txn, &key)? {
+            return Err(invalid("the campaign already holds this continuation"));
+        }
+        let row = ResearchContinuation {
+            root,
+            work,
+            pending,
+            running: None,
+            state: ResearchContinuationState::Open,
+            runs: Vec::new(),
+            debug_spawned: false,
+            created_at: now,
+            updated_at: now,
+        };
+        CONTINUATION.put(&vault.store, txn, &key, &row)
+    })
+}
+
 /// What the round continuations say about the next selection round:
 /// `Some(false)` while one is open or waits on budget, `Some(true)` once the
 /// last round's ended any other way (it may have added no node, so an
