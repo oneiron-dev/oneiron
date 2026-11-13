@@ -496,14 +496,15 @@ pub(crate) fn record_in_txn(
             .as_ref()
             .map(|(model, vector)| (model.as_str(), vector.as_slice())),
     )?;
-    producers::check_score_receipt_in_txn(vault, txn, input.root, &record.pin, &input.score)?;
+    let score =
+        producers::check_score_receipt_in_txn(vault, txn, input.root, &record.pin, &input.score)?;
     // Exact retries keep one copy of each original receipt. Rebuild refuses
     // any conflicting placement, score, cell or definition before the write.
     if !record.placements.contains(&placement) {
         record.placements.push(placement);
     }
-    if !record.scores.contains(&input.score) {
-        record.scores.push(input.score);
+    if !record.scores.contains(&score) {
+        record.scores.push(score);
     }
     let answer = view(&record)?;
     ARCHIVES.put(&vault.store, txn, root.as_bytes(), &record)?;

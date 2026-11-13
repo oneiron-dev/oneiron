@@ -524,14 +524,19 @@ pub(super) fn check_placement_receipt_in_txn(
 }
 
 /// Record's score check: the receipt names the engine's score of this output
-/// under this descriptor revision and the pin's ruler, with this quality.
+/// under this descriptor revision and the pin's ruler, with this quality. It
+/// answers the score with the engine's own quality. A quality that crossed JSON
+/// can come back one unit in the last place off (the workspace's serde_json
+/// parses without `float_roundtrip`), so a caller's number within
+/// `f64::EPSILON` of the recorded one names it, and the archive keeps the
+/// recorded bits.
 pub(super) fn check_score_receipt_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     root: EntityId,
     pin: &CampaignArchivePin,
     score: &ArchiveOutputScore,
-) -> Result<()> {
+) -> Result<ArchiveOutputScore> {
     match PRODUCERS.get(&vault.store, txn, score.receipt.as_bytes())? {
         Some(ArchiveProducerRecord::Score {
             root: recorded_root,
@@ -543,10 +548,13 @@ pub(super) fn check_score_receipt_in_txn(
         }) if recorded_root == root
             && pin_version == score.pin_version
             && output == score.output
-            && quality.to_bits() == score.quality.to_bits()
+            && (quality - score.quality).abs() <= f64::EPSILON
             && quality_metric == pin.quality_metric =>
         {
-            Ok(())
+            Ok(ArchiveOutputScore {
+                quality,
+                ..score.clone()
+            })
         }
         Some(ArchiveProducerRecord::Score { .. }) => Err(invalid(
             "the score receipt records another campaign, descriptor, output, quality or ruler",
