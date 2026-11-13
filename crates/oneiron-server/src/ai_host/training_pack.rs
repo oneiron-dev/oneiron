@@ -69,8 +69,9 @@ const HOLD_NO_EVALUATOR: &str = "training.no_evaluator";
 const HOLD_PARITY_FAILED: &str = "training.parity_failed";
 
 /// A seat evaluator: it scores the held-out bytes its claim
-/// (`claim_training_evaluation`) served against the returned checkpoint. It may retain run-bound verifier
-/// logs; the caller alone records the evaluation and advances its state.
+/// (`claim_training_evaluation`) served against the returned checkpoint. It
+/// may retain run-bound verifier logs; the caller alone records the
+/// evaluation and advances its state.
 type TrainingEvaluator = Box<dyn Fn(&TrainingEvalInput) -> oneiron::Result<HeldOutResult>>;
 
 /// Trains, recovers or scores the run one leased `coach.training_run`
