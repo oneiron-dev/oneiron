@@ -4,6 +4,7 @@
 //! process that has not assembled the document yet.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test -p oneiron-server --test openapi_document_precompute`
+#![cfg(oneiron_test_support)]
 
 use std::sync::Arc;
 use std::time::Instant;

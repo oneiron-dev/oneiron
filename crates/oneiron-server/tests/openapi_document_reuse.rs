@@ -4,6 +4,7 @@
 //! (FIX [SLOW-FACADE-CALLS-COORDINATION-08]).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test -p oneiron-server --test openapi_document_reuse`
+#![cfg(oneiron_test_support)]
 
 use std::sync::Arc;
 use std::time::Instant;
