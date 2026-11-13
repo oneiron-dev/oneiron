@@ -376,6 +376,7 @@ impl MergeQueue<'_> {
                 | BatchState::Quarantined
                 | BatchState::RolledBack
                 | BatchState::Cancelled
+                | BatchState::Superseded
         ) {
             return Err(invalid("live speculation cannot be collected"));
         }

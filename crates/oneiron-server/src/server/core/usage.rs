@@ -13,6 +13,16 @@ impl SyncServer {
         self,
         owner: impl Into<String>,
     ) -> Result<Self, crate::usage::UsageError> {
+        self.bind_usage_metering(owner)?;
+        Ok(self)
+    }
+
+    /// [`Self::with_usage_metering`] on a built server: a bind that fails
+    /// leaves the server as it was, unmetered, so serve can go on without it.
+    pub(crate) fn bind_usage_metering(
+        &self,
+        owner: impl Into<String>,
+    ) -> Result<(), crate::usage::UsageError> {
         let vault_id = self.vault.authority_fold()?.vault_id.ok_or(
             crate::usage::UsageError::InvalidField {
                 field: "vaultId",
@@ -29,7 +39,7 @@ impl SyncServer {
             Arc::clone(self.wire_telemetry.limit_questions()),
         )?;
         self.run_receipts.meter(usage);
-        Ok(self)
+        Ok(())
     }
 
     #[must_use]
