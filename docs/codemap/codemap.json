@@ -43202,7 +43202,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/gate/decode/decode_map_util.rs",
-     "purpose": "Generic MessagePack map accessors, signature values, and semver compare",
+     "purpose": "Generic MessagePack map accessors, policy authority markers, and semver compare",
      "surface": {
       "crate-vis": 13
      }
@@ -43976,7 +43976,7 @@
      "path": "src/gate/owner_answer.rs",
      "purpose": "The owner-answer obligation: a critical claim's durable hold, which only its owner's answer closes…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -45771,7 +45771,7 @@
      "path": "src/graph_fs/claim_ids.rs",
      "purpose": "Claim listings in id order, `/claims/by-id` and an entity's `claims`: each page reads one bounded run of…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -75125,7 +75125,7 @@
      "path": "src/settings/device_local.rs",
      "purpose": "Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 10
      }
     },
@@ -82936,7 +82936,7 @@
      "path": "src/store/pending_gate_consent/tray.rs",
      "purpose": "Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 2
      }
     },
@@ -92696,7 +92696,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 66,
+      "mod": 67,
       "re-export": 1
      }
     },
@@ -92965,6 +92965,19 @@
      "purpose": "Door for `tests/sync_outbox.rs`, mounted inside `sync::connection` so it drives the production…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettledAround"
+     ],
+     "path": "src/test_doors/tray_answered_removal.rs",
+     "purpose": "Doors for `tests/tray_answered_removal.rs` (FIX 22394 CONSENT-TRAY): a tray removal says `Answered` only…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -101406,6 +101419,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/admin_is_not_deputy.rs",
+     "purpose": "An Admin never gives the Deputy role, to itself or to anyone (Engine ruling C1-DEPUTY-GIVER, 13 Nov 14:39…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/admin_is_not_steward.rs",
      "purpose": "An Admin never gives the Steward role, to itself or to anyone (lead 10 Nov 06:5x; ARCH-0043's Admin row…",
      "surface": {}
@@ -102474,6 +102495,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/graph_fs_withheld_claim_scan.rs",
+     "purpose": "Census row L3-27 (ARCH-0044 C5, \"Still open, follow-up queued\"): off this device, Graph-FS reads on past…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/holder_approval_fallback_floor.rs",
      "purpose": "A Grant holder's approval lands under the holder's Grant on a predicate no manifest rule names…",
      "surface": {}
@@ -103401,7 +103430,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/owner_export_keeps_credentials.rs",
@@ -104354,6 +104383,14 @@
      "notable": [],
      "path": "tests/thread_task_one_surface.rs",
      "purpose": "A plain thread reply in a project room lands on the same surface as a witness turn…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tray_answered_removal.rs",
+     "purpose": "FIX 22394 (CONSENT-TRAY): a tray removal that says `Answered` carries the owner's answer",
      "surface": {}
     },
     {
@@ -106098,7 +106135,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106275,8 +106312,8 @@
    },
    "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7483,
-   "test_files": 1187
+   "source_files": 7484,
+   "test_files": 1190
   },
   "oneiron-agent-runtime": {
    "files": [
