@@ -1037,3 +1037,182 @@ fn a_world_caption_published_at_idle_before_the_sweep_comes_back_on_inherit() {
         "the vault's index takes the caption again",
     );
 }
+
+#[test]
+fn a_writer_vector_at_birth_never_enters_the_vault_index() {
+    let fixture = world_space_fixture();
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    let at = fixture.vault.now_recorded_at();
+    let range = TimeRange { start: at, end: at };
+    let picture = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &picture,
+            ENTITY_TYPE_ASSET,
+            range,
+            at,
+            b"a picture in the private world",
+        )
+        .edge(&picture, EdgeKind::InWorld, &fixture.world, 1.0)
+        .commit()
+        .expect("owner stores a picture in W");
+    let caption_text = "writer caption at birth";
+    let caption_body =
+        rmp_serde::to_vec_named(&json!({ "content": caption_text })).expect("caption body");
+    let caption_vector_before_link = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &caption_vector_before_link,
+            ENTITY_TYPE_ASSET_TEXT,
+            range,
+            at,
+            &caption_body,
+        )
+        .text(&caption_vector_before_link, &[("content", caption_text)])
+        .vector(
+            &caption_vector_before_link,
+            &text_vector(caption_text.as_bytes()),
+        )
+        .edge(
+            &caption_vector_before_link,
+            EdgeKind::DerivedFrom,
+            &picture,
+            1.0,
+        )
+        .commit()
+        .expect("owner stores W's caption with its vector before its link");
+    let caption_link_before_vector = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &caption_link_before_vector,
+            ENTITY_TYPE_ASSET_TEXT,
+            range,
+            at,
+            &caption_body,
+        )
+        .text(&caption_link_before_vector, &[("content", caption_text)])
+        .edge(
+            &caption_link_before_vector,
+            EdgeKind::DerivedFrom,
+            &picture,
+            1.0,
+        )
+        .vector(
+            &caption_link_before_vector,
+            &text_vector(caption_text.as_bytes()),
+        )
+        .commit()
+        .expect("owner stores W's caption with its link before its vector");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption_vector_before_link)
+            .expect("read W's caption vector written before its link")
+            .is_none(),
+        "a writer's vector at birth entered the vault's index for W's caption (vector before its link)",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption_link_before_vector)
+            .expect("read W's caption vector written after its link")
+            .is_none(),
+        "a writer's vector at birth entered the vault's index for W's caption (link before its vector)",
+    );
+
+    let unscoped_picture = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &unscoped_picture,
+            ENTITY_TYPE_ASSET,
+            range,
+            at,
+            b"a picture in no world",
+        )
+        .commit()
+        .expect("owner stores a picture in no world");
+    let unscoped_caption = EntityId::now();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &unscoped_caption,
+            ENTITY_TYPE_ASSET_TEXT,
+            range,
+            at,
+            &caption_body,
+        )
+        .text(&unscoped_caption, &[("content", caption_text)])
+        .vector(&unscoped_caption, &text_vector(caption_text.as_bytes()))
+        .edge(
+            &unscoped_caption,
+            EdgeKind::DerivedFrom,
+            &unscoped_picture,
+            1.0,
+        )
+        .commit()
+        .expect("owner stores an unscoped caption with its writer's vector");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&unscoped_caption)
+            .expect("unscoped caption vector read")
+            .is_some(),
+        "a caption in no world keeps its writer's vector",
+    );
+
+    fixture
+        .vault
+        .put_vector(
+            &fixture.world_claim,
+            &text_vector(b"writer vector for the world claim"),
+        )
+        .expect("owner writes a vector for W's claim");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&fixture.world_claim)
+            .expect("world claim vector read after put_vector")
+            .is_none(),
+        "put_vector entered the vault's index for W's claim",
+    );
+
+    fixture.set_models(ModelOrder::Inherit);
+    fixture
+        .reconciler()
+        .reconcile_once()
+        .expect("text pass after W inherits");
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle refill after W inherits");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption_vector_before_link)
+            .expect("caption vector read after W inherits")
+            .is_some(),
+        "the idle refill gives W's caption its vault vector once W inherits",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&fixture.world_claim)
+            .expect("world claim vector read after W inherits")
+            .is_some(),
+        "the vault's index takes W's claim once W inherits",
+    );
+}
