@@ -13,7 +13,6 @@ const watch = new Worker(`${import.meta.dir}/memory-watch.ts`);
 await new Promise<void>((resolve) => {
   watch.onmessage = () => resolve();
 });
-watch.unref();
 const bytes = craftedPackage(process.argv[2] as CraftedKind);
 let answer: unknown;
 try {
@@ -22,3 +21,4 @@ try {
   answer = err instanceof WorkbookBudgetError ? { refused: err.line } : { failed: String(err) };
 }
 console.log(JSON.stringify(answer));
+watch.terminate();
