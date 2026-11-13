@@ -72,24 +72,39 @@ export const HUGE_ROW_HYPERLINK_SHEET = worksheet(
  * A shared formula whose master text is `masterLength` characters, followed by
  * `followers` cells below it; every cell caches the value 1. Each follower
  * names the master with `followerTag`: the standard self-closing formula by
- * default, or a tag SheetJS's fallback formula reader also takes.
+ * default, or a tag SheetJS's fallback formula reader also takes. The master's
+ * start tag names its index with `master.index` (`si="0"` by default), and its
+ * text ends with `master.tail`.
  */
 export function fanOutSheet(
   masterLength: number,
   followers: number,
   followerTag = `<f t="shared" si="0"/>`,
+  master: { readonly index?: string; readonly tail?: string } = {},
 ): string {
+  const { index = `si="0"`, tail = "" } = master;
   // References, so each follower gets its own shifted copy, not the master's
   // string back unchanged.
-  const master = "A1+".repeat(Math.floor(masterLength / 3)).padEnd(masterLength, "1");
+  const references = masterLength - tail.length;
+  const masterText = "A1+".repeat(Math.floor(references / 3)).padEnd(references, "1") + tail;
   const rows = [
-    `<row r="1"><c r="A1"><f t="shared" ref="A1:A${followers + 1}" si="0">${master}</f><v>1</v></c></row>`,
+    `<row r="1"><c r="A1"><f t="shared" ref="A1:A${followers + 1}" ${index}>${masterText}</f><v>1</v></c></row>`,
   ];
   for (let row = 2; row <= followers + 1; row += 1) {
     rows.push(`<row r="${row}"><c r="A${row}">${followerTag}<v>1</v></c></row>`);
   }
   return worksheet(rows.join(""));
 }
+
+/**
+ * A two-character shared master at A1 and one follower beside it whose
+ * address is 220 Zs and a row: its column decodes to Infinity, and SheetJS's
+ * `encode_col` never finishes the shifted copy's column.
+ */
+export const FAR_COLUMN_FOLLOWER_SHEET = worksheet(
+  `<row r="1"><c r="A1"><f t="shared" ref="A1:B1" si="0">A1</f><v>1</v></c>` +
+    `<c r="${"Z".repeat(220)}1"><f t="shared" si="0"/><v>1</v></c></row>`,
+);
 
 /**
  * The sheet deflated as one non-final stored block whose length runs from the
@@ -116,7 +131,9 @@ export type CraftedKind =
   | "full-grid-hyperlink"
   | "shared-formula-fan-out"
   | "huge-row-hyperlink"
-  | "fallback-formula-fan-out";
+  | "fallback-formula-fan-out"
+  | "hidden-index-fan-out"
+  | "far-column-follower";
 
 /** The crafted package of `kind`; its sheet is S1. */
 export function craftedPackage(kind: CraftedKind): Uint8Array {
@@ -134,5 +151,14 @@ export function craftedPackage(kind: CraftedKind): Uint8Array {
     case "fallback-formula-fan-out":
       // The same fan-out, each follower an unknown `<foo si="0"/>`.
       return sheetsPackage([text(fanOutSheet(64 * 1024, 300_000, `<foo si="0"/>`))]);
+    case "hidden-index-fan-out":
+      // The same fan-out, the master's start tag naming index 1 and its text
+      // ending in ` si='0' `: SheetJS reads the master's attributes over its
+      // whole element, and the last `si` there files it under 0.
+      return sheetsPackage([
+        text(fanOutSheet(64 * 1024, 300_000, undefined, { index: `si="1"`, tail: `N(" si='0' ")` })),
+      ]);
+    case "far-column-follower":
+      return sheetsPackage([text(FAR_COLUMN_FOLLOWER_SHEET)]);
   }
 }

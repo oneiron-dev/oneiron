@@ -5,6 +5,7 @@ import { PREVIEW_BUDGET, WorkbookBudgetError, preflightPackage, type BudgetLine 
 import { checkSheetExpansion } from "../src/bridge/expansion";
 import { readSheet, readWorkbook, readWorkbookOutline } from "../src/bridge/parse";
 import {
+  FAR_COLUMN_FOLLOWER_SHEET,
   FULL_GRID_HYPERLINK_SHEET,
   HUGE_ROW_HYPERLINK_SHEET,
   PLAIN_SHEET,
@@ -107,6 +108,22 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
     TEST_LIMIT_MS,
   );
 
+  it(
+    "refuses a shared formula whose master names its index inside its text",
+    () => {
+      expect(readInChild("hidden-index-fan-out")).toEqual({ refused: "sheetTextChars" });
+    },
+    TEST_LIMIT_MS,
+  );
+
+  it(
+    "refuses a shared formula follower whose column decodes past the safe integers",
+    () => {
+      expect(readInChild("far-column-follower")).toEqual({ refused: "sheetCells" });
+    },
+    TEST_LIMIT_MS,
+  );
+
   it("counts what SheetJS would expand before it reads: far addresses, browser-decoded ranges, fallback followers", () => {
     const sheetPart = "xl/worksheets/sheet1.xml";
     const check = (bytes: Uint8Array, formulaText = false, budget = PREVIEW_BUDGET) => () =>
@@ -129,6 +146,25 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
     const budget = { ...PREVIEW_BUDGET, sheetTextChars: 1_000 };
     refusedWith("sheetTextChars", check(text(fanOutSheet(100, 50, `<foo si="0"/>`)), true, budget));
     expect(check(text(fanOutSheet(100, 9, `<foo si="0"/><foo si="0"/>`)), true, budget)).not.toThrow();
+    // The master's own tag names index 1; its text names 0, which SheetJS
+    // reads last and files the master under. Without that text no follower
+    // names the master.
+    const hidden = { index: `si="1"`, tail: `N(" si='0' ")` };
+    refusedWith("sheetTextChars", check(text(fanOutSheet(100, 50, undefined, hidden)), true, budget));
+    expect(check(text(fanOutSheet(100, 50, undefined, { index: `si="1"` })), true, budget)).not.toThrow();
+    // `si=a=b` names `si` with the value `a=b`, which SheetJS files under NaN.
+    refusedWith(
+      "sheetTextChars",
+      check(text(fanOutSheet(100, 50, `<f t="shared" si="NaN"/>`, { index: "si=a=b" })), true, budget),
+    );
+    // A shared formula's cell at a column past the safe integers, follower or
+    // master; the same cells without formula text are not shifted.
+    refusedWith("sheetCells", check(text(FAR_COLUMN_FOLLOWER_SHEET), true));
+    const farMaster = worksheet(
+      `<row r="1"><c r="${"Z".repeat(220)}1"><f t="shared" si="0">A1</f><v>1</v></c><c r="A2"><f t="shared" si="0"/><v>1</v></c></row>`,
+    );
+    refusedWith("sheetCells", check(text(farMaster), true));
+    expect(check(text(FAR_COLUMN_FOLLOWER_SHEET), false)).not.toThrow();
   });
 
   it("refuses a deflate stream an inflater cannot finish inside its entry, from the preflight alone", () => {
