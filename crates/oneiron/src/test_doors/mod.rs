@@ -61,6 +61,7 @@ pub mod spend;
 pub mod split_phrase_carrier;
 pub mod steward;
 pub mod substrate_reads;
+pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
