@@ -16,6 +16,7 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EntityId;
+use oneiron::agent_dispatch::RunBudgetChoice;
 use oneiron::llm::decision::{DecisionAnswer, DecisionAsk, HostRule};
 use oneiron::outbound_intent_ledger::RemoteTaskInputChoice;
 use serde::Deserialize;
@@ -98,6 +99,10 @@ struct AnswerAsk {
     /// rule row.
     #[serde(default)]
     reason: Option<String>,
+    /// The cap of a run-budget ask's `overdraft` answer, in the run's budget
+    /// units; without it the overdraft is the cap the ask states.
+    #[serde(default)]
+    cap_units: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -192,6 +197,22 @@ async fn answer(
             server
                 .vault()
                 .press_remote_task_input_ask(&owner, request.seq, choice)?;
+        }
+        // A run held at its spend cap takes the owner's choice, and an
+        // overdraft's cap, in the write that resumes it (RUNBUDGET-OVERDRAFT).
+        let run_budget = match &request.answer {
+            DecisionAnswer::Choice(token) => RunBudgetChoice::of_token(token),
+            _ => None,
+        };
+        if request.cap_units.is_some() && run_budget != Some(RunBudgetChoice::Overdraft) {
+            return Err(OwnerError::Invalid(
+                "cap_units names the cap of a run-budget overdraft answer".to_owned(),
+            ));
+        }
+        if let Some(choice) = run_budget {
+            server
+                .vault()
+                .press_run_budget_ask(&owner, request.seq, choice, request.cap_units)?;
         }
         asks.answer_with_reason(
             &owner,

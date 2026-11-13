@@ -503,6 +503,17 @@ pub const QUOTA_SPENT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// What the owner does about an agent run held at its spend cap (ARCH-0026 depletion ladder,
+/// policy knob; ARCH-0036 #offers-ask-home): with no overdraft configured the ladder asks up
+/// and never downgrades the run by itself. Asked of the owner role only; keyed by the run's
+/// root attempt. Its fixed machine-lifecycle wording lives in agent_dispatch, the third
+/// wording exception.
+pub const RUN_BUDGET_SPENT: QuestionFamily = QuestionFamily {
+    name: "models.run_budget_spent",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which class a message to a busy agent takes (AGM-2 = C; ARCH-0079 #message-classes):
 /// interrupt, steer, follow_up or digest. Read on the rule and local rungs only, from the
 /// message's stamped envelope and its first line fenced as data; an unsure interrupt is asked
@@ -569,5 +580,6 @@ pub const FAMILIES: &[QuestionFamily] = &[
     CLAIM_SOURCE_SUPPORT,
     SEAL_OBJECTIVE_FLAW,
     QUOTA_SPENT,
+    RUN_BUDGET_SPENT,
     MESSAGE_CLASS,
 ];

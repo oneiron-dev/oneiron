@@ -513,12 +513,18 @@ impl Vault {
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
             crate::campaign::surface::apply_campaign_complaint_answer_in_txn(self, txn, &held)?;
+            crate::agent_dispatch::apply_run_budget_answer_in_txn(self, txn, &held)?;
             Ok(held)
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).
         self.signal_decision_answer(seq);
         // A graph unit's ask lands its answer on the unit (FIX 11231).
         self.land_question_unit_answer(seq);
+        // A run-budget answer may have resumed its run: the queue's
+        // observers claim it at once.
+        if crate::agent_dispatch::is_run_budget_ask(&answered) {
+            self.store.notify_attempt_observers();
+        }
         Ok(answered)
     }
 

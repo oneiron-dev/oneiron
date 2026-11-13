@@ -78,6 +78,7 @@ mod research_root;
 pub(crate) use self::research_root::ResearchRootRequest;
 mod resident;
 mod room_join;
+mod run_budget_ask;
 mod run_effects;
 pub use self::run_effects::AgentRunEffectAnswerOutcome;
 pub(crate) use self::run_effects::{
@@ -187,6 +188,11 @@ pub use self::planner::{
     resolve_care, top_shapes,
 };
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
+pub use self::run_budget_ask::{
+    RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS, RunBudgetChoice, RunBudgetQuestion, RunOverdraft,
+    run_budget_questions,
+};
+pub(crate) use self::run_budget_ask::{apply_run_budget_answer_in_txn, is_run_budget_ask};
 pub use self::task_type_tree::{
     SourcedTypeTree, TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at,
     load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,
