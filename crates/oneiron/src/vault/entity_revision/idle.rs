@@ -330,6 +330,16 @@ impl Vault {
                 // and the pending work stays for it (and for the vault's index,
                 // should the world inherit again).
                 drop_index_vector_in_txn(self, &mut txn, &input.entity)?;
+                // A row the pending worker does not embed (a NOTE, a caption)
+                // gets a vector of the vault's index back only by a refill,
+                // and a sweep after this pass finds no vector to mark it by:
+                // it is marked here, refilled should the world inherit again.
+                if !self
+                    .store
+                    .has_current_pending_embedding_in_txn(&txn, &input.entity)?
+                {
+                    vector_refill::mark_vector_refill_in_txn(&self.store, &mut txn, &input.entity)?;
+                }
             }
             super::pending_index::clear(&self.store, &mut txn, &input.entity)?;
             // The published revision settled its own vector, so a refill a

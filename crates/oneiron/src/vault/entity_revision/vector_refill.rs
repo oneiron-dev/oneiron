@@ -44,7 +44,6 @@ pub(crate) fn schedule_vector_refills(vault: &Vault, wtxn: &mut heed::RwTxn<'_>)
 /// Marks `id` for the idle refill at its published revision: a vector the vault's index lost
 /// when a world's own text space took the row comes back once no world's space takes it
 /// (DEC-0005 #private-world-vectors). A record the pending worker embeds is queued instead.
-#[cfg(feature = "sync")]
 pub(crate) fn mark_vector_refill_in_txn(
     store: &impl ManifestDbs,
     txn: &mut heed::RwTxn<'_>,
