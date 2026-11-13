@@ -2,14 +2,19 @@
 //! (13 Nov): the owner takes back a run nobody settled. `vault.revert_run`
 //! with no settlement takes the run's members from its change journal: each
 //! landed claim gets the undo a settle would give it, each compensation is
-//! kept on the change's journal row, and a later change resting on one of the
-//! run's claims keeps that claim and is reported as dependent.
+//! kept on the change's journal row, a claim the gate still holds is reported
+//! as never landed, and a later change resting on one of the run's claims
+//! keeps that claim and is reported as dependent.
+//!
+//! The run's claims land at once as a live run's do: its put asks Auto
+//! (`test_doors::run_changes::put_claim_asking_auto`, the first ask of
+//! `put_claim_from_host`, FIX 3983). A code-mode put asks Proposed and waits.
 //!
 //! Red on main: `vault.revert_run` reverts only a settled run there, so a run
 //! nobody settled answers not_found. Green on the head.
 //!
-//! `cargo test --locked -p oneiron --all-features --test run_revert_unsettled`
-#![cfg(feature = "test-support")]
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test run_revert_unsettled`
+#![cfg(all(oneiron_test_support, feature = "test-support"))]
 
 use oneiron::code_run::{
     HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemoryPutClaimCall,
@@ -17,6 +22,7 @@ use oneiron::code_run::{
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::test_doors::run_changes::put_claim_asking_auto;
 use oneiron::test_support::{
     bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
 };
@@ -92,7 +98,8 @@ impl Fixture {
         .map_err(at("the run's dispatcher"))
     }
 
-    /// One `self.memory.put_claim` of the run about `subject`, at a fresh id.
+    /// One claim of the run about `subject`, at a fresh id: the claim put a
+    /// live run asks Auto, so it lands at once.
     fn put(
         &self,
         run: &HostSelfDispatcher<'_>,
@@ -101,18 +108,25 @@ impl Fixture {
         at_time: u64,
     ) -> TestResult<EntityId> {
         let id = EntityId::now();
-        run.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
-            id,
-            ClaimCandidate::new(
-                "profile.favorite_drink",
-                ClaimSubject::Entity(subject),
-                Value::from(value),
-                0.8,
-            ),
-            range(at_time),
-            at_time + 1,
+        put_claim_asking_auto(run, claim_call(id, subject, value, at_time))
+            .map_err(at("the run's claim put"))?;
+        Ok(id)
+    }
+
+    /// One code-mode `self.memory.put_claim` of the run about `subject`, at a
+    /// fresh id: code mode asks Proposed, so the claim waits for review.
+    fn propose(
+        &self,
+        run: &HostSelfDispatcher<'_>,
+        subject: EntityId,
+        value: &str,
+        at_time: u64,
+    ) -> TestResult<EntityId> {
+        let id = EntityId::now();
+        run.dispatch(SelfCall::MemoryPutClaim(claim_call(
+            id, subject, value, at_time,
         )))
-        .map_err(at("the run's claim put"))?;
+        .map_err(at("the run's code-mode claim put"))?;
         Ok(id)
     }
 
@@ -135,6 +149,26 @@ impl Fixture {
             body.lifecycle.as_str().to_owned(),
         ))
     }
+}
+
+/// The run's `self.memory.put_claim` call of `value` about `subject`.
+fn claim_call(
+    id: EntityId,
+    subject: EntityId,
+    value: &str,
+    at_time: u64,
+) -> SelfMemoryPutClaimCall {
+    SelfMemoryPutClaimCall::new(
+        id,
+        ClaimCandidate::new(
+            "profile.favorite_drink",
+            ClaimSubject::Entity(subject),
+            Value::from(value),
+            0.8,
+        ),
+        range(at_time),
+        at_time + 1,
+    )
 }
 
 /// Defaults that land the owner's Generated claims, as the code-run gate
@@ -212,28 +246,35 @@ fn not_undone(outcome: &serde_json::Value) -> TestResult<Vec<(String, String)>> 
         .collect()
 }
 
-/// A run nobody reviewed writes 3 claims that land at Auto; another run
-/// writes 1. Undo-all of the first run retracts its 3, newest first, each
-/// with its own receipt, and leaves the other run's claim standing. Asked
-/// again, it answers with the same 3 receipts and writes nothing new.
+/// A run nobody reviewed writes 3 claims that land at Auto and 1 that waits
+/// for review; another run writes 1. Undo-all of the first run retracts its
+/// 3, newest first, each with its own receipt, reports the waiting one as
+/// never landed and leaves it waiting, and leaves the other run's claim
+/// standing. Asked again, it answers with the same 3 receipts and writes
+/// nothing new.
 #[test]
 fn revert_all_undoes_an_unsettled_runs_changes() -> TestResult {
     let f = Fixture::open()?;
     let run = f.run("run-revert-a")?;
     let other = f.run("run-revert-b")?;
-    let mut ours = Vec::new();
-    for (value, at_time) in [("sencha", 10), ("matcha", 12), ("genmaicha", 14)] {
-        let subject = f.person()?;
-        ours.push(f.put(&run, subject, value, at_time)?);
-    }
+    let sencha = f.put(&run, f.person()?, "sencha", 10)?;
+    let matcha = f.put(&run, f.person()?, "matcha", 12)?;
+    let waiting = f.propose(&run, f.person()?, "hojicha", 13)?;
+    let genmaicha = f.put(&run, f.person()?, "genmaicha", 14)?;
+    let ours = [sencha, matcha, genmaicha];
     let theirs = f.put(&other, f.person()?, "oolong", 16)?;
     for id in ours.iter().chain([&theirs]) {
         assert_eq!(
             f.state(*id)?,
             ("auto".to_owned(), "active".to_owned()),
-            "each run claim lands at Auto"
+            "each landed run claim stands at Auto"
         );
     }
+    assert_eq!(
+        f.state(waiting)?,
+        ("proposed".to_owned(), "active".to_owned()),
+        "the code-mode claim waits for review"
+    );
 
     let outcome = f.revert_all("run-revert-a")?;
     assert_eq!(outcome["run_id"], "run-revert-a");
@@ -244,7 +285,7 @@ fn revert_all_undoes_an_unsettled_runs_changes() -> TestResult {
             .map(|(change, _)| change.clone())
             .collect::<Vec<_>>(),
         ours.iter().rev().map(EntityId::to_hex).collect::<Vec<_>>(),
-        "every change of the run, newest first"
+        "every landed change of the run, newest first"
     );
     assert!(
         undone
@@ -252,7 +293,8 @@ fn revert_all_undoes_an_unsettled_runs_changes() -> TestResult {
             .all(|(_, receipt)| receipt.starts_with("gate:")),
         "each compensation has its own receipt: {undone:?}"
     );
-    assert_eq!(not_undone(&outcome)?, Vec::new());
+    let never_landed = vec![(waiting.to_hex(), "not_landed".to_owned())];
+    assert_eq!(not_undone(&outcome)?, never_landed);
     for id in &ours {
         assert_eq!(
             f.state(*id)?.1,
@@ -260,6 +302,11 @@ fn revert_all_undoes_an_unsettled_runs_changes() -> TestResult {
             "the run's claim is taken back"
         );
     }
+    assert_eq!(
+        f.state(waiting)?,
+        ("proposed".to_owned(), "active".to_owned()),
+        "the waiting claim keeps waiting"
+    );
     assert_eq!(f.state(theirs)?.1, "active", "another run's claim stands");
 
     let again = f.revert_all("run:run-revert-a")?;
@@ -268,14 +315,14 @@ fn revert_all_undoes_an_unsettled_runs_changes() -> TestResult {
         undone,
         "a repeat answers with the kept receipts"
     );
-    assert_eq!(not_undone(&again)?, Vec::new());
+    assert_eq!(not_undone(&again)?, never_landed);
     Ok(())
 }
 
-/// A run nobody reviewed writes 2 claims. Another run then supersedes the
-/// first with its own claim. Undo-all of the first run takes back the second
-/// claim, keeps the first under the later claim that rests on it, and
-/// reports it as dependent.
+/// A run nobody reviewed writes 2 claims that land at Auto. Another run then
+/// supersedes the first with its own claim. Undo-all of the first run takes
+/// back the second claim, keeps the first under the later claim that rests
+/// on it, and reports it as dependent.
 #[test]
 fn revert_all_keeps_and_reports_a_later_change_on_a_runs_claim() -> TestResult {
     let f = Fixture::open()?;
@@ -284,7 +331,14 @@ fn revert_all_keeps_and_reports_a_later_change_on_a_runs_claim() -> TestResult {
     let subject = f.person()?;
     let first = f.put(&run, subject, "sencha", 10)?;
     let second = f.put(&run, f.person()?, "matcha", 12)?;
-    let replacement = f.put(&later, subject, "hojicha", 14)?;
+    for id in [first, second] {
+        assert_eq!(
+            f.state(id)?,
+            ("auto".to_owned(), "active".to_owned()),
+            "each run claim lands at Auto"
+        );
+    }
+    let replacement = f.propose(&later, subject, "hojicha", 14)?;
     later
         .dispatch(SelfCall::MemorySupersedeClaim(
             SelfMemorySupersedeClaimCall::new(replacement, first, 20),
