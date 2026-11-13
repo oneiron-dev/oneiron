@@ -646,6 +646,14 @@ fn execution_summary(execution: &DreamerAttemptExecution) -> String {
         DreamerAttemptExecution::ParkOnSeat {
             reason, reset_at_s, ..
         } => format!("park on a seat reset_at={reset_at_s:?} reason={reason}"),
+        DreamerAttemptExecution::ParkOnSeatWithSpend {
+            reason,
+            reset_at_s,
+            completed_units,
+            ..
+        } => format!(
+            "park on a seat units={completed_units} reset_at={reset_at_s:?} reason={reason}"
+        ),
         DreamerAttemptExecution::Deferred {
             completed_units,
             retry_at,
