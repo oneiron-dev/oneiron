@@ -1,5 +1,5 @@
-//! The entity linker's phonetic and role rungs (census item 12; ARCH-0024
-//! signals 2 and 3).
+//! The entity linker's phonetic, role and vector rungs (census item 12;
+//! ARCH-0024 signals 2, 3 and 4).
 //!
 //! A person's name of two or more parts that the identity key misses is
 //! looked up next over the phonetic postings every PERSON birth writes: a
@@ -25,6 +25,16 @@
 //! person, no edge for the word, or an edge of someone other than the
 //! speaker, mints as on main.
 //!
+//! Two or more candidates are ordered by the turn's stored vector: the one
+//! whose stored vector is nearest goes first when its cosine reaches the
+//! evidence floor and leads the next by the `linker.vector.margin` row. The
+//! list keeps every candidate, so the mention stays a question the nightly
+//! re-check asks, and an effect on it still waits. The re-check orders the
+//! ask's candidates again when the turn was embedded after its save. A tie,
+//! a candidate with no vector, or a winner under the floor keeps the key's
+//! order, as on main. These tests store exact vectors in a four-dimensional
+//! space, as the embed worker would; no step embeds a person yet.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test entity_linker_cascade`.
 
@@ -39,24 +49,30 @@ use oneiron::dreamer_runner::maintenance::identity::{
     IdentityActNow, IdentityActNowRequest, IdentityAskReason, IdentityEffect,
 };
 use oneiron::edge::EdgeActorClass;
+use oneiron::embed::EmbedderLocality;
 use oneiron::identity_topology::{
     IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
     SurvivorshipPlan,
 };
-use oneiron::memory::extraction::{EncoderOutput, NerSpan};
+use oneiron::memory::extraction::{
+    EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+};
 use oneiron::memory::{
     ClaimInput, MEMORY_CODE_IDENTITY_UNSETTLED, MessagePersonRequest, WitnessAssertions,
     WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::outbound::MentionProvenance;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
-use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
+use oneiron::tagging::{
+    HeldTagsOutcome, MentionLink, TaggedMention, TaggingMarkerConfig, TaggingMode,
+    TaggingReconciler,
+};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::identity_recheck::run_identity_recheck;
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    Vault, VaultConfig,
+    ModelId, Vault, VaultConfig,
 };
 use serde_json::json;
 
@@ -887,4 +903,267 @@ fn the_write_codes_are_unchanged() {
         generate_phonetic_codes("もり ゆき"),
         ["kana:もりゆき", "romaji:moriyuki"]
     );
+}
+
+/// The vector tests' space: four dimensions, so each cosine is exact.
+const VECTOR_DIMENSIONS: usize = 4;
+/// The turn's vector, along the first axis.
+const TURN_VECTOR: [f32; VECTOR_DIMENSIONS] = [1.0, 0.0, 0.0, 0.0];
+/// Cosine 0.6 to the turn: over the 0.3 evidence floor.
+const NEAR_VECTOR: [f32; VECTOR_DIMENSIONS] = [3.0, 4.0, 0.0, 0.0];
+/// Cosine 0 to the turn.
+const FAR_VECTOR: [f32; VECTOR_DIMENSIONS] = [0.0, 1.0, 0.0, 0.0];
+/// Cosine 1/sqrt(17), about 0.24, to the turn: under the 0.3 floor.
+const FAINT_VECTOR: [f32; VECTOR_DIMENSIONS] = [1.0, 4.0, 0.0, 0.0];
+/// The owner's turn in the vector tests.
+const OWEN_TEXT: &str = "Owen sent the budget forecast.";
+
+/// A tagger that tags the first "Owen" of every MESSAGE it is given as a
+/// `PERSON`.
+struct Owens(ModelId);
+
+impl ExtractionEncoder for Owens {
+    fn model_id(&self) -> &ModelId {
+        &self.0
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::OnDevice
+    }
+
+    fn infer(&self, input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
+        let spans = input
+            .messages
+            .iter()
+            .enumerate()
+            .filter_map(|(message, each)| {
+                each.text.find("Owen").map(|start| NerSpan {
+                    message,
+                    start,
+                    end: start + 4,
+                    label: "PERSON".to_owned(),
+                    confidence: 0.9,
+                })
+            })
+            .collect();
+        EncoderAttempt {
+            execution: None,
+            panicked: false,
+            result: Ok(EncoderOutput {
+                spans,
+                links: Vec::new(),
+                vad: None,
+                context_links: Vec::new(),
+                speaker_links: Vec::new(),
+                mood_parts: Vec::new(),
+                stack_sha16: None,
+            }),
+        }
+    }
+}
+
+/// A vault with the shipped policy, an embedding model over
+/// [`VECTOR_DIMENSIONS`] and a tagger that saves its tags, its embedded
+/// owner, and two persons both named Owen: one who climbs, made first, so
+/// the key orders him first, and one who owns the budget.
+struct TwoOwens {
+    _dir: tempfile::TempDir,
+    vault: Arc<Vault>,
+    owner: EntityId,
+    climber: EntityId,
+    budget: EntityId,
+}
+
+/// [`TwoOwens`], each Owen holding the given stored vector, or none.
+fn two_owens(
+    climber_vector: Option<[f32; VECTOR_DIMENSIONS]>,
+    budget_vector: Option<[f32; VECTOR_DIMENSIONS]>,
+) -> TwoOwens {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut config = tagging_config();
+    config.dimensions = VECTOR_DIMENSIONS;
+    config.embedding_model = Some("fixture/vectors@v1".to_owned());
+    let vault = Arc::new(open_member_vault(dir.path(), config, &[]).expect("fixture vault"));
+    let (owner, _proof) = embedded_owner(&vault).expect("the owner");
+    let climber = person(&vault, "Owen");
+    let budget = person(&vault, "Owen");
+    assert!(
+        climber < budget,
+        "FIXTURE: the key orders the climber first"
+    );
+    for (owen, vector) in [(climber, climber_vector), (budget, budget_vector)] {
+        if let Some(vector) = vector {
+            store_vector(&vault, owen, vector);
+        }
+    }
+    TwoOwens {
+        _dir: dir,
+        vault,
+        owner,
+        climber,
+        budget,
+    }
+}
+
+/// Stores `vector` for `id`, as the embed worker would.
+fn store_vector(vault: &Vault, id: EntityId, vector: [f32; VECTOR_DIMENSIONS]) {
+    vault.put_vector(&id, &vector).expect("vector put");
+    assert!(
+        vault.get_vector(&id).expect("vector read").is_some(),
+        "FIXTURE: the vector is stored, not staged"
+    );
+}
+
+/// The owner says [`OWEN_TEXT`] as one turn with no held tags; the embed
+/// worker stores the turn's vector; then the tagging worker tags it. Returns
+/// the turn and its one mention.
+fn embed_then_tag(owens: &TwoOwens) -> (EntityId, TaggedMention) {
+    owens
+        .vault
+        .memory(owens.owner, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: ROOM.into(),
+            turn_ref: Some(TURN.to_owned()),
+            thread_audience: None,
+            occurred_at: now_seconds(),
+            messages: vec![WitnessMessage {
+                id: None,
+                author: WitnessAuthor::User,
+                message_type: "text".into(),
+                content: OWEN_TEXT.into(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            assertions: WitnessAssertions::default(),
+        })
+        .expect("the owner's turn");
+    let turn = EntityId::from_hex(TURN).expect("turn id");
+    store_vector(&owens.vault, turn, TURN_VECTOR);
+    TaggingReconciler::new(
+        Arc::clone(&owens.vault),
+        Arc::new(Owens("fixture/owens@v1".parse().expect("model id"))),
+    )
+    .expect("reconciler")
+    .drain_once()
+    .expect("one tagging pass");
+    let tags = owens
+        .vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("FIXTURE: the turn's tags are saved");
+    let [mention] = tags.mentions.as_slice() else {
+        panic!("FIXTURE: one mention, found {:?}", tags.mentions);
+    };
+    (turn, mention.clone())
+}
+
+/// Both Owens as the mention's candidates, in `order`.
+fn owens_in(order: [EntityId; 2]) -> MentionLink {
+    MentionLink::Candidates {
+        kind: ENTITY_TYPE_PERSON,
+        entities: order.to_vec(),
+    }
+}
+
+/// The turn's vector lies near the budget Owen's and far from the
+/// climber's, so the vector rung puts the budget Owen first. The mention
+/// keeps both as candidates: an effect on it still waits for its ask, the
+/// nightly re-check asks which one it is with the budget Owen first, and
+/// both stay their own entity. Main keeps the key's order, the climber
+/// first.
+#[test]
+fn a_vector_margin_puts_the_nearer_owen_first_and_the_link_stays_uncertain() {
+    let owens = two_owens(Some(FAR_VECTOR), Some(NEAR_VECTOR));
+    let vault = &owens.vault;
+
+    let (turn, mention) = embed_then_tag(&owens);
+
+    assert_eq!(
+        mention.link,
+        owens_in([owens.budget, owens.climber]),
+        "the nearer Owen goes first, and both stay candidates"
+    );
+    let refused = vault
+        .memory(owens.owner, EdgeActorClass::Human)
+        .message_person(&MessagePersonRequest {
+            pr: owens.budget.to_hex(),
+            text: "The forecast is in.".to_owned(),
+            mention: Some(MentionProvenance {
+                turn: turn.to_hex(),
+                message: mention.message.to_hex(),
+                start: u64::try_from(mention.start).expect("span start"),
+                end: u64::try_from(mention.end).expect("span end"),
+            }),
+            from_project: None,
+            to_project: None,
+        })
+        .expect_err("a message to the first of two candidates waits for the ask");
+    assert_eq!(refused.code, MEMORY_CODE_IDENTITY_UNSETTLED, "{refused:?}");
+    let asks = run_identity_recheck(vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    let ask = &asks[0];
+    assert_eq!(ask.name, "Owen");
+    assert_eq!(ask.reason, IdentityAskReason::Unsettled);
+    assert_eq!(ask.provisional, None);
+    assert_eq!(ask.candidates, vec![owens.budget, owens.climber]);
+    for owen in [owens.climber, owens.budget] {
+        assert_eq!(vault.resolve_entity(&owen).expect("resolve"), vec![owen]);
+    }
+}
+
+/// The tagger saved the turn before the embed worker reached it, so the
+/// save keeps the key's order. Once the turn's vector is stored, the
+/// nightly re-check orders the ask's candidates by it: the budget Owen
+/// first, both still asked about. Main asks in the key's order.
+#[test]
+fn a_turn_embedded_after_its_save_is_ranked_when_the_ask_is_built() {
+    let owens = two_owens(Some(FAR_VECTOR), Some(NEAR_VECTOR));
+    let vault = &owens.vault;
+
+    let (turn, link) = save_as(vault, owens.owner, OWEN_TEXT, "Owen");
+    assert_eq!(
+        link,
+        owens_in([owens.climber, owens.budget]),
+        "FIXTURE: a turn with no vector yet keeps the key's order"
+    );
+    store_vector(vault, turn, TURN_VECTOR);
+
+    let asks = run_identity_recheck(vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    assert_eq!(asks[0].reason, IdentityAskReason::Unsettled);
+    assert_eq!(asks[0].candidates, vec![owens.budget, owens.climber]);
+}
+
+/// The mention and its ask keep both Owens in the key's order, the climber
+/// first, as on main.
+fn assert_key_order(owens: &TwoOwens) {
+    let (_, mention) = embed_then_tag(owens);
+    assert_eq!(mention.link, owens_in([owens.climber, owens.budget]));
+    let asks = run_identity_recheck(&owens.vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    assert_eq!(asks[0].candidates, vec![owens.climber, owens.budget]);
+}
+
+/// Both Owens' vectors are the same, so neither leads by the margin: the
+/// key's order stands.
+#[test]
+fn equal_vectors_keep_the_key_order() {
+    assert_key_order(&two_owens(Some(NEAR_VECTOR), Some(NEAR_VECTOR)));
+}
+
+/// The climber has no vector, so the rung cannot compare the two: the
+/// key's order stands.
+#[test]
+fn a_candidate_with_no_vector_keeps_the_key_order() {
+    assert_key_order(&two_owens(None, Some(NEAR_VECTOR)));
+}
+
+/// The budget Owen leads by more than the margin, but his cosine is under
+/// the evidence floor: the key's order stands.
+#[test]
+fn a_winner_under_the_evidence_floor_keeps_the_key_order() {
+    assert_key_order(&two_owens(Some(FAR_VECTOR), Some(FAINT_VECTOR)));
 }
