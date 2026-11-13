@@ -1,5 +1,7 @@
-//! `can({verb})`: one verb's gate for one actor (FIX [UI-GATE-PREVIEW] phase
-//! 1; GENUI-WIRE-GAPS section 4 item 1). For each verb with a preview the
+//! `can({verb})`: one verb's gate for one actor (FIX [UI-GATE-PREVIEW]
+//! phases 1 and 2; GENUI-WIRE-GAPS section 4 item 1). For each verb with a
+//! preview (the room pin doors, the pin policy, the room invitation, a
+//! room's speech and an ask's answer) the
 //! gate agrees with the call itself, made right after by the same actor with
 //! the same input: `auto` lands, and `person` and `refused` are refused with
 //! the one reason the gate names. A verb whose row asks a person's proof
@@ -10,8 +12,9 @@
 //! plain member and four agents: the leader's pen, the member's pen, the pen
 //! of an outsider (a PERSON the room does not seat) and an agent that is no
 //! one's pen. The leader speaks three trunk turns; their MESSAGEs are the pin
-//! targets. Each PERSON holds one public contact the owner precleared, and
-//! every seated non-owner holds a grant over the room's messages.
+//! targets, and their TURNs an ask's question and answer. Each PERSON holds
+//! one public contact the owner precleared, and every seated non-owner holds
+//! a grant over the room's messages.
 //!
 //! Public paths only; no test door.
 //! `cargo test --locked -p oneiron --all-features --test can_verb_gate`.
@@ -33,7 +36,13 @@ use oneiron::policy_manifest_doors::{
     policy_manifests_as_owner, put_policy_manifest_as_owner,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec, CanRequest};
+use oneiron::task_verb::{
+    ConsultPayloadRef, TaskAskDefault, TaskAskOption, TaskAskOptionId, TaskAskQuestion,
+    TaskAskSpec, TaskAskTarget, TaskAskWord,
+};
+use oneiron::verbs::{
+    AgentDefinitionCreateRequest, AgentDefinitionSpec, CanRequest, TaskAnswerRequest,
+};
 use oneiron::workspace_roster::{JoinRequest, ProjectRecord, RoomPinPolicySet, RoomPinRequest};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use serde_json::{Value, json};
@@ -44,6 +53,8 @@ const PIN: &str = "vault.rooms.pins.pin";
 const UNPIN: &str = "vault.rooms.pins.unpin";
 const POLICY_SET: &str = "vault.rooms.pins.policy.set";
 const INVITE: &str = "vault.rooms.invite";
+const SPEAK: &str = "vault.rooms.speak";
+const ANSWER: &str = "tasks.answer";
 
 struct Fixture {
     vault: Vault,
@@ -56,6 +67,9 @@ struct Fixture {
     outsider_agent: EntityId,
     unanchored_agent: EntityId,
     room: EntityId,
+    /// The leader's three trunk TURNs.
+    turns: [EntityId; 3],
+    /// Their MESSAGEs, in the same order.
     targets: [EntityId; 3],
     _directory: tempfile::TempDir,
 }
@@ -104,31 +118,44 @@ fn grant_room_messages(vault: &Vault, room: EntityId, principals: &[EntityId]) -
     Ok(())
 }
 
-/// The leader's trunk turn in the home room `room`, one MESSAGE; returns the
-/// MESSAGE id.
-fn speak_trunk(vault: &Vault, leader: EntityId, room: EntityId) -> TestResult<EntityId> {
+/// A trunk turn in the home room `room`, one MESSAGE: the turn, and its TURN
+/// and MESSAGE ids.
+fn trunk_turn(vault: &Vault, room: EntityId) -> (WitnessTurn, EntityId, EntityId) {
+    let turn = EntityId::now();
     let message = EntityId::now();
+    let input = WitnessTurn {
+        conversation_ref: room.to_hex(),
+        turn_ref: Some(turn.to_hex()),
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: Some(message.to_hex()),
+            author: WitnessAuthor::User,
+            message_type: "text".into(),
+            content: "owen".into(),
+            parts: None,
+            metadata: Some(Value::Object(serde_json::Map::new())),
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: vault.now_recorded_at(),
+        assertions: Default::default(),
+    };
+    (input, turn, message)
+}
+
+/// The leader's trunk turn in the home room `room`; returns its TURN and
+/// MESSAGE ids.
+fn speak_trunk(
+    vault: &Vault,
+    leader: EntityId,
+    room: EntityId,
+) -> TestResult<(EntityId, EntityId)> {
+    let (input, turn, message) = trunk_turn(vault, room);
     vault
         .memory(leader, EdgeActorClass::Human)
-        .rooms_speak(&WitnessTurn {
-            conversation_ref: room.to_hex(),
-            turn_ref: Some(EntityId::now().to_hex()),
-            thread_audience: None,
-            messages: vec![WitnessMessage {
-                id: Some(message.to_hex()),
-                author: WitnessAuthor::User,
-                message_type: "text".into(),
-                content: "owen".into(),
-                parts: None,
-                metadata: Some(Value::Object(serde_json::Map::new())),
-                is_visible: true,
-                order: 0,
-                quote: None,
-            }],
-            occurred_at: vault.now_recorded_at(),
-            assertions: Default::default(),
-        })?;
-    Ok(message)
+        .rooms_speak(&input)?;
+    Ok((turn, message))
 }
 
 fn open_fixture() -> TestResult<Fixture> {
@@ -258,11 +285,13 @@ fn open_fixture() -> TestResult<Fixture> {
             unanchored_agent,
         ],
     )?;
-    let targets = [
+    let spoken = [
         speak_trunk(&vault, leader, room)?,
         speak_trunk(&vault, leader, room)?,
         speak_trunk(&vault, leader, room)?,
     ];
+    let turns = spoken.map(|(turn, _)| turn);
+    let targets = spoken.map(|(_, message)| message);
     Ok(Fixture {
         vault,
         owner,
@@ -274,6 +303,7 @@ fn open_fixture() -> TestResult<Fixture> {
         outsider_agent,
         unanchored_agent,
         room,
+        turns,
         targets,
         _directory: directory,
     })
@@ -618,19 +648,13 @@ fn row_rule_unchecked_and_malformed_requests() -> TestResult {
         .gate,
         CanVerbGate::Unchecked
     );
-    let speak = ask_gate(
-        &agent(&fx, fx.member_agent),
-        "vault.rooms.speak",
-        &params,
-        None,
-    )?;
-    assert_eq!(
-        (speak.gate, speak.reasons.len()),
-        (CanVerbGate::Unchecked, 0)
-    );
+    let wait = ask_gate(&agent(&fx, fx.member_agent), "tasks.wait", &params, None)?;
+    assert_eq!((wait.gate, wait.reasons.len()), (CanVerbGate::Unchecked, 0));
     for (verb, params) in [
         ("vault.rooms.members.remove", json!({})),
         (PIN, json!({ "room": fx.room })),
+        (SPEAK, json!({})),
+        (ANSWER, json!({ "handle": {} })),
     ] {
         let refusal = ask_gate(&person(&fx, fx.member), verb, &params, None)
             .expect_err("refused before any gate");
@@ -647,4 +671,104 @@ fn row_rule_unchecked_and_malformed_requests() -> TestResult {
         .is_err()
     );
     Ok(())
+}
+
+/// The speech gate agrees with the room's speak door, read before the turn's
+/// witness: the seated leader's trunk turn lands; a person the room does not
+/// seat, and an agent the vault does not know, are refused with the door's
+/// own reason.
+#[test]
+fn the_speech_gate_agrees_with_the_speak_door() -> TestResult {
+    let fx = open_fixture()?;
+    let stranger = EntityId::now();
+    for (memory, who, expected) in [
+        (
+            person(&fx, fx.leader),
+            (fx.leader, EdgeActorClass::Human),
+            CanVerbGate::Auto,
+        ),
+        (
+            person(&fx, fx.outsider),
+            (fx.outsider, EdgeActorClass::Human),
+            CanVerbGate::Refused,
+        ),
+        (
+            agent(&fx, stranger),
+            (stranger, EdgeActorClass::Agent),
+            CanVerbGate::Refused,
+        ),
+    ] {
+        let (input, _, _) = trunk_turn(&fx.vault, fx.room);
+        let params = serde_json::to_value(&input)?;
+        let answer = gate_of(&fx, &memory, who, SPEAK, &params, expected)?;
+        agrees(&answer, memory.rooms_speak(&input))?;
+    }
+    Ok(())
+}
+
+/// The answer gate agrees with the answer door, read through every check a
+/// word meets before it is recorded. An agent asks the vault's owner about
+/// the leader's turn: the asking agent and a person the ask does not ask are
+/// refused with the door's own reason, the owner's read of the agent's gate
+/// says the same, and the owner's own word lands.
+#[test]
+fn the_answer_gate_agrees_with_the_answer_door() -> TestResult {
+    let fx = open_fixture()?;
+    let [question_turn, answer_turn, _] = fx.turns;
+    let mut question = TaskAskQuestion::new(ConsultPayloadRef::Turn(question_turn));
+    let option = TaskAskOptionId::new("owen")?;
+    question
+        .options
+        .insert(option.clone(), TaskAskOption::new("owen"));
+    let spec = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People(BTreeSet::from([fx.owner]))),
+        question,
+        None,
+        TaskAskDefault::AskMe,
+    );
+    let asker = agent(&fx, fx.unanchored_agent);
+    let handle = asker.tasks_ask(&spec)?.handle;
+    let mut word = TaskAskWord::new(answer_turn);
+    word.option = Some(option);
+    word.provenance_refs = BTreeSet::from([ConsultPayloadRef::Turn(answer_turn)]);
+    let params = serde_json::to_value(TaskAnswerRequest {
+        handle,
+        word: word.clone(),
+    })?;
+    let owner = person(&fx, fx.owner);
+    let named = ask_gate(&owner, ANSWER, &params, Some(fx.unanchored_agent))?;
+    assert_eq!(
+        (named.gate, named.actor_ref),
+        (CanVerbGate::Refused, fx.unanchored_agent),
+        "{named:?}"
+    );
+    let own = gate_of(
+        &fx,
+        &asker,
+        (fx.unanchored_agent, EdgeActorClass::Agent),
+        ANSWER,
+        &params,
+        CanVerbGate::Refused,
+    )?;
+    assert_eq!(own.reasons, named.reasons);
+    agrees(&own, asker.tasks_answer(&handle, &word))?;
+    let outsider = person(&fx, fx.outsider);
+    let unasked = gate_of(
+        &fx,
+        &outsider,
+        (fx.outsider, EdgeActorClass::Human),
+        ANSWER,
+        &params,
+        CanVerbGate::Refused,
+    )?;
+    agrees(&unasked, outsider.tasks_answer(&handle, &word))?;
+    let answered = gate_of(
+        &fx,
+        &owner,
+        (fx.owner, EdgeActorClass::Human),
+        ANSWER,
+        &params,
+        CanVerbGate::Auto,
+    )?;
+    agrees(&answered, owner.tasks_answer(&handle, &word))
 }
