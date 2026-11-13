@@ -9,7 +9,9 @@
 //! nothing.
 //!
 //! On main the three off-device tests fail: the walk keeps no count, so no
-//! check is raised.
+//! check is raised. The off-device `ls -t` fails before that: it holds a read
+//! transaction, and its withheld-claim filter opened a second one on the
+//! thread (`MDB_BAD_RSLOT`).
 //!
 //! `cargo test --locked -p oneiron --all-features --test graph_fs_withheld_claim_scan`.
 #![cfg(feature = "test-support")]
@@ -223,7 +225,7 @@ fn an_off_device_ls_t_of_subject_claims_past_its_row_raises_the_edge_peer_check(
             .expect("read the subject"),
         "the walk starts only for a subject the reader reads"
     );
-    reader
+    let listed = reader
         .graph_fs(GraphFsOptions::default())
         .ls(
             &format!("/entities/{}/claims", fixture.subject.to_hex()),
@@ -232,6 +234,11 @@ fn an_off_device_ls_t_of_subject_claims_past_its_row_raises_the_edge_peer_check(
         )
         .expect("ls -t the subject's claims");
 
+    assert!(
+        listed.bytes().is_empty(),
+        "off this device ls -t names no withheld claim: {:?}",
+        String::from_utf8_lossy(listed.bytes())
+    );
     assert_raised(&fixture.vault, EngineScan::EdgePeerRows, &scope);
 }
 

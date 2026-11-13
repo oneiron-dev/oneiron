@@ -394,6 +394,7 @@ impl GraphFsResolver<'_, '_> {
         let mut after = None;
         let fits = loop {
             let run = self.device_admitted_run(
+                Some(&rtxn),
                 after,
                 max_scan_rows + 1 - members.len(),
                 &mut count,
