@@ -2,6 +2,7 @@
 
 use super::document::NoteDocument;
 use super::*;
+use crate::provenance::ActorStamp;
 use crate::{EdgeActorClass, TimeRange, Vault, VaultConfig, WriteActor};
 use std::ops::ControlFlow;
 
@@ -27,9 +28,17 @@ fn concurrent_note_batches_converge_with_durable_actor_stamps_and_cursors() {
     let claim = EntityId::from_bytes([0x74; 16]).unwrap();
     let actor_a = WriteActor::new(a, EdgeActorClass::Human);
     let actor_b = WriteActor::new(b, EdgeActorClass::Human);
+    let stamp_a = ActorStamp {
+        token: a,
+        class: EdgeActorClass::Human,
+    };
+    let stamp_b = ActorStamp {
+        token: b,
+        class: EdgeActorClass::Human,
+    };
     let first = NoteDocument::birth(id, "before quoted after", &actor_a).unwrap();
     let pin = first.pin(claim, 7, 13).unwrap();
-    first.add_pin(&pin, &actor_a).unwrap();
+    first.add_pin(&pin, stamp_a).unwrap();
     let base = first.view().unwrap().frontier;
     let second = NoteDocument::load(id, &first.snapshot().unwrap()).unwrap();
     assert!(
@@ -41,7 +50,7 @@ fn concurrent_note_batches_converge_with_durable_actor_stamps_and_cursors() {
                     delete: 0,
                     insert: "A ".into()
                 }],
-                &actor_a,
+                stamp_a,
                 &[]
             )
             .unwrap()
@@ -55,7 +64,7 @@ fn concurrent_note_batches_converge_with_durable_actor_stamps_and_cursors() {
                     delete: 0,
                     insert: " B".into()
                 }],
-                &actor_b,
+                stamp_b,
                 &[]
             )
             .unwrap()
@@ -112,6 +121,7 @@ fn claim_input(id: EntityId, subject: EntityId, value: &str) -> crate::memory::C
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 
@@ -278,6 +288,10 @@ fn brief_pins_editor_proposals_purge_and_fresh_views() {
 #[test]
 fn quoted_character_endpoints_survive_boundary_edits_and_state_only_reopen() {
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    let stamp = ActorStamp {
+        token: actor.entity_ref(),
+        class: EdgeActorClass::Human,
+    };
     // Include a one-character span, interior and end-of-body spans, and
     // non-BMP text. All offsets and the exclusive end remain scalar indices.
     for (start, end) in [(0, 1), (1, 3), (0, 4), (3, 4)] {
@@ -285,7 +299,7 @@ fn quoted_character_endpoints_survive_boundary_edits_and_state_only_reopen() {
         let claim = EntityId::now();
         let doc = NoteDocument::birth(id, "α🦀bç", &actor).unwrap();
         let pin = doc.pin(claim, start, end).unwrap();
-        doc.add_pin(&pin, &actor).unwrap();
+        doc.add_pin(&pin, stamp).unwrap();
         let before = doc.view().unwrap();
         assert!(
             doc.edit(
@@ -302,7 +316,7 @@ fn quoted_character_endpoints_survive_boundary_edits_and_state_only_reopen() {
                         insert: "prefix ".into(),
                     },
                 ],
-                &actor,
+                stamp,
                 &[],
             )
             .unwrap()
@@ -338,7 +352,7 @@ fn quoted_character_endpoints_survive_boundary_edits_and_state_only_reopen() {
                             delete: 1,
                             insert: "replacement".into(),
                         }],
-                        &actor,
+                        stamp,
                         &[],
                     )
                     .unwrap()
@@ -351,11 +365,15 @@ fn quoted_character_endpoints_survive_boundary_edits_and_state_only_reopen() {
 #[test]
 fn deleted_quote_anchor_drifts_instead_of_remapping_identical_neighbor() {
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    let stamp = ActorStamp {
+        token: actor.entity_ref(),
+        class: EdgeActorClass::Human,
+    };
     let id = EntityId::now();
     let claim = EntityId::now();
     let doc = NoteDocument::birth(id, "aaa", &actor).unwrap();
     let pin = doc.pin(claim, 1, 2).unwrap();
-    doc.add_pin(&pin, &actor).unwrap();
+    doc.add_pin(&pin, stamp).unwrap();
     // Model out-of-band source drift. The normal edit door rejects this touch.
     doc.doc.get_text("body").delete(1, 1).unwrap();
     doc.doc.commit();

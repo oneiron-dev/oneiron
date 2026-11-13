@@ -531,8 +531,9 @@ fn an_unpersisted_or_uncited_judgment_is_skipped() -> Result<()> {
 
     let forged = AttributionJudgment {
         sequence: 99,
+        row_id: EntityId::now(),
         verdict: AttributionVerdict::ExecutionLapse,
-        subject: actor,
+        subject: Some(actor),
         evidence_receipts: vec!["receipt:never-stamped".to_owned()],
         at: 100,
     };
@@ -540,8 +541,9 @@ fn an_unpersisted_or_uncited_judgment_is_skipped() -> Result<()> {
 
     let uncited = AttributionJudgment {
         sequence: 1,
+        row_id: EntityId::now(),
         verdict: AttributionVerdict::ExecutionLapse,
-        subject: actor,
+        subject: Some(actor),
         evidence_receipts: Vec::new(),
         at: 100,
     };
@@ -565,7 +567,8 @@ fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<
     let speaker = put_actor(vault)?;
     let facade = vault.memory(speaker, EdgeActorClass::Human);
     let conversation = EntityId::now().to_hex();
-    let SessionMintOutcome::Minted(session) = vault.mint_session(now)? else {
+    let key = vault.local_session_key(speaker)?;
+    let SessionMintOutcome::Minted(session) = vault.mint_session(key, now)? else {
         panic!("a fresh vault mints");
     };
     for index in 0..turn_count {
@@ -574,16 +577,20 @@ fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<
             .witness(&WitnessTurn {
                 conversation_ref: conversation.clone(),
                 turn_ref: None,
+                thread_audience: None,
                 messages: vec![WitnessMessage {
                     id: None,
                     author: WitnessAuthor::User,
                     message_type: "text".to_owned(),
                     content: format!("turn {index}"),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    quote: None,
                 }],
                 occurred_at: now + index,
+                assertions: Default::default(),
             })
             .expect("the witness door lands the turn");
     }
@@ -591,7 +598,7 @@ fn witnessed_chat_session(vault: &Vault, turn_count: usize, now: u64) -> Result<
         &session,
         SessionClosePredicate::Explicit,
         now + 100,
-        &SessionEndWake::none(0),
+        &SessionEndWake::none(session, 0),
     )?;
     Ok(session)
 }
@@ -732,23 +739,28 @@ fn archived_actor_history_is_typed_but_not_live_or_a_projector_prior() -> Result
             skill,
             fit: 0.99,
         },
-        ActorClaimRow::EditCost {
-            actor,
-            scope: "outbound".into(),
-            cost: 0.9,
-        },
     ] {
         ids.push(write_actor_claim(&source, row, &evidence)?);
     }
-    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-    let document = target.read_whole_vault_json(archive.bytes())?;
+    let archive = source.export_whole_vault(false)?;
+    let document = target.read_whole_vault_archive(archive.bytes())?;
     for id in &ids {
-        assert!(!document.manifest.import_refusals.iter().any(|refusal|matches!(refusal,crate::batch::export::ExportImportRefusal::Entity{entity_id,..} if entity_id==&id.to_hex())));
+        assert!(
+            !document
+                .manifest
+                .import_refusals
+                .iter()
+                .any(|refusal| matches!(
+                    refusal,
+                    crate::batch::export::ExportImportRefusal::Entity { entity_id, .. }
+                    if entity_id.as_str() == id.to_hex()
+                ))
+        );
     }
-    target.import_whole_vault_json(archive.bytes())?;
+    target.import_whole_vault_archive(archive.bytes())?;
     assert_eq!(
         target
-            .import_whole_vault_json(archive.bytes())?
+            .import_whole_vault_archive(archive.bytes())?
             .inserted_entities,
         0
     );
@@ -773,7 +785,8 @@ fn archived_actor_history_is_typed_but_not_live_or_a_projector_prior() -> Result
                         crate::registry::ENTITY_TYPE_CLAIM,
                         t(70),
                         70,
-                        &bytes
+                        None,
+                        &bytes,
                     )
                     .commit()
                     .is_err()
@@ -781,10 +794,6 @@ fn archived_actor_history_is_typed_but_not_live_or_a_projector_prior() -> Result
         }
     }
     assert_eq!(skill_fit_for(&target, &actor, &skill)?, None);
-    assert_eq!(
-        crate::edit_distance::attribution::edit_cost_for(&target, &actor, "outbound")?,
-        None
-    );
     let original_bodies = ids
         .iter()
         .map(|id| target.get_claim(id))
@@ -803,9 +812,9 @@ fn archived_actor_history_is_typed_but_not_live_or_a_projector_prior() -> Result
     for (id, before) in ids.iter().zip(original_bodies) {
         assert_eq!(target.get_claim(id)?, before);
     }
-    let reexport = target.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let reexport = target.export_whole_vault(false)?;
     let (_third_dir, third) = temp_vault();
-    third.import_whole_vault_json(reexport.bytes())?;
+    third.import_whole_vault_archive(reexport.bytes())?;
     assert_eq!(skill_fit_for(&third, &actor, &skill)?, None);
     Ok(())
 }
@@ -825,16 +834,16 @@ fn archived_chat_evidence_preserves_session_and_turn_references_without_distill_
         },
         &evidence,
     )?;
-    let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-    target.import_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    target.import_whole_vault_archive(export.bytes())?;
     let imported = target.get_claim(&id)?.unwrap();
     assert_eq!(imported.evidence, source.get_claim(&id)?.unwrap().evidence);
     assert_eq!(imported.approval, ClaimApprovalStatus::Proposed);
     assert_eq!(actor_claim_lineage(&imported), Some(ClaimSource::Imported));
     assert!(pending_session_actor_distills(&target)?.is_empty());
-    let reread = target.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let reread = target.export_whole_vault(false)?;
     let (_third_dir, third) = temp_vault();
-    third.import_whole_vault_json(reread.bytes())?;
+    third.import_whole_vault_archive(reread.bytes())?;
     assert_eq!(third.get_claim(&id)?, Some(imported));
     Ok(())
 }
