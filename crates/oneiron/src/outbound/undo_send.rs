@@ -322,7 +322,8 @@ impl Vault {
     /// Every send whose undo-send window is open that `caller` may take
     /// back, soonest release first: the vault owner sees every one, and a
     /// person their own. A listed send's attempt still waits unsent
-    /// ([`waits_unsent`]) and its window has not closed. The proof is a live person's, owner or not.
+    /// (Scheduled, or paused in its window) and its window has not closed.
+    /// The proof is a live person's, owner or not.
     ///
     /// # Errors
     ///
