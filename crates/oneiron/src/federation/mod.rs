@@ -204,8 +204,6 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-MEMBERSHIP-GATE-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod membership_gate_tests;
 mod system_agent_grant;

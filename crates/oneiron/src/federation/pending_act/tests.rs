@@ -31,14 +31,9 @@ fn fixture_on(
     // Membership defaults and act rows are manifest policy: keep the seeded
     // manifest rather than the legacy test opener that removes policy rows.
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(
-        dir.path(),
-        crate::VaultConfig {
-            store_clock,
-            ..crate::test_util::embedding_test_config()
-        },
-    )
-    .unwrap();
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = store_clock;
+    let vault = Vault::open(dir.path(), config).unwrap();
     let mut holders = Vec::new();
     // The first is the personal vault's owner, who shares it.
     let owner = vault.ensure_embedded_owner_actor().unwrap();
@@ -115,13 +110,9 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
     assert!(!held.completed);
     assert!(!vault.advance_authority_act(&act.id, 100 + WEEK)?.completed);
     drop(vault);
-    let reopened = Vault::open(
-        dir.path(),
-        crate::VaultConfig {
-            store_clock: clock.bundle(),
-            ..crate::test_util::embedding_test_config()
-        },
-    )?;
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = clock.bundle();
+    let reopened = Vault::open(dir.path(), config)?;
     // A proof binds to the open it was minted on: the reopened vault takes a
     // fresh one.
     let other = reopened.authenticate_owner(
@@ -362,6 +353,7 @@ fn read_only_owner_cannot_start_or_edit_policy() -> Result<()> {
                 crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
                 TimeRange { start: 10, end: 10 },
                 10,
+                None,
                 &super::super::encode_federation_grant_body(&grant)?,
             )
             .commit()?;
@@ -684,6 +676,7 @@ fn manifest_without_owner_door_does_not_change_wait() -> Result<()> {
                 crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                 TimeRange { start: 50, end: 50 },
                 50,
+                None,
                 &body,
             )
             .commit()?;
@@ -745,6 +738,7 @@ fn malformed_act_policy_table_refuses_start() -> Result<()> {
                 entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
                 occurred: TimeRange { start: 50, end: 50 },
                 learned_at: 50,
+                row_version: None,
                 data: body,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,

@@ -106,6 +106,7 @@ fn publication() -> BookingPagePublication {
             enabled: false,
             placeholder: String::new(),
         },
+        constraint_front: None,
         theme: ThemeTokens(json!({"arbitrary": [false, null, {"nested": "</script>"}]})),
         landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
@@ -114,6 +115,7 @@ fn publication() -> BookingPagePublication {
             window_secs: 3_600,
             visitor_tz: "UTC".to_owned(),
         },
+        sponsor: None,
     }
 }
 

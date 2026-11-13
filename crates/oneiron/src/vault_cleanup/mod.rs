@@ -225,8 +225,6 @@ use crate::vault::LiveEntityRow;
 #[cfg(test)]
 use uuid::Uuid;
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-RETENTION-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod retention_tests;
 

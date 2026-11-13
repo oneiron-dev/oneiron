@@ -169,13 +169,9 @@ fn completed_attempt_retention_is_reversible_and_never_changes_queue_bytes() -> 
     let dir = tempfile::tempdir()?;
     let old = 1_000;
     let clock = crate::ports::ManualClock::new(old);
-    let vault = Vault::open(
-        dir.path(),
-        VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::default()
-        },
-    )?;
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config)?;
     let queue = AttemptQueue::new(&vault);
     queue.enqueue(EnqueueAttempt {
         kind: "test.retained".into(),

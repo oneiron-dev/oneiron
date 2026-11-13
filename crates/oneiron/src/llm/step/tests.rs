@@ -117,11 +117,14 @@ fn request_fixture() -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
                 text: "consolidate this".to_owned(),
+                signature: None,
             }],
         }],
         tools: Vec::new(),
@@ -137,6 +140,7 @@ fn response_fixture(text: &str) -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: text.to_owned(),
+                signature: None,
             }],
         },
         usage: LlmUsage {
@@ -151,8 +155,11 @@ fn response_fixture(text: &str) -> LlmResponse {
                 reasoning: 0,
             },
             raw_provider: serde_json::Value::Null,
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -573,7 +580,9 @@ fn a_budget_trap_lands_only_with_its_park() -> Result<()> {
     DreamerRunnerStore::new(&vault).park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: fixture.attempt_id,
         reason: "driver park".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::Signal,
         park_owner: "wake-worker".to_owned(),
+        carried_spend: None,
         now: 10,
     })?;
     let backend = ScriptedBackend::new(Vec::new()); // must never be called
@@ -601,7 +610,9 @@ fn signal_before_wait_ordering() -> Result<()> {
     runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: fixture.attempt_id,
         reason: "consent".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::Signal,
         park_owner: trap_park_owner(&trap.trap_claim_id),
+        carried_spend: None,
         now: 10_001,
     })?;
 
@@ -660,7 +671,9 @@ fn forged_resume_signal_rejected() -> Result<()> {
     runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: fixture.attempt_id,
         reason: "budget".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::Signal,
         park_owner: trap_park_owner(&trap.trap_claim_id),
+        carried_spend: None,
         now: 10_001,
     })?;
     register_wait(&vault, &trap, 10_002)?;
@@ -765,7 +778,9 @@ fn own_anchor_sent_record_refused() -> Result<()> {
     runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: fixture.attempt_id,
         reason: "budget".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::Signal,
         park_owner: trap_park_owner(&real.trap_claim_id),
+        carried_spend: None,
         now: 10_001,
     })?;
 
@@ -823,7 +838,9 @@ fn signal_naming_other_owners_job_refused() -> Result<()> {
     runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: fixture_j.attempt_id,
         reason: "budget j".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::Signal,
         park_owner: trap_park_owner(&trap_j.trap_claim_id),
+        carried_spend: None,
         now: 10_001,
     })?;
 
@@ -901,7 +918,9 @@ fn consume_refuses_when_parked_by_other_owner() -> Result<()> {
     runner.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: fixture.attempt_id,
         reason: "driver park".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::Signal,
         park_owner: "wake-worker".to_owned(),
+        carried_spend: None,
         now: 10_001,
     })?;
     register_wait(&vault, &trap, 10_002)?;
@@ -1254,7 +1273,9 @@ fn trap_for_consent_scale_durable_wait_is_consent() {
         .park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
             attempt_id: fixture.attempt_id,
             reason: "outbound wait".to_owned(),
+            cause: crate::dreamer_runner::DreamerParkCause::Signal,
             park_owner: trap_park_owner(&trap.trap_claim_id),
+            carried_spend: None,
             now: 10_001,
         })
         .expect("park attempt");
@@ -1610,7 +1631,9 @@ fn open_peer_wait(
     DreamerRunnerStore::new(vault).park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
         attempt_id: fixture.attempt_id,
         reason: "peer result".to_owned(),
+        cause: crate::dreamer_runner::DreamerParkCause::Signal,
         park_owner: trap_park_owner(&trap.trap_claim_id),
+        carried_spend: None,
         now: DELEGATE_NOW,
     })?;
     register_peer_result_wait(vault, &trap, task_ref, DELEGATE_NOW)?;
@@ -1917,6 +1940,7 @@ fn provenance_recorded_for_every_call() -> Result<()> {
     let mut second = request_fixture();
     second.messages[0].content = vec![ContentPart::Text {
         text: "consolidate a different transcript".to_owned(),
+        signature: None,
     }];
     assert_ne!(
         first.canonical_hash().expect("hash"),
@@ -2185,6 +2209,7 @@ fn untrusted_active_step_claim_is_not_memo_indexed() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             occurred(10_000),
             10_000,
+            None,
             &bytes,
         )
         .commit()?;
@@ -2259,7 +2284,8 @@ fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
     assert_eq!(
         response.message.content,
         vec![ContentPart::Text {
-            text: json!({"verdict":"hold"}).to_string()
+            text: json!({"verdict":"hold"}).to_string(),
+            signature: None,
         }]
     );
     assert!(
@@ -2483,7 +2509,7 @@ fn schema_shim_corrects_validates_and_charges_all_attempts() -> Result<()> {
     let requests = backend.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     let text_json = |message: &LlmMessage| {
-        let [ContentPart::Text { text }] = message.content.as_slice() else {
+        let [ContentPart::Text { text, .. }] = message.content.as_slice() else {
             panic!("schema message")
         };
         serde_json::from_str::<serde_json::Value>(text).unwrap()
@@ -2784,6 +2810,8 @@ fn custom_fallback_empty_output_is_typed_and_not_memoized() -> Result<()> {
             Box::new(Empty(ContentPart::Reasoning {
                 text: "".into(),
                 signature: None,
+                reasoning_kind: crate::ReasoningPartKind::Full,
+                data: None,
             })),
         )
         .unwrap();
@@ -2792,7 +2820,9 @@ fn custom_fallback_empty_output_is_typed_and_not_memoized() -> Result<()> {
             "empty".into(),
             Box::new(Empty(ContentPart::Reasoning {
                 text: "".into(),
-                signature: None
+                signature: None,
+                reasoning_kind: crate::ReasoningPartKind::Full,
+                data: None,
             }))
         ),
         Err(FallbackError::Duplicate(_))
@@ -2947,6 +2977,7 @@ fn malformed_structured_fallback_is_rejected_before_memoization() -> Result<()> 
             call_id: "".into(),
             name: "tool".into(),
             input: json!([]),
+            signature: None,
         },
         ContentPart::ToolResult {
             call_id: "valid-call-id".into(),
@@ -3262,7 +3293,7 @@ fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()
     use crate::store::GateDecisionId;
 
     let mut config = VaultConfig::device();
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
@@ -3355,8 +3386,8 @@ fn failure_signals_use_executed_model_revisions_and_role_override() -> Result<()
 fn option_link_void_wakes_a_parked_code_mode_peer_wait_without_settling_ask()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     use crate::task_verb::{
-        ConsultPayloadRef, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskStatus,
-        TaskAskTarget, TaskAskWait,
+        ConsultPayloadRef, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSpec,
+        TaskAskStatus, TaskAskTarget, TaskAskWait,
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
@@ -3374,8 +3405,10 @@ fn option_link_void_wakes_a_parked_code_mode_peer_wait_without_settling_ask()
         &question_body,
     )?;
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
-    what.options
-        .insert(TaskAskOptionId::new("yes").unwrap(), "Yes".into());
+    what.options.insert(
+        TaskAskOptionId::new("yes").unwrap(),
+        TaskAskOption::new("Yes"),
+    );
     let memory = vault.memory(owner, EdgeActorClass::Human);
     let spec = |key: &str, what: TaskAskQuestion| {
         let mut spec = TaskAskSpec::shorthand(

@@ -94,6 +94,7 @@ fn v3() -> DreamerWakePolicy {
         idle_secs: 60,
         quiet_weave_secs: 3600,
         weave_recipe_priority: crate::dreamer_wake::WeaveRecipePriority::BeforeConnectorEvent,
+        surprise_permille: 500,
     }
 }
 

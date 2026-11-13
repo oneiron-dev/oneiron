@@ -190,7 +190,7 @@ fn optimizer_proposal_cannot_change_resident_across_recreation() -> Result<()> {
     assert_eq!(
         vault
             .batch()
-            .put_replicated(&proposal_id, ENTITY_TYPE_SKILL, t(303), 303, &raw)
+            .put_replicated(&proposal_id, ENTITY_TYPE_SKILL, t(303), 303, None, &raw)
             .commit()
             .expect_err("replay cannot reassign optimizer origin")
             .kind(),
@@ -206,6 +206,7 @@ fn optimizer_proposal_cannot_change_resident_across_recreation() -> Result<()> {
                 ENTITY_TYPE_SKILL,
                 t(304),
                 304,
+                None,
                 &crate::skill::encode_skill_record(&original)?,
             )
             .commit()
