@@ -19302,7 +19302,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 60,
+      "crate-vis": 61,
       "mod": 8,
       "re-export": 38
      }
@@ -20222,7 +20222,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "re-export": 6
      }
     },
@@ -20502,7 +20502,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 32,
       "fn": 1
      }
     },
@@ -20544,6 +20544,16 @@
      "purpose": "A captured step's replay context (FIX 6351), attached to its capsule in its checkpoint's one transaction…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/declarations.rs",
+     "purpose": "The executor's declarations, kept out of a stored request (FIX row [AGENT-RUN-START-LATENCY-4S])",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -27475,7 +27485,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -27558,7 +27568,7 @@
      "path": "src/conversation_dag/policy.rs",
      "purpose": "Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -27766,7 +27776,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/writes.rs",
@@ -39040,7 +39050,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "The recording JS host, its state and its runtime adapter",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -39090,7 +39100,7 @@
      "path": "src/engine_executor/host/prompt.rs",
      "purpose": "The resolved system and per-turn prompt sites of the executor",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -39170,7 +39180,7 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "mod": 4,
       "re-export": 11
      }
@@ -45014,7 +45024,7 @@
      "path": "src/gate/witness_message.rs",
      "purpose": "ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -62564,7 +62574,7 @@
      "purpose": "The durable connector-send task substrate",
      "surface": {
       "const": 1,
-      "crate-vis": 43,
+      "crate-vis": 45,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -62894,10 +62904,10 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1,
       "mod": 1,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -63331,6 +63341,26 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "UndoSendFirstAgentSend",
+      "UndoSendHeldSend",
+      "UndoSendHeldSends",
+      "UndoSendOutcome",
+      "UndoSendRequest",
+      "UndoSendUndone"
+     ],
+     "path": "src/outbound/undo_send.rs",
+     "purpose": "The undo-send window on a send (DEC-0006 #undo-send; owner ruling REV-8 = B, 2026-10-09: \"undo send is a…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
      }
     },
     {
@@ -74885,7 +74915,7 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 13,
-      "mod": 4,
+      "mod": 5,
       "re-export": 7,
       "struct": 7
      }
@@ -75039,6 +75069,23 @@
      "path": "src/settings/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UndoSendChannelLength",
+      "UndoSendSetting",
+      "UndoSendSettings"
+     ],
+     "path": "src/settings/undo_send.rs",
+     "purpose": "The owner's undo-send window (DEC-0006 #undo-send; owner ruling REV-8 = B, 2026-10-09): how long a send…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 3
+     }
     },
     {
      "bucket": "L",
@@ -92191,6 +92238,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/code_mode_capture.rs",
+     "purpose": "Doors for `tests/code_mode_step_capture.rs` (OPUS-E2E-1, FIX row [AGENT-RUN-START-LATENCY-4S]): a code-mode…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/code_reply_healer.rs",
      "purpose": "Doors for `tests/code_reply_healer.rs` (CODE-RUNTIME-02 ruling B, the lead 10 Nov 10:32): the code-reply…",
      "surface": {
@@ -92475,7 +92532,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 59,
+      "mod": 60,
       "re-export": 1
      }
     },
@@ -101608,6 +101665,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/code_mode_step_capture.rs",
+     "purpose": "A code-mode step's replay capture (FIX row [AGENT-RUN-START-LATENCY-4S])",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/code_proposal_owner_attribution.rs",
      "purpose": "NO-DOOR CODE-PROPOSAL-ATTRIBUTION (tests/e2e/code-custody.test.ts CODE-CUSTODY-04, -05, -08; Engine…",
      "surface": {}
@@ -102060,6 +102125,14 @@
      "notable": [],
      "path": "tests/gate_pins_put_pipeline.rs",
      "purpose": "OPUS-T0-F gate pins, PR 3 (Engine task 12 Nov 19:38): green pins for six put-pipeline write gates of…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_pins_turn_retry_model_routing.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 5 (Engine NOTE 13 Nov 02:19): green pins for five model-routing write gates of…",
      "surface": {}
     },
     {
@@ -102986,6 +103059,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/outbound_undo_send.rs",
+     "purpose": "DEC-0006 #undo-send (owner ruling REV-8 = B, 2026-10-09): \"undo send is a great idea, yeah. like email has…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_approval_criticality_floor.rs",
      "purpose": "The owner's approval lands past the criticality floor ([CRITICALITY-FLOOR-PENDS-OWNER-WRITES])",
      "surface": {}
@@ -103883,6 +103964,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_retry_regenerated_turn.rs",
+     "purpose": "A Retry's regenerated reply lands where the reply it answers again landed (Engine TASK 13 Nov 04:50…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104375,7 +104464,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 267,
+     "files": 268,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105103,7 +105192,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105411,7 +105500,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "settings": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -105600,7 +105689,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 62,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105775,10 +105864,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 264,
+   "over_bar": 265,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7463,
-   "test_files": 1158
+   "source_files": 7467,
+   "test_files": 1162
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -130160,7 +130249,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 191
+      "crate-vis": 192
      }
     },
     {
@@ -131299,6 +131388,16 @@
      "purpose": "The host door of the owner's answer to a send that may have gone out (FIX 4747)…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/undo_send_doors.rs",
+     "purpose": "The host doors of the undo-send window (DEC-0006 #undo-send; REV-8 = B): the setting's read and set, the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -147625,7 +147724,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 772,
+     "files": 773,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -148173,7 +148272,7 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1850,
+   "source_files": 1851,
    "test_files": 219
   },
   "oneiron-skill-attribution": {
