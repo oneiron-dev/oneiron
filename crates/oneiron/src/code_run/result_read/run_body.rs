@@ -64,6 +64,18 @@ impl<'s, 'a> RunBody<'s, 'a> {
             live_cutoff: LiveCutoff(read.live_cutoff.as_ref()),
         }
     }
+
+    /// The whole body `read` reads a window of, under the same live cutoff:
+    /// what its redacted view reads the bytes around a window from (L6-31).
+    pub(super) fn whole(read: &'s ResultRead, storage: &'s ExecutorStorage<'a>) -> Self {
+        Self {
+            storage,
+            output: &read.output,
+            base: 0,
+            len: read.output.raw_len,
+            live_cutoff: LiveCutoff(read.live_cutoff.as_ref()),
+        }
+    }
 }
 
 impl ResultBody for RunBody<'_, '_> {

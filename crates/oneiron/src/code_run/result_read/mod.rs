@@ -10,13 +10,18 @@
 //! served from, and read it through [`ResultRead`], which checks the taint
 //! of the run's occurrence of it (Docs Q08). `can({read: r})` asks the same
 //! checks for their verdict and reads no byte. A scoped child's read also
-//! stops at its live cutoff (FIX 8233; see `run_body`).
+//! stops at its live cutoff (FIX 8233; see `run_body`). A body a lease's
+//! secret tainted, or one the secret scan marked for a span a read places
+//! again, is read through its redacted view, each secret span blanked; one
+//! an erase or a withdrawal took, or one marked for anything else, is
+//! withheld whole (ARCH-0069 `#result-bodies`, L6-31; see `redacted`).
 
 mod arm;
 mod chunks;
 mod facets;
 mod outside;
 mod query;
+mod redacted;
 mod run_body;
 mod search;
 mod shape;
@@ -25,9 +30,11 @@ mod unplaced;
 
 pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
+use self::redacted::RedactedBody;
 use self::run_body::{LiveCutoff, RunBody};
 pub(crate) use self::unplaced::unplaced_answer;
 
+use crate::batch::secret_scan::span_placed_for;
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunOutputKind,
     CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, ExecutorStorage, RESPONSE_ERASED,
@@ -39,6 +46,7 @@ use crate::engine_executor::{
 use crate::entity_id::EntityId;
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::secret_rotation::ArtifactTaintState;
+use crate::serialize::{CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS, compressed_code_run_output_preview};
 use crate::store::LINE_INDEX_BLOCK_BYTES;
 use crate::{Error, Result, Vault};
 use serde_json::{Value, json};
@@ -207,6 +215,32 @@ impl ResultRead {
         self.state.is_tainted()
     }
 
+    /// Whether reads of the occurrence show its redacted view (L6-31): it is
+    /// tainted by a lease's secret, or by a scan mark whose span a read
+    /// places again. An erase or a withdrawal (`response_erased`) takes the
+    /// content, not a span, and a mark no rule places names nothing to
+    /// blank, so either stays withheld whole.
+    fn redacts(&self) -> bool {
+        self.state.is_tainted() && self.secret.as_deref().is_none_or(span_placed_for)
+    }
+
+    /// Runs `read` over the body this read shows in `storage`, and whether
+    /// that is its redacted view: the stored bytes of a clean or withheld
+    /// occurrence, else each secret span blanked (L6-31).
+    fn with_shown_body<T>(
+        &self,
+        storage: &ExecutorStorage<'_>,
+        read: impl FnOnce(&dyn ResultBody, bool) -> Result<T>,
+    ) -> Result<T> {
+        let body = RunBody::of(self, storage);
+        if !self.redacts() {
+            return read(&body, false);
+        }
+        let whole = RunBody::whole(self, storage);
+        let view = RedactedBody::new(&body, &whole, redacted::known_source(storage)?)?;
+        read(&view, true)
+    }
+
     /// Whether this is a delegated source named in the caller's own run,
     /// rather than an unnamed child finding or one of the owner's results.
     fn caller_named(&self) -> bool {
@@ -244,14 +278,16 @@ impl ResultRead {
     /// it is clean, its head: the handle facets, its name, its taint, the
     /// facets that read it and the shape its head shows. A range's card is
     /// its parent's, with the range's `ref`, bytes and preview. A body that
-    /// is not clean shows no preview and no shape.
+    /// is withheld shows no preview and no shape; a redacted one previews
+    /// and sniffs its view, and says `redacted` (L6-31).
     pub(crate) fn card(&self, storage: &ExecutorStorage<'_>) -> Result<Value> {
-        self.card_of(&RunBody::of(self, storage))
+        self.with_shown_body(storage, |body, redacted| self.card_of(body, redacted))
     }
 
     /// [`Self::card`] over `body`, the result's bytes where they are held: a
-    /// run's storage, or a shadow arm's own store (`arm`).
-    fn card_of(&self, body: &dyn ResultBody) -> Result<Value> {
+    /// run's storage, or a shadow arm's own store (`arm`). `redacted`: `body`
+    /// is the occurrence's redacted view, so a tainted occurrence shows it.
+    fn card_of(&self, body: &dyn ResultBody, redacted: bool) -> Result<Value> {
         let mut card = result_handle_json(self.owner, &self.output);
         card["name"] = json!(self.name);
         card["taint"] = json!({"state": taint_word(self.state), "secret": self.secret});
@@ -273,7 +309,7 @@ impl ResultRead {
                     .unwrap_or_else(|| self.output.handle.clone())
             );
         }
-        if self.state.is_tainted() {
+        if self.state.is_tainted() && !redacted {
             card["preview"] = json!(withheld_preview(self.secret.as_deref()));
             return Ok(card);
         }
@@ -281,6 +317,12 @@ impl ResultRead {
         if self.range.is_some() {
             let cut = floor_boundary(&head, RANGE_PREVIEW_BYTES);
             card["preview"] = json!(String::from_utf8_lossy(&head[..cut]));
+        } else if redacted {
+            // The manifest's preview is of the stored head; the view's is
+            // made from its own.
+            let (preview, _) =
+                compressed_code_run_output_preview(&head, CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS);
+            card["preview"] = json!(preview);
         }
         card["shape"] = shape::shape_of(body, head)?;
         if let Some(reason) = unmarked_secret(&json!([card["preview"], card["shape"]])) {
@@ -292,16 +334,19 @@ impl ResultRead {
             if let Some(fields) = card.as_object_mut() {
                 fields.remove("shape");
             }
+        } else if redacted {
+            card["redacted"] = json!(true);
         }
         Ok(card)
     }
 
     /// `can({read: r})`'s verdict on a read that passed every check before
-    /// its taint: `can` while the body is clean, with its ref, size, kind
-    /// and taint, else `tainted` with what a facet would say of it. No
-    /// preview and no byte of the body either way.
+    /// its taint: `can` while the body is clean or read through its
+    /// redacted view, with its ref, size, kind and taint (and `redacted`),
+    /// else `tainted` with what a facet would say of it. No preview and no
+    /// byte of the body either way.
     pub(crate) fn preflight(&self) -> Value {
-        if self.state.is_tainted() {
+        if self.state.is_tainted() && !self.redacts() {
             let mut verdict = self.withheld();
             if let Some(fields) = verdict.as_object_mut() {
                 if let Some(detail) = fields.remove("reason") {
@@ -313,17 +358,21 @@ impl ResultRead {
             return verdict;
         }
         let (start, end) = self.range.unwrap_or((0, self.output.raw_len));
-        json!({
+        let mut verdict = json!({
             "can": true,
             "ref": self.reference(),
             "bytes": end - start,
             "kind": kind_word(self.output.kind),
             "taint": {"state": taint_word(self.state), "secret": self.secret},
-        })
+        });
+        if self.redacts() {
+            verdict["redacted"] = json!(true);
+        }
+        verdict
     }
 
-    /// What any facet of a body that is not clean answers: its size and
-    /// taint, none of its content.
+    /// What any facet of a withheld body answers: its size and taint, none
+    /// of its content.
     pub(crate) fn withheld(&self) -> Value {
         self.withheld_as(self.state, self.secret.as_deref())
     }

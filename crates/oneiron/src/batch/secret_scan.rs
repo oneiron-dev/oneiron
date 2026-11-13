@@ -57,7 +57,8 @@ pub(crate) use self::mask::spool::{
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(crate) use self::mask::{
-    mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+    file_spans, mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
+    span_placed_for,
 };
 pub(crate) use self::mask::{rebind_mask_origin_in_txn, side_row::admission_form};
 pub(crate) use self::message_parts::seal_message_parts_in_txn;

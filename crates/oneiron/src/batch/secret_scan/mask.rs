@@ -86,7 +86,8 @@ use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
 use split_phrase::Spread;
-use text_spans::{file_spans, merged, occurrences, secret_spans};
+pub(crate) use text_spans::{file_spans, span_placed_for};
+use text_spans::{merged, occurrences, secret_spans};
 use wipe::{PlanOps, PlanValues, replace_wiped};
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
