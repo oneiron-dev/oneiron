@@ -16,9 +16,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
-use crate::identity_topology::{
-    IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, TopologySeal,
-};
+use crate::identity_topology::{IdentityOpOutcome, IdentityOpWrite, TopologySeal};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{ClaimCandidate, EntityId, Vault};
 
@@ -258,14 +256,6 @@ pub(super) fn stage_topology_in_txn(
             return refuse_about(vault, txn, context, about, TOPOLOGY_REJECTED);
         }
     };
-    // A code run's merge, split or facet judgment joins that run's change
-    // journal (ARCH-0040 #revert-run). A distinct assertion is no change a
-    // run review takes back.
-    if let Some(run) = &context.stamp.run
-        && !matches!(item.op, IdentityTopologyOp::AssertDistinct(_))
-    {
-        crate::memory::run_review::record_run_topology_in_txn(&vault.store, txn, run, event)?;
-    }
     let receipt = allowance_receipt_in_txn(
         vault,
         txn,

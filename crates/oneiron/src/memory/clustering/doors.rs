@@ -217,12 +217,6 @@ impl Memory<'_> {
         let op = operation.into_engine(&resolve)?;
         let authority = self.cluster_authority(owner, grant, &resolve)?;
         let seal = TopologySeal::decision(authority.clone());
-        // The code run this judgment belongs to, from the run's own write
-        // origin (ARCH-0040 #revert-run): its event joins that run's change
-        // journal in the same write.
-        let run = self
-            .host_envelope(approval)?
-            .and_then(|envelope| crate::code_run::envelope_run_ref(&envelope).map(str::to_owned));
         self.with_verified_actor_write_txn(|txn| {
             let write = self.cluster_writer_in_txn(txn, &authority, approval)?;
             readable(&lane, txn, &op)?;
@@ -233,32 +227,21 @@ impl Memory<'_> {
                 &seal,
                 self.vault().now_recorded_at(),
             )?;
-            let (event, outcome) = match result {
-                IdentityOpOutcome::Applied { event, .. } => {
-                    (event, ClusterTopologyOutcome::Applied)
-                }
-                IdentityOpOutcome::Parked { event } => (event, ClusterTopologyOutcome::Proposed),
-                IdentityOpOutcome::Noop => {
-                    return Err(MemoryError::bad_request(
-                        "cluster judgment did not write an event",
-                    ));
-                }
-            };
-            if let Some(run) = &run {
-                crate::memory::run_review::record_run_topology_in_txn(
-                    &self.vault().store,
-                    txn,
-                    run,
-                    event,
-                )?;
+            match result {
+                IdentityOpOutcome::Applied { event, .. } => Ok(ClusterTopologyReceipt {
+                    receipt_ref: self.cluster_ref_in_txn(txn, &event),
+                    proposal_ref: None,
+                    outcome: ClusterTopologyOutcome::Applied,
+                }),
+                IdentityOpOutcome::Parked { event } => Ok(ClusterTopologyReceipt {
+                    receipt_ref: self.cluster_ref_in_txn(txn, &event),
+                    proposal_ref: Some(self.cluster_ref_in_txn(txn, &event)),
+                    outcome: ClusterTopologyOutcome::Proposed,
+                }),
+                IdentityOpOutcome::Noop => Err(MemoryError::bad_request(
+                    "cluster judgment did not write an event",
+                )),
             }
-            let receipt_ref = self.cluster_ref_in_txn(txn, &event);
-            Ok(ClusterTopologyReceipt {
-                proposal_ref: matches!(outcome, ClusterTopologyOutcome::Proposed)
-                    .then(|| receipt_ref.clone()),
-                receipt_ref,
-                outcome,
-            })
         })
     }
 
