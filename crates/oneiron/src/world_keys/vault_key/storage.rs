@@ -44,6 +44,7 @@ impl Vault {
                 &VaultKeyState {
                     commitment,
                     created_at,
+                    recovery: RecoveryPreset::Standard,
                 },
             )?;
             let info = VaultKeyWrapInfo {
@@ -88,13 +89,15 @@ impl Vault {
     /// commitment names these bytes. A vault without one takes it as its own,
     /// with no wrap: the node's wrap stays with the supervisor, and a restore
     /// elsewhere opens through an escrow wrap ([`Self::add_vault_key_escrow`]).
-    /// True when the vault took it as new.
+    /// True when the vault took it as new. Refused under the "Nobody but me"
+    /// recovery preset, where nobody but the owner holds the key.
     pub fn admit_vault_key(&self, delivered: &[u8; 32]) -> Result<bool> {
         let key = VaultDataKey::from_guarded(Zeroizing::new(*delivered));
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let created = self.with_write_txn(|txn| {
             if let Some(state) = STATE.get(&self.store, txn, &())? {
+                admit_delivered_key(state.recovery)?;
                 return if state.commitment == commitment {
                     Ok(false)
                 } else {
@@ -109,6 +112,7 @@ impl Vault {
                 &VaultKeyState {
                     commitment,
                     created_at,
+                    recovery: RecoveryPreset::Standard,
                 },
             )?;
             Ok(true)
@@ -235,7 +239,7 @@ impl Vault {
     /// opened with its recipient's released secret, for a vault restored from
     /// an artifact that predates or lacks that wrap. It opens only to the key
     /// the vault's commitment names, bound to its id and the wrap id `label`
-    /// makes.
+    /// makes. Refused under the "Nobody but me" recovery preset.
     pub fn unlock_vault_key_with_escrow_capsule(
         &self,
         label: &str,
@@ -249,6 +253,7 @@ impl Vault {
                 .get(&self.store, &txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?
         };
+        admit_presented_capsule(state.recovery)?;
         let key = open_wrap(
             self.vault_id().as_bytes(),
             &state.commitment,

@@ -9,7 +9,9 @@
 //! - a vault password: Argon2id over the passphrase;
 //! - a passkey: the host hands in the WebAuthn PRF output as the KEK;
 //! - escrow: a hybrid capsule (X25519 + ML-KEM-1024) to a recovery or transfer
-//!   key, the one wrap that crosses a public-key boundary.
+//!   key, the one wrap that crosses a public-key boundary;
+//! - the printed recovery sheet: a KEK derived from the sheet's random code,
+//!   issued by the "Nobody but me" recovery preset (`recovery_preset`).
 //!
 //! A managed node's supervisor unwraps the key itself and hands it to the vault
 //! process at boot ([`Vault::admit_vault_key`]); that wrap stays with the node.
@@ -56,6 +58,7 @@ pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 pub(super) mod kit;
+mod recovery_preset;
 pub(super) mod restore;
 mod state;
 mod storage;
@@ -65,6 +68,9 @@ pub use self::escrow::{
     EscrowAddWarning, EscrowAdded, EscrowRetirement, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
     reseal_escrow_capsule,
 };
+pub(super) use self::recovery_preset::EscrowOrigin;
+pub use self::recovery_preset::{RecoveryPreset, RecoveryPresetChange, RecoverySheet};
+use self::recovery_preset::{admit_delivered_key, admit_presented_capsule, admit_wrap};
 pub use self::vocabulary::{
     NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient, passkey_prf_input,
 };
@@ -228,6 +234,12 @@ impl CarriedVaultKey {
                 let presented = presented_escrow(label, capsule)?;
                 attempt(&presented, &UnlockSecret::Hybrid(secret));
             }
+            VaultKeyUnlock::Sheet(sheet) => {
+                let secret = UnlockSecret::Kek(sheet.kek(vault_id));
+                for stored in named(VaultKeyWrapKind::Sheet) {
+                    attempt(stored, &secret);
+                }
+            }
             VaultKeyUnlock::Kit { .. } => {
                 return kit::open_kit(vault_id, self, unlock).map(|key| (key, Vec::new()));
             }
@@ -326,6 +338,7 @@ impl Vault {
                     &VaultKeyState {
                         commitment,
                         created_at,
+                        recovery: RecoveryPreset::Standard,
                     },
                 )
             })?,
@@ -433,13 +446,15 @@ impl Vault {
     /// Seals the held vault data key to `recipient` as escrow wrap `label`, in
     /// the caller's transaction, replacing a wrap of that label. `None` when
     /// the vault has no data key; refused when it has one this handle does
-    /// not hold, so the old wrap never outlives the change. A sealed vault's
-    /// mirror is staged first: the caller begins `transition` before its
-    /// transaction and finishes it after the commit ([`WrapTransition`]).
+    /// not hold, so the old wrap never outlives the change, and when the
+    /// recovery preset rules out an escrow wrap from `origin`. A sealed
+    /// vault's mirror is staged first: the caller begins `transition` before
+    /// its transaction and finishes it after the commit ([`WrapTransition`]).
     pub(super) fn put_vault_key_escrow_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         transition: &WrapTransition<'_>,
+        origin: EscrowOrigin,
         label: &str,
         recipient: &HybridPublicKey,
     ) -> Result<Option<VaultKeyWrapInfo>> {
@@ -461,6 +476,7 @@ impl Vault {
         let kind = VaultKeyWrapKind::Escrow {
             label: label.to_owned(),
         };
+        admit_wrap(state.recovery, &kind, origin)?;
         self.refuse_retired_escrow_in_txn(txn, &kind)?;
         let fingerprint = recipient_fingerprint(recipient);
         let warnings = self.escrow_warnings_in_txn(txn, label, &fingerprint)?;
@@ -513,7 +529,8 @@ impl Vault {
     /// sealed vault's page-seal mirror. The change's last step, the mirror
     /// rewritten from the committed wraps, is the caller's ([`WrapTransition`]).
     /// An escrow wrap records its recipient's fingerprint and answers what
-    /// the add warns of (FIX 2857).
+    /// the add warns of (FIX 2857). The recovery preset is read in the same
+    /// transaction, and a kind it rules out adds nothing.
     fn commit_vault_key_wrap(
         &self,
         kind: VaultKeyWrapKind,
@@ -538,6 +555,7 @@ impl Vault {
             if state.commitment != commitment {
                 return Err(refused("this handle holds another vault key"));
             }
+            admit_wrap(state.recovery, &kind, EscrowOrigin::Recipient)?;
             let warnings = match (&kind, secret) {
                 (VaultKeyWrapKind::Escrow { label }, WrapSecret::Hybrid(recipient)) => {
                     let fingerprint = recipient_fingerprint(recipient);

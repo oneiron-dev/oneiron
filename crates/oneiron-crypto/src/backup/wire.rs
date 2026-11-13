@@ -60,17 +60,21 @@ pub enum VaultKeyWrapKind {
     Passkey { credential: String },
     /// A hybrid capsule to a recovery or transfer key, by the owner's label.
     Escrow { label: String },
+    /// The printed recovery sheet: a KEK derived from the sheet's random
+    /// code. One per vault; the "Nobody but me" recovery preset issues it.
+    Sheet,
 }
 
 impl VaultKeyWrapKind {
-    /// The wrap's id: one wrap per device, per passkey and per escrow label, and
-    /// one password.
+    /// The wrap's id: one wrap per device, per passkey and per escrow label, one
+    /// password and one sheet.
     pub fn id(&self) -> String {
         match self {
             Self::Device { install } => format!("device:{install}"),
             Self::Password => "password".to_owned(),
             Self::Passkey { credential } => format!("passkey:{credential}"),
             Self::Escrow { label } => format!("escrow:{label}"),
+            Self::Sheet => "sheet".to_owned(),
         }
     }
 
@@ -81,6 +85,7 @@ impl VaultKeyWrapKind {
             Self::Password => WrapType::Passphrase,
             Self::Passkey { .. } => WrapType::Passkey,
             Self::Escrow { .. } => WrapType::HybridCapsule,
+            Self::Sheet => WrapType::SymmetricKek,
         }
     }
 }

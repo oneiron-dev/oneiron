@@ -38,8 +38,8 @@ use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
 use oneiron::world_keys::{
-    self, EscrowAddWarning, HybridSecretKey, NewVaultKeyWrap, VaultKeyUnlock, VaultKeyWrapInfo,
-    VaultPageSeal,
+    self, EscrowAddWarning, HybridSecretKey, NewVaultKeyWrap, RecoveryPreset, VaultKeyUnlock,
+    VaultKeyWrapInfo, VaultPageSeal,
 };
 use oneiron_keystore::DeviceKeystore;
 use rand_core::RngCore as _;
@@ -49,8 +49,8 @@ use zeroize::Zeroizing;
 use super::secret_input::{TerminalRead, read_stdin_secret};
 use super::{emit, open_stopped_vault};
 use crate::cli::{
-    SecretSourceArgs, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs,
-    VaultKeyResealArgs,
+    RecoveryPresetArg, SecretSourceArgs, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand,
+    VaultKeyNamedArgs, VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
 };
 use crate::commands::credential_file;
 use crate::config::{ServeArgs, ServeConfig, resolve_serve_config};
@@ -102,7 +102,74 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
             emit(&vault.retire_vault_key_escrow_as(&owner, &args.name)?)
         }
         VaultKeyCommand::ResealCapsule(args) => reseal_capsule(*args),
+        VaultKeyCommand::RecoveryPreset(args) => recovery_preset(*args),
     }
+}
+
+/// Shows the recovery preset, or sets it with `--set`. Entering
+/// `nobody-but-me` writes the printed sheet's code to the new owner-only file
+/// `--sheet-out` names: the file is made before the vault changes, so a
+/// sheet is never issued with nowhere to go, and removed again when no sheet
+/// was issued. The vault keeps only the sheet's wrap.
+fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
+    let unlock = UnlockRequest::of(&args.unlock);
+    let Some(set) = args.set else {
+        anyhow::ensure!(
+            args.sheet_out.is_none(),
+            "--sheet-out is read only with --set nobody-but-me"
+        );
+        let vault = open(&args.serve, &unlock, KeyNeed::Open)?;
+        return emit(&view::RecoveryPresetView {
+            preset: vault.recovery_preset()?,
+        });
+    };
+    let (preset, need) = match set {
+        RecoveryPresetArg::Standard => (RecoveryPreset::Standard, KeyNeed::Open),
+        RecoveryPresetArg::NobodyButMe => (RecoveryPreset::NobodyButMe, KeyNeed::Held),
+    };
+    let sheet_out = match (preset, args.sheet_out) {
+        (RecoveryPreset::NobodyButMe, Some(path)) => Some(path),
+        (RecoveryPreset::NobodyButMe, None) => anyhow::bail!(
+            "--set nobody-but-me writes the printed sheet's code to a new owner-only file:              --sheet-out FILE"
+        ),
+        (RecoveryPreset::Standard, None) => None,
+        (RecoveryPreset::Standard, Some(_)) => {
+            anyhow::bail!("--sheet-out is read only with --set nobody-but-me")
+        }
+    };
+    let vault = open(&args.serve, &unlock, need)?;
+    let owner = local_owner(&vault)?;
+    let file = sheet_out
+        .as_deref()
+        .map(credential_file::create)
+        .transpose()?;
+    let discard = |path: Option<&Path>| {
+        if let Some(path) = path {
+            let _ = std::fs::remove_file(path);
+        }
+    };
+    let change = match vault.set_recovery_preset_as(&owner, preset) {
+        Ok(change) => change,
+        Err(error) => {
+            drop(file);
+            discard(sheet_out.as_deref());
+            return Err(error.into());
+        }
+    };
+    let (mut set, sheet) = view::RecoveryPresetSet::of(&vault.vault_key_vault_id(), change);
+    match (sheet, file, sheet_out) {
+        (Some(sheet), Some(mut file), Some(path)) => {
+            let line = Zeroizing::new(format!("{}\n", sheet.code().as_str()));
+            file.write_all(line.as_bytes())?;
+            file.sync_all()?;
+            set.sheet_file = Some(path.display().to_string());
+        }
+        (_, file, path) => {
+            drop(file);
+            discard(path.as_deref());
+        }
+    }
+    emit(&set)
 }
 
 /// Reseals a registry's escrow capsule to a fresh recipient and prints the

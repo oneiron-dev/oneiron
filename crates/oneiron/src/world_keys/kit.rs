@@ -550,6 +550,7 @@ impl Vault {
         let escrow = self.put_vault_key_escrow_in_txn(
             txn,
             transition,
+            super::vault_key::EscrowOrigin::WorldKit,
             WORLD_KIT_ESCROW,
             &confirm.root.recovery_key,
         )?;

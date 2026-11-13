@@ -9,8 +9,8 @@ use std::path::Path;
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
 use oneiron::world_keys::{
-    EscrowRetirement, HybridSecretKey, ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo,
-    VaultKeyWrapKind,
+    EscrowRetirement, HybridSecretKey, RecoveryPreset, RecoveryPresetChange, RecoverySheet,
+    ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
 };
 use oneiron_vault_contract::escrow::{
     ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
@@ -32,6 +32,7 @@ pub(crate) enum VaultKeyWrapKindSchema {
     Password,
     Passkey { credential: String },
     Escrow { label: String },
+    Sheet,
 }
 
 /// One wrap as the owner reads it.
@@ -71,6 +72,9 @@ impl WrapView {
 pub(crate) struct VaultKeyReport {
     pub(crate) vault_id: String,
     pub(crate) status: VaultKeyStatus,
+    /// The owner's recovery preset: `standard`, or `nobody_but_me`, where
+    /// the printed sheet alone restores the vault.
+    pub(crate) recovery_preset: RecoveryPreset,
     pub(crate) wraps: Vec<WrapView>,
     /// What keeps this install's device wrap and signing seeds at rest:
     /// `hardware`, `platform` or `software`; none without a keystore.
@@ -113,6 +117,7 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
     Ok(VaultKeyReport {
         vault_id: hex(&vault_id),
         status: vault.vault_key_status()?,
+        recovery_preset: vault.recovery_preset()?,
         wraps: vault
             .vault_key_wraps()?
             .into_iter()
@@ -135,6 +140,62 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
             .map(RetiredEscrowView::from)
             .collect(),
     })
+}
+
+/// The owner's recovery preset, as `GET /v1/owner/vault-key/recovery-preset`
+/// and `oneiron vault-key recovery-preset` answer it.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct RecoveryPresetView {
+    pub(crate) preset: RecoveryPreset,
+}
+
+/// What setting the recovery preset did, as the owner reads it. The printed
+/// sheet is handed over once, when the change entered "Nobody but me": its
+/// code in the HTTP answer, or its owner-only file from the CLI. The vault
+/// keeps only its wrap.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct RecoveryPresetSet {
+    pub(crate) previous: RecoveryPreset,
+    pub(crate) preset: RecoveryPreset,
+    /// The printed sheet's code, 56 symbols in groups of 4: print it and
+    /// keep it offline. Omitted when no sheet was issued, and from the CLI,
+    /// which writes it to `sheet_file`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) sheet_code: Option<String>,
+    /// The owner-only file the CLI wrote the sheet's code to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) sheet_file: Option<String>,
+    /// The wraps the change removed.
+    pub(crate) removed: Vec<WrapView>,
+    /// The escrow recipients the change retired, with their receipts.
+    pub(crate) retired: Vec<RetiredEscrowView>,
+}
+
+impl RecoveryPresetSet {
+    /// The view of `change` on the vault `vault_id`, with no sheet in it,
+    /// and the sheet the change issued, if any, for the caller to hand over.
+    pub(crate) fn of(
+        vault_id: &[u8; 32],
+        change: RecoveryPresetChange,
+    ) -> (Self, Option<RecoverySheet>) {
+        let view = Self {
+            previous: change.previous,
+            preset: change.preset,
+            sheet_code: None,
+            sheet_file: None,
+            removed: change
+                .removed
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+            retired: change
+                .retired
+                .into_iter()
+                .map(RetiredEscrowView::from)
+                .collect(),
+        };
+        (view, change.sheet)
+    }
 }
 
 /// What a backup's clear head says unlocks it. Unauthenticated until the

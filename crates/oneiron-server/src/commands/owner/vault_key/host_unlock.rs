@@ -6,7 +6,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::recovery::{KitId, KitSecretKind, checkpoint::CheckpointKey};
-use oneiron::world_keys::{HybridSecretKey, RecoveryRootSeed, VaultKeyUnlock, WORLD_KIT_ESCROW};
+use oneiron::world_keys::{
+    HybridSecretKey, RecoveryRootSeed, RecoverySheet, VaultKeyUnlock, WORLD_KIT_ESCROW,
+};
 use oneiron_keystore::DeviceKeystore;
 use zeroize::Zeroizing;
 
@@ -57,6 +59,8 @@ pub(crate) enum HostUnlock {
         pieces: Vec<oneiron::recovery::KitPiece>,
         passphrase: Option<oneiron::recovery::KitPassphrase>,
     },
+    /// The printed recovery sheet, read from its code.
+    Sheet(RecoverySheet),
 }
 
 impl HostUnlock {
@@ -243,6 +247,13 @@ impl HostUnlock {
                     kit_seed: None,
                 }
             }
+            UnlockMethod::Sheet => {
+                let code = read_secret(secret, "the recovery sheet's code")?;
+                let code = std::str::from_utf8(&code).map_err(|_| {
+                    anyhow::anyhow!("a recovery sheet's code is 56 letters and digits")
+                })?;
+                Self::Sheet(RecoverySheet::from_code(code)?)
+            }
             UnlockMethod::Kit => anyhow::bail!(
                 "--unlock kit opens with the kit's pieces (--piece) and the vault id it is bound \
                  to (--vault-id)"
@@ -260,6 +271,7 @@ impl HostUnlock {
             // `--unlock kit`, as the flag names it; a pre-open world kit's
             // Escrow says its wrap above.
             Self::WorldKit { .. } | Self::VaultKeyKit { .. } => "kit".to_owned(),
+            Self::Sheet(_) => "sheet".to_owned(),
         }
     }
 
@@ -303,6 +315,7 @@ impl HostUnlock {
                 passphrase: passphrase.as_ref(),
                 keystore: None,
             }),
+            Self::Sheet(sheet) => Some(VaultKeyUnlock::Sheet(sheet)),
         }
     }
 
@@ -381,6 +394,7 @@ impl HostUnlock {
                 pieces,
                 passphrase,
             } => vault.unlock_vault_key_with_kit(vault_id, pieces, passphrase.as_ref()),
+            Self::Sheet(sheet) => vault.unlock_vault_key_with_sheet(sheet),
         }
     }
 }
