@@ -516,6 +516,7 @@ impl BatchBuilder<'_> {
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
+            row_version: None,
             data: data.to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: true,

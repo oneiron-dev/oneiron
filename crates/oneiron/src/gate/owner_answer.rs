@@ -52,6 +52,14 @@ impl OwnerAnswer {
     }
 }
 
+/// Proof that an owner's answer closed a claim's owner-answer obligation: the
+/// only way a tray removal says [`TrayRemoval::Answered`]. Its field is
+/// private, so only [`close_owner_answer_obligation_in_txn`] builds one, and
+/// only when it has just closed the obligation, in the answering transaction,
+/// with an [`OwnerAnswer`] to the item that obligation names (FIX 22394).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ObligationAnswered(());
+
 /// Closes `claim_id`'s obligation with its owner's answer to the item whose
 /// content binding is `answered`, and says how the door removes that item. An
 /// answer to an item the obligation no longer names closes nothing: an earlier
@@ -77,7 +85,7 @@ pub(crate) fn close_owner_answer_obligation_in_txn(
         return Ok(TrayRemoval::Unanswered);
     }
     store.delete_owner_answer_obligation_in_txn(wtxn, claim_id)?;
-    Ok(TrayRemoval::Answered)
+    Ok(TrayRemoval::Answered(ObligationAnswered(())))
 }
 
 /// Closes `claim_id`'s obligation for a revision its owner wrote in person:

@@ -44,6 +44,17 @@ pub const MCP_RESULT_TTL_MS: u64 = 0;
 /// Cache audience for every actor-derived result.
 pub const MCP_RESULT_CACHE_SCOPE: &str = "private";
 
+/// Cache lifetime of the `server/discover` catalog, the one publicly
+/// cacheable result (canon ARCH-0028, mcp-rc:cache-refusal). Its body changes
+/// only with the server's build, never with a caller or the vault's state,
+/// so an hour of reuse can only keep an old build's summary that long; each
+/// `initialize` still negotiates afresh.
+pub const MCP_DISCOVER_TTL_MS: u64 = 3_600_000;
+
+/// Cache audience of the `server/discover` catalog: every caller gets the
+/// same bytes, so any cache may hold it.
+pub const MCP_DISCOVER_CACHE_SCOPE: &str = "public";
+
 /// Schema version of the result metadata envelope.
 pub const MCP_RESULT_META_SCHEMA_VERSION: &str = "mcp_result_meta.v1";
 
@@ -93,6 +104,16 @@ impl McpSurfaceMode {
         match self {
             Self::Primary => "primary",
             Self::ToolFirst => "tool_first",
+        }
+    }
+
+    /// The HTTP path the server routes this endpoint at (`api/routes.rs`),
+    /// as `server/discover` lists it.
+    #[must_use]
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::Primary => "/mcp",
+            Self::ToolFirst => "/mcp/tool-first",
         }
     }
 }
