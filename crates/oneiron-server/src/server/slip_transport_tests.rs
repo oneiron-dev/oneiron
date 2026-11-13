@@ -14,7 +14,7 @@ const ISSUER_KEY: &str = "slip-only-transport-issuer";
 fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         SyncServerConfig {
             auth_secret: Some(ISSUER_KEY.into()),

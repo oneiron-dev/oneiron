@@ -127,6 +127,7 @@ fn grant_self_model(fixture: &Fixture, agent: EntityId) -> EntityId {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints the self-model Grant");

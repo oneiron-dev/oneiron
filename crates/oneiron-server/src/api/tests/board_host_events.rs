@@ -381,7 +381,14 @@ async fn board_host_mcp_get_loaded_and_changed_only_ride_existing_frames() {
     );
     let exhausted = board_mcp_call(&server, "board-main", actor, "describe", json!({})).await;
     assert!(exhausted["result"].get("carrier").is_none());
-    let refreshed = board_mcp_call(&server, "board-main", actor, "board.refresh", json!({})).await;
+    let refreshed = board_mcp_call(
+        &server,
+        "board-main",
+        actor,
+        "self.focus.refresh",
+        json!({}),
+    )
+    .await;
     assert!(
         refreshed["result"]["structuredContent"]["output"]["frame"]["kind"]["payload"]
             .as_str()
@@ -474,11 +481,11 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
         rows.iter()
             .any(|row| row["key"] == "SKILLS" && row["line"].as_str().unwrap().contains(" found "))
     );
-    assert!(
-        rows.iter()
-            .any(|row| row["key"] == "AGENTS:cand"
-                && row["line"].as_str().unwrap().contains(" cand "))
-    );
+    // 6bef6393118 (#1787, ARCH-0067): the AGENTS section is gone; a found
+    // agent definition rides the SKILLS found rows as `found agent`.
+    assert!(rows.iter().any(
+        |row| row["key"] == "SKILLS" && row["line"].as_str().unwrap().contains(" found agent ")
+    ));
     let retained = "memory snippet ".repeat(2000);
     enqueue_board_frame(
         &server,
@@ -509,8 +516,10 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
             .any(|row| row["key"] == "SKILLS" && row["line"] == "loaded: ")
     );
     assert!(
-        rows.iter()
-            .any(|row| row["key"] == "AGENTS:cand" && row["line"] == "")
+        !rows
+            .iter()
+            .any(|row| row["key"] == "SKILLS" && row["line"].as_str().unwrap().contains(" found ")),
+        "the found rows, skill and agent alike, are shed: {rows:?}"
     );
     enqueue_board_frame(
         &server,
@@ -526,8 +535,10 @@ async fn board_host_capabilities_are_turn_local_and_shed_before_carried_memory()
         .as_array()
         .unwrap();
     assert!(
-        rows.iter()
-            .any(|row| row["key"] == "AGENTS:cand" && row["line"] == "")
+        !rows
+            .iter()
+            .any(|row| row["key"] == "SKILLS" && row["line"].as_str().unwrap().contains(" found ")),
+        "the found rows, skill and agent alike, are shed: {rows:?}"
     );
     assert!(
         rows.iter()

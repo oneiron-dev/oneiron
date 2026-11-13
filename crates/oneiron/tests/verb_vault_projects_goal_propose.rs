@@ -151,6 +151,7 @@ fn grant_propose(vault: &Vault, owner_proof: &AuthenticatedOwner, agent: EntityI
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints the propose Grant");

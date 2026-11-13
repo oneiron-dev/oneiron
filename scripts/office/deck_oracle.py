@@ -86,6 +86,36 @@ def font_account() -> str:
     return pwd.getpwuid(os.geteuid()).pw_name
 
 
+# ---- account roles: font approvals are keyed by role, never by account name --
+#
+# `isolated` is held by the accounts environment.json lists in
+# `isolated_accounts`: the only ones that open untrusted decks. `owner` is held
+# by the account whose name the local, untracked OWNER_ACCOUNT_FILE gives.
+# Any other account holds no role and cannot render; without that file no
+# account holds `owner`.
+ROLES = ('owner', 'isolated')
+OWNER_ACCOUNT_FILE = Path.home() / '.config/oneiron/office-owner-account'
+
+
+def owner_account_name() -> str | None:
+    """The owner account's name from OWNER_ACCOUNT_FILE; None when it is missing or empty."""
+    try:
+        name = OWNER_ACCOUNT_FILE.read_text().strip()
+    except OSError:
+        return None
+    return name or None
+
+
+def account_role(account: str, isolated_accounts: list[str]) -> str | None:
+    """`isolated` for an allowlisted test account, `owner` for the account the
+    owner file names, else None."""
+    if account in isolated_accounts:
+        return 'isolated'
+    if account == owner_account_name():
+        return 'owner'
+    return None
+
+
 def font_roots() -> list[tuple[str, Path]]:
     resources = APP / 'Contents/Resources'
     return [('system', Path('/System/Library/Fonts')), ('local', Path('/Library/Fonts')),
@@ -163,40 +193,71 @@ def env_pin(observer: str) -> dict:
             'macos': command(['sw_vers', '-productVersion']),
             'macos_build': command(['sw_vers', '-buildVersion']),
             'pdfkit': platform.mac_ver()[0], 'raster_scale': 2,
-            'font_account': account, 'font_inventory_sha256': inventory,
+            'font_account': account, 'font_role': font_role(account),
+            'font_inventory_sha256': inventory,
             'observer': observer, 'locale': os.environ.get('LANG', '')}
 
 
 ENV_FIELDS = frozenset({'harness', 'powerpoint', 'macos', 'macos_build', 'pdfkit',
                         'raster_scale', 'observer', 'locale'})
-ENV_VERSION = 2
+ENV_VERSION = 3
+
+
+def environment_problem(config) -> str | None:
+    """Why an environment.json cannot be used, or None: version 3, the approved
+    renderer fields, role-keyed font approvals and the isolated allowlist."""
+    if not isinstance(config, dict) or config.get('version') != ENV_VERSION:
+        return 'approved environment configuration is incomplete or unsupported'
+    expected = config.get('environment')
+    approved = config.get('approved_font_inventories')
+    isolated = config.get('isolated_accounts')
+    if (not isinstance(expected, dict) or set(expected) != ENV_FIELDS
+            or not isinstance(approved, dict) or not set(approved) <= set(ROLES)
+            or not isinstance(isolated, list)
+            or not all(isinstance(name, str) and name for name in isolated)):
+        return 'approved environment configuration is incomplete or unsupported'
+    return None
+
+
+def load_environment() -> tuple[dict | None, str | None]:
+    """environment.json beside this file: (config, None), or (None, why it is unusable)."""
+    try:
+        config = json.loads((ROOT / 'environment.json').read_text())
+    except (OSError, ValueError) as exc:
+        return None, f'approved environment unavailable: {exc}'
+    problem = environment_problem(config)
+    return (None, problem) if problem else (config, None)
+
+
+def font_role(account: str) -> str | None:
+    """The role `account` holds under environment.json beside this file, or None."""
+    config, problem = load_environment()
+    return None if problem else account_role(account, config['isolated_accounts'])
 
 
 def environment_mismatch(observed: dict) -> str | None:
     """Only the explicitly approved Mac/renderer combination may produce a clean receipt.
-    Fonts are judged against the account the receipt records, not the one reading it."""
-    try:
-        config = json.loads((ROOT / 'environment.json').read_text())
-        expected = config['environment']
-        approved = config['approved_font_inventories']
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        return f'approved environment unavailable: {exc}'
-    if (config.get('version') != ENV_VERSION or not isinstance(expected, dict)
-            or set(expected) != ENV_FIELDS or not isinstance(approved, dict)):
-        return 'approved environment configuration is incomplete or unsupported'
+    Fonts are judged against the role the receipt records, not the account reading it."""
+    config, problem = load_environment()
+    if problem:
+        return problem
+    expected, approved = config['environment'], config['approved_font_inventories']
     if not isinstance(observed, dict):
         return 'no environment was recorded'
     for field in sorted(ENV_FIELDS):
         if observed.get(field) != expected[field]:
             return f'unapproved environment {field}: expected {expected[field]!r}, observed {observed.get(field)!r}'
-    account, inventory = observed.get('font_account'), observed.get('font_inventory_sha256')
-    if not account or not inventory:
-        return 'the environment records no font account or font inventory'
-    if approved.get(account) != inventory:
-        held = approved.get(account)
+    role, inventory = observed.get('font_role'), observed.get('font_inventory_sha256')
+    if not inventory:
+        return 'the environment records no font inventory'
+    if role not in ROLES:
+        return (f"account {observed.get('font_account')!r} holds no role: only an account in "
+                f'environment.json `isolated_accounts`, or the one {OWNER_ACCOUNT_FILE} names, may render')
+    if approved.get(role) != inventory:
+        held = approved.get(role)
         why = (f'approved {held}' if held else 'none approved')
-        return (f'unapproved font inventory for account {account!r}: observed {inventory}, {why}; '
-                f'inspect with `deck_oracle.py fonts`, then approve as {account} with: {approve_command()}')
+        return (f'unapproved font inventory for the {role} role: observed {inventory}, {why}; '
+                f'inspect with `deck_oracle.py fonts`, then approve in that account with: {approve_command()}')
     return None
 
 
@@ -210,24 +271,30 @@ def write_json_atomic(path: Path, value) -> None:
 
 
 def fonts(approve: Path | None) -> int:
-    """Print this account's font inventory and digest; with --approve, record it."""
+    """Print this account's font inventory, role and digest; with --approve, record
+    the digest under the account's role."""
     account, inventory, rows = font_inventory()
     for row in rows:
         print(json.dumps(row, sort_keys=True, ensure_ascii=False))
     problems = inventory_problems(rows)
     for problem in problems:
         print(f'WARNING {problem}', file=sys.stderr)
-    print(f'account {account} font_inventory_sha256 {inventory} ({len(rows)} rows, '
-          f'{len(problems)} missing or unreadable)')
+    print(f'account {account} role {font_role(account) or "none"} font_inventory_sha256 {inventory} '
+          f'({len(rows)} rows, {len(problems)} missing or unreadable)')
     if approve is None:
         return 0
     config = json.loads(approve.read_text())
-    if config.get('version') != ENV_VERSION or not isinstance(config.get('approved_font_inventories'), dict):
+    if environment_problem(config):
         print(f'REFUSED: {approve} is not a version {ENV_VERSION} environment', file=sys.stderr)
         return 2
-    config['approved_font_inventories'][account] = inventory
+    role = account_role(account, config['isolated_accounts'])
+    if role is None:
+        print(f'REFUSED: account {account} holds no role: list it in {approve} `isolated_accounts`, '
+              f'or, in the owner account, write its name to {OWNER_ACCOUNT_FILE}', file=sys.stderr)
+        return 2
+    config['approved_font_inventories'][role] = inventory
     write_json_atomic(approve, config)
-    print(f'approved {account} -> {inventory} in {approve}')
+    print(f'approved the {role} role ({account}) -> {inventory} in {approve}')
     return 0
 
 
@@ -770,7 +837,7 @@ def main() -> int:
     fetch.add_argument('destination', type=Path, help='new directory; binaries are not committed')
     font = sub.add_parser('fonts', help="print this account's font file inventory and its digest")
     font.add_argument('--approve', type=Path, metavar='ENVIRONMENT_JSON',
-                      help="record this account's digest as approved in that environment.json")
+                      help="record this account's digest as approved for its role in that environment.json")
     args = p.parse_args()
     if args.command == 'fonts':
         return fonts(args.approve)

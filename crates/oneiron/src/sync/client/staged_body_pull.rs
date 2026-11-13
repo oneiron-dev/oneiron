@@ -277,7 +277,8 @@ impl SyncClient {
         }
         match tag {
             transport::TAG_RPC if pull.selector_request.is_some() => {
-                super::note_session::accept_bind_reply(payload)?;
+                let receipt = super::note_session::accept_bind_reply(payload)?;
+                tracing::debug!(?receipt, "the home answered the staged body pull's bind");
                 pull.idle_until = Instant::now() + STAGED_BODY_PULL_IDLE;
                 Ok(pull.selector_request.take().into_iter().collect())
             }

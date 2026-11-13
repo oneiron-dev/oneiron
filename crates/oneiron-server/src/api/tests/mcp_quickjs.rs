@@ -2,12 +2,17 @@
 use super::*;
 use oneiron::code_run::CodeRunDeterminism;
 use oneiron::engine_executor::{EngineExecutorConfig, EngineExecutorLimits};
-use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
+use oneiron::llm::decision::{
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial,
+    DecisionProvider, DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+};
+use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot};
 use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
-use oneiron::llm::seat::{ModelDescription, SeatCandidate, SeatJudge, SeatJudgment, SeatTask};
+use oneiron::llm::seat::{ModelDescription, SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
     LlmCapability, LlmCatalogCost, LlmCatalogEntry, ModelTierRef as Tier, ReasoningEffort,
 };
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{
     BudgetLease, ContentPart, FinishReason, LlmBackend, LlmGenerateFuture, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, LlmStreamResult, LlmUsage, ModelId, ModelLocality,
@@ -25,28 +30,61 @@ struct Backend {
     scripts: Mutex<VecDeque<String>>,
     requests: Mutex<Vec<LlmRequest>>,
 }
+/// The seat pick's head (the pick is typed decisions through the host's
+/// ladder since 4c541a578f5, #1608): it picks `model` whenever the model
+/// question offers it, keeps the first effort rung, and counts the picks.
 struct Judge {
     model: ModelId,
     calls: AtomicUsize,
 }
-impl SeatJudge for Judge {
-    fn judge(
+impl DecisionProvider for Judge {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Big,
+            model: "fixture-seat-judge".into(),
+            version: "1".into(),
+        }
+    }
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        let AnswerContract::Choice { options } = &call.question.contract else {
+            panic!("the seat pick asks Choice questions");
+        };
+        let answer = if options.iter().any(|option| option == self.model.as_str()) {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            assert!(
+                !call.state["task"]["task"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .is_empty()
+            );
+            self.model.to_string()
+        } else {
+            // The effort question: the chosen model's first rung.
+            "default".to_owned()
+        };
+        Ok(ProviderDecision {
+            answer: DecisionAnswer::Choice(answer),
+            probability: Some(0.99),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        })
+    }
+}
+/// The receipt's `why` beside the decided pick.
+struct Why;
+impl SeatNotes for Why {
+    fn why(
         &self,
         task: &SeatTask,
-        candidates: &[SeatCandidate],
-    ) -> oneiron::Result<SeatJudgment> {
-        self.calls.fetch_add(1, Ordering::Relaxed);
+        _candidates: &[SeatCandidate],
+        _model: &ModelId,
+        _effort: ReasoningEffort,
+        _deadline: &RetrievalDeadline,
+    ) -> oneiron::Result<String> {
         assert!(!task.task.is_empty());
-        assert!(
-            candidates
-                .iter()
-                .any(|candidate| candidate.model == self.model)
-        );
-        Ok(SeatJudgment {
-            model: self.model.clone(),
-            effort: None,
-            why: "The owner's code-task description fits this run".into(),
-        })
+        Ok("The owner's code-task description fits this run".into())
     }
 }
 // One request per call: the provider's run gate wraps it.
@@ -68,10 +106,15 @@ impl LlmBackend for Backend {
             Ok(LlmResponse {
                 message: LlmMessage {
                     role: LlmMessageRole::Assistant,
-                    content: vec![ContentPart::Text { text }],
+                    content: vec![ContentPart::Text {
+                        text,
+                        signature: None,
+                    }],
                 },
                 usage: LlmUsage::zero(),
                 finish_reason: FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }
@@ -121,26 +164,43 @@ fn code_mode_server(scripts: Vec<String>) -> CodeMode {
     code_mode_server_with(scripts, None)
 }
 
-/// [`code_mode_server`], with shadow mode's type check when `check` is set.
+/// [`code_mode_server`], with feedback mode's type check when `check` is set.
+/// Shadow mode's `ShadowCheck` became feedback mode's `FeedbackCheck`, handed to
+/// the provider through a loaded `TypeFeedback` (3748955211e, #3903, FIX 8277).
 pub(super) fn code_mode_server_with(
     scripts: Vec<String>,
-    check: Option<Arc<oneiron_code_check::ShadowCheck>>,
+    check: Option<Arc<oneiron_code_check::FeedbackCheck>>,
 ) -> CodeMode {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
+    // The extraction encoder binds the Oneironer slot, alone, to a model no
+    // generative role serves (ARCH-0036, OF-138; `validate_families`).
+    let encoder_model = ModelId::new("fixture/code-encoder@v2").unwrap();
     let manifest = ModelManifest {
         version: 2,
         roles: MODEL_ROLES
             .into_iter()
             .map(|role| {
+                let encoder = role == ModelRole::ExtractionEncoder;
                 (
                     role,
                     ModelBinding {
-                        model: seat_model.clone(),
-                        slot: ModelSlot::Llm,
+                        model: if encoder {
+                            encoder_model.clone()
+                        } else {
+                            seat_model.clone()
+                        },
+                        slot: if encoder {
+                            ModelSlot::Oneironer
+                        } else {
+                            ModelSlot::Llm
+                        },
                         tier: Tier("legacy".into()),
                         route_models: BTreeMap::new(),
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })
@@ -186,12 +246,16 @@ pub(super) fn code_mode_server_with(
                     output_per_million: "1".into(),
                     cache_read_per_million: None,
                     cache_write_per_million: None,
+                    currency: None,
                 }),
                 capabilities: vec![LlmCapability::Reasoning],
                 metadata: BTreeMap::new(),
             },
             scores: BTreeMap::new(),
             fetched_at: BTreeMap::new(),
+            tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
         })
         .unwrap();
     vault
@@ -230,17 +294,39 @@ pub(super) fn code_mode_server_with(
             seat_effort: None,
             global_tier: ModelTierRef("fixture".into()),
             determinism: CodeRunDeterminism::new(1700000000000, [7; 32]),
-            limits: EngineExecutorLimits {
-                soft_steps: 1,
-                hard_steps: 4,
-            },
+            // The hard cap is the `[limits] executor_run_steps` row since
+            // 5ce94a6121b (#2867, FIX 4197); no test here reaches it.
+            limits: EngineExecutorLimits { soft_steps: 1 },
             wake: None,
         },
     )
     .unwrap()
-    .with_model_seat_router(judge.clone(), "code-task");
+    .with_model_seat_router(
+        SeatDecisions {
+            ladder: HeldLadder {
+                big: Some(judge.clone() as Arc<dyn DecisionProvider>),
+                ..HeldLadder::unstaffed()
+            },
+            principal: seeded_test_entity_id(0x0024_6506),
+            dial: DecisionDial {
+                first: DecisionRung::Big,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: DecisionBandPolicy::default(),
+            model_wording: "Which model should run this code-mode task?".into(),
+            effort_wording: "At which effort should the chosen model run it?".into(),
+            budget: std::time::Duration::from_secs(30),
+            notes: Arc::new(Why),
+        },
+        "code-task",
+    );
     let provider = match check {
-        Some(check) => provider.with_code_check(check),
+        Some(check) => {
+            let feedback = oneiron::engine_executor::TypeFeedback::loading("tsc-rs", vault.clone());
+            feedback.loaded(Ok(check));
+            provider.with_code_check(feedback)
+        }
         None => provider,
     };
     let config = crate::mcp::McpCodeModeProvider::executor_config(
@@ -320,10 +406,10 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
         assert!(mcp_listed_tool_names(&listing).contains(&"execute_code"));
     }
-    for (path, field) in [
-        ("/api/core/discover", "feature_flags"),
-        ("/api/health", "capabilities"),
-    ] {
+    // 8bd904f78b5 (#3490, FIX 6692): discovery lists the capabilities by
+    // family; health carries each family's count and the same digest.
+    let mut bodies = Vec::new();
+    for path in ["/api/core/discover", "/api/health"] {
         let (status, body) = route_json(
             server.clone(),
             Request::builder()
@@ -333,16 +419,34 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        let capabilities = body[field]["capabilities"].as_array().unwrap();
-        for token in [
-            "mcp.tool.execute_code",
-            "mcp.endpoint.primary.execute_code",
-            "mcp.endpoint.tool_first.execute_code",
-        ] {
-            assert!(capabilities.contains(&json!(token)), "{path}: {body}");
-        }
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        bodies.push(body);
     }
+    let (discover, health) = (&bodies[0], &bodies[1]);
+    for (token, family) in [
+        ("mcp.tool.execute_code", "mcp.tool"),
+        ("mcp.endpoint.primary.execute_code", "mcp.endpoint.primary"),
+        (
+            "mcp.endpoint.tool_first.execute_code",
+            "mcp.endpoint.tool_first",
+        ),
+    ] {
+        let group = &discover["feature_flags"]["groups"][family];
+        assert!(
+            group["capabilities"]
+                .as_array()
+                .is_some_and(|tokens| tokens.contains(&json!(token))),
+            "{token}: {discover}"
+        );
+        assert_eq!(
+            health["capabilities"]["counts"][family], group["count"],
+            "{family}: {health}"
+        );
+    }
+    assert_eq!(
+        health["capabilities"]["digest"],
+        discover["feature_flags"]["digest"]
+    );
     let args = mcp_merge_args(
         mcp_endpoint_envelope(actor_id, "write_memory"),
         json!({"run_ref":"quickjs-one", "task":"write one claim then finish"}),
@@ -434,7 +538,13 @@ async fn witness_through_tool_list(
     );
     let (_, body) = route_json(
         server.clone(),
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "witness",
+            "vault.witness",
+            args,
+        ),
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -524,7 +634,7 @@ async fn quickjs_execute_code_serves_a_64_kib_task() {
         seen.iter()
             .flat_map(|request| &request.messages)
             .flat_map(|message| &message.content)
-            .any(|part| matches!(part, ContentPart::Text { text } if text.contains(&task))),
+            .any(|part| matches!(part, ContentPart::Text { text, .. } if text.contains(&task))),
         "the whole task reaches the model",
     );
 }
@@ -567,7 +677,13 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
         json!({"run_ref": "quickjs-world", "task": "recall the heron lantern"}),
     );
     for request in [
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, "quickjs-world", "tool", "recall", tool),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            "quickjs-world",
+            "tool",
+            "vault.recall",
+            tool,
+        ),
         mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
     ] {
         let body = mcp_refusal(&mode.server, request).await;
@@ -954,7 +1070,7 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
             MCP_TOOL_FIRST_PATH,
             "quickjs-closed",
             "misspelled",
-            "recall",
+            "vault.recall",
             recall(json!({"facet_ref": facet})),
         ),
     )
@@ -970,7 +1086,7 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
             MCP_TOOL_FIRST_PATH,
             "quickjs-closed",
             "listed",
-            "recall",
+            "vault.recall",
             recall(json!({"world_ref": null, "facet": null})),
         ),
     )
@@ -1072,6 +1188,7 @@ async fn serve_with_models(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let server = SyncServer::new(
         vault.clone(),
         SyncServerConfig {
@@ -1156,7 +1273,12 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
 
     let run_id = oneiron::EntityId::from_hex(structured["run_id"].as_str().unwrap()).unwrap();
     let record = vault.get_code_run_replay_record(&run_id).unwrap().unwrap();
-    let clock = record.determinism.frozen_unix_ms;
+    // A run witnessed here keeps its frozen inputs.
+    let clock = record
+        .determinism
+        .as_ref()
+        .expect("witnessed frozen inputs")
+        .frozen_unix_ms;
     assert!(
         (started..=vault.now_recorded_at() * 1000).contains(&clock),
         "{clock}"

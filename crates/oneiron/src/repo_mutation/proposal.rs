@@ -35,6 +35,7 @@ mod execution;
 mod files;
 mod guards;
 mod owner;
+mod owner_request;
 pub(super) mod persist;
 mod queue_review;
 mod receipts;
@@ -49,6 +50,7 @@ pub use files::RepoProposedFile;
 pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
+pub(crate) use owner_request::OwnerRequestAttribution;
 pub use queue_review::{
     ContractReviewEvidence, ContractReviewRequest, ContractReviewSettlement, QueueReviewAdmission,
     RepoProposalCritique, RepoProposalReview,
@@ -630,10 +632,13 @@ fn put_journal_claim(
     {
         return Err(invalid("invalid repository journal producer"));
     }
+    // The subject is the code session, which has no FACET of its own.
+    let mut body = body.clone();
+    body.scope_facet = vault.claim_put_facet_in_txn(txn, &id)?;
     vault.put_reserved_claim_in_txn(
         txn,
         &id,
-        body,
+        &body,
         crate::temporal::TimeRange {
             start: now,
             end: now,

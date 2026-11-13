@@ -77,6 +77,8 @@ pub(crate) use credit_join::erase_credit_adjustments_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
 pub(crate) use credit_join::{StandingCreditObservation, standing_credit_observation_in_txn};
 mod decay_fit;
+#[cfg(oneiron_test_support)]
+pub(crate) mod decay_fit_door;
 mod late_credit;
 mod outcome_source;
 mod pack_learning;

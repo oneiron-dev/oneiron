@@ -786,7 +786,7 @@ impl Store {
 
     /// Whether this vault is archived: by its mark, read in `txn`, or by the
     /// seal a restore's swap put on this handle.
-    pub(in crate::store) fn archived_in_txn(&self, txn: &RoTxn<'_>) -> Result<bool> {
+    pub(crate) fn archived_in_txn(&self, txn: &RoTxn<'_>) -> Result<bool> {
         Ok(self.env.is_sealed()
             || archived_by(ARCHIVED.get(self, txn, &())?.as_deref(), self.env.path())?)
     }

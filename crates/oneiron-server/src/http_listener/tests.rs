@@ -530,7 +530,8 @@ async fn a_replayed_proof_leaves_its_connection_in_the_anonymous_share() {
         auth_secret: Some("listener-trust-root".to_owned()),
         ..Default::default()
     };
-    let server = Arc::new(crate::server::SyncServer::new(vault, config).unwrap());
+    let server =
+        Arc::new(crate::test_credentials::server_with_fixture_keystore(vault, config).unwrap());
     let listener = TcpListener::bind(SocketAddr::new(local, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let task = tokio::spawn(serve(

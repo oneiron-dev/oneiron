@@ -57,7 +57,9 @@ impl Memory<'_> {
                 return Ok(false);
             };
             match kind {
-                Some(kind) if kind_string_for_type(header.entity_type) != kind => return Ok(false),
+                Some(kind) if self.vault.entity_kind_name(header.entity_type) != kind => {
+                    return Ok(false);
+                }
                 // A view that names no kind takes the scope's kinds, which
                 // recall applies, or else the default kinds.
                 None if scope.kinds.is_none() && CONTAINER_KINDS.contains(&header.entity_type) => {

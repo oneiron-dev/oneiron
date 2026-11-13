@@ -25,9 +25,9 @@ pub enum ModelStepFailureClass {
     BudgetRefused,
 }
 
-/// Why a step's spend scope refused its reservation with no park
+/// Why a step's spent budget refused it with no park
 /// (BUDGET-TRAP-UNTYPED-NO-SENDER): no write the step could wait for gives
-/// that scope room again, so the step fails at once, typed, and nothing parks.
+/// its budget room again, so the step fails at once, typed, and nothing parks.
 /// `scope` is the refusing spend scope's id, `available_units` its room for
 /// the reservation, `asked_units` what the reservation asked of it.
 #[derive(
@@ -55,6 +55,18 @@ pub enum StepBudgetRefusal {
         available_units: u64,
         asked_units: u64,
     },
+    /// The step's guard is spent and the step is bound to no wake pass and no
+    /// spend scope, so no write it could wait for refills that guard.
+    /// `asked_units` is the reservation the guard refused, when the refusal
+    /// named one.
+    #[error("the step's budget is spent and no wake pass or spend scope refills it")]
+    Unbound { asked_units: Option<u64> },
+    /// The host's run admission found no allocation to fund the host-paid
+    /// call: none delivered, the allocation spent or another wallet's, or a
+    /// price past its unit. No budget write funds it. `asked_units` is the
+    /// reservation the step's guard held for the call.
+    #[error("no allocation of the host funds the step's call")]
+    Unfunded { asked_units: Option<u64> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

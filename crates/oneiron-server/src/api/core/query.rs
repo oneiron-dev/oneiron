@@ -322,7 +322,14 @@ async fn read_core_query(
         let mut value = if matches!(view, View::Standard) {
             serde_json::json!({"id": result.id.to_hex(), "score": result.score})
         } else if decoded {
-            projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
+            projection::project_entity_parts(
+                &server.vault,
+                &result.id,
+                entity_type,
+                learned_at,
+                &body,
+                view,
+            )
         } else {
             bodies.omitted(
                 &result.id,

@@ -20,16 +20,16 @@ pub use agent_grant::{AgentGrantFromSlipUnchangedReason, DefaultAgentGrantBackfi
 pub(crate) use agent_verb_class::AgentVerbClasses;
 // The self brief's GRANT producer (FIX 17594).
 mod agent_grant_brief;
-// Who may delete one record the cleanup archived (OF-449 L4).
-mod archive_delete;
-pub(crate) use archive_delete::{
-    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal,
-    require_archive_delete_in_txn,
+// Who may delete one record (ARCH-0043 DEL-2; the cleanup archive's door,
+// OF-449 L4, and a record's own).
+mod delete_authority;
+pub(crate) use delete_authority::{
+    DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget, require_delete_authority_in_txn,
 };
 // The old path of the role the deletion gate now names at
 // `deletion::archive_role`; kept for callers of the federation path.
 #[allow(unused_imports)]
-pub(crate) use archive_delete::ArchiveDeleteRole;
+pub(crate) use delete_authority::ArchiveDeleteRole;
 mod connect_grant;
 pub use connect_grant::{ConnectGrantMinted, ConnectMemberLeaveConsent, INQUIRE_VERB_CLASS};
 pub(crate) use connect_grant::{
@@ -275,7 +275,7 @@ use std::io::Cursor;
 pub use oneiron_authority::federation::{
     FederationGrantKind, GIT_PUSH_VERB, GitPushBounds, GitPushRepo, REPO_EDIT_VERB, REPO_READ_VERB,
     RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget, Scope, ScopeAtom, ScopeAxis,
-    ScopeId, Sensitivity, SensitivityCeiling, WalletRef,
+    ScopeId, Sensitivity, SensitivityCeiling, WalletRef, WorkingViewEditBounds,
 };
 
 mod org_admin;

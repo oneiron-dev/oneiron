@@ -87,6 +87,22 @@ pub struct DraftInput {
     /// becomes an ordinary step, listed in `pressed_through`.
     #[serde(default)]
     pub past_press: bool,
+    /// The task type the caller records for the span (FIX 10508). With it,
+    /// a span whose checks are met on the page the call leaves is kept as
+    /// the caller's solved-run evidence, grouped under its site, origin,
+    /// type and subgoal; without it, nothing is kept.
+    #[serde(default)]
+    pub type_ref: Option<DraftTypeRef>,
+}
+
+/// A task type a caller records on its draft (FIX 10508): the type tree's
+/// node and the tree version it was placed in, as a receipt's type names
+/// them. It is the wire form; the engine reads it as its own task type.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DraftTypeRef {
+    pub node_id: String,
+    pub tree_version: u64,
 }
 
 /// A draft: the proposal its span gives, the literals that might take

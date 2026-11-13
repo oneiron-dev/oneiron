@@ -4,6 +4,7 @@
 //! through the evaluator while keeping replicated replay trust-blind.
 
 mod agent_definition_setup;
+mod agent_power_refusal;
 mod ask_policy;
 mod auto_signals;
 mod bundle;
@@ -150,6 +151,7 @@ pub(crate) mod live_run_claim_put_fixture;
 mod tests;
 
 pub(crate) use self::agent_definition_setup::record_agent_definition_setup_in_txn;
+pub(crate) use self::agent_power_refusal::record_agent_power_refusal_in_txn;
 pub(crate) use self::ask_policy::{AskOperationalPolicy, AskPolicySurface};
 pub(crate) use self::bundle::append_reviewed_run_decision_in_txn;
 pub use self::bundle::{
@@ -306,8 +308,8 @@ pub(crate) use self::witness_message::{
     WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER,
     WitnessMessageAuthorization, WitnessMessageBodyAuthor, WitnessMessageEnvelope,
     check_source_bound_witness_message_ceiling, check_witness_message_ceiling,
-    check_witness_message_ceiling_with_permit, validate_canonical_witness_message_body,
-    validate_own_device_witness_message_body,
+    check_witness_message_ceiling_with_permit, check_witness_turn_ceiling,
+    validate_canonical_witness_message_body, validate_own_device_witness_message_body,
 };
 
 // gate.rs was one flat module: its private `use` header and every item in it

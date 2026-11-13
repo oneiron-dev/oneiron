@@ -231,6 +231,11 @@ pub struct AgentSpawnInput {
     /// envelope, which the host enforces either way.
     #[serde(default)]
     pub balance_free_prompt: bool,
+    /// The powers the child holds (SPAWN-KNOB): an absent power is the
+    /// parent's, `false` switches it off for the child. Asking `true` for a
+    /// power the parent does not hold is refused.
+    #[serde(default)]
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
 }
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
@@ -320,6 +325,7 @@ impl AgentSpawnInput {
                 .transpose()?,
             objectives: self.objectives,
             comm: self.comm,
+            powers: self.powers,
             ..AgentSpawnContext::default()
         };
         let ask = super::SelfSpawnAsk {
@@ -420,6 +426,11 @@ pub struct ReaderSpawnInput {
     pub ask: String,
     /// The spawn's key in the run: the same key spawns the same child.
     pub intent_key: String,
+    /// The powers the child holds (SPAWN-KNOB): an absent power is the
+    /// parent's, `false` switches it off for the child. Asking `true` for a
+    /// power the parent does not hold is refused.
+    #[serde(default)]
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
 }
 
 /// `summarize(r, {effort?, group?, defer?})`: one model call over a result
