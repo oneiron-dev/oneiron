@@ -31,7 +31,8 @@ use crate::consent::bundle_projection::GateConsentBundleAction;
 mod authority;
 use authority::ClaimSettler;
 mod conflict_head;
-use conflict_head::{ConflictHead, ConflictHeadIndex, conflict_head_in_txn};
+pub(in crate::memory) use conflict_head::ConflictHeadIndex;
+use conflict_head::{ConflictHead, conflict_head_in_txn};
 mod restored_member;
 
 /// Key-derivation context of the review handle.
@@ -260,6 +261,30 @@ impl ReviewedProposal {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> MemoryResult<Self> {
+        Self::read_with_head_in_txn(vault, txn, id, |body| {
+            conflict_head_in_txn(vault, txn, id, body)
+        })
+    }
+
+    /// `read_in_txn`, with the head read from `heads`: one read of each
+    /// subject's claims for many reviews in one txn (FIX 23686).
+    fn read_indexed_in_txn(
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        heads: &mut ConflictHeadIndex,
+    ) -> MemoryResult<Self> {
+        Self::read_with_head_in_txn(vault, txn, id, |body| heads.head(vault, txn, id, body))
+    }
+
+    /// The review of `id`, with `conflict_head` naming the head an approval
+    /// of its body would close.
+    fn read_with_head_in_txn(
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        conflict_head: impl FnOnce(&ClaimBody) -> crate::Result<Option<ConflictHead>>,
+    ) -> MemoryResult<Self> {
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or_else(|| MemoryError::not_found("no claim has that ref"))?;
         let header =
@@ -298,7 +323,7 @@ impl ReviewedProposal {
         let prior = if body.approval == ClaimApprovalStatus::Proposed
             && !vault.has_deferred_claim_in_txn(txn, id)?
         {
-            conflict_head_in_txn(vault, txn, id, &body)?
+            conflict_head(&body)?
         } else {
             None
         };

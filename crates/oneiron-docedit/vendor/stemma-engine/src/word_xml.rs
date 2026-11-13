@@ -391,7 +391,7 @@ pub fn document_root_ancestors(bytes: &[u8]) -> Result<Vec<Element>, WordXmlErro
         config.check_end_names = true;
     }
 
-    let mut scope: Vec<NsFrame> = Vec::new();
+    let mut scope = NsScope::default();
     let mut ancestors: Vec<Element> = Vec::new();
     let mut depth: usize = 0;
     let mut buf = Vec::new();
@@ -467,7 +467,7 @@ pub fn parse_document_background_element(bytes: &[u8]) -> Result<Option<Element>
         config.check_end_names = true;
     }
 
-    let mut scope: Vec<NsFrame> = Vec::new();
+    let mut scope = NsScope::default();
     let mut depth: usize = 0;
     let mut buf = Vec::new();
     loop {
@@ -558,31 +558,112 @@ const XMLNS: &str = "http://www.w3.org/2000/xmlns/";
 const XML_URI: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// One frame of in-scope namespace bindings. Holds only the prefixes *declared
-/// on the corresponding element* — never the inherited scope. URI resolution
-/// walks the stack from the top, which is what gives us inheritance semantics
-/// without ever materializing (and cloning) a flattened scope per element.
+/// on the corresponding element* — never the inherited scope. [`NsScope`]
+/// indexes the open frames by prefix, which is what gives us inheritance
+/// semantics without ever materializing (and cloning) a flattened scope per
+/// element.
 struct NsFrame {
-    /// `prefix -> uri`. The default namespace uses the empty-string prefix.
+    /// `prefix -> uri` in declared order, the order the element's
+    /// `namespaces` map is built in. The default namespace uses the
+    /// empty-string prefix.
     bindings: Vec<(String, String)>,
+    /// Each declared prefix's position in `bindings`, so one lookup costs one
+    /// hash however many prefixes the element declares. A scan of `bindings`
+    /// per prefixed attribute made one tag with d declarations and a prefixed
+    /// attributes cost O(a*d) (FIX STEMMA-NS-PREFIX-SCAN).
+    by_prefix: HashMap<String, usize>,
 }
 
-/// Resolve a prefix to its URI by scanning declared frames from innermost out.
+impl NsFrame {
+    fn new(bindings: Vec<(String, String)>) -> Self {
+        let mut by_prefix = HashMap::with_capacity(bindings.len());
+        for (position, (prefix, _)) in bindings.iter().enumerate() {
+            // The first declaration of a prefix wins, as the scan's first
+            // match did. quick-xml refuses a repeated attribute anyway.
+            by_prefix.entry(prefix.clone()).or_insert(position);
+        }
+        Self {
+            bindings,
+            by_prefix,
+        }
+    }
+
+    /// The URI this element itself binds `prefix` to.
+    fn get(&self, prefix: &str) -> Option<&str> {
+        self.by_prefix
+            .get(prefix)
+            .map(|&position| self.bindings[position].1.as_str())
+    }
+
+    /// Whether this element itself binds `prefix`.
+    fn binds(&self, prefix: &str) -> bool {
+        self.by_prefix.contains_key(prefix)
+    }
+}
+
+/// The namespace frames of the open elements, innermost last, with an index
+/// from each prefix to the open frames that bind it, as parse_budget.rs's
+/// `Scope` keeps one. Resolving a prefix costs one hash however many frames
+/// and declarations are open; walking every frame per element made a root
+/// with d declarations cost O(elements*d) (FIX STEMMA-NS-PREFIX-SCAN).
+#[derive(Default)]
+struct NsScope {
+    frames: Vec<NsFrame>,
+    /// `prefix -> (frame, position in its bindings)` for each open frame that
+    /// binds the prefix, innermost last.
+    bound: HashMap<String, Vec<(usize, usize)>>,
+}
+
+impl NsScope {
+    /// Enter an element with the frame of declarations it introduced.
+    fn push(&mut self, frame: NsFrame) {
+        let depth = self.frames.len();
+        for (prefix, &position) in &frame.by_prefix {
+            self.bound
+                .entry(prefix.clone())
+                .or_default()
+                .push((depth, position));
+        }
+        self.frames.push(frame);
+    }
+
+    /// Leave the innermost element, dropping what it bound.
+    fn pop(&mut self) {
+        let Some(frame) = self.frames.pop() else {
+            return;
+        };
+        for prefix in frame.by_prefix.keys() {
+            if let Some(bindings) = self.bound.get_mut(prefix) {
+                bindings.pop();
+                if bindings.is_empty() {
+                    self.bound.remove(prefix);
+                }
+            }
+        }
+    }
+
+    /// The number of open elements.
+    fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// The URI the innermost open frame that binds `prefix` gives it.
+    fn lookup(&self, prefix: &str) -> Option<&str> {
+        let &(depth, position) = self.bound.get(prefix)?.last()?;
+        Some(self.frames[depth].bindings[position].1.as_str())
+    }
+}
+
+/// Resolve a prefix to its URI through the innermost open frame that binds it.
 /// `xml` and `xmlns` are always implicitly bound per the XML Namespaces spec.
-fn resolve_uri<'a>(scope: &'a [NsFrame], prefix: &str) -> Option<&'a str> {
+fn resolve_uri<'a>(scope: &'a NsScope, prefix: &str) -> Option<&'a str> {
     if prefix == "xml" {
         return Some(XML_URI);
     }
     if prefix == "xmlns" {
         return Some(XMLNS);
     }
-    for frame in scope.iter().rev() {
-        for (p, uri) in &frame.bindings {
-            if p == prefix {
-                return Some(uri.as_str());
-            }
-        }
-    }
-    None
+    scope.lookup(prefix)
 }
 
 /// Split a `QName` into `(prefix, local)` as owned strings. quick-xml has
@@ -651,7 +732,7 @@ impl ExpandedNameCheck {
 fn element_from_start(
     start: &quick_xml::events::BytesStart<'_>,
     reader: &Reader<&[u8]>,
-    scope: &[NsFrame],
+    scope: &NsScope,
 ) -> Result<(Element, NsFrame), WordXmlError> {
     let (prefix, name) = split_qname(start.name());
 
@@ -754,7 +835,7 @@ fn element_from_start(
     }
 
     // Frame of declarations introduced by this element. Pushed by the caller.
-    let frame = NsFrame { bindings: ns_decls };
+    let frame = NsFrame::new(ns_decls);
 
     // Resolve the element's own namespace URI: check this element's declarations
     // first, then the inherited scope.
@@ -816,8 +897,7 @@ fn element_from_start(
             .find(|(an, _)| an.prefix.is_none() && an.local_name == "Requires")
     {
         for token in requires.split_whitespace() {
-            let already_local = frame.bindings.iter().any(|(p, _)| p == token);
-            if already_local {
+            if frame.binds(token) {
                 continue;
             }
             if let Some(uri) = resolve_uri(scope, token) {
@@ -854,7 +934,7 @@ fn element_from_start(
 /// enclosing scope. Used for both the element name and prefixed attributes.
 fn resolve_in_frame_then_scope<'a>(
     frame: &'a NsFrame,
-    scope: &'a [NsFrame],
+    scope: &'a NsScope,
     prefix: &str,
 ) -> Option<&'a str> {
     if prefix == "xml" {
@@ -863,10 +943,8 @@ fn resolve_in_frame_then_scope<'a>(
     if prefix == "xmlns" {
         return Some(XMLNS);
     }
-    for (p, uri) in &frame.bindings {
-        if p == prefix {
-            return Some(uri.as_str());
-        }
+    if let Some(uri) = frame.get(prefix) {
+        return Some(uri);
     }
     resolve_uri(scope, prefix)
 }
@@ -897,7 +975,7 @@ pub fn parse_document_xml_quick(bytes: &[u8]) -> Result<Element, WordXmlError> {
     // Stack of partially built elements. `stack.last_mut()` is the open parent.
     let mut stack: Vec<Element> = Vec::new();
     // Parallel stack of namespace-declaration frames (one per open element).
-    let mut scope: Vec<NsFrame> = Vec::new();
+    let mut scope = NsScope::default();
     let mut root: Option<Element> = None;
 
     let mut buf = Vec::new();
@@ -1170,7 +1248,7 @@ pub fn for_each_body_child<E>(
     // While we are scanning at body-child level, this holds the frames for
     // `document` and `body`, so a subtree built from here resolves prefixes the
     // same way the full-tree builder would.
-    let mut scope: Vec<NsFrame> = Vec::new();
+    let mut scope = NsScope::default();
     // Depth of currently-open elements: 0 before root, 1 inside <w:document>,
     // 2 inside <w:body>. Body children open at depth 2 -> their subtree.
     let mut depth: usize = 0;
@@ -1307,7 +1385,7 @@ fn build_subtree_from_open(
     reader: &mut Reader<&[u8]>,
     buf: &mut Vec<u8>,
     open: Element,
-    scope: &mut Vec<NsFrame>,
+    scope: &mut NsScope,
 ) -> Result<Element, WordXmlError> {
     // Local stack rooted at `open`; `scope` already has `open`'s frame on top.
     let mut stack: Vec<Element> = vec![open];
