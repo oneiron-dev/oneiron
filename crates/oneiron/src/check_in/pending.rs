@@ -36,6 +36,49 @@ use crate::store::Store;
 pub(super) const PENDING: SideTable<EntityId, PendingCheckIn, Named> =
     SideTable::new(&side_table::CHECK_IN_PENDING);
 
+/// Each open pending check-in by its next due time (2e): the housekeeping
+/// pass reads it in order (`wake`), and the vault's wake reads its first row.
+pub(super) const DUE: SideTable<(u64, EntityId), (), Named> =
+    SideTable::new(&side_table::CHECK_IN_DUE);
+
+/// Writes `row` and moves its `DUE` entry to the row's next due time, or
+/// drops it once the row is final. Every write of a pending row comes here,
+/// so the index holds each open row once, at its due time; a row written
+/// before the index existed gains its entry at its next write.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn store_pending_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &PendingCheckIn,
+) -> Result<()> {
+    let stored_due = PENDING
+        .get(store, txn, &row.id)?
+        .and_then(|stored| stored.next_due_at());
+    let due = row.next_due_at();
+    if let Some(at) = stored_due.filter(|at| Some(*at) != due) {
+        DUE.delete(store, txn, &(at, row.id))?;
+    }
+    if let Some(at) = due {
+        DUE.put(store, txn, &(at, row.id), &())?;
+    }
+    PENDING.put(store, txn, &row.id, row)
+}
+
+/// Deletes the row `id` and its `DUE` entry.
+fn delete_pending_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    if let Some(at) = PENDING
+        .get(store, txn, id)?
+        .and_then(|stored| stored.next_due_at())
+    {
+        DUE.delete(store, txn, &(at, *id))?;
+    }
+    PENDING.delete(store, txn, id)?;
+    Ok(())
+}
+
 /// A rung of the ladder above rung 1 (ARCH-0082 #ladder).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -462,7 +505,7 @@ pub(crate) fn open_pending_check_in_in_txn(
         now,
     )?;
     enter_next_rung(vault, txn, &mut row, chain, now)?;
-    PENDING.put(&vault.store, txn, &row.id, &row)?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(row)
 }
 
@@ -558,7 +601,7 @@ pub(crate) fn answer_pending_check_in_in_txn(
         fields,
         now,
     )?;
-    PENDING.put(&vault.store, txn, &row.id, &row)?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(row)
 }
 
@@ -620,7 +663,7 @@ pub(crate) fn extend_pending_check_in_in_txn(
         fields,
         now,
     )?;
-    PENDING.put(&vault.store, txn, &row.id, &row)?;
+    store_pending_in_txn(&vault.store, txn, &row)?;
     Ok(row)
 }
 
@@ -655,7 +698,7 @@ pub(crate) fn record_objection_in_txn(
         by: Some(by),
         at: now,
     });
-    PENDING.put(store, txn, &row.id, &row)?;
+    store_pending_in_txn(store, txn, &row)?;
     Ok(row)
 }
 
@@ -756,14 +799,14 @@ pub(crate) fn erase_pending_check_in_actor_in_txn(
             continue;
         }
         if scrub_row(&mut row, actor) {
-            changed.push((key, row));
+            changed.push(row);
         }
     }
     for key in removed {
-        PENDING.delete(&vault.store, wtxn, &key)?;
+        delete_pending_in_txn(&vault.store, wtxn, &key)?;
     }
-    for (key, row) in changed {
-        PENDING.put(&vault.store, wtxn, &key, &row)?;
+    for row in changed {
+        store_pending_in_txn(&vault.store, wtxn, &row)?;
     }
     Ok(())
 }

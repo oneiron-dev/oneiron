@@ -26,10 +26,13 @@
 //!   holder answers while its live grant and its own check-in admit the act,
 //!   and an agent holder's verdict comes from its caller.
 //!
+//! * the host that wakes a due check-in (PR 2, P2.3: 2e): each housekeeping
+//!   pass advances the open rows due by now, in due order, and the vault's
+//!   wake reads the first due row.
+//!
 //! Fan-out admission is the first caller, through [`check_in_with_mode`],
-//! because its mode comes from its own manifest rows. The host that wakes a
-//! due check-in (2e), the agent verbs (2f, 2l), the change path and the key
-//! and quorum proofs are later builds.
+//! because its mode comes from its own manifest rows. The agent verbs (2f,
+//! 2l), the change path and the key and quorum proofs are later builds.
 
 mod act_class;
 mod chain;
@@ -42,6 +45,7 @@ mod role_preset;
 pub(crate) mod tables;
 mod verb_act_class;
 mod waits;
+mod wake;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
@@ -73,5 +77,6 @@ pub use resolve::{
 pub use role_preset::{ROLE_PRESET, RoleDefault, RolePreset, RolePresetRow};
 pub use verb_act_class::{VerbActClass, verb_act_class};
 pub use waits::CheckInTransition;
+pub(crate) use wake::next_check_in_due_at;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use waits::advance_pending_check_in_in_txn;
