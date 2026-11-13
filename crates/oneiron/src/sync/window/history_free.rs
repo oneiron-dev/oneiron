@@ -32,8 +32,9 @@ use super::super::origin_claims::{receipt_actor, section_fit_body};
 use super::super::types::WindowKey;
 use super::bridge::BRIDGE_ORIGIN;
 use super::egress::{
-    history_free_window_required, scrub_local_claim_carriers, scrub_local_only_carriers,
-    scrub_redacted_attribution_carriers, scrub_withdrawn_delete_carriers,
+    history_free_window_required, is_local_only_carrier, require_history_free_window,
+    scrub_local_claim_carriers, scrub_local_only_carriers, scrub_redacted_attribution_carriers,
+    scrub_withdrawn_delete_carriers,
 };
 use super::erased_origin::ErasedOrigin;
 use super::reverse::{is_delegated_channel_identity_carrier, is_unsyncable_secret_custody};
@@ -568,16 +569,21 @@ pub fn export_window_since_for(
     if super::device_only::export_withheld_for(vault, key, doc, &remote, withhold)? {
         return super::device_only::withheld_window_update().map(WindowExport::Update);
     }
+    // No scrub moves the shallow root, so the floor reads the same before them. A peer that
+    // holds it may get history past its own version; any other gets a snapshot, which may carry
+    // all the history the doc retains.
+    let holds_floor = remote.includes_vv(&doc.shallow_since_vv().to_vv())
+        && baseline.is_none_or(|floor| remote.includes_vv(floor));
+    let nothing = VersionVector::default();
+    let history_from = if holds_floor { &remote } else { &nothing };
     let Scrubbed {
         check,
         device_only_history,
-    } = scrub_for_export(vault, key, doc, &remote, withhold)?;
+    } = scrub_for_export(vault, key, doc, &remote, history_from, withhold)?;
     if device_only_history {
         return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline, withhold)
             .map(WindowExport::Replacement);
     }
-    let holds_floor = remote.includes_vv(&doc.shallow_since_vv().to_vv())
-        && baseline.is_none_or(|floor| remote.includes_vv(floor));
     if holds_floor
         && check
             .as_ref()
@@ -625,7 +631,7 @@ pub fn export_window_replacement_for(
     let Scrubbed {
         check,
         device_only_history,
-    } = scrub_for_export(vault, key, doc, &nothing, withhold)?;
+    } = scrub_for_export(vault, key, doc, &nothing, &nothing, withhold)?;
     if device_only_history {
         return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline, withhold)
             .map(Some);
@@ -699,11 +705,13 @@ pub(crate) fn export_sealed_mirror_snapshot(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<SealedMirrorExport> {
+    let nothing = VersionVector::default();
     let Scrubbed { check, .. } = scrub_for_export(
         vault,
         key,
         doc,
-        &VersionVector::default(),
+        &nothing,
+        &nothing,
         super::Withhold::Nothing,
     )?;
     let check = match check {
@@ -746,11 +754,15 @@ struct Scrubbed {
 }
 
 /// Refreshes NOTE carriers and runs every egress scrub over `doc`, as each export does.
+/// `history_from` is the version past which the export may ship ordinary history: when no scrub
+/// removed anything and the window is not pinned, the operations past it are read for a
+/// local-only carrier a delete took out before any scrub saw it.
 fn scrub_for_export(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
     remote: &VersionVector,
+    history_from: &VersionVector,
     withhold: super::Withhold<'_>,
 ) -> Result<Scrubbed> {
     crate::sync::note::refresh(vault, doc, key)?;
@@ -820,6 +832,7 @@ fn scrub_for_export(
         || source_audiences_scrubbed
         || positions_scrubbed
         || history_free_window_required(vault, key)?
+        || pin_local_only_history(vault, key, doc, history_from)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)
     } else {
@@ -830,4 +843,40 @@ fn scrub_for_export(
         device_only_history: remote.is_empty()
             && super::device_only::delta_carries_device_only_for(vault, doc, remote, withhold)?,
     })
+}
+
+/// Whether an operation of `doc` past `from` inserted a carrier no window ships
+/// ([`is_local_only_carrier`]); one that did pins window `key` history-free, as the live scrub
+/// does before it removes one. A carrier a delete took out of the live map before any scrub saw
+/// it, such as a dev vault's custody row from before the seal (ARCH-0069
+/// `#custody-seal-planned`), left the window unpinned while its body still rides ordinary
+/// history.
+fn pin_local_only_history(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    from: &VersionVector,
+) -> Result<bool> {
+    // The export commits a pending edit too, so read it into the range.
+    doc.commit();
+    let entities = ContainerID::new_root("entities", ContainerType::Map);
+    let carried = doc
+        .export_json_updates(from, &doc.oplog_vv())
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| {
+            op.container == entities
+                && matches!(
+                    &op.content,
+                    JsonOpContent::Map(MapOp::Insert {
+                        key: entity_key,
+                        value: LoroValue::Binary(blob),
+                    }) if is_local_only_carrier(entity_key, blob)
+                )
+        });
+    if carried {
+        require_history_free_window(vault, key)?;
+    }
+    Ok(carried)
 }

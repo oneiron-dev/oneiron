@@ -112,6 +112,22 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
     })
 }
 
+/// Whether the entities-map value `blob` under key `raw_key` is a carrier no
+/// window ships, by its body: a diagnostic observation, a secret-custody row,
+/// a delegated channel identity or an LFS chunk. The live scrub
+/// ([`scrub_local_only_carriers`]) removes such a value, and the export's
+/// history scan holds back one an operation inserted.
+pub(super) fn is_local_only_carrier(raw_key: &str, blob: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(blob).is_some_and(|header| {
+        matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_SECRET_CUSTODY | crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        )
+    }) || is_delegated_channel_identity_carrier(blob)
+        || EntityId::from_hex(raw_key)
+            .is_ok_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob))
+}
+
 /// Removes local-only diagnostic and secret-custody carriers from the window
 /// doc. Diagnostic observations and secret custody never sync. Neither
 /// refused body may ship in an update.
@@ -145,17 +161,7 @@ pub(super) fn scrub_local_only_carriers(
             key_carriers.push((raw_key.to_owned(), blob.to_vec()));
             return;
         }
-        let lfs_chunk = EntityId::from_hex(raw_key)
-            .ok()
-            .is_some_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob));
-        if crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|h| {
-            !matches!(
-                h.entity_type,
-                crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                    | crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            ) && !is_delegated_channel_identity_carrier(blob)
-        }) && !lfs_chunk
-        {
+        if !is_local_only_carrier(raw_key, blob) {
             return;
         }
         match EntityId::from_hex(raw_key) {
