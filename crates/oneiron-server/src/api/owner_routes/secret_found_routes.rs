@@ -17,6 +17,15 @@
 //! - re-enter: a key ruled no secret whose custody key no longer opens its
 //!   kept value takes the value again (FIX 7404).
 //!
+//! The person who wrote a key's record in their own name may give two of
+//! these answers, not a secret and keep as text, at the same two routes, on
+//! their own verified human slip ([`holder`]; ARCH-0038 "The writer may
+//! mark a hit 'not a secret'", L6-03-WRITER-MARK = B). That proof lends them
+//! no owner authority: the engine admits the vault's live owner, or else the
+//! live person the key's recorded writer names, in the acting transaction,
+//! and refuses anyone else with the owner door's refusal. No agent reaches
+//! these routes, and every other answer here stays the owner's.
+//!
 //! Each act writes its receipt in the engine; nothing here reads a value.
 
 use std::sync::Arc;
@@ -30,10 +39,11 @@ use axum::routing::{get, post};
 use oneiron::secret_custody::{FoundKeyCard, FoundKeyCursor, FoundKeyNotice, FoundKeySettled};
 use serde::{Deserialize, Serialize};
 
+use super::world_privacy_routes::holder;
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{has_json_content_type, query_params};
-use crate::auth::CoreAuth;
+use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::owner::secrets::reenter_kept_value_body_schema;
 use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
@@ -85,7 +95,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/secrets/found/not-a-secret",
-                summary: "The owner overrules the scan for that key in its record.",
+                summary: "The owner, or the person who wrote the key's record, overrules the scan for that key in its record.",
                 row: None,
                 shape: Some(RestShape::json(
                     found_key_body_schema,
@@ -98,7 +108,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/secrets/found/keep-as-text",
-                summary: "Keeps the found secret as text by the owner's explicit choice, without ruling it a false hit.",
+                summary: "Keeps the found secret as text by the explicit choice of the owner, or of the person who wrote the key's record, without ruling it a false hit.",
                 row: None,
                 shape: Some(RestShape::json(
                     found_key_body_schema,
@@ -340,9 +350,10 @@ async fn grant(
     Ok(Json(settled))
 }
 
-/// `POST /v1/owner/secrets/found/not-a-secret` with `{"handle"}`: the owner
+/// `POST /v1/owner/secrets/found/not-a-secret` with `{"handle"}`: the owner,
+/// or the person who wrote the key's record on their own slip ([`holder`]),
 /// overrules the scan for that key in its record. Its revoke records where
-/// his request reached this install, as this request proves it
+/// the request reached this install, as this request proves it
 /// (`machine_routes::act_surface_admitted`): audit only (FIX 4650).
 async fn not_a_secret(
     auth: CoreAuth,
@@ -351,21 +362,22 @@ async fn not_a_secret(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<FoundKey>,
 ) -> OwnerReply<SettledView> {
-    let owner = owner(&auth, &server)?;
+    let person = holder(&auth, &server, CoreScope::Write)?;
     let surface =
         super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<SettledView> {
         Ok(server
             .vault()
-            .rule_found_key_not_a_secret(&owner, surface, &request.handle)?
+            .rule_found_key_not_a_secret(&person, surface, &request.handle)?
             .into())
     })
     .await?;
     Ok(Json(settled))
 }
 
-/// `POST /v1/owner/secrets/found/keep-as-text` with `{"handle"}`: the owner
+/// `POST /v1/owner/secrets/found/keep-as-text` with `{"handle"}`: the owner,
+/// or the person who wrote the key's record on their own slip ([`holder`]),
 /// keeps the secret as text, rather than overruling the scan as a false hit.
 async fn keep_as_text(
     auth: CoreAuth,
@@ -374,14 +386,14 @@ async fn keep_as_text(
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<FoundKey>,
 ) -> OwnerReply<SettledView> {
-    let owner = owner(&auth, &server)?;
+    let person = holder(&auth, &server, CoreScope::Write)?;
     let surface =
         super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<SettledView> {
         Ok(server
             .vault()
-            .keep_found_key_as_text(&owner, surface, &request.handle)?
+            .keep_found_key_as_text(&person, surface, &request.handle)?
             .into())
     })
     .await?;
