@@ -863,6 +863,18 @@ impl PipelineBuilder<'_> {
                 None => HashSet::new(),
             };
             if let Some(context_pack_budget) = self.context_pack_budget {
+                // Read after the fold, so a TURN carries its MESSAGEs' match.
+                let matched: HashSet<_> = scores
+                    .iter()
+                    .filter(|row| {
+                        entity_rank::direct_query_match(
+                            &acc.signal_components,
+                            &row.id,
+                            temporal_is_query,
+                        )
+                    })
+                    .map(|row| row.id)
+                    .collect();
                 let share_held_back = apply_context_pack_retrieval_budget(
                     &mut scores,
                     &self.read,
@@ -871,6 +883,7 @@ impl PipelineBuilder<'_> {
                     context_pack_budget,
                     world_share,
                     &critical,
+                    &matched,
                 )?;
                 emptied_by_policy |= share_held_back && scores.is_empty();
             }

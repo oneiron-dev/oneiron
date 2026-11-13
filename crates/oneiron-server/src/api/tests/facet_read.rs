@@ -29,25 +29,22 @@ struct Room {
 
 fn facets() -> Facets {
     let (_dir, server) = interlocutor_test_server();
-    let owner = seeded_test_entity_id(0x2614_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     // The seeded manifest's agent ceiling names the first-party connector
     // actor; MCP resolves an agent connector only under one.
     let agent = oneiron::EntityId::from_bytes([0xE1; 16]).unwrap();
-    for (id, kind) in [
-        (owner, oneiron::registry::ENTITY_TYPE_PERSON),
-        (agent, oneiron::registry::ENTITY_TYPE_PERSON),
-    ] {
-        server
-            .vault
-            .put_entity(
-                &id,
-                kind,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"person",
-            )
-            .expect("onboard person");
-    }
+    server
+        .vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .expect("onboard person");
     bind_room_owner(&server, owner);
     let room = |seed: u128| {
         let facet = seeded_test_entity_id(seed);
@@ -67,38 +64,11 @@ fn facets() -> Facets {
             oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner)
                 .unwrap();
         roster.slice.facet = Some(facet);
-        create_owned_project(&server, owner, project, &roster);
         roster.roster.push(agent.to_hex());
+        // The member joins at the owner-signed birth: its v3 proof signs the
+        // roster, and the birth derives the home room from it.
+        create_owned_project(&server, owner, project, &roster);
         let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
-        let exact_room = oneiron::workspace_roster::ProjectRoom {
-            schema_version: 1,
-            kind: "channel".into(),
-            project_id: project.to_hex(),
-            member_ids: roster.roster.clone(),
-            claims_scope_ref: roster.claims_scope_ref.clone(),
-            origin: None,
-            pins: Vec::new(),
-            pin_policy: Default::default(),
-        };
-        server
-            .vault
-            .batch()
-            .put(
-                &project,
-                server.vault.project_type_byte().unwrap(),
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                &rmp_serde::to_vec_named(&roster).unwrap(),
-            )
-            .put(
-                &room,
-                oneiron::registry::ENTITY_TYPE_CONVERSATION,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                &rmp_serde::to_vec_named(&exact_room).unwrap(),
-            )
-            .commit()
-            .expect("onboard the agent into the project and its room");
         let message = oneiron::EntityId::now();
         server
             .vault
@@ -114,8 +84,12 @@ fn facets() -> Facets {
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: 2,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .expect("speak");
         Room {

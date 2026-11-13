@@ -1229,6 +1229,27 @@ pub(super) fn project_connector_send_task_outcome(
     })
 }
 
+/// The synced suppression of a send the owner took back inside its
+/// undo-send window (DEC-0006 #undo-send).
+pub(super) const UNDO_SEND_SUPPRESSION: &str = "undo_send";
+
+/// Settles the TASK of a send the owner took back inside its undo-send
+/// window (DEC-0006 #undo-send), in the caller's write: failed, with the
+/// synced reason [`UNDO_SEND_SUPPRESSION`], so no machine takes it to send
+/// again ([`connector_send_task_permits_send`]).
+pub(super) fn project_connector_send_task_undone_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    now: u64,
+) -> Result<(), Error> {
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        body.outcome = Some(ConnectorSendTaskOutcome::Failed);
+        body.suppression = Some(UNDO_SEND_SUPPRESSION.to_owned());
+        Ok(())
+    })
+}
+
 pub(super) fn project_connector_send_task_suppression_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

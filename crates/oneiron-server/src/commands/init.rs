@@ -1023,11 +1023,12 @@ provider = "local"
         // embedder prepared first, its device refusal would come back instead,
         // and with a device that resolved, its model download would start.
         let env = EnvConfig::from_pairs([("ONEIRON_EMBEDDER_DEVICE", "cuda")]).unwrap();
+        // The local tagger is built since 68071b65132 (OF-119, OF-539); with
+        // no bundle named, it is the tagger that is refused, by name.
         let refused = init_with_env(args.clone(), env, None).unwrap_err();
-        assert_eq!(
-            refused.downcast_ref::<crate::oneironer::TaggerNotBuilt>(),
-            Some(&crate::oneironer::TaggerNotBuilt::LocalProvider),
-            "{refused}"
+        assert!(
+            format!("{refused:#}").contains("--oneironer local requires --oneironer-model-dir"),
+            "{refused:#}"
         );
         assert!(!args.path.exists());
         assert!(!dir.path().join("oneiron.toml").exists());

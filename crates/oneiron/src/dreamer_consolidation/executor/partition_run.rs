@@ -212,6 +212,11 @@ impl ConsolidationExecutor<'_> {
             Ok(PartitionRun::Refused { reason }) => {
                 Ok(charges.park_for(&reason, DreamerParkCause::Retry))
             }
+            // A spend scope refused a step for good: the try ends Failed,
+            // typed, with what it already spent (BUDGET-TRAP-UNTYPED-NO-SENDER).
+            Ok(PartitionRun::BudgetRefused { reason, refusal }) => {
+                Ok(charges.fail_refused(&reason, refusal))
+            }
             // A turn demoted after the model answered waits too (FIX 6060),
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {

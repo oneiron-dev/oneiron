@@ -75,13 +75,13 @@ pub use field::{
 };
 pub use library::{
     AdmissionRefusal, Admitted, DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput,
-    DraftPage, DraftStep, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
-    LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
-    LibraryRunInput, LibraryRunMode, LibraryRunOutput, PressedThrough, ProposeInput, ProposeOutput,
-    RecentCounts, ReplayGuest, RetiredCard, RunOutcome, SecretArg, SecretParam, SlotCandidate,
-    SlotField, SupersedeOutcome, SupersedeRefusal, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
-    WorkflowProof, WorkflowSeed, default_mode, draft_from_steps, effective_mode, model_free,
-    site_of, validate_replay_args,
+    DraftPage, DraftStep, DraftTypeRef, FiledWorkflow, LibraryCard, LibraryFindInput,
+    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput,
+    LibraryRetiredOutput, LibraryRunInput, LibraryRunMode, LibraryRunOutput, PressedThrough,
+    ProposeInput, ProposeOutput, RecentCounts, ReplayGuest, RetiredCard, RunOutcome, SecretArg,
+    SecretParam, SlotCandidate, SlotField, SupersedeOutcome, SupersedeRefusal, WorkflowCheck,
+    WorkflowLibrary, WorkflowProgram, WorkflowProof, WorkflowSeed, default_mode, draft_from_steps,
+    effective_mode, model_free, site_of, validate_replay_args,
 };
 #[cfg(feature = "driver")]
 pub use library::{filled_checks, program_origin};

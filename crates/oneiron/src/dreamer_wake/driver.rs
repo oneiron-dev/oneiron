@@ -285,6 +285,27 @@ impl<'a> DreamerWakeDriver<'a> {
         Ok(report)
     }
 
+    /// Wakes the pass budget parks of this pass's lease owner that the pass's
+    /// guard has room for. A driver with no guard has no pass room to give.
+    /// A wake that fails is logged and never stops the pass.
+    fn wake_pass_budget_parks(&self, input: &RunWakePass) {
+        let Some(guard) = &self.guard else {
+            return;
+        };
+        let room = guard.read().remaining_units;
+        if let Err(error) = crate::llm::wake_pass_budget_traps(
+            self.vault,
+            &input.lease_owner,
+            room,
+            input.now.saturating_mul(1_000),
+        ) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "pass budget parks were not woken this pass"
+            );
+        }
+    }
+
     fn begin_wake(&mut self, input: &RunWakePass) -> Result<()> {
         let now = input.now;
         // Per-pass driver state (ONE-1305): a reused driver must fire its
@@ -304,6 +325,10 @@ impl<'a> DreamerWakeDriver<'a> {
         // (here, or by a peer through sync) resumes its parked attempt as
         // the same try, admissible in this very pass.
         crate::llm::resume_signalled_steps(self.vault, now.saturating_mul(1_000))?;
+        // A step its pass's guard refused parked for a later pass: this pass's
+        // guard wakes the oldest it has room for, as the same tries,
+        // admissible in this very pass (BUDGET-TRAP-UNTYPED-NO-SENDER).
+        self.wake_pass_budget_parks(input);
         // An ended pass's Checkpoint parks, and its Retry parks whose delay
         // passed, resume as the same tries (DOOR-144).
         self.resume_checkpoints(input);

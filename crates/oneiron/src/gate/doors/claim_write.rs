@@ -10,7 +10,7 @@ mod stored_close;
 use record_inner::check_claim_policy_for_write_with_record_inner;
 pub(crate) use reference_hook::check_claim_policy_for_write_with_record_with_reader_reference_probe;
 pub(crate) use reference_read::unresolved_claim_reference;
-use stored_close::{closes_stored_row_only, closes_stored_value};
+use stored_close::{approves_stored_proposal_only, closes_stored_row_only, closes_stored_value};
 
 use super::burst_inputs::claim_burst_inputs;
 use super::consent::{

@@ -368,14 +368,24 @@ pub fn run_ics_feed_poll_with_screener(
                 source: Some(source),
                 verdict_fold: VerdictFold::default(),
                 continuations: Some(Vec::new()),
+                owed_booking_moves: 0,
             };
             admission.apply_feed(&feed)?;
             admission.sweep_absent_sources(&feed)?;
+            // A booking move a pending emergency delivery held back stays
+            // owed (FIX 22385): the cursor keeps no ETag, so the next poll
+            // reads the whole feed again rather than a not-modified answer,
+            // and the move lands once the delivery completes.
+            let etag = if admission.owed_booking_moves > 0 {
+                None
+            } else {
+                etag.or(cursor.etag)
+            };
             write_cursor(
                 vault,
                 &cursor_digest,
                 IcsFeedCursor {
-                    etag: etag.or(cursor.etag),
+                    etag,
                     write_seq: cursor.write_seq,
                     last_complete_at: Some(now),
                     last_screen_verdict: Some(admission.verdict_fold.token().to_owned()),

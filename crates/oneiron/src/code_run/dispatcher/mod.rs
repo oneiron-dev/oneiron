@@ -3,6 +3,7 @@
 //! Child modules own behavior; call definitions are forwarded from `code_run::types`.
 
 mod admission;
+mod agent_powers;
 mod agent_verb;
 mod agent_wait;
 mod binding;

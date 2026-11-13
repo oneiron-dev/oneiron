@@ -22,7 +22,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::{TimeRange, Vault};
 use oneiron_authority::federation::{
-    FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope, WalletRef,
+    FederationGrantKind, GitPushBounds, RepoAccessBounds, Scope, WalletRef, WorkingViewEditBounds,
 };
 
 use super::machine_standing::{InstallCounted, Standing};
@@ -55,7 +55,9 @@ pub(crate) enum AgentGrantAct {
     /// 8735); empty when he named none. `wallet_ref` names the host wallet
     /// the work the Grant funds draws on (FIX 7766); `None` when he named
     /// none. `steward` marks his Steward grant to a base agent (untangle
-    /// 6.3): the row is a Steward, never a Delegate.
+    /// 6.3): the row is a Steward, never a Delegate. `working_view_bounds`
+    /// binds the repo bounds to one owner working view (row 6
+    /// WORKING-VIEW-EDIT); `None` when he bound none.
     Mint {
         grant: EntityId,
         member: EntityId,
@@ -67,6 +69,7 @@ pub(crate) enum AgentGrantAct {
         verb_classes: BTreeSet<String>,
         wallet_ref: Option<WalletRef>,
         steward: bool,
+        working_view_bounds: Option<WorkingViewEditBounds>,
     },
     /// The owner revokes the Grant `grant`, acknowledging exactly the
     /// topology decision tokens the writer collected (FIX 5114).
@@ -91,6 +94,7 @@ impl AgentGrantAct {
                 verb_classes,
                 wallet_ref,
                 steward,
+                working_view_bounds,
             } => (
                 grant,
                 AgentGrantChange::Mint {
@@ -103,6 +107,7 @@ impl AgentGrantAct {
                     verb_classes,
                     wallet_ref,
                     steward,
+                    working_view_bounds,
                 },
             ),
             Self::Revoke {

@@ -31,8 +31,9 @@ struct MintEvidence {
 
 impl MintEvidence {
     /// Whether this act signed exactly the Grant `standing` holds: its id,
-    /// owner, member, scope, expiry, repo bounds, kind, verb classes and
-    /// wallet. An act that only names the same id is not its evidence.
+    /// owner, member, scope, expiry, repo bounds, kind, verb classes, wallet
+    /// and working view bound. An act that only names the same id is not its
+    /// evidence.
     fn signs(&self, standing: &AgentGrantStanding) -> bool {
         let AgentGrantChange::Mint {
             member,
@@ -44,6 +45,7 @@ impl MintEvidence {
             verb_classes,
             wallet_ref,
             steward,
+            working_view_bounds,
         } = &self.record.change
         else {
             return false;
@@ -60,6 +62,7 @@ impl MintEvidence {
             && *git_push_bounds == grant.git_push_bounds
             && *verb_classes == grant.verb_classes
             && *wallet_ref == grant.wallet_ref
+            && *working_view_bounds == grant.working_view_bounds
     }
 }
 

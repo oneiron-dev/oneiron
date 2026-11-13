@@ -5,6 +5,7 @@
 
 mod actor_erase;
 mod receipts;
+mod restore_group;
 mod revert;
 mod settle;
 mod snapshot;
@@ -231,6 +232,11 @@ enum RunInverse {
     Note(crate::note::RunNoteUndo),
     Topology {
         event: String,
+    },
+    /// A restored claim with raw evidence, which names no author: its undo
+    /// retracts it while its row is unchanged (RULING 02:26 13 Nov, R5).
+    Restored {
+        fingerprint: String,
     },
 }
 

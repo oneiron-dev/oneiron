@@ -246,6 +246,11 @@ impl<'a> HostSelfDispatcher<'a> {
                 AgentScope::All => true,
             });
         let lease = self.agent_lease.as_ref().ok_or_else(invalid)?;
+        // SPAWN-KNOB: a definition the caller may not save is refused with
+        // its receipt; the author writer checks the same grant again.
+        if let Some(denied) = self.check_save_agent_power(id.as_bytes())? {
+            return Err(crate::code_run::payload::replay_denied_trap_error(&denied));
+        }
         vault.put_agent_definition_for_author_with_scope(
             &self.actor.entity_ref(),
             id,
@@ -272,6 +277,16 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         if call.intent_key.trim().is_empty() || call.intent_key.len() > SPAWN_INTENT_KEY_MAX_BYTES {
             return Err(invalid());
+        }
+        // SPAWN-KNOB: refused before any plan, reservation or enqueue; the
+        // dispatch writer checks the parent's grant again and stages the
+        // child's.
+        if let Err(denied) = self.check_spawn_powers(
+            crate::code_run::SelfEffect::AgentsSpawn,
+            call.context.powers,
+            call.intent_key.as_bytes(),
+        )? {
+            return Ok(SelfDispatchOutcome::Denied(denied));
         }
         let now = crate::unix_seconds_now();
         // OF-541: with the host's planner and the agent's lease, an ask is
