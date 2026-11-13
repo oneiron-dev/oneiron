@@ -311,6 +311,12 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# A world's device text space (census L5-26 PR 2) roots its server on a `MemoryKeystore` too.
+[[test]]
+name = "world_space_recall_seed"
+path = "tests/world_space_recall_seed.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 
