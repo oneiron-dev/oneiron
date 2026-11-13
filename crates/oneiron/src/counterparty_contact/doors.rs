@@ -230,8 +230,9 @@ impl Vault {
     /// the heads itself would be asserting against its own copy of the door's
     /// rules rather than the door. This changes nothing about the door: it is
     /// the same call the shipping writers make, reachable from the sibling
-    /// module that pins the opt-out coexistence ladder.
-    #[cfg(test)]
+    /// module that pins the opt-out coexistence ladder, and from the
+    /// integration tests' door (`test_doors::contact_family_heads`).
+    #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn supersede_counterparty_contact_claim_heads_for_test(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
