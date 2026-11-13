@@ -313,7 +313,7 @@ impl OffRecordSession<'_> {
 
     /// The base conversation shell this session witnesses under while ON
     /// RECORD (K10), allocated on the first post-flip witness and reused until
-    /// flip-back.
+    /// flip-back; each on-record stretch gets its own (FIX 22388).
     ///
     /// Deliberately distinct from the overlay shell: witnessing an on-record
     /// turn under the overlay conversation id would write a BASE row

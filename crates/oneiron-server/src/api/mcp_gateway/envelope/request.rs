@@ -1,4 +1,4 @@
-//! One MCP JSON-RPC request: its id and its dispatch to initialize, tools/list or tools/call.
+//! One MCP JSON-RPC request: its id and its dispatch to the method it names.
 //! `handle_mcp_request` is its call surface.
 //! The envelope root defines `McpJsonRpcRequest` and `McpCallContext`, the records forwarded here.
 
@@ -35,6 +35,11 @@ pub(crate) async fn handle_mcp_request(
     let peer = crate::auth::proved_peer(headers, connection);
 
     match request.method.as_str() {
+        // The static catalog answers before any caller is resolved, an
+        // unauthenticated prober's included: it names no one, so it has no
+        // one to resolve (canon ARCH-0028 "Discover catalog"; Engine RULING
+        // L1-04 = B, 13 Nov 2026).
+        "server/discover" => Ok(mcp_server_discover_result()),
         "initialize" => {
             let actor =
                 resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
@@ -77,13 +82,7 @@ pub(crate) async fn handle_mcp_request(
                     "name": crate::mcp::MCP_SERVER_NAME,
                     "version": env!("CARGO_PKG_VERSION"),
                 },
-                "capabilities": {
-                    "tools": { "listChanged": false },
-                    "experimental": {
-                        (super::super::client_surface::MCP_GENERATED_UI_CAPABILITY):
-                            super::super::client_surface::initialize_capability(declared.as_ref()),
-                    },
-                },
+                "capabilities": mcp_server_capabilities(declared.as_ref()),
                 "surfaceMode": mode.as_str(),
                 "executeCodeAdmitted": matches!(mode, McpSurfaceMode::Primary)
                     && super::admission::mcp_execute_code_admitted(server, &actor),
@@ -93,7 +92,8 @@ pub(crate) async fn handle_mcp_request(
             });
             super::device_release::mcp_release_result(server, &actor, &[], false, result, false)
         }
-        // Actor-free, but a caller is still REQUIRED, as for every method.
+        // Actor-free, but a caller is still REQUIRED, as for every method but
+        // `server/discover`.
         "notifications/initialized" => {
             resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
                 .await?;
@@ -282,4 +282,49 @@ pub(crate) async fn handle_mcp_request(
         )
         .with_field("method")),
     }
+}
+
+/// The capabilities this server declares: its tools, whose registration is
+/// fixed, and generated UI, with the profile `declared` names as negotiated
+/// (`None`: none declared, as `server/discover` answers every caller).
+fn mcp_server_capabilities(
+    declared: Option<&oneiron::lens::GeneratedUiSurfaceCapabilities>,
+) -> Value {
+    json!({
+        "tools": { "listChanged": false },
+        "experimental": {
+            (super::super::client_surface::MCP_GENERATED_UI_CAPABILITY):
+                super::super::client_surface::initialize_capability(declared),
+        },
+    })
+}
+
+/// `server/discover` (canon ARCH-0028 "Discover catalog"): the static,
+/// account-neutral identity and capability summary, the same bytes for every
+/// caller. It holds the server's name and build version, the protocol
+/// versions it speaks, its capabilities and its endpoints. It holds nothing
+/// of the vault, a caller, a scope, a world or a facet, and no live state:
+/// retrieval health rides each result's envelope instead. It is the one
+/// publicly cacheable result (mcp-rc:cache-refusal).
+fn mcp_server_discover_result() -> Value {
+    let endpoints: Vec<Value> = McpSurfaceMode::ALL
+        .iter()
+        .map(|mode| {
+            json!({
+                "path": mode.path(),
+                "surfaceMode": mode.as_str(),
+            })
+        })
+        .collect();
+    json!({
+        "serverInfo": {
+            "name": crate::mcp::MCP_SERVER_NAME,
+            "version": env!("CARGO_PKG_VERSION"),
+        },
+        "protocolVersions": MCP_PROTOCOL_VERSIONS,
+        "capabilities": mcp_server_capabilities(None),
+        "endpoints": endpoints,
+        "ttlMs": crate::mcp::MCP_DISCOVER_TTL_MS,
+        "cacheScope": crate::mcp::MCP_DISCOVER_CACHE_SCOPE,
+    })
 }
