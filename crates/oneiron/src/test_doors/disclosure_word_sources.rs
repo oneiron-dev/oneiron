@@ -79,5 +79,5 @@ fn clamp_admits(vault: &Vault, audience: InterlocutorSet, record: &EntityId) -> 
         .store
         .port_entity_record(&rtxn, record)?
         .ok_or(Error::EntityNotFound)?;
-    ctx.admits(&vault.store, &rtxn, record, row.entity_type, None)
+    ctx.admits_in(vault, &rtxn, record, row.entity_type, None)
 }

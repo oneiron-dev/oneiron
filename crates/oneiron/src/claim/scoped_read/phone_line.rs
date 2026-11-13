@@ -99,7 +99,7 @@ impl ScopedRead<'_> {
             let Some(row) = self.vault.store.port_entity_record(&txn, source)? else {
                 return Err(crate::phone_line::invalid());
             };
-            if !disclosure.admits(&self.vault.store, &txn, source, row.entity_type, None)? {
+            if !disclosure.admits_in(self.vault, &txn, source, row.entity_type, None)? {
                 return Err(crate::phone_line::invalid());
             }
         }
