@@ -428,6 +428,19 @@ fn role_edge(
     person: EntityId,
     approval: ClaimApprovalStatus,
 ) -> EntityId {
+    role_edge_valid_from(vault, possessor, word, person, approval, None)
+}
+
+/// A role edge as [`role_edge`] writes it, whose valid time starts at
+/// `valid_from` (Unix seconds).
+fn role_edge_valid_from(
+    vault: &Vault,
+    possessor: EntityId,
+    word: &str,
+    person: EntityId,
+    approval: ClaimApprovalStatus,
+    valid_from: Option<u64>,
+) -> EntityId {
     let predicate = format!("relationship.{word}");
     declare_predicate_normal(vault, &predicate);
     let claim = EntityId::now();
@@ -441,6 +454,7 @@ fn role_edge(
     )
     .expect("role edge body");
     body.scope_facet = oneiron::claim::substrate_facet_id(possessor).expect("substrate facet");
+    body.valid_from = valid_from;
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("role edge put");
@@ -736,13 +750,21 @@ fn a_mention_minted_before_its_role_edge_is_asked_about() {
 /// the act-now ask, Owen Smith or someone new. On main the mention's own
 /// provisional settles it at once: the guard lets the message through, and
 /// it fails later on the recipient lookup (NOT_FOUND), not
-/// IDENTITY_UNSETTLED.
+/// IDENTITY_UNSETTLED. The edge's valid time starts at 1 s: the guard
+/// reads it at the vault's clock, as the save and the recheck do, not at 0.
 #[test]
 fn an_effect_on_an_inferred_role_edge_asks_first() {
     let dir = tempfile::tempdir().expect("dir");
     let (vault, owner) = open_with_owner(&dir);
     let owen = person(&vault, "Owen Smith");
-    role_edge(&vault, owner, "manager", owen, ClaimApprovalStatus::Auto);
+    role_edge_valid_from(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Auto,
+        Some(1),
+    );
 
     let (turn, link) = save_as(&vault, owner, "my manager called.", "my manager");
     let provisional = assert_mints(&vault, link);
