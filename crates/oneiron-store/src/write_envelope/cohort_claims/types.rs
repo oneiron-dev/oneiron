@@ -356,9 +356,11 @@ pub struct CommJurisdictionValue {
 
 /// One pure-data descriptor row, mirroring ARCH-0057 §4 fields.
 ///
-/// No descriptor runtime exists in engine Rust yet; this table is ready to
-/// register when the registry lands and is authoritative documentation until
-/// then. It has no persistence side effect and mints no entity.
+/// The row itself has no persistence side effect and mints no entity. The
+/// engine's descriptor registry (`oneiron::comm::descriptor`) seeds the
+/// compiled `comm.*` rows, this table's `comm.do_not_contact` among them, as
+/// descriptor entities at open, and the send gate's claims-read door reads
+/// the enforced ones (`oneiron::claim::enforcement_read`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClaimClassDescriptorRow {
     /// The predicate this row describes.
