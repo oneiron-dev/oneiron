@@ -123,6 +123,17 @@ impl Memory<'_> {
         Ok(author.validate_action_event(&read, author.principal(), render, state, event)?)
     }
 
+    /// The held `frame`'s rows read again under this handle's read
+    /// (GENUI-STATE-PERSIST): before a held card goes back to the credential
+    /// that rendered it, every row it binds is proved again on this read, as
+    /// an event's backing refs are. A row the read no longer admits, or one
+    /// that moved since the render, refuses.
+    pub fn lens_frame_reread(&self, frame: &LensRenderFrame) -> MemoryResult<()> {
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let reader = frame.for_event_author(&read)?;
+        Ok(reader.reprove_backing_refs(&read)?)
+    }
+
     /// `selected`, read reach this handle's actor selected on the card, as
     /// a model round trip's context (FIX 3268): each handle proved again
     /// against the held `frame`, its exact `render` and this handle's read

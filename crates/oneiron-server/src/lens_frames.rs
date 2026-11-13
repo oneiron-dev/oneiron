@@ -13,7 +13,7 @@
 //!
 //! State (GENUI-STATE-PERSIST): a card's `$state` lasts for the card's life
 //! here. Each accepted local event moves the one held state, and the
-//! credential that rendered the card reads it back
+//! credential that rendered the card reads the card back with it
 //! ([`LensFrameStore::rendered_card`]), so a reload, and every view of the
 //! card in the same app, draws the state its events left.
 //!
@@ -329,8 +329,8 @@ impl LensFrameStore {
     }
 
     /// The card `card` when `auth`'s caller rendered it here: the custody
-    /// that reads a card's current `$state` back (GENUI-STATE-PERSIST), as it
-    /// closes the card. `None` when it is not held or another credential
+    /// that reads a card back with its current `$state` (GENUI-STATE-PERSIST),
+    /// as it closes the card. `None` when it is not held or another credential
     /// rendered it.
     pub(crate) fn rendered_card(
         &self,

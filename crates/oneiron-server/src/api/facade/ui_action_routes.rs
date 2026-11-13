@@ -25,9 +25,10 @@
 //! a system job rendered answers `409`. Closing a card stays with the
 //! credential that rendered it, and retiring it with its run.
 //!
-//! `GET /v1/core/lens-frames/{card_id}` answers the card's current `$state`
-//! to the credential that rendered it (GENUI-STATE-PERSIST), so a reload
-//! draws the state the card's events left, not the render's initial values.
+//! `GET /v1/core/lens-frames/{card_id}` hands a held card back to the
+//! credential that rendered it (GENUI-STATE-PERSIST), its render carrying the
+//! current `$state`, so a reload draws the state the card's events left, not
+//! the render's initial values; its rows are proved again on that read first.
 //! A model round trip carries the card's `$state` at the press to the agent.
 //!
 //! `selectedContext` (FIX 3268) names selections the clicker made on this
@@ -428,16 +429,15 @@ fn tool_bound(
     Ok((bound, key))
 }
 
-/// `GET /v1/core/lens-frames/{card_id}` (GENUI-STATE-PERSIST): the current
-/// `$state` of a held card, for the credential that rendered it, as its
-/// events left it: `{"cardId", "$state"}`. A reload, and every view of the
-/// card in the same app (the talk, the pane beside the room, a pinned view),
-/// draws this one state instead of the render's initial values. It answers
-/// the state alone and never the render again: the render's rows were read
-/// under the read its render call made, and handing them out again would
-/// skip the read each use is checked under. A card this credential did not
-/// render, or one this server no longer holds, answers the re-render
-/// refusal.
+/// `GET /v1/core/lens-frames/{card_id}` (GENUI-STATE-PERSIST): a held card
+/// for the credential that rendered it, its render carrying the current
+/// `$state` its events left: `{"cardId", "render"}`. A reload, and every
+/// view of the card in the same app (the talk, the pane beside the room, a
+/// pinned view), draws this one state instead of the render's initial
+/// values. Every row the card binds is proved again on the caller's read
+/// first, as an event's are: a row it no longer reads, or one that moved
+/// since the render, refuses. A card this credential did not render, or
+/// one this server no longer holds, answers the re-render refusal.
 async fn card_state(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -448,11 +448,25 @@ async fn card_state(
         .ok()
         .and_then(|card| server.lens_frames.rendered_card(&auth, &card))
         .ok_or_else(rerender)?;
+    let (actor, class) = facade_actor(&server, &auth)?;
+    {
+        let server = Arc::clone(&server);
+        let auth = auth.clone();
+        let held = Arc::clone(&held);
+        super::clock_ingress::run_blocking(move || {
+            credential_memory(&server.vault, Some(&auth), actor, class)
+                .at(auth.locality())
+                .lens_frame_reread(&held.frame)
+        })
+        .await
+        .map_err(|_| internal("a lens frame read"))??;
+    }
     // An event in flight holds the lock from its validation to its effect,
     // so this reads the state before it or after it, never between.
-    let state = held.state.lock().await.clone();
+    let mut render = held.render.clone();
+    render.state = held.state.lock().await.clone();
     Ok(Json(
-        serde_json::json!({ "cardId": &held.render.card_id, "$state": &state }),
+        serde_json::json!({ "cardId": &held.render.card_id, "render": render }),
     ))
 }
 
