@@ -14,6 +14,12 @@
 //!   one exposure and queues the referee's run.
 //! - An agent with no Grant is refused FORBIDDEN; a campaign its own workflow drives, and an
 //!   unbound root, are refused.
+//! - Each pass step commits its accounting in the same write as its row, after checking that
+//!   no other pass moved the row (REVIEW-RESEARCH-ADVANCE D1-D3): a pass that lost its row
+//!   reserves nothing; the step that spends the shot serves the cohort and settles its
+//!   exposure in one write; a stale confirmation pass leaves the winner's token work open,
+//!   and the winner's referee runs on it. These three take single steps through the
+//!   `test_doors::research_continuation::step` door, on a row as a pass read it.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test verb_vault_research_advance`.
 #![cfg(oneiron_test_support)]
 
@@ -22,10 +28,13 @@ use std::sync::Arc;
 
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use oneiron::authority::{ActSurface, MachineRole};
-use oneiron::autoreason_campaign::research::{ResearchTask, ResearchWork};
+use oneiron::autoreason_campaign::research::{
+    ResearchContinuation, ResearchSplit, ResearchTask, ResearchWork, research_continuations,
+    research_promotions, research_reservations,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::llm::{RsiBudgetConfig, RsiBudgetShare, RsiTopUp};
+use oneiron::llm::{RsiBudgetConfig, RsiBudgetShare, RsiSettlement, RsiTopUp};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
 use oneiron::skill_optimize::{
     CutDecision, DerivationKind, EvalCaseDraft, EvalCohortSetup, EvalSeat, FamilyPurpose,
@@ -34,12 +43,12 @@ use oneiron::skill_optimize::{
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::derive_verbs::define_agent;
-use oneiron::test_doors::research_continuation::seed_continuation;
+use oneiron::test_doors::research_continuation::{seed_continuation, step};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, ResearchChildWire,
     create_agent_definition_as, mint_agent_grant_as, research_create_child_as_owner,
 };
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Error, Vault, VaultConfig};
 use oneiron_store::dreamer_attempt_payload::decode_dreamer_attempt_payload;
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
@@ -718,6 +727,197 @@ fn confirmation_holds_on_the_exposure_line_then_serves_once() {
         1,
         "no second serving"
     );
+}
+
+/// The campaign's one continuation, as the store holds it.
+fn stored_continuation(fixture: &Fixture, root: &Root) -> ResearchContinuation {
+    let rows = research_continuations(&fixture.vault, root.id).expect("read the continuations");
+    assert_eq!(rows.len(), 1, "one continuation: {rows:?}");
+    rows.into_iter().next().expect("one continuation")
+}
+
+/// One pass step on the continuation as the store holds it now.
+fn step_stored(fixture: &Fixture, root: &Root) {
+    let row = stored_continuation(fixture, root);
+    step(&fixture.vault, root.id, &row, T0).expect("one pass step");
+}
+
+/// Reservation `id`'s settlement; `None` while it is open.
+fn settlement(fixture: &Fixture, root: &Root, id: EntityId) -> Option<RsiSettlement> {
+    research_reservations(&fixture.vault, root.id)
+        .expect("read the reservations")
+        .into_iter()
+        .find(|row| row.id == id)
+        .expect("the campaign holds the reservation")
+        .settlement
+}
+
+fn cohort_servings(fixture: &Fixture, cohort: &EntityId) -> u64 {
+    fixture
+        .vault
+        .eval_cohort_exposure(cohort)
+        .expect("cohort exposure")
+        .candidates
+}
+
+#[test]
+fn a_pass_that_lost_its_row_reserves_nothing() {
+    let fixture = rooted_vault();
+    configure_rsi(&fixture, 120, 2, &[]);
+    let agents = agents(&fixture);
+    let root = create_root(&fixture, "lost-row");
+    bind(&fixture, &root, Some(&agents), None, None);
+    seed_continuation(
+        &fixture.vault,
+        root.id,
+        ResearchWork::Bootstrap,
+        vec![ResearchTask::Measure {
+            node: root.id,
+            split: ResearchSplit::Search,
+        }],
+        T0,
+    )
+    .expect("seed the bootstrap measure");
+    // A pass reads the row; another pass takes it first, reserves and dispatches.
+    let read = stored_continuation(&fixture, &root);
+    advance(&owner_memory(&fixture), &root).expect("the owner advances the campaign");
+    let reservations = research_reservations(&fixture.vault, root.id).expect("reservations");
+    assert_eq!(
+        reservations.len(),
+        1,
+        "the winner's one reservation: {reservations:?}"
+    );
+    let winner = reservations[0].id;
+
+    let lost = step(&fixture.vault, root.id, &read, T0)
+        .expect_err("the row moved since this pass read it");
+    assert!(matches!(lost, Error::ConcurrentWrite(_)), "{lost:?}");
+    let reservations = research_reservations(&fixture.vault, root.id).expect("reservations");
+    assert_eq!(
+        reservations.len(),
+        1,
+        "the pass that lost its row reserved nothing, not even a refunded row: {reservations:?}"
+    );
+    assert_eq!(reservations[0].id, winner);
+    assert_eq!(
+        reservations[0].settlement, None,
+        "the winner's reservation stays open"
+    );
+    assert_eq!(
+        fixture.vault.rsi_budget().expect("token line").reserved,
+        UNITS,
+        "the vault token line holds the winner's reservation alone"
+    );
+}
+
+#[test]
+fn the_confirmation_serving_settles_its_exposure_in_the_same_write() {
+    let fixture = rooted_vault();
+    configure_rsi(&fixture, 120, 1, &[]);
+    let campaign = confirmable(&fixture);
+    let root = &campaign.root;
+    let child = attempt_of(&campaign.child_hex);
+    // The basis puts the confirmation in front; the next step reserves its exposure and its
+    // token work.
+    step_stored(&fixture, root);
+    step_stored(&fixture, root);
+    let running = stored_continuation(&fixture, root)
+        .running
+        .expect("the confirmation is in flight");
+    assert_eq!(running.task, ResearchTask::Confirm { candidate: child });
+    assert!(
+        running.release.is_none() && running.run.is_none(),
+        "{running:?}"
+    );
+    let exposure = running.exposure.expect("the exposure reservation");
+    assert_eq!(settlement(&fixture, root, exposure), None);
+
+    // The step that spends the shot serves the cohort and settles the exposure with it.
+    step_stored(&fixture, root);
+    let row = stored_continuation(&fixture, root);
+    let running = row.running.as_ref().expect("the confirmation is in flight");
+    let release = running
+        .release
+        .as_ref()
+        .expect("the cohort went to the referee");
+    assert!(running.run.is_none(), "the referee is dispatched next");
+    assert_eq!(
+        settlement(&fixture, root, exposure),
+        Some(RsiSettlement::Exposure(1)),
+        "the serving spent its exposure in its own write"
+    );
+    assert_eq!(
+        settlement(&fixture, root, running.reservation),
+        None,
+        "the referee's token work stays reserved"
+    );
+    assert_eq!(cohort_servings(&fixture, &campaign.cohort), 1);
+    let basis = research_promotions(&fixture.vault, root.id)
+        .expect("read the promotions")
+        .into_iter()
+        .find(|basis| basis.candidate == child)
+        .expect("the candidate's basis");
+    assert_eq!(
+        basis
+            .confirmation
+            .and_then(|confirmation| confirmation.exposure),
+        Some(release.exposure.id),
+        "the basis marks the serving"
+    );
+    let line = fixture.vault.rsi_exploration().expect("exposure line");
+    assert_eq!((line.spent_exposure, line.reserved_exposure), (1, 0));
+}
+
+#[test]
+fn a_stale_confirmation_pass_leaves_the_winning_reservation_open() {
+    let fixture = rooted_vault();
+    configure_rsi(&fixture, 120, 1, &[]);
+    let campaign = confirmable(&fixture);
+    let root = &campaign.root;
+    step_stored(&fixture, root);
+    step_stored(&fixture, root);
+    // Two passes read the confirmation before either spends the shot.
+    let read = stored_continuation(&fixture, root);
+    let running = read.running.clone().expect("the confirmation is in flight");
+    let exposure = running.exposure.expect("the exposure reservation");
+    step(&fixture.vault, root.id, &read, T0).expect("the first pass serves the cohort");
+    let lost = step(&fixture.vault, root.id, &read, T0)
+        .expect_err("the second pass read the row before the first moved it");
+    assert!(matches!(lost, Error::ConcurrentWrite(_)), "{lost:?}");
+
+    assert_eq!(
+        settlement(&fixture, root, running.reservation),
+        None,
+        "the stale pass refunded nothing of the winner's"
+    );
+    assert_eq!(
+        settlement(&fixture, root, exposure),
+        Some(RsiSettlement::Exposure(1)),
+        "one serving, its exposure spent once"
+    );
+    assert_eq!(
+        research_reservations(&fixture.vault, root.id)
+            .expect("reservations")
+            .len(),
+        2,
+        "no other reservation"
+    );
+    assert_eq!(cohort_servings(&fixture, &campaign.cohort), 1);
+
+    // The winner goes on: the referee runs on its open reservation.
+    let answer = advance(&owner_memory(&fixture), root).expect("the owner advances");
+    let row = only_continuation(&answer);
+    let run_hex = row["running"]["run"]
+        .as_str()
+        .expect("the referee run is queued");
+    assert_eq!(row["runs"], json!([run_hex]), "{row}");
+    assert_eq!(
+        answer["budget"]["work_reserved"],
+        json!(UNITS),
+        "the referee's work is reserved, not refunded: {answer}"
+    );
+    assert_eq!(settlement(&fixture, root, running.reservation), None);
+    assert_eq!(cohort_servings(&fixture, &campaign.cohort), 1);
 }
 
 /// An enabled, active agent definition the owner creates: the advancing caller.

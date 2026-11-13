@@ -10,8 +10,9 @@
 //! write scope. A consumed confirmation shot stays spent: a referee that does
 //! not answer holds the campaign, and is never asked again. Serving that
 //! sealed cohort to the referee spends one exposure on the campaign's own
-//! exploration line, reserved before the shot; the meter never counts it as
-//! token work.
+//! exploration line, reserved before the shot and settled in the write that
+//! serves; the meter never counts it as token work. A step's reservations,
+//! serving and settlements commit in the same write as the row it moves.
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound::{Excluded, Unbounded};
 
@@ -22,17 +23,19 @@ use serde_json::json;
 use super::super::CampaignDatasetRef;
 use super::super::beam_promotion::SealedRefereeMeasurement;
 use super::super::general::Measurement;
-use super::budget::{is_budget_refusal, settle_research_work_unknown};
+use super::budget::{
+    Finish, ReservationAsk, Reserved, finish_in_txn, reservation_in_txn, reservation_signing,
+    reserve_in_txn,
+};
 use super::estimator::{self, ENGINE_ESTIMATOR_VERSION};
+use super::promotion::{basis_in_txn, serve_confirmation_in_txn, spend_confirmation_shot_in_txn};
 use super::{
     BINDING, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput, ForkKind, HeldOutCall,
     NODE, PromotionBasis, PromotionDisposition, ROUND, ResearchBinding, ResearchExecution,
     ResearchReservation, ResearchReservationLine, ResearchStep, ResearchTarget, SearchEvidence,
     SelectionReceipt, hex, invalid, nodes_in_txn, promote_measured, promotion_basis, proposal_of,
     record_fork, record_held_out_measurement, record_invalid_experiment, record_search_measurement,
-    refund_research_work, research_binding, research_incumbent, research_promotions,
-    research_reservations, reserve_confirmation, reserve_research_exploration,
-    reserve_research_work, settle_research_work,
+    research_binding, research_incumbent, research_promotions, research_reservations,
 };
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent,
@@ -131,9 +134,9 @@ pub struct ResearchRunning {
     #[serde(default)]
     pub exposure: Option<EntityId>,
     pub run: Option<AttemptId>,
-    /// A confirmation's sealed release, kept once `reserve_confirmation`
-    /// returned it: a restart re-briefs the referee and never spends a
-    /// second shot.
+    /// A confirmation's sealed release, kept in the write that spent the
+    /// shot, served the cohort and settled `exposure`: a restart re-briefs
+    /// the referee and never spends a second shot.
     pub release: Option<EvalRelease>,
 }
 
@@ -475,6 +478,32 @@ pub(crate) fn seed_research_continuation(
         };
         CONTINUATION.put(&vault.store, txn, &key, &row)
     })
+}
+
+/// One pass step of `root`'s campaign on `row` as the caller read it, as a
+/// pass that read `row` earlier takes it: no failure handling and no next
+/// step.
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_research_continuation(
+    vault: &Vault,
+    root: AttemptId,
+    row: &ResearchContinuation,
+    now: u64,
+) -> Result<()> {
+    let binding = research_binding(vault, root)?
+        .ok_or(invalid("no research campaign is bound to this root"))?;
+    let execution = binding
+        .execution
+        .as_ref()
+        .ok_or(invalid("the campaign has no execution spec"))?;
+    Pass {
+        vault,
+        binding: &binding,
+        execution,
+        now,
+    }
+    .step(row)
+    .map(|_| ())
 }
 
 /// Every continuation of a campaign, bootstrap first, then by round.
