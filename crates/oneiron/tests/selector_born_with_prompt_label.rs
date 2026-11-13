@@ -328,10 +328,11 @@ fn export_through(
             reads(open_claim),
             "FIXTURE: the member reads the open CLAIM"
         );
-        assert!(
-            reads(open_prompt),
-            "FIXTURE: the member reads the open prompt MESSAGE"
-        );
+        // The member's own read lane reads no MESSAGE without a MessagesRead
+        // grant, so it is no witness for the open prompt. The selector gate
+        // is the relationship gate, which leaves a row that names no
+        // relationship open: the window check below proves the open prompt
+        // rides.
         assert!(
             !reads(relationship_prompt),
             "FIXTURE: the member's own read lane does not read the R prompt MESSAGE"
