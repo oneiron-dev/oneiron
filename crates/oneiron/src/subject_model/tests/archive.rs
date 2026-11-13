@@ -16,9 +16,9 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
     );
     let anchor = anchor_actor_subject(&source, actor, person, author, 100)?;
     let substrate = set_person_substrate(&source, person, PersonSubstrate::Model, author, 100)?;
-    let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let export = source.export_whole_vault(false)?;
     let (_target_dir, target) = test_vault();
-    let imported = target.import_whole_vault_json(export.bytes())?;
+    let imported = target.import_whole_vault_archive(export.bytes())?;
     assert!(imported.inserted_entities >= 4);
     for id in [anchor, substrate] {
         let body = target.get_claim(&id)?.unwrap();
@@ -30,7 +30,7 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
     assert_eq!(target.person_substrate(&person, now)?, None);
     assert_eq!(
         target
-            .import_whole_vault_json(export.bytes())?
+            .import_whole_vault_archive(export.bytes())?
             .inserted_entities,
         0
     );
@@ -65,7 +65,7 @@ fn archive_subject_facts_wait_for_a_current_owner_review() -> Result<()> {
         Some(PersonSubstrate::Model)
     );
     // The archive cannot undo a current owner's approval or revive its old author.
-    assert!(target.import_whole_vault_json(export.bytes()).is_err());
+    assert!(target.import_whole_vault_archive(export.bytes()).is_err());
     Ok(())
 }
 
