@@ -333,10 +333,13 @@ fn retained_hold_in_txn(
 /// (Engine RULING L3-14-RETAINED-HOLD-FORGE = A, 14 Nov 05:22). Retracted
 /// heads are what [`retained_hold_in_txn`] reads, so a writer must not be
 /// able to make one: a claim of the family is born Active, about a live
-/// CHANNEL_IDENTITY row. A put that rewrites the stored claim at the same id,
-/// with the same predicate and subject, may close it (a retraction or a
-/// supersession of that identity's own head), and an Active correction head
-/// on a live identity still re-keys its slot (OF-272).
+/// CHANNEL_IDENTITY row, and an Active correction head on a live identity
+/// still re-keys its slot (OF-272).
+///
+/// A put that rewrites the stored claim at the same id keeps that claim's
+/// predicate and subject, so it makes no new head and is not a birth: a
+/// retraction or supersession of an identity's own head, or the owner's
+/// value redaction of a deleted identity's retained one.
 ///
 /// `admit_claim_put` asks this for local puts through the generic doors
 /// only. The replicated door and the engine's own writers (the reserved
@@ -347,7 +350,10 @@ pub(crate) fn guard_generic_claim_put_in_txn(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
-    if !is_channel_identity_claim_predicate(&body.predicate) {
+    if !is_channel_identity_claim_predicate(&body.predicate)
+        || stored_claim_body(store, txn, id)?
+            .is_some_and(|prior| prior.predicate == body.predicate && prior.subject == body.subject)
+    {
         return Ok(());
     }
     let ClaimSubject::Entity(subject) = body.subject else {
@@ -364,10 +370,7 @@ pub(crate) fn guard_generic_claim_put_in_txn(
             "a channel_identity claim must be about a live channel identity",
         ));
     }
-    if body.lifecycle != ClaimLifecycleStatus::Active
-        && !stored_claim_body(store, txn, id)?
-            .is_some_and(|prior| prior.predicate == body.predicate && prior.subject == body.subject)
-    {
+    if body.lifecycle != ClaimLifecycleStatus::Active {
         return Err(Error::InvalidClaimBody(
             "a channel_identity claim is born active",
         ));
