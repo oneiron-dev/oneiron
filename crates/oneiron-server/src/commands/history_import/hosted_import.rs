@@ -54,7 +54,9 @@
 //! job's place is kept leaves messages the import landed that the landing of
 //! the same conversation again counts skipped. The pass reads them first
 //! ([`oneiron::Vault::hosted_import_resumed`]) and counts them as they landed,
-//! so the job's counts, and whether its import is surfaced, stay true.
+//! so the job's counts, and whether its import is surfaced, stay true. A job
+//! asked to cancel before that conversation landed again keeps them the same
+//! way before it ends, and lands nothing more.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -64,7 +66,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::ingest::history::{
-    HistorySource, HostedImportId, HostedImportJob, HostedImportStaged, HostedImportState,
+    HistoryConversation, HistorySource, HostedImportId, HostedImportJob, HostedImportStaged,
+    HostedImportState,
 };
 use rustix::fs::{CWD, Mode, OFlags, openat};
 use serde::{Deserialize, Serialize};
@@ -856,6 +859,9 @@ impl HostedImports {
             return Ok(true);
         };
         if job.state == HostedImportState::Cancelling {
+            if let Some(conversation) = conversation_at_place(&folder, source, job) {
+                keep_resumed(vault, id, source, job, job.cursor, &conversation)?;
+            }
             finish(
                 vault,
                 &folder,
@@ -904,6 +910,9 @@ impl HostedImports {
                 .hosted_import(id)?
                 .is_some_and(|row| row.state == HostedImportState::Cancelling)
             {
+                if landed_here == 0 {
+                    keep_resumed(vault, id, source, job, cursor, conversation)?;
+                }
                 finish(
                     vault,
                     &folder,
@@ -1052,6 +1061,44 @@ fn finish(
             review = %review,
             "hosted import landed; its claims wait for the owner in this review"
         );
+    }
+    Ok(())
+}
+
+/// The conversation at a job's place, earliest first, read from its staged
+/// export. `None` when the job is past its last conversation, or its export
+/// is gone, changed, unreadable or does not decode: what a stopped landing
+/// left of it is then not read.
+fn conversation_at_place(
+    folder: &Path,
+    source: HistorySource,
+    job: &HostedImportJob,
+) -> Option<HistoryConversation> {
+    let export = staged_export(folder, job.staged_bytes).ok().flatten()?;
+    let (_, mut conversations) = decode(source, &export).ok()?;
+    earliest_first(&mut conversations);
+    conversations
+        .into_iter()
+        .nth(usize::try_from(job.cursor).ok()?)
+}
+
+/// Keeps on a job asked to cancel what a process that stopped after the
+/// landing of `conversation`, at the job's place `cursor`, committed, and
+/// before that place was kept, landed of it: its messages count as they
+/// landed, its TURNs are the job's, and the place moves past it, as the
+/// record of that landing would have done. Lands nothing. The caller holds
+/// the host's admission.
+fn keep_resumed(
+    vault: &oneiron::Vault,
+    id: HostedImportId,
+    source: HistorySource,
+    job: &HostedImportJob,
+    cursor: u64,
+    conversation: &HistoryConversation,
+) -> anyhow::Result<()> {
+    let resumed = vault.hosted_import_resumed(source, conversation, job.imported_at)?;
+    if resumed.new + resumed.changed > 0 {
+        vault.hosted_import_landed(id, cursor + 1, &resumed.report(conversation))?;
     }
     Ok(())
 }

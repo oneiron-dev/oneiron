@@ -5,7 +5,9 @@
 //! one hosted import's progress with its five phases apart, during the job
 //! and after it. `vault.imports.cancel` stops a job: between two passes, or
 //! during a pass at its next conversation. The job lands nothing more, its
-//! staging is removed, and what landed stays in the import's review. A
+//! staging is removed, and what landed stays in the import's review, counted
+//! with its TURNs, even what a process that stopped before keeping the job's
+//! place landed. A
 //! caller that is neither the owner nor a holder of the matching Steward
 //! grant is refused both verbs: `read` admits the read, `delete` the cancel.
 //!
@@ -29,7 +31,7 @@ use oneiron::test_doors::steward::{
     STEWARD_DELETE_VERB, STEWARD_READ_VERB, open_owner_carrier_vault, stand_steward_grant,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
-use oneiron_server::test_doors::hosted_import::{pass, pass_cancelled_after, stage};
+use oneiron_server::test_doors::hosted_import::{land_unplaced, pass, pass_cancelled_after, stage};
 use serde_json::{Map, Value, json};
 
 type TestError = Box<dyn std::error::Error>;
@@ -334,6 +336,98 @@ fn a_cancel_stops_the_job_removes_its_staging_and_keeps_what_landed() -> TestRes
     assert_eq!(stopped["searchable"], searchable(1, 2));
     assert!(!staging(vault_dir.path(), during).exists());
     assert_eq!(vault.history_import_ledger_len(HistorySource::Chatgpt)?, 4);
+    Ok(())
+}
+
+/// A process that stops after the landing at a job's place commits, and
+/// before that place is kept, leaves its messages uncounted. A cancel asked
+/// between that stop and the next pass lands nothing more, yet the job
+/// counts them as they landed, with their TURNs, before it ends Cancelled,
+/// so its counts are true and its import is surfaced (an inbox row needs
+/// new or changed messages).
+#[test]
+fn a_cancel_between_passes_keeps_what_a_stopped_landing_landed() -> TestResult {
+    let vault_dir = tempfile::tempdir()?;
+    let exports = tempfile::tempdir()?;
+    let (vault, owner) = open_vault(vault_dir.path())?;
+    let human = EdgeActorClass::Human;
+
+    let export = exports.path().join("conversations.json");
+    write_export(&export, "meadow", &[2, 3])?;
+    let id = stage(vault_dir.path(), HistorySource::Chatgpt, &export)?;
+    pass(&vault, vault_dir.path(), Some(0))?;
+    land_unplaced(&vault, vault_dir.path(), id, 0)?;
+    call(&vault, owner, human, CANCEL, lookup(id)).expect("the owner cancels the import");
+    assert_eq!(
+        job(&vault, id)?.cursor,
+        0,
+        "the stopped landing kept no place"
+    );
+
+    // The next pass, as a restarted process's first pass.
+    pass(&vault, vault_dir.path(), None)?;
+    let cancelled = call(&vault, owner, human, GET, lookup(id)).expect("the owner reads");
+    assert_eq!(cancelled["state"], json!("cancelled"));
+    assert_eq!(
+        cancelled["searchable"],
+        searchable(1, 2),
+        "FAILBEFORE: the messages the stopped landing left count new"
+    );
+    assert_eq!(
+        cancelled["embeddings"],
+        embeddings(2),
+        "FAILBEFORE: their TURNs are the job's"
+    );
+    assert!(!staging(vault_dir.path(), id).exists());
+    assert_eq!(
+        vault.history_import_ledger_len(HistorySource::Chatgpt)?,
+        2,
+        "the cancelled job lands nothing more"
+    );
+    Ok(())
+}
+
+/// The same stop, with the cancel asked once the next pass has begun and
+/// before it lands the conversation at the job's place: the pass stops
+/// there, and the job keeps what the stopped landing landed.
+#[test]
+fn a_cancel_during_the_next_pass_keeps_what_a_stopped_landing_landed() -> TestResult {
+    let vault_dir = tempfile::tempdir()?;
+    let exports = tempfile::tempdir()?;
+    let (vault, owner) = open_vault(vault_dir.path())?;
+    let vault = Arc::new(vault);
+    let human = EdgeActorClass::Human;
+
+    let export = exports.path().join("conversations.json");
+    write_export(&export, "harbour", &[2, 3])?;
+    let id = stage(vault_dir.path(), HistorySource::Chatgpt, &export)?;
+    pass(&vault, vault_dir.path(), Some(0))?;
+    land_unplaced(&vault, vault_dir.path(), id, 0)?;
+    assert_eq!(
+        job(&vault, id)?.cursor,
+        0,
+        "the stopped landing kept no place"
+    );
+
+    pass_cancelled_after(&vault, vault_dir.path(), id, 0)?;
+    let cancelled = call(&vault, owner, human, GET, lookup(id)).expect("the owner reads");
+    assert_eq!(cancelled["state"], json!("cancelled"));
+    assert_eq!(
+        cancelled["searchable"],
+        searchable(1, 2),
+        "FAILBEFORE: the messages the stopped landing left count new"
+    );
+    assert_eq!(
+        cancelled["embeddings"],
+        embeddings(2),
+        "FAILBEFORE: their TURNs are the job's"
+    );
+    assert!(!staging(vault_dir.path(), id).exists());
+    assert_eq!(
+        vault.history_import_ledger_len(HistorySource::Chatgpt)?,
+        2,
+        "the cancelled job lands nothing more"
+    );
     Ok(())
 }
 

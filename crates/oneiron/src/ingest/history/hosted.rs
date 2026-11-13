@@ -318,6 +318,15 @@ impl HostedImportResumed {
         }
         report.turns = turns;
     }
+
+    /// The report of a landing of `conversation` that lands nothing more,
+    /// counting only what the stopped landing landed: a job asked to cancel
+    /// keeps it at its place ([`Vault::hosted_import_landed`]).
+    pub fn report(&self, conversation: &HistoryConversation) -> HistoryImportReport {
+        let mut report = HistoryImportReport::new(conversation);
+        self.fold_into(&mut report);
+        report
+    }
 }
 
 impl Vault {
