@@ -102,6 +102,20 @@ impl Fixture {
             .vector(&self.claim, &QUERY)
             .commit()
             .expect("claim vector");
+        // The rewrite moved the live revision past the indexed one, so the
+        // vector waits staged for the idle publish; publish it now.
+        self.vault
+            .set_indexed_idle_delay_ms(0)
+            .expect("idle publish delay");
+        let published = self
+            .vault
+            .refresh_staged_indexed_at_idle(u64::MAX)
+            .expect("idle publish of the staged vector");
+        assert!(
+            published.failed.is_empty(),
+            "FIXTURE: the rewritten claim's vector is published: {:?}",
+            published.failed
+        );
         ReadMode::Pinned(pin)
     }
 
