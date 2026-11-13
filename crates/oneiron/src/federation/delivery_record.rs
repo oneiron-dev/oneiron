@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, ForeignWorldId};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::ManifestDbs;
@@ -41,6 +41,57 @@ pub(crate) struct DeliveredRecord {
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("federation delivered record")
+}
+
+/// The delivery-history key of `record` as `pact` delivered it at consent
+/// `epoch`: hex64 (pact) ":" hex16 (epoch) ":" hex32 (record).
+pub(crate) fn delivery_key(pact: &[u8; 32], epoch: u64, record: EntityId) -> String {
+    format!(
+        "{}:{epoch:016x}:{}",
+        crate::entity_id::bytes_to_hex_lower(pact),
+        record.to_hex()
+    )
+}
+
+/// Records that this vault's engine itself landed `record`, already written
+/// in `txn`, as delivered by `pact` at consent `epoch` from `origin`, sitting
+/// in the foreign `world`: a copied inquiry answer (INQUIRE-1 PR 6). The
+/// digest is of the row as `txn` holds it now. The world is not registered to
+/// the pact: a pact's registered worlds read stale once it ends, and the
+/// company keeps a copied answer after the member leaves (federation.md
+/// #leaving).
+///
+/// # Errors
+///
+/// `record` is not written in `txn`; storage errors.
+pub(crate) fn record_engine_delivery_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pact: &[u8; 32],
+    epoch: u64,
+    record: EntityId,
+    origin: DeliveryOrigin,
+    world: ForeignWorldId,
+) -> Result<()> {
+    let row_hash = {
+        let row = vault
+            .store
+            .entities
+            .get(txn, record.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        *blake3::hash(row).as_bytes()
+    };
+    let place = encode_delivered_record(&DeliveredRecord {
+        origin,
+        row_hash,
+        world: Some(world.entity_id()),
+    });
+    DELIVERED.put(
+        &vault.store,
+        txn,
+        &delivery_key(pact, epoch, record),
+        &place,
+    )
 }
 
 /// Current delivery-value codec. Keys still carry pact, consent epoch and id.

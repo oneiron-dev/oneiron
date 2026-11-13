@@ -8,8 +8,10 @@
 //! A pending inquiry is re-sent by the agent with the same id; the member's
 //! vault returns its current answer. No housekeeping pass re-sends it.
 
+use super::landing::inquiry_landing;
 use super::record::{
-    Inquiry, InquiryAnswer, InquiryAsker, InquiryOutcome, InquiryStatement, InquiryTask, refuse,
+    Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
+    InquiryTask, refuse,
 };
 use super::route::{InquiryRoute, inquiry_route_in_txn};
 use crate::Vault;
@@ -87,13 +89,14 @@ pub struct InquirySent {
 
 impl Vault {
     /// Sends one inquiry about `request.member` over the member's route
-    /// through `transport`, writes its `inquiry` receipt (never answer
-    /// text), and holds an answer's statements with the task until the task
-    /// ends or `valid_until` comes. The keep is the vault's `inquiry_keep`.
-    /// `copy` has no landing yet (INQUIRE-1 PR 6), so an answer to a `copy`
-    /// inquiry is held with the task as well. Every send, whatever its
-    /// outcome and before any refusal, first drops the held answers whose
-    /// task has ended or whose `valid_until` has come.
+    /// through `transport` and writes its `inquiry` receipt (never answer
+    /// text). The keep is the vault's `inquiry_keep`. With `task`, an
+    /// answer's statements are held with the task until the task ends or
+    /// `valid_until` comes. With `copy`, they land in this vault in the
+    /// receipt's transaction ([`super::landing`]) and are not held; a `copy`
+    /// send with no landing gives `unavailable` without a send. Every send,
+    /// whatever its outcome and before any refusal, first drops the held
+    /// answers whose task has ended or whose `valid_until` has come.
     ///
     /// # Errors
     ///
@@ -112,9 +115,10 @@ impl Vault {
             ));
         }
         let keep = self.inquiry_keep()?.keep;
-        let (inquiry, route) = {
+        let (inquiry, route, landing) = {
             let txn = self.store.env.read_txn()?;
-            let Some(vault_id) = self.authority_fold_readonly_in_txn(&txn)?.vault_id else {
+            let fold = self.authority_fold_readonly_in_txn(&txn)?;
+            let Some(vault_id) = fold.vault_id else {
                 return Err(refuse(
                     "this vault is not rooted: it has no vault id to ask from",
                 ));
@@ -146,7 +150,12 @@ impl Vault {
                 } else {
                     None
                 };
-            (inquiry, route)
+            let landing = match (&route, keep) {
+                (Some(route), InquiryKeep::Copy) => inquiry_landing(&fold, route)?,
+                _ => None,
+            };
+            let route = route.filter(|_| keep == InquiryKeep::Task || landing.is_some());
+            (inquiry, route, landing)
         };
         let answer = match &route {
             Some(route) => self.exchange_inquiry(&inquiry, route, transport)?,
@@ -154,6 +163,19 @@ impl Vault {
         };
         let receipt = self.with_write_txn(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            if let (Some(landing), Some(valid_until), InquiryOutcome::Answered) =
+                (&landing, answer.valid_until(), answer.outcome())
+            {
+                self.land_inquiry_copy_in_txn(
+                    txn,
+                    landing,
+                    inquiry.id,
+                    request.member,
+                    answer.statements(),
+                    valid_until,
+                    now,
+                )?;
+            }
             super::receipt::write_inquiry_receipt_in_txn(
                 &self.store,
                 txn,
@@ -164,14 +186,17 @@ impl Vault {
             )
         })?;
         let held = match answer.valid_until() {
-            Some(valid_until) if answer.outcome() == InquiryOutcome::Answered => self
-                .hold_inquiry_answer(
+            Some(valid_until)
+                if keep == InquiryKeep::Task && answer.outcome() == InquiryOutcome::Answered =>
+            {
+                self.hold_inquiry_answer(
                     request.asker,
                     request.task,
                     inquiry.id,
                     answer.statements(),
                     valid_until,
-                )?,
+                )?
+            }
             _ => false,
         };
         Ok(InquirySent {

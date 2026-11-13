@@ -32,11 +32,16 @@
 //!   `unavailable` when no route answers; and the task-held answer, in
 //!   memory only, dropped when its task ends or at `valid_until`.
 //!
-//! The verbs and the member host's route (PR 5) and the copy landing
-//! (PR 6) are later builds.
+//! * The copy landing (PR 6), on the company vault: with `inquiry_keep =
+//!   copy`, each answered statement lands as a CLAIM in the foreign WORLD of
+//!   the member's opened world, attributed by a federation delivery record,
+//!   and is not held with the task.
+//!
+//! The verbs and the member host's route (PR 5) are a later build.
 
 mod edge;
 mod holder;
+mod landing;
 mod log;
 mod member;
 mod policy;
