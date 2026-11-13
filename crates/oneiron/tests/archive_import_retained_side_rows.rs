@@ -12,9 +12,10 @@
 //!   retained CONSENT_STANDING_GRANT row, none for HEALER_OVERSIGHT_RECEIPT,
 //!   and the manifest declares 23 omitted tables, the healer table with
 //!   three rows.
-//! * `each_import_door_retains_the_rows_and_the_next_archive_carries_them`:
-//!   the owner, actor and actorless doors all retain without going live,
-//!   and each destination's own archive re-carries the tuples byte for byte.
+//! * `each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_setting`:
+//!   the owner door installs the backup row live while the actor and actorless
+//!   doors retain it; the grant stays retained for all three, and each
+//!   destination's own archive re-carries the tuples byte for byte.
 //! * `a_repeat_import_keeps_one_copy_and_a_new_value_keeps_both`: a repeat
 //!   import adds no copy; a changed backup value lands beside the old one.
 //! * `an_actor_erase_drops_the_retained_copies_that_name_the_actor`: erasing
@@ -44,7 +45,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 
 /// A source vault opened as the owner's own, as the model's fixture opens it.
-fn open_source_vault() -> (tempfile::TempDir, Vault) {
+pub(crate) fn open_source_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir for the source vault");
     let vault =
         Vault::open_owned(dir.path(), VaultConfig::default()).expect("open the source vault");
@@ -68,7 +69,7 @@ pub(crate) fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
         .expect("owner proof")
 }
 
-fn export_whole(vault: &Vault) -> Vec<u8> {
+pub(crate) fn export_whole(vault: &Vault) -> Vec<u8> {
     vault
         .export_whole_vault(true)
         .expect("whole-vault export")
@@ -126,7 +127,7 @@ fn side_table_omissions(archive: &[u8]) -> Vec<(String, String, u64)> {
 /// the archive's `files/<blake3>` member, read out of `archive` with `zip`.
 /// Family and envelope shapes are read from JSON, so this compiles on the
 /// base, where the family is absent and every retention assertion fails red.
-fn retained_rows(archive: &[u8]) -> Vec<(String, Vec<u8>, Vec<u8>)> {
+pub(crate) fn retained_rows(archive: &[u8]) -> Vec<(String, Vec<u8>, Vec<u8>)> {
     let document = read_archive(archive);
     let rows = serde_json::to_value(&document.side_tables).expect("the side tables serialize");
     let mut zip = zip::ZipArchive::new(Cursor::new(archive)).expect("the archive opens as a zip");
@@ -322,7 +323,10 @@ pub(crate) fn source_with_rows() -> Source {
 }
 
 /// The retained tuples of `table` in `rows`.
-fn rows_for(rows: &[(String, Vec<u8>, Vec<u8>)], table: &str) -> Vec<(String, Vec<u8>, Vec<u8>)> {
+pub(crate) fn rows_for(
+    rows: &[(String, Vec<u8>, Vec<u8>)],
+    table: &str,
+) -> Vec<(String, Vec<u8>, Vec<u8>)> {
     rows.iter()
         .filter(|(name, _, _)| name == table)
         .cloned()
@@ -388,7 +392,7 @@ fn whole_vault_archive_retains_rows_and_declares_omitted_tables() {
 }
 
 #[test]
-fn each_import_door_retains_the_rows_and_the_next_archive_carries_them() {
+fn each_import_door_carries_the_rows_and_only_the_owner_door_installs_the_setting() {
     let source = source_with_rows();
     let source_rows = retained_rows(&source.archive);
     let source_backup = rows_for(&source_rows, "BACKUP_POLICY");
@@ -427,17 +431,31 @@ fn each_import_door_retains_the_rows_and_the_next_archive_carries_them() {
         .import_whole_vault_archive_from(Cursor::new(&source.archive))
         .expect("the actorless import succeeds");
 
+    let source_policy = BackupPolicy {
+        enabled: true,
+        every_hours: 6,
+        keep: 3,
+    };
     for (door, dest) in [
         ("owner", &owner_dest),
         ("actor", &actor_dest),
         ("actorless", &bare_dest),
     ] {
-        assert_eq!(
-            dest.backup_policy()
-                .expect("read the destination backup choice"),
-            None,
-            "the {door} import retains the backup row without making it live"
-        );
+        if door == "owner" {
+            assert_eq!(
+                dest.backup_policy()
+                    .expect("read the destination backup choice"),
+                Some(source_policy),
+                "the owner import installs the backup row live"
+            );
+        } else {
+            assert_eq!(
+                dest.backup_policy()
+                    .expect("read the destination backup choice"),
+                None,
+                "the {door} import retains the backup row without making it live"
+            );
+        }
         assert!(
             dest.consent_grant(&source.grant_ref)
                 .expect("read the destination grant")
