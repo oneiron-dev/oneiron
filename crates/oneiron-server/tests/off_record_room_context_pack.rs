@@ -15,13 +15,20 @@
 //! because the stretch flipped on record before the finish, the finish fails
 //! and base keeps no run of it.
 //!
-//! On unmodified main every pack route reads base alone, so the first two
-//! cases miss the staged MESSAGE and the third finds a run in base; and the
-//! deferred door refuses any pack assembled in a stretch, so the fourth
-//! fails at its assembly.
+//! A member of a room (ROOM-PACK-MEMBER-BIND; ARCH-0052 #e5-read-union-open
+//! = B, the lead's ruling 13 Nov 05:5x): the owner witnesses one turn into a
+//! stretch in a Group room that seats the owner and their own agent. The
+//! agent, on its own slip, names that room's stretch in `x-oneiron-session`:
+//! its pack binds the stretch while the agent is on the roster, so its
+//! retrieval run lands in the stretch, never in base, and each staged row is
+//! read under the agent's own key. An agent not on the roster reads base
+//! alone. The owner's pack in the same stretch is the fixture's control: it
+//! returns the staged MESSAGE.
 //!
-//! Each case drives the real route with the owner's host-root credential (on
-//! a profiled install, as a serving start enrols it). Deterministic:
+//! The owner cases drive the real route with the owner's host-root
+//! credential (on a profiled install, as a serving start enrols it); the
+//! member cases with an agent slip signed by the agent's own key.
+//! Deterministic:
 //! in-process vault and router (`oneshot`, no TCP ports, no sleeps, no
 //! models).
 //!
@@ -34,18 +41,25 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{
+    AgentTier, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
+};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice};
 use oneiron::edge::EdgeActorClass;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::off_record::OffRecordBackendClass;
+use oneiron::off_record::{OffRecordBackendClass, room_session_key};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::stretch_pack_finalize::finish_stretch_pack_after_flip;
-use oneiron::{EntityId, ErrorKind, Vault, VaultConfig};
+use oneiron::{EntityId, ErrorKind, Vault, VaultConfig, WriteActor};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -57,6 +71,11 @@ const FLIPPED_STRETCH: &str = "room-pack-flipped-stretch";
 const STAGED_WORD: &str = "lanternfish";
 const CONTEXT_PACK: &str = "/v1/core/context-pack";
 const CONTEXT_BOARD: &str = "/v1/core/context-board";
+/// The stretch the member cases stage their MESSAGE in, in a room.
+const ROOM_STRETCH: &str = "room-pack-room-stretch";
+/// The one word the room stretch's staged MESSAGE holds, which no base row
+/// and no other stretch holds.
+const ROOM_WORD: &str = "kingfisher";
 
 struct Host {
     _dir: tempfile::TempDir,
@@ -133,34 +152,12 @@ fn host() -> Host {
         .memory(owner, EdgeActorClass::Human)
         .witness_into_session(
             &stretch,
-            &WitnessTurn {
-                conversation_ref: String::new(),
-                turn_ref: None,
-                thread_audience: None,
-                messages: vec![WitnessMessage {
-                    id: None,
-                    author: WitnessAuthor::User,
-                    message_type: "dialogue".to_owned(),
-                    content: format!("the stretch says {STAGED_WORD}"),
-                    metadata: None,
-                    is_visible: true,
-                    order: 0,
-                    parts: None,
-                    quote: None,
-                }],
-                occurred_at: 900,
-                assertions: Default::default(),
-            },
+            &owner_turn(format!("the stretch says {STAGED_WORD}"), 900),
             None,
             None,
         )
         .expect("the owner's turn in the stretch");
-    let staged_message = receipt
-        .message_short_ids
-        .first()
-        .and_then(|short| short.split(':').next())
-        .expect("the turn's MESSAGE")
-        .to_owned();
+    let staged_message = first_message(&receipt);
     drop(stretch);
 
     let app = build_app(server);
@@ -176,27 +173,210 @@ fn host() -> Host {
     }
 }
 
+/// The owner's one-message turn saying `content` at `occurred_at`.
+fn owner_turn(content: String, occurred_at: u64) -> WitnessTurn {
+    WitnessTurn {
+        conversation_ref: String::new(),
+        turn_ref: None,
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "dialogue".to_owned(),
+            content,
+            metadata: None,
+            is_visible: true,
+            order: 0,
+            parts: None,
+            quote: None,
+        }],
+        occurred_at,
+        assertions: Default::default(),
+    }
+}
+
+/// The short id of the first MESSAGE a witness receipt names.
+fn first_message(receipt: &oneiron::memory::WitnessReceipt) -> String {
+    receipt
+        .message_short_ids
+        .first()
+        .and_then(|short| short.split(':').next())
+        .expect("the turn's MESSAGE")
+        .to_owned()
+}
+
+/// One of the vault's own agents on its own slip, signed by its own key.
+struct Principal {
+    slip: CapabilitySlip,
+    key: SigningKey,
+}
+
+/// Who sends a request: the owner on the host root, or a principal.
+#[derive(Clone, Copy)]
+enum Caller<'a> {
+    Owner,
+    Principal(&'a Principal),
+}
+
+/// A live stretch in a Group room that seats the owner and their agent
+/// `member`, holding one turn the owner witnessed into it. `stranger` is
+/// another of the vault's agents, not on the room's roster.
+struct RoomStretch {
+    /// The key `x-oneiron-session` names the stretch by.
+    key: String,
+    member: Principal,
+    stranger: Principal,
+    /// The short id of the MESSAGE the owner's turn staged in the stretch.
+    staged_message: String,
+}
+
 impl Host {
-    fn owner_binding(&self) -> String {
-        let timestamp = self.vault.now_recorded_at();
-        let nonce = EntityId::now().to_hex();
-        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
-        let signature: String = hex(&self
-            .issuer
-            .binding_proof(&self.owner_slip, challenge.as_bytes())
-            .expect("owner holder proof"));
-        json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string()
+    fn owner_proof(&self) -> AuthenticatedOwner {
+        self.vault
+            .authenticate_owner(
+                self.owner,
+                &self.owner.to_hex(),
+                true,
+                GateDecisionId::now(),
+            )
+            .expect("the owner's proof")
+    }
+
+    /// `agent`'s slip: the vault's own agent, reading on its own key.
+    fn agent_slip(&self, agent: EntityId, seed: u8) -> Principal {
+        let key = SigningKey::from_bytes(&[seed; 32]);
+        let mut claims = self.owner_slip.claims.clone();
+        claims.parent_id = None;
+        claims.holder_ref = agent.to_hex();
+        claims.binding_key = key.verifying_key().to_bytes();
+        claims.actor_class = Some("agent".to_owned());
+        claims.scope = Scope::top();
+        claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["core:read".to_owned()]));
+        claims.slip_id = [seed; 32];
+        let slip = self
+            .vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("mint the agent's slip");
+        Principal { slip, key }
+    }
+
+    /// A Group room seating the owner and their agent, with a stretch the
+    /// owner entered there and one turn they witnessed into it.
+    fn room_stretch(&self) -> RoomStretch {
+        let vault = &self.vault;
+        let proof = self.owner_proof();
+        let by_owner = || WriteActor::new(self.owner, EdgeActorClass::Human);
+        let member = vault
+            .ensure_agent_principal("yuki")
+            .expect("the member agent");
+        let stranger = vault
+            .ensure_agent_principal("owen")
+            .expect("the stranger agent");
+        for agent in [member, stranger] {
+            vault
+                .bind_and_grant_agent_principal(
+                    &self.issuer,
+                    &proof,
+                    agent,
+                    AgentTier::ReadOnly.ceiling(),
+                )
+                .expect("bind the vault's own agent");
+        }
+        let room = EntityId::now();
+        vault
+            .create_conversation(
+                room,
+                &ConversationBody {
+                    kind: ConversationKind::Group,
+                    member_ids: vec![self.owner],
+                    ..Default::default()
+                },
+                by_owner(),
+                vault.now_recorded_at(),
+            )
+            .expect("create the room");
+        vault
+            .join_member(
+                room,
+                member,
+                by_owner(),
+                vault.now_recorded_at(),
+                HistoryChoice::Share,
+            )
+            .expect("seat the member agent");
+        let stretch = vault
+            .off_record_session_vault()
+            .enter_in_room_as(ROOM_STRETCH, OffRecordBackendClass::Local, room, &proof)
+            .expect("enter the room stretch");
+        let receipt = vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .witness_into_session_as(
+                &proof,
+                &stretch,
+                &owner_turn(
+                    format!("the room says {ROOM_WORD}"),
+                    vault.now_recorded_at(),
+                ),
+                None,
+                None,
+            )
+            .expect("the owner's turn in the room stretch");
+        RoomStretch {
+            key: room_session_key(room, ROOM_STRETCH),
+            member: self.agent_slip(member, 0x71),
+            stranger: self.agent_slip(stranger, 0x72),
+            staged_message: first_message(&receipt),
+        }
     }
 
     /// The owner's call to `route` over actual HTTP, in the stretch when
     /// `in_stretch`; its answer, which must be 200.
     async fn call(&self, route: &str, body: Value, in_stretch: bool) -> Value {
+        self.send(Caller::Owner, route, body, in_stretch.then_some(STRETCH))
+            .await
+    }
+
+    /// `caller`'s call to `route` over actual HTTP, in the stretch `session`
+    /// names, if any; its answer, which must be 200.
+    async fn send(
+        &self,
+        caller: Caller<'_>,
+        route: &str,
+        body: Value,
+        session: Option<&str>,
+    ) -> Value {
+        let timestamp = self.vault.now_recorded_at();
+        let nonce = EntityId::now().to_hex();
+        let challenge = holder_proof_challenge(timestamp, &nonce);
+        let (token, signature) = match caller {
+            Caller::Owner => (
+                self.owner_token.clone(),
+                hex(&self
+                    .issuer
+                    .binding_proof(&self.owner_slip, &challenge)
+                    .expect("owner holder proof")),
+            ),
+            Caller::Principal(principal) => (
+                principal.slip.to_token().expect("agent slip token"),
+                hex(&principal
+                    .key
+                    .sign(
+                        &principal
+                            .slip
+                            .binding_transcript(&challenge)
+                            .expect("agent binding transcript"),
+                    )
+                    .to_bytes()),
+            ),
+        };
+        let binding =
+            json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string();
         let mut request = Request::post(route)
-            .header("authorization", format!("Bearer {}", self.owner_token))
-            .header("x-oneiron-binding", self.owner_binding())
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-oneiron-binding", binding)
             .header("content-type", "application/json");
-        if in_stretch {
-            request = request.header("x-oneiron-session", STRETCH);
+        if let Some(session) = session {
+            request = request.header("x-oneiron-session", session);
         }
         let response = self
             .app
@@ -359,6 +539,172 @@ fn a_stretch_pack_whose_run_cannot_land_fails_at_its_finish() {
             host.base_runs(),
             before,
             "base keeps no run of a pack assembled in the stretch"
+        );
+    });
+}
+
+/// The short ids of the rows a pack returned, for a failure message.
+fn result_short_ids(pack: &Value) -> Vec<&str> {
+    pack["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entity| entity["short_id"].as_str())
+        .collect()
+}
+
+/// The room request a member case sends: the room stretch's word.
+fn room_pack_request() -> Value {
+    json!({"query": ROOM_WORD, "limit": 10})
+}
+
+/// The owner's pack in the room's stretch returns the MESSAGE they staged
+/// there: the fixture's control, so a member case that misses that MESSAGE
+/// misses it by the member's read, not by the fixture.
+#[test]
+fn the_owners_pack_in_a_room_stretch_reads_its_staged_message() {
+    run_on_engine_stack("room-stretch-owner-pack", async {
+        let host = host();
+        let room = host.room_stretch();
+        let inside = host
+            .send(
+                Caller::Owner,
+                CONTEXT_PACK,
+                room_pack_request(),
+                Some(room.key.as_str()),
+            )
+            .await;
+        assert!(
+            names_short_id(&inside["results"], &room.staged_message),
+            "the owner's pack in the room stretch returns {} among {:?}",
+            room.staged_message,
+            result_short_ids(&inside)
+        );
+    });
+}
+
+/// A member of the room, the owner's own agent on its own slip, reads in its
+/// pack the stretch's MESSAGE its key may read. On main a member's pack reads
+/// base alone.
+#[test]
+fn a_members_pack_in_a_room_reads_the_rows_it_can_read() {
+    run_on_engine_stack("room-stretch-member-pack", async {
+        let host = host();
+        let room = host.room_stretch();
+        let inside = host
+            .send(
+                Caller::Principal(&room.member),
+                CONTEXT_PACK,
+                room_pack_request(),
+                Some(room.key.as_str()),
+            )
+            .await;
+        assert!(
+            names_short_id(&inside["results"], &room.staged_message),
+            "the member's pack in the room stretch returns {} among {:?}; narrowing {}",
+            room.staged_message,
+            result_short_ids(&inside),
+            inside["narrowing"]
+        );
+    });
+}
+
+/// The same member pack, naming the room as the pack's conversation, so the
+/// room's audience resolves the member as the vault's own agent.
+#[test]
+fn a_members_pack_naming_the_room_reads_the_rows_it_can_read() {
+    run_on_engine_stack("room-stretch-member-pack-room", async {
+        let host = host();
+        let room = host.room_stretch();
+        let conversation = room
+            .key
+            .split(':')
+            .nth(1)
+            .expect("the room key names its room")
+            .to_owned();
+        let mut request = room_pack_request();
+        request["conversation_id"] = json!(conversation);
+        let inside = host
+            .send(
+                Caller::Principal(&room.member),
+                CONTEXT_PACK,
+                request,
+                Some(room.key.as_str()),
+            )
+            .await;
+        assert!(
+            names_short_id(&inside["results"], &room.staged_message),
+            "the member's pack naming the room returns {} among {:?}; narrowing {}",
+            room.staged_message,
+            result_short_ids(&inside),
+            inside["narrowing"]
+        );
+    });
+}
+
+/// A member's pack in the room's stretch binds it: its retrieval run lands
+/// in the stretch, so base keeps none of it. The same pack with no stretch
+/// named keeps its run in base. On main the member's pack reads base alone,
+/// so base keeps its run either way.
+#[test]
+fn a_members_pack_in_a_room_keeps_no_retrieval_run_in_base() {
+    run_on_engine_stack("room-stretch-member-runs", async {
+        let host = host();
+        let room = host.room_stretch();
+        let before = host.base_runs();
+        host.send(
+            Caller::Principal(&room.member),
+            CONTEXT_PACK,
+            room_pack_request(),
+            None,
+        )
+        .await;
+        let outside = host.base_runs();
+        assert_eq!(
+            outside,
+            before + 1,
+            "the member's pack outside the stretch keeps its run in base, as capture is on"
+        );
+        host.send(
+            Caller::Principal(&room.member),
+            CONTEXT_PACK,
+            room_pack_request(),
+            Some(room.key.as_str()),
+        )
+        .await;
+        assert_eq!(
+            host.base_runs(),
+            outside,
+            "the member's pack in the room stretch keeps no retrieval run in base"
+        );
+    });
+}
+
+/// An agent not on the room's roster names the room's stretch and reads base
+/// alone: no staged MESSAGE, and its run lands in base.
+#[test]
+fn a_strangers_pack_in_a_room_reads_base_alone() {
+    run_on_engine_stack("room-stretch-stranger-pack", async {
+        let host = host();
+        let room = host.room_stretch();
+        let before = host.base_runs();
+        let inside = host
+            .send(
+                Caller::Principal(&room.stranger),
+                CONTEXT_PACK,
+                room_pack_request(),
+                Some(room.key.as_str()),
+            )
+            .await;
+        assert!(
+            !names_short_id(&inside, &room.staged_message),
+            "a stranger's pack reads none of the room stretch: {:?}",
+            result_short_ids(&inside)
+        );
+        assert_eq!(
+            host.base_runs(),
+            before + 1,
+            "a stranger's pack reads base, and keeps its run there"
         );
     });
 }
