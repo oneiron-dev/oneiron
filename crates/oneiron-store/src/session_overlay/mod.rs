@@ -5,6 +5,7 @@
 //! journal entries, generation-stamped read/segment leases, and the byte
 //! budget that bounds live overlay rows.
 
+mod dump_suppression;
 pub mod journal;
 pub mod keyspace;
 pub mod overlay;
