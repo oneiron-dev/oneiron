@@ -608,7 +608,7 @@ impl Vault {
             pass.include_secrets,
             pass.reader,
             true,
-            MemberMailPass::Owner { untold },
+            { let _untold = untold; MemberMailPass::Exempt },
             admit,
             &mut file,
         )?;
