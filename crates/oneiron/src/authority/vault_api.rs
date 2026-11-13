@@ -560,8 +560,9 @@ impl Vault {
     }
 
     /// This vault's authority generation: it moves on every commit to the
-    /// authority log, a grant's revoke among them, and on a legacy token
-    /// revoke's marker. A scope or world setting held elsewhere leaves it.
+    /// authority log, a grant's revoke among them, on every AccessGrant
+    /// write (create, narrow, revoke), and on a legacy token revoke's
+    /// marker. A scope or world setting held elsewhere leaves it.
     /// A kept inference snapshot restores only at the generation its read
     /// was admitted at (V2-R3). It only reads.
     ///
