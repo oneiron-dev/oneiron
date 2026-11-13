@@ -248,10 +248,9 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
     use crate::edit_distance::{ProposalArtifactRef, finalized_proposal_text, retained_proposal};
 
     let clock = crate::ports::ManualClock::new(50);
-    let (_tmp, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig {
-        store_clock: clock.bundle(),
-        ..crate::test_util::embedding_test_config()
-    });
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = clock.bundle();
+    let (_tmp, vault) = crate::test_util::open_test_vault_with(config);
     let topic = crate::test_util::entity(0x5B);
     let reviewer = {
         let id = crate::test_util::entity(0x5C);
@@ -317,7 +316,7 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
         retained.final_text().into_text().as_deref(),
         Some("actually, the agent's draft digest")
     );
-    let delta = delta_from_recorded_ops(&retained);
+    let delta = delta_from_recorded_ops(&retained).expect("delta from recorded ops");
     assert!(
         delta.d_norm > 0.0,
         "the user's amendment must produce a measurable Δ"

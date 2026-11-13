@@ -3,11 +3,7 @@
 // those words back at it.
 
 /// Recall's TURN item for `query`, found by `meaning` and its words.
-fn recalled_turn(
-    facade: &Memory<'_>,
-    query: &str,
-    meaning: &[f32],
-) -> crate::memory::MemoryItem {
+fn recalled_turn(facade: &Memory<'_>, query: &str, meaning: &[f32]) -> crate::memory::MemoryItem {
     facade
         .recall_with_execution(
             query,
@@ -49,11 +45,19 @@ fn pinned_pack_text(
         .run_unfinalized_with_telemetry()
         .expect("assemble")
         .value;
-    lane.filter_context_pack(&mut pack).expect("filter the pack");
+    lane.filter_context_pack(&mut pack)
+        .expect("filter the pack");
     pack.results
         .iter()
         .find(|entity| entity.id == *turn)
-        .and_then(|entity| entity.fields.as_ref()?.get("txt")?.as_str().map(str::to_owned))
+        .and_then(|entity| {
+            entity
+                .fields
+                .as_ref()?
+                .get("txt")?
+                .as_str()
+                .map(str::to_owned)
+        })
 }
 
 /// The first message of `turn`, in message order.
@@ -86,6 +90,9 @@ fn read_back(facade: &Memory<'_>, turn: &EntityId, item: &crate::memory::MemoryI
                 format: None,
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .expect("chat")
@@ -239,7 +246,10 @@ fn a_turn_reference_reads_back_the_words_it_was_served_with() {
         .expect("move the message's text into its document");
 
     let before = recalled_turn(&facade, "appointment", &MEANING);
-    assert_eq!(before.value_text, "the appointment is on Monday\nsee you there");
+    assert_eq!(
+        before.value_text,
+        "the appointment is on Monday\nsee you there"
+    );
     let end = vault.entity_text(&message).expect("text").chars().count();
     let whole = vault.entity_text_anchor(&message, 0, end).expect("anchor");
     vault
@@ -257,7 +267,10 @@ fn a_turn_reference_reads_back_the_words_it_was_served_with() {
         )
         .expect("edit the message");
     let after = recalled_turn(&facade, "appointment", &MEANING);
-    assert_eq!(after.value_text, "the appointment is on Tuesday\nsee you there");
+    assert_eq!(
+        after.value_text,
+        "the appointment is on Tuesday\nsee you there"
+    );
     assert_ne!(after.source_revision_ref, before.source_revision_ref);
 
     let lane = facade
@@ -471,7 +484,10 @@ fn a_turn_reference_never_reads_a_moved_message_back_from_its_old_rows() {
     rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields)).expect("encode");
     vault
         .with_write_txn(|wtxn| {
-            vault.store.entities.put(wtxn, message.as_bytes(), &pointer)?;
+            vault
+                .store
+                .entities
+                .put(wtxn, message.as_bytes(), &pointer)?;
             DOCUMENT_HEADS.put(&vault.store, wtxn, &HexId(message), &rmpv::Value::Nil)
         })
         .expect("move the message's text out of its row, as a sync process does");
@@ -535,7 +551,9 @@ fn a_turn_reference_reads_back_words_served_at_a_merged_document_state() {
                 &[AnchoredEdit {
                     actor: Some(actor),
                     verb: EditVerb::AppendToSection {
-                        section: vault.entity_text_anchor(&message, end, end).expect("anchor"),
+                        section: vault
+                            .entity_text_anchor(&message, end, end)
+                            .expect("anchor"),
                         text: text.into(),
                     },
                 }],

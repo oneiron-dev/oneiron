@@ -42,6 +42,10 @@ fn recall_scope_honesty_stays_bounded_on_a_large_claim_index() {
             Effort::Medium,
             &RecallScope {
                 world_ref: Some(world.to_hex()),
+                worlds: None,
+                project_refs: Vec::new(),
+                conversation_refs: Vec::new(),
+                person_ref: None,
                 facet: None,
                 kinds: None,
             },

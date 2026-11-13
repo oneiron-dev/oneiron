@@ -582,8 +582,6 @@ fn zero_remote_lease_duration_is_rejected() {
     assert!(matches!(err, Error::InvalidConfig(_)));
 }
 
-// FIX [LIBTEST-QUARANTINE-EMBED-TESTS-DEVICE]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 mod device;
 mod device_local;
 mod payload;
