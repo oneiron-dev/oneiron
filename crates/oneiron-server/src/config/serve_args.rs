@@ -363,6 +363,13 @@ pub struct ServeArgs {
     #[arg(long = "seal-organ")]
     pub seal_organ: Option<PathBuf>,
 
+    /// Managed mode: the image organ's program, an absolute path, installed
+    /// at start as first party (L4-15), as `ONEIRON_IMAGE_ORGAN` names it on
+    /// a self-hosted server. Without it no image organ runs here unless an
+    /// installed pack carries one.
+    #[arg(long = "image-organ", requires = "managed_by_hypnos")]
+    pub image_organ: Option<PathBuf>,
+
     /// The directory the vault hands its authorized e-sign mail to (OF-415):
     /// each `esign.delivery` intent is written there as
     /// `esign-delivery-<key>.json` for the host's sender, which answers with

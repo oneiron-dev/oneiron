@@ -301,6 +301,8 @@ pub struct ManagedArgs {
     pub seal_signing_url: Option<String>,
     /// The seal organ's program (`--seal-organ`).
     pub seal_organ: Option<PathBuf>,
+    /// The image organ's program (`--image-organ`).
+    pub image_organ: Option<PathBuf>,
     /// Where this vault hands its authorized e-sign mail to the supervisor's
     /// sender (`--esign-delivery-outbox-dir`); no outbox runs without it.
     pub esign_delivery_outbox: Option<PathBuf>,
