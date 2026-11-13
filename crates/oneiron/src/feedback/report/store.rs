@@ -1,7 +1,10 @@
 //! Durable issue identity, entity-local review, and the arrival index.
 use std::sync::atomic::Ordering;
 
-use super::{ReportIssue, ReportReceipt, ReportRequest, ReportReview, ReportStatus, invalid};
+use super::{
+    ReportDisclosure, ReportIssue, ReportIssueOrigin, ReportReceipt, ReportRequest, ReportReview,
+    ReportRoute, ReportStatus, invalid,
+};
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::StandingConsentGrant;
 use crate::feedback::intake::FeedbackDedup;
@@ -124,7 +127,99 @@ fn write(vault: &Vault, txn: &mut heed::RwTxn<'_>, issue: &ReportIssue) -> Resul
     )
 }
 
+/// What the owner's archive restore did with one archived ISSUE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReportRestoreOutcome {
+    /// The report was absent here and is now written, with its arrival.
+    Inserted,
+    /// This vault already holds the same report; nothing was written.
+    Unchanged,
+}
+
+/// Review shape is shared; only the live review door requires its target to exist.
+fn validate_review(id: &EntityId, review: &ReportReview) -> Result<Option<EntityId>> {
+    if review
+        .quality_score
+        .is_some_and(|score| !score.is_finite() || !(0.0..=1.0).contains(&score))
+    {
+        return Err(invalid("invalid report quality score"));
+    }
+    let duplicate = review
+        .duplicate_of
+        .as_deref()
+        .map(EntityId::from_hex)
+        .transpose()?;
+    if (review.status == ReportStatus::Duplicate) != duplicate.is_some() || duplicate == Some(*id) {
+        return Err(invalid("duplicate review must name another issue"));
+    }
+    Ok(duplicate)
+}
+
 impl Vault {
+    /// The filing resolver, called before the archive import opens its writer.
+    pub(crate) fn archived_report_artifact_route(
+        &self,
+        subject: &str,
+    ) -> Result<Option<ReportRoute>> {
+        self.report_artifact_route(subject)
+    }
+
+    /// Restores one archived ISSUE `body` under `id` for the owner's whole-vault
+    /// restore. The actor, request, filing time, review and disclosure basis and
+    /// round come from the archive; the route is computed here from
+    /// `artifact_route` (resolved before the writer opened) and this vault's
+    /// route policy, and the disclosure from that route, keeping an archived
+    /// `Denied` only on the same route. The row is marked
+    /// [`ReportIssueOrigin::OwnerArchiveRestore`], so no signature is offered
+    /// for it. A row already here with the same actor, request, filing time and
+    /// review is `Unchanged`; any other row under `id` is a collision.
+    pub(crate) fn restore_archived_report_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        body: &[u8],
+        artifact_route: Option<ReportRoute>,
+    ) -> Result<ReportRestoreOutcome> {
+        let mut issue: ReportIssue =
+            rmp_serde::from_slice(body).map_err(|_| invalid("invalid archived report body"))?;
+        if EntityId::from_hex(&issue.issue_ref)? != id
+            || issue_id(EntityId::from_hex(&issue.actor_ref)?, &issue.request)? != id
+        {
+            return Err(invalid("archived report identity does not match its ID"));
+        }
+        issue.request.validate()?;
+        validate_review(&id, &issue.review)?;
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)? {
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("report issue header"))?;
+            if header.entity_type == ENTITY_TYPE_ISSUE
+                && let Some(existing) = read(self, txn, &id)?
+                && existing.actor_ref == issue.actor_ref
+                && existing.request == issue.request
+                && existing.received_at == issue.received_at
+                && existing.review == issue.review
+            {
+                return Ok(ReportRestoreOutcome::Unchanged);
+            }
+            return Err(Error::InvalidConfig(
+                "whole-vault import: import ID collides with different entity data".into(),
+            ));
+        }
+        let route = self.report_route_in_txn(txn, &issue.request.subject_ref, artifact_route)?;
+        let keep_denial = issue.disclosure == ReportDisclosure::Denied && route == issue.route;
+        issue.disclosure = if keep_denial {
+            ReportDisclosure::Denied
+        } else {
+            super::routing::report_disclosure(&route, issue.request.carries_text())
+        };
+        issue.route = route;
+        self.project_report_disclosure_in_txn(txn, &mut issue)?;
+        issue.origin = ReportIssueOrigin::OwnerArchiveRestore;
+        write(self, txn, &issue)?;
+        ARRIVALS.put(&self.store, txn, &(issue.received_at, id), &())?;
+        Ok(ReportRestoreOutcome::Inserted)
+    }
+
     pub(crate) fn submit_report(
         &self,
         actor: EntityId,
@@ -169,6 +264,7 @@ impl Vault {
                 disclosure,
                 disclosure_basis: None,
                 disclosure_round: 0,
+                origin: ReportIssueOrigin::Filed,
             };
             // A standing grant live for this publisher approves its text now.
             self.project_report_disclosure_in_txn(txn, &mut issue)?;
@@ -246,22 +342,7 @@ impl Vault {
         id: &EntityId,
         review: ReportReview,
     ) -> Result<ReportIssue> {
-        if review
-            .quality_score
-            .is_some_and(|score| !score.is_finite() || !(0.0..=1.0).contains(&score))
-        {
-            return Err(invalid("invalid report quality score"));
-        }
-        let duplicate = review
-            .duplicate_of
-            .as_deref()
-            .map(EntityId::from_hex)
-            .transpose()?;
-        if (review.status == ReportStatus::Duplicate) != duplicate.is_some()
-            || duplicate == Some(*id)
-        {
-            return Err(invalid("duplicate review must name another issue"));
-        }
+        let duplicate = validate_review(id, &review)?;
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             if let Some(duplicate) = duplicate {

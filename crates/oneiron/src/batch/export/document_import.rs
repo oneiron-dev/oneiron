@@ -3,6 +3,7 @@
 //! each pass reads one row at a time from it; the dependency queues, id sets
 //! and maps grow in the index as well, so no archive-wide row state stays in
 //! memory. The rows still go in through one write transaction.
+mod issue_archive_restore;
 mod owner_archive_restore;
 mod seed_replacement;
 
@@ -239,6 +240,12 @@ impl Vault {
         // results' are; the values custody holds are read in the writer.
         let _bodies = self.pin_all_result_bodies();
         let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
+        // The filing resolver opens read txns, so resolve each subject before the writer.
+        let issue_routes = if owner.is_some() {
+            issue_archive_restore::artifact_routes(self, &archive, secrets)?
+        } else {
+            BTreeMap::new()
+        };
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
         let restore_fresh =
@@ -502,6 +509,19 @@ impl Vault {
         }
         let mut inserted_entities = pending + model_imports.inserted + inserted_descriptors;
         let mut destination_omissions = Vec::new();
+        // ISSUE stayed omitted through generic indexing; only this owner's permit restores it.
+        if let Some(permit) = permit.as_ref() {
+            let (inserted, unchanged) = issue_archive_restore::restore_in_txn(
+                self,
+                &mut wtxn,
+                &mut archive,
+                permit,
+                &issue_routes,
+                secrets,
+            )?;
+            inserted_entities += inserted;
+            unchanged_entities += unchanged;
+        }
         // Resolve reference dependencies without assuming UUID or export order.
         // A cycle or an unavailable subject fails without a partial commit.
         // Each round queues what waits on no pending id, then restores it.

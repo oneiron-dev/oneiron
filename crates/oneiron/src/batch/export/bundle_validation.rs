@@ -606,13 +606,17 @@ impl OmissionLedger {
 /// the guest-claim rule (FIX 3497) holds. Only the owner's restore brings it
 /// back, as the owner's restore of it, its MACHINE author and proof inert.
 ///
-/// Each maintenance kind the raw entity walk exports and no import door
-/// restores is named here, so one such row never stops the whole import
-/// (L10-23, OF-222): a WORLD_KEY_PAD is key material that only a recovery-kit
-/// restore carries (`world_keys::bundle`); a RECEIPT_RECORD and an ISSUE are
-/// audit evidence, never a permit here; a raw EMBEDDING_SETUP row is the
-/// published form of the spaces and slot bindings the import admits from the
-/// archive's own sections, and the import publishes it again from them.
+/// Each maintenance kind the raw entity walk exports and the generic import
+/// does not restore is named here, so one such row never stops the whole
+/// import (L10-23, OF-222): a WORLD_KEY_PAD is key material that only a
+/// recovery-kit restore carries (`world_keys::bundle`); a RECEIPT_RECORD is
+/// audit evidence, never a permit here; an ISSUE is the owner's own report,
+/// which only the owner's restore brings back, through the feedback writer,
+/// with its route and disclosure computed on this vault and no signature
+/// offered (`document_import::issue_archive_restore`); a raw EMBEDDING_SETUP
+/// row is the published form of the spaces and slot bindings the import
+/// admits from the archive's own sections, and the import publishes it again
+/// from them.
 pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
     match row.entity_type {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR => Some(ImportOmissionReason::SkillAnchorRecomputed),
@@ -634,6 +638,7 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
         | crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
         | crate::registry::ENTITY_TYPE_COMM_RECORD
         | crate::registry::ENTITY_TYPE_RECEIPT_RECORD
+        // Declared here on every door; the owner's restore then brings it back.
         | crate::registry::ENTITY_TYPE_ISSUE => Some(ImportOmissionReason::LocalHistoryNotRestored),
         crate::registry::ENTITY_TYPE_PSYCH_PROFILE
         | crate::registry::ENTITY_TYPE_EMBEDDING_SETUP => {

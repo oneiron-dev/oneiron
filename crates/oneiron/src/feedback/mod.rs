@@ -158,13 +158,14 @@ pub use self::redaction::{
     FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity,
     apply_recognised_spans,
 };
+pub(crate) use self::report::ReportRestoreOutcome;
 pub use self::report::{
     COACH_FEEDBACK_DELIVERY_FACET, IssueCategory, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
     REPORT_SIGNATURE_VERB, REPORT_VERB, ReportDeliveryHold, ReportDeliveryKey,
     ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRetryRequest,
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
     ReportDisclosure, ReportDisclosureBasis, ReportDisclosureChoice, ReportFrozenSend,
-    ReportFrozenSignature, ReportIssue, ReportKind, ReportPublisherBinding,
+    ReportFrozenSignature, ReportIssue, ReportIssueOrigin, ReportKind, ReportPublisherBinding,
     ReportPublisherBindingRequest, ReportPublisherEndpoint, ReportPublisherMetadata, ReportReceipt,
     ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
     ReportSignatureTransport, ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
