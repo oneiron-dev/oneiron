@@ -527,6 +527,9 @@ fn with_no_image_organ_a_preview_is_refused_with_the_reason_and_nothing_is_held_
 
 async fn preview_refused() -> TestResult {
     let fixture = Fixture::new()?;
+    // The Grant stands before the owner's own preview, which it does not
+    // narrow.
+    fixture.grant_agent_facets().await?;
     let photo = fixture
         .artifact("photo.png", "image/png", PNG_BASE64)
         .await?;
@@ -563,7 +566,8 @@ async fn preview_refused() -> TestResult {
         "nothing waits for Keep: {proposals:?}"
     );
 
-    // The agent's lane does not read the owner's artifact.
+    // The owner's one Grant for the agent reads one facet that does not
+    // hold the owner's artifact: its lane does not read it.
     let (status, body) = fixture
         .call(Some(&fixture.agent), PREVIEW, &preview(crop(), 64))
         .await?;
