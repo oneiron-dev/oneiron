@@ -16,6 +16,8 @@ mod archive_read;
 pub(crate) mod archive_retained_side_rows;
 /// The archive disposition of each decided canonical side table.
 pub(crate) mod archive_side_dispositions;
+/// Owner-permitted landing groups for retained archive rows.
+pub(crate) mod archive_side_install;
 mod archive_side_tables;
 mod archive_spool;
 pub(crate) use archive_project::project_stored_archive;

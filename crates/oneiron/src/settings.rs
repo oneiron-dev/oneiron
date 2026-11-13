@@ -4,11 +4,18 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
+pub(crate) mod archive_restore;
 pub mod backup;
 pub(crate) mod board_layout;
 pub mod default_facet;
@@ -594,6 +601,83 @@ fn customization_events_after_in_txn(
         events.push(event);
     }
     Ok(events)
+}
+
+/// Lands one archived plugin-suggestions envelope: strict one-byte Raw decoding plus an absent-key
+/// exact-bytes install.
+fn land_archived_plugin_suggestions_row_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, _) = match decode_archived_row(&PLUGIN_SUGGESTIONS_ENABLED, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(&PLUGIN_SUGGESTIONS_ENABLED, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived customization-profile envelope: [`CustomizationSettings::validate`], then an
+/// absent-key exact-bytes install, never minting an event.
+fn land_archived_customization_settings_row_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&CUSTOMIZATION_SETTINGS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&CUSTOMIZATION_SETTINGS, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived customization-event envelope: [`CustomizationSettingsChangeEvent::validate`]
+/// plus key-equals-sequence, then an absent-key exact-bytes install; the caller repairs the event
+/// counter afterwards.
+fn land_archived_customization_event_row_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&CUSTOMIZATION_EVENT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if value.sequence != key {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    install_archived_row(&CUSTOMIZATION_EVENT, vault, txn, permit, &key, row)
+}
+
+/// Repairs the customization event counter to the max of its stored value and the highest live
+/// event key, so the next event the owner writes does not reuse a key.
+fn repair_customization_event_counter_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let stored = CUSTOMIZATION_EVENT_SEQUENCE.get(&vault.store, txn, &())?;
+    let highest = CUSTOMIZATION_EVENT
+        .scan_keys(&vault.store, txn, &[])?
+        .into_iter()
+        .max()
+        .unwrap_or(0);
+    let repaired = stored.unwrap_or(0).max(highest);
+    if repaired != 0 && Some(repaired) != stored {
+        CUSTOMIZATION_EVENT_SEQUENCE.put(&vault.store, txn, &(), &repaired)?;
+    }
+    Ok(())
 }
 
 fn validate_token(field: &'static str, value: &str) -> Result<()> {

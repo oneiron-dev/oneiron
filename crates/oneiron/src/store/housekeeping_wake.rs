@@ -15,6 +15,11 @@
 
 use heed::{RoTxn, RwTxn};
 
+use crate::batch::export::RetainedSideHeldBackReason;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
@@ -104,4 +109,28 @@ pub(crate) fn clear(vault: &Vault, covered: &[WakeKey]) -> Result<()> {
     }
     txn.commit()?;
     Ok(())
+}
+
+/// Lands archived wake notes with recognized sweep tags, holding back the rest.
+pub(crate) fn land_archived_housekeeping_wake_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let outcome = match decode_archived_row(&WAKE, row) {
+            Err(reason) => ArchivedSideRowOutcome::HeldBack(reason),
+            Ok((key, ())) => {
+                if !matches!(key.0, [1] | [2] | [3] | [4] | [5]) {
+                    ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidValue)
+                } else {
+                    install_archived_row(&WAKE, vault, txn, permit, &key, row)?
+                }
+            }
+        };
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
 }

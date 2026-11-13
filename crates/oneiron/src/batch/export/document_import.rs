@@ -660,13 +660,6 @@ impl Vault {
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
-        // SIDE-1: the retained rows land inert in the same write transaction, for all three
-        // doors alike: no branch on actor, owner or freshness.
-        let retained_side_rows = super::archive_retained_side_rows::retain_side_rows_in_txn(
-            &self.store,
-            &mut wtxn,
-            &archive,
-        )?;
         // FIX 1162: every imported agent gets its model PERSON in this same
         // writer, once the bundle's own PERSON and anchor rows are in.
         super::agent_person_import::ensure_imported_agent_persons_in_txn(
@@ -684,6 +677,15 @@ impl Vault {
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
+        // Actor and actorless doors retain only; the owner door installs tables with a
+        // landing group and retains the rest, after imported persons, results and secrets.
+        let retained_side_rows =
+            super::archive_retained_side_rows::install_or_retain_side_rows_in_txn(
+                self,
+                &mut wtxn,
+                &archive,
+                permit.as_ref(),
+            )?;
         // OF-013: each lineage's floor rises to the archive's and never falls.
         super::epoch_floors::restore_epoch_floors_in_txn(&self.store, &mut wtxn, &archive.spool)?;
         // OF-370: the embedding setup declares and binds only what is absent

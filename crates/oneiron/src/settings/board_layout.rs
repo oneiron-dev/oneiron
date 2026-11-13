@@ -14,11 +14,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::{BoardLayout, BoardLayoutError};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The owner's board layout settings. Absent reads empty.
 const BOARD_LAYOUT_SETTINGS: SideTable<(), BoardLayoutSettings, Named> =
@@ -279,4 +286,43 @@ impl Vault {
             Ok(settings)
         })
     }
+}
+
+/// Lands one archived board-layout envelope: [`BoardLayoutSettings::validate`] plus a live
+/// AGENT_DEF-or-PERSON check per override, then an absent-key exact-bytes install, never recording
+/// an act.
+pub(super) fn land_archived_board_layout_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&BOARD_LAYOUT_SETTINGS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    for agent in &value.agent_override_layouts {
+        match live_entity_row_in_txn(&vault.store, &*txn, &agent.agent)? {
+            LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+                return Ok(ArchivedSideRowOutcome::HeldBack(
+                    RetainedSideHeldBackReason::MissingLiveEntity,
+                ));
+            }
+            LiveEntityRow::Live { entity_type, .. }
+                if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF
+                    && entity_type != crate::registry::ENTITY_TYPE_PERSON =>
+            {
+                return Ok(ArchivedSideRowOutcome::HeldBack(
+                    RetainedSideHeldBackReason::WrongEntityKind,
+                ));
+            }
+            LiveEntityRow::Live { .. } => {}
+        }
+    }
+    install_archived_row(&BOARD_LAYOUT_SETTINGS, vault, txn, permit, &key, row)
 }

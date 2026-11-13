@@ -263,6 +263,24 @@ impl Vault {
     }
 }
 
+/// Lands one archived DREAMER_PROJECTOR_POLICY row live: the singleton policy has no value
+/// bounds (zero is valid), so canonical decode plus the archive seam is the whole check.
+pub(super) fn land_archived_dreamer_projector_policy_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, _) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
+}
+
 /// Compares a due window's material with the held turn, in the wake's
 /// transaction. Writes nothing. `None` when `stop` stopped the plan.
 pub(crate) fn plan_in_txn(
