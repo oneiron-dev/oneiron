@@ -275,7 +275,9 @@ pub(super) fn save_with_hint_read_in_txn(
                     if inherited.kind() == Some(kind) {
                         inherited.clone()
                     } else {
-                        linker.link(txn, kind, text, &messages[span.message], hint_read)?
+                        let link =
+                            linker.link(txn, kind, text, &messages[span.message], hint_read)?;
+                        linker.ranked(txn, link, hint_read)?
                     }
                 } else {
                     // A name that keys elsewhere than its antecedent keeps
