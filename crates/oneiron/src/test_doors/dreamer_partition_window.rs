@@ -27,7 +27,9 @@ use crate::error::{Error, Result};
 use crate::llm::{HostInferenceBinding, HostInferenceContext};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
-use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{
+    ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
+};
 use crate::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallPurpose, ContentPart,
     DreamerClaimAuthoringStrategy, DreamerConsolidationScope, EdgeActorClass, EdgeKind, EntityId,
@@ -314,26 +316,45 @@ fn seed_conversation(vault: &Vault, seed: u8, name: &str, marker: &str) -> Resul
     let person = EntityId::now();
     let named = encode(&Value::Map(vec![("name".into(), name.into())]))?;
     vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
-    // The listed prior: the owner's own statement of the name, written
-    // through the envelope door as `prior_heads.rs`'s fixture writes its head.
-    let owner = EntityId::now();
-    vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-    let envelope = WriteEnvelope::new(
-        WriteActor::new(owner, EdgeActorClass::Human),
-        ClaimSource::UserStated,
-        WriteProvenance::new(Value::from("owner statement"))?,
-        ClaimApprovalStatus::Approved,
+    // The listed prior: a clean Dreamer claim of the name in the shape the
+    // promotion writer stores one (source and taint `generated`), proposed
+    // under the Dreamer's signed MACHINE authority, then approved by the
+    // owner, so it stands as an admitted head the finish's correction read
+    // asks about. A setup that did not reach Approved stops here.
+    let prior = EntityId::now();
+    let mut envelope = WriteEnvelope::with_lineage(
+        vault.dreamer_authority()?,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::from("window finish prior"))?,
+        ClaimApprovalStatus::Proposed,
+        SourceLineage::of(ClaimSource::Generated),
     );
     let candidate = ClaimCandidate::new(
         "profile.name",
         ClaimSubject::Entity(person),
         Value::from(name),
         0.9,
-    );
+    )
+    .with_evidence_taint(ClaimSource::Generated)?;
+    vault.sign_registered_machine_claim(&prior, &candidate, &mut envelope)?;
     vault
         .batch()
-        .claim_candidate(&EntityId::now(), candidate, &envelope, occurred(2), 2)
+        .claim_candidate(&prior, candidate, &envelope, occurred(2), 2)
         .commit()?;
+    vault.approve_machine_claim_as(
+        prior,
+        WriteActor::new(
+            crate::vault::embedded_owner_actor_id()?,
+            EdgeActorClass::Human,
+        ),
+    )?;
+    let stored = vault.get_claim(&prior)?.ok_or(Error::EntityNotFound)?;
+    if stored.approval != ClaimApprovalStatus::Approved {
+        return Err(Error::InvalidConfig(format!(
+            "fixture prior did not reach Approved: {:?}",
+            stored.approval
+        )));
+    }
     let turn = EntityId::now();
     let body = Value::Map(vec![
         ("txt".into(), format!("{name} {marker} enjoys tea").into()),
