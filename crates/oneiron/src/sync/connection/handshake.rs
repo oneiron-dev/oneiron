@@ -664,29 +664,14 @@ impl SyncConnection {
         }
         let full_resync_markers = self.full_resync_markers()?;
         // FIX 20202: an opened-item session re-bootstraps from the server
-        // each marked window this device promoted and the home may read, over
-        // its promoted exchange, once the queue is replayed. Any other marked
-        // window still needs sync-all.
+        // the marked windows it may recover over this connection
+        // (`opened_resync_markers`), once the queue is replayed.
         let (full_resync_markers, promoted_markers) =
             if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
-                for marker in &full_resync_markers {
-                    let recoverable = match WindowKey::try_new(marker.window_key.as_str()) {
-                        Some(key) => {
-                            client
-                                .opened_window_promoted(&key)
-                                .map_err(SessionFault::local)?
-                                && client.home_may_promote(&key)
-                                && client.home_may_request(&key)
-                        }
-                        None => false,
-                    };
-                    if !recoverable {
-                        return Err(SessionFault::local(
-                            "opened-item full-resync requires explicit sync-all recovery",
-                        ));
-                    }
-                }
-                (Vec::new(), full_resync_markers)
+                (
+                    Vec::new(),
+                    Self::opened_resync_markers(client, full_resync_markers)?,
+                )
             } else {
                 (full_resync_markers, Vec::new())
             };
