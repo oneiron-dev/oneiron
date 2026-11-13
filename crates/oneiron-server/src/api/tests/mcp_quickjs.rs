@@ -406,10 +406,10 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
         assert!(mcp_listed_tool_names(&listing).contains(&"execute_code"));
     }
-    for (path, field) in [
-        ("/api/core/discover", "feature_flags"),
-        ("/api/health", "capabilities"),
-    ] {
+    // 8bd904f78b5 (#3490, FIX 6692): discovery lists the capabilities by
+    // family; health carries each family's count and the same digest.
+    let mut bodies = Vec::new();
+    for path in ["/api/core/discover", "/api/health"] {
         let (status, body) = route_json(
             server.clone(),
             Request::builder()
@@ -419,16 +419,34 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
                 .unwrap(),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        let capabilities = body[field]["capabilities"].as_array().unwrap();
-        for token in [
-            "mcp.tool.execute_code",
-            "mcp.endpoint.primary.execute_code",
-            "mcp.endpoint.tool_first.execute_code",
-        ] {
-            assert!(capabilities.contains(&json!(token)), "{path}: {body}");
-        }
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        bodies.push(body);
     }
+    let (discover, health) = (&bodies[0], &bodies[1]);
+    for (token, family) in [
+        ("mcp.tool.execute_code", "mcp.tool"),
+        ("mcp.endpoint.primary.execute_code", "mcp.endpoint.primary"),
+        (
+            "mcp.endpoint.tool_first.execute_code",
+            "mcp.endpoint.tool_first",
+        ),
+    ] {
+        let group = &discover["feature_flags"]["groups"][family];
+        assert!(
+            group["capabilities"]
+                .as_array()
+                .is_some_and(|tokens| tokens.contains(&json!(token))),
+            "{token}: {discover}"
+        );
+        assert_eq!(
+            health["capabilities"]["counts"][family], group["count"],
+            "{family}: {health}"
+        );
+    }
+    assert_eq!(
+        health["capabilities"]["digest"],
+        discover["feature_flags"]["digest"]
+    );
     let args = mcp_merge_args(
         mcp_endpoint_envelope(actor_id, "write_memory"),
         json!({"run_ref":"quickjs-one", "task":"write one claim then finish"}),
