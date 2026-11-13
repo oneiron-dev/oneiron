@@ -44,6 +44,7 @@ pub mod mail_landing;
 pub mod membership;
 pub mod model_binding_proposer;
 pub mod note_bm25f_repair;
+pub mod outbound_grant_index;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;
