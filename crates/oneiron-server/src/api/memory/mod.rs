@@ -729,7 +729,7 @@ fn core_memory_delete_by_role(
         {
             Err(oneiron::memory::MemoryError::new(
                 oneiron::memory::MEMORY_CODE_FORBIDDEN,
-                "account_key_unbound: an account key carries no vault slip, so on a rooted vault it deletes only as the vault's owner",
+                "account_key_unbound: this key can't delete in this vault; use your app login or ask the owner",
                 &[
                     "Present the person's own paired slip (--principal-ref, --actor-class human) to delete as that person.",
                 ],
