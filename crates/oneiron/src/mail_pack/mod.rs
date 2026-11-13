@@ -105,12 +105,16 @@ pub use doors::{
 pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
+#[cfg(oneiron_test_support)]
+pub(crate) use imap::imap_landed_headers;
 pub use imap::{IMAP_CONNECTOR_EFFECTOR, ImapMailWire};
 pub use importer::{MailSyncBudget, MailSyncReport};
 pub use inbox::{
     MailInboxItem, MailInboxPage, MailInboxRequest, MailThreadRequest, MailThreadView,
 };
 pub use local_sync::MailSourceSyncRequest;
+#[cfg(oneiron_test_support)]
+pub(crate) use mbox_import::mbox_landed_headers;
 pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};

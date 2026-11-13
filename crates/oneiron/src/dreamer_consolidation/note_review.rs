@@ -301,6 +301,8 @@ impl ConsolidationExecutor<'_> {
             subject: note.id,
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
+            spend_scope: None,
+            wake_pass_bound: true,
         };
         let response = match call_as_step_checked(
             &step,
@@ -368,10 +370,7 @@ impl ConsolidationExecutor<'_> {
                 return Ok(Some(charges.checkpoint()));
             }
             Err(error) => {
-                return Ok(Some(charges.park_for(
-                    &error.to_string(),
-                    crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-                )));
+                return Ok(Some(charges.end_on_step_error(&error.to_string(), &error)));
             }
         };
         if ctx.deadline.expired() {

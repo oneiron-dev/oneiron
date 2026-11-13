@@ -13,16 +13,24 @@ pub(super) async fn register_mcp_actor(
         oneiron::EdgeActorClass::Agent => oneiron::registry::ENTITY_TYPE_MACHINE,
         oneiron::EdgeActorClass::System => oneiron::registry::ENTITY_TYPE_MACHINE,
     };
-    server
+    // An actor already on file (the vault's embedded owner) keeps its row.
+    if server
         .vault
-        .put_entity(
-            &actor_ref,
-            actor_type,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"mcp actor",
-        )
-        .expect("seed mcp actor entity");
+        .get_entity_type(&actor_ref)
+        .expect("read the mcp actor's type")
+        .is_none()
+    {
+        server
+            .vault
+            .put_entity(
+                &actor_ref,
+                actor_type,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"mcp actor",
+            )
+            .expect("seed mcp actor entity");
+    }
     let credential = pair_mcp_credential(
         server,
         credential,
@@ -130,9 +138,13 @@ pub(super) fn mcp_listed_tool_names(body: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// The tool-first names: every verb row exported to MCP (a `mcp: "none"` row,
+/// such as `self.browser.*`, is no tool, 99f171e1e54 #1556), then the native
+/// read table, sorted.
 pub(super) fn mcp_expected_generated_names() -> Vec<&'static str> {
     let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
         .iter()
+        .filter(|verb| verb.is_mcp())
         .map(|verb| verb.as_str())
         .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter().copied())
         .collect::<Vec<_>>();
@@ -260,10 +272,13 @@ impl oneiron::LlmBackend for McpFixtureCodeBackend {
                     role: oneiron::LlmMessageRole::Assistant,
                     content: vec![oneiron::ContentPart::Text {
                         text: "const found = await self.memory.search(\"launch plan\");".to_owned(),
+                        signature: None,
                     }],
                 },
                 usage: oneiron::LlmUsage::zero(),
                 finish_reason: oneiron::FinishReason::Stop,
+                reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }

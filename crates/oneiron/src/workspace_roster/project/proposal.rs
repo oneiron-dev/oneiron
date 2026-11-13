@@ -415,17 +415,31 @@ pub(crate) fn fail_project_detection(
 /// house room. `None` when that leader is not an AGENT_DEF.
 pub(crate) fn project_house_agent(vault: &Vault) -> Result<Option<EntityId>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(root) = super::root_project_in(&vault.store, &txn)? else {
+    project_house_agent_in_txn(vault, &txn)
+}
+
+/// [`project_house_agent`] in the caller's snapshot.
+pub(crate) fn project_house_agent_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<EntityId>> {
+    let Some(root) = super::root_project_in(&vault.store, txn)? else {
         return Ok(None);
     };
-    let Some((_, effective)) = vault.effective_project_in_txn(&txn, root)? else {
+    let Some((_, effective)) = vault.effective_project_in_txn(txn, root)? else {
         return Ok(None);
     };
     let leader = EntityId::from_hex(&effective.leader).map_err(|_| invalid())?;
     Ok(
-        (vault.get_entity_type_in_txn(&txn, &leader)? == Some(ENTITY_TYPE_AGENT_DEF))
+        (vault.get_entity_type_in_txn(txn, &leader)? == Some(ENTITY_TYPE_AGENT_DEF))
             .then_some(leader),
     )
+}
+
+/// The root's seeded leader, `sys.team_lead`: the house mind a vault has
+/// before a workspace names its own. `None` when no seeded row is so named.
+pub(crate) fn seeded_house_agent() -> Result<Option<EntityId>> {
+    crate::agent_def::legacy_logical_id_row(super::ROOT_SEED_LEADER)
 }
 
 fn mark_minted_in_txn(
@@ -560,21 +574,26 @@ impl Vault {
                 "card": card.card_id,
             }
         });
-        AgentDispatcher::new(self).dispatch_with_context(
-            DispatchAgent {
-                target: AgentDispatchTarget::Custom(leader),
-                parent_attempt: None,
-                dedupe_key: Some(format!("project-goal-intake:{}", project.to_hex())),
-                run_id: Some(format!("project:{}", project.to_hex())),
-                now,
-            },
-            AgentSpawnContext {
-                project_ref: Some(project),
-                ..AgentSpawnContext::default()
-            }
-            .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
-            .with_origin_conversation(home_room),
-        )
+        // The interview is a root run in the new project, which has no run of
+        // its own yet to be its parent: the entry the dispatch writer proves
+        // against this card admits it.
+        AgentDispatcher::new(self)
+            .admitting_goal_intake(&card.card_id, project, home_room, leader)
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(leader),
+                    parent_attempt: None,
+                    dedupe_key: Some(format!("project-goal-intake:{}", project.to_hex())),
+                    run_id: Some(format!("project:{}", project.to_hex())),
+                    now,
+                },
+                AgentSpawnContext {
+                    project_ref: Some(project),
+                    ..AgentSpawnContext::default()
+                }
+                .with_context_spec(ContextSpec::default().with_briefing(brief.to_string()))
+                .with_origin_conversation(home_room),
+            )
     }
 }
 
@@ -744,19 +763,20 @@ impl Memory<'_> {
     }
 
     /// What the goal-intake interview starts from, for a member of the
-    /// project's home room.
+    /// project's home room. The full goal proposals carry goal records, so
+    /// only a member that reads the goal gets them. Membership, the goal
+    /// read and the context are read in one snapshot.
     pub fn projects_goal_intake(
         &self,
         project: EntityId,
     ) -> MemoryResult<super::ProjectGoalInterviewContext> {
         let vault = self.vault();
-        {
-            let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            let record = vault
-                .visible_project_in_txn(&txn, project)?
-                .ok_or_else(invalid)?;
-            rooms::require_member(vault, &txn, canonical(&record.home_room)?, self.actor())?;
-        }
-        Ok(vault.project_goal_interview_context(project)?)
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let record = vault
+            .visible_project_in_txn(&txn, project)?
+            .ok_or_else(invalid)?;
+        rooms::require_member(vault, &txn, canonical(&record.home_room)?, self.actor())?;
+        let reads_goal = super::reads_goal_proposals_in_txn(self, &txn)?;
+        Ok(vault.project_goal_interview_context_in_txn(&txn, project, reads_goal)?)
     }
 }

@@ -5,6 +5,7 @@
   "output": "crate::llm::model_pack::ModelPackRevert",
   "call": "crate::task_verb::sdk::revert_model_pack(memory, input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "host_door": true,
   "host_door_precheck": false,
   "host_door_lists": true,

@@ -247,6 +247,13 @@ fn replace_member_head_in_txn(
 
 /// Writes one evidence-linked hygiene claim, or returns the live head that
 /// already carries exactly this fact.
+///
+/// A hygiene claim is a restriction this door owns outright: the person asked
+/// to stop, or their mailbox refused. It rides the engine-owned door, as a
+/// STOP's projected opt-out does (F06 H160): the criticality ladder never
+/// refuses a restriction, and an unnamed `comm.*` predicate must not park
+/// the suppression for review while sends go out. Body validation and the
+/// source-trust check still run.
 fn put_hygiene_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -270,7 +277,10 @@ fn put_hygiene_claim_in_txn(
     )?;
     body.source = Some(ClaimSource::Observed);
     body.evidence = Some(evidence_value(input.evidence_ref));
-    vault.put_claim_in_txn(
+    // Only a PERSON subject has a substrate FACET; any other subject takes
+    // the vault default facet (a birth gate refusal otherwise, #4389).
+    body.scope_facet = vault.claim_put_facet_keeping_in_txn(wtxn, &id, body.scope_facet)?;
+    vault.put_reserved_claim_in_txn(
         wtxn,
         &id,
         &body,

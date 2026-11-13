@@ -8,6 +8,7 @@
   "output": "crate::anchored_annotation::AnnotationThreadView",
   "call": "memory.artifacts_threads_open(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true,
     "readable": [

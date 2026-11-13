@@ -3,9 +3,11 @@
 //! parent lease, planner, attenuation and project-write gates.
 use super::HostSelfDispatcher;
 use crate::EntityId;
+use crate::agent_dispatch::AgentWaitSetResult;
 use crate::code_run::{
     AgentSpawnInput, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput, ReportBlockedInput,
     ReportBlockedOutput, SelfDispatchOutcome, TaskRefuseInput, TaskRefuseOutput,
+    TaskWaitAgentsRequest,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 
@@ -38,13 +40,16 @@ impl<'a> HostSelfDispatcher<'a> {
     /// Mints a proposal's ordinary gated provenance from a request this
     /// host actually served under the same live-run attachment. `stamp` and
     /// the change come from the admitted native proposal door, not a wire
-    /// provenance assertion.
+    /// provenance assertion; `effect` is the proposal row the host serves
+    /// (`RepoProposalSubmit` or `RepoProposalResolve`), which names the
+    /// provenance's derivation version, as on a native run.
     pub fn repo_sources_from_host(
         &self,
         stamp: &crate::memory::repo_doors::RepoRunStamp,
         path: String,
         content_hash: [u8; 32],
         witness: &super::RepoRequestWitness,
+        effect: crate::code_run::SelfEffect,
     ) -> MemoryResult<crate::memory::repo_doors::RepoRunSources> {
         self.live_parent()?;
         let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
@@ -57,7 +62,7 @@ impl<'a> HostSelfDispatcher<'a> {
             stamp,
             &super::repo_sources::RepoChange { path, content_hash },
             witness,
-            crate::code_run::SelfEffect::RepoProposalSubmit,
+            effect,
         )
         .map_err(crate::memory::MemoryError::from)?
     }
@@ -93,6 +98,37 @@ impl<'a> HostSelfDispatcher<'a> {
         let _tool = self.activity_tool();
         match self.dispatch_agents_spawn(input.into_call()?)? {
             SelfDispatchOutcome::AgentSpawn(spawn) => Ok(spawn.into()),
+            SelfDispatchOutcome::Failed(failed) => {
+                Err(MemoryError::new(&failed.error, &failed.error, &[]))
+            }
+            // SPAWN-KNOB: a power refusal keeps its Gate reason.
+            SelfDispatchOutcome::Denied(denied) => Err(MemoryError::from(
+                crate::code_run::payload::replay_denied_trap_error(&denied),
+            )),
+            _ => Err(host_result_mismatch()),
+        }
+    }
+
+    /// The host door's `tasks.wait` over AGENT children (slice 6.5b), after
+    /// its credential and hooks admitted the call: the wait of this
+    /// dispatcher's own leased attempt over children it spawned. A host
+    /// caller has no executor step to park, so a wait that is not done
+    /// answers its reduction as it stands, and the caller asks again under
+    /// the same step key.
+    pub fn wait_agents_from_host(
+        &self,
+        input: TaskWaitAgentsRequest,
+    ) -> MemoryResult<AgentWaitSetResult> {
+        // An id-only binding is not a public host call's acquired lease.
+        self.live_parent()?;
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        let call = input.into_call();
+        let agents = call.agents.clone().unwrap_or_default();
+        match self.dispatch_agent_wait(&call, &agents, false)? {
+            SelfDispatchOutcome::AgentVerb(answer) => {
+                serde_json::from_value(answer.output).map_err(|_| host_result_mismatch())
+            }
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }
@@ -334,6 +370,74 @@ impl<'a> HostSelfDispatcher<'a> {
             .at(locality)
             .with_task_host(binding)
             .spawn_fanout_batch(input, decisions)
+    }
+
+    /// `vault.derive.commit` (untangle 6.7d): lands the batch as this held
+    /// run's actor. The request names items and source versions alone; the
+    /// stamp is the engine's ([`Self::derivation_stamp`]). Each item is then
+    /// judged on its own by the commit: the claim gate with the derivation
+    /// floors, or the actor's live grant capability over the item's target.
+    pub fn derive_commit_from_host(
+        &self,
+        input: crate::derive::DeriveCommitInput,
+    ) -> MemoryResult<crate::derive::DeriveCommitView> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a derivation commit requires canonical live-run storage",
+            ));
+        };
+        let batch = input.into_batch()?;
+        Ok(vault
+            .derive_commit(&self.derivation_stamp(), &batch)?
+            .into())
+    }
+
+    /// `vault.derive.revert` for the committing actor (untangle 6.7d): this
+    /// held run's actor takes back its own batch, while its derive verdict
+    /// stands. Any other actor's batch is refused by the revert itself.
+    pub fn derive_revert_from_host(
+        &self,
+        batch: EntityId,
+    ) -> MemoryResult<crate::derive::DeriveRevertView> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a derivation revert requires canonical live-run storage",
+            ));
+        };
+        Ok(vault.derive_revert(self.actor, None, batch)?.into())
+    }
+
+    /// Who commits a derivation batch on this held run, as the engine stamps
+    /// it: the run's actor, its recorded run and leased attempt, and the
+    /// `Generated` source with what the run has observed (an external effect
+    /// in its replay record adds `ToolOutput`, as on its claim writes,
+    /// ONE-1314). No part of it comes from the request.
+    fn derivation_stamp(&self) -> crate::derive::DerivationStamp {
+        let lineage = crate::write_envelope::SourceLineage::of(self.source());
+        crate::derive::DerivationStamp {
+            actor: self.actor,
+            run: Some(self.run_ref.clone()),
+            attempt: self.agent_lease.as_ref().map(|lease| lease.attempt),
+            lineage: if self.external_effect_seen.get() {
+                lineage.with(crate::claim::ClaimSource::ToolOutput)
+            } else {
+                lineage
+            },
+        }
     }
 
     fn live_parent(&self) -> MemoryResult<()> {

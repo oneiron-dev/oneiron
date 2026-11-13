@@ -1,6 +1,6 @@
 {
   "name": "vault.delete",
-  "description": "Deletes one entity under a named reason; an owner verb that only a verified human may call.",
+  "description": "Deletes one entity under a named reason. The owner deletes anything; a Member deletes the NOTE or TASK it owns, an Admin what its live grant holds, and an agent only under a live Grant that names delete.",
   "refs": [
     "/entity_ref"
   ],
@@ -15,6 +15,7 @@
   "output": "crate::memory::DeleteReceipt",
   "call": "memory.safe_delete(&input.entity_ref, input.reason)?",
   "scope": "Write",
+  "act_class": "delete",
   "admission": {},
   "section": false,
   "binding": {

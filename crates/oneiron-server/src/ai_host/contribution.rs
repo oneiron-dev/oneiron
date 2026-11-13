@@ -300,9 +300,11 @@ impl ContributionForkScorer for JudgeScorer {
     }
 }
 
-/// The skill's goal axis the outcome was anchored on, with the measure and
-/// bound the joined project's goal states for it, scored by `judge`'s
-/// live-axis question; `None` when it resolves to no frozen rubric.
+/// The skill's goal axis the outcome was anchored on, by its name and kind,
+/// once the joined project's goal states it, scored by `judge`'s live-axis
+/// question; `None` when it resolves to no frozen rubric. The goal's text,
+/// why, measure and bound stay in the project (FIX 22437): its audience
+/// reads them, and no rubric, pair question or journal row copies them.
 fn goal_axis_anchor(
     vault: &Vault,
     candidate: &ContributionCandidate,
@@ -317,23 +319,22 @@ fn goal_axis_anchor(
     let Some((project, _)) = goal.project else {
         return Ok(None);
     };
-    let Some(record) = vault.project_intake_goal(project)? else {
+    let Some(record) = vault
+        .project_intake_goal_as(oneiron::dreamer_runner::authority::coach_reader()?, project)?
+    else {
         return Ok(None);
     };
-    let Some(stated) = record
+    let stated = record
         .primary_axes
         .iter()
         .chain(&record.floor_axes)
         .chain(&record.cost_axes)
-        .find(|stated| stated.name == axis.name)
-    else {
+        .any(|stated| stated.name == axis.name);
+    if !stated {
         return Ok(None);
-    };
+    }
     Ok(Some(ReplayAnchor {
-        rubric: json!({
-            "name": axis.name, "kind": axis.kind, "measure": stated.measure,
-            "bound": stated.bound, "goal": record.goal, "why": record.why,
-        }),
+        rubric: json!({"name": axis.name, "kind": axis.kind}),
         scorer: format!("{}/{SCORER_JUDGMENT}", judge.judge_revision()),
     }))
 }

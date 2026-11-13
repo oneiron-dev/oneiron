@@ -152,6 +152,37 @@ pub(crate) fn check_witness_message_ceiling_with_permit<'a>(
     })
 }
 
+/// The transcript gate of a Retry's assistant TURN: the policy verdict
+/// [`check_witness_message_ceiling`] gives a reply's MESSAGE, over the same
+/// input, without the envelope floor, since a TURN carries no author
+/// bucket, message type or parts. The witness mints a reply's TURN with no
+/// gate of its own and checks only its MESSAGE here; a Retry's TURN, which
+/// holds no words, meets the verdict its MESSAGE meets in the same write. No
+/// source label is read, and only an `actor_ceilings` row that names the
+/// writer clamps it.
+///
+/// # Errors
+///
+/// [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected)
+/// when the policy verdict is not allow.
+pub(crate) fn check_witness_turn_ceiling(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, txn, actor);
+    let mut input = witness_message_gate_input(actor, agent_definition_ceiling);
+    input.foreign_agent_ceiling = super::foreign_agent::resolve(store, txn, actor)?;
+    let decision = if policy.enforces_write_gate() {
+        policy.evaluate_gate(&input)
+    } else {
+        GateDecision::allow()
+    };
+    store.diagnostics.gate.record_decision(&decision);
+    enforce_gate_decision(decision)
+}
+
 /// [`check_witness_message_ceiling`] for a SOURCE-BOUND MESSAGE (fix list
 /// row 16256): the row a source landing writes under its
 /// [`SourceAudienceBirth`], whose stored bytes `stamped` carry the
@@ -200,7 +231,7 @@ pub(crate) fn check_source_bound_witness_message_ceiling<'a>(
 /// every turn a vault ever records), and no consent context is composed. What
 /// is left is exactly the actor identity, the actor's ceiling, and the
 /// fail-closed manifest checks — the ceiling question this door asks.
-fn witness_message_gate_input(
+pub(super) fn witness_message_gate_input(
     actor: WriteActor,
     agent_definition_ceiling: Option<PolicyApprovalCeiling>,
 ) -> GateEvaluatorInput {

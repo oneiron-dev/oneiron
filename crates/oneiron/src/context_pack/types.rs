@@ -30,11 +30,6 @@ pub const DEFAULT_MAX_FIELD_CHARS: usize = 500;
 pub const MAX_EDGE_HOP: u32 = 5;
 pub const MAX_CONTEXT_NEIGHBORS: usize = 1000;
 
-/// Default share of the claim budget that non-base (fictional / dream) worlds
-/// may occupy in an `All`-scope pack — fiction takes at most half, so it can
-/// never crowd base reality out (ARCH-0004 / ARCH-0022).
-pub(super) const DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION: f32 = 0.5;
-
 pub use crate::serialize::pack_format::{FieldProfile, PackFormat};
 
 pub use crate::serialize::context_entity::ContextEntity;

@@ -55,8 +55,9 @@ pub(super) fn context_terms(text: &str, start: usize, end: usize, name: &str) ->
 
 /// Whether the link in `turn` is an uncertain person: two or more
 /// candidates, or the mention's own provisional entity alone while its name
-/// keys to real people now in a world the turn is in, as the Linker filters
-/// them.
+/// keys to real people now, or sounds like them (the Linker's phonetic
+/// rung), in a world the turn is in, as the Linker filters them. A real
+/// person the name only sounds like is never a sure link (OF-123).
 fn uncertain_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -83,8 +84,13 @@ fn uncertain_in_txn(
     if crate::tagging::provisional_in_txn(&vault.store, txn, &own)?.is_none() {
         return Ok(None);
     }
+    let sounds = crate::tagging::sounds_like_in_txn(vault, txn, turn, kind, name)?;
     let mut real = BTreeSet::new();
-    for hit in vault.lookup_identity_key_in_txn(txn, kind, name)? {
+    for hit in vault
+        .lookup_identity_key_in_txn(txn, kind, name)?
+        .into_iter()
+        .chain(sounds)
+    {
         for head in vault.resolve_entity_in_txn(txn, &hit)? {
             if head != own
                 && entity_of_kind_in_txn(vault, txn, &head, kind)?
@@ -308,6 +314,11 @@ pub(in crate::dreamer_runner::maintenance) fn run(
     _attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<()> {
+    run_page(vault, now)
+}
+
+/// [`run`]'s page, which reads nothing of the attempt.
+pub(super) fn run_page(vault: &Vault, now: u64) -> Result<()> {
     // Mentions settle through the Dreamer's lane; a vault that cannot
     // resolve it runs the pass as before the lane did, and says so (FIX
     // 10374).

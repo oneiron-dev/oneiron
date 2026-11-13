@@ -24,11 +24,16 @@
 //! [`super::REPO_LANE_UNREADABLE`]. A file or symbol the lane or the scope
 //! leaves out reads as absent, with no count.
 
+use std::collections::BTreeMap;
+
 use super::work::{repo_ref_pin, same_folder};
 use super::{RepoRunAdmitted, RepoRunBinding, refusal_error, repo_lane_unreadable};
 use crate::Vault;
 use crate::claim::{ClaimReadStatus, PointRead, ScopedRead};
-use crate::code_symbol::{CodeSymbolDefinition, code_symbol_definitions_in_txn};
+use crate::code_symbol::{
+    CodeSymbolDefinition, CodeSymbolManifest, code_symbol_definitions_in_txn,
+    code_symbol_entity_id, code_symbol_manifest_in_txn,
+};
 use crate::codebase::{
     CodebaseFileEntry, CodebaseSnapshotMount, codebase_candidate_matches_scope_key,
     snapshot_asset_entity_id,
@@ -38,6 +43,82 @@ use crate::error::{Error, Result};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::origin::RepoPortableId;
 use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
+
+impl Vault {
+    /// The symbol manifest of the snapshot a run's work is based on (FIX
+    /// RUN-DECLARE-ANCHOR-MANIFEST): an ingested snapshot of the anchor's
+    /// own folder at the work's pinned `base_green` commit, registered to
+    /// `anchor` or to no repository, as the definitions read selects it. A
+    /// Grant names the repo by its stable anchor, which holds no manifest of
+    /// its own; the manifest is keyed by the snapshot artifact. Read in
+    /// `txn`. `None` when no such snapshot has one. Several retained
+    /// snapshots at that commit must agree on every symbol id and its path,
+    /// or the selection is refused: none is guessed.
+    ///
+    /// # Errors
+    /// Snapshots at the commit whose symbol maps differ, a manifest that is
+    /// not of its snapshot, or a store failure.
+    pub(crate) fn repo_base_symbol_manifest_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        anchor: EntityId,
+        anchor_ref: &crate::codebase::RepoRef,
+        base_green: &str,
+    ) -> Result<Option<CodeSymbolManifest>> {
+        let crate::codebase::RepoRef::LocalFolder { path, .. } = anchor_ref else {
+            return Ok(None);
+        };
+        let pinned = crate::codebase::RepoRef::LocalFolder {
+            path: path.clone(),
+            commit: base_green.to_owned(),
+        };
+        let mut found: Option<(CodeSymbolManifest, BTreeMap<EntityId, String>)> = None;
+        for artifact in self.codebase_snapshots_by_repo_ref_in_txn(txn, &pinned)? {
+            let Some(mount) = self.mount_codebase_snapshot_in_txn(txn, &artifact)? else {
+                continue;
+            };
+            let snapshot = mount.snapshot();
+            if snapshot.commit_hash.as_deref() != Some(base_green)
+                || !same_folder(&snapshot.repo_ref, anchor_ref)
+                || !snapshot.repository.is_none_or(|repo| repo == anchor)
+            {
+                continue;
+            }
+            let Some(manifest) = code_symbol_manifest_in_txn(&self.store, txn, &artifact)? else {
+                continue;
+            };
+            if manifest.repo_ref != snapshot.repo_ref
+                || manifest.commit_hash != snapshot.commit_hash
+            {
+                return Err(Error::CorruptedIndex(
+                    "the symbol manifest is not of the work's base snapshot",
+                ));
+            }
+            let ids = manifest
+                .symbols
+                .iter()
+                .map(|symbol| {
+                    Ok((
+                        code_symbol_entity_id(&manifest.repo_identity, symbol)?,
+                        symbol.path.clone(),
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>>>()?;
+            match &found {
+                None => found = Some((manifest, ids)),
+                Some((_, first)) if *first == ids => {}
+                Some(_) => {
+                    return Err(Error::Code(
+                        crate::error::CodeError::InvalidRepoMutationRecord(
+                            "the work's pinned commit has snapshots whose symbol manifests differ",
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(found.map(|(manifest, _)| manifest))
+    }
+}
 
 /// What a run's read selects under the snapshot its pin selected (FIX 4300).
 pub(super) trait RepoReadMember {

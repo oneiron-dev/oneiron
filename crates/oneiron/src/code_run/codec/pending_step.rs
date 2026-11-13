@@ -14,7 +14,10 @@ use super::super::support::{
 };
 use super::{decode_determinism, encode_determinism, encode_value};
 
-const CODE_RUN_PENDING_STEP_KEYS: [&str; 14] = [
+/// The pinned keys. `answered_by`, the last, is written only when the step
+/// keeps one, so a step without it encodes, and digests, as a step stored
+/// before the key existed, and such a stored step still decodes.
+const CODE_RUN_PENDING_STEP_KEYS: [&str; 15] = [
     "step_seq",
     "bridge_start",
     "guest_calls",
@@ -29,7 +32,11 @@ const CODE_RUN_PENDING_STEP_KEYS: [&str; 14] = [
     "determinism",
     "trailing_speech",
     "park_generation",
+    "answered_by",
 ];
+
+/// The index of the optional `answered_by` key.
+const ANSWERED_BY_KEY: usize = 14;
 
 /// The keys of a pending step's [`ExecutorWireRepairs`].
 const CODE_RUN_PENDING_REPAIRS_KEYS: [&str; 4] = [
@@ -42,8 +49,14 @@ const CODE_RUN_PENDING_REPAIRS_KEYS: [&str; 4] = [
 const PENDING_STEP_DIGEST_DOMAIN: &[u8] = b"oneiron:code-run-pending-step:v1";
 
 pub(super) fn encode_pending_step(step: &PendingCodeStep) -> Value {
+    let answered_by = step.answered_by.as_ref().map(|model| {
+        (
+            Value::from(CODE_RUN_PENDING_STEP_KEYS[ANSWERED_BY_KEY]),
+            Value::from(model.as_str()),
+        )
+    });
     Value::Map(
-        CODE_RUN_PENDING_STEP_KEYS
+        CODE_RUN_PENDING_STEP_KEYS[..ANSWERED_BY_KEY]
             .iter()
             .map(|key| Value::from(*key))
             .zip([
@@ -63,6 +76,7 @@ pub(super) fn encode_pending_step(step: &PendingCodeStep) -> Value {
                 Value::Boolean(step.trailing_speech),
                 Value::from(step.park_generation),
             ])
+            .chain(answered_by)
             .collect(),
     )
 }
@@ -100,6 +114,12 @@ pub(super) fn decode_pending_step(value: Option<&Value>) -> Result<Option<Pendin
         )?,
         model: ModelId::new(str_value(required(fields[9], "missing pending model")?)?)
             .map_err(|_| invalid_code_run_replay("pending model is not a model id"))?,
+        answered_by: fields[ANSWERED_BY_KEY]
+            .map(|model| {
+                ModelId::new(str_value(model)?)
+                    .map_err(|_| invalid_code_run_replay("pending answered_by is not a model id"))
+            })
+            .transpose()?,
         repairs: decode_repairs(required(fields[10], "missing pending repairs")?)?,
         determinism: decode_determinism(required(fields[11], "missing pending determinism")?)?,
         trailing_speech: bool_value(required(fields[12], "missing pending trailing_speech")?)?,

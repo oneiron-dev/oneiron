@@ -14,6 +14,7 @@ mod chunks;
 mod direct;
 mod lifecycle;
 mod lift;
+mod path_policy;
 use oneiron_store::origin::lfs::oid;
 use oneiron_store::origin::lfs::pointer;
 use oneiron_store::origin::lfs::policy;
@@ -31,6 +32,8 @@ pub use self::chunks::{
     LFS_CHUNK_AVG, LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsChunkParameters, LfsChunkRef, LfsManifest,
 };
 pub use self::oid::{LfsOid, VAULT_LFS_OID_HEX_LEN, VAULT_LFS_OID_LEN};
+pub(crate) use self::path_policy::validate_origin_lfs_path_rules;
+pub use self::path_policy::{OriginLfsPathMatch, OriginLfsPathPolicy, OriginLfsPathRule};
 pub use self::pointer::{LFS_POINTER_SIZE_CUTOFF, LfsPointerIntent, LfsPushedPointer};
 pub use self::policy::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsAssetClass, LfsPathPolicy,

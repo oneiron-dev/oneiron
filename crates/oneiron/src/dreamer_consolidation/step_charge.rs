@@ -12,6 +12,7 @@ use crate::dreamer_wake::{
 use crate::error::{Error, Result};
 use crate::model_step_context::{StepEffectBinding, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult};
+use crate::store::model_step_submission::StepBudgetRefusal;
 use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 
 /// A checkpoint charges only steps without a durable paid receipt. An earlier
@@ -42,6 +43,45 @@ impl StepChargeTally {
             &error.to_string(),
             RecipeFailure::of_error(error).park_cause(),
         )
+    }
+
+    /// Ends the try on a failed durable step: `Failed`, typed, with what
+    /// the try already spent and its paid steps' receipts, when a spend
+    /// scope refused the step for good; any other step error parks for
+    /// `reason` with that error's cause, as [`Self::park_for`] does
+    /// (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    pub(super) fn end_on_step_error(
+        &self,
+        reason: &str,
+        error: &DurableStepError,
+    ) -> DreamerAttemptExecution {
+        crate::dreamer_runner::dreamer_failed_on_refused_step(
+            error,
+            self.units,
+            &self.step_bindings,
+        )
+        .unwrap_or_else(|| {
+            self.park_for(
+                reason,
+                crate::dreamer_runner::dreamer_park_cause_of_step(error),
+            )
+        })
+    }
+
+    /// Ends the try `Failed` for `reason` on a step a spend scope refused
+    /// for good, `refusal` typed beside it, with what the try already spent
+    /// and its paid steps' receipts.
+    pub(super) fn fail_refused(
+        &self,
+        reason: &str,
+        refusal: StepBudgetRefusal,
+    ) -> DreamerAttemptExecution {
+        DreamerAttemptExecution::Failed {
+            reason: reason.to_owned(),
+            completed_units: self.units,
+            budget_refusal: Some(refusal),
+            step_bindings: self.step_bindings.clone(),
+        }
     }
 
     /// [`Self::park`] with a typed cause, for a failed model call or step.
@@ -254,6 +294,12 @@ pub(super) enum SliceFate {
     Trapped,
     Checkpoint,
     Refused(String),
+    /// A spend scope refused the slice's step for good: the try ends
+    /// `Failed`, typed (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    BudgetRefused {
+        reason: String,
+        refusal: StepBudgetRefusal,
+    },
 }
 
 /// Accounts one slice step's outcome into `charges` and reports its
@@ -297,6 +343,11 @@ pub(super) fn tally_slice_outcome(
         Err(DurableStepError::FinalizeRefused | DurableStepError::DeadlineHardCut) => {
             SliceFate::Checkpoint
         }
+        // A refused step spent nothing: no usage to record.
+        Err(ref error @ DurableStepError::BudgetRefused(ref refusal)) => SliceFate::BudgetRefused {
+            reason: error.to_string(),
+            refusal: refusal.clone(),
+        },
         Err(error) => {
             if let DurableStepError::SpentLlm { usage, .. }
             | DurableStepError::SpentFallback { usage, .. } = &error

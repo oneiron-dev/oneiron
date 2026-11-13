@@ -20,6 +20,16 @@ crate::side_table::side_tables! {
     /// agent's genuine local birth. Key: id16.
     AGENT_DEF_PORTABLE_BIRTH: VaultMeta b"agent_def/portable-birth/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The grant powers one holder has (ARCH-0053:20, SPAWN-KNOB): one byte, bit 0 `spawn`,
+    /// bit 1 `save_agent`; a holder with no row has both ON. Key: a tag byte (0 agent, 1 attempt, 2 reader
+    /// task) then the holder's id16. Authority, so a restore keeps the live rows.
+    AGENT_DEF_POWER_GRANT: VaultMeta b"agent_def/power-grant/v1\0" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// An owner's pause of what one agent made (AUTHOR-OFF, `vault.agents.pause_tree`): the
+    /// agent, each member the pause switched off, paused or held, its receipt, and the resume
+    /// once it ran. Key: id16 (pause).
+    AGENT_DEF_TREE_PAUSE: VaultMeta b"agent_def/tree-pause/v1\0" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 4472: the model an agent's last wake ran on, so a wake on another model notes it in
     /// the agent's own diary. Key: id16(agent).
     AGENT_DEF_WAKE_MODEL: VaultMeta b"agent_def/wake-model/v1\0" Named

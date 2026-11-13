@@ -5,6 +5,7 @@
   "output": "crate::memory::device_succession::DevicePredecessor",
   "call": "memory.device_predecessor_name_as(&memory.embedded_owner(\"vault.devices.predecessor.name\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

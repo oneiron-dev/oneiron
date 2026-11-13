@@ -6,10 +6,13 @@ use super::codec::decode_canonical_entity_ref;
 use super::pact_scope::SelectorRange;
 
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
+use crate::write_envelope::ClaimCandidate;
+use crate::{ClaimSource, WriteActor, WriteEnvelope, WriteProvenance};
 
 pub use crate::claim::relationship_predicates::{
     MAX_RELATIONSHIP_LABEL_BYTES, PREDICATE_RELATIONSHIP_LABEL, PREDICATE_RELATIONSHIP_PERSON_REF,
@@ -204,13 +207,20 @@ pub fn default_retrieval_bands(class: RelationshipTrustClass) -> Vec<SelectorRan
     }
 }
 
-/// Writes an Approved person-ref claim binding `member_ref` to `person`.
+/// Writes an Approved person-ref claim binding `member_ref` to `person`,
+/// as the vault's `owner` in person.
 ///
 /// `person` is the claim VALUE, not its subject, so the claim door's own
 /// subject-existence check never sees it: existence is confirmed HERE, before
 /// anything is written. Self-binding (`person == member_ref`) is legal.
+///
+/// The binding is the owner's own act, so it carries the owner's proof,
+/// revalidated in the writing transaction: its Approved claim lands on any
+/// criticality class (ARCH-0057 §2). A narrowed or delegated credential has
+/// no such proof and is gated as any other Approved write.
 pub fn bind_member_person(
     vault: &Vault,
+    owner: &AuthenticatedOwner,
     member_ref: EntityId,
     person: EntityId,
     occurred: TimeRange,
@@ -219,17 +229,45 @@ pub fn bind_member_person(
     if !vault.entity_exists(&person)? {
         return Err(Error::EntityNotFound);
     }
-    put_relationship_claim(
-        vault,
-        RelationshipClaim {
-            predicate: PREDICATE_RELATIONSHIP_PERSON_REF,
-            subject: member_ref,
-            value: Value::from(person.to_hex()),
-            approval: ClaimApprovalStatus::Approved,
-        },
-        occurred,
-        learned_at,
-    )
+    let id = vault.store.clock.entity_id()?;
+    vault.with_write_txn_grouped(|txn| {
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(
+                owner.revalidate_in_txn(vault, txn)?,
+                crate::edge::EdgeActorClass::Human,
+            ),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::Map(vec![
+                (
+                    Value::from("op"),
+                    Value::from("federation.bind_member_person"),
+                ),
+                (
+                    Value::from("authentication"),
+                    Value::from(format!("{:?}", owner.decision_id())),
+                ),
+            ]))?,
+            ClaimApprovalStatus::Approved,
+        );
+        let owner_authored = owner.owner_answer_in_txn(vault, txn)?;
+        vault
+            .batch_in()
+            .with_owner_authored(owner_authored)
+            .claim_candidate(
+                &id,
+                ClaimCandidate::new(
+                    PREDICATE_RELATIONSHIP_PERSON_REF,
+                    ClaimSubject::Entity(member_ref),
+                    Value::from(person.to_hex()),
+                    1.0,
+                ),
+                &envelope,
+                occurred,
+                learned_at,
+            )
+            .apply(txn)
+    })?;
+    Ok(id)
 }
 
 /// Writes a relationship label claim on `person`.
@@ -329,19 +367,22 @@ fn put_relationship_claim(
     learned_at: u64,
 ) -> Result<EntityId> {
     let id = vault.store.clock.entity_id()?;
-    vault.put_claim(
-        &id,
-        &ClaimBody::new(
-            claim.predicate,
-            ClaimSubject::Entity(claim.subject),
-            claim.value,
-            1.0,
-            claim.approval,
-            ClaimLifecycleStatus::Active,
-        )?,
-        occurred,
-        learned_at,
+    let mut body = ClaimBody::new(
+        claim.predicate,
+        ClaimSubject::Entity(claim.subject),
+        claim.value,
+        1.0,
+        claim.approval,
+        ClaimLifecycleStatus::Active,
     )?;
+    // Only a PERSON subject has a substrate FACET; any other subject (a
+    // RELATIONSHIP) takes the vault default facet (a birth gate refusal
+    // otherwise, #4389).
+    body.scope_facet = {
+        let txn = vault.store.env.read_txn()?;
+        vault.claim_put_facet_keeping_in_txn(&txn, &id, body.scope_facet)?
+    };
+    vault.put_claim(&id, &body, occurred, learned_at)?;
     Ok(id)
 }
 

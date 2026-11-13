@@ -62,6 +62,7 @@ impl Memory<'_> {
         group_ref: EntityId,
         now: u64,
     ) -> MemoryResult<AskCensus> {
+        input.what.check_option_names()?;
         let holders = self.ask_holders_in_txn(txn, input)?;
         let bound = self.ask_class_in_txn(txn, input.task_ref)?;
         let context_class = bound.as_ref().map(|(_, class)| class.clone());

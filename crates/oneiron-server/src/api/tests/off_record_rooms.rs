@@ -555,13 +555,13 @@ async fn every_save_and_export_leaves_a_room_notice() {
     assert!(alone.room.is_none());
 }
 
-/// The owner's 1:1 with their own companion has nobody else to tell, in a
-/// room as out of one: a room holding only the owner and this vault's own
-/// agent posts no notice. An agent that a contact is About acts for that
-/// contact's person, so once a contact names it, it is someone else's agent
-/// and the room hears every act again.
+/// A room's agents hear its notices as its people do (5e0e953097f, #5354):
+/// a room holding only the owner and this vault's own agent posts a notice
+/// for every act, in act order. Only a stretch with no room is the owner's
+/// silent 1:1, and `post_notice` holds that by its room check (Engine ruling
+/// 03:43 Fri on R70).
 #[tokio::test]
-async fn a_room_with_only_the_owner_and_their_own_agent_posts_no_notice() {
+async fn a_room_with_the_owner_and_their_own_agent_posts_every_notice() {
     let (_dir, server) = auth_test_server();
     let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
     let companion_id = agent(&server, "companion");
@@ -579,23 +579,13 @@ async fn a_room_with_only_the_owner_and_their_own_agent_posts_no_notice() {
         let (status, reply) = act(&server, path, who, room, "den").await;
         assert_eq!(status, StatusCode::OK, "{path}: {reply}");
     }
-    assert!(
-        notices(&server, owner.clone(), room, "den")
-            .await
-            .is_empty()
-    );
-
-    let contact = EntityId::now();
-    seed_counterparty_contact(&server, contact, EntityId::now(), "visitor@example.com");
-    server
-        .vault()
-        .put_edge(&contact, oneiron::EdgeKind::About, &companion_id, 1.0)
-        .unwrap();
-    let (status, file) = act(&server, "export", owner.clone(), room, "den").await;
-    assert_eq!(status, StatusCode::OK, "{file}");
     assert_eq!(
         notices(&server, owner, room, "den").await,
-        [("exported".to_owned(), owner_id.to_hex())]
+        [
+            ("save_suggested".to_owned(), companion_id.to_hex()),
+            ("exported".to_owned(), owner_id.to_hex()),
+            ("saved_talk".to_owned(), owner_id.to_hex()),
+        ]
     );
 }
 
@@ -1201,7 +1191,7 @@ async fn an_owner_removed_from_the_room_cannot_speak_into_it() {
         serde_json::from_value(turn(room.id, "yard", 100, SECRET_WORDS)["turn"].clone()).unwrap();
     let refused = vault
         .memory(room.owner, EdgeActorClass::Human)
-        .witness_into_session_as(&proof, &session, &said, None)
+        .witness_into_session_as(&proof, &session, &said, None, None)
         .unwrap_err();
     assert_eq!(
         refused.code,
@@ -1378,9 +1368,13 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                     metadata: None,
                     is_visible: true,
                     order,
+                    parts: None,
+                    quote: None,
                 })
                 .collect(),
             occurred_at: 50,
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap();
     for (id, reason) in [
@@ -1419,9 +1413,14 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                         metadata: None,
                         is_visible: true,
                         order: 0,
+                        parts: None,
+                        quote: None,
                     }],
                     occurred_at: 90,
+                    assertions: Default::default(),
+                    thread_audience: None,
                 },
+                None,
                 None,
             )
             .unwrap();

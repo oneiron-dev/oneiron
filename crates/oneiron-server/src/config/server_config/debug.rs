@@ -20,6 +20,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("house_role", &self.house_role)
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
             .field(
@@ -72,6 +73,7 @@ impl fmt::Debug for ServeConfig {
             .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("house_role", &self.house_role)
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
             .field(

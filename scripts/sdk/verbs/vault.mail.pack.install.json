@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::PackPutReceipt",
   "call": "crate::mail_pack::install_mail_calendar_pack_embedded(memory)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

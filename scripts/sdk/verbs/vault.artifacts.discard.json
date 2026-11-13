@@ -8,6 +8,7 @@
   "output": "crate::blob_artifact::DiscardedProposal",
   "call": "memory.artifacts_discard(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {},
   "section": false,
   "binding": {

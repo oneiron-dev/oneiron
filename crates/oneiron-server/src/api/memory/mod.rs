@@ -4,7 +4,7 @@
 use super::CoreBatchEntityInput;
 use super::CoreBatchEntityResult;
 use super::CoreHydrateDeletionMetadata;
-use super::commit_core_batch_in_lane;
+use super::DagWriteError;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_hydrate_deletion_metadata;
@@ -12,17 +12,14 @@ use super::facade;
 use super::hex_bytes;
 use super::json_payload;
 use super::parse_entity_id_param;
-use super::parse_optional_entity_id;
 // memory/watch.rs reads it through `use super::*`.
 use super::scoped_read_for_core_auth;
-use super::stage_core_entity_put;
 use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
 use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
 use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
@@ -272,9 +269,10 @@ pub(super) use self::watch::{
         (status = 200, description = "Named verb resolved and executed as a typed operation.", body = CoreMemoryVerbResponse, content_type = "application/json"),
         (status = 400, description = "Malformed verb request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase. delete and hard_delete by a token that is not owner-grade answer the engine's delete authority (DEL-2) in the facade's MemoryError body: FORBIDDEN naming not_owner_of_item, out_of_admin_scope, no_delete_grant, credential_bounds, unresolved_actor, or account_key_unbound (an account key that does not name the owner, on a rooted vault). remember's guarded batch door refusing the writer answers the engine's FORBIDDEN in the facade's MemoryError body, as `/v1/core/batch` does.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 422, description = "remember: a ref the entity names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body (as `/v1/core/batch`).", body = super::facade::MemoryErrorEnvelopeSchema, content_type = "application/json"),
         (status = 500, description = "Memory verb failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -283,11 +281,11 @@ pub(crate) async fn core_memory_verb(
     State(server): State<Arc<SyncServer>>,
     Path(verb_name): Path<String>,
     payload: Result<Json<CoreMemoryVerbRequest>, JsonRejection>,
-) -> Result<Json<CoreMemoryVerbResponse>, EnvelopedApiError> {
+) -> Result<Json<CoreMemoryVerbResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     // Every named verb writes or erases vault content: an owner act, so a
     // hosted operator's root is refused before any of them (FIX 2222).
-    crate::api::host_action::require_host_owner_act(&server, &auth)?;
+    let host_action = crate::api::host_action::require_host_owner_act(&server, &auth)?;
     let verb = oneiron::NamedMemoryVerb::parse(&verb_name).map_err(memory_verb_refusal)?;
     let req = json_payload(payload)?;
     let operation = core_memory_operation_kind(verb.operation_kind());
@@ -297,38 +295,48 @@ pub(crate) async fn core_memory_verb(
             let entity = req.entity.ok_or_else(|| {
                 ApiError::bad_request("entity is required for remember", Some("entity"))
             })?;
-            let id = parse_optional_entity_id(entity.id.as_deref(), "entity.id")?;
-            let timestamps = core_entity_timestamps(
+            // The route's own refusals first, as `/v1/core/batch` does; the row mints what the
+            // body omits.
+            if let Some(id) = &entity.id {
+                parse_entity_id_param(id, "entity.id")?;
+            }
+            core_entity_timestamps(
                 entity.occurred_start,
                 entity.occurred_end,
                 entity.learned_at,
             )?;
-            let batch = stage_core_entity_put(
-                server.vault.batch(),
-                &id,
-                entity.entity_type,
-                timestamps,
-                &entity.body,
-                super::announcement_authority(&server, &auth),
-                entity.text.as_deref(),
-            )?;
-            // Held to the credential's write lane, as `vault.batch` is (FIX 1216).
-            let lane = facade::host_doors::core_write_lane(&server.vault, &auth)?;
-            commit_core_batch_in_lane(&server, &auth, batch, &lane).map_err(|error| {
-                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
-                core_engine_error("core memory remember failed", error)
-            })?;
+            // A host action's re-check at commit time, as the raw write did.
+            if let Some(action) = crate::api::host_action::host_action_of(&server.vault, &auth) {
+                action.map_err(crate::api::host_action::host_action_refusal)?;
+            }
+            // Through the guarded `vault.batch` door, at the credential's grade and lane, so a
+            // CONVERSATION body meets the same caller-stamp guard and link carry as every other
+            // generic write. An agent's AGENT_DEF put still records `memory.remember` as its
+            // door (ARCH-0053:20).
+            let input = oneiron::core_write::CoreBatchWriteInput {
+                entities: vec![entity.into_row()],
+            };
+            // The door's refusal rides whole, as `/v1/core/batch` forwards it: the engine's code
+            // picks the status (an invented reference is a 422), in the facade's MemoryError body.
+            let receipt =
+                facade::host_doors::write_core_batch(&server, &auth, input, "memory.remember")
+                    .await?;
+            let written =
+                receipt.entities.into_iter().next().ok_or_else(|| {
+                    ApiError::internal_server_error("core memory remember failed")
+                })?;
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
                 at: None,
-                id: Some(id.to_hex()),
+                id: Some(written.id.clone()),
                 new_id: None,
                 old_id: None,
                 entity: Some(CoreBatchEntityResult {
-                    id: id.to_hex(),
-                    entity_type: entity.entity_type,
+                    id: written.id,
+                    entity_type: written.entity_type,
+                    agent_definition: written.agent_definition,
                 }),
                 delete: None,
             }))
@@ -390,16 +398,35 @@ pub(crate) async fn core_memory_verb(
             }
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let (reason, response_reason) = core_memory_delete_reason(verb, req.reason)?;
-            let failed = |error: oneiron::Error| {
-                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
-                core_engine_error("core memory delete failed", error)
+            // DEL-2 (ARCH-0043, owner DEL-2 = A): a self-hosted root, the dev
+            // mode and an owner-grade token delete as the owner, as before,
+            // with no new read. Any other token is judged by the one delete
+            // authority on its own resolved actor.
+            let owner_door = host_action.is_some() || auth.is_owner_grade();
+            let (existed, receipt_id, sweep_key) = if owner_door {
+                let failed = |error: oneiron::Error| {
+                    tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
+                    core_engine_error("core memory delete failed", error)
+                };
+                let outcome = server
+                    .vault
+                    .delete_entity_with_reason(&id, reason)
+                    .map_err(failed)?;
+                (
+                    outcome.existed,
+                    outcome.receipt_id.map(|id| id.to_hex()),
+                    outcome.sweep_key.as_deref().map(hex_bytes),
+                )
+            } else {
+                let receipt = core_memory_delete_by_role(&server, &auth, &id, response_reason)?;
+                let receipt_id = receipt.receipt_ref.as_deref().map(|receipt| {
+                    receipt
+                        .strip_prefix("redaction:")
+                        .unwrap_or(receipt)
+                        .to_owned()
+                });
+                (receipt.existed, receipt_id, None)
             };
-            let outcome = server
-                .vault
-                .delete_entity_with_reason(&id, reason)
-                .map_err(failed)?;
-            let (existed, receipt_id, sweep_key) =
-                (outcome.existed, outcome.receipt_id, outcome.sweep_key);
             let state = oneiron::memory::DeleteRequestState::Applied;
 
             Ok(Json(CoreMemoryVerbResponse {
@@ -419,8 +446,8 @@ pub(crate) async fn core_memory_verb(
                             | oneiron::DeleteReason::GdprDelete
                             | oneiron::DeleteReason::PolicyDelete
                     ),
-                    receipt_id: receipt_id.map(|id| id.to_hex()),
-                    sweep_key: sweep_key.as_deref().map(hex_bytes),
+                    receipt_id,
+                    sweep_key,
                     state: state.as_str().to_owned(),
                 }),
             }))
@@ -644,6 +671,72 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
             "verb must be one of remember (put), supersede (replace/revise), retract (withdraw), delete (forget), hard_delete",
             Some("verb"),
         ),
+    }
+}
+
+/// The core delete of `id` by a token that is not owner-grade (DEL-2,
+/// ARCH-0043; Engine ruling 13 Nov 02:51 = A). Its actor is resolved as the
+/// facade resolves a writer, and `Memory::safe_delete` judges it on that
+/// actor's handle, the credential's proof bound: the owner path when the
+/// actor is the vault's owner, else the role table (a Member's own item, an
+/// Admin's in-scope item, an agent under a Grant that names `delete`), each
+/// refusal FORBIDDEN and naming its reason. A token that names no actor is
+/// refused `unresolved_actor`.
+///
+/// An account API key (OF-448) names its person and no actor class: it is
+/// judged as that person, a human (Engine rulings 13 Nov 08:20 and 08:30 =
+/// C). The owner's own key deletes on the owner's path, within its scopes.
+/// The key carries no vault slip, so on a rooted vault no other person
+/// stands by it: the engine's owner refusal there answers
+/// `account_key_unbound`. On a rootless vault the role table judges it.
+fn core_memory_delete_by_role(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    id: &oneiron::EntityId,
+    reason: CoreMemoryVerbDeleteReason,
+) -> Result<oneiron::memory::DeleteReceipt, DagWriteError> {
+    let (actor, class, by_account_key) = match facade::facade_actor(server, auth) {
+        Ok((actor, class)) => (actor, class, false),
+        Err(_) => match auth.account_key_principal() {
+            Some(person) => (person, oneiron::EdgeActorClass::Human, true),
+            None => {
+                return Err(oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_FORBIDDEN,
+                    "unresolved_actor: this token names no actor the delete authority can judge",
+                    &[
+                        "Present a slip paired with --principal-ref and --actor-class, an account key that names its person, or the owner's own credential.",
+                    ],
+                )
+                .into());
+            }
+        },
+    };
+    let memory = super::scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
+    let reason = match reason {
+        CoreMemoryVerbDeleteReason::User => oneiron::memory::SafeDeleteReason::UserDelete,
+        CoreMemoryVerbDeleteReason::UserHard => oneiron::memory::SafeDeleteReason::UserHardDelete,
+        CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
+        CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
+    };
+    match memory.safe_delete(&id.to_hex(), reason) {
+        Err(refusal)
+            if by_account_key
+                && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+                && server
+                    .vault()
+                    .authority_vault_id()
+                    .is_ok_and(|root| root.is_some()) =>
+        {
+            Err(oneiron::memory::MemoryError::new(
+                oneiron::memory::MEMORY_CODE_FORBIDDEN,
+                "account_key_unbound: this key can't delete in this vault; use your app login or ask the owner",
+                &[
+                    "Present the person's own paired slip (--principal-ref, --actor-class human) to delete as that person.",
+                ],
+            )
+            .into())
+        }
+        outcome => Ok(outcome?),
     }
 }
 

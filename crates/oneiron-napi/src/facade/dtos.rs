@@ -376,6 +376,9 @@ pub struct NapiEntityRefReceipt {
     pub id_hex: String,
     /// Facade write marker.
     pub receipt_ref: String,
+    /// For an agent's AGENT_DEF put, what its author writer made of it
+    /// (ARCH-0053:20): `active` or `proposed`.
+    pub agent_definition_disposition: Option<String>,
 }
 
 /// One habit check-in append.
@@ -927,6 +930,13 @@ pub struct NapiCalendarSearchRequest {
     pub text: Option<String>,
     /// Maximum rows returned, clamped engine-side.
     pub limit: u32,
+    /// Milliseconds this call may read for, 1 to 60000, checked between the
+    /// window's time slices; omitted ⇒ it reads to the window's end or the
+    /// limit (FIX 11998).
+    pub deadline_ms: Option<u32>,
+    /// The `resumeFrom` an earlier page of this same request answered, Unix
+    /// seconds; omitted ⇒ it starts at the range's start. Needs a range.
+    pub resume_from: Option<i64>,
 }
 
 /// One source-redacted busy interval, half-open `[startUtc, endUtc)`.
@@ -1025,20 +1035,31 @@ pub struct NapiCalendarEventRead {
     pub narrowing: NapiReadReceipt,
 }
 
-/// `calendarSearch` result, with the read's receipt.
+/// `calendarSearch` result: one page, with the read's receipt.
 #[napi(object)]
 pub struct NapiCalendarEvents {
-    /// Matching EVENTs.
+    /// Matching EVENTs: earliest occurrence first, undated EVENTs last.
     pub value: Vec<NapiCalendarEventView>,
+    /// Whether this page reached the window's end: no later page holds more.
+    pub complete: bool,
+    /// Where the next page starts, Unix seconds, while `complete` is false:
+    /// pass it back with the same request.
+    pub resume_from: Option<i64>,
     /// The read's receipt.
     pub narrowing: NapiReadReceipt,
 }
 
-/// `calendarFreebusy` result, with the read's receipt.
+/// `calendarFreebusy` result: one page, with the read's receipt.
 #[napi(object)]
 pub struct NapiCalendarFreebusy {
-    /// Busy intervals, occupancy only.
+    /// Busy intervals, occupancy only: the exact busy union of the covered
+    /// part of the range, clipped to it, so a caller joins touching
+    /// intervals across pages.
     pub value: Vec<NapiCalendarFreebusyInterval>,
+    /// Whether this page reached the range's end.
+    pub complete: bool,
+    /// Where the next page starts, Unix seconds, while `complete` is false.
+    pub resume_from: Option<i64>,
     /// The read's receipt.
     pub narrowing: NapiReadReceipt,
 }

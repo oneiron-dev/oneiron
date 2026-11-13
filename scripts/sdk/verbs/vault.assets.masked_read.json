@@ -1,0 +1,20 @@
+{
+  "name": "vault.assets.masked_read",
+  "description": "Reads one admitted ASSET's bytes always masked, as standard base64 with its hex ref; a missing, withheld or non-ASSET ref answers none.",
+  "input": "EntityRequest",
+  "output": "crate::claim::ScopedReadResult<Option<crate::task_verb::sdk::MaskedAssetRead>>",
+  "call": "crate::task_verb::sdk::vault_assets_masked_read_embedded(memory, input)?",
+  "scope": "Read",
+  "grant_class": "vault.assets.masked_read grant + caller read lane",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "binding": {
+    "native": "agent_verb",
+    "request": true
+  },
+  "mcp_scope": "filtered",
+  "openapi": true
+}

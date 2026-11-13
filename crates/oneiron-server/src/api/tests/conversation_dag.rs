@@ -350,33 +350,39 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
     let conv_id = EntityId::from_hex(conv["id"].as_str().unwrap()).unwrap();
     let asking = EntityId::from_hex(root["id"].as_str().unwrap()).unwrap();
     let session_id = EntityId::from_hex(session["session"].as_str().unwrap()).unwrap();
-    let writer = WriteActor::new(
-        EntityId::from_hex(actor["entity_ref"].as_str().unwrap()).unwrap(),
-        EdgeActorClass::Human,
-    );
+    let writer_ref = EntityId::from_hex(actor["entity_ref"].as_str().unwrap()).unwrap();
+    let writer = WriteActor::new(writer_ref, EdgeActorClass::Human);
+    // The append's bound surface is the byline's own (OF-063).
+    let surface = server.vault.memory(writer_ref, EdgeActorClass::Human);
     let mut parent = asking;
     let mut covers = Vec::new();
     for n in 0..300 {
         let record = server
             .vault
-            .append_dag_record(&oneiron::conversation_dag::AppendRecord {
-                conversation: conv_id,
-                parent: Some(parent),
-                reply_to: None,
-                address: oneiron::conversation_dag::AddressMode::Broadcast,
-                recipients: vec![],
-                advance: false,
-                kind: ENTITY_TYPE_TURN,
-                occurred: TimeRange {
-                    start: n + 10,
-                    end: n + 10,
+            .append_dag_record(
+                &surface,
+                &oneiron::conversation_dag::AppendRecord {
+                    conversation: conv_id,
+                    parent: Some(parent),
+                    reply_to: None,
+                    address: oneiron::conversation_dag::AddressMode::Broadcast,
+                    recipients: vec![],
+                    advance: false,
+                    kind: ENTITY_TYPE_TURN,
+                    occurred: TimeRange {
+                        start: n + 10,
+                        end: n + 10,
+                    },
+                    learned_at: n + 10,
+                    body: rmp_serde::to_vec_named(&json!({"txt": "retained"})).unwrap(),
+                    text: vec![],
+                    session: Some(session_id),
+                    actor: writer,
+                    quote: None,
+                    containing_turn: None,
+                    thread_audience: None,
                 },
-                learned_at: n + 10,
-                body: rmp_serde::to_vec_named(&json!({"txt": "retained"})).unwrap(),
-                text: vec![],
-                session: Some(session_id),
-                actor: writer,
-            })
+            )
             .unwrap();
         parent = record.id;
         covers.push(parent.to_hex());
@@ -526,8 +532,8 @@ fn later_turn(server: &SyncServer) -> Value {
 
 /// The same wake through the generated facade: a turn witnessed at
 /// `POST /v1/core/facade/witness` is read by a Micro round. The handler is
-/// generated (the verb-table row's `lands_turn`), so this fails if
-/// `scripts/sdk/generate.py` stops emitting the wake.
+/// generated (the verb-table row's `lands_turn`), so this fails if the SDK
+/// generator (`crates/oneiron-sdk-generator`) stops emitting the wake.
 #[tokio::test]
 async fn a_facade_witness_turn_wakes_the_dreamer() {
     let reply = Reply::Text {
@@ -548,7 +554,7 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
         &server,
         &slip,
         &key,
-        json_request("POST", "/v1/core/facade/witness", later_turn(&server)),
+        json_request("POST", "/v1/core/facade/vault.witness", later_turn(&server)),
     );
     let response = crate::build_app(Arc::clone(&server))
         .oneshot(request)
@@ -571,7 +577,7 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
 /// The same wake through MCP: a turn witnessed by the generated `witness` tool
 /// is read by a Micro round. Every MCP door (the tool list, code mode, the
 /// stdio bridge) reaches the verb table through one generated dispatcher, so
-/// this fails if `scripts/sdk/generate.py` stops emitting the wake there.
+/// this fails if the SDK generator stops emitting the wake there.
 #[tokio::test]
 async fn an_mcp_witness_turn_wakes_the_dreamer() {
     let reply = Reply::Text {
@@ -589,7 +595,13 @@ async fn an_mcp_witness_turn_wakes_the_dreamer() {
     );
     let (_, body) = route_json(
         Arc::clone(&server),
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "witness",
+            "vault.witness",
+            args,
+        ),
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -616,7 +628,9 @@ async fn an_mcp_room_speech_wakes_the_dreamer() {
     };
     let fake = FakeLlm::start(vec![], Some(reply)).await;
     let (_dir, server, host) = server_past_the_start_scan(&fake).await;
-    let owner = seeded_test_entity_id(0x0024_6513);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let credential = "mcp-room-speech-wake";
     register_mcp_actor(&server, credential, owner, EdgeActorClass::Human).await;
     let project = EntityId::now();
@@ -637,7 +651,7 @@ async fn an_mcp_room_speech_wakes_the_dreamer() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "speak",
-            "rooms.speak",
+            "vault.rooms.speak",
             args,
         ),
     )
@@ -990,7 +1004,14 @@ async fn selected_preview_lifecycle_matrix_keeps_retained_shape_separate_from_co
         for ancestor_deleted in [false, true] {
             for session_deleted in [false, true] {
                 let (_dir, server, actor) = setup();
-                let session = match server.vault.mint_session(100).unwrap() {
+                // The posting actor's sitting on this machine.
+                let key = server
+                    .vault
+                    .local_session_key(
+                        EntityId::from_hex(actor["entity_ref"].as_str().unwrap()).unwrap(),
+                    )
+                    .unwrap();
+                let session = match server.vault.mint_session(key, 100).unwrap() {
                     oneiron::session_lifecycle::SessionMintOutcome::Minted(id) => id,
                     other => panic!("expected new ordinary session: {other:?}"),
                 };
@@ -1320,8 +1341,14 @@ summary_prompt = "Summarize these records."
         extractor.base_url, narrator.base_url
     ));
     let receipts = Arc::new(MemoryReceipts::default());
-    let host =
-        AiHost::start_receipted(Arc::clone(&vault), Some(&models), true, receipts.clone()).await;
+    let host = AiHost::start_receipted(
+        Arc::clone(&vault),
+        Some(&models),
+        true,
+        receipts.clone(),
+        None,
+    )
+    .await;
     let config = SyncServerConfig {
         allow_unauthenticated: true,
         ..Default::default()

@@ -5,6 +5,7 @@
   "output": "crate::policy_manifest_doors::GateCheckerView",
   "call": "crate::policy_manifest_doors::gate_checker_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.checker.get\")?).map_err(crate::memory::MemoryError::from)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

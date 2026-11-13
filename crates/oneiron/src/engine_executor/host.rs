@@ -58,7 +58,8 @@ use serde_json::json;
 
 pub(super) use self::boundary::executor_boundary_contract;
 pub(super) use self::deadline_replay::DeadlineReplay;
-pub(super) use self::prompt::{executor_system_prompt, executor_turn_instruction};
+pub(super) use self::prompt::executor_turn_instruction;
+pub(crate) use self::prompt::{executor_declarations_block, executor_system_prompt};
 use self::results::recorded_output;
 pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 
@@ -387,7 +388,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
     /// The run's custody and PERSON values, as its output sweep reads them.
     fn mask_guest_error(&self, body: &str) -> Result<String> {
         match self.storage {
-            Some(storage) => crate::code_sandbox::guest_error::mask_run_known_values(
+            Some(storage) => crate::guest_error::mask_run_known_values(
                 storage.code_run_known_source(self.run_id)?,
                 body,
             ),

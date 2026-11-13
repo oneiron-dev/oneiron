@@ -5,6 +5,7 @@
   "output": "crate::web_connector::WebConnectorUsagePage",
   "call": "crate::task_verb::sdk::read_web_connector_usage(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_precheck": false,
   "host_door_lists": true,

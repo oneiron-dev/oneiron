@@ -176,6 +176,11 @@ pub struct RoomSection {
     pub scope: Scope,
     pub posture: RoomPosture,
     pub claims: Vec<crate::memory::ClaimView>,
+    /// The room's shared pins the reader sees (ROOM-SCOPED-PINS P2), in the
+    /// room's stored order: each target admitted through the reader's room
+    /// read and the room's P7, never a withheld one or its count. A page
+    /// carries its share of them, after the rules.
+    pub pins: Vec<crate::conversation::RoomPin>,
     /// The room's own open offer cards (OF-530 ruling A), read fresh: each
     /// stays listed while it is open.
     pub offers: Vec<crate::workspace_roster::OfferCard>,
@@ -358,6 +363,18 @@ impl RoomSection {
                 claim.claim_ref,
                 one_line_token(&claim.predicate),
                 one_line_token(&claim.value.to_string())
+            )
+        }));
+        // Each shared pin the reader sees: its target, the PERSON who pinned
+        // it, the agent that acted for that PERSON and the engine time.
+        rows.extend(self.pins.iter().map(|pin| {
+            format!(
+                "pin: {} pinned_by={} acting_agent={} pinned_at={}",
+                pin.target.to_hex(),
+                people.label(pin.pinned_by),
+                pin.acting_agent
+                    .map_or_else(|| "none".to_owned(), |agent| people.label(agent)),
+                pin.pinned_at,
             )
         }));
         // Each open room-wide card, with the moment it ends unless engaged

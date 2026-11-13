@@ -256,6 +256,7 @@ pub(super) fn pinned_row(
         tier: MemoryTier::Pinned,
         snippet: None,
         hook: None,
+        room_pin: None,
         source_revision,
         question: claim
             .as_ref()

@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailComplianceSettingView",
   "call": "memory.mail_compliance_set(&input)?",
   "scope": "Write",
+  "act_class": "security_control_disable",
   "mcp_fields": {
     "spec": "$"
   },

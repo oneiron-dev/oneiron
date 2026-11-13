@@ -865,7 +865,9 @@ fn owner_rung(endpoint: &str) -> crate::config::remote_embedder::RemoteEmbedderC
             allow: Vec::new(),
             deny: Vec::new(),
             allow_all: true,
+            remote_evidence: None,
         }),
+        key_secret: None,
     }
 }
 
@@ -1407,6 +1409,13 @@ fn claim_body(text: &str) -> Vec<u8> {
             ),
             (rmpv::Value::from("val"), rmpv::Value::from(text)),
             (rmpv::Value::from("conf"), rmpv::Value::F32(0.9)),
+            // D18 (FIX 7761): the band and basis beside conf; 0.9 is `certain`
+            // under the house mapping.
+            (rmpv::Value::from("confBand"), rmpv::Value::from("certain")),
+            (
+                rmpv::Value::from("confBasis"),
+                rmpv::Value::from("deterministic_fallback"),
+            ),
             (rmpv::Value::from("appr"), rmpv::Value::from("auto")),
             (rmpv::Value::from("life"), rmpv::Value::from("active")),
             (
@@ -1694,8 +1703,12 @@ fn the_semantic_door_refuses_with_503_when_no_embedder_is_configured() {
 /// A query is a question. Past `[limits].retrieval_query_bytes` (here set to
 /// eight kilobytes) it is a document, and the door says which field and which
 /// bound rather than truncating it silently.
+///
+/// The semantic door no longer refuses past the row: it asks and serves
+/// (a4f08d2553f #3594, 9ccb38714a6 #4890, Rule 5). The text search door still
+/// checks the row (`api/search.rs`, field `query`), so the 413 is pinned there.
 #[test]
-fn the_semantic_door_refuses_oversized_text_with_413() {
+fn the_text_search_door_refuses_an_oversized_query_with_413() {
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use tower::ServiceExt;
@@ -1725,12 +1738,9 @@ fn the_semantic_door_refuses_oversized_text_with_413() {
         let response = crate::build_app(server)
             .oneshot(
                 Request::builder()
-                    .method("POST")
-                    .uri("/api/search/semantic")
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        json!({ "text": "q".repeat(9 * 1024) }).to_string(),
-                    ))
+                    .method("GET")
+                    .uri(format!("/api/search/text?query={}", "q".repeat(9 * 1024)))
+                    .body(Body::empty())
                     .expect("request"),
             )
             .await
@@ -1742,9 +1752,9 @@ fn the_semantic_door_refuses_oversized_text_with_413() {
             serde_json::from_slice::<Value>(&bytes).expect("json"),
         )
     });
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
     assert_eq!(body["code"], json!("PAYLOAD_TOO_LARGE"));
-    assert_eq!(body["details"]["field"], json!("text"));
+    assert_eq!(body["details"]["field"], json!("query"));
     assert_eq!(body["details"]["maxBytes"], json!(8 * 1024));
 }
 
@@ -1967,7 +1977,9 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
                 allow: vec![allow.to_hex(), late.to_hex()],
                 deny: vec![deny.to_hex()],
                 allow_all: false,
+                remote_evidence: None,
             }),
+            key_secret: None,
         });
         let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
         let receipts = Arc::new(oneiron::llm::run_admission::MemoryReceipts::default());
@@ -2044,7 +2056,9 @@ fn remote_section(
             allow: vec![allow.to_hex()],
             deny: Vec::new(),
             allow_all: false,
+            remote_evidence: None,
         }),
+        key_secret: None,
     }
 }
 
@@ -2157,27 +2171,26 @@ fn a_remote_batch_its_line_refuses_is_never_sent_and_embeds_on_device() {
 /// nothing. Two 20 KiB texts on the Oneiron wire go out as two requests.
 #[test]
 fn each_request_a_paid_remote_sends_is_its_own_paid_call() {
-    use oneiron::embed::{
-        Embedder as _, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload,
-    };
+    use oneiron::embed::{Embedder as _, PendingEmbeddingInput, PendingEmbeddingPayload};
     use oneiron::llm::run_admission::MemoryReceipts;
     let remote = MockEndpoint::start(MockBehaviour::ListingDown);
-    let config = endpoint_config("http://127.0.0.1:1");
-    let section = remote_section(&remote.base, oneiron::EntityId::now());
+    let mut config = endpoint_config("http://127.0.0.1:1");
+    config.remote = Some(remote_section(&remote.base, oneiron::EntityId::now()));
     let receipts = Arc::new(MemoryReceipts::default());
-    let http = endpoint::HttpEmbedder::from_config(&section.endpoint_config(&config)).unwrap();
-    http.hold_as_rung(Arc::new(Mutex::new(super::remote::RungHold {
-        transform: Some(MOCK_TRANSFORM.to_owned()),
-        measured: false,
-    })));
-    http.pay_through(Arc::new(
-        super::admitted::AdmittedRequests::unmetered(
-            &section,
-            EmbedderLocality::ThirdParty,
-            receipts.clone(),
-        )
-        .unwrap(),
-    ));
+    // The third-party rung as serve builds it: held to the transform, its
+    // answers judged by the section's egress rule (FIX 9488), and each request
+    // it sends admitted as a paid call on `receipts`.
+    let rung = super::remote::build_remote_rung(
+        &config,
+        Arc::new(Mutex::new(super::remote::RungHold {
+            transform: Some(MOCK_TRANSFORM.to_owned()),
+            measured: false,
+        })),
+        receipts.clone(),
+    )
+    .unwrap()
+    .expect("a remote rung");
+    let http = &rung.embedder;
     let inputs: Vec<PendingEmbeddingInput> = (0..2)
         .map(|_| PendingEmbeddingInput {
             entity_id: oneiron::EntityId::now(),
@@ -2214,10 +2227,16 @@ fn the_startup_probe_of_a_remote_rung_is_a_paid_call() {
             .is_some()
     );
     assert_eq!(remote.requests().len(), 1, "one probe post at the remote");
-    assert!(matches!(
-        remote_batches(&receipts).as_slice(),
-        [(reserved, settled)] if reserved == settled
-    ));
+    assert_eq!(local.requests().len(), 1, "one probe post at the primary");
+    // 19579c8caea (#2489, OF-131): the primary endpoint's probe is admitted
+    // too, first. The primary here names no key, so it is the owner's own
+    // keyless work (Payer::Local) and reserves and settles nothing; the
+    // remote rung's probe reserves and settles PROBE_TEXT's 22 bytes plus 8.
+    assert_eq!(
+        remote_batches(&receipts),
+        vec![(0, 0), (30, 30)],
+        "the primary endpoint's probe, then the remote rung's probe"
+    );
 }
 
 #[test]
@@ -2377,6 +2396,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
     let mock = MockEndpoint::start(MockBehaviour::Concepts);
     let dir = tempfile::tempdir().unwrap();
     let vault = test_vault(dir.path());
+    crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let config = EmbedderConfig {
         idle_interval_ms: 20,
@@ -2448,7 +2468,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
         {
             let at = now - 3_600 * (10 - hour as u64);
             let receipt = post(
-                "claim_upsert",
+                "vault.remember",
                 json!({"predicate": format!("note.n{hour}"), "subject_ref": owner.to_hex(),
                     "value": value, "confidence": 0.9, "source": "user_stated",
                     "occurred_at": at, "learned_at": at}),
@@ -2469,7 +2489,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
         let request = json!({"query": "car repair garage", "limit": 3});
         let mut http = Value::Null;
         for _ in 0..600 {
-            http = post("recall", request.clone()).await;
+            http = post("vault.recall", request.clone()).await;
             if found(&http).1 {
                 break;
             }
@@ -2483,7 +2503,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
             &auth,
             crate::livequery::RpcRequest {
                 request_id: 9,
-                method: "recall".to_owned(),
+                method: "vault.recall".to_owned(),
                 params: request,
             },
         )

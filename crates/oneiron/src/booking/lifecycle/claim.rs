@@ -93,22 +93,19 @@ pub(in crate::booking) fn confirmed_start_for_reminder(
         return Ok(None);
     }
     let facts = read_booking_facts(vault, &rtxn, event_ref)?;
-    if facts.status != BookingStatus::Confirmed {
+    if facts.effective_status() != BookingStatus::Confirmed {
         return Ok(None);
     }
     // An inbound calendar-provider cancellation need not change booking.status.
     // Check the effective CAL head in the same snapshot as the booking and
-    // occurrence, never an unapproved or superseded claim.
+    // occurrence, never an unapproved or superseded claim. The facts read
+    // skips a claim it cannot read; this read fails closed on one.
     for claim_id in claims_for_subject(vault, &rtxn, event_ref)? {
         let body = vault
             .get_claim_in_txn(&rtxn, &claim_id)
             .map_err(|error| engine_failure("calendar status read", error))?;
         if let Some(body) = body.filter(crate::claim::claim_surfaceable)
-            && body.predicate == PREDICATE_CALENDAR_STATUS
-            && decode_status_value(&body.value)
-                .map_err(|error| engine_failure("calendar status decode", error))?
-                .status
-                == CalendarStatus::Cancelled
+            && is_calendar_cancellation(&body)?
         {
             return Ok(None);
         }
@@ -289,11 +286,7 @@ fn is_confirmed_booking_in(
                 }
             }
             PREDICATE_CALENDAR_STATUS => {
-                cancelled |= decode_status_value(&body.value)
-                    .map_err(|error| engine_failure("calendar status decode", error))?
-                    .status
-                    == CalendarStatus::Cancelled
-                    && settled()?;
+                cancelled |= is_calendar_cancellation(&body)? && settled()?;
             }
             _ => {}
         }
@@ -550,6 +543,7 @@ fn booking_facts_in(
     let mut event_type = None;
     let mut status = None;
     let mut held_confirmed = false;
+    let mut calendar_cancelled = false;
     for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
         let Ok(Some(body)) = vault.get_claim_in_txn(rtxn, &claim_id) else {
             continue;
@@ -560,8 +554,9 @@ fn booking_facts_in(
         {
             continue;
         }
-        // The hold binds the enabling heads only: a held Cancelled still
-        // cancels, while a held page, type or Confirmed never decides.
+        // The hold binds the enabling heads only: a held Cancelled (the
+        // booking's or the calendar's) still cancels, while a held page, type
+        // or Confirmed never decides.
         let settled = || -> Result<bool, BookingError> {
             Ok(!hold_enablers
                 || crate::gate::claim_critical_confirm_settled_in_txn(
@@ -600,6 +595,7 @@ fn booking_facts_in(
                     }
                 }
             }
+            PREDICATE_CALENDAR_STATUS => calendar_cancelled |= is_calendar_cancellation(&body)?,
             _ => {}
         }
     }
@@ -611,8 +607,22 @@ fn booking_facts_in(
         event_type: event_type.ok_or_else(|| refused("booking carries no event type claim"))?,
         slot: occurrence_in(vault, rtxn, event_ref)?,
         status: status.ok_or_else(|| refused("booking carries no status claim"))?,
+        calendar_cancelled,
         context: confirmation_context_in(vault, rtxn, event_ref)?,
     })
+}
+
+/// Whether `body` is a `calendar.status` head that says the EVENT is
+/// cancelled: the booking's own cancel or a calendar provider's. An inbound
+/// provider cancellation need not change `booking.status`, so every read of
+/// a booking's effective state (cap, reminder, move) takes this beside the
+/// booking's own status head (FIX 22385).
+fn is_calendar_cancellation(body: &ClaimBody) -> Result<bool, BookingError> {
+    Ok(body.predicate == PREDICATE_CALENDAR_STATUS
+        && decode_status_value(&body.value)
+            .map_err(|error| engine_failure("calendar status decode", error))?
+            .status
+            == CalendarStatus::Cancelled)
 }
 
 /// The EVENT's stored occurrence, read through the CALLER's transaction.

@@ -100,6 +100,9 @@ impl ReaderJobs<'_> {
             kind: kind.clone(),
             ask,
             parent_lease: parent_lease.clone(),
+            // A scoped child is the host's, under its parent's borrowed
+            // lease: it answers to its agent's grant.
+            powers: None,
         };
         let (job, replay) = match storage.spawn_reader_job(seat, new, now_ms)? {
             SpawnAdmission::Queued { job, queued } => {

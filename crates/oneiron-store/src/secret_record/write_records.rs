@@ -3,8 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::git_wire::ids::GitOid;
-use crate::secret_record::types::CustodyClass;
-use crate::secret_record::types::SecretCustodyRecord;
 use oneiron_contracts::entity_id::EntityId;
 
 /// An owner action on one found key.
@@ -159,12 +157,6 @@ pub enum ArchiveSameId {
     Different,
     /// The comparison faulted: the record here stays as it is, pending.
     Pending,
-}
-
-/// Whether `record` may leave this device: custody-portable with its "this
-/// device only" dial off.
-pub fn custody_portable(record: &SecretCustodyRecord) -> bool {
-    record.class == CustodyClass::CustodyPortable && !record.device_only
 }
 
 /// Every slot's name starts with this: the engine's reserved namespace.

@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>",
   "call": "memory.messages_durability(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "projection_record_scope": true
   },

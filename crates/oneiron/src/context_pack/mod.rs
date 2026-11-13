@@ -46,7 +46,7 @@ pub use types::{
     PackStats, PackTokenStats, TokenAllocation,
 };
 pub(crate) use types::{PackCriticalAccounting, PackWorldShare};
-pub use world_partition::WORLD_STALE_FIELD;
+pub use world_partition::{BASE_WORLD_SECTION, WORLD_SECTION_FIELD, WORLD_STALE_FIELD};
 
 pub(crate) use validation::disclosure_admits_target;
 

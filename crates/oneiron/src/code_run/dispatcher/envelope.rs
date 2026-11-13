@@ -396,7 +396,8 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // that advances its own served ref; a mirror release stays the
         // owner's own act.
         | SelfEffect::RepoCheckoutBind
-        | SelfEffect::RepoExport => false,
+        | SelfEffect::RepoExport
+        | SelfEffect::RepoSymbolsObserve => false,
     }
 }
 

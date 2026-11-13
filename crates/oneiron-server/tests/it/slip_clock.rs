@@ -9,7 +9,6 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header::AUTHORIZATION};
@@ -22,6 +21,7 @@ use oneiron::store::ports::ManualClock;
 use oneiron_remote::unix_seconds_now;
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
+use oneiron_server::runtime::ManualClockFile;
 use oneiron_server::server::SyncServer;
 use serde_json::Value;
 use tower::ServiceExt;
@@ -31,17 +31,26 @@ use super::reopen_after_restart::{oneiron, serve, sigterm, stdout};
 const SECRET: &str = "slip-clock-issuer-key-not-a-bearer";
 
 /// `oneiron serve` stopped for longer than the window: the same agent's next
-/// proof is accepted. The shipped binary has no clock to inject, so the stop
-/// is a real one.
+/// proof is accepted. The server runs on a manual clock (`[runtime] clock =
+/// "manual"`), so the stop is a step of that clock, not a real wait.
 #[test]
 fn the_shipped_server_accepts_an_agents_proof_after_a_stop_longer_than_the_window() {
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault");
     let config = dir.path().join("oneiron.toml");
+    let clock = dir.path().join("clock");
     stdout(oneiron(
         &["init", vault.to_str().unwrap(), "--embedder", "none"],
         &config,
     ));
+    let start = unix_seconds_now();
+    ManualClockFile::set(&clock, start * 1000).unwrap();
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str(&format!(
+        "\n[runtime]\nclock = \"manual\"\nclock_file = {:?}\n",
+        clock.to_str().unwrap()
+    ));
+    std::fs::write(&config, text).unwrap();
     let minted: Value = serde_json::from_str(&stdout(oneiron(
         &["token", "agent", "--name", "clock-check"],
         &config,
@@ -67,17 +76,18 @@ fn the_shipped_server_accepts_an_agents_proof_after_a_stop_longer_than_the_windo
     };
 
     let first = serve(&config, port, &dir.path().join("serve-1.log"));
-    let proof = holder_proof(&slip, &key, unix_seconds_now()).unwrap();
+    let proof = holder_proof(&slip, &key, start).unwrap();
     assert_eq!(read(&proof), 200, "a fresh proof");
     assert_eq!(read(&proof), 401, "the same proof replayed");
     sigterm(first);
 
-    // Down for 70 s, counted from the stop: the old window's clock moved
-    // while the first server ran, and never while it was down.
-    std::thread::sleep(Duration::from_secs(70));
+    // Down for 70 s on the server's clock, counted from the stop: the old
+    // window's clock moved while the first server ran, and never while it
+    // was down.
+    let now = start + 70;
+    ManualClockFile::set(&clock, now * 1000).unwrap();
 
     let _second = serve(&config, port, &dir.path().join("serve-2.log"));
-    let now = unix_seconds_now();
     let at = |timestamp: u64| holder_proof(&slip, &key, timestamp).unwrap();
     assert_eq!(read(&at(now)), 200, "a fresh proof after the stop");
     assert_eq!(read(&at(now - 120)), 401, "a proof older than the window");
@@ -297,6 +307,7 @@ fn mint_agent(
                 actor_class: Some("agent".to_owned()),
                 org_ref: None,
                 write_facet: None,
+                comm: None,
             },
         )
         .unwrap();

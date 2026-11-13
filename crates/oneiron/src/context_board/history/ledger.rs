@@ -455,6 +455,9 @@ impl Vault {
             )?;
             body.valid_from = Some(input.at);
             body.source = Some(ClaimSource::Observed);
+            // Only a PERSON subject has a substrate FACET; any other subject takes
+            // the vault default facet (a birth gate refusal otherwise, #4389).
+            body.scope_facet = self.claim_put_facet_keeping_in_txn(&txn, &id, body.scope_facet)?;
             self.put_reserved_claim_in_txn(
                 &mut txn,
                 &id,

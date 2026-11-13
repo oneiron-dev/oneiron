@@ -95,6 +95,16 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
             "page_ref",
         ],
     ),
+    // A hold override: the fan-out launch, or the comment's artifact and
+    // thread, the released hold named. (Engine call S65-B-R3)
+    (
+        ReceiptKind::RunHoldOverride,
+        &["launch_ref", "artifact_ref", "thread_ref"],
+    ),
+    // A check-in transition: the holders a rung pinned, the holder who
+    // answered or extended, and a skipped rung's missing link when it names
+    // a principal. (ROLES-CHECKIN P2.2)
+    (ReceiptKind::CheckIn, &["holders", "by", "missing_link"]),
     // A served form: the ASSET it served, and the ASSET_TEXT it read in
     // place of the body. (FIX 4848)
     (ReceiptKind::ServedForm, &["asset_ref", "asset_text_ref"]),
@@ -127,6 +137,9 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
     // A settlement: the artifact it settled. Its trigger names the
     // artifact at a version, which is not a row spelling. (FIX 4848)
     (ReceiptKind::ArtifactSettle, &["artifact_ref"]),
+    // An inquiry send: the member it asked about. Its trigger names the
+    // task. (INQUIRE-1)
+    (ReceiptKind::Inquiry, &["member"]),
 ];
 
 /// The families whose `actor` and `on_behalf_of` are parties the receipt
@@ -144,7 +157,10 @@ const REFILL_GROWTH: usize = 2;
 /// rows its family's [`ROW_FIELDS`] hold, a share's parties, and the rows a
 /// hook run's reads served. `None` when they cannot be known: a hook receipt
 /// whose run is not kept.
-fn referenced_rows(vault: &Vault, receipt: &ReceiptRecord) -> Result<Option<Vec<EntityId>>> {
+pub(crate) fn referenced_rows(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+) -> Result<Option<Vec<EntityId>>> {
     let mut rows: Vec<EntityId> = receipt
         .trigger_ref
         .as_deref()

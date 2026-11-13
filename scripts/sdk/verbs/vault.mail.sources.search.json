@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailSearchReport",
   "call": "memory.mail_sources_search(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

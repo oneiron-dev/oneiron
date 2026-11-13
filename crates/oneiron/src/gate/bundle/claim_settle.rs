@@ -55,7 +55,7 @@ impl Vault {
         id: EntityId,
         action: GateConsentBundleAction,
         actor: WriteActor,
-        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_answer: Option<crate::consent::OwnerAuthoredWrite>,
         now: u64,
     ) -> Result<SettledProposal> {
         self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, None, now, false)
@@ -92,7 +92,7 @@ impl Vault {
         id: EntityId,
         action: GateConsentBundleAction,
         actor: WriteActor,
-        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_answer: Option<crate::consent::OwnerAuthoredWrite>,
         now: u64,
     ) -> Result<SettledProposal> {
         self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
@@ -117,12 +117,18 @@ impl Vault {
         id: EntityId,
         action: GateConsentBundleAction,
         actor: WriteActor,
-        owner_answer: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_answer: Option<crate::consent::OwnerAuthoredWrite>,
         approval_caller: Option<crate::WriteEnvelope>,
         now: u64,
         vetting: bool,
     ) -> Result<SettledProposal> {
         let (body, header) = live_claim_parts_in_txn(&self.store, &*wtxn, &id)?;
+        if !vetting
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && self.claim_retract_is_parked_in_txn(&*wtxn, &id)?
+        {
+            return self.settle_parked_retract_in_txn(wtxn, id, action, actor, owner_answer, now);
+        }
         let vet_auto = vetting
             && body.approval == ClaimApprovalStatus::Auto
             && crate::claim::claim_generated_origin(&body)
@@ -147,8 +153,14 @@ impl Vault {
             GateConsentBundleAction::Approve => {
                 // Closed before the approval lands, so the row leaves its own
                 // resolution receipt; a refused approval rolls it back.
-                let tray_receipt =
-                    close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer, action, now)?;
+                let tray_receipt = close_settled_tray_row_in_txn(
+                    self,
+                    wtxn,
+                    &id,
+                    owner_answer.as_ref(),
+                    action,
+                    now,
+                )?;
                 let mut approved = body.clone();
                 approved.approval = ClaimApprovalStatus::Approved;
                 let put = BatchOp::Put {
@@ -169,12 +181,16 @@ impl Vault {
                     Some(caller) => crate::batch::ClaimMaterialization::apply_approval_with_caller(
                         self, wtxn, put, true, caller,
                     ),
-                    None => crate::batch::ClaimMaterialization::apply_approval(
+                    // The owner's proof answers the obligation above and
+                    // confirms this approval at the Gate: an owner's
+                    // approval is never parked on the criticality floor.
+                    None => crate::batch::ClaimMaterialization::apply_owner_approval(
                         self,
                         wtxn,
                         put,
                         true,
-                        Some(actor),
+                        actor,
+                        owner_answer,
                     ),
                 }?;
                 self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
@@ -185,6 +201,18 @@ impl Vault {
                 let resolved = self
                     .get_claim_in_txn(&*wtxn, &id)?
                     .ok_or(Error::EntityNotFound)?;
+                if body.approval == ClaimApprovalStatus::Proposed
+                    && crate::claim::claim_surfaceable(&resolved)
+                {
+                    // Approval publishes now, not at an embedder's next idle
+                    // pass. Move the indexed frontier before Text, otherwise
+                    // the text arm would defer the approved revision again.
+                    crate::vault::entity_revision::publish_room_revision(&self.store, wtxn, &id)?;
+                    let text = crate::claim::claim_value_index_text(&resolved.value);
+                    self.batch_in()
+                        .text(&id, &[("val", text.as_str())])
+                        .apply(wtxn)?;
+                }
                 (resolved, tray_receipt)
             }
             GateConsentBundleAction::Decline => {
@@ -252,8 +280,14 @@ impl Vault {
                 } else {
                     crate::batch::VerifiedClaimTransition::after_consent(&self.store, wtxn, &put)?
                 };
-                let tray_receipt =
-                    close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer, action, now)?;
+                let tray_receipt = close_settled_tray_row_in_txn(
+                    self,
+                    wtxn,
+                    &id,
+                    owner_answer.as_ref(),
+                    action,
+                    now,
+                )?;
                 crate::batch::apply_session_bundle_claim_puts_with_transitions(
                     &self.store,
                     &self.config,
@@ -305,6 +339,51 @@ impl Vault {
             tray_receipt,
             recorded,
             dreamer_run: pending.is_some_and(|row| row.dreamer_run_id.is_some()),
+        })
+    }
+
+    /// Settles the retract that the claim `id`'s own author parked for the
+    /// holder's consent (ARCH-0040 `mcp:5`). An approval closes the claim
+    /// as `actor`'s retract; a decline leaves it as it was, Active with its
+    /// approval, and removes the parked retract. Either closes the tray row
+    /// with this settlement's receipt. A parked retract on a class a
+    /// manifest rule declares critical keeps the owner's critical confirm,
+    /// so its approval here refuses as that hold, writing nothing.
+    fn settle_parked_retract_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        action: GateConsentBundleAction,
+        actor: WriteActor,
+        owner_answer: Option<crate::consent::OwnerAuthoredWrite>,
+        now: u64,
+    ) -> Result<SettledProposal> {
+        if action == GateConsentBundleAction::Approve
+            && self.parked_retract_is_critical_in_txn(&*wtxn, &id)?
+        {
+            return Err(Error::Gate(GateError::GateWriteRejected {
+                outcome: "pending",
+                reason_codes: vec![crate::gate::GateReasonCode::PendingCriticalityFloor.as_str()],
+            }));
+        }
+        let tray_receipt =
+            close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer.as_ref(), action, now)?;
+        match action {
+            // The parked binding is checked, and the retract closes the
+            // claim as the settling actor's (FIX 11039).
+            GateConsentBundleAction::Approve => {
+                self.complete_deferred_claim_in_txn(wtxn, &id, false, now, Some(actor))?;
+            }
+            GateConsentBundleAction::Decline => self.cancel_deferred_claim_in_txn(wtxn, &id)?,
+        }
+        let body = self
+            .get_claim_in_txn(&*wtxn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(SettledProposal {
+            body,
+            tray_receipt,
+            recorded: Vec::new(),
+            dreamer_run: false,
         })
     }
 

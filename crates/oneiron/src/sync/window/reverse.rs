@@ -524,6 +524,18 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 5266: a TURN's riding program wakes ride beside it, and a
+            // wake this vault admitted leaves.
+            if window_key.world().is_none()
+                && EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::turn_programs::mirror_turn_program_wakes(
+                    vault, doc, window_key, id,
+                )?
+            {
+                wrote_any = true;
+            }
             // FIX 1794: a room's side rows ride beside its carrier, and a
             // turn's claim, response and thread facts beside the turn's.
             if window_key.world().is_none()
@@ -723,6 +735,12 @@ fn reverse_rematerialize_scan(
     // A carrier the window kept past its row's learned month still takes
     // every revision learned since (Astra #1434 F2).
     wrote_any |= super::project_history::carry_project_history(vault, doc)?;
+
+    // FIX 5266: the turn-program armings and disarms of this window's month.
+    if window_key.world().is_none() {
+        wrote_any |=
+            crate::sync::turn_programs::mirror_turn_program_armings(vault, doc, window_key)?;
+    }
 
     // Commit all bridge writes with origin tag
     if wrote_any {
