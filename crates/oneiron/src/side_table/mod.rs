@@ -280,6 +280,38 @@ impl SideTableDecl {
             .map_or(self.tier, |(_, tier)| *tier)
     }
 
+    /// Every stored row of this declaration as raw bytes, in key order: the key suffix after the
+    /// declared prefix and the stored value, undecoded. A `SyncState` key's text becomes its
+    /// bytes. Storage errors fail the scan.
+    pub(crate) fn iter_raw<'txn>(
+        &'static self,
+        dbs: &impl SideTableDbs,
+        txn: &'txn RoTxn<'_>,
+    ) -> Result<RawRows<'txn>> {
+        let prefix_len = self.prefix.len();
+        Ok(match self.db {
+            SideDb::VaultMeta => Box::new(
+                dbs.side_vault_meta()
+                    .prefix_iter(txn, self.prefix)?
+                    .map(move |row| {
+                        row.map(|(key, value)| (key[prefix_len..].to_vec(), value.into_owned()))
+                    }),
+            ),
+            SideDb::SyncState => {
+                let prefix = self.prefix_str()?;
+                Box::new(
+                    dbs.side_sync_state()?
+                        .prefix_iter(txn, prefix)?
+                        .map(move |row| {
+                            row.map(|(key, value)| {
+                                (key.as_bytes()[prefix_len..].to_vec(), value.into_owned())
+                            })
+                        }),
+                )
+            }
+        })
+    }
+
     /// The declared prefix as the `sync_state` key spelling.
     fn prefix_str(&self) -> Result<&'static str> {
         std::str::from_utf8(self.prefix)

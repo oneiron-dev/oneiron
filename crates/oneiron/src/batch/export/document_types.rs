@@ -6,13 +6,18 @@ use super::{
     ArchiveFile, ArchiveRecordFile, EmbeddingSetupImport, EmbeddingSetupWithheld,
     ExportAgentBundle, ExportBundleOmission, ExportDiaryHold, ExportImportOmission,
     ExportImportRefusal, ExportManifest, ExportSerializerManifest, ExportSkillBundle,
-    ExportSourceBoundary, PortableEmbeddingSpace, PortableSlotBindings, VAULT_ARCHIVE_FORMAT,
-    VaultImportReceipt,
+    ExportSourceBoundary, ImportOmissionReason, PortableEmbeddingSpace, PortableSlotBindings,
+    VAULT_ARCHIVE_FORMAT, VaultImportReceipt,
 };
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 5;
+/// The whole-vault document version this build writes.
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 6;
+/// The manifest versions this build restores: 5 (no retained side family, no table omissions)
+/// and 6 (with them). A v5 archive has no retained family and no table omissions, so archives
+/// written before this change still restore.
+pub const WHOLE_VAULT_DOCUMENT_VERSIONS: [u16; 2] = [5, 6];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,6 +55,23 @@ pub struct WholeVaultDocumentManifest {
     pub embedding_setup_withheld: EmbeddingSetupWithheld,
     /// FIX 2768: side rows this archive holds out, and why.
     pub side_rows_withheld: Vec<super::ArchiveSideWithheld>,
+    /// SIDE-1: the omitted side tables this whole-vault archive declares, with their reasons
+    /// and row counts; empty in a v5 archive and outside a whole-vault export.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub side_table_omissions: Vec<ArchiveSideTableOmission>,
+}
+
+/// One omitted side table: the whole-vault archive declares it with its reason and row count,
+/// and carries none of its rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveSideTableOmission {
+    /// The declared omitted table's name.
+    pub table: String,
+    /// Why the archive omits it.
+    pub reason: ImportOmissionReason,
+    /// The source table's row count when declared.
+    pub rows: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,10 +85,12 @@ impl WholeVaultDocumentManifest {
     /// Validate the versioned manifest of a whole-vault archive. A keeping
     /// archive (`secrets_nulled` false) is valid only with secrets included
     /// in the archive format and with both storage nulling claims false;
-    /// every other archive keeps the historical nulling claims.
+    /// every other archive keeps the historical nulling claims. Accepts
+    /// [`WHOLE_VAULT_DOCUMENT_VERSIONS`]: v5 has no retained family and no
+    /// table omissions.
     pub fn validate(&self) -> Result<()> {
         if self.source_boundaries != [ExportSourceBoundary::BuiltinAdapterCodeNotStored]
-            || self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
+            || !WHOLE_VAULT_DOCUMENT_VERSIONS.contains(&self.manifest_version)
             || self.format != VAULT_ARCHIVE_FORMAT
             || self.serializer != ExportSerializerManifest::current()
             || self.storage.redacted() != self.secrets_nulled
@@ -405,6 +429,31 @@ pub struct ExportDerivationEnvelope {
     pub receipts: Vec<super::ExportReceiptSource>,
 }
 
+/// One retained source table's import counts: the inert copies kept.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct RetainedSideTableCount {
+    /// The declared retained source table's name.
+    pub source_table: String,
+    /// The retained copies newly stored.
+    pub inserted_rows: usize,
+    /// The retained copies already stored equal.
+    pub unchanged_rows: usize,
+}
+
+/// The retained side rows one import kept: the inert copies, by table, and the manifest's
+/// table omissions. Counts inert rows, never grants activated or policies installed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct RetainedSideImportSummary {
+    /// The retained copies newly stored.
+    pub inserted_rows: usize,
+    /// The retained copies already stored equal.
+    pub unchanged_rows: usize,
+    /// The per-table counts, sorted by source table name.
+    pub tables: Vec<RetainedSideTableCount>,
+    /// The manifest's table omissions.
+    pub omissions: Vec<ArchiveSideTableOmission>,
+}
+
 #[derive(Debug, Clone)]
 pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
@@ -461,6 +510,8 @@ pub struct WholeVaultImportReceipt {
     /// FIX 2768: side rows written, and those already here unchanged.
     pub restored_side_rows: usize,
     pub unchanged_side_rows: usize,
+    /// SIDE-1: the retained side rows this import kept inert, and the manifest's table omissions.
+    pub retained_side_rows: RetainedSideImportSummary,
 }
 
 impl WholeVaultDocument {

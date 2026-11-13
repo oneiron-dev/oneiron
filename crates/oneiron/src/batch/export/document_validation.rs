@@ -10,8 +10,8 @@ use super::archive_index::{
 };
 use super::document_import::parse_id;
 use super::{
-    ArchiveRecordKind, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportPack,
-    ExportRowBirth, ExportRun,
+    ArchiveRecordKind, ArchiveSideFamily, ArchiveSideRow, ExportDerivationEnvelope, ExportEdge,
+    ExportEntity, ExportPack, ExportRowBirth, ExportRun, ImportOmissionReason,
 };
 use crate::Vault;
 use crate::edge::{EdgeKind, EdgeValueLayout, edge_value_layout_for_kind};
@@ -38,6 +38,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     /// sources stay Nulled.
     pub(super) fn validate_with(&mut self, vault: &Vault, secrets: ExportSecrets) -> Result<()> {
         self.manifest.validate()?;
+        self.validate_side_table_omissions()?;
         super::epoch_floors::validate_epoch_floors(&self.spool)?;
         let mut runs = self.spool.rows(ArchiveRecordKind::Run);
         while let Some((_, run)) = runs.next_parsed::<ExportRun>(&self.spool)? {
@@ -93,6 +94,62 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         }
         self.validate_bundles(secrets)?;
         self.validate_embedding_setup()?;
+        Ok(())
+    }
+
+    /// Table omissions are empty or name exactly the 23 omitted tables with their disposition
+    /// reasons, sorted without duplicates. Version 5 permits neither omissions nor retained
+    /// rows; version 6 requires omissions when retained rows are present. Export scope and
+    /// locality are not serialized, so an empty retained set cannot prove the export gate here.
+    /// Omitted row counts are source statistics and cannot be rechecked from absent rows.
+    fn validate_side_table_omissions(&mut self) -> Result<()> {
+        let omissions = &self.manifest.side_table_omissions;
+        if self.manifest.manifest_version == 5 && !omissions.is_empty() {
+            return Err(invalid(
+                "manifest omission declaration disagrees with document",
+            ));
+        }
+        if omissions.is_empty() {
+            let mut sides = self.spool.rows(ArchiveRecordKind::SideTable);
+            while let Some((_, row)) = sides.next_parsed::<ArchiveSideRow>(&self.spool)? {
+                if row.family == ArchiveSideFamily::RetainedSideRow {
+                    return Err(invalid(
+                        "manifest omission declaration disagrees with document",
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        let mut expected: Vec<(&str, ImportOmissionReason)> =
+            super::archive_side_dispositions::SIDE_TABLE_DISPOSITIONS
+                .iter()
+                .filter_map(|(name, disposition)| match disposition {
+                    super::archive_side_dispositions::ArchiveSideDisposition::Omitted(reason) => {
+                        Some((*name, *reason))
+                    }
+                    super::archive_side_dispositions::ArchiveSideDisposition::Retained => None,
+                })
+                .collect();
+        expected.sort_by(|left, right| left.0.cmp(right.0));
+        if omissions.len() != expected.len() {
+            return Err(invalid(
+                "manifest omission declaration disagrees with document",
+            ));
+        }
+        let mut last: Option<&str> = None;
+        for (omission, (table, reason)) in omissions.iter().zip(expected.iter()) {
+            if last.is_some_and(|prev| prev >= omission.table.as_str()) {
+                return Err(invalid(
+                    "manifest omission declaration disagrees with document",
+                ));
+            }
+            last = Some(omission.table.as_str());
+            if omission.table != *table || omission.reason != *reason {
+                return Err(invalid(
+                    "manifest omission declaration disagrees with document",
+                ));
+            }
+        }
         Ok(())
     }
 
