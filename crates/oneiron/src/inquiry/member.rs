@@ -400,11 +400,17 @@ pub(crate) fn answer_inquiry_in_txn(
 
 /// The edge `grant`, when `proof` and `inquiry` may use it at `now`: the
 /// credential is the company host's own, bound to this edge's grant and
-/// live in `txn` (its holder, its grant's expiry and withdrawal, its pact);
-/// the grant is a live inquiry edge, not expired or withdrawn, whose Connect
-/// pact is Active and still holds the edge's scope; and the inquiry comes
-/// from the edge's company. One refusal for every credential, edge or pact
-/// failure.
+/// live in `txn` (its holder, its grant's expiry and withdrawal, its pact),
+/// as this vault minted it, with no holder caveat, and its scope holds the
+/// edge's whole scope; the grant is a live inquiry edge, not expired or
+/// withdrawn, whose Connect pact is Active and still holds the edge's
+/// scope; and the inquiry comes from the edge's company. One refusal for
+/// every credential, edge or pact failure.
+///
+/// The route reads no caveat: a holder's narrowing (a scope, a record set,
+/// a pact bound) would otherwise pass verification and still be answered
+/// from the whole edge (review round 1 of #7603). The company host sends
+/// the slip as minted, so the mint is the one form admitted.
 fn admitted_edge_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -417,7 +423,9 @@ fn admitted_edge_in_txn(
     let claims = proof.claims();
     if claims.grant_ref.as_deref() != Some(grant.to_hex().as_str())
         || proof.is_transferred()
+        || !proof.is_unattenuated()
         || !claims.channels.is_empty()
+        || !claims.records.is_empty()
         || !vault.capability_slip_is_live_in_txn(txn, proof)?
     {
         return Err(not_admitted());
@@ -425,6 +433,9 @@ fn admitted_edge_in_txn(
     let Some((edge, decoded)) = inquiry_edge_grant_in_txn(vault, txn, &grant)? else {
         return Err(not_admitted());
     };
+    if !edge.authority_scope.is_narrowing_of(proof.scope()) {
+        return Err(not_admitted());
+    }
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     if !decoded.is_live_at(now)
         || vault.guest_grant_withdrawn_in_txn(txn, &grant)?
