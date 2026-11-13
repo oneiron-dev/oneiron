@@ -171,8 +171,6 @@ mod landing_tests;
 mod maintain_tests;
 #[cfg(test)]
 mod push_cert_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-RECREATE-TESTS]: the lib test target's type check fails here (5 errors: E0308 x4, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod recreate_tests;
 #[cfg(test)]

@@ -323,8 +323,6 @@ impl<T> GrantedData<T> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-ACCESS-GRANT-CONTEXT-TESTS]: the lib test target's type check fails here (10 errors: E0063 x6, E0308 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,16 +355,20 @@ mod tests {
             .witness(&crate::memory::WitnessTurn {
                 conversation_ref: EntityId::now().to_hex(),
                 turn_ref: None,
+                thread_audience: None,
                 occurred_at: 1,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author: crate::memory::WitnessAuthor::User,
                     message_type: "dialogue".into(),
                     content: "safe content".into(),
+                    parts: None,
                     metadata: Some(serde_json::json!({"rel":space.to_hex()})),
                     is_visible: true,
                     order: 0,
+                    quote: None,
                 }],
+                assertions: Default::default(),
             })
             .expect("authenticated witness message");
         vault.put_entity(&summary, ENTITY_TYPE_SUMMARY, when, 1, &body)?;
@@ -380,6 +382,7 @@ mod tests {
             revoked_at: None,
             expires_at: Some(u64::MAX),
             authority_scope: crate::federation::scope_codec::read_preset(),
+            companion_bounds: None,
         };
         // The actual MESSAGE stamp is one kind at Sensitive, not All kinds
         // at Restricted. Narrowing to it must still admit the read.
@@ -553,7 +556,7 @@ mod tests {
                 ClaimLifecycleStatus::Active,
             )
             .unwrap();
-            body.rel = Some(space);
+            body.rel = Some(crate::claim::RelationshipSet::from([space]));
             body.scope_project = project;
             vault.put_claim(&id, &body, when, 1)?;
         }
@@ -566,6 +569,7 @@ mod tests {
             created_at: 1,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         };
         grant.authority_scope.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM]));
         grant.authority_scope.audience =
@@ -699,7 +703,7 @@ mod tests {
                 ClaimLifecycleStatus::Active,
             )
             .unwrap();
-            body.rel = Some(space);
+            body.rel = Some(crate::claim::RelationshipSet::from([space]));
             vault
                 .put_claim(&shared, &body, when, 1)
                 .expect("put the shared claim");
@@ -728,6 +732,7 @@ mod tests {
                     revoked_at: None,
                     expires_at: None,
                     authority_scope: crate::federation::scope_codec::read_preset(),
+                    companion_bounds: None,
                 },
             )?;
             Ok(id)
@@ -1018,6 +1023,7 @@ mod tests {
                 entity_type: crate::registry::ENTITY_TYPE_RELATIONSHIP,
                 occurred: crate::TimeRange { start: 1, end: 1 },
                 learned_at: 1,
+                row_version: 0,
                 body: &original[ENTITY_METADATA_HEADER_LEN..],
             },
             crate::sync::client::ImportTier::OwnDevice,
@@ -1274,9 +1280,9 @@ mod tests {
         let profile_grant = EntityId::now();
         vault.create_access_grant(
             &profile_grant,
-            &crate::AccessGrant::companion_profile_read(principal, person, persona, 10),
+            &crate::AccessGrant::companion_profile_read(principal, person, Some(persona), 10),
         )?;
-        let profile = || vault.companion_profile_access_grant(&principal, &person, &persona);
+        let profile = || vault.companion_profile_access_grant(&principal, &person, Some(&persona));
         let brief = || vault.resolve_share_for_view(&share_id, &recipient, None, &[]);
         assert_eq!(profile()?, Some(profile_grant));
         assert!(brief()?.is_some());

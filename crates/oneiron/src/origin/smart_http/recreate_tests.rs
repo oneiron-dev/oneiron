@@ -77,7 +77,7 @@ fn engine_request_needing(
 fn large_file() -> (LfsPushedPointer, Vec<u8>) {
     let bytes = b"asset bytes the earlier publication never certified".to_vec();
     let pointer = LfsPushedPointer {
-        path: "assets/logo.bin".to_owned(),
+        path: b"assets/logo.bin".to_vec(),
         oid: LfsOid::digest(&bytes),
         size_bytes: u64::try_from(bytes.len()).expect("length fits u64"),
     };
@@ -291,7 +291,7 @@ fn a_push_needing_more_than_a_prepared_owner_is_refused_before_the_ref_moves() {
         .expect("the large file's bytes are held");
     let tip = commit_file(
         source.path(),
-        &pointer.path,
+        std::str::from_utf8(&pointer.path).expect("pointer path is utf-8"),
         &pointer_file(pointer.oid, pointer.size_bytes),
     );
     let (_handle, request) = engine_request(&vault, &repo_dir, &second, &tip);
@@ -334,7 +334,7 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
         .expect("the large file's bytes are held");
     let tip = commit_file(
         &root,
-        &pointer.path,
+        std::str::from_utf8(&pointer.path).expect("pointer path is utf-8"),
         &pointer_file(pointer.oid, pointer.size_bytes),
     );
     git(&root, &["update-ref", "refs/heads/main", base.as_str()]);
@@ -363,7 +363,7 @@ fn an_applied_push_needing_more_than_its_owner_settles_uncertified() {
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+        .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door, None)
         .expect("pre-effect durable intent");
     for _ in 0..2 {
         vault
@@ -398,7 +398,7 @@ fn a_ref_recreated_beside_a_new_large_file_lands_on_its_earlier_publication() {
         .expect("the large file's bytes are held");
     let assets = commit_file(
         source.path(),
-        &pointer.path,
+        std::str::from_utf8(&pointer.path).expect("pointer path is utf-8"),
         &pointer_file(pointer.oid, pointer.size_bytes),
     );
 

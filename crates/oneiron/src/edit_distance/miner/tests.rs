@@ -6,11 +6,10 @@ use crate::edge::EdgeActorClass;
 use crate::edit_distance::attribution::{
     AmendmentCause, AmendmentEvidence, judge_amendment, record_amendment_evidence,
 };
-use crate::edit_distance::delta::{delta_from_recorded_ops, put_amendment_delta_in_txn};
-use crate::edit_distance::{
-    FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef,
-    put_finalized_proposal_text,
+use crate::edit_distance::delta::{
+    EndpointRef, MeasuredEnd, delta_from_reconstructed, put_amendment_delta_in_txn,
 };
+use crate::edit_distance::{ProposalArtifactRef, put_imported_endpoints};
 use crate::error::GateError;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
@@ -145,30 +144,19 @@ impl Amendment {
         bind: impl FnOnce(&Vault, &str) -> Result<()>,
     ) -> Result<()> {
         let artifact_ref = ProposalArtifactRef::mint();
-        let record = FinalizedProposalText {
-            artifact_ref,
-            proposed_ref: LoroOpRef::from_bytes(window_bytes(artifact_ref, 0)),
-            final_ref: LoroOpRef::from_bytes(window_bytes(artifact_ref, 1)),
-            // ONE recorded change covering the whole edit — what a decider's
-            // single correction run looks like on replay.
-            ops_by_actor: vec![(
-                OpAttribution::DevicePeer,
-                OpSpan {
-                    peer_id: 7,
-                    counter: 0,
-                    len: 1,
-                    lamport: 1,
-                    timestamp: 1,
-                    before_text: self.proposed.clone(),
-                    after_text: self.finalized.clone(),
-                },
-            )],
-            proposed_text: self.proposed.clone(),
-            final_text: self.finalized.clone(),
-            source_turn_ref: None,
-        };
-        put_finalized_proposal_text(vault, &record)?;
-        let delta = delta_from_recorded_ops(&record);
+        // ONE endpoint-only import holding both texts — what a decider's
+        // single correction run looks like to the reconstructed lane.
+        put_imported_endpoints(vault, artifact_ref, None, &self.proposed, &self.finalized)?;
+        let delta = delta_from_reconstructed(
+            MeasuredEnd {
+                at: EndpointRef::imported_proposed(artifact_ref),
+                content: self.proposed.as_str(),
+            },
+            MeasuredEnd {
+                at: EndpointRef::imported_final(artifact_ref),
+                content: self.finalized.as_str(),
+            },
+        );
         vault.with_write_txn(|wtxn| {
             put_amendment_delta_in_txn(vault, wtxn, &self.receipt_id, &delta)?;
             Ok(())
@@ -202,14 +190,6 @@ fn fixture_owner(vault: &Vault) -> WriteActor {
 // hysteresis and replay rather than accidentally test 50 years of decay.
 fn run_substitution_miner(vault: &Vault, run: &MinerRun) -> Result<Vec<MinedOutcome>> {
     super::run_substitution_miner_at(vault, run, 10_000)
-}
-
-/// Op-window bytes unique per artifact, so two artifacts never share an index
-/// entry.
-fn window_bytes(artifact_ref: ProposalArtifactRef, end: u8) -> Vec<u8> {
-    let mut bytes = artifact_ref.entity_id().as_bytes().to_vec();
-    bytes.push(end);
-    bytes
 }
 
 /// A sign-off swap: `regards` -> `cheers`, with `index` varying only the
@@ -515,6 +495,7 @@ fn the_dedup_check_sees_the_mark_written_in_its_own_transaction() -> Result<()> 
         &StoredSkillEdit {
             principal: None,
             v: ROW_VERSION,
+            unattributed: false,
             skill: EntityId::now().to_hex(),
             scope: "scheduling".to_owned(),
             from: "fri".to_owned(),
@@ -644,7 +625,7 @@ fn miner_floor_still_denies() -> Result<()> {
         "the negative fixture never persists the record"
     );
     let claim_id = EntityId::now();
-    let envelope = miner_envelope(&run, &handle)?;
+    let envelope = miner_envelope(&run, &handle, cluster.unattributed, ClaimSource::Generated)?;
     let candidate = ClaimCandidate::new(
         PREDICATE_PREFERENCE_PHRASING,
         ClaimSubject::Entity(cluster.actor),

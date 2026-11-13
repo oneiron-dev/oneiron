@@ -87,6 +87,7 @@ fn put_indexed_manifest_at_two(vault: &Vault, id: EntityId, data: &[u8]) -> Resu
             end: learned_at,
         },
         learned_at,
+        0,
         data,
     );
 
@@ -471,6 +472,7 @@ fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
             effect: SelfEffect::MemoryPutEdge,
             outcome: "pending".to_owned(),
             reason_codes: vec!["gate.pending.actor_ceiling".to_owned()],
+            hook_notice: None,
         }),
         determinism.frozen_unix_ms,
         determinism.frozen_unix_ms,
@@ -496,6 +498,8 @@ fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
         &SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: SelfEffect::MemoryPutEdge,
             error: "entity not found".to_owned(),
+            code: None,
+            disk_floor: None,
         }),
         determinism.frozen_unix_ms,
         determinism.frozen_unix_ms,
@@ -523,7 +527,7 @@ fn code_run_replay_returns_a_refused_agent_verb_as_the_live_refusal() -> Result<
         "run-agent-verb",
     )?;
     let call = SelfCall::AgentVerb(SelfAgentVerbCall {
-        verb: crate::task_verb::sdk::AgentVerb::Recall,
+        verb: crate::task_verb::sdk::AgentVerb::VaultRecall,
         input: serde_json::json!({"query": "heron lantern"}),
     });
     // No verb door is bound, so the live answer is a typed refusal.
@@ -534,6 +538,7 @@ fn code_run_replay_returns_a_refused_agent_verb_as_the_live_refusal() -> Result<
             effect: SelfEffect::AgentVerb,
             outcome: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             reason_codes: Vec::new(),
+            hook_notice: None,
         })
     );
 
@@ -573,8 +578,8 @@ fn code_run_replay_large_output_persists_raw_bytes_and_compact_preview() -> Resu
     );
     assert!(!output.preview.text.contains("\n\n"));
 
-    vault.put_code_run_raw_output(&output, &raw)?;
-    vault.put_code_run_raw_output(&same_raw_other_path, &raw)?;
+    vault.put_code_run_raw_output(None, &output, &raw)?;
+    vault.put_code_run_raw_output(None, &same_raw_other_path, &raw)?;
     let mut record = CodeRunReplayRecord::new(
         run_id,
         CodeRunDeterminism::new(1_719_000_002_000, [0xBC; 32]),
@@ -621,6 +626,11 @@ fn code_run_replay_abi_layout_keys_are_pinned_and_hash_checked() {
             "step_checkpoints",
             "outputs",
             "abi_layout_checks",
+            "bindings",
+            "live_run",
+            "callable_rows",
+            "birth_world",
+            "pending_step",
         ]
     );
     assert_eq!(
@@ -632,11 +642,26 @@ fn code_run_replay_abi_layout_keys_are_pinned_and_hash_checked() {
             "outcome",
             "started_at_ms",
             "finished_at_ms",
+            "action_digest",
+            "spawn_targets",
+            "hook_view_served",
+            "rewritten_request",
         ]
     );
     assert_eq!(
         CODE_RUN_RAW_OUTPUT_KEYS,
-        ["handle", "path", "raw_sha256", "raw_len", "preview"]
+        [
+            "handle",
+            "path",
+            "raw_blake3",
+            "raw_len",
+            "kind",
+            "lines",
+            "complete",
+            "preview",
+            "input_rows",
+            "producing_step_start",
+        ]
     );
     assert_eq!(CODE_RUN_OUTPUT_PREVIEW_KEYS, ["codec", "text", "truncated"]);
 
@@ -1271,6 +1296,7 @@ impl AgentVerbDoor for LaneDoor {
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
         }))
     }
 
@@ -1409,6 +1435,7 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
         name: "placement_probe".to_owned(),
         class: crate::secret_custody::CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"custody-value-never-read-here".to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
         registered_at: 1,
@@ -1585,6 +1612,7 @@ fn speech_replay_rejects_successful_non_speech_outcome() -> Result<()> {
     let outcome = SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
         query: "forged search".to_owned(),
         results: Vec::new(),
+        hooks: Vec::new(),
     });
     let row = CodeRunBridgeCall {
         seq: 0,
@@ -1593,6 +1621,10 @@ fn speech_replay_rejects_successful_non_speech_outcome() -> Result<()> {
         outcome: self_dispatch_outcome_value(&outcome).unwrap(),
         started_at_ms,
         finished_at_ms: started_at_ms,
+        action_digest: None,
+        spawn_targets: Default::default(),
+        hook_view_served: false,
+        rewritten_request: None,
     };
     let mut record = CodeRunReplayRecord::new(
         entity(0xD1),
@@ -2058,6 +2090,7 @@ fn memory_search_bridge_call(seq: u64, at_ms: u64) -> Result<CodeRunBridgeCall> 
     let outcome = SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
         query: "tea".to_owned(),
         results: Vec::new(),
+        hooks: Vec::new(),
     });
     CodeRunBridgeCall::record(seq, &call, &outcome, at_ms, at_ms)
 }
@@ -2288,16 +2321,20 @@ fn ordinary_thought_and_public_witness_cannot_forge_blocked_receipts() -> Result
     let turn = crate::memory::WitnessTurn {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: None,
+        thread_audience: None,
         messages: vec![crate::memory::WitnessMessage {
             id: Some(forged.to_hex()),
             author: crate::memory::WitnessAuthor::Companion,
             message_type: super::blocked::BLOCKED_REPORT_MESSAGE_TYPE.to_owned(),
             content,
+            parts: None,
             metadata: None,
             is_visible: false,
             order: 0,
+            quote: None,
         }],
         occurred_at: 1_719_000_000,
+        assertions: Default::default(),
     };
     let error = vault
         .memory(actor, EdgeActorClass::Agent)
@@ -2441,6 +2478,7 @@ fn executor_site(run_id: EntityId) -> ExecutorCallSite<'static> {
         seq: 0,
         step_start: 0,
         earlier: &[],
+        reply_publisher: None,
     }
 }
 
@@ -2448,8 +2486,8 @@ fn executor_site(run_id: EntityId) -> ExecutorCallSite<'static> {
 fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     use crate::task_verb::{
-        ConsultPayloadRef, TaskAskOptionId, TaskAskQuestion, TaskAskSpec, TaskAskStatus,
-        TaskAskTarget,
+        ConsultPayloadRef, TaskAskOption, TaskAskOptionId, TaskAskQuestion, TaskAskSpec,
+        TaskAskStatus, TaskAskTarget,
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
@@ -2466,7 +2504,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     )?;
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question));
     what.options
-        .insert(TaskAskOptionId::new("yes")?, "Yes".into());
+        .insert(TaskAskOptionId::new("yes")?, TaskAskOption::new("Yes"));
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
         what,

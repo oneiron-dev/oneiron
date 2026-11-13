@@ -5,8 +5,6 @@ mod cycle_model;
 mod history;
 #[cfg(feature = "sync")]
 mod history_bounds_fall;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-BUDGET]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_budget;
 #[cfg(feature = "sync")]
@@ -25,8 +23,6 @@ mod history_doors;
 mod history_refresh_order;
 #[cfg(feature = "sync")]
 mod history_resolution;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-TRANSPORT]: the lib test target's type check fails here (10 errors: E0061 x5, E0308 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_transport;
 // FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-ROOM-FACET]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
