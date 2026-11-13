@@ -14,5 +14,6 @@ pub mod media_job_spend;
 pub mod native_board;
 pub mod replay_admission;
 pub mod resident_pump;
+pub mod siwc_seat;
 pub mod solved_runs;
 pub mod workflow_park;
