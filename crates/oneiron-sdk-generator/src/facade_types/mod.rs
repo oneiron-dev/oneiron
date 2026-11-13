@@ -24,7 +24,9 @@ use crate::py::value::Value;
 
 pub(crate) use inventory::Inventory;
 
-/// The crates a facade type can live in, by the name a Rust path gives them, in the Python dict's order.
+/// The crates a facade type can live in, by the name a Rust path gives them, in the Python dict's order, then each
+/// crate added since. A crate missing here reads as `unknown` wherever a facade type names one of its types, even
+/// through a re-export in a listed crate.
 pub const CRATES: &[(&str, &str)] = &[
     ("oneiron", "crates/oneiron/src"),
     ("oneiron_base", "crates/oneiron-base/src"),
@@ -64,6 +66,8 @@ pub const CRATES: &[(&str, &str)] = &[
     ("oneiron_guest", "crates/oneiron-guest/src"),
     ("oneiron_wake_contract", "crates/oneiron-wake-contract/src"),
     ("oneiron_remote", "crates/oneiron-remote/src"),
+    // Core split slice 2: core re-exports the consent state at its old paths (SDK-GEN-CRATES-MISSES-CONSENT-STATE).
+    ("oneiron_consent_state", "crates/oneiron-consent-state/src"),
 ];
 
 /// The source directory `CRATES` gives a crate name (`CRATES[crate]`), or `None` for a name it does not hold.
