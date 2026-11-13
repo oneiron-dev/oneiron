@@ -17,9 +17,10 @@ HTTP/WebSocket paths remain separate. There is no automatic production migration
 - **Admission.** `PairedMachineGrants` admits a key only when `Vault::mesh_peer_machine`
   proves the paired machine: the host-signed binding names the key the machine stands
   on, and the live ALPN grant admits it. Both ends use it.
-- **Server.** `oneiron-server` built with `--features mesh` starts the listener when
-  `ONEIRON_MESH_BIND` names a socket address (`ONEIRON_MESH_RELAYS`: comma-separated
-  private relay URLs, none by default). The install must be enrolled as a machine: its
+- **Server.** `oneiron-server` carries the listener in its default features (`mesh`)
+  and starts it only when `ONEIRON_MESH_BIND` names a socket address
+  (`ONEIRON_MESH_RELAYS`: comma-separated private relay URLs, none by default); without
+  one no listener runs. The install must be enrolled as a machine: its
   transport key derives from the machine key (`TransportKey::for_install`). Routes are
   one row per ALPN in `handler/mesh.rs` `mesh_routes`; a route may add a tick. A mesh
   caller is always off-device: its requests carry a `fd00::/8` peer address made from

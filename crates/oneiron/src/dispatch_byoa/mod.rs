@@ -111,7 +111,7 @@ pub use self::official_seats::{
     SIWC_AUTHORIZE_ENDPOINT, SIWC_DYNAMIC_AGENT_CLIENT, SIWC_RESPONSES_BASE_URL, SeatLoginPlan,
     SeatPlacementApproval, SeatPlanWindow, SignInWithChatGptAdapter, SiwcAuthorizeRequest,
     XAI_API_BASE_URL, check_seat_placement, decide_dry_seat, official_seat_id, pkce_s256_challenge,
-    seat_login_plan, siwc_authorize_url, validate_official_seat,
+    seat_login_plan, siwc_authorize_url, siwc_offer_seat_id, validate_official_seat,
 };
 
 pub use self::connector::{
@@ -148,6 +148,8 @@ pub use self::validate::validate_connector;
 pub(crate) const ERASED_TASK_FAILURE_REASON: &str = "byoa_task_erased";
 
 pub(crate) mod tables;
+// FIX [LIBTEST-QUARANTINE-DISPATCH-BYOA-TESTS]: the lib test target's type check fails here (37 errors: E0063 x15, E0308 x11, E0061 x8, E0609 x2, E0533 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

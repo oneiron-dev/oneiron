@@ -1,0 +1,5 @@
+error[E0616]: field `store` of struct `oneiron::Vault` is private
+ --> tests/store_split_compilefail/d_vault_store_is_engine_only.rs:8:20
+  |
+8 |     let _ = &vault.store;
+  |                    ^^^^^ private field
