@@ -1,7 +1,10 @@
 //! Durable issue identity, entity-local review, and the arrival index.
 use std::sync::atomic::Ordering;
 
-use super::{ReportIssue, ReportReceipt, ReportRequest, ReportReview, ReportStatus, invalid};
+use super::{
+    ReportIssue, ReportIssueOrigin, ReportReceipt, ReportRequest, ReportReview, ReportStatus,
+    invalid,
+};
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::StandingConsentGrant;
 use crate::feedback::intake::FeedbackDedup;
@@ -169,6 +172,7 @@ impl Vault {
                 disclosure,
                 disclosure_basis: None,
                 disclosure_round: 0,
+                origin: ReportIssueOrigin::Filed,
             };
             // A standing grant live for this publisher approves its text now.
             self.project_report_disclosure_in_txn(txn, &mut issue)?;

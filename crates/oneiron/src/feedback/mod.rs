@@ -164,7 +164,7 @@ pub use self::report::{
     ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportDeliveryRetryRequest,
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
     ReportDisclosure, ReportDisclosureBasis, ReportDisclosureChoice, ReportFrozenSend,
-    ReportFrozenSignature, ReportIssue, ReportKind, ReportPublisherBinding,
+    ReportFrozenSignature, ReportIssue, ReportIssueOrigin, ReportKind, ReportPublisherBinding,
     ReportPublisherBindingRequest, ReportPublisherEndpoint, ReportPublisherMetadata, ReportReceipt,
     ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
     ReportSignatureTransport, ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
