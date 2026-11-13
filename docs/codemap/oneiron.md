@@ -7731,7 +7731,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/phonetic.rs` | src | s | 6 crate-vis | — | Supplied and generated name codes publish with the indexed text frontier |
 | `src/vault/entity_revision/phonetic/checkpoint.rs` | src | s | 4 crate-vis | — | The checkpoint rows of the staged phonetic codes (KS7-2): the codes waiting to publish with the indexed text… |
 | `src/vault/entity_revision/repo_projection.rs` | src | s | 6 crate-vis | — | Idle publication and refill of a record whose text is a repo blob's (FIX 7608 slice 3): what the embedder… |
-| `src/vault/entity_revision/storage.rs` | src | L | 2 fn · 1 re-export · 32 crate-vis | — | Transactional revision ledger |
+| `src/vault/entity_revision/storage.rs` | src | L | 2 fn · 1 re-export · 33 crate-vis | — | Transactional revision ledger |
 | `src/vault/entity_revision/storage/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of the revision ledger (KS7-2): each entity's revision state, retained frontiers… |
 | `src/vault/entity_revision/storage/checkpoint/document.rs` | src | L | 12 crate-vis | — | A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE… |
 | `src/vault/entity_revision/storage/checkpoint/native.rs` | src | s | 3 crate-vis | — | Native NOTE revision binding proofs for checkpoint capture and restore |
@@ -8524,6 +8524,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/repo_member_read.rs` | test | m | — | — | NO-DOOR REPO-MEMBER-SNAPSHOT-SYMBOL-READ (tests/e2e/code-custody.test.ts CODE-CUSTODY-01), ruled… |
 | `tests/repo_run/fixture.rs` | test | m | 18 crate-vis | — | The run repo door tests' shared fixture (`symbol_lease_observe.rs`, `repo_member_read.rs`): a fresh owned… |
 | `tests/report_route_one_reader.rs` | test | s | — | — | Regression coverage for report routing with LMDB's one reader slot per thread |
+| `tests/rerank_document_message.rs` | test | s | — | — | L9-11 (ARCH-0004 #rerank-door-open): a MESSAGE whose words live in its entity document is reranked at those… |
 | `tests/residence_rpc_hello.rs` | test | s | — | — | The residence RPC lane's hello lists the codecs only, not the sealed world-update frame kind (FIX… |
 | `tests/residence_rpc_leaf_key_lane.rs` | test | s | — | — | The residence RPC lane is no custody carrier leaf-key lane (FIX 11785, FIX… |
 | `tests/restore_over_live_compartment_rows.rs` | test | s | — | — | Live restores compare refused families with the image's opened compartments |
