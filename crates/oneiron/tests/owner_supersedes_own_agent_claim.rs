@@ -7,8 +7,14 @@
 //! The owner's write now lands at once and closes the agent's claim in the same
 //! write, and its receipt records the owner's ruling and names the superseded
 //! claim and its author. Claims by members, members' agents and agents the
-//! owner never paired keep the review path (ARCH-0040, ARCH-0043: no admin
-//! override by default), and a member gains nothing over the owner's agent.
+//! owner neither paired nor created keep the review path (ARCH-0040, ARCH-0043:
+//! no admin override by default), and a member gains nothing over the owner's
+//! agent.
+//!
+//! An agent definition the owner creates through the owner's create door is
+//! the owner's agent too, unpaired and anchored only to its own model person
+//! (OWNER-MADE-AGENT-DEF-UNPLACED, the Engine's ruling Fri 13 Nov 12:47): the
+//! create door stamps the owner as its creator.
 //!
 //! The owner's agent is paired as MUSE-LOOP-08 pairs it: an ordinary PERSON that
 //! redeems a pairing link the owner issued for it as class `agent`, so its slip
@@ -24,19 +30,21 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope, encode_agent_definition};
 use oneiron::authority::{HostSlipIssuer, MachineRole, PairingPrincipal};
+use oneiron::claim::ClaimSource;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{
     ClaimInput, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest,
     ClaimSettlementVerdict, CommitReceipt, MemoryError, resolve_entity_ref,
 };
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, EdgeActorClass, EntityId, TimeRange,
-    Vault, VaultConfig, WriteActor,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, EdgeActorClass, EntityId, RawEntityPut,
+    TimeRange, Vault, VaultConfig, WriteActor,
 };
 use serde_json::json;
 
@@ -176,6 +184,84 @@ impl Fixture {
         agent
     }
 
+    /// An enabled agent definition the owner creates through the owner's
+    /// create door and leaves as it lands: unpaired, anchored only to its own
+    /// model person.
+    fn owner_made_agent(&self) -> EntityId {
+        let agent = EntityId::now();
+        create_agent_definition_as(
+            &self.vault,
+            &self.owner_proof,
+            AgentDefinitionCreateRequest {
+                agent_def_ref: agent,
+                definition: serde_json::from_value(json!({
+                    "agent_id": "owner-supersede-owner-made",
+                    "desc": "An agent the owner saved",
+                    "version": "1.0.0",
+                    "ceiling": "auto",
+                    "enabled": true,
+                }))
+                .expect("typed agent definition"),
+            },
+        )
+        .expect("the owner creates the agent definition");
+        agent
+    }
+
+    /// An enabled agent definition the member writes in person through the
+    /// bound raw entity put, as a member's code-mode run would, under the
+    /// owner's read and propose Grant every claim author here holds.
+    fn member_made_agent(&self) -> EntityId {
+        self.vault
+            .grant_foreign_principal(&self.owner_proof, &self.member.to_hex())
+            .expect("the owner grants the member read and propose");
+        let agent = EntityId::now();
+        let definition = AgentDefinition::new(
+            "owner-supersede-member-made",
+            "An agent a member saved",
+            "1",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            AgentScope::Base,
+            AgentCeiling::Proposed,
+            None,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::UserStated,
+            1.0,
+            false,
+            true,
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("author"),
+                    rmpv::Value::from(self.member.to_hex()),
+                ),
+                (
+                    rmpv::Value::from("definedVia"),
+                    rmpv::Value::from("member_raw_put"),
+                ),
+            ]),
+            None,
+            true,
+            None,
+        );
+        let at = self.vault.now_recorded_at();
+        self.vault
+            .memory(self.member, EdgeActorClass::Human)
+            .raw_put_entity(RawEntityPut {
+                id: agent,
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                occurred: TimeRange { start: at, end: at },
+                learned_at: at,
+                data: &encode_agent_definition(&definition).expect("valid definition"),
+            })
+            .expect("the member writes the agent definition");
+        agent
+    }
+
     fn input(&self, source: &str, value: &str) -> ClaimInput {
         ClaimInput {
             id: None,
@@ -268,6 +354,76 @@ impl Fixture {
         assert_eq!(body.value.as_str(), Some(value));
     }
 
+    /// The owner's upsert landed as the owner's ruling over `prior`, a claim
+    /// `author` wrote with `value`: the replacement lands Auto, `prior` is closed
+    /// in the same write, and the receipt the upsert answers records the
+    /// owner's ruling and names `prior` and its author.
+    fn assert_owners_ruling(
+        &self,
+        result: Result<CommitReceipt, MemoryError>,
+        prior: EntityId,
+        author: EntityId,
+        value: &str,
+    ) {
+        let receipt = result.unwrap_or_else(|error| {
+            panic!(
+                "the owner's upsert over their own agent's claim is admitted, got {}: {}",
+                error.code, error.message,
+            )
+        });
+        assert_eq!(receipt.approval, "auto", "the owner's write lands at once");
+        let replacement =
+            resolve_entity_ref(&self.vault, &receipt.claim_short_id).expect("replacement id");
+        self.assert_standing(replacement, ClaimApprovalStatus::Auto, OWNER_VALUE);
+        let superseded = receipt
+            .superseded_short_id
+            .as_deref()
+            .expect("the receipt names the claim it superseded");
+        assert_eq!(
+            resolve_entity_ref(&self.vault, superseded).expect("superseded id"),
+            prior,
+        );
+        let closed = self.body(prior);
+        assert_eq!(
+            closed.lifecycle,
+            ClaimLifecycleStatus::Superseded,
+            "the agent's claim is closed in the owner's write, with no proposal left open",
+        );
+        assert_eq!(closed.value.as_str(), Some(value));
+
+        let decision = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .receipts(64)
+            .expect("the owner reads the receipts")
+            .into_iter()
+            .find(|row| row.receipt_ref == receipt.receipt_ref)
+            .expect("the upsert's receipt is in the decision ledger");
+        assert!(
+            decision
+                .reason_codes
+                .iter()
+                .any(|code| code == OWNER_RULING),
+            "the receipt records the owner's ruling: {:?}",
+            decision.reason_codes,
+        );
+        assert_eq!(decision.outcome, "allow");
+        assert_eq!(decision.actor_ref, Some(self.owner.to_hex()));
+        assert_eq!(decision.claim_ref, Some(replacement.to_hex()));
+        assert_eq!(decision.fields.get("superseded"), Some(&prior.to_hex()));
+        assert_eq!(
+            decision.fields.get("superseded_author"),
+            Some(&author.to_hex())
+        );
+        assert_eq!(
+            decision
+                .fields
+                .get("superseded_author_class")
+                .map(String::as_str),
+            Some("agent"),
+        );
+    }
+
     /// The write was refused as a replacement of another author's claim, and
     /// `prior` still stands Approved with `value`.
     fn assert_refused_for_review(
@@ -312,66 +468,9 @@ fn the_owners_upsert_supersedes_their_own_agents_claim_as_the_owners_ruling() {
     let f = Fixture::rooted();
     let prior = f.landed_claim_of(f.agent, EdgeActorClass::Agent, AGENT_VALUE);
 
-    let receipt = f
-        .upsert_as(f.owner, EdgeActorClass::Human, OWNER_VALUE)
-        .unwrap_or_else(|error| {
-            panic!(
-                "the owner's upsert over their own agent's claim is admitted, got {}: {}",
-                error.code, error.message,
-            )
-        });
+    let receipt = f.upsert_as(f.owner, EdgeActorClass::Human, OWNER_VALUE);
 
-    assert_eq!(receipt.approval, "auto", "the owner's write lands at once");
-    let replacement =
-        resolve_entity_ref(&f.vault, &receipt.claim_short_id).expect("replacement id");
-    f.assert_standing(replacement, ClaimApprovalStatus::Auto, OWNER_VALUE);
-    let superseded = receipt
-        .superseded_short_id
-        .as_deref()
-        .expect("the receipt names the claim it superseded");
-    assert_eq!(
-        resolve_entity_ref(&f.vault, superseded).expect("superseded id"),
-        prior,
-    );
-    let closed = f.body(prior);
-    assert_eq!(
-        closed.lifecycle,
-        ClaimLifecycleStatus::Superseded,
-        "the agent's claim is closed in the owner's write, with no proposal left open",
-    );
-    assert_eq!(closed.value.as_str(), Some(AGENT_VALUE));
-
-    let decision = f
-        .vault
-        .memory(f.owner, EdgeActorClass::Human)
-        .receipts(64)
-        .expect("the owner reads the receipts")
-        .into_iter()
-        .find(|row| row.receipt_ref == receipt.receipt_ref)
-        .expect("the upsert's receipt is in the decision ledger");
-    assert!(
-        decision
-            .reason_codes
-            .iter()
-            .any(|code| code == OWNER_RULING),
-        "the receipt records the owner's ruling: {:?}",
-        decision.reason_codes,
-    );
-    assert_eq!(decision.outcome, "allow");
-    assert_eq!(decision.actor_ref, Some(f.owner.to_hex()));
-    assert_eq!(decision.claim_ref, Some(replacement.to_hex()));
-    assert_eq!(decision.fields.get("superseded"), Some(&prior.to_hex()));
-    assert_eq!(
-        decision.fields.get("superseded_author"),
-        Some(&f.agent.to_hex())
-    );
-    assert_eq!(
-        decision
-            .fields
-            .get("superseded_author_class")
-            .map(String::as_str),
-        Some("agent"),
-    );
+    f.assert_owners_ruling(receipt, prior, f.agent, AGENT_VALUE);
 }
 
 /// (2) The owner's upsert over a member's claim is still refused: a person's
@@ -404,7 +503,8 @@ fn a_members_upsert_over_the_owners_agents_claim_is_still_refused() {
 }
 
 /// (4) The owner's upsert over a member's agent's claim is still refused: an
-/// agent anchored to the member is the member's pen, not the owner's agent.
+/// agent anchored to the member is the member's pen, not the owner's agent,
+/// though the owner created its definition (the anchor decides first).
 #[test]
 fn the_owners_upsert_over_a_members_agents_claim_is_still_refused() {
     let f = Fixture::rooted();
@@ -426,6 +526,39 @@ fn the_owners_upsert_over_an_unpaired_agents_claim_is_still_refused() {
     let stranger = person(&f.vault, b"owner supersede unpaired agent");
     let value = "Owen, as an unpaired agent heard it";
     let prior = f.landed_claim_of(stranger, EdgeActorClass::Agent, value);
+
+    let result = f.upsert_as(f.owner, EdgeActorClass::Human, OWNER_VALUE);
+
+    f.assert_refused_for_review(result, prior, value);
+}
+
+/// (6) The owner's upsert supersedes the claim of an agent definition the
+/// owner created through the owner's create door, unpaired and anchored only
+/// to its own model person (OWNER-MADE-AGENT-DEF-UNPLACED). Before the create
+/// door stamped its creator the upsert was refused 403 "self-Grant never
+/// replaces another author's claim; ask for conflict review".
+#[test]
+fn the_owners_upsert_supersedes_the_claim_of_an_agent_the_owner_created() {
+    let f = Fixture::rooted();
+    let made = f.owner_made_agent();
+    let value = "Owen, as the owner's saved agent heard it";
+    let prior = f.landed_claim_of(made, EdgeActorClass::Agent, value);
+
+    let receipt = f.upsert_as(f.owner, EdgeActorClass::Human, OWNER_VALUE);
+
+    f.assert_owners_ruling(receipt, prior, made, value);
+}
+
+/// (7) The owner's upsert over the claim of an agent definition a member wrote
+/// is still refused: only the owner's create door stamps a creator, and an
+/// unpaired definition anchored to no other person names no one the vault can
+/// place as the owner's.
+#[test]
+fn the_owners_upsert_over_a_member_made_agents_claim_is_still_refused() {
+    let f = Fixture::rooted();
+    let made = f.member_made_agent();
+    let value = "Owen, as the member's saved agent heard it";
+    let prior = f.landed_claim_of(made, EdgeActorClass::Agent, value);
 
     let result = f.upsert_as(f.owner, EdgeActorClass::Human, OWNER_VALUE);
 

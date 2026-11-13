@@ -173,9 +173,12 @@ pub(crate) fn require_claim_supersede_in_txn(
 ///   that person's pen, and must be the owner's;
 /// - otherwise every capability slip minted for the author as holder must be
 ///   an Agent-class slip whose pairing the owner approved (its signed
-///   `minting_member`, FIX 11713), and at least one must exist. A slip bound
-///   to a guest grant, an invitation, a share, a support delegation, a
-///   trusted contact or a seat claim names a peer, so it refuses the author.
+///   `minting_member`, FIX 11713). A slip bound to a guest grant, an
+///   invitation, a share, a support delegation, a trusted contact or a seat
+///   claim names a peer, so it refuses the author. At least one such slip
+///   must exist, or the author is an AGENT_DEF the owner created through the
+///   owner's create door (its creating-owner stamp names the owner,
+///   OWNER-MADE-AGENT-DEF-UNPLACED).
 pub(crate) fn owner_agent_author_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -225,22 +228,39 @@ pub(crate) fn owner_agent_author_in_txn(
             return Ok(person == owner);
         }
     }
-    owner_minted_agent_slips_in_txn(vault, txn, agent, owner)
+    Ok(match holder_slips_in_txn(vault, txn, agent, owner)? {
+        HolderSlips::OwnerPaired => true,
+        HolderSlips::Other => false,
+        HolderSlips::Unminted => {
+            definition
+                && crate::agent_def::created_by_owner_in_txn(&vault.store, txn, &agent, &owner)?
+        }
+    })
 }
 
-/// Whether every capability slip the authority fold keeps for `agent` as its
+/// What the capability slips minted for an author as holder say of its owner.
+enum HolderSlips {
+    /// No slip names the author as holder.
+    Unminted,
+    /// Every one is an Agent-class slip the owner approved the pairing of,
+    /// with no peer binding.
+    OwnerPaired,
+    /// At least one names a peer, another class or another approving member.
+    Other,
+}
+
+/// What the capability slips the authority fold keeps for `agent` as its
 /// holder (revoked, consumed and expired ones included, as `self.actor`
-/// reads them) is an Agent-class slip `owner` approved the pairing of, with
-/// no peer binding, and at least one exists.
-fn owner_minted_agent_slips_in_txn(
+/// reads them) say of `owner`.
+fn holder_slips_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
     owner: EntityId,
-) -> Result<bool> {
+) -> Result<HolderSlips> {
     let holder = agent.to_hex();
     let fold = vault.authority_view_readonly_in_txn(txn)?;
-    let mut minted = false;
+    let mut minted = HolderSlips::Unminted;
     for mint in fold
         .slips
         .mints
@@ -258,9 +278,9 @@ fn owner_minted_agent_slips_in_txn(
             || claims.actor_class.as_deref() != Some(EdgeActorClass::Agent.gate_actor_class())
             || mint.action.minting_member != Some(owner)
         {
-            return Ok(false);
+            return Ok(HolderSlips::Other);
         }
-        minted = true;
+        minted = HolderSlips::OwnerPaired;
     }
     Ok(minted)
 }
