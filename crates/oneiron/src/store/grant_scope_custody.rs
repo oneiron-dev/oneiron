@@ -124,18 +124,23 @@ pub(crate) fn install_scope_key(
 }
 
 /// The opening key of a grant's pact at an epoch, as a committed writer
-/// named it in custody's rows (FIX 11730): the key's item, and whether a
-/// retirement of it is staged. What custody's files hold for it is
-/// [`scope_key_of`]'s. A warm authority view compares these rows before it
-/// reads the files again (FIX 23233).
+/// named it in custody's rows (FIX 11730): the key's item, whether a
+/// retirement of it is staged, and the state of custody's entry for it,
+/// read without opening the entry. The key's bytes are [`scope_key_of`]'s.
+/// A warm authority view compares these rows before it reads the entry
+/// again (FIX 23233): an erasable key has one generation and custody never
+/// replaces a live entry's bytes, so an unchanged row names unchanged bytes.
+/// The state is part of the row because a retirement staged and finished
+/// between two reads leaves the other fields as they were.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScopeOpeningRow {
     item: ErasableItem,
     retiring: bool,
+    state: EntryState,
 }
 
 /// The opening `txn`'s rows name for `grant`'s pact `pact_id` at `epoch`,
-/// read without custody's files: what this install's authority view
+/// read without opening custody's entry: what this install's authority view
 /// re-checks a pact's scope commitment with. `None` when the vault is
 /// archived or has no custody yet, or no committed writer named a key for
 /// that epoch: the pact then stands as the fold left it.
@@ -164,11 +169,16 @@ pub(crate) fn scope_opening_row_in_txn(
         return Ok(None);
     };
     let retiring = retirement_in_txn(s, txn, &item.subject(&custody)?)?.is_some();
-    Ok(Some(ScopeOpeningRow { item, retiring }))
+    let state = custody.erasable_state(&item)?;
+    Ok(Some(ScopeOpeningRow {
+        item,
+        retiring,
+        state,
+    }))
 }
 
-/// The live opening key `row` names, read from custody's files. `None` when
-/// its retirement is staged or done, or custody holds no entry for it.
+/// The live opening key `row` names, read from custody's entry. `None` when
+/// `row` names its retirement staged or done, or no entry for it.
 ///
 /// # Errors
 /// An entry that does not read as a 32-byte opening, and custody faults.
@@ -176,15 +186,12 @@ pub(crate) fn scope_key_of(
     s: &Store,
     row: &ScopeOpeningRow,
 ) -> Result<Option<Zeroizing<[u8; 32]>>> {
-    if row.retiring {
+    if row.retiring || row.state != EntryState::Live {
         return Ok(None);
     }
     let Some(custody) = s.core.key_custody.local() else {
         return Ok(None);
     };
-    if custody.erasable_state(&row.item)? != EntryState::Live {
-        return Ok(None);
-    }
     let secret = custody.read_erasable(&row.item)?;
     if secret.expose().len() != 32 {
         return Err(unknown_key());

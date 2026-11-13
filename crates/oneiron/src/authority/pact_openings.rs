@@ -20,18 +20,22 @@
 //!
 //! A cached fold keeps its last answer ([`OpeningAnswer`], FIX 23233) with
 //! the rows of each pact's opening it was read under, and a warm hit whose
-//! snapshot reads the same rows takes it without opening custody's files.
-//! The rows and the authority generation tell every change custody's files
-//! make to a committed opening. A key enters custody only in the writer
-//! that logs its Connect or re-pact, and a committed key is staged to
-//! retire only in the writer that ends its pact (a disconnect or a guest
-//! revoke, [`crate::store::grant_scope_custody::retire_scope_keys`]): both
-//! move the authority generation, which starts a new cached fold. Custody's
-//! finisher clears a staged intent in the rows once it has retired the
-//! file. An archived vault or one with no custody reads no row, and a live
-//! key's bytes never change. An answer that met an unread row or key is
-//! not kept, so the next read tries again, and each unread one is logged
-//! once per authority generation.
+//! snapshot reads the same rows takes it without opening custody's entries.
+//! A row is the opening's item, whether its retirement is staged, and its
+//! entry's state (live, retired or missing), read without opening the
+//! entry. With the authority generation, which starts a new cached fold,
+//! the rows tell every change custody makes to a committed opening. A key
+//! enters custody only in the writer that logs its Connect or re-pact, and
+//! the writer that ends its pact (a disconnect or a guest revoke,
+//! [`crate::store::grant_scope_custody::retire_scope_keys`]) stages its
+//! retirement: both move the generation. A retirement staged by any other
+//! path and finished between two reads leaves the item and the intent as
+//! they were, but not the entry's state. An erasable key has one
+//! generation and custody never replaces a live entry's bytes, so a live
+//! entry under the same rows holds the same key. An archived vault or one
+//! with no custody reads no row. An answer that met an unread row or key
+//! is not kept, so the next read tries again, and each unread one is logged
+//! once per cached fold.
 
 use std::collections::BTreeSet;
 

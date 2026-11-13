@@ -9,7 +9,7 @@ use crate::{
     error::{Error, RecordError, Result},
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 mod adopted;
 mod arriving;
@@ -216,24 +216,40 @@ struct OverlayMemo {
 
 /// The rows a fold's reads have logged as unread (FIX 23233): each agent
 /// act's Grant and each pact's opening that did not read is logged once per
-/// authority generation, not on every read.
+/// cached fold of an authority generation, not on every read. Every clone
+/// shares one set, so concurrent reads of one cached fold log a row once
+/// between them.
 #[derive(Clone, Default)]
 pub(super) struct UnreadLogged {
+    rows: Arc<Mutex<UnreadRows>>,
+}
+
+/// The rows [`UnreadLogged`] has logged.
+#[derive(Default)]
+struct UnreadRows {
     grants: BTreeSet<AuthorityEntryHash>,
     openings: BTreeSet<[u8; 32]>,
 }
 
 impl UnreadLogged {
     /// Whether the unread Grant of the act at `entry` is to be logged now:
-    /// the first time.
-    pub(super) fn first_grant(&mut self, entry: AuthorityEntryHash) -> bool {
-        self.grants.insert(entry)
+    /// the first time any read of this fold meets it.
+    pub(super) fn first_grant(&self, entry: AuthorityEntryHash) -> bool {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .grants
+            .insert(entry)
     }
 
     /// Whether pact `pact_id`'s unread opening is to be logged now: the
-    /// first time.
-    pub(super) fn first_opening(&mut self, pact_id: [u8; 32]) -> bool {
-        self.openings.insert(pact_id)
+    /// first time any read of this fold meets it.
+    pub(super) fn first_opening(&self, pact_id: [u8; 32]) -> bool {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .openings
+            .insert(pact_id)
     }
 }
 
