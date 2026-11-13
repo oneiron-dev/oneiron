@@ -638,8 +638,6 @@ pub use leg::{BuildLegReceipt, CachedBuildLeg};
 pub use reapi::ReapiDigest;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-BUILD-CACHE-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

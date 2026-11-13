@@ -65,6 +65,10 @@ fn facts(jurisdiction: Option<&str>, channel: &str) -> DispatchComplianceFacts {
             in_course_of_business: true,
             no_marketing_statement_attached: true,
         }),
+        consent: HydratedConsentFacts {
+            explicit_opt_in: true,
+            ..Default::default()
+        },
         sender_identity_present: true,
         physical_address_present: true,
         optout_mechanism_present: true,
@@ -456,6 +460,7 @@ fn gate_effect(channel_identity_ref: Option<EntityId>) -> ExternalEffectGateInpu
         has_opted_in: true,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     }
 }
 

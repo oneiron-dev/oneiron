@@ -166,6 +166,7 @@ fn raw_entity_record(
             end: occurred_end,
         },
         learned_at,
+        0,
         payload,
     )
 }
@@ -282,6 +283,7 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
             edge_cache: None,
             claim_bodies: None,
             clamp: None,
+            deadline: None,
         },
         &mut claims_suppressed,
     ) {
@@ -521,7 +523,7 @@ fn scan_rejects_each_malformed_edge_row_shape_like_vault_readers() -> Result<()>
 
         {
             let rtxn = vault.store.env.read_txn()?;
-            let err = scan_edges_for_entity(&vault.store.read(), &rtxn, &src)
+            let err = scan_edges_for_entity(&vault.store.read(), &rtxn, &src, None)
                 .expect_err("context-pack scan must fail closed");
             assert!(
                 matches!(err, Error::CorruptedIndex("edge record")),
@@ -545,7 +547,7 @@ fn scan_rejects_each_malformed_edge_row_shape_like_vault_readers() -> Result<()>
         })?;
         let rtxn = vault.store.env.read_txn()?;
         assert!(
-            scan_edges_for_entity(&vault.store.read(), &rtxn, &src)?.is_empty(),
+            scan_edges_for_entity(&vault.store.read(), &rtxn, &src, None)?.is_empty(),
             "case `{name}`: scan should be clean after removing the planted row"
         );
     }
@@ -1770,7 +1772,7 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     // Board rows agree with the pack (AC 5) and carry the disclosure block.
     let board = project_memories_section(
         &pack,
-        MemoriesBudget::new(8, 8, 8, 8, 8, 8),
+        MemoriesBudget::new(8, 8, 8, 8, 8),
         None,
         Some(ctx.assembly(clamped_out)),
     );

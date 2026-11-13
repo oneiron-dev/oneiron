@@ -297,6 +297,7 @@ fn persona_export_wire_fixture_is_persisted_and_malformed_rows_are_refused() -> 
                     entity_type: crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
                     occurred: TimeRange { start: 4, end: 4 },
                     learned_at: 4,
+                    row_version: None,
                     data: bytes,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -887,6 +888,7 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &crate::claim::encode_claim_body(&body)?,
             )
             .edge(&id, crate::EdgeKind::ClaimOf, &agent, 1.0)

@@ -34,8 +34,14 @@ fn signed_receipt(seed: u8, client_id: u64) -> (EntityId, [u8; 32], Vec<u8>) {
         client_id,
         signing_key,
     };
-    let body =
-        crate::deletion::encode_redaction_audit_receipt(input, &receipt_id, &identity).unwrap();
+    let body = crate::deletion::encode_redaction_audit_receipt(
+        input,
+        Vec::new(),
+        Vec::new(),
+        &receipt_id,
+        &identity,
+    )
+    .unwrap();
     let mut blob = crate::deletion::receipt_envelope_header(TEST_RECEIPT_LEARNED_AT).to_vec();
     blob.extend_from_slice(&body);
     (receipt_id, pubkey, blob)

@@ -90,8 +90,6 @@ mod support;
 pub(crate) mod text_search;
 pub(crate) mod tombstones;
 pub(crate) mod type_registry;
-// FIX [LIBTEST-QUARANTINE-TESTS-VAD-ANNOTATIONS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 pub(crate) mod vad_annotations;
 pub(crate) mod vectors_hnsw;
 use support::*;

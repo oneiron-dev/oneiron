@@ -493,6 +493,7 @@ fn generic_inbox_approval_cannot_arm_representation_delivery() {
         .inbox_groups(crate::inbox::InboxQuery::at(101, 10))
         .unwrap();
     let group = group
+        .groups
         .into_iter()
         .find(|group| {
             group

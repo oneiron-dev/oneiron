@@ -24,8 +24,6 @@ mod types;
 mod validation;
 mod world_partition;
 
-// FIX [LIBTEST-QUARANTINE-CONTEXT-PACK-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

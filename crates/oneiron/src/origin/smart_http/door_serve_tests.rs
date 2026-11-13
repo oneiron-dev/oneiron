@@ -333,7 +333,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     );
     assert!(
         vault
-            .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+            .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door, None)
             .is_err()
     );
     assert!(

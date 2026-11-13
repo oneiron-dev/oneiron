@@ -23,8 +23,6 @@ mod slack_adapter;
 mod slack_personas;
 mod slack_validate;
 pub mod stalwart;
-// FIX [LIBTEST-QUARANTINE-CHANNEL-IDENTITY-PROVIDER-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

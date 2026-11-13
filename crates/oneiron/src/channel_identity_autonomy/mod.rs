@@ -23,8 +23,6 @@ pub use self::types::{
 use self::codec::invalid_autonomy;
 pub(crate) use self::envelopes::AutonomyReader;
 
-// FIX [LIBTEST-QUARANTINE-CHANNEL-IDENTITY-AUTONOMY-TESTS]: the lib test target's type check fails here (5 errors: E0609 x2, E0308 x1, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
