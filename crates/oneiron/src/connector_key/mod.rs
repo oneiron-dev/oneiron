@@ -73,6 +73,7 @@ pub use self::record::{
     EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetWindow,
     PendingConnectorCharter, PendingConnectorManifest,
 };
+pub(crate) use self::setup::GrantAccess;
 pub use self::setup::{
     AuthorizationCodeGrant, BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GOOGLE_TOKEN_CHECK,
     GoogleAuthorizationCode, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, MICROSOFT365_ME_CHECK,

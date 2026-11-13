@@ -124,7 +124,7 @@ impl<'v> HttpGraphCalendarWire<'v> {
             return Err(refused("graph_calendar_link_not_on_graph"));
         }
         let mut answer: Option<RestAnswer> = None;
-        let _receipt = self.vault.with_source_token_at_door(
+        let door = self.vault.with_source_token_at_door(
             source,
             WireReads::Calendar,
             MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR,
@@ -154,7 +154,10 @@ impl<'v> HttpGraphCalendarWire<'v> {
                 answer = Some(rest::send(request)?);
                 Ok(())
             },
-        )?;
+        );
+        self.tokens
+            .keep_successor(self.vault, source.source_ref, &door);
+        door?;
         answer.ok_or_else(|| refused("graph_calendar_credential_door_refused"))
     }
 

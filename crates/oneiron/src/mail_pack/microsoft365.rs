@@ -231,7 +231,7 @@ impl<'v> HttpGraphMailWire<'v> {
             return Err(refused("graph_mail_link_not_on_graph"));
         }
         let mut answer: Option<RestAnswer> = None;
-        let _receipt = self.vault.with_source_token_at_door(
+        let door = self.vault.with_source_token_at_door(
             source,
             WireReads::Mailbox,
             MICROSOFT365_CONNECTOR_EFFECTOR,
@@ -260,7 +260,10 @@ impl<'v> HttpGraphMailWire<'v> {
                 answer = Some(rest::send(request)?);
                 Ok(())
             },
-        )?;
+        );
+        self.tokens
+            .keep_successor(self.vault, source.source_ref, &door);
+        door?;
         answer.ok_or_else(|| refused("graph_mail_credential_door_refused"))
     }
 

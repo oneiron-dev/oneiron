@@ -133,15 +133,19 @@ impl<'v> ReplySink<'v> {
         };
         let body = base64::engine::general_purpose::STANDARD.encode(raw);
         let mut outcome = None;
+        let mut successor = None;
         let door = self.vault.with_source_token_at_door(
             &self.source,
             WireReads::Mailbox,
             MICROSOFT365_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
                 // A stored Microsoft grant sends with a fresh access token.
-                let fresh = rest::GrantIssuer::Microsoft.refresh(&client, token)?;
+                let mut fresh = rest::GrantIssuer::Microsoft.refresh(&client, token)?;
+                if let Some(fresh) = fresh.as_mut() {
+                    successor = fresh.successor.take();
+                }
                 let presented = match &fresh {
-                    Some(fresh) => fresh.as_bytes(),
+                    Some(fresh) => fresh.access_token.as_bytes(),
                     None => token,
                 };
                 let auth = bearer_header(presented)?;
@@ -183,6 +187,10 @@ impl<'v> ReplySink<'v> {
                 Ok(())
             },
         );
+        // Microsoft's newer refresh token is kept whatever the send's answer.
+        if let Ok(receipt) = &door {
+            self.vault.keep_provider_refreshed_grant(receipt, successor);
+        }
         match (outcome, door) {
             (Some(sent), _) => sent,
             (None, Err(error)) => {

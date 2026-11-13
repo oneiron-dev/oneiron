@@ -30,5 +30,5 @@ pub fn access_token_via(name: &str, grant: &[u8], proxy: &str) -> Result<String>
         module(name).ok_or_else(|| Error::InvalidConfig(format!("no workspace module {name}")))?;
     let client = super::microsoft_token::proxied_client(proxy)?;
     workspace_connector::connection_access_token(api, &client, grant)
-        .map(|token| token.as_str().to_owned())
+        .map(|access| access.access_token.as_str().to_owned())
 }

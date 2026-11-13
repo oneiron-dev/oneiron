@@ -13,9 +13,10 @@ use dom_query::Document;
 use reqwest::header::HeaderValue;
 use serde_json::Value;
 
-use crate::EntityId;
-use crate::connector_key::ProviderConnectionChecks;
+use crate::connector_key::{GrantAccess, ProviderConnectionChecks};
 use crate::error::{Error, Result};
+use crate::secret_lease::DoorInjectionReceipt;
+use crate::{EntityId, Vault};
 
 /// The largest provider answer read: a whole message with its inline parts.
 const MAX_REST_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
@@ -427,7 +428,8 @@ pub(crate) enum GrantIssuer {
 
 impl GrantIssuer {
     /// A fresh access token for the stored grant `token`, when it is one
-    /// this issuer refreshes; `None` for any other credential.
+    /// this issuer refreshes, with the grant's successor when the refresh
+    /// rotated it (Microsoft's); `None` for any other credential.
     ///
     /// # Errors
     ///
@@ -437,9 +439,15 @@ impl GrantIssuer {
         self,
         client: &reqwest::blocking::Client,
         token: &[u8],
-    ) -> Result<Option<zeroize::Zeroizing<String>>> {
+    ) -> Result<Option<GrantAccess>> {
         match self {
             Self::Google => ProviderConnectionChecks::refresh_stored_google_grant(client, token)
+                .map(|fresh| {
+                    fresh.map(|access_token| GrantAccess {
+                        access_token,
+                        successor: None,
+                    })
+                })
                 .map_err(|_| refused("google_credential_refresh_failed")),
             Self::Microsoft => {
                 ProviderConnectionChecks::refresh_stored_microsoft_grant(client, token)
@@ -459,6 +467,9 @@ pub(super) struct FreshAccessTokens {
     issuer: GrantIssuer,
     key: [u8; 32],
     fresh: RefCell<BTreeMap<EntityId, ([u8; 32], zeroize::Zeroizing<String>)>>,
+    /// The grant a refresh rotated, by source, until the source's door
+    /// returns and [`Self::keep_successor`] hands it to the write-back.
+    successors: RefCell<BTreeMap<EntityId, zeroize::Zeroizing<Vec<u8>>>>,
 }
 
 impl FreshAccessTokens {
@@ -467,6 +478,23 @@ impl FreshAccessTokens {
             issuer,
             key: rand::random(),
             fresh: RefCell::new(BTreeMap::new()),
+            successors: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// Hands the grant a refresh for `source` rotated to the custody
+    /// write-back ([`Vault::keep_provider_refreshed_grant`]) for the door
+    /// `door` that read the grant, once that door has returned. A door that
+    /// refused drops it: the stored grant still works.
+    pub(super) fn keep_successor(
+        &self,
+        vault: &Vault,
+        source: EntityId,
+        door: &Result<DoorInjectionReceipt>,
+    ) {
+        let successor = self.successors.borrow_mut().remove(&source);
+        if let Ok(door) = door {
+            vault.keep_provider_refreshed_grant(door, successor);
         }
     }
 
@@ -491,8 +519,13 @@ impl FreshAccessTokens {
         }
         match self.issuer.refresh(client, token)? {
             Some(fresh) => {
-                let header = bearer_header(fresh.as_bytes())?;
-                self.fresh.borrow_mut().insert(source, (digest, fresh));
+                let header = bearer_header(fresh.access_token.as_bytes())?;
+                if let Some(successor) = fresh.successor {
+                    self.successors.borrow_mut().insert(source, successor);
+                }
+                self.fresh
+                    .borrow_mut()
+                    .insert(source, (digest, fresh.access_token));
                 Ok(header)
             }
             None => bearer_header(token),

@@ -39,7 +39,7 @@ The exchange body contains their custody **names** only:
   "client_secret": "microsoft.web-client",
   "authorization_secret": "microsoft.completed-authorization",
   "class": "custody-portable",
-  "device_only": false,
+  "device_only": true,
   "rung": 0,
   "replace_existing": false
 }
@@ -47,6 +47,10 @@ The exchange body contains their custody **names** only:
 
 `source` optionally selects the pack's exact setup source. Storage settings
 and `replace_existing` are explicit caller choices, as in the Gmail exchange.
+Store a Microsoft grant with `"device_only": true` (RULING
+MICROSOFT365-WRITEBACK-PORTABLE = A): each install that runs the connection
+signs in once and keeps its own refresh chain, and only a record that stays
+on its device takes Microsoft's newer refresh tokens (see Refresh).
 The owner must prepare the pack's setup and allow the desired permissions
 through the existing setup flow; exchanging a code grants no engine
 authority.
@@ -69,14 +73,27 @@ tenant first gets a fresh access token from the tenant's token endpoint,
 inside the credential door: the Excel connection's sends, the
 `microsoft365.me` check, and the Graph mail, calendar and reply-send wires
 of a Microsoft 365 mailbox source that names the record. The mail wires keep
-one fresh token per source for a wire's life. Nothing fresh is stored.
+one fresh token per source for a wire's life.
 
-Microsoft returns a newer refresh token with each refresh, and the engine
-drops it: the stored grant keeps the refresh token its sign-in returned
-(ASK MICROSOFT365-REFRESH-WRITEBACK). Microsoft's refresh tokens expire 90
-days after they are issued, so a connection needs a new sign-in within 90
-days. The check fails when Microsoft refuses the refresh: sign in again and
-run the exchange with `replace_existing: true`.
+Microsoft returns a newer refresh token with each refresh, and its refresh
+tokens expire 90 days after they are issued. The engine stores the newer
+grant in place of the one the door read (RULING
+MICROSOFT365-REFRESH-WRITEBACK), so a connection in use keeps working with no
+new sign-in:
+- only for a record the owner stored that stays on its device, with no
+  manifest, bound for read to the connector that read it;
+- only on Microsoft's own refresh answer, and only while the record is the
+  one the door read: Active, not revoked, not erased, at the same generation;
+- at most once a day for each record;
+- the same name, bindings and custody policy; the old value is wiped, and a
+  rotation receipt records the cause `provider_refresh`.
+The `microsoft365.me` check refreshes but stores nothing. A pack setup check
+that held before a write-back still holds after it. The setup view's
+`issued_at` for the credential says when its stored value was set.
+
+A portable record keeps its stored refresh token. When Microsoft refuses it,
+the check fails: sign in again and run the exchange with
+`replace_existing: true`.
 
 A grant that names a tenant is never sent to Google's token endpoint, and a
 Google grant names none, so it is never sent to Microsoft's.

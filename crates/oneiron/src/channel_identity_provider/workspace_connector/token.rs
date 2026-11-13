@@ -18,7 +18,7 @@ use serde::Deserialize;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::WorkspaceTokenExchange;
-use crate::connector_key::ProviderConnectionChecks;
+use crate::connector_key::{GrantAccess, ProviderConnectionChecks};
 use crate::error::{Error, Result};
 
 /// The client a refresh exchange runs on: HTTPS only, no redirects, a 15 s
@@ -33,15 +33,21 @@ pub(super) fn refresh_client() -> Result<reqwest::blocking::Client> {
 }
 
 /// The access token the stored grant `value` presents under `exchange`,
-/// refreshed when the exchange and the grant can be.
+/// refreshed when the exchange and the grant can be, with the grant's
+/// successor when the refresh rotated it.
 pub(super) fn access_token(
     client: &reqwest::blocking::Client,
     exchange: WorkspaceTokenExchange,
     value: &[u8],
-) -> Result<Zeroizing<String>> {
+) -> Result<GrantAccess> {
     let fresh = match exchange {
         WorkspaceTokenExchange::GoogleRefresh => {
-            ProviderConnectionChecks::refresh_stored_google_grant(client, value)?
+            ProviderConnectionChecks::refresh_stored_google_grant(client, value)?.map(
+                |access_token| GrantAccess {
+                    access_token,
+                    successor: None,
+                },
+            )
         }
         WorkspaceTokenExchange::MicrosoftRefresh => {
             ProviderConnectionChecks::refresh_stored_microsoft_grant(client, value)?
@@ -68,7 +74,10 @@ pub(super) fn access_token(
     if access_token.is_empty() {
         return Err(unusable());
     }
-    Ok(access_token)
+    Ok(GrantAccess {
+        access_token,
+        successor: None,
+    })
 }
 
 /// The access token a stored grant holds, wiped on drop. Its other fields

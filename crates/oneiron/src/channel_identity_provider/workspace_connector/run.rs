@@ -109,6 +109,7 @@ impl WorkspaceRun<'_> {
         let mut effect_outcome = None;
         let mut readback_outcome = None;
         let mut token_unusable = false;
+        let mut successor = None;
         let door = self.vault.inject_secret_at_door(
             &self.credential,
             connection.effector,
@@ -117,7 +118,10 @@ impl WorkspaceRun<'_> {
                     return Ok(());
                 };
                 let access_token = match token::access_token(&client, connection.token, value) {
-                    Ok(access_token) => access_token,
+                    Ok(access) => {
+                        successor = access.successor;
+                        access.access_token
+                    }
                     Err(error) => {
                         token_unusable = true;
                         return Err(error);
@@ -136,6 +140,10 @@ impl WorkspaceRun<'_> {
                 Ok(())
             },
         );
+        if let Ok(injected) = &door {
+            self.vault
+                .keep_provider_refreshed_grant(injected, successor);
+        }
         let generation = door.as_ref().ok().map(|injected| injected.value_generation);
         // The provider's answer outranks a later door error: once the effect
         // was presented, what the provider said is the fact.

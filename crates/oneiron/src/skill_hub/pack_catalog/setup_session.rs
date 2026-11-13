@@ -142,6 +142,12 @@ pub struct PackSetupSecretState {
     pub name: String,
     /// A live custody record holds the name.
     pub stored: bool,
+    /// Unix seconds the stored value was set: at registration, or at its
+    /// last rotation (an owner's, or a provider refresh's write-back). The
+    /// grant's age, read without opening the grant. `None` when nothing is
+    /// stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_at: Option<u64>,
     /// The live custody record the view read the name to, in the same
     /// transaction; a host lists it beside the view. Never on the wire, and
     /// never a value.
@@ -565,7 +571,8 @@ impl Vault {
             secrets.push(PackSetupSecretState {
                 name: secret.name.clone(),
                 stored: custody.is_some(),
-                custody_id: custody.map(|(id, _)| id),
+                issued_at: custody.map(|live| live.issued_at),
+                custody_id: custody.map(|live| live.id),
             });
         }
         let mut permissions = Vec::with_capacity(connection.permissions.len());
@@ -656,7 +663,8 @@ fn pin_custody_in_txn(
     session
         .custody
         .retain(|pin| !(pin.connection == connection && pin.secret == secret.name));
-    if let Some((id, generation)) = live_custody_in_txn(store, txn, &secret.name)? {
+    if let Some(LiveCustody { id, generation, .. }) = live_custody_in_txn(store, txn, &secret.name)?
+    {
         session.custody.push(PackSetupCustodyRef {
             connection: connection.to_owned(),
             secret: secret.name.clone(),
@@ -673,15 +681,128 @@ pub(crate) fn live_custody_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     name: &str,
-) -> Result<Option<(EntityId, u32)>> {
+) -> Result<Option<LiveCustody>> {
     let Some(id) = resolve_secret_ref_in_txn(store, txn, name)? else {
         return Ok(None);
     };
     Ok(
         crate::secret_custody::read_secret_custody_meta_in_txn(store, txn, &id)?
             .filter(|record| record.status == SecretCustodyStatus::Active)
-            .map(|record| (id, record.rotation_generation)),
+            .map(|record| LiveCustody {
+                id,
+                generation: record.rotation_generation,
+                issued_at: record.rotated_at.unwrap_or(record.registered_at),
+            }),
     )
+}
+
+/// The pack setup checks that ran against one custody record as it stood
+/// before a provider refresh's write-back: each session pinning the record,
+/// and the connections whose check basis matched it.
+pub(crate) struct CurrentPackChecks {
+    sessions: Vec<(PackSetupBinding, PackSetupSession, Vec<String>)>,
+}
+
+impl Vault {
+    /// Before a provider refresh's write-back of custody record `custody`:
+    /// the setup checks whose basis matches the record as it stands, for
+    /// [`Vault::keep_pack_checks_current_in_txn`] to move onto the record
+    /// after it (RULING MICROSOFT365-WRITEBACK-CHECK-STALE = C + B). A
+    /// session whose source no longer binds is left as it is.
+    pub(crate) fn current_pack_checks_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        custody: &EntityId,
+    ) -> Result<CurrentPackChecks> {
+        let custody = custody.to_hex();
+        let mut pinning = Vec::new();
+        for entry in PACK_SETUP.iter_from(&self.store, txn, &[])? {
+            let (_, session) = entry?;
+            if session.custody.iter().any(|pin| pin.custody_id == custody) {
+                pinning.push(session);
+            }
+        }
+        let mut sessions = Vec::new();
+        for session in pinning {
+            let Ok(binding) = self.bind_pack_setup_in_txn(
+                txn,
+                &session.principal_ref,
+                &session.pack_name,
+                Some(session.content_hash.as_str()),
+            ) else {
+                continue;
+            };
+            let mut current = Vec::new();
+            for check in &session.checks {
+                let Some(declared) = binding
+                    .setup
+                    .connections
+                    .iter()
+                    .find(|declared| declared.id == check.connection)
+                else {
+                    continue;
+                };
+                if self.pack_connection_basis_in_txn(txn, declared, &session)? == check.basis {
+                    current.push(check.connection.clone());
+                }
+            }
+            if !current.is_empty() {
+                sessions.push((binding, session, current));
+            }
+        }
+        Ok(CurrentPackChecks { sessions })
+    }
+
+    /// After the write-back moved custody record `custody` to `generation`:
+    /// each check [`Vault::current_pack_checks_in_txn`] found current takes
+    /// the basis the record gives now, and the session's pins of the record
+    /// its new generation. The provider's refresh answer is newer evidence
+    /// for the same grant.
+    pub(crate) fn keep_pack_checks_current_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        custody: &EntityId,
+        generation: u32,
+        current: CurrentPackChecks,
+    ) -> Result<()> {
+        let custody = custody.to_hex();
+        for (binding, mut session, connections) in current.sessions {
+            for pin in &mut session.custody {
+                if pin.custody_id == custody {
+                    pin.generation = generation;
+                }
+            }
+            for connection in &connections {
+                let Some(declared) = binding
+                    .setup
+                    .connections
+                    .iter()
+                    .find(|declared| declared.id == *connection)
+                else {
+                    continue;
+                };
+                let basis = self.pack_connection_basis_in_txn(txn, declared, &session)?;
+                for check in &mut session.checks {
+                    if check.connection == *connection {
+                        check.basis.clone_from(&basis);
+                    }
+                }
+            }
+            self.put_pack_setup_in_txn(txn, &binding, &mut session)?;
+        }
+        Ok(())
+    }
+}
+
+/// The Active custody record a secret name resolves to, read without its
+/// value.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LiveCustody {
+    pub(crate) id: EntityId,
+    pub(crate) generation: u32,
+    /// Unix seconds its value was set: at registration, or at its last
+    /// rotation (an owner's, or a provider refresh's write-back).
+    pub(crate) issued_at: u64,
 }
 
 fn declared_secret<'a>(

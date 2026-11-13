@@ -306,8 +306,15 @@ impl ProviderConnectionChecks {
         url: &str,
         value: &[u8],
     ) -> Result<CheckReply> {
+        // The check stores nothing: its basis is pinned before the provider
+        // call, so a write-back here would move the basis it records.
         if let Some(fresh) = Self::refresh_stored_microsoft_grant(&self.client, value)? {
-            return self.send(MICROSOFT365_ME_CHECK, method, url, fresh.as_bytes());
+            return self.send(
+                MICROSOFT365_ME_CHECK,
+                method,
+                url,
+                fresh.access_token.as_bytes(),
+            );
         }
         let text = std::str::from_utf8(value)
             .map_err(|_| invalid("the stored credential is not text"))?
@@ -489,6 +496,16 @@ impl ProviderConnectionChecks {
             ))),
         }
     }
+}
+
+/// What a stored grant gives one provider call: the access token to
+/// present and, when a refresh rotated the grant, the stored grant rewritten
+/// around the provider's newer refresh token, for the custody write-back
+/// after the door returns (RULING MICROSOFT365-REFRESH-WRITEBACK). Both are
+/// wiped on drop.
+pub(crate) struct GrantAccess {
+    pub(crate) access_token: Zeroizing<String>,
+    pub(crate) successor: Option<Zeroizing<Vec<u8>>>,
 }
 
 /// Why a Google path refuses a stored Microsoft grant.
