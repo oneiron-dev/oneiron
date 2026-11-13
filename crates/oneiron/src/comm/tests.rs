@@ -1946,8 +1946,6 @@ fn put_email_identity(vault: &Vault, id: EntityId, address: &str) -> CommResult<
 #[path = "thread_alias_tests.rs"]
 mod thread_alias_tests;
 
-// FIX [LIBTEST-QUARANTINE-COMM-CONSENT-PROJECTION-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[path = "consent_projection_tests.rs"]
 mod consent_projection_tests;
 

@@ -1233,7 +1233,5 @@ impl ScopedRead<'_> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-CLAIM-SCOPED-READ-WEAVE-DIGEST-TESTS]: the lib test target's type check fails here (4 errors: E0004 x2, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

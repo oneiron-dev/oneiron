@@ -36,7 +36,7 @@ fn smart_http_landing_attaches_a_pointer_only_to_the_ref_that_carries_it() {
             ref_update("refs/heads/assets", None, Some(&assets_oid)),
         ],
         vec![LfsPushedPointer {
-            path: "assets/logo.bin".to_owned(),
+            path: b"assets/logo.bin".to_vec(),
             oid,
             size_bytes: size,
         }],
@@ -71,7 +71,7 @@ fn smart_http_landing_attaches_a_pointer_only_to_the_ref_that_carries_it() {
             ref_update("refs/heads/main", None, Some(&assets_oid)),
         ],
         vec![LfsPushedPointer {
-            path: "assets/logo.bin".to_owned(),
+            path: b"assets/logo.bin".to_vec(),
             oid,
             size_bytes: size,
         }],
@@ -115,7 +115,7 @@ fn smart_http_landing_detaches_the_rows_of_a_deleted_ref() {
     git(&root, &["branch", "release", "refs/heads/main"]);
 
     let pointer = LfsPushedPointer {
-        path: "assets/logo.bin".to_owned(),
+        path: b"assets/logo.bin".to_vec(),
         oid,
         size_bytes: size,
     };
@@ -511,7 +511,7 @@ fn availability_checks_take_the_hosts_room_for_each_manifest_they_read() {
         &["push", "--quiet", "origin", "HEAD:refs/heads/assets"],
     );
     let pointer = || LfsPushedPointer {
-        path: "assets/logo.bin".to_owned(),
+        path: b"assets/logo.bin".to_vec(),
         oid,
         size_bytes: size,
     };
