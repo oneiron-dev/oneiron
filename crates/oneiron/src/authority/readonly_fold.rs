@@ -9,7 +9,7 @@ use crate::{
     error::{Error, RecordError, Result},
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 mod adopted;
 mod arriving;
@@ -87,13 +87,16 @@ impl AuthorityView {
     /// authority generation, so every read judges them in its own snapshot,
     /// a cache hit as a miss. `preserved_world_acts` answers the
     /// past-standing check of the refused world acts (FIX 4703), which reads
-    /// the signed log alone.
+    /// the signed log alone. `memo` is what earlier reads of this view kept
+    /// (FIX 23233): the last pact-opening answer, taken while `txn` reads
+    /// the same opening rows, and the unread rows already logged.
     fn live_overlay(
         &self,
         store: &Store,
         txn: &heed::RoTxn<'_>,
         use_past_standing: bool,
         preserved_world_acts: impl FnOnce(&[AuthorityEntryHash]) -> Result<BTreeSet<AuthorityEntryHash>>,
+        memo: &mut OverlayMemo,
     ) -> LiveOverlay {
         LiveOverlay {
             refused: super::carried_act::grant_refused_agent_acts(
@@ -102,8 +105,15 @@ impl AuthorityView {
                 &self.fold,
                 use_past_standing,
                 preserved_world_acts,
+                &mut memo.logged,
             ),
-            mismatched: super::pact_openings::scope_commitment_mismatches(store, txn, &self.fold),
+            mismatched: super::pact_openings::scope_commitment_mismatches(
+                store,
+                txn,
+                &self.fold,
+                &mut memo.openings,
+                &mut memo.logged,
+            ),
         }
     }
 
@@ -132,16 +142,23 @@ impl AuthorityView {
         }
     }
 
-    /// This view as `txn` reads it ([`Self::live_overlay`]).
+    /// This view as `txn` reads it ([`Self::live_overlay`]), with nothing
+    /// kept from or for another read: a view no cache holds.
     fn with_live_overlays(
         self,
         store: &Store,
         txn: &heed::RoTxn<'_>,
         use_past_standing: bool,
     ) -> Self {
-        let overlay = self.live_overlay(store, txn, use_past_standing, |candidates| {
-            super::past_grant_standing::preserved_world_acts(store, txn, &self.fold, candidates)
-        });
+        let overlay = self.live_overlay(
+            store,
+            txn,
+            use_past_standing,
+            |candidates| {
+                super::past_grant_standing::preserved_world_acts(store, txn, &self.fold, candidates)
+            },
+            &mut OverlayMemo::default(),
+        );
         self.overlaid(&overlay)
     }
 
@@ -181,6 +198,59 @@ pub(crate) struct AuthorityCachedFold {
     /// points), so it holds for every snapshot of `key`'s generation; the
     /// Grant rows that choose those acts are read again on each hit.
     preserved_world_acts: Option<(Vec<AuthorityEntryHash>, BTreeSet<AuthorityEntryHash>)>,
+    /// What the reads of `view` keep between them (FIX 23233): the last
+    /// pact-opening answer, and the unread rows already logged at `key`'s
+    /// generation.
+    memo: OverlayMemo,
+}
+
+/// What the reads of one cached fold keep between them beside its view
+/// (FIX 23233).
+#[derive(Clone, Default)]
+struct OverlayMemo {
+    /// The last pact-opening answer, with the opening rows it was read
+    /// under ([`super::pact_openings::scope_commitment_mismatches`]).
+    openings: Option<super::pact_openings::OpeningAnswer>,
+    logged: UnreadLogged,
+}
+
+/// The rows a fold's reads have logged as unread (FIX 23233): each agent
+/// act's Grant and each pact's opening that did not read is logged once per
+/// cached fold of an authority generation, not on every read. Every clone
+/// shares one set, so concurrent reads of one cached fold log a row once
+/// between them.
+#[derive(Clone, Default)]
+pub(super) struct UnreadLogged {
+    rows: Arc<Mutex<UnreadRows>>,
+}
+
+/// The rows [`UnreadLogged`] has logged.
+#[derive(Default)]
+struct UnreadRows {
+    grants: BTreeSet<AuthorityEntryHash>,
+    openings: BTreeSet<[u8; 32]>,
+}
+
+impl UnreadLogged {
+    /// Whether the unread Grant of the act at `entry` is to be logged now:
+    /// the first time any read of this fold meets it.
+    pub(super) fn first_grant(&self, entry: AuthorityEntryHash) -> bool {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .grants
+            .insert(entry)
+    }
+
+    /// Whether pact `pact_id`'s unread opening is to be logged now: the
+    /// first time any read of this fold meets it.
+    pub(super) fn first_opening(&self, pact_id: [u8; 32]) -> bool {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .openings
+            .insert(pact_id)
+    }
 }
 
 /// The rows a caller's snapshot holds over a signed-log view
@@ -390,6 +460,7 @@ fn cache_fold_if_committed(
                             continuation: None,
                             overlaid: None,
                             preserved_world_acts: None,
+                            memo: OverlayMemo::default(),
                         }
                         .matches(committed)
                     })
@@ -405,6 +476,7 @@ fn cache_fold_if_committed(
             continuation: continuation.map(Arc::new),
             overlaid: None,
             preserved_world_acts: None,
+            memo: OverlayMemo::default(),
         });
     }
 }
@@ -451,48 +523,75 @@ pub(crate) fn authority_view_readonly_for_store_in_txn(
     let use_past_standing = posture == store.privacy_posture;
     if let Some(fold) = cached_fold(store, key) {
         tracing::trace!(target: "oneiron::authority::cache", generation = fold.generation(), "exact authority fold cache hit");
-        return Ok(overlay_hit(store, txn, key, fold, use_past_standing));
+        return Ok(apply_live_overlay(store, txn, key, fold, use_past_standing));
     }
     // A miss resumes from the last committed generation's fold where it can.
     let continuation = resumable_continuation(store, key.generation);
     let (view, next_deadline_secs, continuation) =
         fold_view_for_key(store, posture, txn, key, continuation.as_deref())?;
     cache_fold_if_committed(store, key, next_deadline_secs, &view, continuation);
-    Ok(view.with_live_overlays(store, txn, use_past_standing))
+    // The miss's own read fills what the next hit takes (FIX 23233).
+    Ok(apply_live_overlay(store, txn, key, view, use_past_standing))
 }
 
-/// The cached signed-log `view` behind `key` as `txn` reads it: the view the
-/// last hit made when `txn` reads the same overlay, else a new one, kept for
-/// the next hit while the cache still holds `key`'s fold.
-fn overlay_hit(
+/// The signed-log `view` behind `key` as `txn` reads it: the view the last
+/// read made when `txn` reads the same overlay, else a new one. While the
+/// cache holds `key`'s fold, what this read computed is kept there for the
+/// next one: the overlaid view, the past-standing answer and the
+/// [`OverlayMemo`].
+fn apply_live_overlay(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: AuthorityCacheKey,
     view: AuthorityView,
     use_past_standing: bool,
 ) -> AuthorityView {
-    let overlay = view.live_overlay(store, txn, use_past_standing, |candidates| {
-        let cached = store.authority_fold_cache.lock().ok().and_then(|cache| {
+    let mut memo = store
+        .authority_fold_cache
+        .lock()
+        .ok()
+        .and_then(|cache| {
             cache
                 .as_ref()
                 .filter(|cached| cached.matches(key))
-                .and_then(|cached| cached.preserved_world_acts.as_ref())
-                .filter(|(asked, _)| asked.as_slice() == candidates)
-                .map(|(_, preserved)| preserved.clone())
-        });
-        if let Some(preserved) = cached {
-            return Ok(preserved);
-        }
-        let preserved =
-            super::past_grant_standing::preserved_world_acts(store, txn, &view.fold, candidates)?;
-        if let Ok(mut cache) = store.authority_fold_cache.lock()
-            && let Some(cached) = cache.as_mut()
-            && cached.matches(key)
-        {
-            cached.preserved_world_acts = Some((candidates.to_vec(), preserved.clone()));
-        }
-        Ok(preserved)
-    });
+                .map(|cached| cached.memo.clone())
+        })
+        .unwrap_or_default();
+    let overlay = view.live_overlay(
+        store,
+        txn,
+        use_past_standing,
+        |candidates| {
+            let cached = store.authority_fold_cache.lock().ok().and_then(|cache| {
+                cache
+                    .as_ref()
+                    .filter(|cached| cached.matches(key))
+                    .and_then(|cached| cached.preserved_world_acts.as_ref())
+                    .filter(|(asked, _)| asked.as_slice() == candidates)
+                    .map(|(_, preserved)| preserved.clone())
+            });
+            if let Some(preserved) = cached {
+                return Ok(preserved);
+            }
+            let preserved = super::past_grant_standing::preserved_world_acts(
+                store, txn, &view.fold, candidates,
+            )?;
+            if let Ok(mut cache) = store.authority_fold_cache.lock()
+                && let Some(cached) = cache.as_mut()
+                && cached.matches(key)
+            {
+                cached.preserved_world_acts = Some((candidates.to_vec(), preserved.clone()));
+            }
+            Ok(preserved)
+        },
+        &mut memo,
+    );
+    if let Ok(mut cache) = store.authority_fold_cache.lock()
+        && let Some(cached) = cache.as_mut()
+        && cached.matches(key)
+    {
+        cached.memo = memo;
+    }
     if overlay.is_empty() {
         return view;
     }
