@@ -142791,7 +142791,7 @@
      "path": "src/models/media/scoped_job_door.rs",
      "purpose": "Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a video job…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -146188,7 +146188,7 @@
      "path": "src/test_doors/media_job_spend.rs",
      "purpose": "Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped…",
      "surface": {
-      "fn": 9,
+      "fn": 11,
       "struct": 2
      }
     },
