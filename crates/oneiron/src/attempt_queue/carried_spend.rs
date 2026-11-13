@@ -3,10 +3,12 @@
 //! a retry after a restart replays it exactly").
 //!
 //! The step runner holds this in its process too; the row is what a retry
-//! reads once that process is gone. Each row is keyed by the failed try and
-//! holds the units its whole retry chain had spent when it failed. The retry
-//! takes the row, and the row goes with its attempt row when the ledger
-//! deletes it.
+//! reads once that process is gone. Each row is keyed by a try and holds the
+//! units its whole retry chain had spent. A failed try records its row; the
+//! retry that follows inherits it, the row moving to the retry in the
+//! transaction that reads it, so a crash before the retry settles leaves the
+//! row where a reclaim of that same try finds it. The row goes when no retry
+//! follows its try, or with its attempt row when the ledger deletes it.
 
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -15,7 +17,7 @@ use crate::store::Store;
 use super::AttemptQueue;
 use super::types::AttemptId;
 
-/// Key: id16 (the failed try). Value: units spent by the try's chain.
+/// Key: id16 (the try). Value: units spent by the try's chain.
 const CARRIED_SPEND: SideTable<AttemptId, u64, Named> =
     SideTable::new(&side_table::ATTEMPT_CARRIED_SPEND);
 
@@ -43,23 +45,39 @@ impl AttemptQueue<'_> {
         Ok(())
     }
 
-    /// Takes what the failed try `id` recorded for its retry: the units, and
-    /// the row is gone. `None` when `id` recorded none.
+    /// The units the try `id` replays before it runs: its own row when it
+    /// has one (the same try reclaimed after a crash), else the row of the
+    /// try it retries, `retry_of`, which moves to `id` in this transaction.
+    /// Either way `retry_of`'s row is gone after. `None` when neither try
+    /// has a row.
     ///
     /// # Errors
     ///
     /// Storage errors, or a row that does not decode.
-    pub fn take_carried_spend(&self, id: AttemptId) -> Result<Option<u64>> {
+    pub fn inherit_carried_spend(
+        &self,
+        id: AttemptId,
+        retry_of: Option<AttemptId>,
+    ) -> Result<Option<u64>> {
+        // A first try retries nothing: it reads its own row and writes none.
+        let Some(parent) = retry_of else {
+            let rtxn = self.store.env.read_txn()?;
+            return CARRIED_SPEND.get(self.store, &rtxn, &id);
+        };
         let mut wtxn = self.store.env.write_txn()?;
-        let units = CARRIED_SPEND.get(self.store, &wtxn, &id)?;
-        if units.is_some() {
-            CARRIED_SPEND.delete(self.store, &mut wtxn, &id)?;
-            wtxn.commit()?;
+        let own = CARRIED_SPEND.get(self.store, &wtxn, &id)?;
+        let Some(parent_units) = CARRIED_SPEND.get(self.store, &wtxn, &parent)? else {
+            return Ok(own);
+        };
+        CARRIED_SPEND.delete(self.store, &mut wtxn, &parent)?;
+        if own.is_none() {
+            CARRIED_SPEND.put(self.store, &mut wtxn, &id, &parent_units)?;
         }
-        Ok(units)
+        wtxn.commit()?;
+        Ok(own.or(Some(parent_units)))
     }
 
-    /// Drops the failed try `id`'s record once no retry follows it.
+    /// Drops the try `id`'s record once no retry follows it.
     ///
     /// # Errors
     ///
