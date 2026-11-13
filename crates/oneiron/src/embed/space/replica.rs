@@ -24,7 +24,8 @@ pub struct MediaVectorReplica {
     pub(crate) text_hash: [u8; 32],
     pub(crate) row: Vec<u8>,
     pub(crate) provenance: Option<EmbeddingProvenance>,
-    /// Full native source carriers, not a claim about the model's runtime.
+    /// Full native source carriers, not a claim about the model's runtime: each row's digest
+    /// as a residence door serves it (`served_source_digest_in_txn`).
     pub(crate) sources: Vec<(EntityId, [u8; 32])>,
 }
 
@@ -52,13 +53,10 @@ pub(crate) fn media_vector_replicas_in_txn(
     }
     let mut sources = Vec::with_capacity(source_ids.len());
     for source in source_ids {
-        let Some(raw) = vault
-            .get_raw_in(txn, &source)?
-            .and_then(|raw| crate::world_keys::live_route_row(&vault.store, raw))
-        else {
+        let Some(digest) = served_source_digest_in_txn(vault, txn, &source)? else {
             return Ok(Vec::new());
         };
-        sources.push((source, *blake3::hash(&raw).as_bytes()));
+        sources.push((source, digest));
     }
     Ok(vec![MediaVectorReplica {
         space: space.id,
@@ -99,13 +97,7 @@ pub(crate) fn install_media_vector_replica_in_txn(
         return Ok(false);
     }
     for (source, digest) in &replica.sources {
-        let Some(raw) = vault
-            .get_raw_in(txn, source)?
-            .and_then(|raw| crate::world_keys::live_route_row(&vault.store, raw))
-        else {
-            return Ok(false);
-        };
-        if blake3::hash(&raw).as_bytes() != digest {
+        if served_source_digest_in_txn(vault, txn, source)?.as_ref() != Some(digest) {
             return Ok(false);
         }
     }
@@ -129,6 +121,25 @@ pub(crate) fn install_media_vector_replica_in_txn(
     )?;
     clear_media_refusal_in_txn(&vault.store, txn, &space, id)?;
     Ok(true)
+}
+
+/// The digest of `source`'s row as a residence door serves and checks it (`full_sources_match`
+/// hashes `sync::residence::selected_item_blob_with`): the live-routed row, with a file-plane
+/// ASSET's whole body in place of the manifest its stored row keeps
+/// (`sync::asset_body::served_row`). `None` while the row, or its pad, is not here.
+fn served_source_digest_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(raw) = vault
+        .get_raw_in(txn, source)?
+        .and_then(|raw| crate::world_keys::live_route_row(&vault.store, raw))
+    else {
+        return Ok(None);
+    };
+    let served = vault.materialized_row_in_txn(txn, source, raw)?;
+    Ok(Some(*blake3::hash(&served).as_bytes()))
 }
 
 impl MediaVectorReplica {
