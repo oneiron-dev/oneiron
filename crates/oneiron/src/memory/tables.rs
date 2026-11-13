@@ -64,6 +64,11 @@ crate::side_table::side_tables! {
     /// Latest terminal stream receipt of a message. Key: id16.
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// One change a run wrote, recorded in that change's own write, so the engine lists a run's
+    /// changes by itself (ARCH-0040 #revert-run). Key: bytes16(blake3 of the run reference) +
+    /// u64be(write order within the run).
+    RUN_REVIEW_CHANGE: VaultMeta b"run_review:change:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.
     RUN_REVIEW_SETTLEMENT: VaultMeta b"run_review:settlement:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical]

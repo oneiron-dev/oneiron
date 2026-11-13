@@ -174,11 +174,29 @@ fn boundary_after(schedule: &FreeTimeSchedule, after: u64) -> Result<Option<u64>
 }
 
 /// The boundary a policy's next cycle must pass: the last one this node
-/// opened or passed, and never one at or before the owner set the policy.
+/// opened or passed, never one at or before the owner set the policy, and
+/// never one before a holder's schedule move allows (FABLE-6918-1). The
+/// boundary a move holds the next cycle to opens: the schedule before the
+/// move would have opened it.
 fn due_floor(clock: Option<FreeTimeClock>, policy: &FreeTimePolicy) -> u64 {
     clock
         .map_or(0, |clock| clock.last_boundary)
         .max(policy.set_at)
+        .max(
+            policy
+                .holder_not_before
+                .map_or(0, |not_before| not_before.saturating_sub(1)),
+        )
+}
+
+/// The boundary `policy`'s next cycle opens at, with `clock` this node's
+/// clock for its agent: the first past its due floor. `None` when the
+/// schedule has none within the search.
+pub(super) fn next_due_boundary(
+    clock: Option<FreeTimeClock>,
+    policy: &FreeTimePolicy,
+) -> Result<Option<u64>> {
+    boundary_after(&policy.schedule, due_floor(clock, policy))
 }
 
 /// The cycle id of `agent`'s cycle at `boundary`.
@@ -235,8 +253,7 @@ impl Vault {
             let Some(policy) = record.policy else {
                 continue;
             };
-            let floor = due_floor(CLOCK.get(&self.store, &txn, &agent)?, &policy);
-            if let Some(at) = boundary_after(&policy.schedule, floor)? {
+            if let Some(at) = next_due_boundary(CLOCK.get(&self.store, &txn, &agent)?, &policy)? {
                 next = Some(next.map_or(at, |next| next.min(at)));
             }
         }
@@ -248,7 +265,9 @@ impl Vault {
     /// this vault's node and its MACRO home, or nothing opens. Each cycle
     /// opens in its own commit, with its root spend scope and its items. A
     /// boundary that cannot open is passed and logged, never retried in a
-    /// loop. Returns how many opened.
+    /// loop. A boundary the scan found under a schedule moved before its
+    /// writer ran opens nothing; the schedule in force opens at its own.
+    /// Returns how many opened.
     ///
     /// On a new home, a home move's carried state adopted before this pass
     /// (FIX 5661, `handoff`) is what it reads: the carried clock is the due
@@ -356,6 +375,13 @@ fn open_cycle_in_txn(
     if boundary <= due_floor(CLOCK.get(&vault.store, txn, &agent)?, &policy) {
         return Ok(Opened::Passed);
     }
+    // The scan read the policy in its own read. A holder's move since keeps
+    // the set's time (FABLE-6918-2), so the floor alone does not catch a
+    // boundary of the schedule it replaced: only the schedule in force
+    // opens a cycle, at its own boundary (FABLE-6918-1).
+    if boundary_at_or_before(&policy.schedule, now)? != Some(boundary) {
+        return Ok(Opened::Passed);
+    }
     // The cycle before ends at this boundary: it admits no new item, and
     // calls it already made settle normally.
     close_open_cycle_in_txn(vault, txn, agent, now)?;
@@ -388,6 +414,27 @@ fn open_cycle_in_txn(
     } else {
         Opened::Passed
     })
+}
+
+/// The writer of [`Vault::enqueue_due_free_time_cycles`] alone, for a
+/// boundary its scan found: a test stands a scan that read the policy before
+/// a later act (FABLE-6918-1).
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Runs the writer for `agent`'s scanned `boundary` at `now` on node
+    /// `local_node_id`; `true` when a cycle opened.
+    pub(crate) fn open_scanned_free_time_boundary_for_doors(
+        &self,
+        agent: EntityId,
+        boundary: u64,
+        now: u64,
+        local_node_id: u64,
+    ) -> Result<bool> {
+        let opened = self.with_write_txn_grouped(|txn| {
+            open_cycle_in_txn(self, txn, agent, boundary, now, local_node_id)
+        })?;
+        Ok(matches!(opened, Opened::Cycle))
+    }
 }
 
 /// Opens `policy`'s cycle at `boundary`: its root scope under the owner's

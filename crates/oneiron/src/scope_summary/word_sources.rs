@@ -22,7 +22,8 @@ pub(crate) enum WordSources {
 /// The word sources of the stored revision `raw` of `id`: an epoch summary,
 /// a scope summary, a TURN that copies one, a claim whose merge header names
 /// one, a `conversation.summary` claim's typed coverage, a native conflict
-/// pair's two claims, or the MESSAGE an owner's stated intent cites.
+/// pair's two claims, the MESSAGE an owner's stated intent cites, or the
+/// finding and subject a Dreamer finding's notice points at.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -136,6 +137,11 @@ pub(crate) fn word_sources_through_in(
                 }
             }
         }
+        crate::registry::ENTITY_TYPE_NOTIFICATION
+            if names(crate::inbox::NOTIFICATION_PRODUCER_FINDING.as_bytes()) =>
+        {
+            return Ok(finding_notice_sources(body));
+        }
         _ => return Ok(WordSources::Own),
     };
     Ok(match sources {
@@ -157,6 +163,52 @@ pub(crate) fn word_sources_through_in(
         ) => WordSources::Unresolved,
         Err(error) => return Err(error),
     })
+}
+
+/// The word sources of a notification body (FIX STEWARDSHIP-NOTICE-POINTER,
+/// OPUS-LEAKS). A Dreamer finding's notice (producer `dreamer.finding`)
+/// points at its finding and the finding's subject, so it reads only while
+/// every one of its `subject_refs` reads; those refs must name every id of
+/// its event key. A body under that producer that does not decode, or whose
+/// refs do not cover its event key, is unresolved. Every other notice,
+/// whatever its kind, is its own.
+fn finding_notice_sources(body: &[u8]) -> WordSources {
+    let producer =
+        crate::inbox::notification_recipient::notification_body_json(body).and_then(|json| {
+            json.get("source")?
+                .get("producer")?
+                .as_str()
+                .map(str::to_owned)
+        });
+    if producer.as_deref() != Some(crate::inbox::NOTIFICATION_PRODUCER_FINDING) {
+        return WordSources::Own;
+    }
+    let Ok(notice) = crate::inbox::decode_notification_body(body) else {
+        return WordSources::Unresolved;
+    };
+    let subjects = notice
+        .subject_refs
+        .iter()
+        .map(|hex| EntityId::from_hex(hex).ok())
+        .collect::<Option<Vec<_>>>();
+    let event = notice
+        .source
+        .event
+        .split(':')
+        .map(|hex| EntityId::from_hex(hex).ok())
+        .collect::<Option<Vec<_>>>();
+    match (subjects, event) {
+        (Some(mut subjects), Some(event))
+            if notice.kind == crate::inbox::NotificationKind::Finding
+                && !subjects.is_empty()
+                && event.iter().all(|id| subjects.contains(id)) =>
+        {
+            subjects.sort_unstable();
+            subjects.dedup();
+            WordSources::From(subjects)
+        }
+        _ => WordSources::Unresolved,
+    }
 }
 
 /// The predicate an owner's stated intent is kept under

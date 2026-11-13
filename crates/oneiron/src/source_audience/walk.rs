@@ -4,6 +4,8 @@
 //!
 //! What a row's words came from, as this walk reads it:
 //! - a MESSAGE's TURN (`PartOf`);
+//! - a TURN's MESSAGE rows (`PartOf` into it): its text is projected from
+//!   them, so a row written from a TURN reads under its MESSAGEs' sources;
 //! - every record a row is `DerivedFrom` (an attachment's text, an EVENT a
 //!   message proposed, an epoch summary);
 //! - the records and MESSAGEs a summary, a merge header or a copied reply
@@ -50,7 +52,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::EdgeKind;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 pub(super) mod export_verdicts;
 
@@ -82,6 +84,18 @@ fn word_sources(
             &id,
             EdgeKind::PartOf,
             false,
+        )?);
+    }
+    // A TURN's words are its MESSAGE rows' (FIX SOURCE-AUDIENCE-TURN-MESSAGE-LINEAGE):
+    // each row `PartOf` it must read. The cycle back through a MESSAGE's own
+    // `PartOf` adds nothing.
+    if header.entity_type == ENTITY_TYPE_TURN {
+        every.extend(crate::conversation_dag::counted_edge_ids(
+            dbs,
+            txn,
+            &id,
+            EdgeKind::PartOf,
+            true,
         )?);
     }
     every.extend(crate::conversation_dag::counted_edge_ids(
@@ -552,9 +566,10 @@ pub(crate) fn readable_with_read_in(
 /// holds no policy answers none.
 ///
 /// The caller names every row its read met: a witnessed TURN and each
-/// MESSAGE row its projected text was read from, whose lineage the TURN's
-/// own does not reach (review of #6985, round 2). It names the policies of
-/// rows a read admitted; it judges nothing of the rows themselves.
+/// MESSAGE row its projected text was read from (review of #6985, round 2);
+/// the TURN's own lineage reaches the rows `PartOf` it as well. It names the
+/// policies of rows a read admitted; it judges nothing of the rows
+/// themselves.
 ///
 /// # Errors
 ///

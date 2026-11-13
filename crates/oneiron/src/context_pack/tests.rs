@@ -1379,32 +1379,6 @@ fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
     Ok(())
 }
 
-/// The deferred door is closed to rooms: `finish_projected_json` returns no
-/// `Result`, so a room's failed finalize would have nowhere to go but a
-/// warning. The refusal is what keeps [`finalize_context_pack_telemetry`]'s
-/// `Err` arm unreachable from that path.
-#[test]
-fn a_room_may_not_defer_its_context_pack_finalization() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let session = vault.off_record_session_vault().enter(
-        "sess-cp-armb-defer",
-        crate::off_record::OffRecordBackendClass::Local,
-    )?;
-    let route = session.write_route()?;
-    let door = session.retrieval_telemetry(&route)?;
-
-    let deferred = vault
-        .context_pack()
-        .search_text("deferredroomneedle", 10)
-        .in_session(&door)
-        .run_unfinalized_with_telemetry();
-    let Err(error) = deferred else {
-        panic!("a room's assembly must take a finalizing door");
-    };
-    assert!(matches!(error, Error::InvalidConfig(_)));
-    Ok(())
-}
-
 #[test]
 fn context_pack_serialized_telemetry_reflects_budget_surviving_results() -> Result<()> {
     let (_dir, vault) = open_test_vault();

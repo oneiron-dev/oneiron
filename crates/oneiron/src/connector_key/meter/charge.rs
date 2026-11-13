@@ -294,17 +294,19 @@ pub(crate) fn charge_effector_budgets(
     }) = key_exhaustion(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
         .filter(|pool| pool_exhaustion_reported(own.as_ref(), pool))
     {
-        let held = on_exhaust == EffectorBudgetOnExhaust::Suspend
-            && catalog.status == ConnectorKeyStatus::Active;
-        if held {
-            catalog = suspend_connector_key_in_txn(
+        let mut held = false;
+        if on_exhaust == EffectorBudgetOnExhaust::Suspend
+            && let SuspendAdmission::Suspended(written) = suspend_connector_key_in_txn(
                 store,
                 wtxn,
                 &catalog_id,
                 &catalog,
-                budget_exhausted_reason(&location),
+                SuspendCause::BudgetExhausted(&location),
                 now,
-            )?;
+            )?
+        {
+            catalog = written;
+            held = true;
         }
         let mut charge =
             evaluated_charge(store, wtxn, key_id, key, effect_channel, send_like, now)?;
