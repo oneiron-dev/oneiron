@@ -53,17 +53,21 @@ pub(super) fn context_terms(text: &str, start: usize, end: usize, name: &str) ->
     terms
 }
 
-/// Whether the link in `turn` is an uncertain person: two or more
-/// candidates, or the mention's own provisional entity alone while its name
-/// keys to real people now, or sounds like them (the Linker's phonetic
-/// rung), in a world the turn is in, as the Linker filters them. A real
-/// person the name only sounds like is never a sure link (OF-123).
+/// Whether the link of a mention said in `message` of `turn` is, at `now`, an
+/// uncertain person: two or more candidates, or the mention's own
+/// provisional entity alone while its name keys to real people now, or
+/// sounds like them (the Linker's phonetic rung), or names a person by the
+/// speaker's role edge (its role rung), in a world the turn is in, as the
+/// Linker filters them. A real person the name only sounds like, or one only
+/// an Auto role edge names, is never a sure link (OF-123).
 fn uncertain_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: EntityId,
+    message: &EntityId,
     link: &MentionLink,
     name: &str,
+    now: u64,
 ) -> Result<Option<Uncertain>> {
     let (kind, entities) = match link {
         MentionLink::Candidates { kind, entities } => (*kind, entities.clone()),
@@ -85,11 +89,13 @@ fn uncertain_in_txn(
         return Ok(None);
     }
     let sounds = crate::tagging::sounds_like_in_txn(vault, txn, turn, kind, name)?;
+    let roles = crate::tagging::role_hits_in_txn(vault, txn, turn, message, kind, name, now)?;
     let mut real = BTreeSet::new();
     for hit in vault
         .lookup_identity_key_in_txn(txn, kind, name)?
         .into_iter()
         .chain(sounds)
+        .chain(roles)
     {
         for head in vault.resolve_entity_in_txn(txn, &hit)? {
             if head != own
@@ -146,7 +152,16 @@ pub(super) fn ask_for_mention_in_txn(
     else {
         return Ok(None);
     };
-    let Some(found) = uncertain_in_txn(vault, txn, *turn, &mention.link, name)? else {
+    let Some(found) = uncertain_in_txn(
+        vault,
+        txn,
+        *turn,
+        &mention.message,
+        &mention.link,
+        name,
+        now,
+    )?
+    else {
         return Ok(None);
     };
     let _ = vault.measure_limit(EngineLimit::IdentityExcerptBytes, text.len() as u64);
