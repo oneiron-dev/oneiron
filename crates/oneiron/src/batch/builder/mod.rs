@@ -76,9 +76,9 @@ pub struct BatchBuilder<'a> {
     /// staged.
     agent_authoring: Option<crate::agent_def::AgentAuthoring>,
     /// The person a door authors this batch through
-    /// ([`Self::authored_through`]), for a batch applied with no actor of
-    /// its own: the door's mask names them as the writer of each key it
-    /// lifts (L6-03-WRITER-MARK).
+    /// ([`Self::authored_through`]), for a batch applied or committed with
+    /// no actor of its own: the door's mask names them as the writer of each
+    /// key it lifts (L6-03-WRITER-MARK).
     person_writer: Option<EntityId>,
     /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
     /// exact bytes: a marked carrier's content its writer already scanned
@@ -205,6 +205,23 @@ impl<'a> BatchBuilder<'a> {
         self.agent_authoring = crate::agent_def::AgentAuthoring::of(actor, door, read_key);
         self.person_writer = crate::federation::person_writing(actor);
         self
+    }
+
+    /// The person who writes this batch in their own name, whom the door's
+    /// mask names as the writer of each key it lifts (L6-03-WRITER-MARK):
+    /// its `actor` when it applies with one, else the person its door
+    /// authored it through ([`Self::authored_through`]). A promotion replay
+    /// names none: its saver chose the save, but the room or scratch text it
+    /// replays may be another person's, so its keys stay the owner's to
+    /// answer.
+    fn person_writer_for(&self, actor: Option<&crate::WriteActor>) -> Option<EntityId> {
+        if matches!(self.origin, BaseWriteOrigin::PromoteReplay(_)) {
+            return None;
+        }
+        match actor {
+            Some(actor) => crate::federation::person_writing(actor),
+            None => self.person_writer,
+        }
     }
 
     /// What the author writer makes of each AGENT_DEF put this batch stages,

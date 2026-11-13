@@ -184,12 +184,7 @@ impl BatchBuilder<'_> {
             })
             .transpose()?
             .flatten();
-        // The person who writes this batch in their own name: its actor, or,
-        // for a batch with no actor, the person its door authored it through.
-        let person_writer = match actor {
-            Some(actor) => crate::federation::person_writing(actor),
-            None => self.person_writer,
-        };
+        let person_writer = self.person_writer_for(actor);
         let mut gate_mode = gate_mode
             .with_person_writer(person_writer)
             .with_birth_mask(self.birth_mask)

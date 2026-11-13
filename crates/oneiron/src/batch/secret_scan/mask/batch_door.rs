@@ -21,12 +21,13 @@ use crate::write_envelope::ClaimCandidate;
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
-/// before. `person_writer` is the person who writes the batch in their own
-/// name, named as the writer of each key it lifts (L6-03-WRITER-MARK).
-/// `at` stamps each custody record the batch mints. It also returns
+/// before. `at` stamps each custody record the batch mints. It also returns
 /// each MACHINE claim candidate the minted pass rewrote with its pre-mask
 /// body, in op order, so the candidate apply can renew its proof over what
 /// is stored (FIX 11356); a replayed batch reports none.
+///
+/// `person_writer` is the person who writes the batch in their own name,
+/// named as the writer of each key it lifts (L6-03-WRITER-MARK).
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's own apply parts, its origin, its writer and its time"
