@@ -362,6 +362,7 @@ pub(crate) fn canonical_witness_message_body_for_test(
         author,
         message_type,
         content,
+        parts: None,
         metadata: None,
         is_visible,
         order,
