@@ -151,6 +151,7 @@ fn unbound_turns_naming_one_unknown_name_in_two_conversations_are_read_on_one_li
     assert_eq!(things.len(), 1, "one thing for the one name: {things:?}");
     let thing = &things[0];
     assert_eq!(thing.entity, None);
+    assert_eq!(turns_of(thing), BTreeSet::from([sent.turn, late.turn]));
     let lines = lines_of(thing);
     assert_eq!(
         lines.get(&sent.turn),
