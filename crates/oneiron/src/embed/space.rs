@@ -48,10 +48,10 @@ mod replica;
 pub(super) mod repo_projection;
 #[cfg(feature = "sync")]
 pub use replica::MediaVectorReplica;
-#[cfg(feature = "sync")]
-pub(crate) use replica::reuse_home_media_vectors;
 #[cfg(all(feature = "sync", oneiron_test_support))]
 pub(crate) use replica::install_media_vector_replica_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use replica::reuse_home_media_vectors;
 
 pub use crate::store::embedding::{
     EMBEDDING_SETUP_LEARNED_AT, EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS,
