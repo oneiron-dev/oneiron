@@ -500,16 +500,21 @@ pub(in crate::sync::selector) fn filter_window_doc(
             return;
         }
         // FIX SELECTOR-TOMBSTONE-LABEL (OPUS-LEAKS): a tombstone names the
-        // row's id, the delete's reason and its time, so the member takes it
-        // only of a row it reads at the relationship gate.
-        if member_reads_tombstoned(
-            vault,
-            &ttxn,
-            member_access.as_ref(),
-            &source_entities,
-            &id,
-            value,
-        ) {
+        // row's id, the delete's reason and its time, so a member who is not
+        // an Owner takes it only of a row it reads at the relationship gate:
+        // by the row's bytes while the window still holds a body for it, and
+        // by the relationship read its delete captured. A read that fails
+        // withholds the tombstone.
+        let member = member_access.as_ref();
+        if member.is_some()
+            && let Some(blob) =
+                crate::sync::loro_support::map_get_bytes(&source_entities, &id.to_hex())
+            && blob.len() > ENTITY_METADATA_HEADER_LEN
+            && !member_reads_labels(vault, &ttxn, member, &id, &blob).unwrap_or(false)
+        {
+            return;
+        }
+        if super::super::tombstones::member_reads_deleted(vault, &ttxn, member, &id, value) {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });
@@ -536,31 +541,6 @@ pub(in crate::sync::selector) fn filter_window_doc(
     crate::sync::note::copy_selected(source, &out, &notes)?;
     out.commit();
     Ok(out)
-}
-
-/// Whether the selector's member reads the row that a tombstone of `id`
-/// removes (FIX SELECTOR-TOMBSTONE-LABEL): by its bytes while the window
-/// still holds a body for it, and by the relationship read its delete
-/// captured. `None` is an Owner's member, which reads every row. A read that
-/// fails withholds the tombstone.
-fn member_reads_tombstoned(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    member: Option<&crate::access_grant::AccessContext<'_>>,
-    entities: &loro::LoroMap,
-    id: &EntityId,
-    value: &[u8],
-) -> bool {
-    if member.is_none() {
-        return true;
-    }
-    if let Some(blob) = crate::sync::loro_support::map_get_bytes(entities, &id.to_hex())
-        && blob.len() > ENTITY_METADATA_HEADER_LEN
-        && !member_reads_labels(vault, rtxn, member, id, &blob).unwrap_or(false)
-    {
-        return false;
-    }
-    super::super::tombstones::member_reads_deleted(vault, rtxn, member, id, value)
 }
 
 /// Whether the selector's member reads the row `raw` of `id` at the
