@@ -116,3 +116,57 @@ fn an_owner_version_claim_delete_leaves_no_bytes_for_a_later_replica() {
         "the version the deleted claim records was released on the origin"
     );
 }
+
+/// #7640 review round 1: the owner releases a version on B, a replica that received the artifact
+/// and its claims but keeps no chain of its own, so only the claim's tombstone travels. A, the
+/// uploader, replays it: its chain's version goes with the claim, as on the origin, and reading
+/// that version answers nothing instead of a corrupted index.
+///
+/// Red at #7640's head 5d5d87c2ffa6: A purges the claim and keeps the version that names it, so
+/// A still lists two versions and the released one's read fails `CorruptedIndex`.
+#[test]
+fn an_owner_release_on_a_replica_releases_the_uploaders_chain_version() {
+    let (mut a, mut b) = vault_pair();
+    let (artifact, claims) = upload(&mut a, T0, &[RELEASED, KEPT]);
+    let released = a
+        .vault
+        .blob_artifact_versions(&artifact)
+        .unwrap()
+        .into_iter()
+        .find(|version| version.claim_id == claims[0])
+        .expect("fixture: the uploader's chain records the first version under its claim")
+        .version;
+    exchange(&a, &b, WINDOW);
+    assert!(
+        b.vault.get_raw(&claims[0]).unwrap().is_some(),
+        "fixture: the replica received the version claim"
+    );
+
+    b.close_window(WINDOW);
+    b.vault
+        .delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)
+        .unwrap();
+    b.recover(WINDOW);
+    exchange(&a, &b, WINDOW);
+    a.recover(WINDOW);
+
+    assert!(
+        a.vault.get_raw(&claims[0]).unwrap().is_none(),
+        "fixture: the owner's release reached the uploader as the claim's tombstone"
+    );
+    let read = a.vault.blob_artifact_version_metadata(&artifact, released);
+    assert!(
+        matches!(read, Ok(None)),
+        "the uploader's chain kept the released version without its claim: {read:?}"
+    );
+    assert_eq!(
+        a.vault.blob_artifact_versions(&artifact).unwrap().len(),
+        1,
+        "the uploader still lists the version the owner released"
+    );
+    assert!(
+        !stores(&a.vault, RELEASED),
+        "the uploader kept the released version's bytes"
+    );
+    assert!(stores(&a.vault, KEPT), "the other version's bytes stay");
+}
