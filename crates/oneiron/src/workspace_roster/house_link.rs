@@ -656,9 +656,10 @@ pub(crate) fn erase_house_link_actor_in_txn(
 /// latest bind still open at `at` ([`open_links_at_in_txn`]). Nothing about a
 /// statement is stored for this, so an unbind never changes how a statement
 /// written before it reads. A statement's byline reads it at the statement's
-/// write time (FIX row SPEAKER-BYLINE-FOR-ORG). Times are recorded seconds: a
-/// statement written in the second of a bind or an unbind reads as after it.
-#[cfg_attr(not(oneiron_test_support), allow(dead_code))]
+/// write time (FIX row SPEAKER-BYLINE-FOR-ORG): `vault.rooms.messages` and
+/// `vault.rooms.trunk` read it for each turn's speaker. Times are recorded
+/// seconds: a statement written in the second of a bind or an unbind reads as
+/// after it.
 pub(crate) fn house_org_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

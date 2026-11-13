@@ -42,11 +42,13 @@ impl Memory<'_> {
             .map(EntityId::from_hex)
             .transpose()?;
         let limit = request.limit.unwrap_or(PAGE_LIMIT);
-        match request.thread_ref.as_deref() {
+        let mut page = match request.thread_ref.as_deref() {
             None if self.owner_off_room(room)? => self.owner_threads_page(room, after, limit),
             None => self.rooms_messages_page(room, after, limit),
             Some(root) => self.thread_messages_page(room, EntityId::from_hex(root)?, after, limit),
-        }
+        }?;
+        page.for_org = self.turns_for_org(&page.rows)?;
+        Ok(page)
     }
 
     /// One page of the thread rooted at `root` in `room`
@@ -168,5 +170,6 @@ fn page_after(
         rows,
         next_after,
         scope,
+        for_org: std::collections::BTreeMap::new(),
     })
 }
