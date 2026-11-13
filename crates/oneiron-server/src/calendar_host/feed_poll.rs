@@ -18,6 +18,13 @@
 //! payload's not-before instant, but resumes the current installed seat's
 //! cursor, never the payload's cursor. A first explicit pull starts a new
 //! seat's chain; successful polls queue its successors through the kernel.
+//!
+//! Each pass then sends the revised invites the passes' booking moves owe
+//! their bookers (FIX 22385): a feed or connector update that moved a
+//! booking queued one `booking.revision_invite` row in the move's own
+//! transaction, and the worker sends it on the calendar send sink a booking
+//! lifecycle turn uses, through the page's standing invite grant, the gate
+//! and the intent ledger. The worker keeps its send clients across passes.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +32,9 @@ use std::time::Duration;
 use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, CompleteAttempt,
     FailAttempt, RequeueAttempt,
+};
+use oneiron::booking::lifecycle::{
+    BOOKING_REVISION_INVITE_ATTEMPT_KIND, BookingRevisionInviteDrain, run_booking_revision_invites,
 };
 use oneiron::calendar::connectors::door::{self as connector, CalendarConnectorRequest};
 use oneiron::calendar::ingest::feed_door::{self, CalendarIcsFeedRequest};
@@ -40,6 +50,7 @@ use oneiron::calendar::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::{EdgeActorClass, Vault};
 
+use super::{CalendarChannelSink, CalendarSendClients};
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// How often the worker looks for a due poll.
@@ -67,6 +78,11 @@ pub(crate) fn spawn_calendar_polls(
         let mut interval = tokio::time::interval(POLL_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut recovered = false;
+        let line_push_allowance = server.config.line.monthly_push_allowance();
+        // The revised-invite send clients, built on a pass's blocking thread
+        // and kept across passes; a pass that could not build them tries
+        // again next time.
+        let mut clients: Option<CalendarSendClients> = None;
         loop {
             interval.tick().await;
             let Some(admission) = admit() else {
@@ -74,17 +90,28 @@ pub(crate) fn spawn_calendar_polls(
             };
             let recover = !std::mem::replace(&mut recovered, true);
             let server = Arc::clone(&server);
+            let mut kept = clients.take();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                if recover {
-                    recover_polls(server.vault())?;
-                }
-                run_due_polls(server.vault())
+                let polled = if recover {
+                    recover_polls(server.vault()).and_then(|()| run_due_polls(server.vault()))
+                } else {
+                    run_due_polls(server.vault())
+                };
+                let sent =
+                    send_booking_revision_invites(server.vault(), line_push_allowance, &mut kept);
+                (polled.and(sent), kept)
             })
             .await;
             let error = match pass {
-                Ok(Ok(())) => continue,
-                Ok(Err(error)) => format!("{error:#}"),
+                Ok((Ok(()), kept)) => {
+                    clients = kept;
+                    continue;
+                }
+                Ok((Err(error), kept)) => {
+                    clients = kept;
+                    format!("{error:#}")
+                }
                 Err(error) => error.to_string(),
             };
             tracing::warn!(error = %error, "calendar poll pass failed");
@@ -97,6 +124,7 @@ fn recover_polls(vault: &Vault) -> anyhow::Result<()> {
         ICS_POLL_ATTEMPT_KIND,
         ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
         CALDAV_SYNC_ATTEMPT_KIND,
+        BOOKING_REVISION_INVITE_ATTEMPT_KIND,
     ] {
         AttemptQueue::new(vault).cleanup_kind_leases(
             kind,
@@ -158,6 +186,38 @@ fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
             break;
         };
         settle_connector(&queue, vault, &owner, &attempt)?;
+    }
+    Ok(())
+}
+
+/// Sends up to [`PASS_LIMIT`] queued revised invites (FIX 22385) on the
+/// calendar send sink, as the page's live publisher; a send that refuses
+/// settles its own row. The kept send clients are built here, off the
+/// runtime, when the worker has none yet.
+fn send_booking_revision_invites(
+    vault: &Vault,
+    line_push_allowance: u32,
+    clients: &mut Option<CalendarSendClients>,
+) -> anyhow::Result<()> {
+    let clients = match clients {
+        Some(clients) => clients,
+        None => clients.insert(CalendarSendClients::new()?),
+    };
+    let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
+    let drain = run_booking_revision_invites(
+        vault,
+        LEASE_OWNER,
+        &mut sink,
+        PASS_LIMIT,
+        vault.now_recorded_at(),
+    )?;
+    if drain != BookingRevisionInviteDrain::default() {
+        tracing::info!(
+            dispatched = drain.dispatched,
+            settled_unsent = drain.settled_unsent,
+            refused = drain.refused,
+            "booking revised invites settled"
+        );
     }
     Ok(())
 }

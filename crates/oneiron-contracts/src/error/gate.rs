@@ -96,6 +96,12 @@ pub enum GateDenialReason {
     PendingDelegationChainCeiling,
     /// FIX 12542: campaign compliance waits for the owner's clearance.
     PendingCampaignCompliance,
+    /// SPAWN-KNOB: the spawning instance's `spawn` power is off.
+    DenyAgentPowerSpawnOff,
+    /// SPAWN-KNOB: the authoring instance's `save_agent` power is off.
+    DenyAgentPowerSaveAgentOff,
+    /// SPAWN-KNOB: a parent asked its child for a power the parent does not hold.
+    DenyAgentPowerAboveParent,
 }
 
 impl GateDenialReason {
@@ -129,6 +135,9 @@ impl GateDenialReason {
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
             Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
             Self::PendingCampaignCompliance => "gate.pending.campaign_compliance",
+            Self::DenyAgentPowerSpawnOff => "gate.deny.agent_power.spawn_off",
+            Self::DenyAgentPowerSaveAgentOff => "gate.deny.agent_power.save_agent_off",
+            Self::DenyAgentPowerAboveParent => "gate.deny.agent_power.above_parent",
         }
     }
 
@@ -164,6 +173,9 @@ impl GateDenialReason {
             "gate.deny.unresolved_record_reference" => Some(Self::DenyUnresolvedRecordReference),
             "gate.pending.delegation_chain_ceiling" => Some(Self::PendingDelegationChainCeiling),
             "gate.pending.campaign_compliance" => Some(Self::PendingCampaignCompliance),
+            "gate.deny.agent_power.spawn_off" => Some(Self::DenyAgentPowerSpawnOff),
+            "gate.deny.agent_power.save_agent_off" => Some(Self::DenyAgentPowerSaveAgentOff),
+            "gate.deny.agent_power.above_parent" => Some(Self::DenyAgentPowerAboveParent),
             _ => None,
         }
     }
@@ -182,7 +194,10 @@ impl GateDenialReason {
             | Self::DenyWitnessMessageMalformedEnvelope
             | Self::DenyWitnessMessageAuthorNotAuthorized
             | Self::DenyMessageAddress
-            | Self::DenyUnresolvedRecordReference => GateDenialOutcome::Deny,
+            | Self::DenyUnresolvedRecordReference
+            | Self::DenyAgentPowerSpawnOff
+            | Self::DenyAgentPowerSaveAgentOff
+            | Self::DenyAgentPowerAboveParent => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor

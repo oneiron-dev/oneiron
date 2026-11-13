@@ -152,7 +152,7 @@ fn check_intent(vault: &Vault, id: EntityId) -> Result<Option<(AskForwardIntent,
         &intent.act,
     )?;
     let (Ok(slip), Some(signature)) = (
-        crate::authority::CapabilitySlip::from_token(&intent.proof.token),
+        crate::authority::CapabilitySlip::from_token(&intent.proof.slip),
         intent.proof.signature_bytes(),
     ) else {
         return Ok(Some((intent, Verdict::Refused)));

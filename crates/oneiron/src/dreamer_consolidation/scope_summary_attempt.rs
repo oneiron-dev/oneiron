@@ -297,6 +297,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
             spend_scope: None,
+            wake_pass_bound: true,
         };
         let mut charges = StepChargeTally::default();
         // The reply answers to the summary contract inside the step (FIX
@@ -367,6 +368,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     charges.record_usage(usage);
                 }
                 return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
+            }
+            // A spend scope refused the step for good: the try ends Failed,
+            // typed, settling what it spent with its paid steps.
+            Err(other @ DurableStepError::BudgetRefused(_)) => {
+                return Ok(charges.end_on_step_error(&other.to_string(), &other));
             }
             // Parks Retry unless only an owner act clears it (FIX 7369).
             // A failed call's paid usage has no terminal step: it is handed

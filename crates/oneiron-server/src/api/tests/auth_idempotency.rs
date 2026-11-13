@@ -211,12 +211,12 @@ async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
         "a scoped bearer is a /v1-plane instrument and must work there"
     );
 
-    // Refused on every legacy `/api/*` route, read and mutating alike.
+    // Refused on every legacy `/api/*` route, read and mutating alike, but
+    // home text search (below).
     for (method, uri, body) in [
         ("GET", "/api/core/discover", None),
         ("GET", "/api/openapi.json", None),
         ("GET", "/api/skills/oneiron.skills.md", None),
-        ("GET", "/api/search/text?query=anything", None),
         (
             "POST",
             "/api/lease/revoke",
@@ -234,6 +234,23 @@ async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
             "legacy {method} {uri} must refuse a scoped bearer"
         );
     }
+    // 22bcf230666 (#2799, FIX 3604): a verified slip that holds core:read
+    // reads home search, under its own key.
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            "/api/search/text?query=anything",
+            test_bearer(scoped),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "legacy GET /api/search/text admits a verified core:read slip"
+    );
 }
 
 #[tokio::test]
@@ -460,7 +477,7 @@ async fn v1_companion_access_grant_create_replays_idempotency_key() {
             .companion_profile_access_grant(
                 &oneiron::EntityId::from_hex(&principal_ref).expect("principal id"),
                 &oneiron::EntityId::from_hex(&person_ref).expect("person id"),
-                &oneiron::EntityId::from_hex(&persona_ref).expect("persona id"),
+                Some(&oneiron::EntityId::from_hex(&persona_ref).expect("persona id")),
             )
             .expect("grant lookup"),
         Some(grant_id)

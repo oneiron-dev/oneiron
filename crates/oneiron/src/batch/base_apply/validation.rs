@@ -152,10 +152,12 @@ pub(super) fn source_free_text_birth(
         && !derived.contains(id)
 }
 
-/// The FACET a NOTE, ASSET, CLAIM, EVENT or TURN put at `id` is born under.
-/// A CLAIM carries its facet in its body, so its birth edge follows the body's
-/// `scopeFacetId` (FIX 7757); a NOTE, ASSET, EVENT or TURN uses the batch mask,
-/// else the vault default (FIX 7774 keeps the TASK exception). An ASSET_TEXT put
+/// The FACET a NOTE, ASSET, CLAIM, EVENT, TURN or TASK put at `id` is born
+/// under. A CLAIM carries its facet in its body, so its birth edge follows the
+/// body's `scopeFacetId` (FIX 7757); a NOTE, ASSET, EVENT, TURN or TASK uses
+/// the batch mask, else the vault default. A TASK's mask is its writer's facet
+/// (ARCH-0022 #facets, UNBUILT item 10: "With no active mask, the vault's
+/// default facet stamps it"); an authority fact's is its TASK's. An ASSET_TEXT put
 /// with the `sources` it was written from is born under the one facet they were
 /// born under (facet rule C); a `source_free` one ([`source_free_text_birth`])
 /// under the batch mask, else the vault default, as a NOTE is (FIX 8741).
@@ -182,6 +184,7 @@ pub(super) fn birth_stamp_target(
                     | crate::registry::ENTITY_TYPE_CLAIM
                     | crate::registry::ENTITY_TYPE_EVENT
                     | crate::registry::ENTITY_TYPE_TURN
+                    | crate::registry::ENTITY_TYPE_TASK
             ))
         || crate::ports::EntityStoreRead::port_entity_present(store, txn, &id)?
     {

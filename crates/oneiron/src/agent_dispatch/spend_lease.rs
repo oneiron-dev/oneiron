@@ -45,6 +45,7 @@ mod closed_scope;
 mod funding;
 mod hard_cap_refusal;
 mod late_spend;
+mod pending;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
 pub(crate) use self::hard_cap_refusal::SpendCapRefusal;

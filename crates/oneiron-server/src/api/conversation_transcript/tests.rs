@@ -165,7 +165,7 @@ async fn a_recall_hit_names_its_conversation() {
         &server,
         actor,
         "POST",
-        "/v1/core/facade/recall",
+        "/v1/core/facade/vault.recall",
         Some(&json!({"query": "basil", "effort": "light", "limit": 10})),
     )
     .await;

@@ -173,6 +173,8 @@ pub(crate) use self::result_read::{
 pub(crate) use self::result_read::{unmarked_secret, unplaced_answer};
 pub use self::run_verb_call::run_verb_call;
 pub use self::storage::ReadWorldUnknown;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::capsule_stored_request_bytes;
 pub(crate) use self::storage::session_model_heal_count;
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;

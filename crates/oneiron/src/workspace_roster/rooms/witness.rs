@@ -203,8 +203,8 @@ pub(crate) fn admit_witness(
         // per message (FIX 2028). Its speaker takes part here, on a seat or a
         // live Ready join, and each selection is one the speaker's own read
         // admits under the room's ceiling, or the thread's a stored turn sits
-        // in. An ordinary room keeps no room row, so its turn's first body
-        // keeps its messages' quotes by citing MESSAGE: they are born with
+        // in. An ordinary room's turn's first body keeps its messages'
+        // quotes by citing MESSAGE, its room row none: they are born with
         // the TURN, which stays an opaque one answering its first quoted
         // message in that message's TURN, no thread, no `Parent`. A retried message carries
         // its own kept quote again; a stored TURN takes no new one.
@@ -257,6 +257,40 @@ pub(crate) fn admit_witness(
             )?),
             None => None,
         };
+        // THREAD-TASK-EVERY-ROOM: the turn keeps its room row in this write,
+        // through the one writer every room's turn takes. A turn this write
+        // mints is a trunk turn, as its DAG holds it; its quotes stay in its
+        // first body alone. A stored turn's new messages join the row it
+        // keeps.
+        if stored_body.is_some() {
+            for message in messages {
+                super::turn_record::record_room_message_in_txn(vault, txn, turn_id, *message)?;
+            }
+        } else {
+            let turn = RoomTurn {
+                turn_id: turn_id.to_hex(),
+                room_id: room.to_hex(),
+                actor: actor.to_hex(),
+                addressed_agents: BTreeSet::new(),
+                message_ids: messages.iter().map(EntityId::to_hex).collect(),
+                reply_to: None,
+                thread_of: None,
+                at: input.occurred_at,
+                task_ids: Vec::new(),
+                converted_project: None,
+                quotes: BTreeMap::new(),
+            };
+            super::turn_record::record_room_turn_in_txn(
+                vault,
+                txn,
+                None,
+                &turn,
+                None,
+                true,
+                None,
+                vault.store.clock.now_recorded_at(),
+            )?;
+        }
         super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
         return Ok(RoomWitness {
             quoted,
@@ -269,7 +303,7 @@ pub(crate) fn admit_witness(
     let now = vault.store.clock.now_recorded_at();
     let speaker = participant_in_txn(vault, txn, actor, now)?;
     let current_room = match speaker {
-        Some(_) => room_in(vault, txn, room)?,
+        Some(_) => room_access_in(vault, txn, room)?,
         None => require_member(vault, txn, room, actor)?,
     };
     let mut mentions = BTreeSet::new();

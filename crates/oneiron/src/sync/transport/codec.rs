@@ -52,7 +52,8 @@ pub mod frame_kind_ids {
     pub const SEALED_WORLD_UPDATES: u8 = 0x80;
 }
 
-/// The optional frame kinds this build decodes, as its hellos list them.
+/// The optional frame kinds this build decodes, as its sync hellos list them.
+/// The residence RPC lane's hello lists none.
 pub const DECODED_FRAME_KIND_IDS: &[u8] = &[frame_kind_ids::SEALED_WORLD_UPDATES];
 
 /// The codecs one peer decodes, from its hello. Unknown ids are ignored.
@@ -96,10 +97,18 @@ impl WireCodecs {
 
 /// Builds a hello: `[TAG_PROTOCOL_HELLO][version][codec ids…][frame kind ids…]`.
 pub(super) fn hello_frame(version: u8) -> Vec<u8> {
+    let mut frame = codecs_only_hello_frame(version);
+    frame.extend_from_slice(DECODED_FRAME_KIND_IDS);
+    frame
+}
+
+/// Builds a hello that lists the codecs and no frame kind:
+/// `[TAG_PROTOCOL_HELLO][version][codec ids…]`, for a lane that decodes none
+/// of the optional frames.
+pub(super) fn codecs_only_hello_frame(version: u8) -> Vec<u8> {
     let mut frame = Vec::with_capacity(2 + DECODED_CODEC_IDS.len() + DECODED_FRAME_KIND_IDS.len());
     frame.extend_from_slice(&[TAG_PROTOCOL_HELLO, version]);
     frame.extend_from_slice(DECODED_CODEC_IDS);
-    frame.extend_from_slice(DECODED_FRAME_KIND_IDS);
     frame
 }
 

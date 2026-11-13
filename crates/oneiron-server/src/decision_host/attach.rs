@@ -107,6 +107,7 @@ impl SyncServer {
                 models.raw_budget_units,
                 tokio::runtime::Handle::current(),
             )
+            .with_question_heads(&self.vault)
             .with_big(
                 models.decisions.big.as_ref(),
                 self.ai.models(),

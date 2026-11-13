@@ -7,7 +7,6 @@
 use super::{AssetConsumer, HydratedAsset, hydrated_asset};
 use crate::claim::{ScopedRead, ScopedReadReceipt};
 use crate::memory::read_lane::ReadTargetSlot;
-use crate::memory::structural::kind_string_for_type;
 use crate::memory::support::decode_body_json;
 use crate::memory::{EntityView, MemoryResult};
 use crate::receipt::ServedForm;
@@ -26,7 +25,7 @@ pub(in crate::memory) fn serve_hydrated_views(
     views: &mut [EntityView],
     receipt: &mut ScopedReadReceipt,
 ) -> MemoryResult<Vec<ServedForm>> {
-    let asset_kind = kind_string_for_type(ENTITY_TYPE_ASSET);
+    let asset_kind = lane.vault().entity_kind_name(ENTITY_TYPE_ASSET);
     let consumer = AssetConsumer::hydrate_reader(false);
     let mut served_forms = Vec::new();
     for (target, view) in targets.iter().zip(views) {

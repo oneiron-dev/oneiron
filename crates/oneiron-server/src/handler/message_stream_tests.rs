@@ -39,6 +39,7 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
         SyncMessage::Ephemeral(producer.encode(&key)),
         &direct_tx,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -51,7 +52,16 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
     let receiver = EphemeralStore::new(30_000);
     receiver.apply(&frame[1..]).unwrap();
     assert_eq!(receiver.get(&key), producer.get(&key));
-    let late = late_join_presence(&server, 18).next().unwrap();
+    // A fresh socket, placed as `ConnState::new` places one: off device, no
+    // machine proven (FIX 9537).
+    let late = late_join_presence(
+        &server,
+        18,
+        oneiron::claim::CallerLocality::OffDevice,
+        oneiron::authority::PeerMachine::Unknown,
+    )
+    .next()
+    .unwrap();
     let late_receiver = EphemeralStore::new(30_000);
     late_receiver.apply(&late[1..]).unwrap();
     assert_eq!(late_receiver.get(&key), producer.get(&key));
@@ -70,6 +80,7 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
         SyncMessage::Ephemeral(encode_ephemeral_states(&cleared).unwrap()),
         &direct_tx,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap();
@@ -119,7 +130,11 @@ async fn message_stream_local_host_relay_is_live_without_a_sync_client() {
             metadata: None,
             is_visible: true,
             order: 0,
+            parts: None,
+            quote: None,
         }],
+        assertions: Default::default(),
+        thread_audience: None,
     };
     let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
     let handle = memory
@@ -190,6 +205,7 @@ async fn send_presence(server: &SyncServer, frame: Vec<u8>) {
         SyncMessage::Ephemeral(frame),
         &direct_tx,
         &mut state,
+        &|| false,
     )
     .await
     .unwrap_or_else(|error| panic!("a presence frame was refused: {error}"));
@@ -220,7 +236,14 @@ async fn presence_past_the_old_hub_share_is_kept() {
         assert!(server.ephemeral_store.get(key).is_some(), "{key} dropped");
     }
     // A socket that joins now hears all of it, in parts.
-    let late: Vec<_> = late_join_presence(&server, 18).collect();
+    // A fresh socket, placed as `ConnState::new` places one (FIX 9537).
+    let late: Vec<_> = late_join_presence(
+        &server,
+        18,
+        oneiron::claim::CallerLocality::OffDevice,
+        oneiron::authority::PeerMachine::Unknown,
+    )
+    .collect();
     assert!(late.len() > 1, "a hub past one frame is sent in parts");
     let heard: Vec<_> = late
         .iter()

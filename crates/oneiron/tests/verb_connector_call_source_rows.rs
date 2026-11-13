@@ -387,6 +387,7 @@ fn connector_source_rows_test_fixture() -> ConnectorSourceRowsTestFixture {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner grants the holder its base lane and the verb");
