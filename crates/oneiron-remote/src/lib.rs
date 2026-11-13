@@ -70,7 +70,7 @@ pub use crate::caps::{
 };
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::{HostOpenCheck, store_open_count, verify_read_credential};
-use crate::error::forbidden;
+use crate::error::{forbidden, vault_locked};
 pub use crate::in_process::{
     InProcessReply, InProcessRequest, InProcessStream, InProcessTransport,
 };
@@ -164,10 +164,14 @@ pub struct OneironClient {
     host_root: Option<HostRootProfile>,
 }
 
-/// Embedded or remote, decided once at construction.
+/// Embedded, remote or a Dreamer attempt's, decided once at construction.
 enum Backend {
     Embedded(EmbeddedClient),
     Remote(RemoteClient),
+    /// A strength attempt's job client (untangle 6.9c PR 3): its calls run
+    /// under the engine's binding, which proves the attempt's lease and the
+    /// Dreamer's live reach at each one.
+    DreamerAttempt(Box<oneiron::dreamer_runner::DreamerAttemptBinding>),
 }
 
 /// Prints the backend KIND and nothing else.
@@ -184,6 +188,7 @@ impl fmt::Debug for OneironClient {
         let backend = match self.backend {
             Backend::Embedded(_) => "Embedded",
             Backend::Remote(_) => "Remote",
+            Backend::DreamerAttempt(_) => "DreamerAttempt",
         };
         write!(formatter, "OneironClient {{ backend: {backend} }}")
     }
@@ -279,6 +284,25 @@ impl OneironClient {
         })
     }
 
+    /// The job client of one admitted strength attempt, over the vault the
+    /// engine minted `binding` in (`Vault::bind_dreamer_attempt`). It runs
+    /// in this process only and makes no request.
+    ///
+    /// Its calls are `agent_verb` and `retry` of the strength facet's two
+    /// verbs: `vault.consolidation.strength.observations.page` with its usual
+    /// request, and `vault.derive.commit` with the batch itself
+    /// (`{"items": [...], "sources": [...]}`, Archive items only), since the
+    /// binding is the live run. Each call proves the binding again in the
+    /// engine; once the attempt's lease ends every call refuses. The handle
+    /// cannot rebind, and its other calls refuse `FORBIDDEN`.
+    #[must_use]
+    pub fn for_dreamer_attempt(binding: oneiron::dreamer_runner::DreamerAttemptBinding) -> Self {
+        Self {
+            backend: Backend::DreamerAttempt(Box::new(binding)),
+            host_root: None,
+        }
+    }
+
     /// Binds a remote `oneiron-server` through the facade projection.
     ///
     /// `key` is the credential [`OneironClient::pair`] returned. This call
@@ -347,6 +371,7 @@ impl OneironClient {
                     "The slip's principal_ref and actor_class bind write identity server-side.",
                 ],
             )),
+            Backend::DreamerAttempt(_) => Err(dreamer_attempt_rebind()),
         }
     }
 
@@ -371,6 +396,7 @@ impl OneironClient {
                 "a connected handle reads under the credential it connected with",
                 &["Connect with the delegated reader's own credential instead."],
             )),
+            Backend::DreamerAttempt(_) => Err(dreamer_attempt_rebind()),
         }
     }
 
@@ -390,6 +416,7 @@ impl OneironClient {
             backend: match &self.backend {
                 Backend::Embedded(embedded) => Backend::Embedded(embedded.in_room_turn(room)?),
                 Backend::Remote(remote) => Backend::Remote(remote.in_room_turn(room)?),
+                Backend::DreamerAttempt(_) => return Err(dreamer_attempt_rebind()),
             },
             host_root: None,
         })
@@ -418,6 +445,7 @@ impl OneironClient {
                 Backend::Remote(remote) => {
                     Backend::Remote(remote.in_off_record_session(session_ref)?)
                 }
+                Backend::DreamerAttempt(_) => return Err(dreamer_attempt_rebind()),
             },
             host_root: None,
         })
@@ -434,7 +462,7 @@ impl OneironClient {
     #[must_use]
     pub fn base_url(&self) -> Option<&str> {
         match &self.backend {
-            Backend::Embedded(_) => None,
+            Backend::Embedded(_) | Backend::DreamerAttempt(_) => None,
             Backend::Remote(remote) => remote.base_url(),
         }
     }
@@ -449,7 +477,7 @@ impl OneironClient {
     #[must_use]
     pub fn last_receipt_ref(&self) -> Option<String> {
         match &self.backend {
-            Backend::Embedded(_) => None,
+            Backend::Embedded(_) | Backend::DreamerAttempt(_) => None,
             Backend::Remote(remote) => remote.last_receipt_ref(),
         }
     }
@@ -461,7 +489,7 @@ impl OneironClient {
     #[must_use]
     pub fn last_hook_notice(&self) -> Option<String> {
         match &self.backend {
-            Backend::Embedded(_) => None,
+            Backend::Embedded(_) | Backend::DreamerAttempt(_) => None,
             Backend::Remote(remote) => remote.last_hook_notice(),
         }
     }
@@ -477,6 +505,7 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(embedded) => Some(embedded.actor_hex()),
             Backend::Remote(_) => None,
+            Backend::DreamerAttempt(binding) => Some(binding.actor().entity_ref().to_hex()),
         }
     }
 
@@ -495,7 +524,7 @@ impl OneironClient {
     pub fn native_limit_questions(&self) -> Result<Option<Vec<NativeLimitQuestion>>, MemoryError> {
         match &self.backend {
             Backend::Embedded(embedded) => embedded.native_limit_questions(),
-            Backend::Remote(_) => Ok(None),
+            Backend::Remote(_) | Backend::DreamerAttempt(_) => Ok(None),
         }
     }
 
@@ -505,6 +534,10 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(embedded) => Some(embedded.lease_pid()),
             Backend::Remote(_) => None,
+            Backend::DreamerAttempt(binding) => binding
+                .vault()
+                .writer_lease()
+                .map(oneiron::VaultWriterLease::pid),
         }
     }
 
@@ -516,6 +549,10 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(embedded) => embedded.ensure_dispatch_pid(),
             Backend::Remote(_) => Ok(()),
+            Backend::DreamerAttempt(binding) => match binding.vault().writer_lease() {
+                Some(lease) if lease.held_by_current_process() => Ok(()),
+                _ => Err(vault_locked()),
+            },
         }
     }
 
@@ -528,10 +565,18 @@ impl OneironClient {
             Backend::Embedded(embedded) => {
                 Some(std::sync::Arc::as_ptr(embedded.shared()).cast::<()>() as usize)
             }
-            Backend::Remote(_) => None,
+            Backend::Remote(_) | Backend::DreamerAttempt(_) => None,
         }
     }
 
     // ── the declared catalog ────────────────────────────────────────────
     //
+}
+
+/// A Dreamer attempt's handle acts only as the attempt it was minted for.
+fn dreamer_attempt_rebind() -> MemoryError {
+    forbidden(
+        "a Dreamer attempt handle cannot rebind",
+        &["Call through the handle the host minted for the attempt."],
+    )
 }

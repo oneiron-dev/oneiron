@@ -254,6 +254,7 @@ fn passing(error: &LlmError, now: u64) -> Option<(&'static str, Option<u64>)> {
             kind: SpentKind::Window,
             retry_after,
             resets_at,
+            ..
         }) => ("agent_run_window_spent", retry_after, resets_at),
         LlmError::Retryable(RetryableLlmError::KeptOnDevice {
             retry_after,

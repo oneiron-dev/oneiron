@@ -2,6 +2,30 @@
 //! owner act clears keeps its private ExecutorError park and ends the pass,
 //! as before; any other parks as a Retry a later pass resumes after its
 //! retry delay (Engine 10-21).
+//!
+//! An ExecutorError park has no wake signal of its own. It waits for the
+//! owner's release, and the park raises the owner's notice
+//! (`raise_park_release_notice_in_txn`, WAKE-D1 Q2 B), which the release
+//! resolves.
+//!
+//! The consent kinds stay owner-released (FIX 23347, Engine ruling 13 Nov
+//! 06:28). A consent hold never reaches this park: a gate that holds an
+//! effect for consent alone parks the run typed on its code consent wait
+//! (`DreamerParkWait::Consent`), and the owner's answer resumes it. What
+//! reaches this park is a consent refusal, and no later landing answers a
+//! refusal by its identity:
+//! - `ConsentGrantNotFound` and `ConsentGrantRevoked` come from an owner door
+//!   on a named row that is missing or revoked, or from a same-transaction
+//!   guard after the gate already matched the grant (the owner-reason use
+//!   record, the contact-clearance use receipt). Neither names a grant a
+//!   landing could carry, and a new grant has a new id.
+//! - `ConsentApproveOnceSpent` refuses a replayed digest, which no later
+//!   approval admits (DEC-0006 invariant 2).
+//! - The authentication kinds (`ConsentOwnerNotAuthenticated`,
+//!   `ConsentUnauthenticatedActor`, `ConsentGuestNotRecorded`) name no act
+//!   that answers them.
+//! - `GateConsentStale` refuses a deferred claim whose digest or binding
+//!   drifted. That claim is proposed again; it is not resumed.
 
 use crate::dreamer_runner::DreamerParkCause;
 use crate::error::ErrorKind;
@@ -86,9 +110,10 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::DeviceAdmissionStopped => false,
         },
         LlmError::Fatal(fatal) => match fatal {
-            FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {
-                true
-            }
+            FatalLlmError::Auth
+            | FatalLlmError::SeatSignedOut { .. }
+            | FatalLlmError::Unsupported(_)
+            | FatalLlmError::ResponseErased => true,
             FatalLlmError::InvalidRequest
             | FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContextWindowExceeded { .. }

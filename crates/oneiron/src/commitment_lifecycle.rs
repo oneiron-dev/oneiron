@@ -294,6 +294,11 @@ pub fn fulfill_commitments_for_brief(
             Ok(CommitmentInstanceState::Missing) | Err(Error::InvalidClaimBody(_)) => {
                 return Err(Error::CorruptedIndex("brief fulfills non-commitment claim"));
             }
+            // The link door names only an open promise, and an inert one was
+            // never open (Inert -> Open is one way).
+            Ok(CommitmentInstanceState::Inert(_)) => {
+                return Err(Error::CorruptedIndex("brief fulfills an inert commitment"));
+            }
             Err(other) => return Err(other),
         };
         let source = FulfillmentSource::BriefCompletion {
@@ -313,6 +318,11 @@ pub fn fulfill_commitments_for_brief(
             CommitmentStatus::Released
             | CommitmentStatus::Lapsed
             | CommitmentStatus::Superseded => already_closed.push(commitment_ref),
+            CommitmentStatus::Inert => {
+                return Err(Error::InvariantViolation(
+                    "inert commitment reached the brief fulfillment arm",
+                ));
+            }
         }
     }
 
@@ -358,12 +368,18 @@ pub fn lapse_overdue_commitments(
                 withdrawn.push(instance_ref);
                 continue;
             }
-            CommitmentInstanceState::Missing => {
+            // An inert promise enters no due index.
+            CommitmentInstanceState::Missing | CommitmentInstanceState::Inert(_) => {
                 return Err(Error::CorruptedIndex("commitment due index"));
             }
         };
         match record.status {
             CommitmentStatus::Open => to_lapse.push(instance_ref),
+            CommitmentStatus::Inert => {
+                return Err(Error::InvariantViolation(
+                    "inert commitment reached the lapse arm",
+                ));
+            }
             CommitmentStatus::Lapsed
             | CommitmentStatus::Fulfilled
             | CommitmentStatus::Released
@@ -373,7 +389,7 @@ pub fn lapse_overdue_commitments(
                     CommitmentStatus::Fulfilled => CommitmentInstanceOutcome::Fulfilled,
                     CommitmentStatus::Released => CommitmentInstanceOutcome::Released,
                     CommitmentStatus::Superseded => CommitmentInstanceOutcome::Superseded,
-                    CommitmentStatus::Open => {
+                    CommitmentStatus::Open | CommitmentStatus::Inert => {
                         return Err(Error::InvariantViolation(
                             "open commitment reached the terminal repair arm",
                         ));

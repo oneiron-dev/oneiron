@@ -124,6 +124,9 @@ pub struct AgentDispatcher<'a> {
     /// The goal-intake interview this dispatcher launches, proved in the
     /// dispatch writer: [`Self::admitting_goal_intake`].
     goal_intake: Option<GoalIntakeEntry>,
+    /// The host's classifier of a message to a busy resident (AGM-2 = C):
+    /// [`Self::with_message_classifier`].
+    pub(super) message_classifier: Option<super::ResidentMessageClassifier<'a>>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -136,7 +139,21 @@ impl<'a> AgentDispatcher<'a> {
             seats: None,
             funding: None,
             goal_intake: None,
+            message_classifier: None,
         }
+    }
+
+    /// This dispatcher, classing each message that reaches a busy resident
+    /// with the host's `classifier` (AGM-2 = C): on its rule and local
+    /// rungs only. Without one, a message takes its envelope's default
+    /// class.
+    #[must_use]
+    pub fn with_message_classifier(
+        mut self,
+        classifier: super::ResidentMessageClassifier<'a>,
+    ) -> Self {
+        self.message_classifier = Some(classifier);
+        self
     }
 
     /// This dispatcher, for the goal-intake interview the host-held `card`
@@ -336,6 +353,13 @@ impl<'a> AgentDispatcher<'a> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         if let Some(task) = leader_task {
             self.validate_leader_task_in_txn(&wtxn, task, &input, &spawn)?;
+        } else {
+            // Plan mode: an agent's spawn pins no plan.
+            self.refuse_unplanned_child_in_txn(
+                &wtxn,
+                input.parent_attempt,
+                input.target.agent_definition_ref()?,
+            )?;
         }
         let outcome = self.dispatch_in_txn(&mut wtxn, leader_task, input, spawn)?;
         if let Some(task) = leader_task {
@@ -753,6 +777,7 @@ impl<'a> AgentDispatcher<'a> {
             requester,
             caller_origin,
             funding,
+            carried_wake_keys: spawn.carried_wake_keys,
         })
     }
 
@@ -922,6 +947,31 @@ impl<'a> AgentDispatcher<'a> {
         crate::agent_def::child_agent_powers(held, root, requested)
             .map(Some)
             .map_err(crate::agent_def::power_refusal)
+    }
+
+    /// Plan mode (SETTING = A): refuses a child of `target`, an agent whose
+    /// plan mode is `required`, that an agent's attempt `parent` starts with
+    /// no TASK, so with no plan the owner approved: a spawn, a team's leader
+    /// or a workflow leaf. A root (the owner's or the engine's start) and an
+    /// engine job's child are no agent's start, and pass. A TASK's run is
+    /// admitted with its brief instead (`tasks.create`).
+    ///
+    /// # Errors
+    ///
+    /// A Gate deny (`gate.deny.plan_mode.required`).
+    pub(super) fn refuse_unplanned_child_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: Option<AttemptId>,
+        target: EntityId,
+    ) -> Result<()> {
+        let Some(parent) = parent else {
+            return Ok(());
+        };
+        if self.parent_dispatch_input_in_txn(txn, parent)?.is_none() {
+            return Ok(());
+        }
+        crate::agent_def::refuse_unplanned_run_in_txn(&self.vault.store, txn, target)
     }
 
     /// The parent attempt's decoded dispatch input, read outside any caller

@@ -456,6 +456,7 @@ impl SeatSpent {
                 kind,
                 retry_after,
                 resets_at,
+                ..
             } => Some(Self {
                 kind: Some(*kind),
                 retry_after: *retry_after,

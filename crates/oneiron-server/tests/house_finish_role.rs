@@ -28,11 +28,15 @@
 //! --locked -p oneiron-server --all-features --features oneiron/test-support
 //! --test house_finish_role`.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use engine_stack::run_on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, MachineRole};
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::FederationGrantRole;
@@ -43,9 +47,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -68,27 +70,6 @@ struct Host {
     root: EntityId,
     /// The workspace's house: the seeded `sys.default` agent.
     house: EntityId,
-}
-
-/// Runs `test` on an engine-sized stack and runtime, as the served doors
-/// need more than a test thread's default stack.
-fn run_on_engine_stack(name: &str, test: impl std::future::Future<Output = ()> + Send + 'static) {
-    let run = std::thread::Builder::new()
-        .name(name.into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(test)
-        })
-        .expect("spawn the engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -271,7 +252,7 @@ impl Host {
 
 #[test]
 fn a_finish_naming_no_role_on_a_host_with_no_house_role_runs_the_house_as_deputy() {
-    run_on_engine_stack("house-finish-default", async {
+    run_on_engine_stack("house-finish-default", || async {
         let host = host(None);
         let (status, answer) = host.finish(json!({"workspace_ref": WORKSPACE})).await;
         assert_eq!(status, StatusCode::OK, "the finish lands: {answer}");
@@ -281,7 +262,7 @@ fn a_finish_naming_no_role_on_a_host_with_no_house_role_runs_the_house_as_deputy
 
 #[test]
 fn a_finish_naming_deputy_runs_the_house_as_deputy() {
-    run_on_engine_stack("house-finish-deputy", async {
+    run_on_engine_stack("house-finish-deputy", || async {
         let host = host(Some(FederationGrantRole::Member));
         let (status, answer) = host
             .finish(json!({"workspace_ref": WORKSPACE, "role": "deputy"}))
@@ -293,7 +274,7 @@ fn a_finish_naming_deputy_runs_the_house_as_deputy() {
 
 #[test]
 fn a_finish_naming_no_role_runs_the_house_at_the_hosts_house_role() {
-    run_on_engine_stack("house-finish-configured", async {
+    run_on_engine_stack("house-finish-configured", || async {
         let host = host(Some(FederationGrantRole::Member));
         let (status, answer) = host.finish(json!({"workspace_ref": WORKSPACE})).await;
         assert_eq!(status, StatusCode::OK, "the finish lands: {answer}");
@@ -303,7 +284,7 @@ fn a_finish_naming_no_role_runs_the_house_at_the_hosts_house_role() {
 
 #[test]
 fn a_finish_naming_viewer_is_refused_and_binds_nothing() {
-    run_on_engine_stack("house-finish-viewer", async {
+    run_on_engine_stack("house-finish-viewer", || async {
         let host = host(None);
         let leader = host.leader();
         let (status, answer) = host

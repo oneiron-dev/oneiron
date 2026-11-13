@@ -249,6 +249,13 @@ impl UnfinalizedContextPack<'_> {
     /// token and item cuts kept, its last cut (FIX 9761), and only then
     /// finalizes the run row. A failed resolution discards the provisional
     /// run row before it returns.
+    ///
+    /// # Errors
+    ///
+    /// A failed resolution, and a ROOM's failed finalize (ONE-1570 Arm B):
+    /// the room's run row is what its close consumes, so its retrieval fails
+    /// with it. A base finalize keeps its best-effort posture: it warns,
+    /// discards the provisional row and answers with no run id.
     pub fn finish_projected_json(
         mut self,
         config: &SerializeConfig,
@@ -271,11 +278,6 @@ impl UnfinalizedContextPack<'_> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
-        // BASE-ONLY by construction: `run_unfinalized_with_telemetry` refuses
-        // a room's assembly precisely because this finalize has no channel to
-        // carry a room's registration failure, and the base arm's posture is
-        // best-effort `Ok`. The `Err` arm is therefore unreachable here, and
-        // flattening it cannot hide a room's failure.
         let mut replay_config = self.replay_config.take();
         if let Some(value) = replay_config.as_mut() {
             value["projection"] = super::replay::projection_config(
@@ -298,9 +300,7 @@ impl UnfinalizedContextPack<'_> {
                 &surfaced_result_ids,
             ),
             replay_config,
-        )
-        .ok()
-        .flatten();
+        )?;
         Ok(RetrievalWithTelemetry {
             retrieval_quality: pack.retrieval_quality.clone(),
             value: pack,
