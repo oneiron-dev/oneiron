@@ -72,8 +72,6 @@ pub(crate) use self::rule_outcome::{
     withdraw_rule_outcome_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-SKILL-RELIABILITY-TESTS]: the lib test target's type check fails here (37 errors: E0061 x16, E0308 x11, E0277 x8, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
