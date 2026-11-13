@@ -16627,7 +16627,7 @@
      "path": "src/claim/scoped_read/owned.rs",
      "purpose": "Moves a base reader's existing state across a worker boundary",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -16772,7 +16772,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 27,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -59656,7 +59656,7 @@
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
       "crate-vis": 9,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -59796,6 +59796,21 @@
      "purpose": "What a room write stages beside its row (FIX 4280, 4281; Engine 10-22): the row's birth and, for a NOTE, its…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomPackRead",
+      "RoomPackSession"
+     ],
+     "path": "src/off_record/lifecycle/room_pack.rs",
+     "purpose": "A context pack's read of the live stretch its request names (ARCH-0052 #e5-read-union-open, ONE-1729): \"a…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -92542,7 +92557,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 61,
+      "mod": 62,
       "re-export": 1
      }
     },
@@ -92761,6 +92776,16 @@
       "enum": 1,
       "fn": 25,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/stretch_pack_finalize.rs",
+     "purpose": "Door for `oneiron-server/tests/off_record_room_context_pack.rs` (census row L6-12): a context pack assembled…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -105213,7 +105238,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105731,7 +105756,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 64,
+     "files": 65,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105908,7 +105933,7 @@
    },
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7468,
+   "source_files": 7470,
    "test_files": 1166
   },
   "oneiron-agent-runtime": {
@@ -147632,6 +147657,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/off_record_room_context_pack.rs",
+     "purpose": "The context pack a turn taken in an off-record stretch reads (census row L6-12; ARCH-0052…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/openai_proxy_exchange_names_recalled_rows.rs",
      "purpose": "The OpenAI proxy's exchange claim names the recalled row its prompt carried",
      "surface": {}
@@ -148343,7 +148376,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1852,
-   "test_files": 221
+   "test_files": 222
   },
   "oneiron-skill-attribution": {
    "files": [
