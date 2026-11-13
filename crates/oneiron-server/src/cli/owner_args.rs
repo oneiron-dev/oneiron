@@ -851,6 +851,14 @@ pub struct ImportSourceArgs {
     #[arg(long, conflicts_with = "dry_run")]
     pub queue: bool,
 
+    /// Stage this ChatGPT or Claude export in the vault's own data folder
+    /// (`imports/<id>/`) for the running `serve` to import as a job: a
+    /// restart takes it up where it stopped, and its claims wait in one
+    /// review (ARCH-0027 #hosted-import). Prints the import's id; copies the
+    /// export and nothing else.
+    #[arg(long, conflicts_with_all = ["dry_run", "queue"])]
+    pub hosted: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

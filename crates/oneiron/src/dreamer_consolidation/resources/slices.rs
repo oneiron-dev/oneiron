@@ -33,8 +33,10 @@ impl BranchResources<'_> {
     /// first) is paged (FIX 7580, 9347), and a chunk is one call per page:
     /// each page's call reads the chunk's turns, and every page's call holds
     /// all of the chunk's heads, so a candidate is decided against every head
-    /// listed about its subject. The flag is the whole branch's low trust;
-    /// each slice also carries its own.
+    /// listed about its subject. The flag is whether the whole branch
+    /// extracts at width one (ARCH-0026: an imported or otherwise low-trust
+    /// member, by provenance: [`serial_width_prior`]); each slice also
+    /// carries its own low trust for the clean-slice loan.
     pub(in crate::dreamer_consolidation) fn extraction_slices(
         &self,
         turns: &[EntityId],
@@ -50,10 +52,10 @@ impl BranchResources<'_> {
                 .collect(),
             ResourceOrigin::Root(_) => self.turns.keys().map(|turn| (*turn, 0)).collect(),
         };
-        let mut low_trust = self.priors.values().any(low_trust_prior);
+        let mut serial_width = self.priors.values().any(serial_width_prior);
         for id in turns {
             let facts = self.turn(self.scope(), id)?;
-            low_trust |= facts.imported;
+            serial_width |= facts.imported;
             let (_, body) = self.source(self.scope(), id)?;
             let mentioned = self.known.mentioned(&body, facts.text.as_deref());
             let line = lines.get(id).copied().unwrap_or_default();
@@ -222,7 +224,7 @@ impl BranchResources<'_> {
                 }
             }
         }
-        Ok((slices, low_trust))
+        Ok((slices, serial_width))
     }
 }
 
@@ -270,9 +272,35 @@ impl BranchResources<'_> {
 }
 
 /// Whether a prior head is not the user's own words, by its source or its
-/// evidence's taint.
+/// evidence's taint: a slice that shows one is never lent as clean (FIX
+/// 9017).
 fn low_trust_prior(prior: &crate::dreamer_consolidation::PriorHead) -> bool {
     prior.body.source != Some(crate::claim::ClaimSource::UserStated)
         || crate::claim::claim_evidence_taint(&prior.body)
             .is_some_and(|source| source != crate::claim::ClaimSource::UserStated)
+}
+
+/// Whether a prior head holds its branch's extraction at width one
+/// (ARCH-0026: "any imported or otherwise low-trust member"). Low trust
+/// follows provenance, not the head's own stamp (the lead's DREAMER-WIDTH
+/// ruling, 13 Nov 2026): a head is low-trust when its source or its
+/// evidence taint is tool output or imported, or when its ancestry is
+/// unknown - no source, or a head not the user's own words that carries
+/// no evidence taint. So the Dreamer's own claims drawn only from the
+/// owner's words run wide, and one tainted head holds its whole branch
+/// serial.
+fn serial_width_prior(prior: &crate::dreamer_consolidation::PriorHead) -> bool {
+    use crate::claim::ClaimSource;
+    let tainted =
+        |source: ClaimSource| matches!(source, ClaimSource::ToolOutput | ClaimSource::Imported);
+    match (
+        prior.body.source,
+        crate::claim::claim_evidence_taint(&prior.body),
+    ) {
+        (None, _) => true,
+        (Some(source), _) if tainted(source) => true,
+        (_, Some(taint)) => tainted(taint),
+        (Some(ClaimSource::UserStated), None) => false,
+        (Some(_), None) => true,
+    }
 }
