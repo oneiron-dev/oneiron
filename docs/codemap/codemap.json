@@ -95329,16 +95329,22 @@
       "BaseAgentList",
       "BaseAgentPrincipal",
       "EngineControlChangeEntry",
+      "EngineControlsGrantRequest",
+      "EngineControlsGranted",
+      "EngineControlsRevokeRequest",
+      "EngineControlsRevoked",
       "EngineDefaultGrantEntry",
       "SystemAgentGrantNarrowRequest",
-      "SystemAgentGrantNarrowed"
+      "SystemAgentGrantNarrowed",
+      "SystemAgentGrantRestoreRequest",
+      "SystemAgentGrantRestored"
      ],
      "path": "src/verbs/agent_grant.rs",
      "purpose": "The inputs and answers of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`…",
      "surface": {
       "enum": 2,
-      "fn": 7,
-      "struct": 11
+      "fn": 10,
+      "struct": 17
      }
     },
     {
@@ -102632,6 +102638,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/grant_restore_and_engine_controls_verbs.rs",
+     "purpose": "The owner's three grant verbs (Engine RULING ROW3-GRANT-VERBS = A; FIX FABLE-6917-1 and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/grant_roles_seven.rs",
      "purpose": "The grant roles after the lead's 11 Nov 11:38 ruling (VS-CHECKIN-NAMES = A with the roles, VS-OLD-NAMES =…",
      "surface": {}
@@ -106554,7 +106568,7 @@
    "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7493,
-   "test_files": 1205
+   "test_files": 1206
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -132000,7 +132014,7 @@
      "path": "src/api/facade/steward_doors.rs",
      "purpose": "The host doors of the Steward rows (untangle 6.3 and 6.6, after 4.2): the member asks a shared vault's…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
