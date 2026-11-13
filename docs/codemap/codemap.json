@@ -41378,7 +41378,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 56,
       "mod": 2,
       "re-export": 24
      }
@@ -42018,7 +42018,7 @@
      "path": "src/federation/system_agent_grant.rs",
      "purpose": "The Steward grant a base agent holds by default (untangle 6.3; ARCH-0043's Steward role, owner 9 Nov 2026…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "enum": 1,
       "fn": 5,
       "re-export": 1,
@@ -42037,10 +42037,20 @@
      "purpose": "The owner's opt-out of a system agent's grant (untangle 6.3c; S6-4 amended, owner 9 Nov 15:21: \"we can make…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/system_agent_grant/narrowing/home.rs",
+     "purpose": "The narrowing history a home move carries (STEWARD-NARROWING-RECEIPT-LOCAL; Engine RULING…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -47439,6 +47449,47 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HostedImportCanceller",
+      "HostedImportEmbeddings",
+      "HostedImportId",
+      "HostedImportJob",
+      "HostedImportParse",
+      "HostedImportResumed",
+      "HostedImportReview",
+      "HostedImportSearchable",
+      "HostedImportStaged",
+      "HostedImportState",
+      "HostedImportStatus",
+      "HostedImportUpload",
+      "HostedImportView"
+     ],
+     "path": "src/ingest/history/hosted.rs",
+     "purpose": "A hosted import (ARCH-0027 #hosted-import): an export staged inside the vault's own data directory, landed…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 19,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedImportCancel",
+      "HostedImportLookup"
+     ],
+     "path": "src/ingest/history/hosted_verbs.rs",
+     "purpose": "The hosted import's verbs (ARCH-0027 #hosted-import; the Engine's rulings of 13 Nov 07:14, substrate behind…",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "HistoryImportReport"
      ],
      "path": "src/ingest/history/land.rs",
@@ -47486,7 +47537,7 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 5,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 4
      }
     },
@@ -86690,7 +86741,7 @@
      "path": "src/sync/home_handoff/mod.rs",
      "purpose": "FIX 5661 C1: the typed home-to-home handoff carrier",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -86721,6 +86772,16 @@
      "purpose": "FIX 6459: the routes a home move's target is captured at",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/section_doors.rs",
+     "purpose": "A door for the integration tests (compiled only under `--cfg oneiron_test_support`): one registered section…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -92804,6 +92865,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/home_sections.rs",
+     "purpose": "A door to one home-move section, for the home narrowing test: the owner's narrowing history carried from one…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/house_link.rs",
      "purpose": "The house link's bind-interval read (HOUSE-BIND = A, S3) for the test that reads it on both sides of an…",
      "surface": {
@@ -92923,7 +92994,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 79,
+      "mod": 80,
       "re-export": 1
      }
     },
@@ -93192,7 +93263,7 @@
      "path": "src/test_doors/steward.rs",
      "purpose": "The Dreamer's Steward grant and the strength archive, for integration tests (untangle 6.3; X02's test…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "enum": 1,
       "fn": 27,
       "struct": 2
@@ -95478,6 +95549,7 @@
       "AgentGrantView",
       "BaseAgentList",
       "BaseAgentPrincipal",
+      "DreamerGrantReach",
       "EngineControlChangeEntry",
       "EngineControlsGrantRequest",
       "EngineControlsGranted",
@@ -95494,7 +95566,7 @@
      "surface": {
       "enum": 2,
       "fn": 10,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -102849,7 +102921,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/grant_restore_and_engine_controls_verbs.rs",
@@ -102894,6 +102966,14 @@
      "notable": [],
      "path": "tests/holder_work_budget_cap_order.rs",
      "purpose": "A holder's work budget stays within the owner's cap at every read, not only at the holder's door…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/home_carries_narrowing_history.rs",
+     "purpose": "A home move carries the owner's narrowing history (STEWARD-NARROWING-RECEIPT-LOCAL; Engine RULING…",
      "surface": {}
     },
     {
@@ -105837,7 +105917,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 102,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105998,7 +106078,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 74,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -106628,7 +106708,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 414,
+     "files": 415,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -106684,7 +106764,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 82,
+     "files": 83,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106861,8 +106941,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7505,
-   "test_files": 1224
+   "source_files": 7510,
+   "test_files": 1225
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -131297,7 +131377,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 193
+      "crate-vis": 194
      }
     },
     {
@@ -131426,6 +131506,16 @@
      "notable": [],
      "path": "src/api/facade/host_trigger_doors.rs",
      "purpose": "The owner's typed host triggers",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hosted_import_doors.rs",
+     "purpose": "The host doors of the hosted import's verbs (ARCH-0027 #hosted-import; substrate behind grants)…",
      "surface": {
       "crate-vis": 3
      }
@@ -134581,6 +134671,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/hosted_import_routes.rs",
+     "purpose": "`/v1/owner/imports/hosted`: a ChatGPT or Claude.ai export uploaded to the vault's own hostname…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -137183,7 +137283,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 13,
       "re-export": 29,
       "struct": 1
@@ -137285,7 +137385,17 @@
      "path": "src/commands/history_import.rs",
      "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault, or through the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/hosted_import.rs",
+     "purpose": "The hosted import's job (ARCH-0027 #hosted-import, CROSS-ARCH-0024 #onboarding-import): an export staged…",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -147405,6 +147515,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/hosted_import.rs",
+     "purpose": "Doors for `tests/hosted_import_job.rs` ([HOSTED-IMPORT-JOB]) and `tests/hosted_import_verbs.rs`…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "HeldInstallLine"
      ],
@@ -147479,7 +147599,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 15
+      "mod": 16
      }
     },
     {
@@ -148467,6 +148587,30 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hosted_import_job.rs",
+     "purpose": "[HOSTED-IMPORT-JOB] (census item 14, L2-19; ARCH-0027 #hosted-import; the Engine's ruling of 13 Nov 07:02)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hosted_import_upload_route.rs",
+     "purpose": "[HOSTED-IMPORT-UPLOAD-ROUTE] (census item 14, L2-19; ARCH-0027:151 #hosted-import: \"Upload bytes go straight…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hosted_import_verbs.rs",
+     "purpose": "[HOSTED-IMPORT-VERBS] (census item 14, L2-19; ARCH-0027 #hosted-import: \"Raw staging is deleted after ingest…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -149044,7 +149188,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 776,
+     "files": 778,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -149121,7 +149265,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 73,
+     "files": 74,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -149527,7 +149671,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -149590,10 +149734,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 61,
+   "over_bar": 62,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1864,
-   "test_files": 238
+   "source_files": 1868,
+   "test_files": 241
   },
   "oneiron-skill-attribution": {
    "files": [
