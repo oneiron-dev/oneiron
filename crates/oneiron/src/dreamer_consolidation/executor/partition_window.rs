@@ -735,17 +735,20 @@ impl ConsolidationExecutor<'_> {
                             // The window stopped ahead of this slot:
                             // account the prefix and park without
                             // finishing - the serial pass never reaches
-                            // its commit.
+                            // its commit. A slice that already decided
+                            // the try (a trap, or a spent seat's refusal)
+                            // settles as the finish would have settled it
+                            // (review round 2 of #7340).
                             stages.close_model_run(run_started);
                             match super::super::step_charge::tally_extracted_outcomes(
                                 ctx.vault,
                                 *extracted,
                                 &mut charges,
                             ) {
-                                Ok(true) => {
+                                Ok(Some(decided)) => {
                                     self.boxed_settle_partition_run(
                                         &resources,
-                                        Ok(PartitionRun::Trapped),
+                                        Ok(decided),
                                         &widened,
                                         widened_round,
                                         &originals,
@@ -756,7 +759,7 @@ impl ConsolidationExecutor<'_> {
                                     )
                                     .await
                                 }
-                                Ok(false) => {
+                                Ok(None) => {
                                     Ok(charges
                                         .park_for(stop.park_reason(), DreamerParkCause::Retry))
                                 }
@@ -806,9 +809,13 @@ impl ConsolidationExecutor<'_> {
                                             // the attempt under its durable
                                             // trap: settle the trapped exit;
                                             // the rerun must not extract past
-                                            // it (FIX 12487 round 2).
-                                            Ok(true) => Ok(PartitionRun::Trapped),
-                                            Ok(false) => {
+                                            // it (FIX 12487 round 2). A spent
+                                            // seat's refusal waits on that
+                                            // seat: the rerun must not ask it
+                                            // again before its available
+                                            // write (review round 2 of #7340).
+                                            Ok(Some(decided)) => Ok(decided),
+                                            Ok(None) => {
                                                 self.boxed_run_partition_attempt(
                                                     &payload,
                                                     &fresh,
@@ -846,23 +853,25 @@ impl ConsolidationExecutor<'_> {
                                     // receipts instead of refunding at zero
                                     // (FIX 12487 round 1). A tally failure is
                                     // a genuine store failure and propagates.
-                                    let trapped =
+                                    let decided =
                                         super::super::step_charge::tally_extracted_outcomes(
                                             ctx.vault,
                                             *extracted,
                                             &mut charges,
                                         )?;
-                                    if trapped {
-                                        // The trap decided first, at prefix
-                                        // time; the reopen failure is moot
-                                        // (the signal-resumed attempt
-                                        // re-opens fresh then). Deferring
-                                        // instead would requeue behind the
-                                        // standing trap park (FIX 12487
-                                        // round 2).
+                                    if let Some(decided) = decided {
+                                        // The trap or the spent seat decided
+                                        // first, at prefix time; the reopen
+                                        // failure is moot (the resumed
+                                        // attempt re-opens fresh then).
+                                        // Deferring instead would requeue
+                                        // behind the standing trap park
+                                        // (FIX 12487 round 2), or ask the
+                                        // seat again before its available
+                                        // write (review round 2 of #7340).
                                         self.boxed_settle_partition_run(
                                             &resources,
-                                            Ok(PartitionRun::Trapped),
+                                            Ok(decided),
                                             &widened,
                                             widened_round,
                                             &originals,

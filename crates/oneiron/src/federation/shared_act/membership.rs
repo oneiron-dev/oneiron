@@ -103,29 +103,31 @@ impl<'writer, 'env> SharedMemberDeparture<'writer, 'env> {
     }
 }
 
-/// Higher ranks hold more; a change to a lower rank revokes held slips. A
-/// Deputy sits above Admin: a move from Deputy to Admin drops its delegated
-/// Owner powers.
-const fn rank(role: Role) -> u8 {
+/// The member ladder: higher ranks hold more, and a change to a lower rank
+/// revokes held slips. A Deputy sits above Admin: a move from Deputy to Admin
+/// drops its delegated Owner powers. Steward is a named grant preset, not a
+/// rung (ARCH-0043; lead 10 Nov 06:5x), so it has no rank.
+const fn rank(role: Role) -> Option<u8> {
     match role {
-        Role::Owner => 6,
-        Role::Deputy => 5,
-        Role::Admin => 4,
-        Role::Steward => 3,
-        Role::Member => 2,
-        Role::Viewer => 1,
-        Role::Delegate | Role::Guest => 0,
+        Role::Owner => Some(6),
+        Role::Deputy => Some(5),
+        Role::Admin => Some(4),
+        Role::Member => Some(2),
+        Role::Viewer => Some(1),
+        Role::Delegate | Role::Guest => Some(0),
+        Role::Steward => None,
     }
 }
 
 /// Whether moving a member from `from` to `to` (`None` leaves the vault)
-/// revokes the slips they hold: a lower rank, or a move into or out of
-/// Steward. A Steward's verbs (read, derive, archive, delete) are neither a
-/// subset nor a superset of a Member's (read, write) or an Admin's, so a
-/// slip minted under one never stands under the other.
+/// revokes the slips they hold: a lower rank on the ladder, or any move
+/// into or out of Steward. A Steward's verbs (read, derive, archive,
+/// delete) are neither a subset nor a superset of a Member's (read, write)
+/// or an Admin's, so a slip minted under one never stands under the other.
 fn move_revokes_slips(from: Role, to: Option<Role>) -> bool {
-    to.is_none_or(|to| {
-        rank(to) < rank(from) || (to != from && (to == Role::Steward || from == Role::Steward))
+    to.is_none_or(|to| match (rank(from), rank(to)) {
+        (Some(from), Some(to)) => to < from,
+        _ => to != from,
     })
 }
 
@@ -196,6 +198,31 @@ impl Vault {
                 || stewards.contains(&grant.member_ref)
         });
         Ok(grants)
+    }
+    /// Steward and Deputy are the owner's to give: a role change or an
+    /// invitation that names either needs an Owner of the vault, and an
+    /// Admin's AssignRole and AddMember powers never reach them. Steward:
+    /// ARCH-0043, an Admin "cannot self-grant blanket access" (lead 10 Nov
+    /// 06:5x). Deputy: Admin plus the delegated Owner Grant (ARCH-0082),
+    /// which the house door already refuses an Admin (Engine ruling
+    /// C1-DEPUTY-GIVER, 13 Nov).
+    fn reserved_role_given_by_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        giver: EntityId,
+        role: Role,
+    ) -> Result<()> {
+        if matches!(role, Role::Steward | Role::Deputy)
+            && self.member_role_in_txn(txn, vault_id, giver)? != Some(Role::Owner)
+        {
+            return Err(crate::error::Error::Claim(
+                crate::error::ClaimError::ActorLacksClaimAuthority {
+                    reason: "only an owner of the vault gives the Steward or Deputy role",
+                },
+            ));
+        }
+        Ok(())
     }
     /// `member`'s one membership role in the vault, delegate grants aside.
     pub(super) fn member_role_in_txn(
@@ -701,6 +728,7 @@ impl Vault {
                     })
                     .unwrap_or(Role::Member);
                 non_root(Some(role))?;
+                self.reserved_role_given_by_owner_in_txn(txn, vault_id, inviter, role)?;
                 if !crate::consent::person_is_live_in_txn(self, txn, &member)?
                     || self.member_role_in_txn(txn, vault_id, member)?.is_some()
                 {
@@ -739,8 +767,9 @@ impl Vault {
             vault_id,
             Some(OrgAdminPower::AssignRole),
             ask,
-            |txn, _, now, receipt| {
+            |txn, giver, now, receipt| {
                 non_root(Some(role))?;
+                self.reserved_role_given_by_owner_in_txn(txn, vault_id, giver, role)?;
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
                     .ok_or_else(invalid)?;

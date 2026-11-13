@@ -311,6 +311,7 @@ impl ConsolidationExecutor<'_> {
         let mut replies = Vec::new();
         let mut refused = None;
         let mut budget_refused = None;
+        let mut seat_refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
         for (
@@ -336,10 +337,30 @@ impl ConsolidationExecutor<'_> {
                 SliceFate::BudgetRefused { reason, refusal } => {
                     budget_refused.get_or_insert((reason, refusal));
                 }
+                SliceFate::SeatRefused {
+                    reason,
+                    seat,
+                    reset_at_s,
+                } => {
+                    seat_refused.get_or_insert((reason, seat, reset_at_s));
+                }
             }
         }
         if trapped {
             return Ok(PartitionRun::Trapped);
+        }
+        // A spent seat waits for its login or its reset, even once the pass
+        // is out of time or stopped: a checkpoint would let a later pass ask
+        // the seat again before its available write. A spend scope's refusal
+        // for good still comes first (SEAT-PARK-MODEL-STEP-PATH).
+        if budget_refused.is_none()
+            && let Some((reason, seat, reset_at_s)) = seat_refused
+        {
+            return Ok(PartitionRun::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            });
         }
         if checkpoint || ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
