@@ -103575,6 +103575,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/origin_serve_lazy_fetch_pinned.rs",
+     "purpose": "Census L4-32, ARCH-0068 #push-cert-open: \"Pin `GIT_NO_LAZY_FETCH=1` for the backend, or refuse promisor…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -106546,7 +106554,7 @@
    "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7493,
-   "test_files": 1204
+   "test_files": 1205
   },
   "oneiron-agent-runtime": {
    "files": [

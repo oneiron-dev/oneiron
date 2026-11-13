@@ -8546,6 +8546,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/off_record_continuation_shell.rs` | test | s | — | — | Each on-record stretch of an off-record session is a conversation of its own (FIX 22388) |
 | `tests/origin_lfs_path_policy.rs` | test | s | — | — | NO-DOOR REPO-LFS-PATH-POLICY (tests/e2e/code-custody.test.ts CODE-CUSTODY-06; Engine CODECUSTODY-LFS Q1 =… |
 | `tests/origin_register_host_git.rs` | test | s | — | — | Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`) |
+| `tests/origin_serve_lazy_fetch_pinned.rs` | test | s | — | — | Census L4-32, ARCH-0068 #push-cert-open: "Pin `GIT_NO_LAZY_FETCH=1` for the backend, or refuse promisor… |
 | `tests/outbound_undo_send.rs` | test | m | — | — | DEC-0006 #undo-send (owner ruling REV-8 = B, 2026-10-09): "undo send is a great idea, yeah. like email has… |
 | `tests/owner_approval_criticality_floor.rs` | test | m | — | — | The owner's approval lands past the criticality floor ([CRITICALITY-FLOOR-PENDS-OWNER-WRITES]) |
 | `tests/owner_export_keeps_credentials.rs` | test | L | — | — | Public-path pins for the Owner's whole-vault archive credential promises (ARCH-0038 #promise-cons-06, owner… |
