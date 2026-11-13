@@ -211,27 +211,8 @@ pub struct ClaimSettlement {
     pub warnings: Vec<SettleWarning>,
 }
 
-/// Why a committed settlement warns (FIX 7600).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SettleWarningCode {
-    /// The approved claim's VAD consolidation failed after the commit: the
-    /// settlement stands, and the claim's VAD is pending.
-    VadPending,
-}
-
-/// A warning a committed settlement carries: a stable code, the claim it is
-/// about and one human line (FIX 7600). The settlement it rides on is
-/// durable; the warning names work still owed after it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SettleWarning {
-    /// Why it warns.
-    pub code: SettleWarningCode,
-    /// The claim it is about (32 hex).
-    pub claim_ref: String,
-    /// One human line.
-    pub detail: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::claims::settle::{SettleWarning, SettleWarningCode};
 
 /// What a review reads of one claim, in one snapshot.
 struct ReviewedProposal {

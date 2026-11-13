@@ -5,8 +5,6 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -26,22 +24,15 @@ pub struct GoalAxisPlan {
     pub pulls_per_axis: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct AxisScores {
-    pub before: f64,
-    pub after: f64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::goal_axes::{
+    AxisScores, ConfidenceInterval, GoalAxisReport, OnlineAxisMeasurement, OnlineAxisOutcome,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AxisArm {
     Incumbent,
     Candidate,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ConfidenceInterval {
-    pub lower: f64,
-    pub upper: f64,
 }
 
 /// One attributed live observation, including the person's time spent on it.
@@ -101,40 +92,6 @@ pub trait GoalAxisBandits {
         let _ = notes;
         self.for_proposal(proposal)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OnlineAxisOutcome {
-    CandidateBetter,
-    IncumbentBetter,
-    Inconclusive,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OnlineAxisMeasurement {
-    pub axis: String,
-    pub before_pulls: u32,
-    pub after_pulls: u32,
-    pub before: ConfidenceInterval,
-    pub after: ConfidenceInterval,
-    /// Person-time recorded on the slice's runs, by arm, in minutes.
-    pub human_minutes: AxisScores,
-    /// The pulls of each arm whose run carried recorded person-time.
-    pub before_timed: u32,
-    pub after_timed: u32,
-    pub outcome: OnlineAxisOutcome,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GoalAxisReport {
-    pub held_out_receipts: Vec<String>,
-    pub offline: Vec<(String, AxisScores)>,
-    pub online: Vec<OnlineAxisMeasurement>,
-    /// Mandatory cost axis: the mean person-time of one timed live run, by
-    /// arm, in minutes. `None` while either arm has no timed run. Never
-    /// included in an online success rate.
-    pub human_minutes: Option<AxisScores>,
 }
 
 fn invalid(reason: &str) -> Error {

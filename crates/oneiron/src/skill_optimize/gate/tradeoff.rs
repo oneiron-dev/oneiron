@@ -51,14 +51,8 @@ const PREFERENCES_PREFIX: &[u8] = b"skill_optimize/tradeoff_preferences/v1\0";
 const ASK_PREFIX: &[u8] = b"skill_optimize/tradeoff_ask/v1\0";
 const LABEL: &str = "skill tradeoff record";
 
-/// A rule matches the exact sets of axes gained and lost, not unbound prose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TradeoffRule {
-    pub gains: BTreeSet<String>,
-    pub losses: BTreeSet<String>,
-    pub choice: TradeoffChoice,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::gate::tradeoff::TradeoffRule;
 
 /// The preference part of a skill's goal record. The responsible person
 /// authors the rules and the judgment band. Learned rules come only from that

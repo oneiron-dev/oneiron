@@ -37,9 +37,8 @@ impl ArtifactServeTier {
     }
 }
 
-fn link_digest(token: &[u8; 32]) -> [u8; 32] {
-    blake3::derive_key("oneiron artifact link token v1", token)
-}
+#[doc(hidden)]
+use oneiron_verb_wire::artifact_hosting::access::link_digest;
 
 fn matches_token(capability: ArtifactLinkCapability, token: Option<&str>) -> bool {
     let Some(token) = token.and_then(|value| parse_codebase_fork_hash_hex(value).ok()) else {
