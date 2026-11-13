@@ -6,6 +6,7 @@
 
 pub mod agent_definition_scans;
 pub mod archive_import;
+pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
 pub mod callable_skill;
