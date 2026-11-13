@@ -281,6 +281,15 @@ fn record_step_read(
     }
 }
 
+/// Deletes `attempt`'s carried-spend row once no retry follows the try: it
+/// failed for good, or it completed. A row that does not delete stays until
+/// the ledger deletes its attempt row.
+pub(super) fn drop_carried_spend(vault: &Vault, attempt: AttemptId) {
+    if let Err(error) = AttemptQueue::new(vault).forget_carried_spend(attempt) {
+        tracing::warn!(kind = ?error.kind(), ?attempt, "a try's carried spend was not dropped");
+    }
+}
+
 impl StepRunner {
     /// Drops what a failed try spent once no retry follows it, here and in
     /// its carried-spend row.
@@ -289,9 +298,7 @@ impl StepRunner {
             .lock()
             .expect("step spend mutex poisoned")
             .remove(&attempt);
-        if let Err(error) = AttemptQueue::new(vault).forget_carried_spend(attempt) {
-            tracing::warn!(kind = ?error.kind(), ?attempt, "a failed try's carried spend was not dropped");
-        }
+        drop_carried_spend(vault, attempt);
         // Nothing can parent on this try's ticket anymore (FIX 11960).
         if let Ok(entity) = oneiron::EntityId::from_bytes(*attempt.as_bytes()) {
             forget_work_parent(&entity);
@@ -761,7 +768,7 @@ impl StepRunner {
         // chain spent, or this same try did when it parked on its payer
         // (FIX 805). After a restart the failed try's carried-spend row holds
         // what the chain spent (ARCH-0053 #paid-leg-built), and the retry
-        // takes it. With no row left (written before the row existed, or not
+        // inherits it. With no row (written before the row existed, or not
         // written), each earlier try is replayed at one reservation per rung
         // of the ladder it has now: an estimate, exact only when every
         // earlier rung went out metered on the same ladder and routes.
@@ -778,12 +785,12 @@ impl StepRunner {
                     .remove(&attempt.id)
                     .or_else(|| attempt.retry_of.and_then(|parent| spent.remove(&parent)))
             };
-            // The row is taken either way, so none outlives its retry; this
-            // process's value, when it holds one, is the same or newer.
-            let stored = match attempt.retry_of {
-                Some(parent) => AttemptQueue::new(vault).take_carried_spend(parent)?,
-                None => None,
-            };
+            // The row moves to this try as it is read, so a crash before
+            // this try settles leaves it where a reclaim of the try finds
+            // it; this process's value, when it holds one, is the same or
+            // newer.
+            let stored =
+                AttemptQueue::new(vault).inherit_carried_spend(attempt.id, attempt.retry_of)?;
             held.or(stored)
         } else {
             None
