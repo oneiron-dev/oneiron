@@ -51,9 +51,11 @@ const BACKGROUND_LINE_SECS: u64 = 86_400;
 /// such row it has no limit, and spend is as it was.
 ///
 /// Each day of the vault's clock gets one line, built when the day's first
-/// request comes, so its policy rows are read again each day. A request on a
-/// bound line is never sent on another: when the vault is gone, or its
-/// policy cannot build the line, the request is refused.
+/// request comes, so its policy rows are read again each day. A paid request
+/// on a bound line is never sent on another: when the vault is gone, or its
+/// policy cannot build the line (a fail-closed manifest), it meets a line
+/// with nothing left and is refused, while free work on the owner's own
+/// device still goes.
 ///
 /// Until a vault binds it (`init`'s probes, a slot no vault serves), each
 /// request meters on a line of its own, as [`AdmittedRequests::on_line`]
@@ -117,12 +119,7 @@ impl BackgroundLine {
 }
 
 fn line_refused(why: &str) -> oneiron::Error {
-    oneiron::Error::UpstreamToolFailure {
-        tool: "embedder-remote",
-        code: format!(
-            "budget denied: the {BACKGROUND_EMBEDDING_LINE} line refused the request: {why}"
-        ),
-    }
+    oneiron::Error::InvalidConfig(format!("the {BACKGROUND_EMBEDDING_LINE} line: {why}"))
 }
 
 /// What an endpoint's door is admitted by, common to the primary endpoint's
@@ -370,7 +367,22 @@ impl PaidRequests for AdmittedRequests {
         let (run, meter) = match self.background.line() {
             // The vault's background line: every request spends on the
             // day's one meter, so its policy caps bind their total.
-            Some(line) => (format!("{BACKGROUND_EMBEDDING_LINE}:{request}"), line?),
+            Some(line) => {
+                let run = format!("{BACKGROUND_EMBEDDING_LINE}:{request}");
+                let meter = line.unwrap_or_else(|error| {
+                    tracing::warn!(
+                        %error,
+                        "the background embedding line was not built; a paid request is refused"
+                    );
+                    BudgetGuard::with_reserve_units(
+                        run.clone(),
+                        0,
+                        1,
+                        BudgetExhaustionPolicy::Suspend,
+                    )
+                });
+                (run, meter)
+            }
             // A meter of its own per request: its lease ids are the
             // request's, and nothing outlives the call.
             None => {
