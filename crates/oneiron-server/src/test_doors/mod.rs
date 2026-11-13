@@ -5,6 +5,7 @@
 //! `--all-features` build reaches them. Hidden; never API.
 
 pub mod big_rung;
+pub mod booking_turn_line;
 pub mod build_server;
 pub mod coach_round;
 pub mod lfs_install_line;

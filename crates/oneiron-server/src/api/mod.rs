@@ -235,6 +235,9 @@ pub(crate) use self::discover::*;
 pub(crate) use self::entity::*;
 use self::error_map::{core_engine_error, json_rejection_error, query_rejection_error};
 pub(crate) use self::lease::*;
+// The integration tests' door to the booking turn's line (census L3-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::booking_anti_abuse::BookingHttpDisposition;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::draft_checked_span;

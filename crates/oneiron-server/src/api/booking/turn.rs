@@ -24,7 +24,7 @@ use crate::wire_telemetry::LimitRow;
 /// keys windows of its own (`BookingTransportContext::actor_key`), so no
 /// caller's wait is spent on another's requests, and a refused window spends
 /// nothing, so a request that waits holds nothing.
-pub(super) struct Turn<'a> {
+pub(crate) struct Turn<'a> {
     server: &'a SyncServer,
     authenticated: bool,
     deadline: Instant,
@@ -47,7 +47,7 @@ impl<'a> Turn<'a> {
 
     /// What admission's `disposition` comes to: `Some` to act on, or `None`
     /// once this request has waited and should be admitted again.
-    pub(super) async fn after(
+    pub(crate) async fn after(
         &mut self,
         disposition: BookingHttpDisposition,
     ) -> Result<Option<BookingHttpDisposition>, ApiError> {
@@ -73,6 +73,20 @@ impl<'a> Turn<'a> {
             return Err(waited_out());
         }
         Ok(None)
+    }
+}
+
+// RED PROOF ONLY (census L3-11): the integration tests' door builds main's
+// turn for an authenticated request; main has no line to take a place in.
+#[cfg(oneiron_test_support)]
+impl<'a> Turn<'a> {
+    pub(crate) fn authenticated(server: &'a SyncServer) -> Self {
+        Self {
+            server,
+            authenticated: true,
+            deadline: Instant::now() + server.config.limits.queue_wait(),
+            asked: false,
+        }
     }
 }
 
