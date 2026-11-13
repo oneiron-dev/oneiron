@@ -212,6 +212,18 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         }
+        // FIX SELECTOR-SCOPE-SUMMARY-WORDS (OPUS-LEAKS): a row that carries
+        // other rows' words (a scope SUMMARY, the TURN that copies one, a
+        // merge header) reaches the member only when it reads every one of
+        // those sources at the same gate, as its scoped read admits it.
+        match member_reads_word_sources(vault, &rtxn, member_access.as_ref(), &id, blob) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
         match super::super::scope::settled_position_selected(&id, blob, &scope, scope_position) {
             Ok(true) => {}
             Ok(false) => return,
@@ -556,4 +568,41 @@ pub(in crate::sync::selector) fn member_reads_labels(
         Err(Error::InvalidClaimBody(_)) => Ok(false),
         Err(error) => Err(error),
     }
+}
+
+/// Whether the selector's member reads, at the relationship gate, every
+/// source the words of the row `raw` of `id` came from (FIX
+/// SELECTOR-SCOPE-SUMMARY-WORDS): the sources
+/// `scope_summary::word_sources_in` names, as the scoped read admits a
+/// derived row (`claim/scoped_read/visibility.rs`). A row with words of its
+/// own passes; one whose sources no longer resolve, or name a row not held
+/// here, is withheld. `None` is an Owner's member, which reads every row.
+/// Only a member the label gate binds pays for the lookup.
+fn member_reads_word_sources(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    member: Option<&crate::access_grant::AccessContext<'_>>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    if member.is_none() {
+        return Ok(true);
+    }
+    let sources = match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
+        Ok(crate::scope_summary::WordSources::Own) => return Ok(true),
+        Ok(crate::scope_summary::WordSources::Unresolved) => return Ok(false),
+        Ok(crate::scope_summary::WordSources::From(sources)) => sources,
+        // A CLAIM body that does not decode is withheld, as at the label gate.
+        Err(Error::InvalidClaimBody(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for source in &sources {
+        let Some(source_raw) = vault.get_raw_in(rtxn, source)? else {
+            return Ok(false);
+        };
+        if !member_reads_labels(vault, rtxn, member, source, &source_raw)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
