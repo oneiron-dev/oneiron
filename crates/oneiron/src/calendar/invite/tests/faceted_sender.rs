@@ -67,6 +67,7 @@ fn faceted_sender_selection_preserves_actor_custody_and_ambiguity_checks() -> cr
         name: grant.custody_record_ref.clone(),
         class: crate::secret_custody::CustodyClass::CrossVault,
         device_only: true,
+        model_reveal_allowed: false,
         value_bytes: b"test-delegated-token".to_vec(),
         status: crate::secret_custody::SecretCustodyStatus::Active,
         registered_at: 1_800_000_000,

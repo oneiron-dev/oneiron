@@ -43,12 +43,8 @@ mod authority_log;
 mod facet_taint_session;
 mod habit_streak;
 mod lexical_hints_lifecycle;
-// FIX [LIBTEST-QUARANTINE-BATCH-TESTS-LEXICAL-HINTS-POLICY]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 mod lexical_hints_policy;
 mod provenance_edges;
-// FIX [LIBTEST-QUARANTINE-BATCH-TESTS-REPLICATED-TEXT]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod replicated_text;
 mod secret_policy_claim;
 mod seeded_actors;

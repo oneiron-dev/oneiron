@@ -42,8 +42,6 @@ mod carry_forward;
 #[cfg(feature = "sync")]
 mod carry_forward_sync;
 mod charter_ceiling;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CLAIM-CANDIDATE-LINEAGE]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;

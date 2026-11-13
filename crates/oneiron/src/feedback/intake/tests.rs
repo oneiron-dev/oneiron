@@ -3,10 +3,8 @@ use crate::feedback::{FeedbackBundle, FeedbackPlatform, encode_feedback_bundle};
 
 #[test]
 fn identical_feedback_refuses_deleted_or_replaced_evidence() -> Result<()> {
-    let config = crate::VaultConfig {
-        dimensions: 2,
-        ..crate::test_util::embedding_test_config()
-    };
+    let mut config = crate::test_util::embedding_test_config();
+    config.dimensions = 2;
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let bundle = FeedbackBundle::new(FeedbackCategory::Bug, "1.0", FeedbackPlatform::current());
     let bytes = encode_feedback_bundle(&bundle).unwrap();
@@ -39,10 +37,8 @@ fn identical_feedback_refuses_deleted_or_replaced_evidence() -> Result<()> {
 
 #[test]
 fn queue_identity_mismatch_is_refused_by_every_reader_and_mutator() -> Result<()> {
-    let config = crate::VaultConfig {
-        dimensions: 2,
-        ..crate::test_util::embedding_test_config()
-    };
+    let mut config = crate::test_util::embedding_test_config();
+    config.dimensions = 2;
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let mut bundle = FeedbackBundle::new(FeedbackCategory::Bug, "1.0", FeedbackPlatform::current());
     let bytes = encode_feedback_bundle(&bundle).unwrap();
@@ -87,10 +83,8 @@ fn feedback_digest_omits_proposals_with_dead_or_changed_bundle_evidence() -> Res
         Some(crate::DeleteReason::UserDelete),
         None,
     ] {
-        let config = crate::VaultConfig {
-            dimensions: 2,
-            ..crate::test_util::embedding_test_config()
-        };
+        let mut config = crate::test_util::embedding_test_config();
+        config.dimensions = 2;
         let (_dir, vault) = crate::test_util::open_test_vault_with(config);
         let mut bundle =
             FeedbackBundle::new(FeedbackCategory::Bug, "1.0", FeedbackPlatform::current());

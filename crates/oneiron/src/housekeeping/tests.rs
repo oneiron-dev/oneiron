@@ -326,8 +326,6 @@ fn a_confirm_walk_that_spans_passes_ends_and_retires_the_deadline_it_covered() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-HOUSEKEEPING-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 /// Sol R4 F2 (#1456): an owner's erasure run cut short before it compacts is
 /// still the owner's when the next pass retries it, so the retry compacts the
 /// history the owner asked to drop, with no obligation due. A scheduled run
@@ -337,9 +335,10 @@ fn a_confirm_walk_that_spans_passes_ends_and_retires_the_deadline_it_covered() {
 fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
-    let config = || VaultConfig {
-        store_clock: clock.bundle(),
-        ..crate::test_util::embedding_test_config()
+    let config = || {
+        let mut config = crate::test_util::embedding_test_config();
+        config.store_clock = clock.bundle();
+        config
     };
     {
         let vault = Vault::open(dir.path(), config()).expect("open vault");
@@ -388,8 +387,6 @@ fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-HOUSEKEEPING-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 /// Engine edge on Sol R4 F2 (#1456): a window a caller holds when the
 /// owner's erasure run comes is left out of it, and the run stays the
 /// owner's. Once the window is free, the retry compacts it, with no
@@ -411,16 +408,9 @@ fn a_window_held_through_the_owners_erasure_run_is_compacted_on_its_retry() {
         };
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
-    let vault = Arc::new(
-        Vault::open(
-            dir.path(),
-            VaultConfig {
-                store_clock: clock.bundle(),
-                ..crate::test_util::embedding_test_config()
-            },
-        )
-        .expect("open vault"),
-    );
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(Vault::open(dir.path(), config).expect("open vault"));
     // A persisted window, and no obligation left.
     let erased = EntityId::now();
     vault

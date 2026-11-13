@@ -232,8 +232,6 @@ pub use engine_controls::{
 pub(crate) use substrate_reads::{SubstrateRead, admit_substrate_read, admit_substrate_read_by};
 #[cfg(test)]
 mod shared_creation_tests;
-// FIX [LIBTEST-QUARANTINE-FEDERATION-STEWARD-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod steward_tests;
 #[cfg(test)]
