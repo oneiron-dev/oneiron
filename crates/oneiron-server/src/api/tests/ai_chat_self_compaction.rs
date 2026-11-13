@@ -111,7 +111,7 @@ fn reply(body: &Value) -> String {
 
 /// A served vault whose code-mode writer compaction is live on the fake
 /// model at `base_url`, a 1500-token window with one hot turn, and whose
-/// self row reads the retained turns at any locality.
+/// self row reads the retained turns with the widest locality ceiling.
 async fn retained_row_server(
     base_url: &str,
 ) -> (
@@ -224,8 +224,8 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
     let (_dir, _prompts, server, _host) = retained_row_server(&fake.base_url).await;
     let conversation = oneiron::EntityId::now().to_hex();
 
-    // Each answer fills about 900 tokens: past the 1500-token window, the
-    // turns behind the hot one compact.
+    // The cold-start threshold is 750 tokens for this 1500-token window.
+    // A tiny first flight can be rejected; later flights include a long answer.
     let mut turn = 0;
     let mut compacted = false;
     while turn < 6 && !compacted {
