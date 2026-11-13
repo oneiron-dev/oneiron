@@ -66,8 +66,17 @@ pub(crate) enum TrayRemoval {
     /// The obligation stays open and nothing is shown here: an erasure, or a
     /// revision change whose put shows the item for the new revision.
     Silent,
-    /// The owner's answer to this item closed the obligation.
-    Answered,
+    /// The owner's answer to this item closed the obligation: only
+    /// `crate::gate::close_owner_answer_obligation_in_txn` builds the proof
+    /// it carries (FIX 22394).
+    Answered(crate::gate::ObligationAnswered),
+}
+
+impl TrayRemoval {
+    /// Whether an owner's answer closed the obligation.
+    pub(crate) const fn is_answered(self) -> bool {
+        matches!(self, Self::Answered(_))
+    }
 }
 
 impl Store {
@@ -166,7 +175,7 @@ impl Store {
             }
             // A confirm parked before obligations were recorded is one, and
             // only an answer removes it without recording it.
-            if removal != TrayRemoval::Answered
+            if !removal.is_answered()
                 && crate::store::critical_confirm_record::pending_row_holds_critical_confirm(
                     &record,
                 )

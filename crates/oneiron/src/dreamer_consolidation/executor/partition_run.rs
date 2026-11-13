@@ -217,6 +217,13 @@ impl ConsolidationExecutor<'_> {
             Ok(PartitionRun::BudgetRefused { reason, refusal }) => {
                 Ok(charges.fail_refused(&reason, refusal))
             }
+            // A spent model seat refused a step: the try parks on the seat
+            // with what it already spent (SEAT-PARK-MODEL-STEP-PATH).
+            Ok(PartitionRun::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            }) => Ok(charges.park_on_seat(&reason, seat, reset_at_s)),
             // A turn demoted after the model answered waits too (FIX 6060),
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {

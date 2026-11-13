@@ -354,6 +354,20 @@ pub struct MentionProvenance {
     pub end: u64,
 }
 
+/// One page of the nightly re-check at `now` (seconds), then every open ask:
+/// the test door's view of the asks a saved tag set opens (census item 12,
+/// the entity linker cascade).
+#[cfg(oneiron_test_support)]
+pub(crate) fn recheck_page_for_test(vault: &Vault, now: u64) -> Result<Vec<IdentityAsk>> {
+    recheck::run_page(vault, now)?;
+    let txn = vault.store.env.read_txn()?;
+    Ok(ASKS
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .map(|(_, ask)| ask)
+        .collect())
+}
+
 /// The name of a mention an effect may not act on yet: its ask is open, or
 /// it is still uncertain and no saved hint settles it. Provenance that names
 /// no saved mention is unsettled too, with an empty name. Reads only, in the

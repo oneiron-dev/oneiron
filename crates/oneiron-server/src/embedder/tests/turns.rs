@@ -231,6 +231,9 @@ fn a_recall_never_returns_a_turn_beside_its_own_message() {
             json!([{
                 "short_id": car["message_short_ids"][1],
                 "value_text": "The mechanic says the automobile needs new brakes.",
+                // 031d8b2d610 (#2170, OF-063): the cited message carries its
+                // typed record ref, the one the witness receipt names.
+                "record": car["messages"][1],
             }]),
             "the turn quotes the message the words matched: {pack}"
         );
