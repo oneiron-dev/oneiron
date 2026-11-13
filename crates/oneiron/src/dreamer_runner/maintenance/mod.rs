@@ -53,7 +53,7 @@ pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod person_threshold;
 mod proposals;
-mod strength;
+pub mod strength;
 pub use applied::{
     AppliedMaintenance, IDENTITY_PROVISIONAL_KIND, MAINTENANCE_APPLY_KIND, MAINTENANCE_REVERT_KIND,
     MaintenanceRevert, MaintenanceTarget,

@@ -8411,7 +8411,9 @@ name = "oneiron-driver"
 version = "0.1.0"
 dependencies = [
  "oneiron",
+ "oneiron-dreamer",
  "oneiron-llm-local",
+ "oneiron-remote",
  "rmpv",
  "serde_json",
  "tempfile",
