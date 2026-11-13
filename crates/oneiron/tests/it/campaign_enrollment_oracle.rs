@@ -178,6 +178,8 @@ fn install_fixture(vault: &Vault) -> Fixture {
             schema_version: CAMPAIGN_SCHEMA_VERSION,
             name: "enrollment oracle campaign".to_owned(),
             reply_snooze_policy: None,
+            voice_guide_ref: None,
+            copy_review: None,
         },
         1,
     )
@@ -884,6 +886,8 @@ fn runner_derives_cause_and_outbound_request_from_persisted_state() -> Result<()
             schema_version: CAMPAIGN_SCHEMA_VERSION,
             name: "enrollment oracle foreign campaign".to_owned(),
             reply_snooze_policy: None,
+            voice_guide_ref: None,
+            copy_review: None,
         },
         102,
     )?
