@@ -6,9 +6,10 @@
 //! (`SecretScanMode::Off`). So `vault.assets.resolve` serves no such clip,
 //! `vault.images.view` no such image, and `graph_fs.cat` serves such a body as
 //! an entity view does, with the token redacted. A graph-fs listing of an entity
-//! whose asset is withheld answers rather than failing. The clean twin of each
-//! is served its stored bytes unchanged, so each withhold is the scan, not the
-//! lane. Only public doors are used, so the file builds on main.
+//! whose asset is withheld answers rather than failing, and so does an indexed
+//! claim grep over a claim the redaction leaves no claim. The clean twin of
+//! each is served its stored bytes unchanged, so each withhold is the scan, not
+//! the lane. Only public doors are used, so the file builds on main.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test masked_forms_and_graph_fs_release_scan`
 #![cfg(oneiron_test_support)]
@@ -24,7 +25,8 @@ use oneiron::embed::InputKind;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::graph_fs::GraphFsReference;
 use oneiron::memory::graph_fs_doors::{
-    GraphFsEncoding, GraphFsLsRequest, GraphFsMountRequest, GraphFsOutput, GraphFsPathRequest,
+    GraphFsEncoding, GraphFsGrepRequest, GraphFsLsRequest, GraphFsMountRequest, GraphFsOutput,
+    GraphFsPathRequest,
 };
 use oneiron::memory::{
     AssetIngestRequest, AssetResolveRequest, ImageViewRequest, Memory, MemoryError,
@@ -34,8 +36,8 @@ use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange,
-    Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
 };
 
 const FORMS_TEST_NOW: u64 = 1_700_000_000;
@@ -488,4 +490,91 @@ fn graph_fs_ls_lists_an_entity_whose_asset_is_withheld() {
             "a masked reader cats no asset body that holds a token",
         );
     }
+}
+
+/// A claim whose predicate holds a token, stored with the scan off, has no
+/// lifted key, and serve redacts its predicate out of the claim grammar. A
+/// masked reader's indexed `grep -r` over `/claims` still answers (at the
+/// first head of this fix the redacted body failed to decode and failed the
+/// whole grep), lists the clean twin, and serves no token. The owner's grep
+/// lists both claims, so both are indexed and the grep takes the index.
+#[test]
+fn graph_fs_claim_grep_answers_past_a_claim_whose_predicate_holds_a_key() {
+    let fixture = forms_fixture();
+    let token = forms_token();
+    let subject = forms_put(&fixture.vault, ENTITY_TYPE_PERSON, b"claim subject\n");
+    let claim = |predicate: &str| {
+        let id = EntityId::now();
+        let body = ClaimBody::new(
+            predicate,
+            ClaimSubject::Entity(subject),
+            rmpv::Value::from("formsneedle"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .expect("the predicate is in the grammar");
+        fixture
+            .vault
+            .put_claim(&id, &body, FORMS_TEST_TIME, FORMS_TEST_NOW)
+            .expect("owner stores the claim with the scan off");
+        fixture
+            .vault
+            .batch()
+            .text(&id, &[("body", "formsneedle")])
+            .commit()
+            .expect("the claim's text is indexed");
+        id
+    };
+    let keyed = claim(&format!("note.{token}"));
+    let clean = claim("note.plain");
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let published = fixture
+        .vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .expect("staged index inputs publish");
+    assert!(
+        published.failed.is_empty(),
+        "every staged index input publishes: {:?}",
+        published.failed,
+    );
+    let grep = |memory: &Memory<'_>| {
+        memory.graph_fs_grep(GraphFsGrepRequest {
+            mount: forms_mount(),
+            path: "/claims".to_owned(),
+            pattern: "formsneedle".to_owned(),
+            recursive: true,
+            cursor: None,
+        })
+    };
+    let line = |id: &EntityId| format!("/claims/{0}:id={0}\t", id.to_hex());
+    let shown = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace(&token, "<token>");
+    let owner = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let owner_served = forms_output_bytes(&grep(&owner).expect("the owner's grep answers"));
+    let owner_text = String::from_utf8_lossy(&owner_served).into_owned();
+    assert!(
+        owner_text.contains(&line(&keyed)) && owner_text.contains(&line(&clean)),
+        "the owner's indexed grep lists both claims: {}",
+        shown(&owner_served),
+    );
+    let memory = fixture.vault.memory(fixture.holder, EdgeActorClass::Agent);
+    let served = match grep(&memory) {
+        Ok(output) => forms_output_bytes(&output),
+        Err(err) => panic!(
+            "a masked reader's grep answers past a claim the redaction leaves no claim: {err:?}"
+        ),
+    };
+    assert!(
+        String::from_utf8_lossy(&served).contains(&line(&clean)),
+        "the masked reader's grep lists the clean claim: {}",
+        shown(&served),
+    );
+    assert!(
+        !forms_holds(&served, token.as_bytes()),
+        "a masked reader's grep serves no token: {}",
+        shown(&served),
+    );
 }
