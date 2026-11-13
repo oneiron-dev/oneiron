@@ -33,6 +33,7 @@ mod anthropic;
 mod broker;
 mod broker_context;
 mod broker_media;
+mod broker_rerank;
 mod broker_responses;
 mod cache_usage;
 mod catalog;
@@ -485,28 +486,30 @@ fn build_provider(
     Ok(Some(backend))
 }
 
-/// The rerank client for `provider`'s reranker `models`.
+/// The rerank client for `provider`'s reranker `models`: over the
+/// provider's own HTTP client, or, for a `key_secret` key, over the
+/// credential broker at `site` with the key read at `keys` (L9-12), as the
+/// offer's T0 custody says.
 fn build_reranker(
     provider: &ProviderConfig,
     models: &[ModelRef],
+    site: Option<&Result<broker::BrokerSite, String>>,
+    keys: Option<&Arc<dyn KeyDoor>>,
 ) -> anyhow::Result<Arc<dyn SingleRouteBackend>> {
     anyhow::ensure!(
         provider.siwc.is_none(),
         "SIWC credentials serve Responses, not reranking"
     );
-    // The credential broker sends chat calls only. A rerank call sent without
-    // it would carry no key, while its offer says the broker holds one.
-    if provider.key_secret.is_some() {
-        anyhow::bail!(
-            "a reranker cannot use a key_secret key yet: the credential broker has no rerank shape"
-        );
-    }
-    let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
+    let transport = if provider.key_secret.is_some() {
+        rerank::RerankTransport::Broker(broker_rerank::BrokerRerank::new(provider, site, keys)?)
+    } else {
+        rerank::RerankTransport::Direct(http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?)
+    };
     let wire_models = models
         .iter()
         .map(|model| Ok((engine_model_id(model, provider)?, model.model.clone())))
         .collect::<anyhow::Result<_>>()?;
-    Ok(Arc::new(rerank::RerankBackend::new(http, wire_models)))
+    Ok(Arc::new(rerank::RerankBackend::new(transport, wire_models)))
 }
 
 /// The output ceiling a provider's wire carries.
