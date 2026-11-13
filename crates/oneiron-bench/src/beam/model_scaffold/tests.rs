@@ -171,6 +171,7 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
                 answer_prompt: Some(AnswerPromptPin::from_exact_text(prompt)),
                 vote_count: 3,
             },
+            replicate_instruction: None,
         },
         answer_prompt: prompt.into(),
         routing_prompt: AnswerPromptPin::from_exact_text("Fixture query routing policy."),
@@ -539,6 +540,7 @@ fn half_credit_moves_a_pick_that_int_cast_scores_as_a_tie() {
     let half = paired::BeamColumns {
         int_cast: 0.0,
         fixed: 0.5,
+        replicate: None,
     };
     assert!(!report.picks.is_empty());
     for pick in &report.picks {
