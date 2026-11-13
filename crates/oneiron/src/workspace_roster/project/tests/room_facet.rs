@@ -99,10 +99,14 @@ fn a_room_turn_keeps_the_facet_it_opened_with() -> Result<()> {
         "the turn reports the room's facet"
     );
     let lists_the_room = |turn: &crate::memory::RoomTurnHandle<'_>| {
-        turn.invoke("rooms.list", serde_json::json!({}))
-            .expect("rooms.list")
-            .to_string()
-            .contains(&room.to_hex())
+        turn.invoke(
+            &crate::verbs::VERB_TABLE,
+            "rooms.list",
+            serde_json::json!({}),
+        )
+        .expect("rooms.list")
+        .to_string()
+        .contains(&room.to_hex())
     };
     assert!(lists_the_room(&turn));
     assert!(reads(&turn, &at_work));
