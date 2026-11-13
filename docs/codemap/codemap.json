@@ -2924,6 +2924,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/boundary_pause.rs",
+     "purpose": "The step-boundary pause: a run's own lease holder moves its running row to `Paused` once the step that took…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/browser_admission.rs",
      "purpose": "Attempt kind for browser program admission",
      "surface": {
@@ -3373,7 +3383,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 9,
       "re-export": 12
      }
@@ -43718,7 +43728,7 @@
      "path": "src/gate/effect/approval_target.rs",
      "purpose": "FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -53740,7 +53750,7 @@
      "purpose": "Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 1,
       "re-export": 3,
@@ -53778,6 +53788,7 @@
      "path": "src/memory/claims/settle.rs",
      "purpose": "One proposed claim's review and settlement (DOOR-115, e2e MEMORY-01): `vault.claims.review` reads one…",
      "surface": {
+      "crate-vis": 1,
       "enum": 5,
       "fn": 9,
       "struct": 7
@@ -53800,7 +53811,7 @@
      "path": "src/memory/claims/settle/conflict_head.rs",
      "purpose": "The head an approved proposal supersedes (e2e MEMORY-01; ARCH-0040 `mcp:5`, ARCH-0003 conflictSet): the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -62882,7 +62893,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/dispatch_pipeline/govern.rs",
@@ -71150,7 +71161,7 @@
      "path": "src/run_tree/signal.rs",
      "purpose": "Durable, branch-addressed Signal inbox",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 8,
       "fn": 7,
       "re-export": 1
      }
@@ -87569,7 +87580,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 10,
       "re-export": 28
      }
@@ -87794,6 +87805,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "GrantRow",
+      "InvalidPadOffer",
       "PadAccessRequest",
       "PadAccessState",
       "PendingPadAccess",
@@ -87802,10 +87815,10 @@
      "path": "src/sync/residence/bundle_access.rs",
      "purpose": "A late joiner's access to the kept pad objects (FIX 4271): the home's custody of the grants, and the outbox…",
      "surface": {
-      "crate-vis": 6,
-      "enum": 1,
-      "fn": 4,
-      "struct": 3
+      "crate-vis": 8,
+      "enum": 2,
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -88789,13 +88802,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/sync/source_audiences/mod.rs",
      "purpose": "Source audiences on the owner's full-window lane (Engine A, 6 Nov 03:46; SYNC-3)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 27
      }
     },
     {
@@ -92371,6 +92384,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FamilyRoundTrip"
+     ],
+     "path": "src/test_doors/approval_target_round_trip.rs",
+     "purpose": "Doors for `tests/approval_target_round_trip.rs` (FIX 22398 APPROVAL-TARGET): the press each approval family…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -92897,7 +92923,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 77,
+      "mod": 79,
       "re-export": 1
      }
     },
@@ -92933,6 +92959,17 @@
      "purpose": "Door for `tests/off_record_continuation_shell.rs` (FIX 22388): the BASE conversation shell an off-record…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/pad_offer_invalidation.rs",
+     "purpose": "Door for `tests/pad_offer_invalidation.rs` (FIX 22389): the home's grant rows of one late joiner, and its…",
+     "surface": {
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -93121,7 +93158,7 @@
      "path": "src/test_doors/source_audience_binding.rs",
      "purpose": "Test doors for a restored source-audience binding whose live policy is absent",
      "surface": {
-      "fn": 4
+      "fn": 7
      }
     },
     {
@@ -101688,7 +101725,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/agent_blast_radius.rs",
@@ -101837,6 +101874,14 @@
      "notable": [],
      "path": "tests/agent_wake_hold.rs",
      "purpose": "The wake hold of a sleeping resident (AGM-4 = C; agent-mind-design-v1 §1.6 #inbox-wake, ARCH-0067…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/approval_target_round_trip.rs",
+     "purpose": "FIX 22398 (APPROVAL-TARGET): every approval family spends what it composed",
      "surface": {}
     },
     {
@@ -103870,6 +103915,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pad_offer_invalidation.rs",
+     "purpose": "FIX 22389 PAD-GRANT: a late joiner that could not use its offered pad grant reports it to the home, and the…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -104277,6 +104330,14 @@
      "notable": [],
      "path": "tests/room_turn_backfill.rs",
      "purpose": "The one-time room-row backfill at writable open (THREAD-TASK-EVERY-ROOM P2; Engine RULING EVERYROOM-P2-SHAPE…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_admission_receipt_names_world.rs",
+     "purpose": "Census row L5-25 (DEC-0005 world privacy, fix 12): every provider call on a private world writes a receipt…",
      "surface": {}
     },
     {
@@ -104861,6 +104922,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/tombstone_publish_policy_prune.rs",
+     "purpose": "FIX 17211: a tombstone publication prunes, in its own commit, the policy revisions no binding reaches any…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/tray_answered_removal.rs",
      "purpose": "FIX 22394 (CONSENT-TRAY): a tray removal that says `Answered` carries the owner's answer",
      "surface": {}
@@ -105187,7 +105256,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106561,7 +106630,7 @@
     "sync": {
      "files": 414,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
@@ -106615,7 +106684,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 80,
+     "files": 82,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106792,8 +106861,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7502,
-   "test_files": 1220
+   "source_files": 7505,
+   "test_files": 1224
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -144120,7 +144189,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LoggedReceipts"
@@ -145853,12 +145922,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GpuDerivationLease",
       "GpuHealth",
       "GpuLease",
+      "GpuPodHours",
       "GpuRegistry",
       "GpuRegistryError"
      ],
@@ -145867,8 +145937,8 @@
      "surface": {
       "const": 2,
       "enum": 1,
-      "fn": 12,
-      "struct": 4
+      "fn": 15,
+      "struct": 5
      }
     },
     {
@@ -145878,15 +145948,16 @@
       "GpuDerivationJob",
       "GpuLeaseGuard",
       "GpuPodConfig",
+      "GpuPodHoursConfig",
       "GpuPool",
       "GpuPoolConfig"
      ],
      "path": "src/runtime/gpu_pool.rs",
      "purpose": "The serve host's owner of the per-region GPU registry",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 13,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -148220,6 +148291,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/artifact_private_owner_read.rs",
+     "purpose": "A private published app serves its vault's owner alone (CROSS-ARCH-0019 #public-backend, PUBLIC-BACKEND = A…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -148369,6 +148448,14 @@
      "notable": [],
      "path": "tests/git_lfs_prehandler_refusal_envelope.rs",
      "purpose": "A slip the owner revoked is refused at the binding door, before any route runs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gpu_pod_hours.rs",
+     "purpose": "A GPU pod with `hours` takes new batches only inside them, read in its fixed UTC offset; a pod without…",
      "surface": {}
     },
     {
@@ -149506,7 +149593,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1864,
-   "test_files": 236
+   "test_files": 238
   },
   "oneiron-skill-attribution": {
    "files": [
