@@ -226,6 +226,9 @@ pub(super) fn scrub_local_only_carriers(
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
         crate::sync::origin_positions::drop_unbound(doc)?;
+        // The policies no binding reaches now go in this commit (fix list
+        // row 17211).
+        crate::sync::source_audiences::prune_unreached_policies(vault, doc, Some(key))?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -714,6 +717,13 @@ fn replay_mirrors(
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {
                 require_history_free_window(vault, window_key)?;
+                // The policies no binding reaches now go in this commit
+                // (fix list row 17211).
+                crate::sync::source_audiences::prune_unreached_policies(
+                    vault,
+                    doc,
+                    Some(window_key),
+                )?;
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
             settled.settle(vault, marker_key)?;
@@ -983,6 +993,9 @@ pub(in crate::sync) fn withhold_audience_carriers(
     // it lands this marker (REVIEW-5911), rather than under the binding it
     // travelled with.
     crate::sync::source_audiences::mark_withheld(doc, &withheld, by.as_ref())?;
+    // No prune here (fix list row 17211): the refresh that called this
+    // prunes after it writes the bindings it publishes, which may reach a
+    // policy this map's carried bindings do not reach yet.
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)
 }

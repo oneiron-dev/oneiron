@@ -16,6 +16,8 @@ pub const STEWARD_VERBS: [&str; 4] = grant_scope::STEWARD_VERBS;
 pub const STEWARD_READ_VERB: &str = grant_scope::STEWARD_READ_VERB;
 /// The Steward's `archive` verb.
 pub const STEWARD_ARCHIVE_VERB: &str = grant_scope::STEWARD_ARCHIVE_VERB;
+/// The Steward's `delete` verb.
+pub const STEWARD_DELETE_VERB: &str = grant_scope::STEWARD_DELETE_VERB;
 
 /// What the Dreamer may do now, as the policy fold reads its rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
