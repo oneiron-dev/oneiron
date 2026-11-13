@@ -8,7 +8,7 @@ fn crash_resume_finishes_without_duplicates() -> Result<()> {
         let (dir, vault, mut intent) = fixture(venture_name);
         let birth = companion_birth();
         intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-        intent.companion_birth = Some(birth);
+        intent.companion = CompanionChoice::Work(birth);
         (dir, vault, intent)
     };
     let census = |vault: &Vault| {
@@ -82,7 +82,7 @@ fn mailbox_replay_is_incomplete_without_duplicates_and_pins_starting_mode() -> R
     let requested = mailbox();
     let birth = companion_birth();
     intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth);
+    intent.companion = CompanionChoice::Work(birth);
     intent.delegated_mailbox = Some(requested.clone());
     register_mailbox_custody(&vault, &requested, &requested.address)?;
     let census = || {
@@ -142,7 +142,7 @@ fn every_completed_step_resumes_with_identical_stable_refs() -> Result<()> {
         let (_dir, vault, mut intent) = fixture("Antevon");
         let birth = companion_birth();
         intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-        intent.companion_birth = Some(birth);
+        intent.companion = CompanionChoice::Work(birth);
         vault.onboard_workspace_member_halting_after(
             intent.clone(),
             &writer(WRITER),
@@ -187,7 +187,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
         let (_dir, vault, mut intent) = fixture("Antevon");
         let birth = companion_birth();
         intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-        intent.companion_birth = Some(birth.clone());
+        intent.companion = CompanionChoice::Work(birth.clone());
         let owner = writer(WRITER);
         vault.onboard_workspace_member_halting_after(
             intent.clone(),
@@ -197,8 +197,8 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
         )?;
         let expected_grant = AccessGrant::companion_profile_read(
             intent.person_ref,
-            intent.person_ref,
             birth.person_ref,
+            None,
             intent.occurred_at,
         );
         if fail_grant {
@@ -207,7 +207,7 @@ fn companion_birth_retries_after_baseline_commit_and_grant_failure() -> Result<(
             let wrong = AccessGrant::companion_profile_read(
                 entity(OUTSIDER),
                 intent.person_ref,
-                birth.person_ref,
+                None,
                 intent.occurred_at,
             );
             vault.put_access_grant(&birth.profile_grant_ref, &wrong)?;
@@ -272,7 +272,7 @@ fn companion_retry_rejects_conflicting_roster_identity_after_baseline() -> Resul
     let (_dir, vault, mut intent) = fixture("Antevon");
     let birth = companion_birth();
     intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth.clone());
+    intent.companion = CompanionChoice::Work(birth.clone());
     let owner = writer(WRITER);
     vault.onboard_workspace_member_halting_after(
         intent.clone(),

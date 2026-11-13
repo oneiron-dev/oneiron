@@ -7,7 +7,7 @@ type Mutation = fn(&Vault, &MemberOnboardingIntent, &WriteActor) -> Result<()>;
 type RawRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 fn birth(intent: &MemberOnboardingIntent) -> &CompanionBirthIntent {
-    intent.companion_birth.as_ref().expect("companion fixture")
+    intent.companion.birth().expect("companion fixture")
 }
 
 /// Capture durable effects, not just the returned error. Authority entries
@@ -96,7 +96,7 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         let (_dir, vault, mut intent) = fixture("Antevon");
         let companion = companion_birth();
         intent.grant_bundle.companion_profile_grant_ref = Some(companion.profile_grant_ref);
-        intent.companion_birth = Some(companion.clone());
+        intent.companion = CompanionChoice::Work(companion.clone());
         let requested = mailbox();
         intent.delegated_mailbox = Some(requested.clone());
         let owner = writer(WRITER);
@@ -503,7 +503,7 @@ fn class_valid_bound_admins_keep_authorized_onboarding_behavior() -> Result<()> 
             ),
         );
         let outcome = vault.onboard_workspace_member(intent.clone(), &admin, None)?;
-        let companion = intent.companion_birth.as_ref().expect("required companion");
+        let companion = intent.companion.birth().expect("required companion");
         assert_eq!(
             person_substrate(&vault, &companion.person_ref, AT)?,
             Some(PersonSubstrate::Model)
@@ -855,9 +855,9 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                     vault.revoke_access_grant(&state.mode.read_grant_ref.expect("read"), at)?;
                 }
                 1 => {
-                    vault.revoke_standing_outbound_grant(
-                        &state.mode.action_grant_ref.expect("draft"),
-                        at,
+                    vault.revoke_consent_grant(
+                        &owner,
+                        &state.action_grant.as_ref().expect("draft").grant_ref,
                     )?;
                 }
                 2 => {

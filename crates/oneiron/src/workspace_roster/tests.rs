@@ -132,6 +132,7 @@ fn seed_federation_grant(vault: &Vault, seed: u8, grant: &FederationGrant) -> En
                         end: 100,
                     },
                     learned_at: 100,
+                    row_version: None,
                     data,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -191,6 +192,7 @@ fn mailbox() -> DelegatedMailboxOnboarding {
                 identity_ref: entity(MAILBOX_IDENTITY),
                 label_allowlist: vec!["inbox".to_owned()],
                 thread_allowlist: vec!["thread:1".to_owned()],
+                full_mailbox: false,
                 not_before: Some(AT),
                 not_after: Some(AT + 60),
             },
@@ -228,7 +230,7 @@ fn intent(vault: &Vault, workspace_ref: &str, venture_name: &str) -> MemberOnboa
             preset: FederationGrantPreset::Member,
             companion_profile_grant_ref: Some(entity(PROFILE_GRANT)),
         },
-        companion_birth: Some(companion_birth()),
+        companion: CompanionChoice::Work(companion_birth()),
         delegated_mailbox: None,
         occurred_at: AT,
     }
@@ -329,7 +331,7 @@ fn companion_birth_is_full_person() -> Result<()> {
     let (_dir, vault, mut intent) = fixture("Antevon");
     let birth = companion_birth();
     intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth.clone());
+    intent.companion = CompanionChoice::Work(birth.clone());
 
     let outcome = vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
     assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
@@ -380,22 +382,12 @@ fn companion_birth_is_full_person() -> Result<()> {
     let grant = vault
         .get_access_grant(&birth.profile_grant_ref)?
         .expect("profile grant");
-    assert!(grant.allows_companion_profile_read(
-        &member_person(),
-        &member_person(),
-        &birth.person_ref,
-        43
-    ));
+    assert!(grant.allows_companion_profile_read(&member_person(), &birth.person_ref, None, 43));
+    assert!(!grant.allows_companion_profile_read(&entity(OUTSIDER), &birth.person_ref, None, 43));
     assert!(!grant.allows_companion_profile_read(
-        &entity(OUTSIDER),
-        &member_person(),
-        &birth.person_ref,
-        43
-    ));
-    assert!(!grant.allows_companion_profile_read(
-        &member_person(),
         &member_person(),
         &entity(MEMBER_ACTOR),
+        None,
         43
     ));
     assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 1);
@@ -434,7 +426,7 @@ fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()
         let (_dir, vault, mut intent) = fixture("Antevon");
         let birth = companion_birth();
         intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-        intent.companion_birth = Some(birth.clone());
+        intent.companion = CompanionChoice::Work(birth.clone());
         let body = encode_value(&Value::Map(vec![
             (
                 Value::from("schema_version"),
@@ -583,7 +575,7 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     second_birth.actor_definition = definition("fixture.second_companion");
     second_birth.display_name = "Silverleaf".to_owned();
     second.grant_bundle.companion_profile_grant_ref = Some(second_birth.profile_grant_ref);
-    second.companion_birth = Some(second_birth.clone());
+    second.companion = CompanionChoice::Work(second_birth.clone());
     let outcome = vault.onboard_workspace_member(second, &writer(WRITER), None)?;
     assert_eq!(outcome.person_ref, entity(0xB9));
 
