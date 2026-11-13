@@ -3,14 +3,15 @@
 //! proposal waiting for Keep.
 //!
 //! It speaks protocol values only and never links the organ crate (the
-//! of060 F4 fence, `tests/organ_fence.rs`). One edit is `image.open` on the
-//! version, each op on the body that returns, then `image.export` to PNG,
-//! submitted as one job ([`OrganRouter::submit`]): its file lands beside
-//! the artifact through [`crate::propose_organ_outputs`], or, when no node
-//! can run the export now, the export waits beside the artifact with the
-//! reason until a redrive runs it. The open and the ops run where a node
-//! can (this host first, then the owner's other nodes); when none can, the
-//! edit is refused with the reason and nothing waits or lands.
+//! of060 F4 fence, `tests/organ_fence.rs`). One edit is one `image.render`
+//! call: the organ opens the version, applies each op in order and exports
+//! PNG (RULING 09:53 Fri 13 Nov, IO-HOLD C). It is submitted as one job
+//! ([`OrganRouter::submit`]) and runs where a node can, this host first,
+//! then the owner's other nodes: its file lands beside the artifact through
+//! [`crate::propose_organ_outputs`]. When no node can run it now, the whole
+//! edit waits beside the artifact with the reason until a redrive
+//! ([`OrganRouter::redrive_waiting`]) runs it and lands its file the same
+//! way.
 //!
 //! The organ exports PNG only. A PNG artifact's edit is its next version
 //! once kept. A JPEG or WebP artifact's edit lands on a new `image/png`
@@ -18,10 +19,11 @@
 //! IO-FORMAT B): the new artifact's `DerivedFrom` edge names the source
 //! artifact, its proposal's made_by names the source version it read, and
 //! it carries the source's secret taint refs. The source stays as it was.
-//! The new artifact is made only once the export has run or waits, so a
-//! refused edit leaves nothing behind. No body is stored: the organ's
-//! export report carries the schema-1 body it rendered, and the proposal
-//! keeps that report (IO-BODY A). The next edit opens the kept PNG.
+//! The new artifact is made only once the edit has run or waits, so a
+//! refused edit leaves nothing behind; a held edit waits beside it. No body
+//! is stored: the organ's render report carries the schema-1 body it
+//! rendered, and the proposal keeps that report (IO-BODY A). The next edit
+//! opens the kept PNG.
 //!
 //! Calls block, as every host call does: run them off any async runtime.
 
@@ -33,11 +35,11 @@ use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EdgeKind, EntityId, TimeRange, Vault, WriteActor};
-use oneiron_organ_protocol::{ErrorCode, OrganError, TypedBody, Value};
+use oneiron_organ_protocol::{ErrorCode, OrganError, Value};
 
 use crate::error::HostError;
 use crate::handlers::AskHandlers;
-use crate::route::{OrganRouter, Routed};
+use crate::route::OrganRouter;
 use crate::spec::{CallClass, OrganCall, OrganInput, OrganSpec, SightedInput};
 use crate::wait::{JobCall, Submitted};
 
@@ -49,6 +51,8 @@ pub const VERB_CROP: &str = "image.crop";
 pub const VERB_RESIZE: &str = "image.resize";
 pub const VERB_ANNOTATE: &str = "image.annotate";
 pub const VERB_EXPORT: &str = "image.export";
+/// Open, the ops and the PNG export in one call: what an edit submits.
+pub const VERB_RENDER: &str = "image.render";
 /// The typed body the organ reads and writes, and its schema.
 pub const IMAGE_BODY_KIND: &str = "image";
 pub const IMAGE_BODY_SCHEMA: u32 = 1;
@@ -61,8 +65,8 @@ const WEBP: &str = "image/webp";
 /// The media types the organ opens.
 const IMAGE_MEDIA_TYPES: [&str; 3] = [PNG, JPEG, WEBP];
 
-/// The image organ's install grant: its six verbs, over still PNG, JPEG and
-/// WebP, and its `image` body alone. The default memory and frame limits of
+/// The image organ's install grant: its seven verbs, over still PNG, JPEG
+/// and WebP, and its `image` body alone. The default memory and frame limits of
 /// a first-party organ stand.
 #[must_use]
 pub fn image_spec(program: impl Into<PathBuf>) -> OrganSpec {
@@ -74,6 +78,7 @@ pub fn image_spec(program: impl Into<PathBuf>) -> OrganSpec {
         VERB_RESIZE,
         VERB_ANNOTATE,
         VERB_EXPORT,
+        VERB_RENDER,
     ]
     .map(String::from)
     .into();
@@ -116,22 +121,18 @@ pub enum ImageOp {
 }
 
 impl ImageOp {
-    const fn verb(self) -> &'static str {
-        match self {
-            Self::Crop { .. } => VERB_CROP,
-            Self::Resize { .. } => VERB_RESIZE,
-        }
-    }
-
-    fn args(self) -> Value {
+    /// The op as `image.render` reads it: its name as `op`, beside its args.
+    fn render_arg(self) -> Value {
         let pairs: Vec<(&str, Value)> = match self {
             Self::Crop { x, y, w, h } => vec![
+                ("op", "crop".into()),
                 ("x", x.into()),
                 ("y", y.into()),
                 ("w", w.into()),
                 ("h", h.into()),
             ],
             Self::Resize { w, h, filter } => vec![
+                ("op", "resize".into()),
                 ("w", w.into()),
                 ("h", h.into()),
                 ("filter", filter.name().into()),
@@ -174,7 +175,7 @@ pub struct ImageEdited {
     pub artifact: EntityId,
     /// Whether `artifact` is new, born from a JPEG or WebP source.
     pub born: bool,
-    /// The proposal waiting for Keep, or the export held for a node.
+    /// The proposal waiting for Keep, or the whole edit held for a node.
     pub submitted: Submitted,
 }
 
@@ -190,7 +191,9 @@ pub enum ImageEditRefusal {
     NoOps,
     #[error("an edit names at most 256 ops, not {count}")]
     TooManyOps { count: usize },
-    /// No node can run the open or an op now; nothing waits.
+    /// No node can run the edit now. [`edit_image`] no longer answers it:
+    /// a whole edit is one call, held when no node can run it (IO-HOLD C).
+    /// The code stays for the doors that map it.
     #[error("no node can run the image organ now: {reason}")]
     NoNode { reason: String },
     /// The organ refused: its code (`bad_request`, `unsupported`,
@@ -249,50 +252,27 @@ const fn organ_code(code: ErrorCode) -> &'static str {
 }
 
 impl ImageEdit {
-    fn call(
-        &self,
-        verb: &str,
-        args: Value,
-        body: Option<TypedBody>,
-        source: Option<OrganInput>,
-    ) -> OrganCall {
+    /// The edit as one `image.render` call over `source`: each op in order,
+    /// then the PNG export.
+    fn render_call(&self, source: OrganInput) -> OrganCall {
+        let ops = self.ops.iter().copied().map(ImageOp::render_arg).collect();
         OrganCall {
             organ: IMAGE_ORGAN.to_owned(),
-            verb: verb.to_owned(),
+            verb: VERB_RENDER.to_owned(),
             schema: IMAGE_BODY_SCHEMA,
-            args,
-            body,
-            inputs: source
-                .map(|input| SightedInput {
-                    input,
-                    sight: self.sight,
-                })
-                .into_iter()
-                .collect(),
+            args: Value::Map(vec![
+                ("ops".into(), Value::Array(ops)),
+                ("format".into(), "png".into()),
+            ]),
+            body: None,
+            inputs: vec![SightedInput {
+                input: source,
+                sight: self.sight,
+            }],
             class: self.class,
             deadline: self.deadline,
             grant: self.grant.clone(),
         }
-    }
-}
-
-/// The body one call returns, run where a node can run it now.
-fn body_of(
-    router: &OrganRouter,
-    vault: &Vault,
-    call: OrganCall,
-    asks: &AskHandlers<'_>,
-) -> Result<TypedBody, ImageEditRefusal> {
-    let verb = call.verb.clone();
-    match router.call_with(vault, call, Vec::new(), asks)? {
-        Routed::Done { outcome, .. } => outcome.body.ok_or_else(|| {
-            ImageEditRefusal::Host(HostError::ReplyInvalid(format!(
-                "{verb} returned no image body"
-            )))
-        }),
-        Routed::Waiting(wait) => Err(ImageEditRefusal::NoNode {
-            reason: wait.reason,
-        }),
     }
 }
 
@@ -308,16 +288,17 @@ fn png_name(name: &str) -> String {
         )
 }
 
-/// Runs `edit` through `router`: opens the version, applies each op, and
-/// submits the PNG export as one job made by `actor`. Its file waits for
-/// Keep beside the artifact, or beside a new PNG artifact born from a JPEG
-/// or WebP source; or the export waits for a node, with the reason.
+/// Runs `edit` through `router`: submits one `image.render` of the version,
+/// its ops and the PNG export, as one job made by `actor`. Its file waits
+/// for Keep beside the artifact, or beside a new PNG artifact born from a
+/// JPEG or WebP source; or, with no node able to run it now, the whole edit
+/// is held there with the reason until a redrive runs it.
 ///
 /// # Errors
 /// [`ImageEditRefusal`]: no ops or too many; an artifact or version this
-/// vault does not hold, or one that is not a PNG, JPEG or WebP; no node to
-/// run the open or an op now; the organ's refusal; the host's or the
-/// vault's error, the landing's refusal included.
+/// vault does not hold, or one that is not a PNG, JPEG or WebP; the
+/// organ's refusal; the host's or the vault's error, the landing's or the
+/// hold's refusal included. Never that no node can run it now.
 pub fn edit_image(
     router: &OrganRouter,
     vault: &Vault,
@@ -354,25 +335,9 @@ pub fn edit_image(
         artifact: edit.artifact,
         version,
     };
-
-    let mut body = body_of(
-        router,
-        vault,
-        edit.call(VERB_OPEN, Value::Nil, None, Some(input)),
-        asks,
-    )?;
-    for op in &edit.ops {
-        body = body_of(
-            router,
-            vault,
-            edit.call(op.verb(), op.args(), Some(body), None),
-            asks,
-        )?;
-    }
-    let export = Value::Map(vec![("format".into(), "png".into())]);
     let job = JobCall {
         run_ref: edit.run_ref.clone(),
-        call: edit.call(VERB_EXPORT, export, Some(body), Some(input)),
+        call: edit.render_call(input),
         lent: Vec::new(),
         trigger: edit.trigger.clone(),
         submitter: edit.submitter,

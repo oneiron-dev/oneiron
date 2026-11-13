@@ -6,12 +6,12 @@
 //! ([`image_editor`], the row's `host_door_proof`). Its own lane reads the
 //! artifact before any organ runs, and its proposal is made by it; anyone
 //! but the owner also has the proposal's sources admitted through their own
-//! read as it lands (FIX 9310). The open and each step run where a node can
-//! (this host, then the owner's other nodes); when none can, the edit is
-//! refused with the reason and nothing waits. The PNG export lands as one
-//! proposal for Keep, or is held beside the artifact with its reason until a
-//! node can run it. The door mints nothing: the call receipt the proposal
-//! names is the host's attestation.
+//! read as it lands (FIX 9310). The whole edit is one `image.render` call
+//! that runs where a node can (this host, then the owner's other nodes): its
+//! PNG lands as one proposal for Keep, or, when no node can run it now, the
+//! edit is held beside the artifact with its reason until a redrive runs it
+//! (IO-HOLD C). The door mints nothing: the call receipt the proposal names
+//! is the host's attestation.
 
 use std::sync::Arc;
 use std::time::Duration;

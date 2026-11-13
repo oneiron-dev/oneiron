@@ -2,7 +2,9 @@
 //! (`oneiron_organ_host::image`, L4-15): the organ runs as its own process
 //! behind the host, over a real vault, and the PNG it exports waits as one
 //! proposal until the owner keeps it. A JPEG artifact's edit lands on a new
-//! PNG artifact born from it (RULING 09:34 Fri 13 Nov, IO-FORMAT B).
+//! PNG artifact born from it (RULING 09:34 Fri 13 Nov, IO-FORMAT B). With no
+//! node to run it, the whole edit is one held call, and a redrive on a host
+//! that runs the organ lands it (RULING 09:53, IO-HOLD C).
 #![cfg(unix)]
 
 mod fixtures;
@@ -17,7 +19,9 @@ use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 use oneiron_organ_host::image::{
     ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ResizeFilter, edit_image, image_spec,
 };
-use oneiron_organ_host::{AskHandlers, CallClass, HostConfig, OrganHost, OrganRouter, Submitted};
+use oneiron_organ_host::{
+    AskHandlers, CallClass, HostConfig, OrganHost, OrganRouter, Redrive, Submitted,
+};
 
 const ORGAN: &str = env!("CARGO_BIN_EXE_oneiron-image-organ");
 
@@ -153,6 +157,28 @@ impl Fixture {
             .expect("read")
             .expect("the kept version");
         fixtures::decode_png(&bytes)
+    }
+
+    /// Redrives every held call through this host, which runs the organ:
+    /// the one proposal it landed beside `artifact` under `run_ref`.
+    fn redrive(&self, artifact: EntityId, run_ref: &str) -> PendingProposalView {
+        let mut redriven = self
+            .router
+            .redrive_waiting(&self.vault, &AskHandlers::none())
+            .expect("redrive");
+        assert_eq!(redriven.len(), 1, "one call was held");
+        let one = redriven.remove(0);
+        assert_eq!((one.artifact, one.run_ref.as_str()), (artifact, run_ref));
+        let mut proposals = match one.state {
+            Redrive::Landed(proposals) => proposals,
+            other => panic!("the redrive ran the edit here and landed it: {other:?}"),
+        };
+        assert_eq!(proposals.len(), 1, "one proposal for the whole edit");
+        assert!(
+            self.vault.organ_waits(&artifact).expect("waits").is_empty(),
+            "the hold is released"
+        );
+        proposals.remove(0)
     }
 
     fn nothing_waits(&self, artifact: EntityId) {
@@ -384,13 +410,144 @@ fn an_edit_the_adapter_cannot_run_is_refused_with_its_reason_and_nothing_waits()
     );
     let text = f.artifact("notes.txt", "text/plain", b"not an image");
     assert_eq!(code(f.edit(text, vec![crop], "text")), "not_an_image");
-    // No host here and no mesh: the open cannot run anywhere, so nothing is held.
-    let nowhere = OrganRouter::new();
-    let refusal = match f.edit_through(&nowhere, artifact, None, vec![crop], "nowhere") {
-        Ok(edited) => panic!("no node runs it: {edited:?}"),
-        Err(refusal) => refusal,
-    };
-    assert_eq!(refusal.code(), "no_node", "{refusal}");
     assert_eq!(f.head(artifact), Some(1));
     f.nothing_waits(artifact);
+}
+
+#[test]
+fn with_no_node_the_whole_edit_is_held_and_a_redrive_lands_it_as_one_proposal() {
+    let f = fixture();
+    let artifact = f.artifact("photo.png", "image/png", &coded_png(9, 7));
+    let crop = ImageOp::Crop {
+        x: 2,
+        y: 1,
+        w: 6,
+        h: 5,
+    };
+    // No host here and no mesh: no node can run the edit now.
+    let nowhere = OrganRouter::new();
+    let edited = match f.edit_through(&nowhere, artifact, None, vec![crop], "held-1") {
+        Ok(edited) => edited,
+        Err(err) => panic!("FAILBEFORE: with no node the whole edit is held: {err}"),
+    };
+    assert_eq!(edited.artifact, artifact);
+    assert!(!edited.born);
+    let wait = match edited.submitted {
+        Submitted::Waiting(wait) => wait,
+        Submitted::Landed { .. } => panic!("no node runs it, so nothing lands"),
+    };
+    assert_eq!(
+        (
+            wait.organ.as_str(),
+            wait.verb.as_str(),
+            wait.run_ref.as_str()
+        ),
+        ("image", "image.render", "held-1"),
+        "the whole edit is one held call"
+    );
+    assert!(wait.reason.contains("image.render"), "{}", wait.reason);
+    assert_eq!(f.vault.organ_waits(&artifact).expect("waits").len(), 1);
+    assert_eq!(
+        f.vault
+            .pending_proposals(&artifact)
+            .expect("proposals")
+            .len(),
+        0,
+        "nothing waits for Keep while the edit is held"
+    );
+    assert_eq!(f.head(artifact), Some(1));
+
+    // This host runs the organ: the redrive lands the edit as if it had run at once.
+    let proposal = f.redrive(artifact, "held-1");
+    assert_eq!(proposal.proposal_ref, "held-1");
+    assert_eq!(proposal.base_version, Some(1), "made against the head");
+    let body = &proposal.summary["report"]["report"]["body"];
+    assert_eq!(body["canvas"]["w"].as_u64(), Some(6), "{body}");
+    assert_eq!(f.head(artifact), Some(1), "nothing lands before Keep");
+
+    assert_eq!(f.keep(artifact, "held-1"), 2);
+    let image = f.png_of(artifact, 2);
+    assert_eq!(image.dimensions(), (6, 5));
+    for (x, y, pixel) in image.enumerate_pixels() {
+        assert_eq!(pixel.0, fixtures::coded(x + 2, y + 1), "pixel {x},{y}");
+    }
+    f.nothing_waits(artifact);
+}
+
+#[test]
+fn a_held_jpeg_edit_waits_beside_its_new_png_artifact_and_lands_there() {
+    let f = fixture();
+    let jpeg = fixtures::jpeg_flat(8, 6, [200, 40, 40], None);
+    let source = f.artifact("photo.jpg", "image/jpeg", &jpeg);
+    let crop = ImageOp::Crop {
+        x: 1,
+        y: 1,
+        w: 4,
+        h: 3,
+    };
+    let nowhere = OrganRouter::new();
+    let edited = match f.edit_through(&nowhere, source, None, vec![crop], "held-jpeg") {
+        Ok(edited) => edited,
+        Err(err) => panic!("FAILBEFORE: with no node the JPEG's edit is held: {err}"),
+    };
+    assert!(
+        matches!(edited.submitted, Submitted::Waiting(_)),
+        "{:?}",
+        edited.submitted
+    );
+    assert!(
+        edited.born,
+        "the new PNG artifact is made as the edit is held"
+    );
+    let born = edited.artifact;
+    assert_ne!(born, source);
+    let body = f
+        .vault
+        .get_blob_artifact(&born)
+        .expect("read")
+        .expect("the new artifact");
+    assert_eq!(
+        (body.name.as_str(), body.media_type.as_str()),
+        ("photo.png", "image/png")
+    );
+    assert_eq!(
+        f.vault
+            .targets(&born, EdgeKind::DerivedFrom, None)
+            .expect("edges"),
+        vec![source],
+        "the new artifact is derived from the source"
+    );
+    assert_eq!(
+        f.vault.organ_waits(&born).expect("waits").len(),
+        1,
+        "the edit waits beside the new artifact"
+    );
+    assert!(
+        f.vault.organ_waits(&source).expect("waits").is_empty(),
+        "nothing waits beside the source"
+    );
+    assert_eq!(f.head(born), None);
+
+    let proposal = f.redrive(born, "held-jpeg");
+    assert_eq!(
+        proposal.base_version, None,
+        "the new artifact has no version yet"
+    );
+    let made_by = proposal.made_by.expect("the receipt's made_by");
+    assert!(
+        made_by.inputs.iter().any(|input| input.row == source),
+        "the proposal names the source it read: {made_by:?}"
+    );
+    assert_eq!(f.keep(born, "held-jpeg"), 1);
+    assert_eq!(f.png_of(born, 1).dimensions(), (4, 3));
+    assert_eq!(
+        f.vault
+            .blob_artifact_versions(&source)
+            .expect("versions")
+            .len(),
+        1,
+        "the source stays as it was"
+    );
+    f.nothing_waits(source);
+    f.nothing_waits(born);
 }
