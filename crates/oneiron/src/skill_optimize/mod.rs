@@ -290,7 +290,7 @@ pub use gate::{
     score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap, set_skill_edit_goal_axes,
     set_skill_goal_project, set_skill_tradeoff_preferences, settle_skill_tradeoff_ask,
     settle_skill_tradeoff_ask_as, settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest,
-    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_axis_report,
+    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_as_owner, skill_edit_goal_axis_report,
     skill_edit_needs_goal_axis_report, skill_edit_score_call_purpose, skill_edit_verdict,
     skill_edit_verdicts, skill_edit_verdicts_for_proposal, skill_goal_axis_plan,
     skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
@@ -305,7 +305,7 @@ pub(crate) use gate::{
     skill_edit_verdict_sourced, skill_tradeoff_ask_sourced, validate_judge_revision,
     with_optimized_skill_admission,
 };
-pub(crate) use gate::{project_axes, project_rules_for_record, skill_edit_goal_as_owner};
+pub(crate) use gate::{project_axes, project_rules_for_record};
 pub(crate) use gate::{skill_edit_goal_sourced, skill_edit_goal_sourced_in_txn};
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
