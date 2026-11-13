@@ -37,11 +37,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
-        let config = VaultConfig {
-            dimensions: 4,
-            embedding_model: Some("test/model@v1".to_owned()),
-            ..VaultConfig::default()
-        };
+        let mut config = VaultConfig::default();
+        config.dimensions = 4;
+        config.embedding_model = Some("test/model@v1".to_owned());
         let vault = Vault::open(dir.path(), config)?;
         let owner = vault.ensure_embedded_owner_actor()?;
         let issuer = HostSlipIssuer::from_secret(b"serving-scoped-credentials-host")?;
