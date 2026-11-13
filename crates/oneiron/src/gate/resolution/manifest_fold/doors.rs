@@ -41,6 +41,13 @@ impl Vault {
     /// [`Error::InvalidConfig`] and never
     /// substitutes an empty or fabricated table. Production callers keep
     /// admitting with `guard.admit_for_request(&request)` exactly as before.
+    ///
+    /// `on_budget_exhausted` is the caller's own choice for this meter. The
+    /// default, `Suspend`, takes the owner's `on_budget_exhausted` knob from
+    /// the same manifest (ARCH-0026 depletion ladder, policy knob; Engine
+    /// ruling RUNBUDGET-KNOB = A): a configured `Overdraft{cap}` widens the
+    /// meter's paid cap by `cap`. A caller's other choice, such as the
+    /// owner's one-off overdraft of a held run, stands.
     pub fn policy_budget_guard(
         &self,
         attempt_id: impl Into<String>,
@@ -57,6 +64,10 @@ impl Vault {
                     .to_owned(),
             )
         })?;
+        let on_budget_exhausted = match on_budget_exhausted {
+            BudgetExhaustionPolicy::Suspend => resolution.on_budget_exhausted(),
+            chosen => chosen,
+        };
         Ok(BudgetGuard::with_policy_table(
             attempt_id,
             limit_units,
