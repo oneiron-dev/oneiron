@@ -1370,3 +1370,6 @@ mod device_local;
 
 /// The rows a run serves itself, under the connector's door.
 mod run_rows;
+
+/// The graph-FS rows, walked through the verb-call import.
+mod graph_fs_walk;
