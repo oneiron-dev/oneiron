@@ -18,6 +18,7 @@ use crate::dreamer_consolidation::strength::{
     ConsolidationStrengthPolicy, OBSERVATIONS, StrengthObservations, observation_pin_in_txn,
     policy_in_txn, strength_policy_pin_in_txn,
 };
+use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::{Scope, grant_scope, holds_system_agent_grant, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault};
@@ -102,6 +103,30 @@ pub fn strength_observations_page(
     memory: &Memory<'_>,
     input: &StrengthObservationsPageRequest,
 ) -> MemoryResult<ScopedReadResult<StrengthObservationsPage>> {
+    observations_page(memory, input, None)
+}
+
+/// [`strength_observations_page`] for a strength attempt's bound client
+/// (untangle 6.9c PR 3): `binding` is proved in the page's own read, before
+/// any row of it is read.
+///
+/// # Errors
+///
+/// As [`strength_observations_page`], and the binding's refusals.
+pub(crate) fn strength_observations_page_bound(
+    memory: &Memory<'_>,
+    input: &StrengthObservationsPageRequest,
+    binding: &DreamerAttemptBinding,
+) -> MemoryResult<ScopedReadResult<StrengthObservationsPage>> {
+    observations_page(memory, input, Some(binding))
+}
+
+/// The one page body, with the binding of a bound call to prove in its read.
+fn observations_page(
+    memory: &Memory<'_>,
+    input: &StrengthObservationsPageRequest,
+    binding: Option<&DreamerAttemptBinding>,
+) -> MemoryResult<ScopedReadResult<StrengthObservationsPage>> {
     let vault = memory.vault();
     let owner = memory
         .embedded_owner("vault.consolidation.strength.observations.page")
@@ -117,6 +142,9 @@ pub fn strength_observations_page(
     let _pins = read.prepare_point_read::<MemoryError>()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     memory.prove_read_authority_in_txn(&txn)?;
+    if let Some(binding) = binding {
+        binding.check_in_txn(&txn)?;
+    }
     let scope = observation_reader_scope_in_txn(memory, &txn, owner.as_ref())?;
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
         let mut page = StrengthObservationsPage {
