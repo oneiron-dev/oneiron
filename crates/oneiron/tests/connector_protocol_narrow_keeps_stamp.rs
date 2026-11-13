@@ -38,8 +38,14 @@ const SERVER: &str = "harbor_ledger";
 const ENDPOINT: &str = "https://connector.invalid/mcp";
 /// The decision-ask queue a narrowing protocol revision's question rides.
 const NARROW_ASK_QUEUE: &str = "connector_key.protocol_revision.narrow";
-/// The owner door the question names as the one act that switches it off.
+/// The owner door the question names as the one act that switches it off
+/// once it is admitted again.
 const SWITCH_OFF_DOOR: &str = "POST /v1/owner/connectors/enabled";
+/// The owner doors the question names to admit the key again. The question
+/// is put while the key is Pending, where the switch refuses ("the connector
+/// is not admitted yet"), so these are the acts that work when it is read.
+const QUALIFY_DOOR: &str = "POST /v1/owner/connectors/qualify";
+const ATTEST_DOOR: &str = "POST /v1/owner/connectors/attest";
 
 struct Fixture {
     vault: Vault,
@@ -273,6 +279,8 @@ fn a_narrowing_protocol_revision_keeps_the_stamp_and_the_agents_tools() {
         "from A to B",
         "Narrowed: read.",
         "Dropped: write.",
+        QUALIFY_DOOR,
+        ATTEST_DOOR,
         SWITCH_OFF_DOOR,
     ] {
         assert!(text.contains(named), "the question names {named:?}: {text}");
