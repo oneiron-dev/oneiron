@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
+    WitnessReceipt, WitnessTurn,
 };
 use crate::access_grant::AccessGrantScope;
 use crate::agent_dispatch::{
@@ -325,7 +326,10 @@ impl Memory<'_> {
     /// given ([`ActorAttribution`]): the persons `vault.people.list` reads
     /// for this caller, their names disclosed by the same rule, loaded for
     /// these actors alone. A ref that is no entity id names no one, and a
-    /// caller whose credential grants it no read names no one at all.
+    /// caller whose credential grants it no read names no one at all. The
+    /// table labels a page already served, never admits it: a caller this
+    /// read refuses (an unbound handle whose actor the vault does not hold)
+    /// keeps its page and names no one too.
     pub(crate) fn actor_attributions(
         &self,
         actors: BTreeSet<String>,
@@ -337,7 +341,12 @@ impl Memory<'_> {
             .iter()
             .filter_map(|actor| EntityId::from_hex(actor).ok())
             .collect();
-        let people = match self.read_lane_if_granted(ClaimReadStatus::Surfaceable)? {
+        let read = match self.read_lane_if_granted(ClaimReadStatus::Surfaceable) {
+            Ok(read) => read,
+            Err(refusal) if refusal.code == MEMORY_CODE_FORBIDDEN => None,
+            Err(error) => return Err(error),
+        };
+        let people = match read {
             Some(read) => {
                 let mut people = People::load_named(self.vault, unix_ms(), &ids, &mut |person| {
                     read.is_entity_readable(&person)

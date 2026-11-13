@@ -336,3 +336,33 @@ fn a_room_page_names_each_turns_actor_as_the_readers_people_list_does() -> TestR
     );
     Ok(())
 }
+
+#[test]
+fn a_reader_the_vault_does_not_hold_keeps_its_receipts_page_and_names_no_one() -> TestResult {
+    let fx = open_fixture()?;
+    let owner = fx.vault.memory(fx.owner, EdgeActorClass::Human);
+    write_claim(&owner, fx.owner, "owner's")?;
+    // A native handle is never checked against the vault when it is made,
+    // and its unbound ledger page never asks: the table that labels the page
+    // must not refuse it either.
+    let stranger = fx.vault.memory(EntityId::now(), EdgeActorClass::Human);
+    let page = stranger.receipts_page(100, &[], None)?;
+    let refs: BTreeSet<String> = page
+        .receipts
+        .iter()
+        .filter_map(|receipt| receipt.actor_ref.clone())
+        .collect();
+    assert!(
+        refs.contains(&fx.owner.to_hex()),
+        "precondition: the unbound page serves the owner's receipt: {refs:?}"
+    );
+    let unknown: BTreeMap<String, ActorAttribution> = refs
+        .into_iter()
+        .map(|actor| (actor, ActorAttribution::unknown()))
+        .collect();
+    assert_eq!(
+        page.actors, unknown,
+        "a reader the vault does not hold names every actor unknown"
+    );
+    Ok(())
+}
