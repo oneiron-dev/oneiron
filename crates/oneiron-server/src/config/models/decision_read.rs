@@ -32,11 +32,7 @@ const DEFAULT_PERSON_THRESHOLD: f64 = 0.9;
 /// The ThinkThreshold row's start value: a paired "does this need more
 /// thinking?" reading at or above it climbs a rung. Below the person row's,
 /// since a stronger rung costs less than a person's time; canon sets none.
-/// 0.277 = p90 of run 2 (FIX 22229), start value only; host policy overrides;
-/// Coach tunes. On run 2's 1,000 BoolQ reads the house read's think P never
-/// reached the old 0.8 (max 0.559), so about one read in ten now steps up to
-/// the Big rung (lead ruling THINK-START, 13 Nov 2026; FIX 22360).
-const DEFAULT_THINK_THRESHOLD: f64 = 0.277;
+const DEFAULT_THINK_THRESHOLD: f64 = 0.8;
 const RECIPE_FORMAT: u32 = 3;
 
 /// `[models.decision_read]` as written.
