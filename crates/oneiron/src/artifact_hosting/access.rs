@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::consent::AuthenticatedOwner;
 use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use rand_core::{OsRng, RngCore};
@@ -71,6 +72,8 @@ struct AuthorizedArtifactRead {
 }
 
 impl Vault {
+    /// One file of a live pointer, for a reader holding `token`, identified
+    /// as `principal`, or proving the vault's owner with `owner`.
     pub fn resolve_authorized_artifact_file(
         &self,
         artifact: &str,
@@ -78,6 +81,7 @@ impl Vault {
         path: &str,
         token: Option<&str>,
         principal: Option<EntityId>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<Option<ArtifactServedFile>> {
         self.resolve_authorized_artifact_file_with_reader(
             artifact,
@@ -85,10 +89,12 @@ impl Vault {
             path,
             token,
             principal,
+            owner,
             &crate::batch::secret_scan::ContainerReader::default(),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn resolve_authorized_artifact_file_with_reader(
         &self,
         artifact: &str,
@@ -96,13 +102,14 @@ impl Vault {
         path: &str,
         token: Option<&str>,
         principal: Option<EntityId>,
+        owner: Option<&AuthenticatedOwner>,
         reader: &crate::batch::secret_scan::ContainerReader,
     ) -> Result<Option<ArtifactServedFile>> {
         validate_artifact_id(artifact)?;
         validate_artifact_path(path)?;
         let txn = self.store.env.read_txn()?;
         let Some(read) =
-            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal)?
+            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal, owner)?
         else {
             return Ok(None);
         };
@@ -117,12 +124,13 @@ impl Vault {
         selector: ArtifactSnapshotSelector,
         token: Option<&str>,
         principal: Option<EntityId>,
+        owner: Option<&AuthenticatedOwner>,
         mut file: impl FnMut(ArtifactServedFile, u32) -> Result<()>,
     ) -> Result<Option<ArtifactPointer>> {
         validate_artifact_id(artifact)?;
         let txn = self.store.env.read_txn()?;
         let Some(read) =
-            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal)?
+            self.authorize_artifact_read_in_txn(&txn, artifact, selector, token, principal, owner)?
         else {
             return Ok(None);
         };
@@ -151,6 +159,7 @@ impl Vault {
         selector: ArtifactSnapshotSelector,
         token: Option<&str>,
         principal: Option<EntityId>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<Option<AuthorizedArtifactRead>> {
         let channels: &[ArtifactPointerChannel] = match selector {
             ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published) => {
@@ -178,7 +187,13 @@ impl Vault {
                 continue;
             }
             let allowed = match target.pointer.serve_tier {
-                ArtifactServeTier::Private => false,
+                // A private pointer serves its vault's owner alone
+                // (PUBLIC-BACKEND = A: "An app's default audience is
+                // private: the owner only"). His proof must hold in this
+                // read view; an identity alone, his own included, is no
+                // owner proof.
+                ArtifactServeTier::Private => owner
+                    .is_some_and(|owner| owner.revalidate_as_vault_owner_in_txn(self, txn).is_ok()),
                 ArtifactServeTier::Public => true,
                 ArtifactServeTier::LinkToken(capability) => matches_token(capability, token),
                 ArtifactServeTier::WorldMembers(world_id) => principal.is_some_and(|member| {
