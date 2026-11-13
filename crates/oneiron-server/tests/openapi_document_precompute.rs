@@ -6,10 +6,13 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test -p oneiron-server --test openapi_document_precompute`
 #![cfg(oneiron_test_support)]
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
+use axum::Extension;
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use oneiron_server::test_doors::openapi_document::{assemblies, spawn_precompute};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
@@ -49,8 +52,11 @@ async fn first_openapi_request_after_the_precompute_assembles_nothing() {
         )
         .expect("sync server"),
     );
+    // A hatch server answers only callers on this device.
+    let loopback = ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
     let started = Instant::now();
     let response = build_app(server)
+        .layer(Extension(loopback))
         .oneshot(
             Request::builder()
                 .uri("/api/openapi.json")
