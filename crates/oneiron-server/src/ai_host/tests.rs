@@ -462,11 +462,15 @@ async fn a_failing_steps_retries_spend_one_step_budget() {
 /// Try 1 sends two metered rungs (16,000 units, the whole step budget); the
 /// host restarts with one rung. The estimate (8,000) let the retry send once
 /// more; the exact carried spend holds it at the budget before any call.
+/// Rung 1 refuses its key (401), a failure that rests nothing, so try 1 ends
+/// on rung 2's 500 at once instead of waiting out a health rest (OF-305)
+/// into its budget; every later call answers 500.
 #[tokio::test]
 async fn a_failed_steps_exact_carried_spend_survives_a_host_restart() {
+    use crate::fake_llm::Reply;
     use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
     use oneiron::attempt_queue::{AttemptQueue, AttemptState};
-    let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let fake = FakeLlm::start(vec![Reply::Status(401)], Some(Reply::Status(500))).await;
     let (_dir, vault) = rooted_vault();
     let only = saved_agent(&vault, "carried-spend", "Say one word.");
     let workflow = EntityId::now();
