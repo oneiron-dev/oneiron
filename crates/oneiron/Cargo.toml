@@ -84,7 +84,11 @@ rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
 schemars = "=0.8.22"
-serde_json = { workspace = true, features = ["raw_value"] }
+# `float_roundtrip`: a write's receipt keeps its input's JSON text, and a
+# resumed step reads it back and compares it with the live input, so a float
+# must read back exactly (census L1-06). The server turned it on for the served
+# binary only; the crate asks for it itself.
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 jsonschema = { version = "0.33", default-features = false }
 serde_path_to_error = "0.1"
 postcard = { workspace = true, optional = true }
