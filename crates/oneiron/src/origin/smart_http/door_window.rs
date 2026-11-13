@@ -18,13 +18,13 @@ use super::paths::{
     DOOR_BLOB_TOO_LARGE, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
     ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
-use super::protected_ref_confirm::{ProtectedRef, ProtectedRefDecision};
+use super::protected_ref_confirm::{ProtectedRef, ProtectedRefDecision, ProtectedRefPasses};
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
-use crate::consent::EffectDigest;
 use crate::credential_door::CredentialDoorService;
 use crate::error::{Error, Result};
+use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{GitOid, GitRefName};
 use crate::origin::lfs::LfsPushedPointer;
 use crate::origin::receive_scan_verdict::DoorScanVerdict;
@@ -183,7 +183,7 @@ pub(super) fn serve_door_window(
     // that cannot be parsed and an extraction that cannot be read whole are
     // both unscanned bytes, so they become a published refusal rather than an
     // empty scan — and rather than an unanswered hook left blocking.
-    let (mut report, approved) = match scan_window(vault, repo, &request_path, hooks, context) {
+    let (mut report, passes) = match scan_window(vault, repo, &request_path, hooks, context) {
         Ok(window) => (
             DoorWindowReport {
                 verdict: window.verdict,
@@ -192,7 +192,7 @@ pub(super) fn serve_door_window(
                 ref_lfs_pointers: window.ref_lfs_pointers,
                 quarantine_path: window.request.quarantine_path,
             },
-            window.approved,
+            window.passes,
         ),
         Err(refused) => (
             DoorWindowReport {
@@ -201,7 +201,7 @@ pub(super) fn serve_door_window(
                 },
                 ..DoorWindowReport::not_invoked()
             },
-            Vec::new(),
+            ProtectedRefPasses::default(),
         ),
     };
     if report.admitted() {
@@ -211,20 +211,15 @@ pub(super) fn serve_door_window(
         // A checkout push's ref moves and changed paths go to the writer,
         // which rechecks the push's authority (G1-PUSH) and names a refusal.
         // The owner's leave for each deletion or rewrite of the protected ref
-        // is spent there too (L8-51).
+        // is spent there too, and each bypass that covered one read again and
+        // receipted (L8-51).
         let recorded = context
             .admission
             .ok_or_else(|| receive_pack_provenance_refused("intent has no admission"))
             .and_then(|stamp| {
                 let changes =
                     super::push_paths::checkout_changes(hooks, stamp, &report.ref_updates)?;
-                vault.record_receive_pack_intent(
-                    repo,
-                    stamp,
-                    &report,
-                    changes.as_deref(),
-                    &approved,
-                )
+                vault.record_receive_pack_intent(repo, stamp, &report, changes.as_deref(), &passes)
             });
         if let Err(error) = recorded {
             report.verdict = DoorWindowVerdict::Rejected {
@@ -273,9 +268,9 @@ struct WindowScan {
     lfs_pointers: Vec<LfsPushedPointer>,
     ref_lfs_pointers: Vec<Vec<usize>>,
     verdict: DoorWindowVerdict,
-    /// The owner's leaves the intent's writer spends, one per rewrite of the
-    /// protected ref the door let pass (L8-51).
-    approved: Vec<EffectDigest>,
+    /// The deletions and rewrites of the protected ref the door let pass, for
+    /// the intent's writer to settle (L8-51).
+    passes: ProtectedRefPasses,
 }
 
 /// Reads what the hook left behind and decides on it: the ref list, the blob
@@ -314,6 +309,10 @@ fn scan_window(
             protected,
             &request,
             context.admission.map(DoorAdmissionStamp::principal_ref),
+            context
+                .admission
+                .and_then(|stamp| stamp.push.as_ref())
+                .and_then(GitPushStamp::code_repo),
         )?,
         None => ProtectedRefDecision::default(),
     };
@@ -391,13 +390,13 @@ fn scan_window(
             reasons: vec!["publication requires the landed scan".to_owned()],
         },
     };
-    let (verdict, approved) = protected.apply(vault, verdict);
+    let (verdict, passes) = protected.apply(vault, verdict);
     Ok(WindowScan {
         request,
         lfs_pointers,
         ref_lfs_pointers,
         verdict,
-        approved,
+        passes,
     })
 }
 

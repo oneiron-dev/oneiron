@@ -275,7 +275,8 @@ impl GitPushStamp {
 
     /// Whether this push was admitted as the vault's owner (a co-owner
     /// included, on any route). Every other arm pushes under a Grant, and
-    /// may not delete or rewrite the repo's protected ref (L8-51).
+    /// may not delete or rewrite the repo's protected ref (L8-51) unless the
+    /// owner left that move once or the owner's live bypass covers it.
     pub(crate) const fn is_owner(&self) -> bool {
         matches!(self.arm, GitPushArm::Owner)
     }

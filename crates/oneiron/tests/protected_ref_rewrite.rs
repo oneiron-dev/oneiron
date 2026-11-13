@@ -16,6 +16,11 @@
 //! leave. Git itself refuses to delete the branch HEAD names; that refusal
 //! stays git's.
 //!
+//! Inside its scope the owner's live bypass grant replaces the question
+//! (DEC-0006 invariant 7): the floor's `protected_ref_rewrite_or_delete`
+//! (version 3) covers the rewrite and the delete alike, and the act is
+//! receipted as bypassed.
+//!
 //! The holder pushes with a stock `git` through the real smart-HTTP wire
 //! ([`oneiron::origin::smart_http::serve_bounded_as`], the host's entry with
 //! the pusher it authenticated), the owner through the in-process serve. The
@@ -39,9 +44,15 @@ use std::time::Duration;
 use std::{io, thread};
 
 use oneiron::authority::ActSurface;
-use oneiron::consent::AuthenticatedOwner;
+use oneiron::consent::bypass_lifecycle::{
+    BypassedEffectReceipt, BypassedEffectReceiptsRequest, bypassed_effect_receipts,
+};
 use oneiron::consent::lifecycle::{ApproveOnceRequest, approve_once};
-use oneiron::federation::{GitPushCaller, GitPushCredential};
+use oneiron::consent::{
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, BypassScope, CatastropheClass,
+    CatastropheFloor, GrantBound, consent_receipt_grant_ref,
+};
+use oneiron::federation::{GitPushCaller, GitPushCredential, GitPushRepo};
 use oneiron::llm::decision::{DecisionAnswer, DecisionAsk};
 use oneiron::origin::smart_http::{
     self, DoorSeam, DoorWindowVerdict, ExchangeBounds, SERVE_IDLE_TIMEOUT, ScanBounds, ServeReport,
@@ -51,6 +62,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
     GitPushGrantMintInput, RepoAnchorBindInput, bind_repo_anchor_as, mint_git_push_grant_as,
 };
+use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 /// The typed reason the door refuses a protected-ref delete or rewrite with.
@@ -136,6 +148,16 @@ impl Pusher {
     }
 }
 
+/// The PROJECT the served repository's CODE anchor is bound to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Home {
+    /// The vault's root PROJECT.
+    Root,
+    /// A PROJECT under the root, the scope a bypass grant may name, with a
+    /// second one beside it.
+    Project,
+}
+
 /// One vault serving one registered repository over the real smart-HTTP wire,
 /// with an agent that holds a `git_push` Grant on it.
 struct TestOrigin {
@@ -149,14 +171,44 @@ struct TestOrigin {
     pusher: Arc<Mutex<Pusher>>,
     owner: EntityId,
     holder: EntityId,
+    /// The repository's CODE anchor and the PROJECT it is bound to, as the
+    /// holder's Grant names them.
+    push_repo: GitPushRepo,
+    /// A second PROJECT under the root, for [`Home::Project`].
+    other_project: Option<EntityId>,
 }
 
 impl TestOrigin {
     /// Starts an origin whose `main` (its HEAD) the owner published with a
     /// real scanned push, and mints the holder's `git_push` Grant on it.
     fn start(source: &Path) -> Self {
+        Self::start_in(source, Home::Root)
+    }
+
+    /// As [`Self::start`], with the repository bound to a PROJECT under the
+    /// root, the scope a bypass grant may name.
+    fn start_in_project(source: &Path) -> Self {
+        Self::start_in(source, Home::Project)
+    }
+
+    fn start_in(source: &Path, home: Home) -> Self {
         let dir = tempfile::tempdir().expect("vault tempdir");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+        // The PROJECTs are born before this install's signing keys load, as
+        // a vault's first projects are.
+        let projects = (home == Home::Project).then(|| {
+            let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+            let root = vault.root_project().expect("root project");
+            let child = || {
+                let id = EntityId::now();
+                let record = ProjectRecord::new(id, Some(root), root, owner).expect("a project");
+                vault
+                    .put_project(id, &record, vault.now_recorded_at())
+                    .expect("put a project under the root");
+                id
+            };
+            (child(), child())
+        });
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         vault
             .prepare_install_signing()
@@ -169,8 +221,11 @@ impl TestOrigin {
             .register_served_origin_as_owner(&proof, "demo", "main")
             .expect("register the served repo");
         let repo_dir = smart_http::origin_repo_dir(&vault, "demo").expect("served repo dir");
-        let project = vault.root_project().expect("root project");
-        let anchor = bind_repo_anchor_as(
+        let project = match projects {
+            Some((project, _)) => project,
+            None => vault.root_project().expect("root project"),
+        };
+        let push_repo = bind_repo_anchor_as(
             &vault,
             &proof,
             RepoAnchorBindInput {
@@ -192,7 +247,7 @@ impl TestOrigin {
             ActSurface::ThisInstall,
             GitPushGrantMintInput {
                 member: holder,
-                repos: BTreeSet::from([anchor]),
+                repos: BTreeSet::from([push_repo]),
                 expires_at: None,
             },
         )
@@ -233,6 +288,8 @@ impl TestOrigin {
             pusher,
             owner,
             holder,
+            push_repo,
+            other_project: projects.map(|(_, other)| other),
         };
         let head = git(source, &["rev-parse", "--verify", "refs/heads/main"]);
         git(source, &["push", &origin.url(), "main:refs/heads/main"]);
@@ -333,6 +390,45 @@ impl TestOrigin {
             .and_then(|state| state["approval_digest"].as_str())
             .expect("the question shows the move's approve-once digest")
             .to_owned()
+    }
+
+    /// The owner's live bypass grant for the protected ref's rewrite or
+    /// delete, by `actor`, on `main` of this repository's CODE anchor, scoped
+    /// to `project`: created after its one warning. Returns its registry
+    /// reference.
+    fn create_bypass(&self, actor: EntityId, project: EntityId) -> String {
+        let class = CatastropheClass::parse(PROTECTED_REF_REWRITE_OR_DELETE)
+            .expect("the catastrophe floor names a protected ref's rewrite or delete");
+        let bound = GrantBound::action(
+            ActorBound::new(actor.to_hex()).expect("the bypass's actor"),
+            ActionClass::new(class.as_str()).expect("the bypass's class"),
+            ActionEnvelope::new(["ref:refs/heads/main".to_owned()])
+                .and_then(|envelope| envelope.with_target(self.push_repo.repo.to_hex()))
+                .expect("the bypass's envelope"),
+        )
+        .expect("the bypass's bound");
+        let warning = self
+            .vault
+            .bypass_grant_warning(&self.proof, bound, BypassScope::Project(project))
+            .expect("the bypass's one warning");
+        assert_eq!(warning.allows(), class, "the warning names what it allows");
+        let created = self
+            .vault
+            .create_bypass_grant(&self.proof, &warning)
+            .expect("the owner creates the bypass");
+        consent_receipt_grant_ref(&created).expect("the bypass row's reference")
+    }
+
+    /// Every act receipted as run under the bypass `grant`.
+    fn bypassed_receipts(&self, grant: &str) -> Vec<BypassedEffectReceipt> {
+        bypassed_effect_receipts(
+            &self.vault,
+            &self.proof,
+            BypassedEffectReceiptsRequest {
+                grant: grant.to_owned(),
+            },
+        )
+        .expect("read the bypassed receipts")
     }
 
     /// A clone of the origin's `main`, fetched as the owner.
@@ -942,4 +1038,186 @@ fn the_owners_approve_once_lands_the_exact_rewrite_once() {
         digest,
         "a spent move is never asked again"
     );
+}
+
+/// The named red test: the owner's live bypass, scoped to the repository's
+/// PROJECT and naming the pusher, replaces the question. The holder's
+/// force-push of the default branch lands unasked, and the act is receipted
+/// as run under that bypass. Before the floor named the class, no bypass
+/// could cover the move, and it was refused with a question.
+#[test]
+fn a_live_project_bypass_naming_the_pusher_lands_a_rewrite_without_an_ask_and_receipts_it() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start_in_project(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+    let grant = origin.create_bypass(origin.holder, origin.push_repo.project);
+
+    let rewritten = rewrite_tip(&clone, "history rewritten");
+    origin.push_as_holder();
+    git(&clone, &["push", "--force", "origin", "main"]);
+
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(rewritten.as_str()),
+        "the bypassed rewrite moved main"
+    );
+    assert!(
+        origin.door_refusals().is_empty(),
+        "the door refused nothing: {:?}",
+        origin.door_refusals()
+    );
+    assert!(
+        origin.protected_ref_asks().is_empty(),
+        "inside the bypass's scope nothing asks"
+    );
+    assert_eq!(origin.landed().len(), 1, "and it landed");
+    let receipts = origin.bypassed_receipts(&grant);
+    assert_eq!(
+        receipts.len(),
+        1,
+        "one act ran under the bypass: {receipts:?}"
+    );
+    assert_eq!(receipts[0].grant_ref, grant, "the receipt names the bypass");
+}
+
+/// One floor member covers a delete as it covers a rewrite: under the same
+/// bypass, the holder's delete of the default branch passes the door unasked
+/// and is receipted as bypassed. Git itself then refuses to delete the branch
+/// HEAD names; the refusal the holder reads is git's own.
+#[test]
+fn a_live_bypass_covers_a_delete_of_the_protected_ref_up_to_gits_own_refusal() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start_in_project(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+    let grant = origin.create_bypass(origin.holder, origin.push_repo.project);
+
+    origin.push_as_holder();
+    let push = git_output(&clone, &["push", "origin", "--delete", "main"]);
+
+    assert!(
+        !push.status.success(),
+        "git refuses to delete the branch HEAD names"
+    );
+    let stderr = String::from_utf8_lossy(&push.stderr);
+    assert!(
+        stderr.contains(GIT_DELETE_CURRENT_REFUSAL),
+        "the refusal the holder reads is git's own: {stderr}"
+    );
+    assert!(
+        !stderr.contains(PROTECTED_REF_REWRITE_OR_DELETE),
+        "the door added no refusal of its own: {stderr}"
+    );
+    assert!(
+        origin.protected_ref_asks().is_empty(),
+        "inside the bypass's scope nothing asks"
+    );
+    assert_eq!(
+        origin.bypassed_receipts(&grant).len(),
+        1,
+        "the delete passed the door under the bypass"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main is still there"
+    );
+}
+
+/// A bypass covers only its own actor inside its own scope: one naming
+/// another agent in the repository's PROJECT, and one naming the pusher in
+/// another PROJECT, leave the holder's rewrite to the question.
+#[test]
+fn a_bypass_naming_another_pusher_or_project_leaves_the_rewrite_to_the_ask() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start_in_project(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+    let bystander = origin
+        .vault
+        .ensure_agent_principal("bystander")
+        .expect("a second agent principal");
+    let other_actor = origin.create_bypass(bystander, origin.push_repo.project);
+    let other_project = origin.create_bypass(
+        origin.holder,
+        origin.other_project.expect("a second PROJECT"),
+    );
+
+    rewrite_tip(&clone, "history rewritten");
+    origin.push_as_holder();
+    let push = git_output(&clone, &["push", "--force", "origin", "main"]);
+
+    assert!(!push.status.success(), "the rewrite is refused");
+    let refusals = origin.door_refusals();
+    assert!(
+        refusals.last().is_some_and(|reason| {
+            reason.contains("refs/heads/main") && reason.contains(PROTECTED_REF_REWRITE_OR_DELETE)
+        }),
+        "the door refused the rewrite with its typed reason: {refusals:?}"
+    );
+    assert_eq!(origin.asked_digest().len(), 64, "and asked the owner once");
+    assert!(origin.bypassed_receipts(&other_actor).is_empty());
+    assert!(origin.bypassed_receipts(&other_project).is_empty());
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main still names the owner's commit"
+    );
+}
+
+/// One revoke ends a bypass: the same rewrite is refused and asked about
+/// again, and nothing is receipted under the revoked bypass.
+#[test]
+fn a_revoked_bypass_no_longer_covers_the_rewrite() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start_in_project(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+    let grant = origin.create_bypass(origin.holder, origin.push_repo.project);
+    origin
+        .vault
+        .revoke_consent_grant(&origin.proof, &grant)
+        .expect("the owner revokes the bypass");
+
+    rewrite_tip(&clone, "history rewritten");
+    origin.push_as_holder();
+    let push = git_output(&clone, &["push", "--force", "origin", "main"]);
+
+    assert!(!push.status.success(), "the rewrite is refused");
+    let refusals = origin.door_refusals();
+    assert!(
+        refusals.last().is_some_and(|reason| {
+            reason.contains("refs/heads/main") && reason.contains(PROTECTED_REF_REWRITE_OR_DELETE)
+        }),
+        "the door refused the rewrite with its typed reason: {refusals:?}"
+    );
+    assert_eq!(origin.asked_digest().len(), 64, "and asked the owner once");
+    assert!(
+        origin.bypassed_receipts(&grant).is_empty(),
+        "nothing ran under the revoked bypass"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main still names the owner's commit"
+    );
+}
+
+/// The named red test for the floor: version 3 names a protected ref's
+/// rewrite or delete, one class a bypass may cover.
+#[test]
+fn the_catastrophe_floor_is_version_3_and_names_a_protected_refs_rewrite_or_delete() {
+    let class =
+        CatastropheClass::parse(PROTECTED_REF_REWRITE_OR_DELETE).expect("the class string parses");
+    assert_eq!(class.as_str(), PROTECTED_REF_REWRITE_OR_DELETE);
+    assert!(class.bypassable(), "a bypass may cover it");
+    let floor = CatastropheFloor::pinned();
+    assert_eq!(floor.version(), 3);
+    assert_eq!(floor.members().len(), 7);
+    assert!(floor.contains(class), "the floor names it");
 }
