@@ -123,22 +123,32 @@ pub(crate) fn install_scope_key(
     put_erasable_ref_in_txn(s, w, &item)
 }
 
-/// The live opening key of `grant`'s pact `pact_id` at `epoch` that a
-/// writer committed in `txn` (FIX 11730): what this install's authority view
-/// re-checks a pact's scope commitment with. `None` when custody holds none
-/// for that epoch, its retirement is staged or done, the vault is archived
-/// or has no custody yet: the pact then stands as the fold left it.
+/// The opening key of a grant's pact at an epoch, as a committed writer
+/// named it in custody's rows (FIX 11730): the key's item, and whether a
+/// retirement of it is staged. What custody's files hold for it is
+/// [`scope_key_of`]'s. A warm authority view compares these rows before it
+/// reads the files again (FIX 23233).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScopeOpeningRow {
+    item: ErasableItem,
+    retiring: bool,
+}
+
+/// The opening `txn`'s rows name for `grant`'s pact `pact_id` at `epoch`,
+/// read without custody's files: what this install's authority view
+/// re-checks a pact's scope commitment with. `None` when the vault is
+/// archived or has no custody yet, or no committed writer named a key for
+/// that epoch: the pact then stands as the fold left it.
 ///
 /// # Errors
-/// A committed key that does not read as a 32-byte opening, and custody and
-/// storage faults.
-pub(crate) fn scope_key_in_txn(
+/// Storage and custody faults.
+pub(crate) fn scope_opening_row_in_txn(
     s: &Store,
     txn: &RoTxn<'_>,
     grant: &EntityId,
     pact_id: &[u8; 32],
     epoch: u64,
-) -> Result<Option<Zeroizing<[u8; 32]>>> {
+) -> Result<Option<ScopeOpeningRow>> {
     if s.core.gate_custody_archived() {
         return Ok(None);
     }
@@ -146,24 +156,42 @@ pub(crate) fn scope_key_in_txn(
         return Ok(None);
     };
     let incarnation = incarnation(pact_id, epoch);
-    for item in erasable_refs_of_in_txn(s, txn, ErasablePurpose::GrantScope, grant.as_bytes())? {
-        if item.incarnation != incarnation {
-            continue;
-        }
-        if retirement_in_txn(s, txn, &item.subject(&custody)?)?.is_some()
-            || custody.erasable_state(&item)? != EntryState::Live
-        {
-            return Ok(None);
-        }
-        let secret = custody.read_erasable(&item)?;
-        if secret.expose().len() != 32 {
-            return Err(unknown_key());
-        }
-        let mut key = Zeroizing::new([0u8; 32]);
-        key.copy_from_slice(secret.expose());
-        return Ok(Some(key));
+    let Some(item) =
+        erasable_refs_of_in_txn(s, txn, ErasablePurpose::GrantScope, grant.as_bytes())?
+            .into_iter()
+            .find(|item| item.incarnation == incarnation)
+    else {
+        return Ok(None);
+    };
+    let retiring = retirement_in_txn(s, txn, &item.subject(&custody)?)?.is_some();
+    Ok(Some(ScopeOpeningRow { item, retiring }))
+}
+
+/// The live opening key `row` names, read from custody's files. `None` when
+/// its retirement is staged or done, or custody holds no entry for it.
+///
+/// # Errors
+/// An entry that does not read as a 32-byte opening, and custody faults.
+pub(crate) fn scope_key_of(
+    s: &Store,
+    row: &ScopeOpeningRow,
+) -> Result<Option<Zeroizing<[u8; 32]>>> {
+    if row.retiring {
+        return Ok(None);
     }
-    Ok(None)
+    let Some(custody) = s.core.key_custody.local() else {
+        return Ok(None);
+    };
+    if custody.erasable_state(&row.item)? != EntryState::Live {
+        return Ok(None);
+    }
+    let secret = custody.read_erasable(&row.item)?;
+    if secret.expose().len() != 32 {
+        return Err(unknown_key());
+    }
+    let mut key = Zeroizing::new([0u8; 32]);
+    key.copy_from_slice(secret.expose());
+    Ok(Some(key))
 }
 
 /// Stages the retirement of every opening key custody holds for `grant`,
