@@ -11,8 +11,8 @@
 //! follows them to the head ([`NoteDocument::live_span`]): the span maps
 //! while every quoted character still stands, in order, with no other text
 //! between them. A rewritten or deleted line, text typed inside the span, a
-//! rewrite of the whole text, or a frontier the document no longer holds is
-//! drift, and the thread stays on the span it was opened on. An edit writes
+//! quoted character deleted and typed again, a rewrite of the whole text, or
+//! a frontier the document no longer holds is drift, and the thread stays on the span it was opened on. An edit writes
 //! nothing to a thread; where its span stands is read each time.
 //!
 //! Only a plan-doc takes a thread: any other NOTE keeps refusing one, as it
@@ -91,7 +91,8 @@ fn head_span(doc: &NoteDocument, char_start: u64, char_end: u64) -> Result<PlanD
 }
 
 /// The span `char_start..char_end` of `doc` read at `frontier`, and the same
-/// characters at `doc`'s head while they all stand with the same text.
+/// characters at `doc`'s head while every one of them still stands, in
+/// order, with no other character between them.
 fn span_read(
     doc: &NoteDocument,
     frontier: &[u8],
@@ -114,8 +115,15 @@ fn span_read(
         return Ok(unread);
     };
     let quote_hash = *blake3::hash(span.quote.as_bytes()).as_bytes();
+    // The endpoints and the text alone would still map a span whose inner
+    // character was deleted and the same character typed again: the span
+    // maps only while the head holds the very characters quoted.
+    let quoted = at.character_ids(start, end);
     let head = doc
         .live_span(&span.start_cursor, &span.end_cursor, &quote_hash)?
+        .filter(|&(head_start, head_end, _)| {
+            quoted.is_some() && doc.character_ids(head_start, head_end) == quoted
+        })
         .map(|(start, end, quote)| PlanDocSpan {
             frontier: doc.doc.oplog_frontiers().encode(),
             char_start: start as u64,

@@ -599,6 +599,19 @@ impl NoteDocument {
         })
     }
 
+    /// The IDs of the body's characters `start..end` (Unicode scalar
+    /// indices), in order: which characters stand there, whatever their
+    /// text. `None` for a range outside the text.
+    pub(super) fn character_ids(&self, start: usize, end: usize) -> Option<Vec<loro::ID>> {
+        let text = self.doc.get_text(BODY);
+        if end > text.len_unicode() {
+            return None;
+        }
+        (start..end)
+            .map(|at| text.get_cursor(at, Side::Left)?.id)
+            .collect()
+    }
+
     pub(super) fn resolve(&self, pin: &NotePin) -> Result<NoteSpanResolution> {
         pin.validate()?;
         if pin.document != self.id {
