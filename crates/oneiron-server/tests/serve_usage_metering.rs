@@ -14,7 +14,7 @@ use oneiron::authority::MachineRole;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_server::ENGINE_THREAD_STACK_BYTES;
-use oneiron_server::test_doors::served_server::build_served_server;
+use oneiron_server::test_doors::build_server::build_served_server;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
