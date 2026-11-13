@@ -709,6 +709,31 @@ fn record_refuses_receipts_the_engine_did_not_record_for_that_output() {
 }
 
 #[test]
+fn record_keeps_the_engines_quality_for_a_number_one_ulp_off() {
+    let f = fixture();
+    let sample = artifact(&f, "sample.txt", "a formal, short answer");
+    let campaign = installed(&f, "archive-ulp", std::slice::from_ref(&sample));
+    let (root, revision) = (campaign.root, campaign.revision.as_str());
+    let placed = place(&f, root, revision, &sample, ["formal", "short"]).expect("placement");
+    let scored = score(&f, root, revision, &sample, 0.4).expect("score");
+    // The quality as a JSON parser without `float_roundtrip` may answer it.
+    let mut drifted = scored.clone();
+    drifted.quality = f64::from_bits(scored.quality.to_bits() + 1);
+    let view = record(&f, root, revision, placed.clone(), drifted)
+        .expect("a quality one unit in the last place off names the engine's score");
+    assert_eq!(view.best.len(), 1);
+    assert_eq!(
+        view.best[0].score.to_bits(),
+        scored.quality.to_bits(),
+        "the archive keeps the engine's quality, not the caller's bits"
+    );
+    let again = record(&f, root, revision, placed, scored.clone())
+        .expect("the exact engine score is the same record");
+    assert_eq!(again.best.len(), 1);
+    assert_eq!(again.best[0].score.to_bits(), scored.quality.to_bits());
+}
+
+#[test]
 fn archive_refuses_a_revision_the_output_does_not_hold() {
     let f = fixture();
     let sample = artifact(&f, "sample.txt", "a formal, short answer");
