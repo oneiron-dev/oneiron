@@ -496,13 +496,12 @@ fn leaving_active_or_the_hosts_topic_closes_the_channel_once() -> TestResult {
         mailbox.watch_step(&fake, Some(TOPIC))?,
         Some(MailWatchAct::Stopped)
     );
-    assert_eq!(
-        fake.calls()[before..],
-        [Call::StopWatch],
-        "the close makes one call and no other"
+    assert!(
+        fake.calls()[before..].is_empty(),
+        "a paused source's credential reads nothing: its channel is let go of with no call"
     );
     assert!(!mailbox.watch_due(Some(TOPIC))?, "closed once");
     assert_eq!(mailbox.watch_step(&fake, Some(TOPIC))?, None);
-    assert_eq!(fake.calls().len(), before + 1);
+    assert_eq!(fake.calls().len(), before);
     Ok(())
 }

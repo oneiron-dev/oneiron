@@ -9,9 +9,11 @@
 //! The topic is the host's (its owner's Google project), never the
 //! engine's. A host that sets one opens a channel for each Active Gmail
 //! mailbox and renews it daily (Google closes one after 7 days, and
-//! suggests a daily renewal); a channel whose source left Active, or whose
-//! host set no topic, is closed. Each open, renewal and close is charged as
-//! any call, within the source's quota windows.
+//! suggests a daily renewal); a channel whose host set no topic is closed.
+//! A source that left Active reads nothing through its credential, so its
+//! channel is let go of with no provider call: it lapses within its week,
+//! and its notices wake nothing meanwhile. Each open, renewal and close is
+//! charged as any call, within the source's quota windows.
 
 use serde::{Deserialize, Serialize};
 
@@ -132,10 +134,11 @@ impl Vault {
     /// `wire`, under the host's `topic`: opens or renews it, or closes it,
     /// as [`Vault::mail_watches_due`] lists it; `None` when nothing was
     /// owed, or when the source rests out of quota (it is due again once it
-    /// does not). A channel the provider has already closed is let go of
-    /// with no provider call. It keeps the channel on the source and writes
-    /// no row. Call it from the host only: the owner's own sync never opens
-    /// a channel.
+    /// does not). A channel the provider has already closed, or one of a
+    /// source that left Active (its credential reads nothing then), is let
+    /// go of with no provider call. It keeps the channel on the source and
+    /// writes no row. Call it from the host only: the owner's own sync
+    /// never opens a channel.
     ///
     /// # Errors
     ///
@@ -173,10 +176,11 @@ impl Vault {
                 (Some(watch), MailWatchAct::Watched { expires_at })
             }),
             Owed::Stop
-                if state
-                    .watch
-                    .as_ref()
-                    .is_some_and(|watch| watch.expires_at > now) =>
+                if row.status == MailSourceStatus::Active
+                    && state
+                        .watch
+                        .as_ref()
+                        .is_some_and(|watch| watch.expires_at > now) =>
             {
                 metered
                     .stop_watch(&wire_source)
