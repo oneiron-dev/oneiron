@@ -16,6 +16,7 @@
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test image_organ_route`.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
@@ -24,8 +25,8 @@ use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::agent_dispatch::DEFAULT_BASE_LOGICAL_ID;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, holder_proof_challenge};
-use oneiron::federation::Scope;
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -56,8 +57,12 @@ struct Fixture {
     vault: Arc<Vault>,
     /// The host's root slip: the owner.
     owner: Credential,
-    /// An agent on a slip of its own, which holds no grant.
+    /// An agent on a slip of its own, which holds no grant and reads only
+    /// [`Self::agent_facets`].
     agent: Credential,
+    /// The one facet the agent's slip reads: it holds none of the owner's
+    /// rows.
+    agent_facets: ScopeAxis<ScopeId>,
     _dir: tempfile::TempDir,
 }
 
@@ -72,6 +77,15 @@ impl Fixture {
         let (agent, _) = vault
             .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)?
             .ok_or("the base agent is seeded")?;
+        let work = EntityId::now();
+        vault.put_entity(
+            &work,
+            oneiron::registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"work",
+        )?;
+        let agent_facets = ScopeAxis::Some(BTreeSet::from([ScopeId(work)]));
         // HTTP trusts the logged issuer of each mint; root the vault here.
         let issuer = HostSlipIssuer::from_secret(b"oneiron-test-image-organ-route")?;
         let root = vault.ensure_host_root_slip(&issuer)?;
@@ -82,6 +96,7 @@ impl Fixture {
         claims.binding_key = key.verifying_key().to_bytes();
         claims.actor_class = Some("agent".to_owned());
         claims.scope = Scope::top();
+        claims.scope.facets = agent_facets.clone();
         claims.slip_id = [0x71; 32];
         let agent = Credential {
             slip: vault.mint_capability_slip(&issuer, claims)?,
@@ -99,6 +114,7 @@ impl Fixture {
                 holder: Holder::Issuer(issuer),
             },
             agent,
+            agent_facets,
             _dir: dir,
         })
     }
@@ -284,8 +300,15 @@ async fn caller_refused() -> TestResult {
     );
     assert!(answer(&body)["held"].is_object(), "{body}");
 
-    // The agent's own slip binds it, and holds no grant that reads the
-    // owner's artifact: the edit is refused as if it were absent.
+    // The agent's own slip binds it, holds no grant, and reads one facet
+    // that does not hold the owner's artifact: the edit is refused as if
+    // the artifact were absent.
+    assert!(
+        !fixture
+            .vault
+            .row_in_facets(&EntityId::from_hex(&photo)?, &fixture.agent_facets)?,
+        "the agent's facet does not hold the photo"
+    );
     let (status, body) = fixture
         .call(Some(&fixture.agent), EDIT, &edit(&photo, crop()))
         .await?;
