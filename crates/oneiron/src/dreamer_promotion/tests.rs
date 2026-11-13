@@ -1647,6 +1647,7 @@ fn bounded_over(
         wording: "May this write land without the owner's review?".to_owned(),
         notes,
         calibrated,
+        world_hold: None,
     })
 }
 

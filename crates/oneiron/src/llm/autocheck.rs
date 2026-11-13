@@ -52,6 +52,37 @@ pub struct AutoCheckDecisions {
     /// its calibrated verdict, the decision's probability as the confidence,
     /// and the floor decides. `None` answers Allow or Hold.
     pub calibrated: Option<ModelId>,
+    /// The judge of each candidate's world, when the host injects one: a
+    /// candidate whose world it keeps on this device is asked only of the
+    /// rungs whose provider runs on this device. `None` asks every rung.
+    pub world_hold: Option<Arc<dyn AutoCheckWorldHold>>,
+}
+
+/// Whether a candidate's world keeps its auto check on this device: the
+/// world settings keep a model call on that world from a model off this
+/// device (DEC-0005 fix 6: the world's model order covers every model call on
+/// it). A candidate it keeps is asked only of the rungs that run on this
+/// device ([`super::decision::DecisionProvider::runs_on_device`]); with none,
+/// the check is [`AutoCheckOutcome::Unavailable`], as a dead checker's is, and
+/// the write fails closed (the owner's ruling L9, 2026-07-13).
+pub trait AutoCheckWorldHold: Send + Sync {
+    /// Whether no model off this device may read a candidate in `world`.
+    fn keeps_on_device(&self, world: EntityId) -> Result<bool>;
+}
+
+/// The vault's own world settings. A model off this device is a destination
+/// no machine proof names, as a hosted seat's model is, so a world kept from
+/// any machine, and a world this vault cannot place, keep the check here
+/// ([`crate::Vault::model_call_hold_for`]).
+impl AutoCheckWorldHold for crate::Vault {
+    fn keeps_on_device(&self, world: EntityId) -> Result<bool> {
+        Ok(self
+            .model_call_hold_for(
+                Some(world),
+                &crate::settings::CallerLocality::OffDevice.into(),
+            )?
+            .is_some())
+    }
 }
 
 impl AutoCheckDecisions {

@@ -126,6 +126,17 @@ pub trait DecisionProvider: Send + Sync {
     fn leaves_host(&self) -> bool {
         false
     }
+    /// Whether every call it answers is computed on this physical device: in this process,
+    /// or in a model runtime this host supervises and reaches only over a channel it
+    /// authenticates against that child, so that no transport it may use leaves the device
+    /// (I2-LOCAL, as `RecallRerankHost::runs_on_device` says it). Only such a provider is
+    /// asked about a candidate whose world stays on this device (DEC-0005 fix 6). A
+    /// provider that cannot say runs elsewhere, and so does one that may reach a model over
+    /// HTTP, even on this machine: an owner-hosted route that stays on the host
+    /// ([`Self::leaves_host`] false) is not on this device.
+    fn runs_on_device(&self) -> bool {
+        false
+    }
     /// What it costs per thousand units at its rung, as its host knows it (its registered
     /// price over the units it reads); none when the host knows none. The receipt of an
     /// answer it gives carries it (ARCH-0076, "Cost").

@@ -383,6 +383,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                         )
                     })
                     .transpose()?,
+                world: body.world.unwrap_or_else(crate::claim::base_world_id),
             };
             // The concrete wrapper is required at every injection boundary:
             // one capacity-bounded consult, with panic and timeout isolation.

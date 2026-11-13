@@ -595,6 +595,7 @@ impl DecisionHost {
                 wording: wording.clone(),
                 notes: Arc::new(self.notes.clone()),
                 calibrated: None,
+                world_hold: None,
             })
         });
         self

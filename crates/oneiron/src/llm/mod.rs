@@ -169,7 +169,7 @@ pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
-    AutoCheckSignals, BoundedAutoChecker,
+    AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
 pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
