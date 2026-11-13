@@ -9,7 +9,9 @@
 //! lands, and its row names the manifest of the version it pinned.
 //! `graph_reply_draft_pins_artifact_version` (a Microsoft 365 mailbox, slice
 //! 3b) is red on slice 3a, which refuses files from any mailbox but a
-//! Google one.
+//! Google one. `imap_reply_with_files_waits_for_the_size_check_runner`
+//! (an IMAP mailbox, slice 3c) is red on slice 3b, which refuses files from
+//! an IMAP mailbox outright, without asking its submission server.
 
 use std::sync::Arc;
 
@@ -105,5 +107,29 @@ fn graph_reply_draft_pins_artifact_version() -> TestResult {
         doors::draft_reply_with_file(&vault, seeded.owner, &seeded.thread_ref, artifact, 1);
 
     assert_pins_first_version(drafted, artifact);
+    Ok(())
+}
+
+/// The same reply from an IMAP mailbox asks the mailbox's submission server
+/// the size it takes before any file is read. A test host installs no
+/// runner for that blocking check, so the draft is refused by that name:
+/// it never lands unchecked, and never on the stored limit alone.
+#[test]
+fn imap_reply_with_files_waits_for_the_size_check_runner() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = open_vault(directory.path())?;
+    let seeded = doors::seed_imap_thread(&vault, now_sec()?)?;
+    let artifact = doors::seed_artifact(&vault, seeded.owner, &[FIRST_VERSION, SECOND_VERSION])?;
+
+    let drafted =
+        doors::draft_reply_with_file(&vault, seeded.owner, &seeded.thread_ref, artifact, 1);
+
+    let Err(refusal) = drafted else {
+        panic!("an IMAP reply with files is not drafted before its size check runs");
+    };
+    assert!(
+        refusal.contains("mail_blocking_runner_missing"),
+        "the refusal names the missing size check runner: {refusal}"
+    );
     Ok(())
 }
