@@ -176,3 +176,154 @@ pub(crate) fn erase_hold_override_receipt_actor_in_txn(
     }
     Ok(())
 }
+
+/// Whether `text` is `len` lowercase hex characters.
+fn is_lower_hex(text: &str, len: usize) -> bool {
+    text.len() == len
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether a decoded hold-override receipt keeps the writer's pure row invariants.
+fn archived_hold_override_holds(key: &str, receipt: &ReceiptRecord) -> bool {
+    if key != receipt.receipt_id {
+        return false;
+    }
+    if receipt.receipt_kind != ReceiptKind::RunHoldOverride {
+        return false;
+    }
+    if receipt.outcome != OUTCOME_RELEASED {
+        return false;
+    }
+    if receipt.on_behalf_of.is_some() {
+        return false;
+    }
+    if !receipt.policy_trace.is_empty() {
+        return false;
+    }
+    let Some(rest) = receipt.receipt_id.strip_prefix("run_hold_override:") else {
+        return false;
+    };
+    let Some((hex, seq)) = rest.split_once(':') else {
+        return false;
+    };
+    if !is_lower_hex(hex, 32) {
+        return false;
+    }
+    if seq.is_empty() || !seq.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    if seq.len() > 1 && seq.starts_with('0') {
+        return false;
+    }
+    if seq.parse::<u64>().is_err() {
+        return false;
+    }
+    let Some(hold) = receipt.fields.get(FIELD_HOLD) else {
+        return false;
+    };
+    let Some(attempt) = receipt.fields.get(FIELD_ATTEMPT) else {
+        return false;
+    };
+    if attempt != hex {
+        return false;
+    }
+    match hold.as_str() {
+        "budget" | "hook" => {
+            if receipt.fields.contains_key(FIELD_LAUNCH_REF)
+                || receipt.fields.contains_key(FIELD_ARTIFACT_REF)
+                || receipt.fields.contains_key(FIELD_THREAD_REF)
+            {
+                return false;
+            }
+            if receipt.fields.len() != 2 {
+                return false;
+            }
+        }
+        "fanout" => {
+            let Some(launch) = receipt.fields.get(FIELD_LAUNCH_REF) else {
+                return false;
+            };
+            if !is_lower_hex(launch, 32) {
+                return false;
+            }
+            if receipt.fields.contains_key(FIELD_ARTIFACT_REF)
+                || receipt.fields.contains_key(FIELD_THREAD_REF)
+            {
+                return false;
+            }
+            if receipt.fields.len() != 3 {
+                return false;
+            }
+        }
+        "annotation" => {
+            let (Some(artifact), Some(thread)) = (
+                receipt.fields.get(FIELD_ARTIFACT_REF),
+                receipt.fields.get(FIELD_THREAD_REF),
+            ) else {
+                return false;
+            };
+            if !is_lower_hex(artifact, 32) || !is_lower_hex(thread, 32) {
+                return false;
+            }
+            if receipt.fields.contains_key(FIELD_LAUNCH_REF) {
+                return false;
+            }
+            if receipt.fields.len() != 4 {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Lands one archived hold-override receipt with its time index, preserving erase-cleared actors.
+fn land_archived_hold_override_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, receipt) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if !archived_hold_override_holds(&key, &receipt) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    let outcome = install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)?;
+    if matches!(
+        outcome,
+        ArchivedSideRowOutcome::Installed | ArchivedSideRowOutcome::Unchanged
+    ) {
+        BY_TIME.put(vault, txn, &(receipt.occurred_at, key), &())?;
+    }
+    Ok(outcome)
+}
+
+impl Vault {
+    /// Lands the owner's archived hold-override receipts in input order, rebuilding only their time
+    /// index.
+    pub(crate) fn land_archived_attempt_queue_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        rows: &[crate::batch::export::ArchiveRetainedSideRow],
+    ) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_hold_override_receipt_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
+}

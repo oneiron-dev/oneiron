@@ -3,8 +3,16 @@
 
 use heed::{RoTxn, RwTxn};
 
+use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::receipt::SendReceiptOutcome;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::*;
@@ -206,4 +214,128 @@ fn send_idempotency_task_ref_from_value(value: &[u8]) -> Result<EntityId> {
             .map_err(|_| Error::CorruptedIndex("send idempotency index"))?,
     )
     .map_err(|_| Error::CorruptedIndex("send idempotency index"))
+}
+
+/// Lands one archived `SEND_RECEIPT_ATTEMPT_AUDIT` envelope: the durable bytes and audit-key hash
+/// must validate before install via the shared collision rule. The TASK summary is never required.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_send_audit_row_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&SEND_RECEIPT_AUDIT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let (receipt, _) = match Vault::decode_archived_send_receipt_for_restore(&key.0, &value) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if send_receipt_audit_key(&key.0, &receipt.receipt_id) != key {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&SEND_RECEIPT_AUDIT, vault, txn, permit, &key, row)
+}
+
+/// Lands one archived `SEND_RECEIPT_SUMMARY` envelope: the durable bytes must validate and every
+/// Delivered outcome needs its actual destination idempotency winner before install via the shared
+/// collision rule. Failed and Ambiguous outcomes need no twin.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_send_summary_row_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&SEND_RECEIPT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let (receipt, outcome) = match Vault::decode_archived_send_receipt_for_restore(&key, &value) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if outcome == SendReceiptOutcome::Delivered {
+        let (Some(actor_hex), Some(idempotency_key)) = (
+            receipt.actor.as_deref(),
+            receipt.fields.get("idempotency_key"),
+        ) else {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::MissingCompanion,
+            ));
+        };
+        let Ok(actor) = EntityId::from_hex(actor_hex) else {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        };
+        if actor.to_hex() != actor_hex {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+        match SEND_IDEMPOTENCY.get(vault, &*txn, &send_idempotency_key(&actor, idempotency_key))? {
+            None => {
+                return Ok(ArchivedSideRowOutcome::HeldBack(
+                    RetainedSideHeldBackReason::MissingCompanion,
+                ));
+            }
+            Some(winner) if winner.0 != key => {
+                return Ok(ArchivedSideRowOutcome::HeldBack(
+                    RetainedSideHeldBackReason::InconsistentCompanion,
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    install_archived_row(&SEND_RECEIPT, vault, txn, permit, &key, row)
+}
+
+impl Store {
+    /// Lands the owner's archived `SEND_RECEIPT_ATTEMPT_AUDIT` and `SEND_RECEIPT_SUMMARY` envelopes
+    /// in input order, one outcome per row: audit rows land before summaries, an absent row
+    /// installs, an identical row is unchanged, and a different row stays live. Never dispatches,
+    /// retries, or writes idempotency.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_send_receipts_rows_in_txn(
+        vault: &Vault,
+        txn: &mut RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes: Vec<Option<ArchivedSideRowOutcome>> =
+            (0..rows.len()).map(|_| None).collect();
+        for (index, row) in rows.iter().enumerate() {
+            if row.source_table.as_str() == SEND_RECEIPT_AUDIT.decl().name {
+                outcomes[index] = Some(land_archived_send_audit_row_in_txn(
+                    vault, txn, permit, row,
+                )?);
+            }
+        }
+        for (index, row) in rows.iter().enumerate() {
+            if row.source_table.as_str() == SEND_RECEIPT.decl().name {
+                outcomes[index] = Some(land_archived_send_summary_row_in_txn(
+                    vault, txn, permit, row,
+                )?);
+            }
+        }
+        Ok(outcomes
+            .into_iter()
+            .map(|outcome| {
+                outcome.unwrap_or(ArchivedSideRowOutcome::HeldBack(
+                    RetainedSideHeldBackReason::InvalidEncoding,
+                ))
+            })
+            .collect())
+    }
 }

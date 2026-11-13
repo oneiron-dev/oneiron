@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::agent_dispatch::{load_team_type_tree_at_in_txn, load_team_type_tree_in_txn};
 use crate::attempt_queue::source_rows::union_source_rows;
+use crate::batch::export::ArchiveRetainedSideRow;
+use crate::batch::export::OwnerArchiveRestorePermit;
+use crate::batch::export::RetainedSideHeldBackReason;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
 use crate::claim::learning_evidence::Anchor;
 use crate::claim::learning_evidence::EvidenceSource;
 use crate::claim::learning_evidence::LearningEvidence;
@@ -663,4 +669,66 @@ fn stored_receipts_in_txn(
         a.at.cmp(&b.at).then_with(|| a.team_ref.cmp(&b.team_ref))
     });
     Ok(rows)
+}
+
+/// Lands the owner's archived `TEAM_RECEIPT` envelopes in input order, one outcome per row.
+pub(crate) fn land_archived_team_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_team_receipt_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
+}
+
+/// Lands one archived team-receipt envelope: the contract's structural checks, then an
+/// absent-key exact-bytes install that never feeds learning or validates the type tree.
+fn land_archived_team_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, stored) = match decode_archived_row(&TEAM_RECEIPT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if stored.receipt.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if let Some(outcome) = &stored.receipt.outcome
+        && bounded(
+            &outcome.receipt,
+            "an outcome receipt is 1..=256 bytes without NUL",
+        )
+        .is_err()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if let Some(reason) = team_receipt_twins_hold_in_txn(&key, &stored)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&TEAM_RECEIPT, vault, txn, permit, &key, row)
+}
+
+/// Holds back a team receipt whose key is not its `team_ref` (C7 twin rule, no type check).
+fn team_receipt_twins_hold_in_txn(
+    key: &str,
+    stored: &StoredTeamReceipt,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    if key == stored.receipt.team_ref {
+        Ok(None)
+    } else {
+        Ok(Some(RetainedSideHeldBackReason::InvalidValue))
+    }
 }

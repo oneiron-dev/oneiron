@@ -2,6 +2,12 @@
 use serde::{Deserialize, Serialize};
 
 use super::notifications::PolicyNotificationTarget;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::batch::secret_scan::admit_typed;
 use crate::error::{Error, GateError, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
@@ -316,5 +322,90 @@ impl Vault {
             }
         }
         Ok(rows)
+    }
+}
+
+/// Lands one archived `OWNER_POLICY_CHANGE_EVENT` envelope in `txn`: canonical outer decode
+/// and the credential predicate, then the embedded event's own canonical round-trip with its
+/// key naming its receipt id. No ruling, receipt, sequence row or notification is written.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_policy_change_event_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&EVENTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let event: PolicyChangedEvent = match decode(&value) {
+        Ok(event) => event,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    let canonical = match encode(&event) {
+        Ok(canonical) => canonical,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            ));
+        }
+    };
+    if canonical != value || key != event.receipt_id {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    if event.kind.is_empty()
+        || EntityId::from_hex(&event.receipt_id).is_err()
+        || EntityId::from_hex(&event.author).is_err()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&EVENTS, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived owner-policy envelopes in input order, one outcome per row:
+    /// `OWNER_POLICY_CHANGE_EVENT` rows install as passive history and
+    /// `OWNER_POLICY_SECRET_SCAN_RECEIPT` rows through the switch's own checks. An absent row
+    /// installs, an identical row is unchanged, and a different row stays live. No ruling,
+    /// sequence row, mode row, lift run or notification is written here: the ledger's
+    /// `SEQUENCE` allocates ruling revisions, not event keys, so no counter is repaired.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_policy_model_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            let outcome = match row.source_table.as_str() {
+                name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => {
+                    land_archived_policy_change_event_row_in_txn(vault, txn, permit, row)?
+                }
+                name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name => {
+                    super::secret_scan_switch::land_archived_secret_scan_receipt_row_in_txn(
+                        vault, txn, permit, row,
+                    )?
+                }
+                // The dispatcher never sends a foreign envelope here; without an
+                // owning table the envelope has no decoding.
+                _ => ArchivedSideRowOutcome::HeldBack(RetainedSideHeldBackReason::InvalidEncoding),
+            };
+            outcomes.push(outcome);
+        }
+        Ok(outcomes)
     }
 }

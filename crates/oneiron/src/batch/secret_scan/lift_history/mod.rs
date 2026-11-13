@@ -52,6 +52,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{SecretScanMode, secret_scan_mode_in_txn};
 use crate::Vault;
+use crate::batch::export::archive_side_install::{ArchivedSideRowOutcome, decode_archived_row};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, GateError, Result};
@@ -1186,4 +1190,51 @@ pub fn secret_lift_as_owner(
         live_owner_in_txn(vault, owner, &txn)?;
     }
     vault.secret_lift_status()
+}
+
+/// The holdback reason for one decoded lift receipt: identity mismatch holds as invalid, and every
+/// otherwise-valid receipt holds as missing companion because exact contribution completeness can
+/// never be proved from the envelope's metadata alone.
+fn archived_secret_lift_holdback(
+    key: &EntityId,
+    completed: &CompletedLift,
+) -> RetainedSideHeldBackReason {
+    if completed.run_id != *key {
+        return RetainedSideHeldBackReason::InvalidValue;
+    }
+    // The envelope carries completion metadata only, never family totals. Destination contribution
+    // rows, even when present, prove only that some rows exist — not that they are the source run's
+    // complete set, and no total in the envelope can confirm completeness. Conservative hold per
+    // C5; a future owner rule accepting metadata-only projection would relax this.
+    RetainedSideHeldBackReason::MissingCompanion
+}
+
+/// Lands one archived `SECRET_LIFT_RECEIPT` envelope: always held back, never installed. Identity
+/// mismatch reports invalid; all other rows report missing companion for their unprovable
+/// accounting.
+fn land_archived_secret_lift_row(row: &ArchiveRetainedSideRow) -> ArchivedSideRowOutcome {
+    let (key, completed) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return ArchivedSideRowOutcome::HeldBack(reason),
+    };
+    ArchivedSideRowOutcome::HeldBack(archived_secret_lift_holdback(&key, &completed))
+}
+
+impl Vault {
+    /// Lands the owner's archived `SECRET_LIFT_RECEIPT` envelopes in input order, one outcome per
+    /// row: every row is held back, never installed, because exact contribution completeness cannot
+    /// be proved. Never enqueues a run, reads contributions, or notifies. Kept fallible for
+    /// group-signature compatibility; always returns `Ok`.
+    pub(crate) fn land_archived_secret_lift_rows_in_txn(
+        _vault: &Vault,
+        _txn: &mut RwTxn<'_>,
+        _permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_secret_lift_row(row));
+        }
+        Ok(outcomes)
+    }
 }
