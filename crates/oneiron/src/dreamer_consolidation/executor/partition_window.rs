@@ -578,16 +578,27 @@ impl ConsolidationExecutor<'_> {
                     SlotWork::Panicked => Err(crate::dreamer_wake::executor_panic_error()),
                     SlotWork::Finished { run, live } => match (stopped, run) {
                         // The window stopped ahead of this slot: only a
-                        // checkpoint, a trap or an error settles, as a
-                        // stopped prefix's do; a run that would land
-                        // parks uncommitted, its spend accounted.
+                        // checkpoint, a trap, a spent seat's refusal or an
+                        // error settles, as a stopped prefix's do (review
+                        // round 2 of #7340); a run that would land parks
+                        // uncommitted, its spend accounted.
                         (
                             Some(_),
-                            run @ (Ok(PartitionRun::Checkpoint | PartitionRun::Trapped) | Err(_)),
+                            run @ (Ok(PartitionRun::Checkpoint
+                            | PartitionRun::Trapped
+                            | PartitionRun::SeatRefused { .. })
+                            | Err(_)),
                         )
-                        // A checkpoint or a trap lands nothing: it stands
-                        // whatever an earlier slot committed.
-                        | (None, run @ Ok(PartitionRun::Checkpoint | PartitionRun::Trapped)) => {
+                        // A checkpoint, a trap or a seat refusal lands
+                        // nothing: it stands whatever an earlier slot
+                        // committed, and a re-run would ask the spent seat
+                        // again before its available write.
+                        | (
+                            None,
+                            run @ Ok(PartitionRun::Checkpoint
+                            | PartitionRun::Trapped
+                            | PartitionRun::SeatRefused { .. }),
+                        ) => {
                             self.boxed_settle_partition_run(
                                 &resources,
                                 run,
