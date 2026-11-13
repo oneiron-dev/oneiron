@@ -224,6 +224,8 @@ struct LeaseBatch {
     egress_no_verdict: usize,
     device_local: usize,
     world_space: usize,
+    world_space_index_drops: usize,
+    world_space_vector_drops: usize,
 }
 
 /// One actually-filled measured item: the leased source it filled, with the actual
@@ -261,6 +263,14 @@ pub struct PendingEmbeddingReconcileReport {
     /// media pass of the world's space; never embedded into the vault's
     /// index, here or by a rung.
     pub world_space: usize,
+    /// Vault-index vectors this pass dropped because a world's order now names
+    /// its own text space for their rows; each row is queued again, pending for
+    /// that space and for the vault's index should the world inherit again.
+    pub world_space_index_drops: usize,
+    /// Text vectors this pass dropped from a device space that no longer takes
+    /// their rows, as a world's order stopped naming it; a row the vault's
+    /// index now takes is queued again.
+    pub world_space_vector_drops: usize,
     /// Actually-filled measured items, in fill order, for the operational
     /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
     /// unmeasured remote fills have no entry.
@@ -408,6 +418,8 @@ impl PendingEmbeddingReconciler {
             egress_no_verdict: batch.egress_no_verdict,
             device_local: batch.device_local,
             world_space: batch.world_space,
+            world_space_index_drops: batch.world_space_index_drops,
+            world_space_vector_drops: batch.world_space_vector_drops,
             ..PendingEmbeddingReconcileReport::default()
         };
         Ok(batch.work)
