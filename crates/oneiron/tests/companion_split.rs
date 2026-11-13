@@ -29,10 +29,11 @@ use oneiron::{
     WriteActor,
 };
 
-/// The two workspaces' shared vaults. Not 7, the own-device residence
+/// The shared vault both workspaces run in. A store creates one shared vault
+/// (its creation row is a single row), and the split check reads the
+/// workspaces' presets, not their vault ids. Not 7, the own-device residence
 /// scope's id, whose Owner grants read as device access.
-const VAULT_A: u64 = 41;
-const VAULT_B: u64 = 42;
+const VAULT_ID: u64 = 41;
 const WORKSPACE_A: &str = "companion-split-a";
 const WORKSPACE_B: &str = "companion-split-b";
 /// The words the refusal carries.
@@ -87,7 +88,7 @@ fn definition(agent_id: &str) -> AgentDefinition {
     )
 }
 
-/// A vault whose embedded owner owns both workspaces' shared vaults, with
+/// A vault whose embedded owner owns the workspaces' shared vault, with
 /// the two seeded agents a workspace can name as its house.
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -99,11 +100,11 @@ struct Fixture {
     agent: EntityId,
     /// `sys.team_lead`: a house that is no one's companion.
     other_house: EntityId,
-    /// A second Owner of `VAULT_A`, when the fixture seats one.
+    /// A second Owner of `VAULT_ID`, when the fixture seats one.
     co_owner: Option<EntityId>,
 }
 
-/// [`Fixture`], with a second PERSON seated as an Owner of `VAULT_A` beside
+/// [`Fixture`], with a second PERSON seated as an Owner of `VAULT_ID` beside
 /// the embedded owner when `with_co_owner`: her founding invitation accepted.
 fn fixture_with(with_co_owner: bool) -> Result<Fixture> {
     let dir = tempfile::tempdir()?;
@@ -118,12 +119,12 @@ fn fixture_with(with_co_owner: bool) -> Result<Fixture> {
     };
     match co_owner {
         None => {
-            vault.initialize_shared_vault(&owner_proof, VAULT_A, None, &[], now)?;
+            vault.initialize_shared_vault(&owner_proof, VAULT_ID, None, &[], now)?;
         }
         Some(co_owner) => {
             vault.initialize_shared_vault(
                 &owner_proof,
-                VAULT_A,
+                VAULT_ID,
                 None,
                 &[
                     InitialSharedMember {
@@ -139,14 +140,13 @@ fn fixture_with(with_co_owner: bool) -> Result<Fixture> {
             )?;
             let co_proof = proof(&vault, co_owner)?;
             let invitation = vault
-                .shared_invitations(&co_proof, VAULT_A)?
+                .shared_invitations(&co_proof, VAULT_ID)?
                 .into_iter()
                 .find(|open| open.role == FederationGrantRole::Owner)
                 .expect("the co-owner's founding invitation");
-            vault.accept_shared_invitation(&co_proof, VAULT_A, &invitation.id)?;
+            vault.accept_shared_invitation(&co_proof, VAULT_ID, &invitation.id)?;
         }
     }
-    vault.initialize_shared_vault(&owner_proof, VAULT_B, None, &[], vault.now_recorded_at())?;
     let org = seed_row(&vault, ENTITY_TYPE_ORG)?;
     let (agent, _) = vault
         .get_seeded_agent_definition_by_logical_id("sys.default")?
@@ -260,7 +260,7 @@ fn a_member_who_brings_the_house_of_the_workspace_she_joins_is_refused() -> Resu
     assert_split(
         fx.onboard(
             "bring-own-house",
-            fx.preset(WORKSPACE_A, VAULT_A, fx.agent),
+            fx.preset(WORKSPACE_A, VAULT_ID, fx.agent),
             member,
             companion,
         ),
@@ -276,7 +276,7 @@ fn a_member_who_brings_the_house_of_a_workspace_she_is_in_is_refused() -> Result
     let born = fx.birth("garden.companion.b")?;
     fx.onboard(
         "join-b",
-        fx.preset(WORKSPACE_B, VAULT_B, fx.agent),
+        fx.preset(WORKSPACE_B, VAULT_ID, fx.agent),
         member,
         born,
     )
@@ -285,7 +285,7 @@ fn a_member_who_brings_the_house_of_a_workspace_she_is_in_is_refused() -> Result
     assert_split(
         fx.onboard(
             "bring-house-of-b",
-            fx.preset(WORKSPACE_A, VAULT_A, fx.other_house),
+            fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
             member,
             companion,
         ),
@@ -301,7 +301,7 @@ fn a_member_brings_an_agent_that_runs_no_workspace_of_hers() -> Result<()> {
     let companion = fx.bring(member, fx.agent)?;
     fx.onboard(
         "bring-elsewhere",
-        fx.preset(WORKSPACE_A, VAULT_A, fx.other_house),
+        fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
         member,
         companion,
     )
@@ -315,7 +315,7 @@ fn the_sole_owner_brings_the_house_of_her_own_workspace() -> Result<()> {
     let companion = fx.bring(fx.owner, fx.agent)?;
     fx.onboard(
         "owner-brings-house",
-        fx.preset(WORKSPACE_A, VAULT_A, fx.agent),
+        fx.preset(WORKSPACE_A, VAULT_ID, fx.agent),
         fx.owner,
         companion,
     )
@@ -331,7 +331,7 @@ fn a_co_owner_who_brings_the_house_of_her_workspace_is_refused() -> Result<()> {
     assert_split(
         fx.onboard(
             "co-owner-brings-house",
-            fx.preset(WORKSPACE_A, VAULT_A, fx.agent),
+            fx.preset(WORKSPACE_A, VAULT_ID, fx.agent),
             co_owner,
             companion,
         ),
