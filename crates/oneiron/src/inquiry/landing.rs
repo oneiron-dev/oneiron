@@ -26,7 +26,7 @@ use rmpv::Value;
 use super::INQUIRY_STATEMENT_PREDICATE;
 use super::record::InquiryStatement;
 use super::route::InquiryRoute;
-use crate::authority::{AuthorityFold, FederationPactStatus};
+use crate::authority::{AuthorityFold, AuthorityVaultId, FederationPactStatus};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -106,13 +106,27 @@ pub(super) fn inquiry_landing(
     }))
 }
 
-/// The CLAIM statement `ordinal` of inquiry `inquiry` lands on: the same one
-/// on every send of that inquiry.
-fn inquiry_copy_claim_id(inquiry: EntityId, ordinal: usize) -> Result<EntityId> {
+/// The CLAIM statement `ordinal` of inquiry `inquiry` about the PERSON
+/// `member` lands on, when the member vault `source_vault` answered it: the
+/// same one on every send of that inquiry to that member. The caller chooses
+/// a re-send's id, so the member and its vault are part of the id: an id
+/// re-used for another member lands on that member's own CLAIMs and never
+/// replaces a copy of another member's answer.
+fn inquiry_copy_claim_id(
+    inquiry: EntityId,
+    member: EntityId,
+    source_vault: &AuthorityVaultId,
+    ordinal: usize,
+) -> Result<EntityId> {
     let ordinal = u64::try_from(ordinal).unwrap_or(u64::MAX);
     EntityId::derive(
         derived_domains::INQUIRY_COPY_CLAIM,
-        &[inquiry.as_bytes(), &ordinal.to_le_bytes()],
+        &[
+            inquiry.as_bytes(),
+            member.as_bytes(),
+            source_vault,
+            &ordinal.to_le_bytes(),
+        ],
     )
 }
 
@@ -120,8 +134,9 @@ impl Vault {
     /// Lands each of `statements`, the answer to inquiry `inquiry` about the
     /// PERSON `member`, as one CLAIM in `landing`'s foreign world, and
     /// records its delivery, in `txn`. Each statement holds from `now` (or
-    /// from `valid_until`, when that is earlier) to `valid_until`. A re-sent
-    /// inquiry lands each statement on the CLAIM it landed on before.
+    /// from `valid_until`, when that is earlier) to `valid_until`. An inquiry
+    /// re-sent to the same member lands each statement on the CLAIM it landed
+    /// on before.
     ///
     /// # Errors
     ///
@@ -140,7 +155,7 @@ impl Vault {
     ) -> Result<()> {
         let facet = self.default_facet_in_txn(txn)?;
         for (ordinal, statement) in statements.iter().enumerate() {
-            let id = inquiry_copy_claim_id(inquiry, ordinal)?;
+            let id = inquiry_copy_claim_id(inquiry, member, &landing.origin.source_vault, ordinal)?;
             let mut body = ClaimBody::new(
                 INQUIRY_STATEMENT_PREDICATE,
                 ClaimSubject::Entity(member),

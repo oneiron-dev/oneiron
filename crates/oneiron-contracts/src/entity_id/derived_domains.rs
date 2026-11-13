@@ -340,9 +340,11 @@ pub const CONNECT_GUEST_ACTOR: &[u8] = b"oneiron/connect-guest-actor/v1";
 pub const FOREIGN_WORLD: &[u8] = b"oneiron.federation.foreign-world.v1";
 
 /// One statement of a copied inquiry answer, as the company vault lands it
-/// (`inquiry::landing`, INQUIRE-1 PR 6). Parts: the inquiry's id and the
-/// statement's place in the answer (u64 little-endian), so a re-sent inquiry
-/// lands each statement on the CLAIM it landed before.
+/// (`inquiry::landing`, INQUIRE-1 PR 6). Parts: the inquiry's id, the id of
+/// the member's PERSON, the member vault's id and the statement's place in
+/// the answer (u64 little-endian), so an inquiry re-sent to the same member
+/// lands each statement on the CLAIM it landed before, and an id re-used for
+/// another member never lands on the first member's copy.
 pub const INQUIRY_COPY_CLAIM: &[u8] = b"oneiron.inquiry.copy-claim.v1";
 
 /// The occurrence of an ASSET's current body file (`store::asset_body`, FIX
