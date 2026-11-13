@@ -24,6 +24,7 @@ oneiron doctor /path/to/vault            # add --config FILE if it is not the XD
 | `location.backups` | Backup directory, how many backups, the newest one, the schedule (`every_hours`, `keep`), and `restores`: every restore this vault came from, oldest first (`checkpoint_id`, `restored_at`, `reason`). |
 | `location.last_export` | The latest recorded export receipt: when, format, size, who. Writing the receipt is best effort, so an export can succeed without a new one. |
 | `location.secret_scan` | `on` or `off`. |
+| `location.synced_folder` | Present only when a sync service's folder holds the vault: `service` (`iCloud Drive`, `Dropbox`, `OneDrive`, `Google Drive`, `Box`, `Syncthing`, or another macOS cloud storage provider's name) and `root`, the synced folder. A sync client copies the vault's files while Oneiron writes them, which can corrupt the vault: keep the vault in the app folder, outside every synced folder. `init` prints the same warning and `serve` logs it; neither refuses the vault. It is read from the path, so iCloud's Desktop & Documents sync of the home `Desktop` and `Documents` folders is not seen. |
 
 While `serve` holds the vault, `doctor` still prints the path, size and backups, and says to ask
 the server for the rest: `GET /v1/owner/status` returns the same `location` object. A serve
