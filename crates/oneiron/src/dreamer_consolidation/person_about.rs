@@ -400,7 +400,9 @@ pub(crate) fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
 
 /// Queues the `about` attempt of every person whose facts moved since its
 /// last request. A person with no facts left loses its lines at once, with no
-/// model call. Runs at the start of every Dreamer wake pass.
+/// model call, and its vector with them. A line shown again with no new
+/// landing marks a person that holds no vector of it. Runs at the start of
+/// every Dreamer wake pass.
 pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()> {
     let persons = vault.entities_by_type(ENTITY_TYPE_PERSON)?;
     if persons.is_empty() {
@@ -460,6 +462,14 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
                 )?;
             }
             PERSON_ABOUT.put(&vault.store, txn, person, &row)?;
+            // The vector is of the public line (ruling D4): it goes with
+            // lines no fact is left to back, and comes back where the pass
+            // shows a line again that no landing will mark.
+            if moved && *empty {
+                crate::embed::drop_person_vector_in_txn(&vault.store, txn, person)?;
+            } else {
+                crate::embed::mark_unembedded_person_in_txn(vault, txn, *person)?;
+            }
         }
         Ok(())
     })?;

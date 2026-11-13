@@ -550,27 +550,30 @@ pub(crate) fn drop_vector_state(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let had_node = vault
-        .store
-        .hnsw_neighbors
-        .get(txn, id.as_bytes())?
-        .is_some();
-    let had_vector = vault.store.vectors.delete(txn, id.as_bytes())?;
+    drop_vector_state_in_store(&vault.store, txn, id)
+}
+
+/// [`drop_vector_state`] for a door that holds only the store: a CLAIM
+/// door's PEOPLE hook drops the vector of the person whose lines it took.
+pub(crate) fn drop_vector_state_in_store(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let had_node = store.hnsw_neighbors.get(txn, id.as_bytes())?.is_some();
+    let had_vector = store.vectors.delete(txn, id.as_bytes())?;
     if had_vector || had_node {
-        crate::hnsw::hnsw_deindex(&vault.store, txn, id)?;
-        crate::store::vector_index::increment_vector_version(&vault.store, txn)?;
+        crate::hnsw::hnsw_deindex(store, txn, id)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
-    crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
-    crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
-    crate::embed::delete_text_media_vectors_in_txn(&vault.store, txn, id)?;
-    vault.store.clear_pending_embedding(txn, id)?;
+    crate::embed::clear_embedding_locality_in_txn(store, txn, id)?;
+    crate::embed::record_embedding_device_in_txn(store, txn, id, None)?;
+    crate::embed::delete_text_media_vectors_in_txn(store, txn, id)?;
+    store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
     {
-        vault
-            .store
-            .sync_hooks
-            .delete_embed_job_in_txn(&vault.store, txn, id)?;
-        crate::embed::clear_pending_embedding_lease_if_any(vault, txn, id)?;
+        store.sync_hooks.delete_embed_job_in_txn(store, txn, id)?;
+        crate::embed::clear_pending_embedding_lease_in_store(store, txn, id)?;
     }
     Ok(())
 }

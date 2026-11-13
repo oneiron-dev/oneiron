@@ -48,7 +48,9 @@ pub(crate) use media::text_vector_sources_in_txn;
 pub use media::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
 };
-pub(crate) use person::mark_person_in_txn;
+pub(crate) use person::{
+    drop_person_vector_in_txn, mark_person_in_txn, mark_unembedded_person_in_txn,
+};
 pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
 pub(crate) use repo_projection::{
     apply_ops_session_projected, discard_repo_derived_index_copy_in_txn,
@@ -982,7 +984,18 @@ pub(crate) fn clear_pending_embedding_lease_if_any(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    PENDING_EMBEDDING_LEASE.delete(&vault.store, wtxn, &HexId(*id))
+    clear_pending_embedding_lease_in_store(&vault.store, wtxn, id)
+}
+
+/// [`clear_pending_embedding_lease_if_any`] for a door that holds only the
+/// store.
+#[cfg(feature = "sync")]
+pub(crate) fn clear_pending_embedding_lease_in_store(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    PENDING_EMBEDDING_LEASE.delete(store, wtxn, &HexId(*id))
 }
 
 #[cfg(feature = "sync")]
