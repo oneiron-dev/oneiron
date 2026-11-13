@@ -732,6 +732,33 @@ impl Memory<'_> {
         Ok(())
     }
 
+    /// [`Self::require_approved_plan_pins_in`] in the writer that settles a
+    /// parked post or brief revision: a yes that is not the owner's (an
+    /// agent's take, another approver's approval) lands nothing from a plan
+    /// the owner has not approved at the pinned revision, though it was
+    /// approved when the proposal parked. The owner's approval, or a door
+    /// that records no approver (the owner's tray), is the owner's act and is
+    /// never refused.
+    pub(super) fn require_settled_plan_pins_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        brief: &QueueTaskBrief,
+        approver: Option<crate::WriteActor>,
+    ) -> MemoryResult<()> {
+        let Some(approver) = approver else {
+            return Ok(());
+        };
+        if crate::memory::actor_is_vault_owner_in_txn(
+            self.vault(),
+            txn,
+            approver.entity_ref(),
+            approver.actor_class(),
+        )? {
+            return Ok(());
+        }
+        self.require_approved_plan_pins_in(txn, brief)
+    }
+
     /// Pins one read-first handle for a brief: the row's digest as this vault
     /// holds it now. A composer pins what it read; settlement refuses a pin
     /// whose row has moved since.
