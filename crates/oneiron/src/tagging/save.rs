@@ -483,6 +483,18 @@ pub(crate) fn shares_world_in_txn(
     Linker::new(vault, txn, turn, 0)?.shares_world(txn, id)
 }
 
+/// The persons a mention of `name` in `turn` sounds like, as the Linker's
+/// phonetic rung finds them, for a re-check that runs outside a save.
+pub(crate) fn sounds_like_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    kind: u8,
+    name: &str,
+) -> Result<Vec<EntityId>> {
+    Linker::new(vault, txn, turn, 0)?.sounds_like(txn, kind, name)
+}
+
 /// Links mentions over the identity key, and over the phonetic postings when
 /// the key misses. It never compares names itself: candidates come only
 /// from those lookups.
@@ -593,8 +605,10 @@ impl<'v> Linker<'v> {
     /// the canonical heads of the live or archived persons whose phonetic
     /// postings hold the name's whole romaji or kana code, or the Soundex
     /// code of every one of its parts, each in a world the turn is in. A
-    /// name of one part, and a mention of any other kind, take none. Each
-    /// hit is a candidate as the key's are, never a sure link.
+    /// name of one part, and a mention of any other kind, take none. No hit
+    /// is a sure link: two or more are the mention's candidates, and one
+    /// alone is a candidate the nightly re-check asks about beside the
+    /// mention's own provisional entity (OF-123).
     fn sounds_like(&self, txn: &heed::RoTxn<'_>, kind: u8, mention: &str) -> Result<Vec<EntityId>> {
         if kind != ENTITY_TYPE_PERSON {
             return Ok(Vec::new());
@@ -638,12 +652,17 @@ impl<'v> Linker<'v> {
     }
 
     /// Links a mention by its own name: the key's candidates, else the
-    /// phonetic rung's, or a provisional entity minted for it when both
-    /// have none.
+    /// phonetic rung's when it finds two or more, or a provisional entity
+    /// minted for it. One person who only sounds like the name is an unsure
+    /// match: the mention mints, and the nightly re-check asks whether it
+    /// is that person or someone new (OF-123).
     fn link(&mut self, txn: &mut heed::RwTxn<'_>, kind: u8, mention: &str) -> Result<MentionLink> {
         let mut entities = self.candidates(txn, kind, mention)?;
         if entities.is_empty() {
             entities = self.sounds_like(txn, kind, mention)?;
+            if entities.len() < 2 {
+                entities.clear();
+            }
         }
         if !entities.is_empty() {
             return Ok(MentionLink::Candidates { kind, entities });
