@@ -23,6 +23,9 @@
 //! oneiron/test-support,oneiron/test-hooks,oneiron-broker/test-support,tokio/test-util
 //! --test gate_pin_landing_facet`.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -30,15 +33,14 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use ed25519_dalek::{Signer, SigningKey};
+use engine_stack::on_engine_stack;
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, holder_proof_challenge,
     pairing_binding_transcript,
 };
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -239,34 +241,6 @@ impl Fixture {
             }
         }
         Ok(landed)
-    }
-}
-
-/// Runs `test` as the server's binary runs its app: on a multi-thread runtime
-/// whose threads have the engine's stack, driven from a thread that has it
-/// too (tests/run_reader_record_scope.rs). The generated facade dispatch's
-/// poll frame alone is over 11 MiB in a dev build.
-fn on_engine_stack<F, Fut>(test: F) -> TestResult
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = TestResult>,
-{
-    let driver = std::thread::Builder::new()
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || -> Result<(), String> {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?
-                .block_on(test())
-                .map_err(|error| error.to_string())
-        })?;
-    match driver.join() {
-        Ok(outcome) => Ok(outcome?),
-        // A failed assertion fails the test with its own message.
-        Err(panic) => std::panic::resume_unwind(panic),
     }
 }
 

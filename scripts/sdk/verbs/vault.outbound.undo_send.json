@@ -1,0 +1,17 @@
+{
+  "name": "vault.outbound.undo_send",
+  "description": "The owner, or the person who made the send, takes a send back while its undo-send window is open: its attempt is cancelled and its TASK settles undo_send. A closed window is refused, and nothing is written.",
+  "input": "crate::outbound::UndoSendRequest",
+  "output": "crate::outbound::UndoSendUndone",
+  "call": "crate::outbound::undo_send_embedded(memory, input)?",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

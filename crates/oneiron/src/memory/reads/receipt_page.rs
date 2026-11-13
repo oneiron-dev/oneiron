@@ -515,7 +515,8 @@ fn gate_receipt(record: GateDecisionRecord) -> MemoryReceipt {
     } else {
         ENTITY_TYPE_CLAIM
     };
-    let fields = crate::codebase::code_snapshot_capture_receipt_fields(&record);
+    let mut fields = crate::codebase::code_snapshot_capture_receipt_fields(&record);
+    fields.extend(crate::claim::owner_ruling_receipt_fields(&record));
     MemoryReceipt {
         receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
         kind: ReceiptKind::Gate.as_str().to_owned(),

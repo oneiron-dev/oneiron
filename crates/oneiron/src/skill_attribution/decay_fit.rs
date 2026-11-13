@@ -14,6 +14,7 @@
 use super::contribution::{ContributionCheckRecord, contributed};
 use super::contribution_targets::ContributionTarget;
 use super::late_credit::{CREDIT_RECEIPT, receipt_id};
+use crate::learning::Anchor;
 use crate::learning_setting::{SettingCheck, global_setting_subject, record_setting_check_in_txn};
 use crate::store::setting_seed::CREDIT_DECAY;
 use crate::{Result, Vault};
@@ -100,7 +101,11 @@ fn observe_in_txn(
         observed,
         receipt: record.check.receipt.clone(),
         at: pair.at,
-        anchor: pair.anchor,
+        // A fitting check, as the other setting fitters record theirs: the
+        // pair's own anchor (an owner verdict or a world outcome among
+        // them) scored its forks, and `learning.setting` takes none of
+        // those two (FIX-LIST CREDIT-DECAY-FIT-DROPS-OWNER-AND-WORLD-ANCHORS).
+        anchor: Anchor::FittingCheck,
     };
     record_setting_check_in_txn(vault, txn, &check, now)?;
     Ok(())

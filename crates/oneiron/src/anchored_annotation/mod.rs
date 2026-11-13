@@ -1,5 +1,7 @@
 //! ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob
-//! artifacts, plus thread → task-brief conversion.
+//! artifacts, plus thread → task-brief conversion. Plan mode lifts the same
+//! threads onto a plan-doc NOTE: a text span at a frontier of the plan's
+//! text, followed to the head on each read (`note::plan_markup`).
 //!
 //! # Type-byte decision (OF-368 open question #4)
 //!
@@ -81,8 +83,8 @@ pub use self::model::{
     A1Range, ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE,
     ANNOTATION_COMMENT_TEXT_MAX_BYTES, ANNOTATION_LOCATOR_RANGE_MAX_BYTES,
     ANNOTATION_LOCATOR_TEXT_MAX_BYTES, ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment,
-    AnnotationThread, BodyAnchor, CODE_ANCHOR_VERSION, DriftMarker, Locator, ReanchorOp,
-    ReanchorOutcome, ReanchorSummary, TaskBrief, ThreadState,
+    AnnotationThread, BodyAnchor, CODE_ANCHOR_VERSION, DriftMarker, Locator,
+    PLAN_DOC_ANCHOR_VERSION, ReanchorOp, ReanchorOutcome, ReanchorSummary, TaskBrief, ThreadState,
 };
 pub use self::reanchor::replay_locator;
 

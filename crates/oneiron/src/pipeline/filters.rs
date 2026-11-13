@@ -308,7 +308,8 @@ fn claim_facet_scope(
 /// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
 ///
 /// CLAIM-sourced adjacency only — this is the local query door. The write
-/// table also admits `TURN | EVENT → FACET`, and those stamps carry disclosure
+/// table also admits `TURN | EVENT | NOTE | ASSET | ASSET_TEXT | TASK → FACET`,
+/// and those stamps carry disclosure
 /// weight on the federation selector door even though they never reach this
 /// enum (see [`crate::batch::validate_facet_of_edge`]).
 enum ClaimFacetScope {

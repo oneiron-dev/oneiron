@@ -25,21 +25,23 @@
 //! It needs `oneiron/test-support` for `MemoryKeystore` (the feature turns
 //! on `oneiron-keystore/test-keystore`), and the cfg compiles the lib's
 //! test doors, which need the same feature.
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
 use ed25519_dalek::{Signer, SigningKey};
+use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -61,27 +63,6 @@ struct Fixture {
     issuer: HostSlipIssuer,
     owner_slip: CapabilitySlip,
     owner_token: String,
-}
-
-/// Runs `test` on an engine-sized stack and runtime, as the facade's
-/// generated dispatch needs more than a test thread's default stack.
-fn run_on_engine_stack(name: &str, test: impl std::future::Future<Output = ()> + Send + 'static) {
-    let run = std::thread::Builder::new()
-        .name(name.into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(test)
-        })
-        .expect("spawn the engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -329,7 +310,7 @@ fn registry_row<'body>(registry: &'body Value, grant: &str) -> Option<&'body Val
 /// Red on main (403), green with the fix.
 #[test]
 fn grantee_renounce_of_own_standing_grant_lands_revoked_receipt() {
-    run_on_engine_stack("consent-renounce-own", async {
+    run_on_engine_stack("consent-renounce-own", || async {
         let (fixture, agent, _other) = setup().await;
         let grantee = agent.principal.to_hex();
         let grant = create_action_grant(&fixture, &grantee).await;
@@ -401,7 +382,7 @@ fn grantee_renounce_of_own_standing_grant_lands_revoked_receipt() {
 /// named grant stays active.
 #[test]
 fn non_grantee_revoke_of_anothers_grant_keeps_owner_refusal_and_grant_active() {
-    run_on_engine_stack("consent-renounce-other", async {
+    run_on_engine_stack("consent-renounce-other", || async {
         let (fixture, agent, other) = setup().await;
         let grant = create_action_grant(&fixture, &other.principal.to_hex()).await;
 
@@ -440,7 +421,7 @@ fn non_grantee_revoke_of_anothers_grant_keeps_owner_refusal_and_grant_active() {
 /// today (200, receipt). Passes on main and on the head.
 #[test]
 fn owner_revoke_of_standing_grant_control() {
-    run_on_engine_stack("consent-renounce-owner", async {
+    run_on_engine_stack("consent-renounce-owner", || async {
         let (fixture, agent, _other) = setup().await;
         let grant = create_action_grant(&fixture, &agent.principal.to_hex()).await;
 

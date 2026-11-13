@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::code_run::ExecutorWireRepairs;
+use crate::engine_executor::run_signals::{TakenSignals, TurnRace};
 
 /// The program one step runs, with what its commit keeps of the model turn
 /// that wrote it.
@@ -22,6 +23,10 @@ pub(super) struct StepProgram<'m> {
     /// checkpoint, on every path that commits one, and the reply's heal
     /// tally moves in that commit, once.
     pub(super) correction: CodeRunCorrectionDraft<'m>,
+    /// The interrupts the turn took, before its request or by cutting it
+    /// ([INTERRUPT-CUTS-MODEL-REQUEST-IN-FLIGHT]): acknowledged with the
+    /// step's own signals once its checkpoint commits.
+    pub(super) interrupts: TakenSignals,
 }
 
 /// How one model turn ended: with the program its step runs, or with the
@@ -66,75 +71,94 @@ impl EngineNativeExecutor<'_> {
                     .map_err(Error::from)?
             }
         };
-        let (mut request, mut console) =
-            self.build_llm_request(config, record, wire_prompt, continuation)?;
-        match self.feed_compaction(config, record, &request)? {
-            Ok(Some(reason)) => {
-                return Ok(TurnProgram::Ended(EngineExecutorStatus::WindowFull {
-                    next_step_seq: completed_steps,
-                    reason,
-                }));
-            }
-            Ok(None) => {}
-            Err(stop) => {
-                let Some(wait) = turn_hook_wait(&stop) else {
-                    return Err(Error::from(stop).into());
-                };
-                let key = wait_key(record, &wait);
-                if !self.storage.park_wait(&key)? {
-                    return Ok(TurnProgram::Ended(EngineExecutorStatus::Waiting(wait)));
+        // AGM-2 = C, [INTERRUPT-CUTS-MODEL-REQUEST-IN-FLIGHT]: the turn
+        // watches its run's branch from before its first request. An
+        // interrupt already pending is read in that request; one that lands
+        // while a request is in flight cuts it, and the turn asks again.
+        let mut watch = self.watch_interrupts(record);
+        let mut interrupts = TakenSignals::default();
+        if let Some(watch) = watch.as_mut()
+            && let Some(taken) = self.take_turn_interrupts(watch, record, completed_steps)
+        {
+            interrupts.join(taken);
+        }
+        let (request_hash, response) = loop {
+            let (mut request, mut console) =
+                self.build_llm_request(config, record, wire_prompt, continuation)?;
+            match self.feed_compaction(config, record, &request)? {
+                Ok(Some(reason)) => {
+                    return Ok(TurnProgram::Ended(EngineExecutorStatus::WindowFull {
+                        next_step_seq: completed_steps,
+                        reason,
+                    }));
                 }
-                // The ask settled before the park: retry the same sealed
-                // invocation once, with its fold marks still pending.
-                self.storage.clear_wait(&key)?;
-                match self.feed_compaction(config, record, &request)? {
-                    Ok(Some(reason)) => {
-                        return Ok(TurnProgram::Ended(EngineExecutorStatus::WindowFull {
-                            next_step_seq: completed_steps,
-                            reason,
-                        }));
+                Ok(None) => {}
+                Err(stop) => {
+                    let Some(wait) = turn_hook_wait(&stop) else {
+                        return Err(Error::from(stop).into());
+                    };
+                    let key = wait_key(record, &wait);
+                    if !self.storage.park_wait(&key)? {
+                        return Ok(TurnProgram::Ended(EngineExecutorStatus::Waiting(wait)));
                     }
-                    Ok(None) => {}
-                    Err(stop) => return Err(Error::from(stop).into()),
+                    // The ask settled before the park: retry the same sealed
+                    // invocation once, with its fold marks still pending.
+                    self.storage.clear_wait(&key)?;
+                    match self.feed_compaction(config, record, &request)? {
+                        Ok(Some(reason)) => {
+                            return Ok(TurnProgram::Ended(EngineExecutorStatus::WindowFull {
+                                next_step_seq: completed_steps,
+                                reason,
+                            }));
+                        }
+                        Ok(None) => {}
+                        Err(stop) => return Err(Error::from(stop).into()),
+                    }
                 }
             }
-        }
-        // FIX 17594 (map §2.2): folds by kind the feed landed after this
-        // request was built are a brief boundary. With a brief port bound,
-        // the request is built and counted again before it is hashed,
-        // captured or sent, with the console slot it carries (FIX 3608).
-        let refreshed = self.refresh_brief_request(&mut request, completed_steps, |this| {
-            let (rebuilt, slot) =
-                this.build_llm_request(config, record, wire_prompt, continuation)?;
-            console = slot;
-            Ok(rebuilt)
-        })?;
-        if let Some(status) = refreshed {
-            return Ok(TurnProgram::Ended(status));
-        }
-        // Rule 5 (FIX 4197): the first step past the `[limits]
-        // executor_run_steps` row asks whether everything is okay, once
-        // per run however often it re-enters, and the run keeps going.
-        let steps = self.storage.limit_watch();
-        if completed_steps == steps.bound(EngineLimit::ExecutorRunSteps) {
-            steps.measure(EngineLimit::ExecutorRunSteps, completed_steps + 1);
-        }
-        let request_hash = request.canonical_hash()?;
-        self.capture_step_start(
-            config,
-            completed_steps,
-            &request,
-            console,
-            record,
-            prompt_fingerprint,
-        );
-        let response = {
-            let sources = self.step_source_rows(config, record);
-            let _generating = self.gated_write.activity_generating();
-            self.backend
-                .generate_sourced(request, self.lease, sources)
-                .await
-        }?;
+            // FIX 17594 (map §2.2): folds by kind the feed landed after this
+            // request was built are a brief boundary. With a brief port bound,
+            // the request is built and counted again before it is hashed,
+            // captured or sent, with the console slot it carries (FIX 3608).
+            let refreshed = self.refresh_brief_request(&mut request, completed_steps, |this| {
+                let (rebuilt, slot) =
+                    this.build_llm_request(config, record, wire_prompt, continuation)?;
+                console = slot;
+                Ok(rebuilt)
+            })?;
+            if let Some(status) = refreshed {
+                return Ok(TurnProgram::Ended(status));
+            }
+            // Rule 5 (FIX 4197): the first step past the `[limits]
+            // executor_run_steps` row asks whether everything is okay, once
+            // per run however often it re-enters, and the run keeps going.
+            let steps = self.storage.limit_watch();
+            if completed_steps == steps.bound(EngineLimit::ExecutorRunSteps) {
+                steps.measure(EngineLimit::ExecutorRunSteps, completed_steps + 1);
+            }
+            let request_hash = request.canonical_hash()?;
+            self.capture_step_start(
+                config,
+                completed_steps,
+                &request,
+                console,
+                record,
+                prompt_fingerprint,
+            );
+            let raced = {
+                let sources = self.step_source_rows(config, record);
+                let _generating = self.gated_write.activity_generating();
+                let call = self.backend.generate_sourced(request, self.lease, sources);
+                self.race_interrupts(call, watch.as_mut(), record, completed_steps)
+                    .await
+            };
+            match raced {
+                TurnRace::Answered(response) => break (request_hash, response?),
+                // The cut call's permit settled as it dropped: dispatched,
+                // usage unknown, its reservation kept as spend.
+                TurnRace::Cut(taken) => interrupts.join(taken),
+            }
+        };
         // FIX 17594 (Engine call C): the backend answered a request that
         // carried the run's brief, so the host's prefix is delivered.
         self.brief_delivered();
@@ -185,6 +209,7 @@ impl EngineNativeExecutor<'_> {
             trailing_speak,
             repairs,
             correction,
+            interrupts,
         }))
     }
 }

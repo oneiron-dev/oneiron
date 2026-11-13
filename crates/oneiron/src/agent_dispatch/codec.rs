@@ -19,8 +19,8 @@ use crate::write_envelope::WriteActor;
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION,
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
-    KEY_CALLER_ORIGIN, KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION,
-    KEY_DEPTH_REMAINING, KEY_DIRECT_SPAWN, KEY_FUNDING, KEY_LAUNCH, KEY_OBJECTIVES,
+    KEY_CALLER_ORIGIN, KEY_CARRIED_WAKE_KEYS, KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC,
+    KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_DIRECT_SPAWN, KEY_FUNDING, KEY_LAUNCH, KEY_OBJECTIVES,
     KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF, KEY_REQUESTER,
     KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_PARENTS,
     KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
@@ -240,6 +240,20 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             ))
         })?;
         entries.push((Value::from(KEY_FUNDING), Value::from(json)));
+    }
+    // AGM-4: only a resident's held wake that carries more than one message
+    // names the others; every other dispatch encodes as before.
+    if !input.carried_wake_keys.is_empty() {
+        entries.push((
+            Value::from(KEY_CARRIED_WAKE_KEYS),
+            Value::Array(
+                input
+                    .carried_wake_keys
+                    .iter()
+                    .map(|key| Value::from(key.as_str()))
+                    .collect(),
+            ),
+        ));
     }
     Ok(Value::Map(entries))
 }

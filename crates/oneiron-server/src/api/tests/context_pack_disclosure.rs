@@ -709,40 +709,11 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
     let project = seeded_test_entity_id(0x2094_0103);
     let mut roster =
         oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
-    create_owned_project(&server, owner, project, &roster);
     roster.roster.push(peer.to_hex());
+    // The member joins at the owner-signed birth: its v3 proof signs the
+    // roster, and the birth derives the home room from it.
+    create_owned_project(&server, owner, project, &roster);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
-    let exact_room = oneiron::workspace_roster::ProjectRoom {
-        schema_version: 1,
-        kind: "channel".into(),
-        project_id: project.to_hex(),
-        member_ids: roster.roster.clone(),
-        claims_scope_ref: roster.claims_scope_ref.clone(),
-        origin: None,
-        pins: Vec::new(),
-        pin_policy: Default::default(),
-    };
-    // A public batch can submit the exact derived room beside its PROJECT
-    // edit; the owner-signed birth above admitted the PROJECT itself.
-    server
-        .vault
-        .batch()
-        .put(
-            &project,
-            server.vault.project_type_byte().unwrap(),
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&roster).unwrap(),
-        )
-        .put(
-            &room,
-            oneiron::registry::ENTITY_TYPE_CONVERSATION,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&exact_room).unwrap(),
-        )
-        .commit()
-        .expect("onboard exact project and room in one batch");
     assert_eq!(
         server.vault.room_audience_members(room).unwrap(),
         vec![owner, peer]
@@ -1039,38 +1010,11 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
     let project = seeded_test_entity_id(0x2094_0303);
     let mut roster =
         oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
-    create_owned_project(&server, owner, project, &roster);
     roster.roster.push(agent.to_hex());
+    // The member joins at the owner-signed birth: its v3 proof signs the
+    // roster, and the birth derives the home room from it.
+    create_owned_project(&server, owner, project, &roster);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
-    let exact_room = oneiron::workspace_roster::ProjectRoom {
-        schema_version: 1,
-        kind: "channel".into(),
-        project_id: project.to_hex(),
-        member_ids: roster.roster.clone(),
-        claims_scope_ref: roster.claims_scope_ref.clone(),
-        origin: None,
-        pins: Vec::new(),
-        pin_policy: Default::default(),
-    };
-    server
-        .vault
-        .batch()
-        .put(
-            &project,
-            server.vault.project_type_byte().unwrap(),
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&roster).unwrap(),
-        )
-        .put(
-            &room,
-            oneiron::registry::ENTITY_TYPE_CONVERSATION,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&exact_room).unwrap(),
-        )
-        .commit()
-        .expect("onboard exact project and room in one batch");
     let space = seeded_test_entity_id(0x2094_0304);
     server
         .vault
