@@ -52,10 +52,22 @@ async fn mcp_endpoints_register_distinct_tool_listings() {
     // The generated verb tools, sorted, then OF-181's action door.
     let mut expected = mcp_expected_generated_names();
     expected.push("invoke_action");
+    let listed = mcp_listed_tool_names(&tool_first);
+    // The difference first: a failure line is cut, and the lists are long.
+    let only_listed: Vec<&str> = listed
+        .iter()
+        .copied()
+        .filter(|name| !expected.iter().any(|row| row == name))
+        .collect();
+    let only_expected: Vec<&str> = expected
+        .iter()
+        .copied()
+        .filter(|name| !listed.iter().any(|tool| tool == name))
+        .collect();
     assert_eq!(
-        mcp_listed_tool_names(&tool_first),
-        expected,
-        "the tool-first listing is generated from the exported verb rows"
+        listed, expected,
+        "the tool-first listing is generated from the exported verb rows; \
+         listed only {only_listed:?}, expected only {only_expected:?}"
     );
     for name in mcp_listed_tool_names(&tool_first) {
         assert!(!name.starts_with("oneiron."), "{name} must not be listed");

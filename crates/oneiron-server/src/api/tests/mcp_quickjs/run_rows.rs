@@ -73,14 +73,18 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     .await;
     assert!(body.get("error").is_none(), "{body}");
     // 04edd1261e6 (#1365): a verb call is recorded as `self.verbs.call`, in
-    // the guest's order: the search, then the claim.
+    // the guest's order: the search, then the claim. The run's end comes
+    // first in the message: a failure line is cut.
+    let structured = &body["result"]["structuredContent"];
     assert_eq!(
         verb_call_outcomes(&body),
         [
             verb_refusal("mcp_verb_not_bound"),
             verb_refusal("mcp_verb_not_bound")
         ],
-        "{body}"
+        "result {} steps_run {} | {body}",
+        structured["result"],
+        structured["steps_run"]
     );
     assert!(mode.vault.get_claim(&claim).unwrap().is_none(), "{body}");
 

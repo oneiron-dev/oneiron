@@ -82,25 +82,6 @@ async fn ask(seat: &Seat) -> LlmResult<LlmResponse> {
         .await
 }
 
-/// One wait's budget, on paused test time (Engine ruling on R58.2, (b)).
-/// Since 520329287c0 (#1613, OF-305) a call retries every offer back until
-/// its waits pass the vault's longest wait (60 s). `CallDeadline::wait_secs`
-/// counts whole seconds, so 1.5 s lets one 1 s wait fit and not a second.
-pub(super) const ONE_WAIT_BUDGET: Duration = Duration::from_millis(1500);
-
-/// [`ask`] within [`ONE_WAIT_BUDGET`].
-async fn ask_within_one_wait(seat: &Seat) -> LlmResult<LlmResponse> {
-    seat.ladder
-        .generate_within(
-            &test_run(),
-            request(&seat.model, "check this"),
-            None,
-            &|| true,
-            ONE_WAIT_BUDGET,
-        )
-        .await
-}
-
 /// A world this vault holds, at its default settings: readable everywhere.
 pub(super) fn portable_world(vault: &Vault) -> EntityId {
     let world = EntityId::now();
@@ -834,9 +815,8 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
 /// Review repro (Sol R2 P2): after its one wait a call tries every offer
 /// back, not only the one it waited for, in a stream too, and a refusal
 /// then names each offer's current end: a later refusal supersedes the
-/// reset the call waited for. The calls that must end after one wait run
-/// within [`ONE_WAIT_BUDGET`], on paused time.
-#[tokio::test(start_paused = true)]
+/// reset the call waited for.
+#[tokio::test]
 async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_end() {
     let wait = |seconds: &str| {
         refusal(
@@ -875,9 +855,7 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
         first.push(wait("1"));
         second.push(wait("1"));
     }
-    let error = ask_within_one_wait(seat)
-        .await
-        .expect_err("each refused twice");
+    let error = ask(seat).await.expect_err("each refused twice");
     assert_eq!(error, limited(1, T0 + 402));
     first.push(wait("120"));
     assert_eq!(streamed(seat).await, "second after the wait");
@@ -890,9 +868,7 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
         first.push(reply);
     }
     second.push(wait("2"));
-    let error = ask_within_one_wait(seat)
-        .await
-        .expect_err("nothing is back");
+    let error = ask(seat).await.expect_err("nothing is back");
     assert_eq!(error, limited(1, T0 + 602));
     assert_eq!((first.seen().len(), second.seen().len()), (9, 8));
 }

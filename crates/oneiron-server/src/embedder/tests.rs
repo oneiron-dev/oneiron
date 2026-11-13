@@ -2228,11 +2228,13 @@ fn the_startup_probe_of_a_remote_rung_is_a_paid_call() {
     );
     assert_eq!(remote.requests().len(), 1, "one probe post at the remote");
     assert_eq!(local.requests().len(), 1, "one probe post at the primary");
-    // 19579c8caea (#2489, OF-131): the primary endpoint's probe is paid too,
-    // first; each probe reserves and settles PROBE_TEXT's 22 bytes plus 8.
+    // 19579c8caea (#2489, OF-131): the primary endpoint's probe is admitted
+    // too, first. The primary here names no key, so it is the owner's own
+    // keyless work (Payer::Local) and reserves and settles nothing; the
+    // remote rung's probe reserves and settles PROBE_TEXT's 22 bytes plus 8.
     assert_eq!(
         remote_batches(&receipts),
-        vec![(30, 30), (30, 30)],
+        vec![(0, 0), (30, 30)],
         "the primary endpoint's probe, then the remote rung's probe"
     );
 }
