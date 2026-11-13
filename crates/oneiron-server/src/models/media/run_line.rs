@@ -336,6 +336,9 @@ impl MediaRuntime {
     /// until such a commit is durable ([`Self::end_committed`]): an end
     /// whose write the vault refused stages its part in the next write of
     /// it, or, when the process dies first, leaves the end to its take-up.
+    /// Its caller holds the jobs lock from this snapshot to
+    /// [`Self::end_committed`], so no two ends of a job stage one part
+    /// (S7299 review round 3 P1).
     pub(super) fn end_stage(&self, id: &str) -> Option<ScopeStage> {
         let scoped = self.lock_scoped();
         let job = scoped.get(id)?;
