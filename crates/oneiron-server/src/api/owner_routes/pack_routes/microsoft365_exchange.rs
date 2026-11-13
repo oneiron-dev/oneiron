@@ -17,20 +17,12 @@ use zeroize::Zeroize;
 
 use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape};
 use super::code_exchange::{
-    ExchangeReply, ExchangeRequest, ExchangeTarget, exchange_route, invalid, reply_schema,
-    request_schema,
+    CodeExchange, ExchangeReply, ExchangeRequest, ExchangeTarget, exchange_route, invalid,
+    reply_schema, request_schema,
 };
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-
-static MICROSOFT365: ExchangeTarget = ExchangeTarget {
-    pack: "oneiron.microsoft365",
-    connection: "microsoft365",
-    effector: "connector:microsoft365",
-    grant: "microsoft365.oauth",
-    provider: "Microsoft",
-};
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![(
@@ -52,37 +44,44 @@ async fn exchange(
     server: State<Arc<SyncServer>>,
     payload: OwnerJsonBody<ExchangeRequest>,
 ) -> OwnerReply<ExchangeReply> {
-    exchange_route(
-        &MICROSOFT365,
-        exchange_microsoft_code,
-        auth,
-        headers,
-        extensions,
-        server,
-        payload,
-    )
-    .await
+    exchange_route::<MicrosoftCode>(auth, headers, extensions, server, payload).await
 }
 
 /// Microsoft's code exchange for the stored client and the stored completed
 /// authorization, at the client's tenant.
-fn exchange_microsoft_code(
-    checks: &ProviderConnectionChecks,
-    client_bytes: &[u8],
-    authorization_bytes: &[u8],
-) -> oneiron::Result<AuthorizationCodeGrant> {
-    let client: ClientCredential = serde_json::from_slice(client_bytes)
-        .map_err(|_| invalid("the stored Microsoft client credential is not JSON"))?;
-    let authorization: Authorization = serde_json::from_slice(authorization_bytes)
-        .map_err(|_| invalid("the stored Microsoft authorization is not JSON"))?;
-    checks.exchange_microsoft_authorization_code(MicrosoftAuthorizationCode {
-        client_id: &client.client_id,
-        client_secret: client.client_secret.as_deref(),
-        tenant: &client.tenant,
-        code: &authorization.code,
-        redirect_uri: &authorization.redirect_uri,
-        code_verifier: authorization.code_verifier.as_deref(),
-    })
+enum MicrosoftCode {}
+
+impl CodeExchange for MicrosoftCode {
+    type Client = ClientCredential;
+    const TARGET: ExchangeTarget = ExchangeTarget {
+        pack: "oneiron.microsoft365",
+        connection: "microsoft365",
+        effector: "connector:microsoft365",
+        grant: "microsoft365.oauth",
+        provider: "Microsoft",
+    };
+
+    fn client(bytes: &[u8]) -> oneiron::Result<ClientCredential> {
+        serde_json::from_slice(bytes)
+            .map_err(|_| invalid("the stored Microsoft client credential is not JSON"))
+    }
+
+    fn exchange(
+        checks: &ProviderConnectionChecks,
+        client: &ClientCredential,
+        authorization_bytes: &[u8],
+    ) -> oneiron::Result<AuthorizationCodeGrant> {
+        let authorization: Authorization = serde_json::from_slice(authorization_bytes)
+            .map_err(|_| invalid("the stored Microsoft authorization is not JSON"))?;
+        checks.exchange_microsoft_authorization_code(MicrosoftAuthorizationCode {
+            client_id: &client.client_id,
+            client_secret: client.client_secret.as_deref(),
+            tenant: &client.tenant,
+            code: &authorization.code,
+            redirect_uri: &authorization.redirect_uri,
+            code_verifier: authorization.code_verifier.as_deref(),
+        })
+    }
 }
 
 /// The app registration the sign-in ran on: its client id, its secret (a

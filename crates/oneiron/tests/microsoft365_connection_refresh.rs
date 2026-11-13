@@ -7,6 +7,7 @@
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test microsoft365_connection_refresh`
 
+use oneiron::channel_identity_provider::gmail::gmail_authorization;
 use oneiron::test_doors::workspace_token::access_token_offline;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -45,4 +46,24 @@ fn a_google_connection_refuses_a_microsoft_grant_before_any_send() {
         refused.to_string().contains("never sent to Google"),
         "refused before Google's token endpoint is tried: {refused}"
     );
+}
+
+/// Gmail's token step presents a stored access token as it is; a Microsoft
+/// grant's is refused before any Gmail call (Muse review of #7774, F1).
+#[test]
+fn gmail_refuses_a_microsoft_grant_before_any_send() -> TestResult {
+    let client = reqwest::blocking::Client::builder().build()?;
+    let refused = gmail_authorization(&client, MICROSOFT_TEST_GRANT)
+        .expect_err("a Microsoft grant gives Gmail no Authorization header");
+    assert!(
+        refused.to_string().contains("never sent to Google"),
+        "refused before Gmail is called: {refused}"
+    );
+    // A Google grant's access token is still presented as it is.
+    let header = gmail_authorization(
+        &client,
+        br#"{"access_token":"google-access","refresh_token":"google-refresh","client_id":"google-client"}"#,
+    )?;
+    assert_eq!(header.to_str()?, "Bearer google-access");
+    Ok(())
 }

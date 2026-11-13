@@ -62,10 +62,34 @@ pub(super) struct ExchangeTarget {
     pub(super) provider: &'static str,
 }
 
-/// A provider's code exchange: the stored client and the stored completed
-/// authorization, read inside their credential doors, to the grant.
-pub(super) type CodeExchange =
-    fn(&ProviderConnectionChecks, &[u8], &[u8]) -> oneiron::Result<AuthorizationCodeGrant>;
+/// A provider's code exchange: the stored client, read inside its credential
+/// door before the authorization's door opens, and the stored completed
+/// authorization, read inside its own, to the grant.
+pub(super) trait CodeExchange: 'static {
+    /// The stored client credential, wiped on drop.
+    type Client;
+    /// The pack connection the exchange stores its grant for.
+    const TARGET: ExchangeTarget;
+
+    /// The client credential the stored client secret holds.
+    ///
+    /// # Errors
+    ///
+    /// The stored value is not the provider's client JSON.
+    fn client(bytes: &[u8]) -> oneiron::Result<Self::Client>;
+
+    /// The grant the provider returns for the stored completed authorization
+    /// `authorization` and `client`.
+    ///
+    /// # Errors
+    ///
+    /// The stored authorization is not JSON, or the provider's exchange fails.
+    fn exchange(
+        checks: &ProviderConnectionChecks,
+        client: &Self::Client,
+        authorization: &[u8],
+    ) -> oneiron::Result<AuthorizationCodeGrant>;
+}
 
 pub(super) fn request_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<ExchangeRequest>()
@@ -75,10 +99,8 @@ pub(super) fn reply_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<ExchangeReply>()
 }
 
-/// The route body of an exchange for `target` through `exchange`.
-pub(super) async fn exchange_route(
-    target: &'static ExchangeTarget,
-    exchange: CodeExchange,
+/// The route body of `P`'s exchange.
+pub(super) async fn exchange_route<P: CodeExchange>(
     auth: CoreAuth,
     headers: axum::http::HeaderMap,
     extensions: axum::http::Extensions,
@@ -90,19 +112,17 @@ pub(super) async fn exchange_route(
         super::super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let reply =
-        blocking(move || exchange_admitted(&server, &owner, surface, target, exchange, &request))
-            .await?;
+        blocking(move || exchange_admitted::<P>(&server, &owner, surface, &request)).await?;
     Ok(Json(reply))
 }
 
-fn exchange_admitted(
+fn exchange_admitted<P: CodeExchange>(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
     surface: ActSurface,
-    target: &ExchangeTarget,
-    exchange: CodeExchange,
     request: &ExchangeRequest,
 ) -> Result<ExchangeReply, OwnerError> {
+    let target = &P::TARGET;
     let class = CustodyClass::parse(&request.class)
         .ok_or_else(|| OwnerError::Invalid("unknown custody class".to_owned()))?;
     let rung = CustodyTier::from_u8(request.rung)
@@ -122,11 +142,13 @@ fn exchange_admitted(
         &request.client_secret,
         target.effector,
         &mut |client_bytes| {
+            // The client is read before the authorization's door opens.
+            let client = P::client(client_bytes)?;
             vault.inject_secret_at_door(
                 &request.authorization_secret,
                 target.effector,
                 &mut |authorization_bytes| {
-                    grant = Some(exchange(&checks, client_bytes, authorization_bytes)?);
+                    grant = Some(P::exchange(&checks, &client, authorization_bytes)?);
                     Ok(())
                 },
             )?;

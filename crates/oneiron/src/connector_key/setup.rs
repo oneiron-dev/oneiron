@@ -391,6 +391,27 @@ impl ProviderConnectionChecks {
         Ok((Zeroizing::new(access_token.to_owned()), None))
     }
 
+    /// Refuses a stored grant that names a Microsoft tenant before a Google
+    /// path presents it: neither its access token nor its refresh token goes
+    /// to Google. Any other credential passes; only its tenant is read.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] for a stored Microsoft grant.
+    pub(crate) fn refuse_microsoft_grant(value: &[u8]) -> Result<()> {
+        let Ok(text) = std::str::from_utf8(value) else {
+            return Ok(());
+        };
+        let text = text.trim();
+        if !text.starts_with('{') {
+            return Ok(());
+        }
+        match serde_json::from_str::<StoredGrantTenant>(text) {
+            Ok(grant) if present(&grant.tenant).is_some() => Err(invalid(MICROSOFT_GRANT_REFUSED)),
+            _ => Ok(()),
+        }
+    }
+
     /// A fresh access token for a stored grant that carries its OAuth client.
     /// Called only inside an admitted credential door; nothing is persisted.
     pub(crate) fn refresh_stored_google_grant(
@@ -470,6 +491,17 @@ impl ProviderConnectionChecks {
     }
 }
 
+/// Why a Google path refuses a stored Microsoft grant.
+const MICROSOFT_GRANT_REFUSED: &str =
+    "the stored grant is a Microsoft grant; it is never sent to Google";
+
+/// The tenant a stored grant names, and nothing else of it.
+#[derive(Deserialize)]
+struct StoredGrantTenant {
+    #[serde(default)]
+    tenant: Option<String>,
+}
+
 /// A stored Google grant, read inside the credential door and wiped on drop.
 #[derive(Deserialize)]
 struct StoredGoogleGrant {
@@ -492,9 +524,7 @@ impl StoredGoogleGrant {
     /// whole: its refresh token and client secret never go to Google.
     fn refresh_pair(&self) -> Result<Option<(&str, &str)>> {
         if present(&self.tenant).is_some() {
-            return Err(invalid(
-                "the stored grant is a Microsoft grant; it is never sent to Google",
-            ));
+            return Err(invalid(MICROSOFT_GRANT_REFUSED));
         }
         Ok(present(&self.refresh_token).zip(present(&self.client_id)))
     }

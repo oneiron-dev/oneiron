@@ -12,20 +12,12 @@ use zeroize::Zeroize;
 
 use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape};
 use super::code_exchange::{
-    ExchangeReply, ExchangeRequest, ExchangeTarget, exchange_route, invalid, reply_schema,
-    request_schema,
+    CodeExchange, ExchangeReply, ExchangeRequest, ExchangeTarget, exchange_route, invalid,
+    reply_schema, request_schema,
 };
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-
-static GMAIL: ExchangeTarget = ExchangeTarget {
-    pack: "oneiron.email",
-    connection: "gmail",
-    effector: "connector:gmail",
-    grant: "gmail.oauth",
-    provider: "Google",
-};
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![(
@@ -47,36 +39,43 @@ async fn exchange(
     server: State<Arc<SyncServer>>,
     payload: OwnerJsonBody<ExchangeRequest>,
 ) -> OwnerReply<ExchangeReply> {
-    exchange_route(
-        &GMAIL,
-        exchange_google_code,
-        auth,
-        headers,
-        extensions,
-        server,
-        payload,
-    )
-    .await
+    exchange_route::<GoogleCode>(auth, headers, extensions, server, payload).await
 }
 
 /// Google's code exchange for the stored web client and the stored completed
 /// authorization.
-fn exchange_google_code(
-    checks: &ProviderConnectionChecks,
-    client_bytes: &[u8],
-    authorization_bytes: &[u8],
-) -> oneiron::Result<AuthorizationCodeGrant> {
-    let client: ClientCredential = serde_json::from_slice(client_bytes)
-        .map_err(|_| invalid("the stored Google client credential is not JSON"))?;
-    let authorization: Authorization = serde_json::from_slice(authorization_bytes)
-        .map_err(|_| invalid("the stored Google authorization is not JSON"))?;
-    checks.exchange_google_authorization_code(GoogleAuthorizationCode {
-        client_id: &client.client_id,
-        client_secret: &client.client_secret,
-        code: &authorization.code,
-        redirect_uri: &authorization.redirect_uri,
-        code_verifier: authorization.code_verifier.as_deref(),
-    })
+enum GoogleCode {}
+
+impl CodeExchange for GoogleCode {
+    type Client = ClientCredential;
+    const TARGET: ExchangeTarget = ExchangeTarget {
+        pack: "oneiron.email",
+        connection: "gmail",
+        effector: "connector:gmail",
+        grant: "gmail.oauth",
+        provider: "Google",
+    };
+
+    fn client(bytes: &[u8]) -> oneiron::Result<ClientCredential> {
+        serde_json::from_slice(bytes)
+            .map_err(|_| invalid("the stored Google client credential is not JSON"))
+    }
+
+    fn exchange(
+        checks: &ProviderConnectionChecks,
+        client: &ClientCredential,
+        authorization_bytes: &[u8],
+    ) -> oneiron::Result<AuthorizationCodeGrant> {
+        let authorization: Authorization = serde_json::from_slice(authorization_bytes)
+            .map_err(|_| invalid("the stored Google authorization is not JSON"))?;
+        checks.exchange_google_authorization_code(GoogleAuthorizationCode {
+            client_id: &client.client_id,
+            client_secret: &client.client_secret,
+            code: &authorization.code,
+            redirect_uri: &authorization.redirect_uri,
+            code_verifier: authorization.code_verifier.as_deref(),
+        })
+    }
 }
 
 #[derive(Deserialize)]
