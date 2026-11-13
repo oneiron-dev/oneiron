@@ -120,7 +120,15 @@ impl GraphFsResolver<'_, '_> {
                     // (`SecretScanMode::Off`; FIX
                     // RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
                     let stored = std::mem::take(body);
-                    *body = crate::batch::export::redacted_memory_payload(stored)?;
+                    let released = crate::batch::export::redacted_memory_payload(stored)?;
+                    // A claim the filter left no claim (a predicate
+                    // redacted out of its grammar) has no body here,
+                    // as a withheld row has none: a grep or a walk
+                    // over it skips it rather than failing whole.
+                    row.body = (row.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                        || crate::write_envelope::claim_body::decode_claim_body(&released, true)
+                            .is_ok())
+                    .then_some(released);
                 }
                 Ok(Some(row))
             })
