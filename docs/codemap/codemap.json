@@ -5754,7 +5754,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -22547,7 +22547,7 @@
      "path": "src/comm/consent.rs",
      "purpose": "Human consent gates, send overrides and standing opt-out folds",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 12
      }
     },
@@ -26941,7 +26941,7 @@
      "path": "src/context_pack/hydration.rs",
      "purpose": "Turns raw store bytes into hydrated [`super::types::ContextEntity`] rows and JSON field payloads",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -26986,7 +26986,7 @@
      "path": "src/context_pack/mod.rs",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 2,
       "re-export": 8
      }
@@ -84682,7 +84682,7 @@
      "path": "src/sweep/compact.rs",
      "purpose": "Window shallow-snapshot compaction and erased-id scrub",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -87064,7 +87064,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 12,
       "re-export": 1,
       "struct": 1
@@ -89196,7 +89196,7 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -89673,6 +89673,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/reconciler/older_sets.rs",
+     "purpose": "The sweep that re-tags turns saved under an older tagger (ARCH-0036, a named follow-up of serving the tagger)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -89744,7 +89754,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "enum": 2,
       "fn": 7,
       "struct": 5
@@ -92471,6 +92481,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/authority_stored_damage.rs",
+     "purpose": "L9-50 (ARCH-0006a #list-read-built): damage one stored authority row in place, past every write door, so a…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/authority_view_grant.rs",
      "purpose": "Fixtures for the warm authority-view regressions: the agent binding of the Grant regression, and the read…",
      "surface": {
@@ -92885,6 +92905,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/hydration_decode_guard.rs",
+     "purpose": "Door for `tests/hydration_decode_guard.rs` (census L6-30b; ARCH-0069 #readers-followups-open, \"an isolating…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/identity_recheck.rs",
      "purpose": "The nightly identity re-check, one page, run from a test, and the open identity asks after it (census item…",
      "surface": {
@@ -92994,7 +93024,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 80,
+      "mod": 82,
       "re-export": 1
      }
     },
@@ -94554,7 +94584,7 @@
      "path": "src/vault/open/mod.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 15
      }
     },
@@ -102016,6 +102046,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/authority_stored_row_damage.rs",
+     "purpose": "L9-50 (ARCH-0006a #list-read-built): an authority reader reports a damaged stored row as `CorruptedIndex`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/authority_view_deleted_grant.rs",
      "purpose": "A deleted Grant must stop conferring on an already-cached authority view, and the warm reads that judge it…",
      "surface": {}
@@ -102446,6 +102484,14 @@
      "notable": [],
      "path": "tests/context_pack_l2_prefix_base_reality.rs",
      "purpose": "ARCH-0004 #world-scope: \"The context pack MUST partition claims by world - the base-reality section first…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_second_entity_alias_release.rs",
+     "purpose": "A context pack renders another entity's alias (its id or identity key) as that entity's name at its first…",
      "surface": {}
     },
     {
@@ -102956,6 +103002,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/held_window_erasure_drain.rs",
+     "purpose": "A window that sync traffic holds a frame at a time is still compacted by the erasure sweep (census L9-41…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/holder_approval_fallback_floor.rs",
      "purpose": "A Grant holder's approval lands under the holder's Grant on a predicate no manifest rule names…",
      "surface": {}
@@ -103030,6 +103084,14 @@
      "notable": [],
      "path": "tests/house_source_read.rs",
      "purpose": "HOUSE-SOURCE-READ (OF-501; FIX 22357, #6857): the house mind's project question reads the person's turn it…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hydration_decode_guard.rs",
+     "purpose": "Census L6-30b (ARCH-0069 #readers-followups-open: \"an isolating check for hydration's decode guard\")…",
      "surface": {}
     },
     {
@@ -103758,6 +103820,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/legacy_custody_history_export.rs",
+     "purpose": "A dev vault's window can hold, in its ordinary history only, a custody row from before the seal: a delete…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/lens_backing_refs_use_engine_short_ids.rs",
      "purpose": "A framed lens names each row it binds by the row's engine short id (FIX WEAVE-LENS-BACKING-REF-FULL-HEX)",
      "surface": {}
@@ -103808,6 +103878,14 @@
      "notable": [],
      "path": "tests/mail_late_address_headers.rs",
      "purpose": "Fix list row 20852: an IMAP or mbox landing reads From, Reply-To, To and Cc from the message's whole header…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/merged_contact_stop_view.rs",
+     "purpose": "A key whose PERSON was merged into a different key keeps showing the STOP it said before the merge on its…",
      "surface": {}
     },
     {
@@ -104330,6 +104408,14 @@
      "notable": [],
      "path": "tests/rerank_document_message.rs",
      "purpose": "L9-11 (ARCH-0004 #rerank-door-open): a MESSAGE whose words live in its entity document is reranked at those…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/residence_custody_cache.rs",
+     "purpose": "The residence read cache serves no local-only row (ARCH-0069 secret custody v1, \"the residence cache, which…",
      "surface": {}
     },
     {
@@ -104948,6 +105034,14 @@
      "notable": [],
      "path": "tests/sync_state_retain_refused_window.rs",
      "purpose": "A window whose retain the home refused is found again by the residence upkeep's retry (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/tag_set_older_tagger_sweep.rs",
+     "purpose": "The sweep that re-tags turns saved under an older tagger (ARCH-0036, a named follow-up of serving the…",
      "surface": {}
     },
     {
@@ -106715,7 +106809,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106764,7 +106858,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 83,
+     "files": 85,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106941,8 +107035,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7510,
-   "test_files": 1225
+   "source_files": 7513,
+   "test_files": 1233
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -125660,6 +125754,160 @@
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
    "source_files": 21,
    "test_files": 5
+  },
+  "oneiron-ruler": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "mod": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConvertError",
+      "LmeQuestion",
+      "LmeTurn",
+      "PackMeta",
+      "SliceCounts",
+      "Split",
+      "SplitEntry"
+     ],
+     "path": "src/longmemeval.rs",
+     "purpose": "The LongMemEval-S converter: public questions in, one pack slice out",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 8,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/metrics.rs",
+     "purpose": "The pure graded metrics behind the retrieval scorecard (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "Corpus",
+      "CorpusSession",
+      "EmbeddingPin",
+      "LoadedPack",
+      "PackError",
+      "PackSlice",
+      "PackSource",
+      "Query",
+      "Record",
+      "RecordKind",
+      "Slice",
+      "Vectors"
+     ],
+     "path": "src/pack.rs",
+     "purpose": "The `oneiron.retrieval_pack.v1` pack format: one manifest per slice, plus an optional little-endian f32…",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 18,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CategoryMetrics",
+      "CategoryMin",
+      "Hit",
+      "Latency",
+      "Metrics",
+      "QueryRun",
+      "QueryScore",
+      "RepeatRun",
+      "RunHeader",
+      "Scorecard",
+      "ScorecardError"
+     ],
+     "path": "src/scorecard.rs",
+     "purpose": "The `oneiron.retrieval_scorecard.v1` scorecard: one retrieval run, graded (RESEARCH-0651 Tier 0)",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 3,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/longmemeval.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/scorecard.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "longmemeval": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The LongMemEval-S converter: public questions in, one pack slice out"
+    },
+    "metrics": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The pure graded metrics behind the retrieval scorecard (RESEARCH-0651 Tier 0)"
+    },
+    "pack": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "The `oneiron.retrieval_pack.v1` pack format: one manifest per slice, plus an optional little-endian f32…"
+    },
+    "scorecard": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The `oneiron.retrieval_scorecard.v1` scorecard: one retrieval run, graded (RESEARCH-0651 Tier 0)"
+    }
+   },
+   "over_bar": 1,
+   "purpose": "The retrieval ruler of the oneiron engine (RESEARCH-0651 Tier 0)",
+   "source_files": 5,
+   "test_files": 3
   },
   "oneiron-run-budget": {
    "files": [
