@@ -28,8 +28,8 @@ use engine_stack::run_on_engine_stack;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange,
-    Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
+    VaultConfig,
 };
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
@@ -111,7 +111,10 @@ impl FakeReranker {
 
 async fn rerank(State(fake): State<Fake>, Json(body): Json<Value>) -> Json<Value> {
     fake.calls.fetch_add(1, Ordering::SeqCst);
-    fake.seen.lock().expect("fake reranker calls").push(body.clone());
+    fake.seen
+        .lock()
+        .expect("fake reranker calls")
+        .push(body.clone());
     let count = body["documents"].as_array().map_or(0, Vec::len);
     let results: Vec<Value> = (0..count)
         .map(|index| json!({"index": index, "relevance_score": 0.5}))
@@ -301,8 +304,15 @@ async fn probe() -> Payload {
         recalled.body
     );
     let seen = fake.seen();
-    assert_eq!(seen.len(), 1, "FIXTURE: the probe recall calls the reranker once");
-    assert_eq!(seen[0]["query"], QUERY, "FIXTURE: the reranker reads the query");
+    assert_eq!(
+        seen.len(),
+        1,
+        "FIXTURE: the probe recall calls the reranker once"
+    );
+    assert_eq!(
+        seen[0]["query"], QUERY,
+        "FIXTURE: the reranker reads the query"
+    );
     let documents = sent_documents(&seen[0]);
     assert!(
         documents.len() >= 2,
