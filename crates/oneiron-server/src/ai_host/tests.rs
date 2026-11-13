@@ -524,6 +524,98 @@ async fn a_failing_steps_retries_share_the_policy_rows_cap() {
     host.shutdown().await;
 }
 
+/// Engine ruling RUNBUDGET-KNOB = A (ARCH-0026 depletion ladder): a workflow
+/// step held at its spend cap, on a chat seat with a free keyless rung, is
+/// offered `continue_on_local`. The owner's answer resumes it: the step runs
+/// on that rung alone, unmetered, and completes. The paid rung is never sent.
+#[tokio::test]
+async fn a_held_workflow_continued_on_local_runs_on_the_free_rung() {
+    use oneiron::agent_dispatch::{
+        AgentDispatchTarget, AgentDispatcher, DispatchAgent, RunBudgetChoice, run_budget_questions,
+    };
+    let paid = FakeLlm::start(vec![], None).await;
+    let free = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("done"))).await;
+    let (_dir, vault) = rooted_vault();
+    let only = saved_agent(&vault, "local-after-cap", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("local-after-cap", vec![only])
+                .unwrap(),
+            2,
+        )
+        .unwrap();
+    // The first rung bills a customer account, and the step's line is below
+    // one call's reservation (8,000 units): its admission is refused before
+    // anything is sent. The second rung is free keyless own-server work.
+    let mut config = models_toml(&format!(
+        r#"
+[providers.paid]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.free]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [{{ model = "paid:big" }}, {{ model = "free:small" }}]
+[dreamer]
+enabled = false
+[workflows]
+retry_backoff_secs = 0
+step_budget_units = 1000
+"#,
+        paid.base_url, free.base_url
+    ));
+    config
+        .providers
+        .get_mut("paid")
+        .expect("the paid provider")
+        .payer = oneiron::llm::run_admission::Payer::CustomerAccount;
+    let host = AiHost::start(vault.clone(), Some(&config), true).await;
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("local-after-cap".into()),
+            run_id: Some("local-after-cap".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || workflow_is_held_for_budget(
+            &vault
+        ))
+        .await,
+        "the workflow never held at its step line; status {:?}",
+        host.handle().status().workflows
+    );
+    let asked = run_budget_questions(&vault).unwrap();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert!(
+        asked[0].choices.contains(&RunBudgetChoice::ContinueOnLocal),
+        "the free rung is offered: {asked:?}"
+    );
+    assert!(asked[0].local_model.is_some(), "{asked:?}");
+
+    let owner = crate::test_credentials::embedded_owner(&vault);
+    vault
+        .press_run_budget_ask(&owner, asked[0].seq, RunBudgetChoice::ContinueOnLocal, None)
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await,
+        "the continued workflow never completed; status {:?}",
+        host.handle().status().workflows
+    );
+    assert!(!free.seen().is_empty(), "the step ran on the free rung");
+    assert!(paid.seen().is_empty(), "the paid rung was never sent");
+    host.shutdown().await;
+}
+
 /// Astra #1304 P1: boot lease recovery requeued an attempt parked on its
 /// budget trap, so a restart spent without the trap's resume signal. Since
 /// row B2 a pass budget trap's signal is a later pass with room for it.

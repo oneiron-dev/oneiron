@@ -15,10 +15,18 @@
 //!   its cap, and resumes the run: its meters then run with
 //!   `Overdraft{cap}` ([`AgentDispatcher::run_overdraft_units`]). With no cap
 //!   named, the cap is the units one more call of the run reserves.
-//! - The next hold of the run spends the overdraft: it is deleted and the
-//!   owner is asked again. A resume at the hold's own door withdraws the open
-//!   ask ([`withdraw_run_budget_ask_in_txn`]). With no answer the run stays
-//!   held.
+//! - When the host names a free local chat model that serves the run's
+//!   calls now, the ask also offers `continue_on_local` ([`RunLocalRoute`]).
+//!   That answer resumes the run, and each of its later calls runs on that
+//!   model alone, on its free route ([`AgentDispatcher::run_local_route`]),
+//!   until the run is held again. The owner's `on_budget_exhausted` knob set
+//!   to `continue_on_local` is his standing answer: with a free local model
+//!   named, the hold resumes the run on it in the hold's own write and asks
+//!   nothing; with none named, he is asked (Engine ruling RUNBUDGET-KNOB = A).
+//! - The next hold of the run spends the overdraft and the local route: both
+//!   are deleted and the owner is asked again. A resume at the hold's own
+//!   door withdraws the open ask ([`withdraw_run_budget_ask_in_txn`]). With no
+//!   answer the run stays held.
 //! - `GET /v1/ai/status` lists the open asks ([`run_budget_questions`]); the
 //!   status shows them and does not own them.
 
@@ -27,11 +35,11 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
-use crate::llm::DEFAULT_BUDGET_RESERVE_UNITS;
 use crate::llm::decision::{
     AnswerContract, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionRung, HolderKind,
     HumanAskReason, HumanDecisionRequest, ProviderPin, catalogue::RUN_BUDGET_SPENT,
 };
+use crate::llm::{BudgetExhaustionPolicy, DEFAULT_BUDGET_RESERVE_UNITS, ModelId};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -58,6 +66,9 @@ pub enum RunBudgetChoice {
     /// The run resumes on a one-off overdraft of the cap the owner names, or
     /// [`RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS`] when he names none.
     Overdraft,
+    /// The run resumes on the free local chat model the host named when it
+    /// was held, and spends nothing more. Offered only when one was named.
+    ContinueOnLocal,
 }
 
 impl RunBudgetChoice {
@@ -67,13 +78,14 @@ impl RunBudgetChoice {
         match self {
             Self::StayParked => "stay_parked",
             Self::Overdraft => "overdraft",
+            Self::ContinueOnLocal => "continue_on_local",
         }
     }
 
     /// The choice an answer token names, if any.
     #[must_use]
     pub fn of_token(token: &str) -> Option<Self> {
-        [Self::StayParked, Self::Overdraft]
+        [Self::StayParked, Self::Overdraft, Self::ContinueOnLocal]
             .into_iter()
             .find(|choice| choice.token() == token)
     }
@@ -91,6 +103,9 @@ pub struct RunBudgetQuestion {
     pub choices: Vec<RunBudgetChoice>,
     /// The cap an `overdraft` answer approves when the owner names none.
     pub default_overdraft_units: u64,
+    /// The free local chat model a `continue_on_local` answer runs the run
+    /// on; `None` when the ask does not offer it.
+    pub local_model: Option<ModelId>,
 }
 
 /// The one-off overdraft the owner approved for a held run: its meters run
@@ -108,24 +123,60 @@ pub struct RunOverdraft {
 const OVERDRAFT: SideTable<AttemptId, RunOverdraft, Named> =
     SideTable::new(&side_table::AGENT_DISPATCH_RUN_OVERDRAFT);
 
+/// The free local chat model the host named when a run was held, and the
+/// owner's choice of it: while chosen, each call of the run runs on that model
+/// alone, on its free route, until the run is held again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunLocalRoute {
+    /// The free local chat model the host named at the hold.
+    pub model: ModelId,
+    /// The owner's choice of it; `None` while it is only offered.
+    pub chosen: Option<LocalRouteChoice>,
+}
+
+/// How the owner chose a held run's local route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalRouteChoice {
+    /// The arrival number of the ask whose answer chose it; `None` when his
+    /// standing answer, the `on_budget_exhausted` knob, chose it at the hold.
+    pub ask: Option<u64>,
+    /// Vault clock seconds when it was chosen.
+    pub chosen_at: u64,
+}
+
+/// Local routes keyed by the run's root attempt.
+const LOCAL_ROUTE: SideTable<AttemptId, RunLocalRoute, Named> =
+    SideTable::new(&side_table::AGENT_DISPATCH_RUN_LOCAL_ROUTE);
+
 /// The run-budget ask about the run rooted at `root`, put to the owner role
-/// for `principal`, offering `choices`: keyed by the run, so an open ask of
-/// the run is that ask.
+/// for `principal`: keyed by the run, so an open ask of the run is that ask.
+/// It offers `continue_on_local` when the host named `local_model`.
 fn run_budget_request(
     root: AttemptId,
     principal: EntityId,
-    choices: &[RunBudgetChoice],
+    local_model: Option<&ModelId>,
 ) -> Result<HumanDecisionRequest> {
+    let mut choices = vec![RunBudgetChoice::StayParked, RunBudgetChoice::Overdraft];
+    if local_model.is_some() {
+        choices.push(RunBudgetChoice::ContinueOnLocal);
+    }
     let options = choices
         .iter()
         .map(|choice| choice.token().to_owned())
         .collect();
     // Fixed machine-lifecycle wording, as the campaign pause's is: the host
     // renders the run and its choices.
-    let text = format!(
-        "This run is held at its spend cap. Keep it parked, or approve a one-off overdraft \
-         (by default {RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS} units, one more call)?"
+    let overdraft = format!(
+        "approve a one-off overdraft (by default {RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS} units, one \
+         more call)"
     );
+    let text = match local_model {
+        Some(model) => format!(
+            "This run is held at its spend cap. Keep it parked, {overdraft}, or continue it on \
+             the free local model {model}?"
+        ),
+        None => format!("This run is held at its spend cap. Keep it parked, or {overdraft}?"),
+    };
     let question = RUN_BUDGET_SPENT.question(
         &[root.as_bytes().as_slice()],
         text,
@@ -181,12 +232,27 @@ fn overdraft_open_to_in_txn(
     })
 }
 
+/// What the hold of a run asked its owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeldRunAsk {
+    /// The ask queued, by its arrival number.
+    Asked(u64),
+    /// The owner's standing answer resumed the run on the free local model
+    /// the host named, in the hold's own write: nothing is asked.
+    ContinuedOnLocal,
+    /// Nothing is asked: the vault has no live owner, or the run is not the
+    /// owner's to overdraft or continue.
+    NotAsked,
+}
+
 /// Queues the owner's ask about the run rooted at `root` in the hold's own
 /// write, as the vault's first live owner's question, and spends the run's
-/// approved overdraft: the run is held again. An open ask of the run is that
-/// ask. `None` when no ask is queued: the vault has no live owner, or the
-/// owner has no choice but to keep the run parked. The run stays held and its
-/// notice still goes out.
+/// approved overdraft and local route: the run is held again. An open ask of
+/// the run is that ask. With `local_model`, the free local chat model the host
+/// names for the run now, the ask offers `continue_on_local`; and when the
+/// owner's `on_budget_exhausted` knob is `continue_on_local`, his standing
+/// answer resumes the run on it at once, at `now`, and nothing is asked. A run
+/// nothing is asked about stays held, and its notice still goes out.
 ///
 /// # Errors
 ///
@@ -195,22 +261,51 @@ pub(crate) fn queue_run_budget_ask_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     root: AttemptId,
-) -> Result<Option<u64>> {
+    local_model: Option<&ModelId>,
+    now: u64,
+) -> Result<HeldRunAsk> {
     OVERDRAFT.delete(&vault.store, wtxn, &root)?;
+    LOCAL_ROUTE.delete(&vault.store, wtxn, &root)?;
     let Some(principal) = crate::policy_model::owners_in_txn(vault, wtxn)?
         .into_iter()
         .next()
     else {
-        return Ok(None);
+        return Ok(HeldRunAsk::NotAsked);
     };
     if !overdraft_open_to_in_txn(vault, wtxn, root, principal)? {
-        return Ok(None);
+        return Ok(HeldRunAsk::NotAsked);
     }
-    let choices = [RunBudgetChoice::StayParked, RunBudgetChoice::Overdraft];
-    let request = run_budget_request(root, principal, &choices)?;
+    if let Some(model) = local_model {
+        let standing = crate::gate::resolve_policy_manifest(&vault.store, wtxn)?
+            .on_budget_exhausted()
+            == BudgetExhaustionPolicy::ContinueOnLocal;
+        let chosen = standing.then_some(LocalRouteChoice {
+            ask: None,
+            chosen_at: now,
+        });
+        LOCAL_ROUTE.put(
+            &vault.store,
+            wtxn,
+            &root,
+            &RunLocalRoute {
+                model: model.clone(),
+                chosen,
+            },
+        )?;
+        if standing {
+            AgentDispatcher::new(vault).resume_budget_hold_in_txn(
+                wtxn,
+                root,
+                &principal.to_hex(),
+                now,
+            )?;
+            return Ok(HeldRunAsk::ContinuedOnLocal);
+        }
+    }
+    let request = run_budget_request(root, principal, local_model)?;
     vault
         .queue_decision_ask_in_txn(wtxn, &request, None)
-        .map(Some)
+        .map(HeldRunAsk::Asked)
 }
 
 /// Withdraws the open run-budget ask about the run rooted at `root`, in the
@@ -241,6 +336,7 @@ pub(crate) fn withdraw_run_budget_ask_in_txn(
 
 /// Applies an answered run-budget ask in the generic answer's own write: an
 /// owner person's `overdraft` approves the default cap and resumes the run;
+/// `continue_on_local` resumes it on the local model the ask offered;
 /// `stay_parked` leaves it held. Any other answerer, and every other question
 /// family, is untouched. `true` when it resumed the run.
 ///
@@ -277,6 +373,9 @@ pub(crate) fn apply_run_budget_answer_in_txn(
             RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS,
             answer.answered_at,
         ),
+        Some(RunBudgetChoice::ContinueOnLocal) => {
+            continue_on_local_in_txn(vault, wtxn, root, by, ask.seq, answer.answered_at)
+        }
         Some(RunBudgetChoice::StayParked) | None => Ok(false),
     }
 }
@@ -337,10 +436,42 @@ fn approve_overdraft_in_txn(
     Ok(true)
 }
 
+/// The owner `by`'s choice, answering ask `seq`, to continue the held run
+/// rooted at `root` on the free local chat model its hold offered, in the
+/// answer's write: the local route chosen and the run resumed as `by`. `false`
+/// when the run is no longer held, no local model was offered, or the run is
+/// not the owner's.
+fn continue_on_local_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    by: EntityId,
+    seq: u64,
+    now: u64,
+) -> Result<bool> {
+    let dispatcher = AgentDispatcher::new(vault);
+    if !dispatcher.budget_held_in_txn(wtxn, root)?
+        || !overdraft_open_to_in_txn(vault, wtxn, root, by)?
+    {
+        return Ok(false);
+    }
+    let Some(mut route) = LOCAL_ROUTE.get(&vault.store, wtxn, &root)? else {
+        return Ok(false);
+    };
+    route.chosen = Some(LocalRouteChoice {
+        ask: Some(seq),
+        chosen_at: now,
+    });
+    LOCAL_ROUTE.put(&vault.store, wtxn, &root, &route)?;
+    dispatcher.resume_budget_hold_in_txn(wtxn, root, &by.to_hex(), now)?;
+    Ok(true)
+}
+
 impl Vault {
     /// The owner's press on a run-budget ask (Engine ruling RUNBUDGET-OVERDRAFT):
     /// his `choice`, and for `overdraft` the cap he names (the default when
     /// `None`), answered and applied in one write, his proof revalidated in it.
+    /// `continue_on_local` resumes the run on the local model the ask offered.
     /// Any other ask passes unchanged, for the generic answer door. The same
     /// answer again is a no-op.
     ///
@@ -382,6 +513,14 @@ impl Vault {
                     cap_units.unwrap_or(RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS),
                     self.store.clock.now_recorded_at(),
                 )?,
+                RunBudgetChoice::ContinueOnLocal => continue_on_local_in_txn(
+                    self,
+                    txn,
+                    root,
+                    by,
+                    seq,
+                    self.store.clock.now_recorded_at(),
+                )?,
             };
             Ok(Some(resumed))
         })?;
@@ -405,22 +544,49 @@ impl AgentDispatcher<'_> {
     /// Storage errors.
     pub fn run_overdraft_units(&self, attempt: AttemptId) -> Result<Option<u64>> {
         let txn = self.vault.store.env.read_txn()?;
-        if let Some(overdraft) = OVERDRAFT.get(&self.vault.store, &txn, &attempt)? {
-            return Ok(Some(overdraft.cap_units));
-        }
-        let queue = AttemptQueue::new(self.vault);
-        let Some(record) = queue.get(attempt)? else {
-            return Ok(None);
-        };
-        let Some(run) = record.run_id.as_deref() else {
-            return Ok(None);
-        };
-        for row in queue.list_run_in_txn(&txn, run)? {
-            if let Some(overdraft) = OVERDRAFT.get(&self.vault.store, &txn, &row.id)? {
+        for key in self.run_keys_in_txn(&txn, attempt)? {
+            if let Some(overdraft) = OVERDRAFT.get(&self.vault.store, &txn, &key)? {
                 return Ok(Some(overdraft.cap_units));
             }
         }
         Ok(None)
+    }
+
+    /// The free local chat model the owner chose to continue the run
+    /// `attempt` belongs to on (the root or any attempt of its run), while the
+    /// run has not been held again: each of its calls runs on that model
+    /// alone, on its free route. `None` with none chosen.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn run_local_route(&self, attempt: AttemptId) -> Result<Option<ModelId>> {
+        let txn = self.vault.store.env.read_txn()?;
+        for key in self.run_keys_in_txn(&txn, attempt)? {
+            if let Some(route) = LOCAL_ROUTE.get(&self.vault.store, &txn, &key)? {
+                return Ok(route.chosen.is_some().then_some(route.model));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The attempts a row keyed by the root of `attempt`'s run may sit under:
+    /// `attempt` itself, then every attempt of its run.
+    fn run_keys_in_txn(&self, txn: &heed::RoTxn<'_>, attempt: AttemptId) -> Result<Vec<AttemptId>> {
+        let mut keys = vec![attempt];
+        let queue = AttemptQueue::new(self.vault);
+        let run = queue
+            .get_in_txn(txn, attempt)?
+            .and_then(|record| record.run_id);
+        if let Some(run) = run {
+            keys.extend(
+                queue
+                    .list_run_in_txn(txn, &run)?
+                    .into_iter()
+                    .map(|row| row.id),
+            );
+        }
+        Ok(keys)
     }
 }
 
@@ -431,24 +597,33 @@ impl AgentDispatcher<'_> {
 /// Storage errors.
 pub fn run_budget_questions(vault: &Vault) -> Result<Vec<RunBudgetQuestion>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .open_queue_asks_in_txn(&txn, RUN_BUDGET_ASK_QUEUE)?
-        .into_iter()
-        .filter_map(|ask| {
-            let run = asked_run(&ask)?;
-            let AnswerContract::Choice { options } = &ask.question.contract else {
-                return None;
-            };
-            Some(RunBudgetQuestion {
-                seq: ask.seq,
-                run: crate::entity_id::bytes_to_hex_lower(run.as_bytes()),
-                asked_at: ask.asked_at,
-                choices: options
-                    .iter()
-                    .filter_map(|token| RunBudgetChoice::of_token(token))
-                    .collect(),
-                default_overdraft_units: RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS,
-            })
-        })
-        .collect())
+    let mut questions = Vec::new();
+    for ask in vault.open_queue_asks_in_txn(&txn, RUN_BUDGET_ASK_QUEUE)? {
+        let Some(run) = asked_run(&ask) else {
+            continue;
+        };
+        let AnswerContract::Choice { options } = &ask.question.contract else {
+            continue;
+        };
+        let choices: Vec<RunBudgetChoice> = options
+            .iter()
+            .filter_map(|token| RunBudgetChoice::of_token(token))
+            .collect();
+        let local_model = if choices.contains(&RunBudgetChoice::ContinueOnLocal) {
+            LOCAL_ROUTE
+                .get(&vault.store, &txn, &run)?
+                .map(|route| route.model)
+        } else {
+            None
+        };
+        questions.push(RunBudgetQuestion {
+            seq: ask.seq,
+            run: crate::entity_id::bytes_to_hex_lower(run.as_bytes()),
+            asked_at: ask.asked_at,
+            choices,
+            default_overdraft_units: RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS,
+            local_model,
+        });
+    }
+    Ok(questions)
 }
