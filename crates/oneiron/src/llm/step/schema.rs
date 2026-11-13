@@ -70,7 +70,7 @@ pub(super) async fn generate(
     calls: StepCalls<'_>,
     capture: &(dyn Fn(&LlmRequest, u32) + Sync),
     check: Option<&ReplyCheck>,
-    retries: &super::retry::TransportRetries,
+    retries: &super::retry::TransportRetries<'_>,
 ) -> DurableStepResult<LlmResponse> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
         let response = super::retry::generate_with_retry(backend, request, lease, retries).await?;

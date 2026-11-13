@@ -22,7 +22,10 @@
 //! back, within its rest wait, and asks again; the rest still holds every
 //! other call off the offer. A rest past what is left of that wait returns at
 //! once, unsent, and the step parks with the retries its sends spent
-//! ([`TransportRetries::spent`]); its resume starts from them.
+//! ([`TransportRetries::spent`]); its resume starts from them. A plan that
+//! keeps its count ([`TransportRetries::keeping`]) keeps each failed send's
+//! retry before its wait, so a stop mid-pass resumes with that send counted
+//! too, and a retry that does not keep is not made.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -51,18 +54,22 @@ pub(super) fn retry_delay_ms(retry: usize) -> u64 {
 /// one that is: the schedule's first interval.
 const HEALTH_REST_POLL_MS: u64 = 250;
 
+/// Keeps a step's spent retries where its next pass reads them (FIX 11226),
+/// and answers whether they kept.
+pub(super) type KeepSpent<'a> = &'a (dyn Fn(usize) -> bool + Send + Sync);
+
 /// One durable call's transport retries: the retries its schedule makes
 /// after the first send (FIX 9930), how long it waits in all, unsent, for its
 /// offer back from a health rest, and the retries its failed sends have
 /// spent, which a step that parked keeps for its resume (FIX 11226).
-#[derive(Debug)]
-pub(super) struct TransportRetries {
+pub(super) struct TransportRetries<'a> {
     pub(super) max: usize,
     pub(super) rest_wait: Duration,
     spent: AtomicUsize,
+    keep: Option<KeepSpent<'a>>,
 }
 
-impl TransportRetries {
+impl<'a> TransportRetries<'a> {
     /// `max` retries on the schedule, and no wait for a health rest: a
     /// backend that walks its own ladder waits for its offers itself.
     pub(super) fn schedule(max: usize) -> Self {
@@ -76,6 +83,17 @@ impl TransportRetries {
             max,
             rest_wait,
             spent: AtomicUsize::new(spent),
+            keep: None,
+        }
+    }
+
+    /// The same plan, each retry it spends kept by `keep` before the next
+    /// send may use it: a stop mid-pass then resumes with every failed send
+    /// counted, not only those of a pass that returned.
+    pub(super) fn keeping(self, keep: KeepSpent<'a>) -> Self {
+        Self {
+            keep: Some(keep),
+            ..self
         }
     }
 
@@ -86,9 +104,16 @@ impl TransportRetries {
     }
 
     /// The same plan for another call of the step, a correction: its own
-    /// count, from none.
+    /// count, from none, kept nowhere.
     pub(super) fn for_another_call(&self) -> Self {
         Self::resumed(self.max, self.rest_wait, 0)
+    }
+
+    /// Counts `spent` retries, kept where the plan keeps them. Whether they
+    /// kept: a retry that did not keep is not made.
+    fn spend(&self, spent: usize) -> bool {
+        self.spent.store(spent, Ordering::Release);
+        self.keep.is_none_or(|keep| keep(spent))
     }
 }
 
@@ -96,7 +121,7 @@ pub(super) async fn generate_with_retry(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &super::BudgetLease,
-    plan: &TransportRetries,
+    plan: &TransportRetries<'_>,
 ) -> LlmResult<LlmResponse> {
     let max_retries = plan.max;
     let mut retries = plan.spent();
@@ -117,9 +142,14 @@ pub(super) async fn generate_with_retry(
                 if retries >= max_retries || waits_past_schedule(&error, retries, max_retries) {
                     return Err(LlmError::Retryable(error));
                 }
-                sleep_ms(retry_delay_ms(retries)).await;
+                let delay = retry_delay_ms(retries);
                 retries += 1;
-                plan.spent.store(retries, Ordering::Release);
+                // The failed send's retry is spent before its wait, so a stop
+                // there resumes with it counted.
+                if !plan.spend(retries) {
+                    return Err(LlmError::Retryable(error));
+                }
+                sleep_ms(delay).await;
             }
             Err(error) => return Err(error),
         }

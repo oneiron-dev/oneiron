@@ -3,20 +3,26 @@
 //! `retry.max_attempts` counts the sends the step makes, and the rest still
 //! holds the offer for every other call. A rest longer than one submission
 //! waits parks the step, which resumes on its own once the offer is back.
+//! A pass that stops mid-way keeps the sends it made.
 #![allow(clippy::unwrap_used)]
 
 #[path = "support/fake_llm.rs"]
 mod fake_llm;
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use fake_llm::{FakeLlm, Reply};
-use oneiron::llm::model_step::{ModelStepRetryPolicy, ModelStepSubmit};
+use oneiron::llm::model_step::{self, ModelStepRetryPolicy, ModelStepSubmit};
 use oneiron::{
-    CallClass, CallEnvelope, CallPurpose, LlmMessage, LlmRequest, ModelId, ModelLocality,
-    ModelTierRef, ResponseFormat, TierPrecedence, Vault, VaultConfig,
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
+    FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmMessage, LlmRequest,
+    LlmStreamResult, ModelId, ModelLocality, ModelTierRef, ResponseFormat, RetryableLlmError,
+    TierPrecedence, Vault, VaultConfig,
 };
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::SyncServerConfig;
@@ -90,7 +96,17 @@ async fn served(
 /// `ai.steps.submit` as the host root's owner, for `step_key` with
 /// `max_attempts` declared.
 fn submit(vault: &Vault, step_key: &str, max_attempts: u8) -> Request<Body> {
-    let input = ModelStepSubmit {
+    owner_post(
+        vault,
+        "ai.steps.submit",
+        serde_json::to_vec(&step(step_key, max_attempts)).unwrap(),
+    )
+}
+
+/// One text step to the exact model, for `step_key` with `max_attempts`
+/// declared.
+fn step(step_key: &str, max_attempts: u8) -> ModelStepSubmit {
+    ModelStepSubmit {
         step_key: step_key.into(),
         request: LlmRequest {
             model: ModelId::new(MODEL).unwrap(),
@@ -120,12 +136,7 @@ fn submit(vault: &Vault, step_key: &str, max_attempts: u8) -> Request<Body> {
             host_segments: None,
         },
         retry: ModelStepRetryPolicy { max_attempts },
-    };
-    owner_post(
-        vault,
-        "ai.steps.submit",
-        serde_json::to_vec(&input).unwrap(),
-    )
+    }
 }
 
 /// `ai.steps.receipt` as the host root's owner, for `step_key`.
@@ -303,4 +314,100 @@ fn a_health_rest_outside_its_range_is_refused() {
             "{secs}: {error}"
         );
     }
+}
+
+/// A provider whose every send fails 503, held off by its health rest once:
+/// the rest is no send. `second_send` is told once the second send failed.
+struct DownOnce {
+    rests: Mutex<VecDeque<usize>>,
+    sends: AtomicUsize,
+    second_send: tokio::sync::Notify,
+}
+
+impl LlmBackend for DownOnce {
+    fn supports(&self, _model: &ModelId, _capability: LlmCapability) -> bool {
+        true
+    }
+
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let sends = self.sends.load(Ordering::SeqCst);
+        let mut rests = self.rests.lock().unwrap();
+        let error = if rests.front() == Some(&sends) {
+            rests.pop_front();
+            RetryableLlmError::HealthRest {
+                retry_after: Some(60),
+                resets_at: Vec::new(),
+            }
+        } else {
+            if self.sends.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+                self.second_send.notify_one();
+            }
+            RetryableLlmError::ServerError
+        };
+        Box::pin(async move { Err(LlmError::Retryable(error)) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// Review round 1 of #6966: a pass that stops mid-way keeps the sends it
+/// made. Three attempts declared, no rest wait, and a provider down for
+/// every send: the first pass sends once and parks on the offer's rest; the
+/// second sends again and stops in its retry wait, as a host that stops
+/// does; the third may send only once more. On the park's head the stopped
+/// pass's send was never kept, and the third pass sends twice: four sends.
+#[test]
+fn a_stopped_pass_keeps_the_sends_it_made() {
+    on_engine_stack(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, _app, host) = served(dir.path(), &models("http://127.0.0.1:9", "")).await;
+        let actor = vault.ensure_embedded_owner_actor().unwrap();
+        let owner = vault
+            .authenticate_owner(
+                actor,
+                &actor.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .unwrap();
+        let guard = BudgetGuard::new("model-step", u64::MAX, BudgetExhaustionPolicy::default());
+        let backend = DownOnce {
+            rests: Mutex::new(VecDeque::from([1])),
+            sends: AtomicUsize::new(0),
+            second_send: tokio::sync::Notify::new(),
+        };
+        let pass = || {
+            model_step::submit_as_owner(
+                &vault,
+                &owner,
+                step("stopped-pass", 3),
+                &backend,
+                &guard,
+                Duration::ZERO,
+            )
+        };
+        let parked = serde_json::to_value(pass().await.unwrap()).unwrap();
+        assert_eq!(parked["result"]["status"], "parked", "{parked:#}");
+        assert_eq!(parked["result"]["sends"], 1, "{parked:#}");
+        tokio::select! {
+            biased;
+            () = backend.second_send.notified() => {}
+            stopped = pass() => panic!("the second pass ran to its end: {stopped:?}"),
+        }
+        assert_eq!(backend.sends.load(Ordering::SeqCst), 2);
+        let done = serde_json::to_value(pass().await.unwrap()).unwrap();
+        assert_eq!(done["result"]["status"], "failed", "{done:#}");
+        assert_eq!(
+            backend.sends.load(Ordering::SeqCst),
+            3,
+            "three attempts declared: {done:#}"
+        );
+        host.shutdown().await;
+    });
 }

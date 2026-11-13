@@ -545,13 +545,18 @@ async fn submit(
         spend_scope,
         wake_pass_bound: false,
     };
+    // Each retry a failed send spends is kept on the step's row before the
+    // next send may use it, so a stop mid-pass resumes with it counted (FIX
+    // 11226).
+    let keep = move |spent: usize| keep_sends(vault, id, spent);
     let retries = TransportRetries::resumed(
         usize::from(row.input.retry.max_attempts - 1),
         execution
             .as_ref()
             .map_or(Duration::ZERO, |(_, _, _, rest_wait)| *rest_wait),
         sent,
-    );
+    )
+    .keeping(&keep);
     let outcome = if let Some((backend, guard, _, _)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
@@ -620,6 +625,25 @@ async fn submit(
         Ok(())
     })?;
     view(vault, id, &row).map(Some).map_err(MemoryError::from)
+}
+
+/// Keeps `spent` retries on step `id`'s row (FIX 11226): what its next pass
+/// starts from. Whether they kept: a row that is gone, or a write that
+/// faulted, keeps nothing.
+fn keep_sends(vault: &Vault, id: AttemptId, spent: usize) -> bool {
+    let sends = u8::try_from(spent).unwrap_or(u8::MAX);
+    let kept = vault.with_write_txn(|txn| {
+        let Some(mut row) = SUBMISSIONS.get(&vault.store, txn, &id)? else {
+            return Ok(false);
+        };
+        row.sends = row.sends.max(sends);
+        put_submission_in_txn(vault, txn, &id, &mut row)?;
+        Ok(true)
+    });
+    kept.unwrap_or_else(|error| {
+        tracing::warn!(%error, "a model step's spent sends did not keep; it sends no more");
+        false
+    })
 }
 
 /// The result a step's outcome is saved as. A persistence fault is no
