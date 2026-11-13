@@ -15,6 +15,7 @@ use crate::code_sandbox::microvm::ExecutionBudget;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::limit_ask::EngineLimit;
 use crate::llm::{BudgetLease, LlmBackend, LlmError, LlmRequest};
+use crate::secret_lease::SecretTaintRef;
 
 use super::connector::{
     BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, ByoEndpointSpec, ByoaAttemptPayload,
@@ -23,8 +24,8 @@ use super::connector::{
 };
 use super::error::{
     ByoaError, ByoaResult, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT, ERR_EXECUTION_SHAPE,
-    ERR_LEASE_EXPIRED, ERR_LEASE_HOST_DENIED, ERR_LEASE_ID_ZERO, ERR_LEASE_PROFILE_MISMATCH,
-    ERR_LEASE_TAINT, ERR_LEASE_UNBOUNDED, invalid,
+    ERR_EXHAUST_TAINT, ERR_LEASE_EXPIRED, ERR_LEASE_HOST_DENIED, ERR_LEASE_ID_ZERO,
+    ERR_LEASE_PROFILE_MISMATCH, ERR_LEASE_TAINT, ERR_LEASE_UNBOUNDED, invalid,
 };
 use super::exhaust::{
     ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaTerminalDisposition, CaptureByoaExhaust,
@@ -56,14 +57,30 @@ use super::work_resume::moved_on_in_txn;
 /// The factory is the host's, not this module's: provider transports, custody
 /// wiring, and retry policy all stay on the host side of this seam.
 pub trait ByoEndpointBackendFactory {
-    /// Resolves `spec` into the backend that serves it.
+    /// Resolves `spec` into the backend that serves it, with the host's
+    /// execution receipt for that service.
     ///
     /// # Errors
     ///
     /// Returns [`ByoaError::Backend`] when no backend can serve the config, or
     /// [`ByoaError::CredentialUnavailable`] when the custody handle cannot be
     /// opened.
-    fn resolve_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>>;
+    fn resolve_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding>;
+}
+
+/// What a host's endpoint factory answers for one endpoint config: the
+/// backend that serves it, and the secrets the host injects into that
+/// backend's traffic (ARCH-0069 `#exhaust-taint-open`). Every execution
+/// through the backend carries the refs into its exhaust, as a CLI run
+/// carries its egress leases' ([`ByoaEgressLease::secret_taint_refs`]), so
+/// the captured output exports redacted. The binding holds refs the host
+/// supplied; it finds no injected value on its own.
+#[derive(Clone)]
+pub struct ByoEndpointBinding {
+    pub backend: Arc<dyn LlmBackend>,
+    /// The secrets the host injects when it serves this config, each pinned
+    /// to the custody generation it read. Empty when it injects none.
+    pub secret_taint_refs: Vec<SecretTaintRef>,
 }
 
 /// The claimed attempt a host is about to execute. Connector truth is loaded
@@ -516,13 +533,14 @@ where
         }
     }
 
-    /// Resolves an endpoint connector into the host backend that serves it.
+    /// Resolves an endpoint connector into the host backend that serves it,
+    /// with the secrets the host injects into its traffic.
     ///
     /// # Errors
     ///
     /// Returns [`ByoaError::Store`] when the config fails the door, or the
     /// factory's own refusal.
-    pub fn endpoint_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    pub fn endpoint_backend(&self, spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         validate_endpoint(spec)?;
         self.endpoint_factory.resolve_backend(spec)
     }
@@ -614,11 +632,14 @@ where
     }
 
     /// Invokes the persisted endpoint through its host backend and budget lease.
-    /// The returned transcript can be passed to `capture_terminal_exhaust`.
-    /// The backend owns transport timeouts and enforces its budget lease.
+    /// The returned exhaust can be passed to `capture_terminal_exhaust`: its
+    /// transcript, and the secrets the host's binding says it injected, so the
+    /// capture carries their taint. The backend owns transport timeouts and
+    /// enforces its budget lease.
     ///
     /// # Errors
-    /// Refuses stale fences, unbound/mismatched models, and backend failures;
+    /// Refuses stale fences, unbound/mismatched models, a binding whose taint
+    /// refs are malformed (before any traffic moves), and backend failures;
     /// the request and response are measured, never refused for their size.
     /// Provider error text is not copied into custody.
     pub async fn execute_endpoint(
@@ -639,7 +660,12 @@ where
             EngineLimit::MaintenanceTextBytes,
             encoded_json_len(&request)?,
         );
-        let backend = self.endpoint_backend(&spec)?;
+        let ByoEndpointBinding {
+            backend,
+            secret_taint_refs,
+        } = self.endpoint_backend(&spec)?;
+        crate::secret_rotation::validate_taint_refs(&secret_taint_refs)
+            .map_err(|_| invalid(ERR_EXHAUST_TAINT))?;
         let response = backend.generate(request, lease).await.map_err(|error| {
             // A spent seat keeps its type so the caller can route it; every
             // other provider error stays out of custody.
@@ -657,6 +683,7 @@ where
                 &response,
                 self.vault.proposal_spool(),
             )?),
+            secret_taint_refs,
             ..ByoaExhaust::default()
         })
     }

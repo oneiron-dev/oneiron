@@ -12,11 +12,8 @@
 //! nothing; a later credit spend on the seat is read as before. Each door
 //! rechecks the owner's proof in its own transaction.
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 
-use crate::LlmBackend;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
@@ -25,7 +22,7 @@ use crate::error::Error;
 use crate::memory::{MemoryError, MemoryResult};
 
 use super::connector::ByoEndpointSpec;
-use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher};
+use super::dispatcher::{ByoEndpointBackendFactory, ByoEndpointBinding, ByoaDispatcher};
 use super::error::{ByoaError, ByoaResult};
 use super::exhaust::{ByoaEgressLease, ByoaEgressPort};
 use super::provider::ProviderAdapterRegistry;
@@ -213,7 +210,7 @@ fn skipped_views(skipped: &[SkippedRunnerSeat]) -> Vec<SkippedRunnerSeatView> {
 struct ResumeEndpoints;
 
 impl ByoEndpointBackendFactory for ResumeEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend(
             "the resume door serves no endpoint connector".to_owned(),
         ))
