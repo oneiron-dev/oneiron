@@ -13,6 +13,12 @@ use crate::error::{Error, GateError, Result};
 use crate::identity_topology::ProposalOutcome;
 use crate::vault::Vault;
 
+/// The grant target an Admin's or Delegate's Owner-minted `policy.change`
+/// grant names for the power to demote another actor's graduated ramp scope
+/// through [`Vault::demote_scope_to_propose`]: one target for every scope, at
+/// vault scope, as the other holder doors name theirs (FIX 8177).
+pub const RAMP_DEMOTE_GRANT_TARGET: &str = "consent-graduation:demote";
+
 /// A cold-mail offer needs both an OF-399 streak and live CID-5 reputation.
 /// This filter is on the general offer list as well as the native-mail pack
 /// read path: a poor-reputation identity must not surface a second offer door.
@@ -210,14 +216,21 @@ impl Vault {
         })
     }
 
-    /// The owner demotes a scope back to the propose lane: revokes its
-    /// standing grant if one is live, appends the demotion receipt, and zeroes
-    /// the clean streak.
+    /// The owner, or a policy holder, demotes a scope back to the propose
+    /// lane: revokes its standing grant if one is live, appends the demotion
+    /// receipt, and zeroes the clean streak.
     ///
-    /// The grant is the owner's, so taking it away is the owner's act, proved
-    /// and rechecked in the write's transaction. The scope's own actor steps
-    /// back through [`crate::memory::Memory::demote_own_ramp_scope`] instead.
-    /// Either way the act is said out loud, which is the unconditional receipt
+    /// Demotion narrows, so the owner is not its only author (ARCH-0082
+    /// `#changing`: "Tighten or loosen a row for an act you hold: a policy
+    /// holder ..., own proof, lands at once"). The proof is the vault owner's,
+    /// or the person proof of a policy holder: a live Owner, or an Admin or
+    /// Delegate whose Owner-minted `policy.change` grant names
+    /// [`RAMP_DEMOTE_GRANT_TARGET`]. Both are found again in the write's
+    /// transaction, and a role label alone demotes nothing. The scope's own
+    /// actor, or that actor's parent, steps it back through
+    /// [`crate::memory::Memory::demote_own_ramp_scope`] instead. Re-graduation
+    /// stays the owner's tap ([`Vault::accept_graduation_offer`]).
+    /// Every way the act is said out loud, which is the unconditional receipt
     /// (oracle `ms06_self_demotion_is_receipted_never_silent`): a scope with no
     /// live grant still records the act, so a demotion is never inferred from
     /// an absence.
@@ -226,8 +239,9 @@ impl Vault {
     ///
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the scope tuple is unbuildable,
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated) when the proof no
-    /// longer holds here or names a person who is not this vault's owner,
-    /// plus storage failures.
+    /// longer holds here, or names a person who is neither this vault's owner
+    /// nor a policy holder over [`RAMP_DEMOTE_GRANT_TARGET`], plus storage
+    /// failures.
     pub fn demote_scope_to_propose(
         &self,
         owner: &AuthenticatedOwner,
@@ -237,7 +251,11 @@ impl Vault {
         let at = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
             scope.validate()?;
-            owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
+            if let Err(refusal) = owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)
+                && !holds_ramp_demote_power_in_txn(self, &*wtxn, owner)?
+            {
+                return Err(refusal);
+            }
             append_demotion_in_txn(self, wtxn, scope, reason, at)
         })
     }
@@ -312,6 +330,28 @@ impl Vault {
             Ok(())
         })
     }
+}
+
+/// Whether `proof` is a policy holder's own person proof over
+/// [`RAMP_DEMOTE_GRANT_TARGET`] now, in `txn`: the person proof still holds,
+/// and its person is a live Owner or an Admin or Delegate whose Owner-minted
+/// `policy.change` grant names the target (FIX 8177's holder check). A proof
+/// that no longer holds is no holder.
+fn holds_ramp_demote_power_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proof: &AuthenticatedOwner,
+) -> Result<bool> {
+    let Ok(actor) = proof.revalidate_person_in_txn(vault, txn) else {
+        return Ok(false);
+    };
+    crate::policy_model::holds_vault_policy_power_in_txn(
+        vault,
+        txn,
+        actor,
+        RAMP_DEMOTE_GRANT_TARGET,
+        crate::unix_seconds_now(),
+    )
 }
 
 impl crate::memory::Memory<'_> {
