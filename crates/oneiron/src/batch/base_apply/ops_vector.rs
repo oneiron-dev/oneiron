@@ -44,6 +44,7 @@ pub(super) fn apply_vector_arm(
             plan.as_ref().filter(|_| !state.had_vector_mutation),
         )?;
         state.had_vector_mutation = true;
+        *state.index_vectors_written.entry(id).or_default() |= applied.cleared_pending_embedding;
     }
     if applied.cleared_pending_embedding {
         state.pending_embedding_tokens_written.remove(&id);

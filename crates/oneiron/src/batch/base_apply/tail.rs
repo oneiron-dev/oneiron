@@ -124,6 +124,16 @@ pub(super) fn apply_tail(
         crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture);
     }
 
+    // DEC-0005 #private-world-vectors (census L5-26): a row a world's own text space takes
+    // keeps no vector of the vault's index, whichever writer staged it, judged on the batch's
+    // final state.
+    crate::embed::world_space::keep_world_rows_out_of_vault_index_in_txn(
+        store,
+        config.privacy.posture,
+        wtxn,
+        &state.index_vectors_written,
+    )?;
+
     state
         .question_arrival_ids
         .extend(&state.materialized_entity_ids);

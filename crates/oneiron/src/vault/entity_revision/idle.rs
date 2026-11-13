@@ -329,7 +329,7 @@ impl Vault {
                 // named the space goes; the world's space keeps its vectors,
                 // and the pending work stays for it (and for the vault's index,
                 // should the world inherit again).
-                drop_index_vector_in_txn(self, &mut txn, &input.entity)?;
+                drop_index_vector_in_txn(&self.store, &mut txn, &input.entity)?;
                 // A row the pending worker does not embed (a NOTE, a caption)
                 // gets a vector of the vault's index back only by a refill,
                 // and a sweep after this pass finds no vector to mark it by:
@@ -622,7 +622,7 @@ pub(crate) fn drop_vector_state(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    drop_index_vector_in_txn(vault, txn, id)?;
+    drop_index_vector_in_txn(&vault.store, txn, id)?;
     crate::embed::delete_text_media_vectors_in_txn(&vault.store, txn, id)?;
     vault.store.clear_pending_embedding(txn, id)?;
     #[cfg(feature = "sync")]
@@ -640,21 +640,17 @@ pub(crate) fn drop_vector_state(
 /// marks of where and on what it was filled; its media rows and its pending
 /// marker, job and lease stay. Whether it held a vector.
 pub(crate) fn drop_index_vector_in_txn(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let had_node = vault
-        .store
-        .hnsw_neighbors
-        .get(txn, id.as_bytes())?
-        .is_some();
-    let had_vector = vault.store.vectors.delete(txn, id.as_bytes())?;
+    let had_node = store.hnsw_neighbors.get(txn, id.as_bytes())?.is_some();
+    let had_vector = store.vectors.delete(txn, id.as_bytes())?;
     if had_vector || had_node {
-        crate::hnsw::hnsw_deindex(&vault.store, txn, id)?;
-        crate::store::vector_index::increment_vector_version(&vault.store, txn)?;
+        crate::hnsw::hnsw_deindex(store, txn, id)?;
+        crate::store::vector_index::increment_vector_version(store, txn)?;
     }
-    crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
-    crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
+    crate::embed::clear_embedding_locality_in_txn(store, txn, id)?;
+    crate::embed::record_embedding_device_in_txn(store, txn, id, None)?;
     Ok(had_vector)
 }

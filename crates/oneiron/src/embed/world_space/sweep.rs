@@ -118,7 +118,7 @@ fn sweep_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>) -> Result<WorldTextSpaceSwe
                 continue;
             }
             let dropped =
-                crate::vault::entity_revision::drop_index_vector_in_txn(vault, wtxn, &id)?;
+                crate::vault::entity_revision::drop_index_vector_in_txn(&vault.store, wtxn, &id)?;
             if dropped {
                 sweep.index_drops += 1;
             }

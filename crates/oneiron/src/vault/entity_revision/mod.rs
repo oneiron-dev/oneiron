@@ -13,7 +13,6 @@ pub(crate) use document_mutation::{
 mod document_version;
 pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
-#[cfg(feature = "sync")]
 pub(crate) use idle::drop_index_vector_in_txn;
 pub(crate) use idle::drop_vector_state;
 mod pending_index;
@@ -36,7 +35,6 @@ pub(crate) use turn_text::{
 };
 mod types;
 mod vector_refill;
-#[cfg(feature = "sync")]
 pub(crate) use vector_refill::mark_vector_refill_in_txn;
 pub(crate) use vector_refill::schedule_vector_refills;
 
