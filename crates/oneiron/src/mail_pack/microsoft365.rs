@@ -47,8 +47,8 @@ use serde_json::Value;
 
 use super::credential::WireReads;
 use super::rest::{
-    self, RestAnswer, VerifiedCredentials, array, bearer_header, header_value, html_text, refused,
-    text_of, tidy_text,
+    self, FreshAccessTokens, GrantIssuer, RestAnswer, VerifiedCredentials, array, header_value,
+    html_text, refused, text_of, tidy_text,
 };
 use super::source::MailProvider;
 use super::wire::{
@@ -188,6 +188,9 @@ pub struct HttpGraphMailWire<'v> {
     client: reqwest::blocking::Client,
     /// The credentials this wire has seen read their source's mailbox.
     verified: VerifiedCredentials,
+    /// The fresh access tokens its sources' stored grants were exchanged
+    /// for ([MICROSOFT365-OAUTH-EXCHANGE]).
+    tokens: FreshAccessTokens,
     /// Each source's folders, read once and again when a folder is met
     /// that the read did not hold.
     folders: RefCell<BTreeMap<EntityId, FolderTree>>,
@@ -207,6 +210,7 @@ impl<'v> HttpGraphMailWire<'v> {
             vault,
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
+            tokens: FreshAccessTokens::new(GrantIssuer::Microsoft),
             folders: RefCell::new(BTreeMap::new()),
             reread: RefCell::new(BTreeSet::new()),
         })
@@ -232,7 +236,7 @@ impl<'v> HttpGraphMailWire<'v> {
             WireReads::Mailbox,
             MICROSOFT365_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
-                let auth = bearer_header(token)?;
+                let auth = self.tokens.bearer(&self.client, source.source_ref, token)?;
                 // The credential presented here is the one checked.
                 if !self.verified.holds(source.source_ref, token) {
                     let request = self

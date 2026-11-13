@@ -2,9 +2,11 @@
 //! carry its id as the `workbook-session-id` header on Graph's workbook
 //! paths; a worksheet name, an address, an item id or a session id outside
 //! the path and header alphabets is refused before anything is sent; and the
-//! Microsoft 365 connection presents a stored grant as it is, so a Microsoft
-//! refresh token never reaches Google's token endpoint (RULING
-//! L3-17-EXCEL-CONNECTION, 14 Nov 06:23).
+//! Microsoft 365 connection presents a grant that names no Microsoft tenant
+//! as it is, so a Microsoft refresh token never reaches Google's token
+//! endpoint (RULING L3-17-EXCEL-CONNECTION, 14 Nov 06:23). A grant the
+//! Microsoft code exchange stored refreshes at Microsoft:
+//! tests/microsoft365_connection_refresh.rs.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test microsoft_excel_wire`
 
@@ -248,7 +250,7 @@ fn a_microsoft_grant_never_reaches_googles_token_endpoint() -> TestResult {
     assert_eq!(
         access_token_offline("microsoft.excel", grant)?,
         "ms-access",
-        "the Microsoft 365 connection presents the stored access token and exchanges nothing"
+        "a grant naming no tenant: the Microsoft 365 connection presents its stored access token and exchanges nothing"
     );
     assert_eq!(
         access_token_offline("microsoft.excel", b"ms-bare")?,

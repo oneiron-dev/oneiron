@@ -38,7 +38,12 @@ use crate::{EntityId, Vault};
 mod allow_ask;
 mod google_code;
 mod grants;
-pub use google_code::{GoogleAuthorizationCode, GoogleAuthorizationGrant};
+// Microsoft's code exchange and refresh ([MICROSOFT365-OAUTH-EXCHANGE]).
+mod microsoft_code;
+pub use google_code::GoogleAuthorizationCode;
+pub use microsoft_code::MicrosoftAuthorizationCode;
+#[cfg(oneiron_test_support)]
+pub(crate) use microsoft_code::{exchange_microsoft_code_at, refresh_stored_microsoft_grant_at};
 // A built-in channel's isolated probe replies (FIX 710).
 mod probe;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
@@ -139,6 +144,25 @@ pub trait PackConnectionVerifier {
     ) -> Option<Box<dyn QualificationConnector + 'a>> {
         let _ = (vault, check);
         None
+    }
+}
+
+/// A grant a provider's code exchange made (Google's, Microsoft's), ready
+/// for ordinary credential custody: the stored grant's bytes, wiped on drop,
+/// never an API reply.
+pub struct AuthorizationCodeGrant {
+    bytes: Zeroizing<Vec<u8>>,
+    refreshable: bool,
+}
+
+impl AuthorizationCodeGrant {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Whether the provider issued a refresh token with the access token.
+    pub fn has_refresh_token(&self) -> bool {
+        self.refreshable
     }
 }
 
@@ -252,9 +276,7 @@ impl ProviderConnectionChecks {
         }
         let grant: StoredGoogleGrant = serde_json::from_str(text)
             .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
-        if let (Some(refresh_token), Some(client_id)) =
-            (present(&grant.refresh_token), present(&grant.client_id))
-        {
+        if let Some((refresh_token, client_id)) = grant.refresh_pair()? {
             let (access_token, granted) = self.exchange_google_refresh(
                 refresh_token,
                 client_id,
@@ -272,15 +294,21 @@ impl ProviderConnectionChecks {
         self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
     }
 
-    /// The Microsoft Graph profile read with the stored grant's access token
+    /// The Microsoft Graph profile read with the stored grant. A grant the
+    /// Microsoft code exchange stored (a refresh token, its OAuth client and
+    /// its tenant) is first refreshed at its tenant's token endpoint, here
+    /// inside the credential door; any other grant presents its access token
     /// as it is: bare text, or a JSON grant's `access_token`. A Microsoft
-    /// grant is never exchanged, here or at Google's token endpoint.
+    /// grant never goes to Google's token endpoint.
     fn send_microsoft365_me(
         &self,
         method: &reqwest::Method,
         url: &str,
         value: &[u8],
     ) -> Result<CheckReply> {
+        if let Some(fresh) = Self::refresh_stored_microsoft_grant(&self.client, value)? {
+            return self.send(MICROSOFT365_ME_CHECK, method, url, fresh.as_bytes());
+        }
         let text = std::str::from_utf8(value)
             .map_err(|_| invalid("the stored credential is not text"))?
             .trim();
@@ -348,9 +376,7 @@ impl ProviderConnectionChecks {
         }
         let grant: StoredGoogleGrant = serde_json::from_str(text)
             .map_err(|_| invalid("the stored Google grant is not JSON"))?;
-        if let (Some(refresh_token), Some(client_id)) =
-            (present(&grant.refresh_token), present(&grant.client_id))
-        {
+        if let Some((refresh_token, client_id)) = grant.refresh_pair()? {
             return self.exchange_google_refresh(
                 refresh_token,
                 client_id,
@@ -379,9 +405,7 @@ impl ProviderConnectionChecks {
         }
         let grant: StoredGoogleGrant = serde_json::from_str(text)
             .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
-        let (Some(refresh_token), Some(client_id)) =
-            (present(&grant.refresh_token), present(&grant.client_id))
-        else {
+        let Some((refresh_token, client_id)) = grant.refresh_pair()? else {
             return Ok(None);
         };
         let checks = Self {
@@ -457,6 +481,23 @@ struct StoredGoogleGrant {
     client_id: Option<String>,
     #[serde(default)]
     client_secret: Option<String>,
+    /// Named only by a Microsoft grant ([`MicrosoftAuthorizationCode`]).
+    #[serde(default)]
+    tenant: Option<String>,
+}
+
+impl StoredGoogleGrant {
+    /// The refresh token and the OAuth client it was issued to, when the
+    /// grant carries both. A grant that names a Microsoft tenant is refused
+    /// whole: its refresh token and client secret never go to Google.
+    fn refresh_pair(&self) -> Result<Option<(&str, &str)>> {
+        if present(&self.tenant).is_some() {
+            return Err(invalid(
+                "the stored grant is a Microsoft grant; it is never sent to Google",
+            ));
+        }
+        Ok(present(&self.refresh_token).zip(present(&self.client_id)))
+    }
 }
 
 impl Drop for StoredGoogleGrant {
@@ -496,6 +537,22 @@ struct GoogleTokenReply {
 impl Drop for GoogleTokenReply {
     fn drop(&mut self) {
         self.access_token.zeroize();
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl ProviderConnectionChecks {
+    /// The checks on `client`: a test's own transport.
+    pub(crate) fn on_client(client: reqwest::blocking::Client) -> Self {
+        Self { client }
+    }
+
+    /// The HTTP status of the `microsoft365.me` check's provider call with
+    /// `value` as the stored grant.
+    pub(crate) fn microsoft365_me_status(&self, value: &[u8]) -> Result<u16> {
+        let (method, url) = provider_call(MICROSOFT365_ME_CHECK).map_err(Error::InvalidConfig)?;
+        self.send_microsoft365_me(&method, url, value)
+            .map(|reply| reply.status)
     }
 }
 

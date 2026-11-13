@@ -111,16 +111,17 @@ pub struct WorkspaceConnection {
 }
 
 /// How a send turns a connection's stored grant into its access token.
+/// Under either, a grant the provider cannot refresh presents its stored
+/// access token as it is: bare text, or a JSON grant's `access_token`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkspaceTokenExchange {
     /// A grant carrying a refresh token and its OAuth client is exchanged
-    /// at Google's token endpoint on each send; any other grant is read as
-    /// [`Self::StoredAccessToken`].
+    /// at Google's token endpoint on each send.
     GoogleRefresh,
-    /// The stored access token as it is: bare text, or a JSON grant's
-    /// `access_token`. Nothing is exchanged; once it expires, the owner
-    /// stores a new one.
-    StoredAccessToken,
+    /// A grant carrying a refresh token, its OAuth client and its tenant
+    /// (what the Microsoft code exchange stores) is exchanged at the
+    /// tenant's Microsoft token endpoint on each send.
+    MicrosoftRefresh,
 }
 
 impl WorkspaceConnection {
@@ -145,15 +146,15 @@ pub static GOOGLE_CONNECTION: WorkspaceConnection = WorkspaceConnection {
 /// The Microsoft 365 connection (L3-17-EXCEL = A): one Microsoft sign-in,
 /// bound to the effector the Microsoft 365 mail wire reads
 /// (`connector:microsoft365`), so a mailbox source may name the same stored
-/// grant; Excel is its optional permission. Its grant is presented as stored:
-/// no Microsoft refresh exchange exists yet.
+/// grant; Excel is its optional permission. A grant the Microsoft code
+/// exchange stored is refreshed at Microsoft's token endpoint on each send.
 pub static MICROSOFT365_CONNECTION: WorkspaceConnection = WorkspaceConnection {
     pack: "oneiron.microsoft365",
     builtin: "microsoft365",
     connection: "microsoft365",
     effector: crate::mail_pack::MICROSOFT365_CONNECTOR_EFFECTOR,
     family: "microsoft365",
-    token: WorkspaceTokenExchange::StoredAccessToken,
+    token: WorkspaceTokenExchange::MicrosoftRefresh,
 };
 
 /// One tool of a module.

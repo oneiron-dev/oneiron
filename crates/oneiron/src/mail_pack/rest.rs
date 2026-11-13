@@ -14,6 +14,7 @@ use reqwest::header::HeaderValue;
 use serde_json::Value;
 
 use crate::EntityId;
+use crate::connector_key::ProviderConnectionChecks;
 use crate::error::{Error, Result};
 
 /// The largest provider answer read: a whole message with its inline parts.
@@ -412,39 +413,70 @@ pub(super) fn tidy_text(text: &str) -> String {
     out.trim_end().to_owned()
 }
 
-/// The credentials a wire has seen read the mailbox their source names, each
-/// by a keyed digest of the exact bytes presented (FIX 12559, REVIEW-5754):
-/// a credential replaced at its door is checked again before it reads. The
-/// key is this wire's own and never leaves it, so a digest names no
-/// credential outside it.
-/// The fresh Google access tokens one wire exchanged its sources' stored
-/// grants for (fix list row 16311), by the source and the keyed digest of
-/// the grant: a grant that carries a refresh token and its OAuth client is
-/// exchanged at Google's token endpoint once per wire, not once per call,
-/// and a rotated grant is exchanged again. Read only inside the source's
-/// credential door, so a credential its door refuses sends nothing; held in
-/// memory for the wire's life, never stored.
-pub(super) struct FreshGoogleTokens {
+/// Whose token endpoint refreshes a source's stored grant: the provider the
+/// wire reading it serves. A grant goes to no other provider's endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GrantIssuer {
+    /// Gmail and Google Calendar: a grant that carries a refresh token and
+    /// its OAuth client.
+    Google,
+    /// Graph mail and calendar: a grant that carries a refresh token, its
+    /// OAuth client and its tenant ([MICROSOFT365-OAUTH-EXCHANGE]).
+    Microsoft,
+}
+
+impl GrantIssuer {
+    /// A fresh access token for the stored grant `token`, when it is one
+    /// this issuer refreshes; `None` for any other credential.
+    ///
+    /// # Errors
+    ///
+    /// `<issuer>_credential_refresh_failed` when the issuer refuses the
+    /// grant's refresh token or cannot be reached.
+    pub(crate) fn refresh(
+        self,
+        client: &reqwest::blocking::Client,
+        token: &[u8],
+    ) -> Result<Option<zeroize::Zeroizing<String>>> {
+        match self {
+            Self::Google => ProviderConnectionChecks::refresh_stored_google_grant(client, token)
+                .map_err(|_| refused("google_credential_refresh_failed")),
+            Self::Microsoft => {
+                ProviderConnectionChecks::refresh_stored_microsoft_grant(client, token)
+                    .map_err(|_| refused("microsoft_credential_refresh_failed"))
+            }
+        }
+    }
+}
+
+/// The fresh access tokens one wire exchanged its sources' stored grants for
+/// (fix list row 16311), by the source and the keyed digest of the grant: a
+/// grant its issuer refreshes is exchanged at the issuer's token endpoint
+/// once per wire, not once per call, and a rotated grant is exchanged again.
+/// Read only inside the source's credential door, so a credential its door
+/// refuses sends nothing; held in memory for the wire's life, never stored.
+pub(super) struct FreshAccessTokens {
+    issuer: GrantIssuer,
     key: [u8; 32],
     fresh: RefCell<BTreeMap<EntityId, ([u8; 32], zeroize::Zeroizing<String>)>>,
 }
 
-impl FreshGoogleTokens {
-    pub(super) fn new() -> Self {
+impl FreshAccessTokens {
+    pub(super) fn new(issuer: GrantIssuer) -> Self {
         Self {
+            issuer,
             key: rand::random(),
             fresh: RefCell::new(BTreeMap::new()),
         }
     }
 
     /// The `Authorization: Bearer` value for `source`'s injected credential
-    /// `token`: a fresh access token for a stored grant that can refresh,
+    /// `token`: a fresh access token for a stored grant the issuer refreshes,
     /// else the credential as [`bearer_header`] reads it.
     ///
     /// # Errors
     ///
-    /// `google_credential_refresh_failed` when Google refuses the grant's
-    /// refresh token or cannot be reached; [`bearer_header`]'s own.
+    /// [`GrantIssuer::refresh`]'s; [`bearer_header`]'s own.
     pub(super) fn bearer(
         &self,
         client: &reqwest::blocking::Client,
@@ -457,20 +489,22 @@ impl FreshGoogleTokens {
         {
             return bearer_header(fresh.as_bytes());
         }
-        match crate::connector_key::ProviderConnectionChecks::refresh_stored_google_grant(
-            client, token,
-        ) {
-            Ok(Some(fresh)) => {
+        match self.issuer.refresh(client, token)? {
+            Some(fresh) => {
                 let header = bearer_header(fresh.as_bytes())?;
                 self.fresh.borrow_mut().insert(source, (digest, fresh));
                 Ok(header)
             }
-            Ok(None) => bearer_header(token),
-            Err(_) => Err(refused("google_credential_refresh_failed")),
+            None => bearer_header(token),
         }
     }
 }
 
+/// The credentials a wire has seen read the mailbox their source names, each
+/// by a keyed digest of the exact bytes presented (FIX 12559, REVIEW-5754):
+/// a credential replaced at its door is checked again before it reads. The
+/// key is this wire's own and never leaves it, so a digest names no
+/// credential outside it.
 pub(super) struct VerifiedCredentials {
     key: [u8; 32],
     seen: RefCell<BTreeSet<(EntityId, [u8; 32])>>,
