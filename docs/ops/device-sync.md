@@ -60,7 +60,6 @@ fresh vault has another authority root, and the home refuses it.
 
 ```toml
 [device_sync]
-worlds = ["<world id>"]
 # Only to name a home by hand, instead of the enrolled one:
 home_machine = "<the home's MACHINE id, 32 hex characters>"
 home_url = "wss://home.example/ws"
@@ -71,7 +70,6 @@ always_on = true
 primary = false
 ```
 
-- `worlds`: the worlds this machine follows, by id. Absent, it follows none until some are named.
 - `home_machine`, `home_url`, `credential_file`: a home named by hand, all three or none. Absent,
   the enrolled home. A hand-named home that is the enrolled one keeps the enrolment's pin.
   - `home_machine`: the home's MACHINE id. The mesh dials this machine.
