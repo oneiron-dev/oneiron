@@ -168,6 +168,7 @@ fn bind_resident(vault: &Vault) -> TestResult<Fixture> {
         },
         wake: ResidentWakeMode::AllAddressed,
         wake_hold_secs: HOLD_SECS,
+        digest_delay_secs: oneiron::agent_dispatch::RESIDENT_DIGEST_DELAY_DEFAULT_SECS,
     };
     declare_resident_binding_normal(vault, &proof)?;
     vault

@@ -124,6 +124,9 @@ pub struct AgentDispatcher<'a> {
     /// The goal-intake interview this dispatcher launches, proved in the
     /// dispatch writer: [`Self::admitting_goal_intake`].
     goal_intake: Option<GoalIntakeEntry>,
+    /// The host's classifier of a message to a busy resident (AGM-2 = C):
+    /// [`Self::with_message_classifier`].
+    pub(super) message_classifier: Option<super::ResidentMessageClassifier<'a>>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -136,7 +139,21 @@ impl<'a> AgentDispatcher<'a> {
             seats: None,
             funding: None,
             goal_intake: None,
+            message_classifier: None,
         }
+    }
+
+    /// This dispatcher, classing each message that reaches a busy resident
+    /// with the host's `classifier` (AGM-2 = C): on its rule and local
+    /// rungs only. Without one, a message takes its envelope's default
+    /// class.
+    #[must_use]
+    pub fn with_message_classifier(
+        mut self,
+        classifier: super::ResidentMessageClassifier<'a>,
+    ) -> Self {
+        self.message_classifier = Some(classifier);
+        self
     }
 
     /// This dispatcher, for the goal-intake interview the host-held `card`
