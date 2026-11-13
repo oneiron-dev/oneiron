@@ -1603,7 +1603,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/worker_lease.rs` | src | s | 3 crate-vis | — | A rung's managed worker (FIX 8315, DESIGN-V2 R2): the call waits for it and holds its lease from before… |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
 | `src/models/llama_identity.rs` | src | m | 12 crate-vis | — | What a house llama.cpp answer names about the process that answered it (FIX 7895, 6567 PR1b): its launch… |
-| `src/models/media.rs` | src | L | 3 struct · 1 fn · 10 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
+| `src/models/media.rs` | src | L | 3 struct · 1 fn · 11 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/agent.rs` | src | s | 5 crate-vis | — | Call-local agent attribution and frozen model lists for media calls |
 | `src/models/media/asked_jobs.rs` | src | s | 2 crate-vis | — | The video jobs an agent asked for under the owner's `ai.video` Grant (FIX 3208) |
 | `src/models/media/bindings.rs` | src | s | 7 fn · 10 crate-vis | — | Media voice bindings, clone queries and retry hints |
@@ -1611,16 +1611,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/media/calls.rs` | src | m | 6 fn · 7 crate-vis | — | Media calls, public job operations and runtime cleanup |
 | `src/models/media/construction.rs` | src | m | 4 crate-vis | — | Media runtime construction and transport adapters |
 | `src/models/media/fit.rs` | src | s | 1 crate-vis | — | Whether a media rung takes a call (FIX 8612, FIX 8614, FIX 8627): its row serves the call's operation and… |
-| `src/models/media/job_lifecycle.rs` | src | s | 3 crate-vis | — | A kept job's end and its delete, in one order (FIX 9511, FIX 9513) |
-| `src/models/media/jobs.rs` | src | m | 20 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
+| `src/models/media/job_lifecycle.rs` | src | s | 4 crate-vis | — | A kept job's end and its delete, in one order (FIX 9511, FIX 9513) |
+| `src/models/media/jobs.rs` | src | m | 23 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
 | `src/models/media/jobs/custody.rs` | src | s | 2 crate-vis | — | A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2) |
 | `src/models/media/options.rs` | src | s | 7 fn · 3 crate-vis | — | Media seat queries and model option rows |
 | `src/models/media/replay.rs` | src | m | 1 fn · 13 crate-vis | — | A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465) |
-| `src/models/media/run_line.rs` | src | m | 1 fn · 13 crate-vis | — | A program's media jobs on its run's line (FIX 780, FIX 6083) |
+| `src/models/media/run_line.rs` | src | m | 1 fn · 22 crate-vis | — | A program's media jobs on its run's line (FIX 780, FIX 6083) |
 | `src/models/media/run_replay.rs` | src | s | 8 crate-vis | — | One in-flight media run per replay key, without keeping another durable memo |
+| `src/models/media/scoped_job_door.rs` | src | s | 3 crate-vis | — | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a video job… |
 | `src/models/media/video_length.rs` | src | s | 2 crate-vis | — | A video job's length as it is charged (FIX 1816): the length its clips state, as the provider's wire reads… |
 | `src/models/media/voice_reference.rs` | src | s | 5 crate-vis | — | Every reference upload re-reads the bank (FIX 9517) |
-| `src/models/mod.rs` | src | m | 2 struct · 1 fn · 16 re-export · 27 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
+| `src/models/mod.rs` | src | m | 2 struct · 1 fn · 16 re-export · 28 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/native_call_capture.rs` | src | s | 5 crate-vis | — | Native model-call evidence shared by the probe and decision rungs |
 | `src/models/native_exl3/buffer.rs` | src | s | 13 crate-vis | — | A native call's regions |
 | `src/models/native_exl3/evaluator_ops.rs` | src | s | 2 crate-vis | — | The evaluator op on the house EXL3 worker's socket (FIX 14975), host side: `eval.generate`… |
@@ -1936,7 +1937,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/coach_round.rs` | src | s | 1 fn | — | Door for `tests/eval_authoring_execute_lapsed_lease.rs`: one Coach host round, the nightly worker's unit of… |
 | `src/test_doors/live_lease.rs` | src | s | 2 fn | — | Doors for `tests/live_lease_pending_spend.rs` ([RUN-STEP-CHARGE-LOST-ON-PROCESS-DEATH]): a live lease on a… |
 | `src/test_doors/live_run_payer.rs` | src | s | 1 struct · 3 fn | FillWriterPayer | Doors for `tests/live_run_payer_erased.rs` ([LIVE-RUN-PAYER-REQUIRED]… |
-| `src/test_doors/mod.rs` | src | s | 7 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/media_job_spend.rs` | src | s | 2 struct · 9 fn | ScopedJobSpend, ScopedMediaJob | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped… |
+| `src/test_doors/mod.rs` | src | s | 8 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/resident_pump.rs` | src | s | 1 fn | — | Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`… |
 | `src/test_doors/solved_runs.rs` | src | s | 1 struct · 1 fn | CheckedSpanView | Doors for `tests/library_draft_task_type.rs` (FIX 10508): what a `self.browser.library.draft` call names for… |
@@ -2054,6 +2056,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/managed_mode.rs` | test | XL | — | — | — |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
 | `tests/mcp_caveated_reader.rs` | test | m | — | — | MCP-CAVEATED-READER (RETRIEVAL-04): a reader's `core:read` slip, narrowed by its holder to one world… |
+| `tests/media_job_staged_spend.rs` | test | s | — | — | [MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1: a media job its run's spend scope funds books its own… |
 | `tests/model_binding_proposer_grant.rs` | test | m | — | — | An agent whose Grant names `vault.models.bindings.propose` may propose a binding; the owner still decides… |
 | `tests/note_session_bind_reply.rs` | test | s | — | — | A sync client that carries a NOTE session accepts the home's `auth.bind` reply (FIX-LIST… |
 | `tests/openai_proxy_exchange_names_recalled_rows.rs` | test | m | — | — | The OpenAI proxy's exchange claim names the recalled row its prompt carried |
