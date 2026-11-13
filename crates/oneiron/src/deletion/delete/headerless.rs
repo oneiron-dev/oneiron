@@ -270,15 +270,17 @@ impl Vault {
             id,
             tombstone.reason,
         )?;
-        if existed {
-            journal_deletion_in_txn(
-                self,
-                gate,
-                &mut wtxn,
-                id,
-                reason.active_store_hard_purge_v1(),
-            )?;
-        }
+        // The run that asked it keeps the delete in its journal, in the purge
+        // that commits it (ARCH-0040 #revert-run). The scope probe above
+        // found residue, so this delete removed something even when that was
+        // only index rows with no entity record.
+        journal_deletion_in_txn(
+            self,
+            gate,
+            &mut wtxn,
+            id,
+            reason.active_store_hard_purge_v1(),
+        )?;
         if reason == DeleteReason::UserDelete {
             // A headerless soft deletion still retires proposals. Its
             // cancellation and this evidence must become visible together.

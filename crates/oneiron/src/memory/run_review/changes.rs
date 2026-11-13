@@ -332,7 +332,7 @@ fn first_rows_in_txn(
     let mut rows = Vec::new();
     for row in CHANGES.iter_from(store, txn, &run_hash(run))? {
         let (key, row) = row?;
-        if row.run == run && seen.insert(row.change.change().to_owned()) {
+        if row.run == run && seen.insert(row.change.change()) {
             rows.push((key, row));
         }
     }
