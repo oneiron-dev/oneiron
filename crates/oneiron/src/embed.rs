@@ -43,7 +43,7 @@ pub(crate) use eligibility::{
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::{clear_embedding_locality_in_txn, stamp_embedding_locality_in_txn};
 #[cfg(feature = "sync")]
-pub(crate) use media::text_vector_sources_in_txn;
+pub(crate) use media::media_source_in_txn;
 pub use media::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome, UnboundMediaSample,
 };
@@ -60,6 +60,8 @@ pub(crate) use session_media::{RoomMediaDrops, drop_room_media_copies_in_txn};
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 #[cfg(feature = "sync")]
 pub use space::MediaVectorReplica;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use space::install_media_vector_replica_in_txn;
 pub(crate) use space::checkpoint;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
