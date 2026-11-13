@@ -746,6 +746,35 @@ impl Memory<'_> {
         Ok(())
     }
 
+    /// [`Self::require_plan_admission_in`] in the writer that settles a parked
+    /// post, brief revision or brief-less create: a yes that is not the
+    /// owner's (an agent's take, another approver's approval) lands nothing
+    /// from a plan the owner has not approved at the pinned revision, though
+    /// it was approved when the proposal parked, and no unplanned run of an
+    /// agent whose plan mode turned `required` since. The owner's approval, or
+    /// a door that records no approver (the owner's tray), is the owner's act
+    /// and is never refused.
+    pub(super) fn require_settled_plan_admission_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+        brief: Option<&QueueTaskBrief>,
+        approver: Option<crate::WriteActor>,
+    ) -> MemoryResult<()> {
+        let Some(approver) = approver else {
+            return Ok(());
+        };
+        if crate::memory::actor_is_vault_owner_in_txn(
+            self.vault(),
+            txn,
+            approver.entity_ref(),
+            approver.actor_class(),
+        )? {
+            return Ok(());
+        }
+        self.require_plan_admission_in(txn, assignee, brief)
+    }
+
     /// Pins one read-first handle for a brief: the row's digest as this vault
     /// holds it now. A composer pins what it read; settlement refuses a pin
     /// whose row has moved since.
