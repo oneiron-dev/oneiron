@@ -323,7 +323,6 @@ pub(crate) async fn start_desktop_workers(
             config.vault_path.clone(),
             admitted(),
         )
-        .with_archive_entry_cap(config.import.archive_entry_cap())
         .spawn(Arc::clone(&sync_server)),
     );
     // Attached folders rescan after the import queue starts (OF-554).

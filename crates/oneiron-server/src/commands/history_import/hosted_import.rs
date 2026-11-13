@@ -72,8 +72,8 @@ use oneiron::ingest::history::{
 use rustix::fs::{CWD, Mode, OFlags, openat};
 use serde::{Deserialize, Serialize};
 
-use super::{ExportBounds, decode, earliest_first, own_second, queue_dreamer};
-use crate::config::{ImportConfig, ServeConfig};
+use super::{decode, earliest_first, own_second, queue_dreamer};
+use crate::config::ServeConfig;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// How often a running server looks for staged imports.
@@ -756,9 +756,6 @@ pub(crate) struct HostedImports {
     /// its decode, each later conversation, the rows and removals of the
     /// staging folder); `None` writes nothing more this pass.
     admission: HousekeepingAdmission,
-    /// The most entries a staged export's archive may declare: the host's
-    /// `[import] archive_max_entries` (ARCH-0027 #archive-precheck).
-    archive_entry_cap: u64,
 }
 
 impl HostedImports {
@@ -766,15 +763,7 @@ impl HostedImports {
         Self {
             vault_path,
             admission,
-            archive_entry_cap: ImportConfig::default().archive_entry_cap(),
         }
-    }
-
-    /// Reads staged exports under the host's `[import]` entry cap, so the
-    /// owner lifts it for a hosted import as for `oneiron import`.
-    pub(crate) fn with_archive_entry_cap(mut self, archive_entry_cap: u64) -> Self {
-        self.archive_entry_cap = archive_entry_cap;
-        self
     }
 
     /// Runs a pass every few seconds, one at a time, off the async runtime.
@@ -870,9 +859,7 @@ impl HostedImports {
             return Ok(true);
         };
         if job.state == HostedImportState::Cancelling {
-            if let Some(conversation) =
-                conversation_at_place(&folder, source, job, self.archive_entry_cap)
-            {
+            if let Some(conversation) = conversation_at_place(&folder, source, job) {
                 keep_resumed(vault, id, source, job, job.cursor, &conversation)?;
             }
             finish(
@@ -889,11 +876,7 @@ impl HostedImports {
             fail(vault, &folder, id, "the staged export is gone or changed")?;
             return Ok(true);
         };
-        let mut conversations = match decode(
-            source,
-            &export,
-            &ExportBounds::staged(self.archive_entry_cap),
-        ) {
+        let mut conversations = match decode(source, &export) {
             Ok((_, conversations)) => conversations,
             Err(error) => {
                 fail(vault, &folder, id, &format!("{error:#}"))?;
@@ -1090,11 +1073,9 @@ fn conversation_at_place(
     folder: &Path,
     source: HistorySource,
     job: &HostedImportJob,
-    archive_entry_cap: u64,
 ) -> Option<HistoryConversation> {
     let export = staged_export(folder, job.staged_bytes).ok().flatten()?;
-    let (_, mut conversations) =
-        decode(source, &export, &ExportBounds::staged(archive_entry_cap)).ok()?;
+    let (_, mut conversations) = decode(source, &export).ok()?;
     earliest_first(&mut conversations);
     conversations
         .into_iter()
@@ -1174,8 +1155,7 @@ pub(crate) fn land_unplaced(
     let folder = imports_root(vault_path).join(id.to_hex());
     let export = staged_export(&folder, job.staged_bytes)?
         .ok_or_else(|| anyhow::anyhow!("the staged export is gone or changed"))?;
-    let bounds = ExportBounds::staged(ImportConfig::default().archive_entry_cap());
-    let (_, mut conversations) = decode(source, &export, &bounds)?;
+    let (_, mut conversations) = decode(source, &export)?;
     earliest_first(&mut conversations);
     let conversation = conversations
         .get(index)
