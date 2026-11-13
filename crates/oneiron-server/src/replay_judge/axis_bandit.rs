@@ -101,7 +101,10 @@ impl<'a> ServeAxisBandit<'a> {
             .ok_or(Error::EntityNotFound)?;
         let goal = skill_edit_goal(vault, &target)?;
         judge.word_axes(&goal.axes);
-        let mut criteria: BTreeMap<String, Value> = goal
+        // Each axis by its name and kind under the goal's revision: the joined
+        // project goal's text, why, measure and bound stay in the project
+        // (FIX 22437).
+        let criteria: BTreeMap<String, Value> = goal
             .axes
             .iter()
             .map(|axis| {
@@ -111,28 +114,6 @@ impl<'a> ServeAxisBandit<'a> {
                 (axis.name.clone(), criterion)
             })
             .collect();
-        if let Some((project, _)) = goal.project
-            && let Some(record) = vault.project_intake_goal_as(
-                oneiron::dreamer_runner::authority::coach_reader()?,
-                project,
-            )?
-        {
-            for axis in record
-                .primary_axes
-                .iter()
-                .chain(&record.floor_axes)
-                .chain(&record.cost_axes)
-            {
-                if let Some(criterion) = criteria.get_mut(&axis.name) {
-                    let kind = criterion["kind"].clone();
-                    *criterion = json!({
-                        "name": axis.name, "measure": axis.measure, "bound": axis.bound,
-                        "goal": record.goal, "why": record.why, "kind": kind,
-                        "goal_revision": goal.revision,
-                    });
-                }
-            }
-        }
         Ok(Self {
             judge,
             notes,

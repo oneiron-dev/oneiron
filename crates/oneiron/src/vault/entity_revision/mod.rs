@@ -43,9 +43,10 @@ pub use storage::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
 pub(crate) use storage::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
 pub(crate) use storage::{
     capture_entity_revision, ensure_document, entity_owns_revision_in_txn, fork_revision,
-    publish_room_revision, read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
-    refresh_live_short_id_in_txn, remove_entity_revisions, revision_for_body_hash_in_txn, revision_for_mode_in_txn,
-    storage_manages_text, vectors_embed_body,
+    indexed_revision_is_document_state_in_txn, publish_room_revision,
+    read_entity_revision_from_store_in_txn, read_entity_revision_in_txn,
+    refresh_live_short_id_in_txn, remove_entity_revisions, revision_for_body_hash_in_txn,
+    revision_for_mode_in_txn, storage_manages_text, vectors_embed_body,
 };
 pub(crate) use storage::{
     capture_native_note_in_txn, finish_native_note_publication_in_txn, indexed_native_note_in_txn,

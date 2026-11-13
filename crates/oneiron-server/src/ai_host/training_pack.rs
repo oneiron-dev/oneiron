@@ -32,9 +32,13 @@ use crate::server::SyncServer;
 
 mod parity;
 mod question_evaluation;
+mod question_serving;
+mod question_trial;
 mod trainer;
 mod wire;
 
+pub(crate) use question_serving::QuestionHeadRung;
+pub(crate) use question_trial::{answerer_pins, run_question_head_trial};
 use trainer::QuestionHeadTrainer;
 pub(crate) use trainer::{TrainingInputCleanup, cleanup_training_job_inputs};
 

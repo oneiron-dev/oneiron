@@ -134,6 +134,7 @@ fn edge_grant(edge: &InquiryEdge) -> FederationGrant {
         verb_classes: BTreeSet::new(),
         wallet_ref: None,
         inquiry_terms: Some(edge.terms),
+        working_view_bounds: None,
     }
 }
 

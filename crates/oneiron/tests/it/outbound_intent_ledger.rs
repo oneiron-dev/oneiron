@@ -11,9 +11,9 @@ use oneiron::{
 // accessible. This integration pin keeps the public greenfield format honest.
 #[test]
 fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
-    assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 3);
+    assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 6);
     assert_eq!(OUTBOUND_BINDING_VERSION, 2);
-    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 22);
+    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 24);
     assert_eq!(
         INTENT_LEDGER_VALUE_KEYS
             .iter()
@@ -33,6 +33,10 @@ fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
         "admitted_approval",
         "recorded_outcome",
         "delivery_uncertain",
+        // The approval the send was pinned to (b859b3fb2ef, #6503) and the
+        // owner who authorized it (b98890ef37f, #5933).
+        "pinned_approval",
+        "authorizing_owner",
     ] {
         assert!(INTENT_LEDGER_VALUE_KEYS.contains(&required));
     }

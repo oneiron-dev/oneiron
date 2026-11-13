@@ -58,7 +58,11 @@ fn room(server: &SyncServer, body: ConversationBody) -> (EntityId, EntityId, Ent
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                parts: None,
+                quote: None,
             }],
+            assertions: Default::default(),
+            thread_audience: None,
         })
         .unwrap();
     (room, alice, bob, message)

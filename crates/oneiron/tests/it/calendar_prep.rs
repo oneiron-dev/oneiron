@@ -178,7 +178,7 @@ fn put_claim(
     value: Value,
     learned_at: u64,
 ) {
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
         value,
@@ -187,6 +187,7 @@ fn put_claim(
         ClaimLifecycleStatus::Active,
     )
     .expect("claim body");
+    body.scope_facet = vault.default_facet().expect("vault default facet");
     vault
         .put_claim(&id, &body, at(learned_at), learned_at)
         .expect("put claim");

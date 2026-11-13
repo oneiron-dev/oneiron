@@ -215,6 +215,7 @@ impl Vault {
                     None,
                     BTreeSet::new(),
                     None,
+                    None,
                 )?);
             }
             Ok(GrantlessAgentConversion::Minted(minted))

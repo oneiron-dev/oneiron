@@ -32,6 +32,10 @@ pub(super) struct BudgetState {
     pub(super) row_horizons: Vec<u64>,
     pub(super) shared_used_units: u64,
     pub(super) shared_reserved_units: u64,
+    /// Set once by [`super::BudgetGuard::park`]: the meter's settled state
+    /// moved into a checkpoint that a resumed workflow restores, so no handle
+    /// of this meter issues a lease again (FIX BUDGET-PARK).
+    pub(super) parked: bool,
 }
 
 impl BudgetState {
@@ -68,6 +72,7 @@ impl BudgetState {
             row_horizons,
             shared_used_units: 0,
             shared_reserved_units: 0,
+            parked: false,
         }
     }
 
@@ -77,6 +82,17 @@ impl BudgetState {
         self.limit_units = limit_units;
         self.reserve_units = reserve_units;
         self.row_horizons = row_horizons(&self.policy, limit_units, self.total_floor_units);
+    }
+
+    /// Refuses new work on a parked meter, before any reservation is planned.
+    /// Every issuance goes through [`Self::reserve_bound`] or
+    /// [`Self::issue_lease`], and both ask it first.
+    fn refuse_if_parked(&self) -> Result<(), BudgetDenied> {
+        if self.parked {
+            Err(BudgetDenied::AdmissionDenied)
+        } else {
+            Ok(())
+        }
     }
 
     pub(super) fn check_lease_provenance(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
@@ -108,6 +124,7 @@ impl BudgetState {
         purpose: Option<&CallPurpose>,
         binding: Option<DispatchBinding>,
     ) -> Result<BudgetLease, BudgetDenied> {
+        self.refuse_if_parked()?;
         if reserve_units == 0 {
             return Err(BudgetDenied::AdmissionDenied);
         }
@@ -300,20 +317,22 @@ impl BudgetState {
         self.on_budget_exhausted.admission_cap(self.limit_units)
     }
 
+    /// An unreserved lease (free local work). A parked meter refuses it.
     pub(super) fn issue_lease(
         &mut self,
         reserve_units: u64,
         metered: bool,
         kind: &str,
         binding: Option<DispatchBinding>,
-    ) -> BudgetLease {
-        self.issue_lease_with(
+    ) -> Result<BudgetLease, BudgetDenied> {
+        self.refuse_if_parked()?;
+        Ok(self.issue_lease_with(
             reserve_units,
             metered,
             kind,
             ReserveAllocation::default(),
             binding,
-        )
+        ))
     }
 
     /// The lease id stays `<attempt>:<kind>:<seq>`: row indices, actor refs,
@@ -340,6 +359,7 @@ impl BudgetState {
                 shared_reserved_units: allocation.shared_units,
                 binding,
                 dispatched: false,
+                physical_attempts: lease.physical_attempt_evidence(),
             },
         );
         lease

@@ -232,6 +232,8 @@ pub(super) fn check_floor_cells_in_txn(
                 ClaimLifecycleStatus::Active,
             )?;
             body.source = Some(ClaimSource::Observed);
+            // The subject is the SKILL, which has no FACET of its own.
+            body.scope_facet = vault.claim_put_facet_in_txn(wtxn, &proposal_id)?;
             vault.put_reserved_claim_in_txn(
                 wtxn,
                 &proposal_id,

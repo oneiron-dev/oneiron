@@ -142,8 +142,10 @@ impl Vault {
         // [DISCLOSURE-SCOPE-CLAIM-FACET]: the contact's own substrate is no
         // FACET, so the CLAIM birth gate refused every first clearance with
         // InvalidFacet. The head is born in the vault default facet, as the
-        // contact's own heads are ([COUNTERPARTY-CONTACT-CLAIM-FACET]).
-        claim.scope_facet = self.default_facet_in_txn(wtxn)?;
+        // contact's own heads are ([COUNTERPARTY-CONTACT-CLAIM-FACET]); a
+        // rewrite keeps the stored head's facet, so a later change of the
+        // default facet does not refuse it (`FacetStampImmutable`).
+        claim.scope_facet = self.claim_put_facet_in_txn(wtxn, &claim_id)?;
         self.put_disclosure_claim_in_txn(wtxn, &claim_id, &claim, scope.updated_at)
     }
 
@@ -178,8 +180,9 @@ impl Vault {
         // [DISCLOSURE-TIER-CLAIM-FACET]: a marked row's own substrate is no
         // FACET (only a PERSON's is), so the CLAIM birth gate refused the
         // first mark of any other row with InvalidFacet. The head is born in
-        // the vault default facet, as the disclosure.scope head is.
-        claim.scope_facet = self.default_facet_in_txn(&wtxn)?;
+        // the vault default facet, as the disclosure.scope head is, and a
+        // re-mark keeps the stored head's facet.
+        claim.scope_facet = self.claim_put_facet_in_txn(&wtxn, &claim_id)?;
         self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, marked_at)?;
         wtxn.commit()?;
         Ok(())

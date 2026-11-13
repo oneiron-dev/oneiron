@@ -44,11 +44,15 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// (fail-closed) — without this gate any network peer could pull the full
 /// root snapshot and window exports. When no secret is configured, upgrades
 /// are rejected unless the explicit insecure dev escape hatch is enabled,
-/// matching `auth::require_owner_auth` on the HTTP side. Two upgrades are
-/// the exceptions, and neither serves any of that state: one naming the MCP
-/// subprotocol opens the MCP carrier ([`super::mcp_socket`]), and a managed
+/// matching `auth::require_owner_auth` on the HTTP side. Three upgrades are
+/// the exceptions, and none serves any of that state: one naming the MCP
+/// subprotocol opens the MCP carrier ([`super::mcp_socket`]), a managed
 /// vault's stale owner sign-in opens an app-tier socket that books and
-/// nothing more (FIX 11712, `run::booking`).
+/// nothing more (FIX 11712, `run::booking`), and a caller whose own slip
+/// verified but is narrower than full replication opens an app-tier socket
+/// of facade calls and subscriptions under that slip and nothing more
+/// (FIX-LIST 23077, `run::facade`; ARCH-0044 T1: any authenticated client
+/// that can hold a socket).
 ///
 /// The credential's revocable identity is carried into the connection rather
 /// than discarded with the rest of the `CoreAuth`: the handshake proves the
@@ -172,8 +176,9 @@ async fn ws_upgrade_handler(
 }
 
 /// The full-replication socket an upgrade opens for the caller whose upgrade
-/// proved `machine`: its owner-grade credential and its peer session, or the
-/// refusal it is answered with before the upgrade.
+/// proved `machine`: its owner-grade credential and its peer session, the
+/// facade socket of a caller whose own slip is narrower ([`facade_mode`]),
+/// or the refusal it is answered with before the upgrade.
 fn replication_mode(
     headers: &HeaderMap,
     extensions: &axum::http::Extensions,
@@ -186,8 +191,13 @@ fn replication_mode(
             return Err(crate::auth::caller_slip_too_narrow("full replication").into_response());
         }
         Some(Err(refused)) => return Err(refused.into_response()),
-        None => require_owner_auth(headers, &server.config, server.vault().as_ref())
-            .map_err(|_| sync_upgrade_refused(headers, server))?,
+        None => match require_owner_auth(headers, &server.config, server.vault().as_ref()) {
+            Ok(auth) => auth,
+            Err(_) => {
+                return facade_mode(headers, server)
+                    .ok_or_else(|| sync_upgrade_refused(headers, server));
+            }
+        },
     };
     // Full replication reads the whole vault, an owner act: a hosted
     // operator's root is refused before the upgrade (FIX 2222), with its
@@ -213,6 +223,35 @@ fn replication_mode(
         owner,
         telemetry_actor,
         peer_serve,
+    })
+}
+
+/// The facade socket an upgrade opens for a caller whose own slip verified
+/// but is narrower than full replication: a scoped agent, a guest, an
+/// attenuated person (FIX-LIST 23077). ARCH-0044 T1 serves the held socket
+/// to any authenticated client that can hold one, BYOA agents included, and
+/// T2 binds its principal to the connection; full replication stays the
+/// owner's. The slip is holder-bound by construction: it verifies only with
+/// the upgrade's binding proof. `None` keeps every other refusal as it was:
+/// no slip, a slip that does not verify, an owner-grade credential refused
+/// here, a slip naming no registered principal, or a managed vault, whose
+/// sockets take each call under its reap freeze (FIX 5128), which this
+/// socket does not.
+fn facade_mode(headers: &HeaderMap, server: &SyncServer) -> Option<run::SocketMode> {
+    let slip_bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim_start().starts_with("Bearer v2.slip."));
+    if server.managed_issuer.is_some() || !slip_bearer {
+        return None;
+    }
+    let auth = CoreAuth::from_headers(headers, &server.config, server.vault().as_ref()).ok()?;
+    if auth.is_owner_grade() || auth.require_registered_principal().is_err() {
+        return None;
+    }
+    Some(run::SocketMode::Facade {
+        session_jti: auth.jti().map(str::to_owned),
+        credential: auth,
     })
 }
 

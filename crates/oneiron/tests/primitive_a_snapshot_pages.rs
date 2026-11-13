@@ -492,6 +492,7 @@ mod withheld_row {
                 repo_bounds: None,
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
+                working_view_bounds: None,
             },
         )?;
         Ok(agent)

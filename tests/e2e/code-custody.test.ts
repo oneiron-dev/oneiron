@@ -612,8 +612,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const bytesA = Buffer.from(readA.content_base64, "base64");
     expect(bytesA.length).toBe(size);
     expect(codeCustody06Sha256(bytesA)).toBe(oid);
-    const putB = await codeCustody06ExpectedSuccess("owner B put vault.artifacts.put", () =>
-      engine.client.call("vault.artifacts.put", {
+    // Owner B's put queues behind owner A's 16 MiB landing (3.3 s and 3.6 s in two
+    // runs on set bd95597c, over 10 s on a loaded host), so it takes the transfer budget.
+    const putB = await codeCustody06Transfer("owner B put vault.artifacts.put", () =>
+      transfers.call("vault.artifacts.put", {
         name: "custody-06-owner-b", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
       }));
     const appendB = await codeCustody06Transfer(`owner B append vault.artifacts.append ${transferBytes}`, () =>
@@ -781,14 +783,9 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
       operation: "download", transfers: ["basic"], objects: [{ oid, size }],
     });
     expect(deadLfs.status).toBe(401);
-    try {
-      expect(codeCustody06ErrorBody(deadLfs).code).toBe("UNAUTHORIZED");
-    } catch (error) {
-      throw new Error(
-        `CODE-CUSTODY-06 ENGINE DEFECT 2026-11-12: FIX [GIT-LFS-PREHANDLER-REFUSAL-BARE-BODY] the binding door (auth/binding_admission.rs) envelopes a pre-route refusal only on /v1/ paths, so the revoked slip's LFS batch 401 is a bare ApiError while the same door's 403 is enveloped; ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
+    // FIX [GIT-LFS-PREHANDLER-REFUSAL-BARE-BODY], fixed by #7201: the binding
+    // door envelopes its pre-route refusal on the LFS paths too.
+    expect(codeCustody06ErrorBody(deadLfs).code).toBe("UNAUTHORIZED");
     const stillLive = await codeCustody06ExpectedSuccess("independent read-scoped slip self.actor", () =>
       agent.client.call("self.actor", {}));
     expect(stillLive.actor_ref).toBe(agentId);

@@ -168,6 +168,9 @@ fn sent_request() -> (
     let vault = Arc::new(
         Vault::open(dir.path(), VaultConfig::server()).expect("open signing fixture vault"),
     );
+    // `oneiron serve` installs the install's keystore at open; the dispatch
+    // below signs its request with the keys it holds.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("create embedded owner actor");
@@ -216,6 +219,7 @@ fn sent_request() -> (
             expires_at: now + 3600,
             principal_ref: None,
             automated: false,
+            natural_person: None,
         }],
         fields: vec![EsignField {
             id: field.clone(),
@@ -233,6 +237,9 @@ fn sent_request() -> (
         }],
         full_trail_appendix: false,
         lifecycle: None,
+        token_expires_at: None,
+        project: None,
+        commitments: Vec::new(),
     };
     vault
         .create_esign_document(
@@ -298,6 +305,7 @@ fn sent_request() -> (
                 content_ref: None,
                 idempotency_key: Some("public-sign".into()),
                 dedupe_key: Some("public-sign".into()),
+                mention: None,
             },
             OutboundIntentTrigger {
                 source: OutboundIntentSource::AgentImmediate,
@@ -376,7 +384,8 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     let load = client
         .post(format!("{url}/sign/action"))
         .header("x-forwarded-for", "203.0.113.9")
-        .json(&serde_json::json!({"token": token, "action":{"action":"load"}}))
+        .header("x-oneiron-esign-capability", token.as_str())
+        .json(&serde_json::json!({"action":{"action":"load"}}))
         .send()
         .await
         .expect("load signer action over TCP");
@@ -389,7 +398,8 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     );
     let saved = client
         .post(format!("{url}/sign/action"))
-        .json(&serde_json::json!({"token": token, "action":{
+        .header("x-oneiron-esign-capability", token.as_str())
+        .json(&serde_json::json!({"action":{
             "action":"save_field", "field":field, "value":{"kind":"text","value":"Accepted"}
         }}))
         .send()
@@ -403,7 +413,8 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     );
     let preview = client
         .post(format!("{url}/sign/preview"))
-        .json(&serde_json::json!({"token":token,"item":0}))
+        .header("x-oneiron-esign-capability", token.as_str())
+        .json(&serde_json::json!({"item":0}))
         .send()
         .await
         .expect("preview signing document over TCP");
@@ -420,7 +431,8 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
     );
     let pdf = client
         .post(format!("{url}/sign/pdf"))
-        .json(&serde_json::json!({"token":token,"item":0}))
+        .header("x-oneiron-esign-capability", token.as_str())
+        .json(&serde_json::json!({"item":0}))
         .send()
         .await
         .expect("fetch signing PDF over TCP");
@@ -464,13 +476,24 @@ async fn real_managed_tcp_listener_loads_saves_and_reads_without_device_lease() 
         .expect("finish TCP signing server");
 }
 
-async fn over_unix(path: &std::path::Path, method: &str, target: &str, body: &str) -> Vec<u8> {
+/// One raw HTTP/1.1 exchange over the signing Unix socket; `capability` rides
+/// the `x-oneiron-esign-capability` header when given.
+async fn over_unix(
+    path: &std::path::Path,
+    method: &str,
+    target: &str,
+    body: &str,
+    capability: Option<&str>,
+) -> Vec<u8> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = tokio::net::UnixStream::connect(path)
         .await
         .expect("connect to signing Unix socket");
+    let capability_header = capability
+        .map(|value| format!("x-oneiron-esign-capability: {value}\r\n"))
+        .unwrap_or_default();
     let request = format!(
-        "{method} {target} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-Forwarded-For: 203.0.113.9\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {target} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n{capability_header}X-Forwarded-For: 203.0.113.9\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream
@@ -516,13 +539,14 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
     let signal = shutdown.triggered();
     let app = build_app(Arc::clone(&server));
     let served = tokio::spawn(async move { listener.serve_until(app, signal).await });
-    let page = over_unix(&socket, "GET", "/sign", "").await;
+    let page = over_unix(&socket, "GET", "/sign", "", None).await;
     assert!(!http_body(&page).is_empty());
     let load = over_unix(
         &socket,
         "POST",
         "/sign/action",
-        &serde_json::json!({"token":token,"action":{"action":"load"}}).to_string(),
+        &serde_json::json!({"action":{"action":"load"}}).to_string(),
+        Some(token.as_str()),
     )
     .await;
     let load: serde_json::Value =
@@ -532,10 +556,11 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
         &socket,
         "POST",
         "/sign/action",
-        &serde_json::json!({"token":token,"action":{
+        &serde_json::json!({"action":{
             "action":"save_field", "field":field, "value":{"kind":"text","value":"Accepted"}
         }})
         .to_string(),
+        Some(token.as_str()),
     )
     .await;
     let save: serde_json::Value =
@@ -545,7 +570,8 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
         &socket,
         "POST",
         "/sign/preview",
-        &serde_json::json!({"token":token,"item":0}).to_string(),
+        &serde_json::json!({"item":0}).to_string(),
+        Some(token.as_str()),
     )
     .await;
     let preview: serde_json::Value =
@@ -561,7 +587,8 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
         &socket,
         "POST",
         "/sign/pdf",
-        &serde_json::json!({"token":token,"item":0}).to_string(),
+        &serde_json::json!({"item":0}).to_string(),
+        Some(token.as_str()),
     )
     .await;
     assert_eq!(
@@ -709,9 +736,8 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
                                 .expect("loopback peer"),
                         ))
                         .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(
-                            serde_json::json!({"token":token,"action":action}).to_string(),
-                        ))
+                        .header("x-oneiron-esign-capability", token.as_str())
+                        .body(Body::from(serde_json::json!({"action":action}).to_string()))
                         .expect("signing action request"),
                 )
                 .await

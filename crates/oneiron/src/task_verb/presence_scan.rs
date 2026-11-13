@@ -415,10 +415,11 @@ fn task_page_slot_in(
             TaskIntentPresence::new(task_hex.to_owned(), status, task.label, acked, jobs);
         presence.kind = Some(kind);
         presence.who = task.assignee.and_then(TaskAssignee::entity_ref);
-        presence.type_node = task.type_ref.as_ref().map(|type_ref| {
-            let wire = type_ref.wire_form();
-            wire.split('@').next().unwrap_or_default().to_owned()
-        });
+        presence.type_ref = task.type_ref;
+        presence.project_ref = task
+            .brief
+            .as_ref()
+            .and_then(|stored| stored.brief.project_ref);
         // Display only. The row resolves a handle, storage keeps the actor ref;
         // an unregistered actor renders as its own id rather than as a guess.
         // A human assignee is qualified, because on the ONE shared TASKS

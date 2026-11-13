@@ -243,13 +243,12 @@
       },
       "body": {
         "companion": {
-          "person_ref": "7e000000000000000000000012210005",
-          "persona_ref": "7e000000000000000000000012210006"
+          "counterpart_person_ref": "7e000000000000000000000012210006",
+          "person_ref": "7e000000000000000000000012210005"
         },
         "memories": {
           "slots": {
             "claims": 0,
-            "companions": 0,
             "facets": 0,
             "other": 0,
             "summaries": 0,
@@ -286,7 +285,6 @@
         "memories": {
           "budget": {
             "claims": 0,
-            "companions": 0,
             "facets": 0,
             "other": 0,
             "summaries": 0,
@@ -294,9 +292,9 @@
           },
           "companion": {
             "caller": "7e000000000000000000000012210004",
+            "counterpart_person_ref": "7e000000000000000000000012210006",
             "expression": "professional",
             "person_ref": "7e000000000000000000000012210005",
-            "persona_ref": "7e000000000000000000000012210006",
             "scope": "neutral",
             "scope_source": "neutral_default"
           },
