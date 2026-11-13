@@ -318,6 +318,7 @@ pub(super) fn resident_wakes() -> Result<Case> {
             },
             wake: ResidentWakeMode::HumanMessages,
             wake_hold_secs: 0,
+            digest_delay_secs: crate::agent_dispatch::RESIDENT_DIGEST_DELAY_DEFAULT_SECS,
         },
         3,
     )?;

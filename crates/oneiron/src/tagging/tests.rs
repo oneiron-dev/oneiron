@@ -1970,6 +1970,7 @@ fn bind_resident(vault: &Vault) -> EntityId {
         },
         wake: ResidentWakeMode::HumanMessages,
         wake_hold_secs: 0,
+        digest_delay_secs: crate::agent_dispatch::RESIDENT_DIGEST_DELAY_DEFAULT_SECS,
     };
     vault
         .bind_resident_agent(&auth, &spec, 3)

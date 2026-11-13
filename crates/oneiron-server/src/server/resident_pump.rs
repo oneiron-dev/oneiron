@@ -42,7 +42,7 @@ pub(crate) use self::execution::seated_planner;
 use self::settlement::settle;
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use oneiron::agent_def::{
@@ -52,8 +52,8 @@ use oneiron::agent_def::{
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, AgentRunFence, AgentRunLeaseReap, HealerSlot,
     LeaderStarterSkills, PlannerSeat, PlannerSkills, ProjectConversationSkills, ResidentAgentSpec,
-    SpendScopeId, agent_dispatch_actor, agent_dispatch_run_actor, resident_attempt_reviews_diary,
-    resident_attempt_wakes_for_room,
+    ResidentMessageClassifier, SpendScopeId, agent_dispatch_actor, agent_dispatch_run_actor,
+    resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, ReadSetProducer,
@@ -105,6 +105,32 @@ use crate::mcp::{
     EngineRunError, McpCodeModeProvider, PlannedModel, ScopeMeter, enter_engine_native_run,
     task_engine_run_seat, task_run_seat,
 };
+
+/// The class question's shipped wording (AGM-2 = C): prompt data beside
+/// this host, never engine prose.
+const MESSAGE_CLASS_WORDING: &str = include_str!("resident_message_class_wording.json");
+
+/// [`MESSAGE_CLASS_WORDING`]'s question, read once; `None`, and no message
+/// is classed past its envelope, when the shipped file does not read.
+fn message_class_wording() -> Option<&'static str> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wording {
+        question: String,
+    }
+    static WORDING: OnceLock<Option<String>> = OnceLock::new();
+    WORDING
+        .get_or_init(
+            || match serde_json::from_str::<Wording>(MESSAGE_CLASS_WORDING) {
+                Ok(wording) => Some(wording.question),
+                Err(error) => {
+                    tracing::warn!(%error, "the message class wording does not read");
+                    None
+                }
+            },
+        )
+        .as_deref()
+}
 
 /// The pump's lease owner, and the owner of the park a run stopped by a
 /// provider outage holds (FIX 3194), which a provider's recovery resumes.
@@ -436,7 +462,18 @@ impl SyncServer {
                 }
             }
         }
-        let dispatcher = AgentDispatcher::new(vault);
+        // AGM-2 = C: a message to a busy resident is classed on this host's
+        // rule and local rungs only, under the bands the Coach tuned.
+        let bands = self.decision_host().bands();
+        let mut dispatcher = AgentDispatcher::new(vault);
+        if let Some(wording) = message_class_wording() {
+            dispatcher = dispatcher.with_message_classifier(ResidentMessageClassifier {
+                ladder: self.decision_ladder(),
+                wording,
+                bands: &bands,
+                band: oneiron::llm::decision::DecisionBand::default(),
+            });
+        }
         if !residents.is_empty() {
             for agent in &residents {
                 match dispatcher.dispatch_resident_inbox(*agent, WAKES_PER_PASS, now) {
