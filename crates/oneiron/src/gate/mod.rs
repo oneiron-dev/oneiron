@@ -270,7 +270,8 @@ pub(crate) use self::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, ProviderCooldownPolicy, WaveHandoffPolicy,
 };
 pub(crate) use self::owner_answer::{
-    OwnerAnswer, close_owner_answer_obligation_in_txn, show_owner_answer_item_in_txn,
+    ObligationAnswered, OwnerAnswer, close_owner_answer_obligation_in_txn,
+    show_owner_answer_item_in_txn,
 };
 pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
 pub use self::owner_policy_mutation::{

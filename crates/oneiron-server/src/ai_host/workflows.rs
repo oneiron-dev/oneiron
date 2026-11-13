@@ -277,7 +277,7 @@ fn pump_once(
                 });
             }
             let mut claimed: Option<(AttemptId, u32)> = None;
-            let mut retryable = false;
+            let mut retry = None;
             let mut held = None;
             let mut parked = false;
             let mut hook_wait = false;
@@ -426,7 +426,7 @@ fn pump_once(
                             Err(error)
                         }
                         Err(fault) => {
-                            retryable = fault.retryable;
+                            retry = fault.retry;
                             Err(fault.error)
                         }
                     }
@@ -493,7 +493,7 @@ fn pump_once(
                         Some((leaf, lease_count)) => vec![FailedStep {
                             leaf,
                             lease_count,
-                            retryable,
+                            retry,
                         }],
                         None => held_leases(vault, LEASE_OWNER).unwrap_or_else(|list| {
                             tracing::error!(%list, "held workflow leases could not be listed");

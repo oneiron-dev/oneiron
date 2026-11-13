@@ -377,6 +377,7 @@ struct FileServeConfig {
     failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
     maximum_tier: Option<bool>,
+    off_record_dump_suppression: Option<bool>,
     device_class: Option<oneiron::authority::MachineDeviceClass>,
 }
 
@@ -452,6 +453,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref,
             maximum_tier: value.maximum_tier,
+            off_record_dump_suppression: value.off_record_dump_suppression,
             device_class: value.device_class,
             esign_delivery_outbox_dir: None,
             cloud_registration_pins: None,
@@ -551,6 +553,9 @@ struct PartialServeConfig {
     hosted_kms_key_ref: Option<String>,
     /// `maximum_tier` is file-only: `oneiron init --maximum-tier` writes it.
     maximum_tier: Option<bool>,
+    /// `off_record_dump_suppression`: the file's key, or
+    /// `ONEIRON_OFF_RECORD_DUMP_SUPPRESSION` over it; no flag.
+    off_record_dump_suppression: Option<bool>,
     /// `device_class` is file-only, as `maximum_tier` is.
     device_class: Option<oneiron::authority::MachineDeviceClass>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
@@ -647,6 +652,10 @@ impl fmt::Debug for PartialServeConfig {
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
             .field("maximum_tier", &self.maximum_tier)
+            .field(
+                "off_record_dump_suppression",
+                &self.off_record_dump_suppression,
+            )
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field("cloud_registration_pins", &self.cloud_registration_pins)
@@ -751,6 +760,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
             maximum_tier: None,
+            off_record_dump_suppression: None,
             device_class: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
             cloud_registration_pins: value.cloud_registration_pins.clone(),

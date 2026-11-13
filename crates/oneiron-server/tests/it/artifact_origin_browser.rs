@@ -156,13 +156,23 @@ async fn spawn_daemon(fill: impl FnOnce(&oneiron::Vault, SocketAddr)) -> Daemon 
     );
     let artifact_app = build_artifact_app(server.clone());
     let app = build_app(server);
+    // A hatch server answers only callers on this device, so each app is
+    // served with its peer.
     tokio::spawn(async move {
-        axum::serve(api_listener, app).await.expect("serve");
+        axum::serve(
+            api_listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("serve");
     });
     tokio::spawn(async move {
-        axum::serve(artifact_listener, artifact_app)
-            .await
-            .expect("serve artifacts");
+        axum::serve(
+            artifact_listener,
+            artifact_app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("serve artifacts");
     });
     Daemon {
         api,
