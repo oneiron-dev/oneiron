@@ -143,13 +143,14 @@ impl HookAsk {
         }
     }
 
-    /// The owner answers `ask` proceed.
+    /// The owner answers `ask` proceed. The word's result row is the hook's
+    /// binding claim, the ask's own question, which the owner reads.
     ///
     /// # Errors
     ///
     /// The answer door's refusal.
     pub fn answer_proceed(&self, vault: &Vault, ask: EntityId) -> Result<()> {
-        let mut word = TaskAskWord::new(ask);
+        let mut word = TaskAskWord::new(self.binding_id);
         word.option = Some(
             TaskAskOptionId::new("proceed")
                 .map_err(|_| Error::InvariantViolation("proceed option"))?,
