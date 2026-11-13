@@ -82,7 +82,9 @@ async fn take_run_frame(
 
 /// `frame` less every TASK line the agent may not be told about now: its
 /// TASK no longer stands on the board, or the agent's lane does not read
-/// it. Any failure to decide is a no. `None` when a delta keeps no line.
+/// it; and less every child line whose child the agent did not spawn
+/// (census L2-38). Any failure to decide is a no. `None` when a delta keeps
+/// no line.
 fn live_task_lines(
     server: &SyncServer,
     actor: WriteActor,
@@ -92,10 +94,17 @@ fn live_task_lines(
         return Some(frame);
     };
     let lane = agent_lane(server, actor).ok()?;
+    let spawner = actor.entity_ref();
     rows.retain(|row| {
         row.key.strip_prefix("tasks:").is_none_or(|task| {
             EntityId::from_hex(task).is_ok_and(|task| tells_task(server, &lane, task))
-        })
+        }) && row
+            .key
+            .strip_prefix(oneiron::context_board::CHILD_DONE_KEY_PREFIX)
+            .is_none_or(|child| {
+                oneiron::context_board::child_spawner(server.vault(), child)
+                    .is_ok_and(|child_spawner| child_spawner == Some(spawner))
+            })
     });
     (!rows.is_empty()).then_some(frame)
 }
