@@ -5,18 +5,16 @@
 //! only to name one request kind.
 
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
+use super::super::requests::{
+    decode, file_id_schema, plain_file_id, requests_fit, requests_schema,
+};
 use super::super::{ARGUMENTS_INVALID, WorkspaceTool};
 use super::{SHEETS_READ_GRANT, SHEETS_WRITE_GRANT};
 
 /// The most ranges one read or write names.
 const MAX_RANGES: usize = 100;
-/// The most structural requests one `spreadsheets.batchUpdate` carries.
-const MAX_REQUESTS: usize = 500;
-/// The longest spreadsheet id; Google's are 44 bytes.
-const MAX_SPREADSHEET_ID_BYTES: usize = 128;
 /// The longest A1 range, a quoted sheet name included.
 const MAX_RANGE_BYTES: usize = 512;
 
@@ -85,12 +83,7 @@ impl SheetsTool {
 
     /// The tool's input schema, typed at its top level.
     pub(super) fn input_schema(self) -> Value {
-        let spreadsheet_id = json!({
-            "type": "string",
-            "minLength": 1,
-            "maxLength": MAX_SPREADSHEET_ID_BYTES,
-            "description": "The spreadsheet's id, as its URL shows it after /d/."
-        });
+        let spreadsheet_id = file_id_schema("The spreadsheet's id, as its URL shows it after /d/.");
         let range = json!({
             "type": "string",
             "minLength": 1,
@@ -160,17 +153,7 @@ impl SheetsTool {
                 "type": "object",
                 "properties": {
                     "spreadsheetId": spreadsheet_id,
-                    "requests": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": MAX_REQUESTS,
-                        "items": {
-                            "type": "object",
-                            "minProperties": 1,
-                            "maxProperties": 1,
-                            "description": "One Sheets v4 request, such as {\"addSheet\": {...}}, passed through as written."
-                        }
-                    }
+                    "requests": requests_schema("Sheets v4", "addSheet")
                 },
                 "required": ["spreadsheetId", "requests"],
                 "additionalProperties": false
@@ -325,9 +308,9 @@ impl SheetsCall {
 
     /// Whether the input is within the tool's bounds: a plain spreadsheet
     /// id, 1 to [`MAX_RANGES`] plain ranges, cells that are JSON scalars,
-    /// and 1 to [`MAX_REQUESTS`] requests that each name one request kind.
+    /// and a batch of requests that each name one request kind.
     fn fits(&self) -> bool {
-        plain_spreadsheet_id(self.spreadsheet_id())
+        plain_file_id(self.spreadsheet_id())
             && match self {
                 Self::SpreadsheetGet { .. } => true,
                 Self::ValuesBatchGet(input) => ranges_fit(input.ranges.iter()),
@@ -339,24 +322,9 @@ impl SheetsCall {
                             .flat_map(|range| range.values.iter().flatten())
                             .all(scalar)
                 }
-                Self::StructuralBatchUpdate(input) => {
-                    (1..=MAX_REQUESTS).contains(&input.requests.len())
-                        && input.requests.iter().all(one_request)
-                }
+                Self::StructuralBatchUpdate(input) => requests_fit(&input.requests),
             }
     }
-}
-
-fn decode<T: DeserializeOwned>(arguments: &Value) -> Result<T, &'static str> {
-    T::deserialize(arguments).map_err(|_| ARGUMENTS_INVALID)
-}
-
-/// Google's spreadsheet id alphabet: letters, digits, `-` and `_`.
-fn plain_spreadsheet_id(id: &str) -> bool {
-    (1..=MAX_SPREADSHEET_ID_BYTES).contains(&id.len())
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 /// 1 to [`MAX_RANGES`] ranges, each [`plain_range`].
@@ -376,15 +344,4 @@ fn plain_range(range: &str) -> bool {
 /// cell as it is.
 fn scalar(cell: &Value) -> bool {
     !matches!(cell, Value::Array(_) | Value::Object(_))
-}
-
-/// One structural request: one key, the request kind in letters, holding
-/// one object.
-fn one_request(request: &Map<String, Value>) -> bool {
-    request.len() == 1
-        && request.iter().all(|(kind, body)| {
-            !kind.is_empty()
-                && kind.bytes().all(|byte| byte.is_ascii_alphabetic())
-                && body.is_object()
-        })
 }

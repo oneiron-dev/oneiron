@@ -126,6 +126,18 @@ pub enum Shape {
     /// Sheets v4 structural requests:
     /// `POST …/v4/spreadsheets/{id}:batchUpdate`, JSON, Bearer.
     SheetsBatchUpdate,
+    /// Google Workspace REST, Docs v1 (L3-17): one document,
+    /// `GET …/v1/documents/{id}`, no body, Bearer. The query holds only
+    /// `suggestionsViewMode` and `includeTabsContent`.
+    DocsDocumentGet,
+    /// Docs v1 edits: `POST …/v1/documents/{id}:batchUpdate`, JSON, Bearer.
+    DocsBatchUpdate,
+    /// Google Workspace REST, Slides v1 (L3-17): one presentation,
+    /// `GET …/v1/presentations/{id}`, no body, no query, Bearer.
+    SlidesPresentationGet,
+    /// Slides v1 edits: `POST …/v1/presentations/{id}:batchUpdate`, JSON,
+    /// Bearer.
+    SlidesBatchUpdate,
     /// [`Self::AnthropicMessages`] asking for server-sent events (FIX
     /// 15702): the body's top-level `stream` is exactly `true`, and the
     /// events are relayed as they come.
@@ -521,6 +533,38 @@ const SHEETS_BATCH_UPDATE: Row = workspace(
     Body::Json,
 );
 
+const DOCS_DOCUMENT_GET: Row = workspace(
+    "GET",
+    &["v1", "documents", "{id}"],
+    None,
+    &["suggestionsViewMode", "includeTabsContent"],
+    Body::Empty,
+);
+
+const DOCS_BATCH_UPDATE: Row = workspace(
+    "POST",
+    &["v1", "documents", "{id}:batchUpdate"],
+    None,
+    &[],
+    Body::Json,
+);
+
+const SLIDES_PRESENTATION_GET: Row = workspace(
+    "GET",
+    &["v1", "presentations", "{id}"],
+    None,
+    &[],
+    Body::Empty,
+);
+
+const SLIDES_BATCH_UPDATE: Row = workspace(
+    "POST",
+    &["v1", "presentations", "{id}:batchUpdate"],
+    None,
+    &[],
+    Body::Json,
+);
+
 pub(crate) use crate::route_keys::ROUTE_OVERRIDES;
 
 /// The longest model name or provider id a path segment may hold.
@@ -563,6 +607,10 @@ impl Shape {
             Self::SheetsValuesBatchGet => &SHEETS_VALUES_BATCH_GET,
             Self::SheetsValuesBatchUpdate => &SHEETS_VALUES_BATCH_UPDATE,
             Self::SheetsBatchUpdate => &SHEETS_BATCH_UPDATE,
+            Self::DocsDocumentGet => &DOCS_DOCUMENT_GET,
+            Self::DocsBatchUpdate => &DOCS_BATCH_UPDATE,
+            Self::SlidesPresentationGet => &SLIDES_PRESENTATION_GET,
+            Self::SlidesBatchUpdate => &SLIDES_BATCH_UPDATE,
             Self::AnthropicMessagesStream => &ANTHROPIC_MESSAGES_STREAM,
             Self::OpenAiChatStream => &OPENAI_CHAT_STREAM,
             Self::OpenAiChatUnversionedStream => &OPENAI_CHAT_UNVERSIONED_STREAM,

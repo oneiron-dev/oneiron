@@ -17,6 +17,12 @@ use super::ARGUMENTS_INVALID;
 /// The Sheets v4 origin.
 const SHEETS_ORIGIN: &str = "https://sheets.googleapis.com";
 
+/// The Docs v1 origin.
+const DOCS_ORIGIN: &str = "https://docs.googleapis.com";
+
+/// The Slides v1 origin.
+const SLIDES_ORIGIN: &str = "https://slides.googleapis.com";
+
 /// The longest path with its query: well inside the broker's frame header.
 const MAX_PATH_BYTES: usize = 16 << 10;
 
@@ -35,6 +41,15 @@ pub enum WorkspaceEndpoint {
     SheetsValuesBatchUpdate,
     /// Sheets v4: `POST /v4/spreadsheets/{id}:batchUpdate`.
     SheetsBatchUpdate,
+    /// Docs v1: `GET /v1/documents/{id}`, its query only
+    /// `suggestionsViewMode` and `includeTabsContent`.
+    DocsDocumentGet,
+    /// Docs v1: `POST /v1/documents/{id}:batchUpdate`.
+    DocsBatchUpdate,
+    /// Slides v1: `GET /v1/presentations/{id}`.
+    SlidesPresentationGet,
+    /// Slides v1: `POST /v1/presentations/{id}:batchUpdate`.
+    SlidesBatchUpdate,
 }
 
 impl WorkspaceEndpoint {
@@ -46,6 +61,8 @@ impl WorkspaceEndpoint {
             | Self::SheetsValuesBatchGet
             | Self::SheetsValuesBatchUpdate
             | Self::SheetsBatchUpdate => SHEETS_ORIGIN,
+            Self::DocsDocumentGet | Self::DocsBatchUpdate => DOCS_ORIGIN,
+            Self::SlidesPresentationGet | Self::SlidesBatchUpdate => SLIDES_ORIGIN,
         }
     }
 
@@ -58,6 +75,8 @@ impl WorkspaceEndpoint {
             | Self::SheetsValuesBatchGet
             | Self::SheetsValuesBatchUpdate
             | Self::SheetsBatchUpdate => "sheets.v4",
+            Self::DocsDocumentGet | Self::DocsBatchUpdate => "docs.v1",
+            Self::SlidesPresentationGet | Self::SlidesBatchUpdate => "slides.v1",
         }
     }
 
@@ -66,8 +85,14 @@ impl WorkspaceEndpoint {
     #[must_use]
     pub const fn method(self) -> &'static str {
         match self {
-            Self::SheetsSpreadsheetGet | Self::SheetsValuesBatchGet => "GET",
-            Self::SheetsValuesBatchUpdate | Self::SheetsBatchUpdate => "POST",
+            Self::SheetsSpreadsheetGet
+            | Self::SheetsValuesBatchGet
+            | Self::DocsDocumentGet
+            | Self::SlidesPresentationGet => "GET",
+            Self::SheetsValuesBatchUpdate
+            | Self::SheetsBatchUpdate
+            | Self::DocsBatchUpdate
+            | Self::SlidesBatchUpdate => "POST",
         }
     }
 
@@ -78,6 +103,10 @@ impl WorkspaceEndpoint {
             Self::SheetsValuesBatchGet => "sheets.values.batchGet",
             Self::SheetsValuesBatchUpdate => "sheets.values.batchUpdate",
             Self::SheetsBatchUpdate => "sheets.spreadsheets.batchUpdate",
+            Self::DocsDocumentGet => "docs.documents.get",
+            Self::DocsBatchUpdate => "docs.documents.batchUpdate",
+            Self::SlidesPresentationGet => "slides.presentations.get",
+            Self::SlidesBatchUpdate => "slides.presentations.batchUpdate",
         }
     }
 }

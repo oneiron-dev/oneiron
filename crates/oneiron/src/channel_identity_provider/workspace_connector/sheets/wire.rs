@@ -3,6 +3,7 @@
 
 use serde_json::{Map, Value, json};
 
+use super::super::requests::request_kinds;
 use super::super::wire::query_value;
 use super::super::{ARGUMENTS_INVALID, WorkspaceEndpoint, WorkspacePlan, WorkspaceWireRequest};
 use super::tools::{
@@ -48,12 +49,7 @@ pub(super) fn plan(call: &SheetsCall) -> Result<WorkspacePlan, &'static str> {
             (values_batch_update(input)?, Some(readback))
         }
         SheetsCall::StructuralBatchUpdate(input) => {
-            let kinds: Vec<&str> = input
-                .requests
-                .iter()
-                .filter_map(|request| request.keys().next().map(String::as_str))
-                .collect();
-            preview.insert("requests".to_owned(), json!(kinds));
+            preview.insert("requests".to_owned(), request_kinds(&input.requests));
             (
                 batch_update(input)?,
                 Some(spreadsheet_get(&input.spreadsheet_id)?),
