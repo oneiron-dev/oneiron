@@ -629,3 +629,160 @@ fn scoped_row(
         // value this reader can stand behind; the next row down is.
         .filter(|row| (spec.min..=spec.max).contains(&row.value)))
 }
+
+/// Lands archived LEARNING_SETTING rows live, one outcome per input row in input order.
+///
+/// Each envelope's key passes the row-key parser and canonical re-encode check before its
+/// owning table checks canonical key/value bytes and credentials. The decoded row then
+/// validates through the owner checks (type scope shape, catalog key, row terms, finite
+/// catalog-bounded value) without any owner write or holder grant check. Owner rows land
+/// first, in input order; holder rows land after, in input order, against the destination
+/// owner rows the same import installed: a holder row over a key holders may not tune, or
+/// under an owner's standing row or cap, stays held back as a local authority mismatch.
+/// Absent keys install through the archive seam with their stored `by` and `witness` bytes
+/// kept; identical stored bytes stay unchanged; different destination bytes stay live. No
+/// claim, witness, or engine-control receipt is minted. An installed vault-scoped or seed row
+/// refolds its knob's fits in the same transaction, as the owner put does; unchanged and
+/// kept-live rows refold nothing.
+///
+/// # Errors
+///
+/// Storage errors. Validation becomes `HeldBack`, never `Err`.
+pub(crate) fn land_archived_learning_setting_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    rows: &[crate::batch::export::ArchiveRetainedSideRow],
+) -> Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+
+    let mut outcomes: Vec<Option<ArchivedSideRowOutcome>> = Vec::with_capacity(rows.len());
+    let mut staged: Vec<
+        Option<(
+            String,
+            StoredSettingRow,
+            SettingMode,
+            SettingScope,
+            &'static SettingSpec,
+        )>,
+    > = Vec::with_capacity(rows.len());
+    let mut owner_order: Vec<usize> = Vec::new();
+    let mut holder_order: Vec<usize> = Vec::new();
+
+    for row in rows {
+        let Ok(source_key) = std::str::from_utf8(&row.source_key) else {
+            outcomes.push(Some(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            )));
+            staged.push(None);
+            continue;
+        };
+        let Some((catalog_key, mode, scope)) = parse_row_key(source_key) else {
+            outcomes.push(Some(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            )));
+            staged.push(None);
+            continue;
+        };
+        if scoped_row_key(catalog_key, mode, &scope).as_bytes() != row.source_key {
+            outcomes.push(Some(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidEncoding,
+            )));
+            staged.push(None);
+            continue;
+        }
+        let (key, stored) = match decode_archived_row(&SETTING, row) {
+            Ok(decoded) => decoded,
+            Err(reason) => {
+                outcomes.push(Some(ArchivedSideRowOutcome::HeldBack(reason)));
+                staged.push(None);
+                continue;
+            }
+        };
+        let setting_row = SettingRow {
+            key: catalog_key.to_owned(),
+            mode,
+            value: stored.value,
+            weight_runs: stored.weight_runs,
+            at: stored.at,
+            why: stored.why.clone(),
+        };
+        let spec = match checked_spec(&scope, &setting_row) {
+            Ok(spec) => spec,
+            Err(_) => {
+                outcomes.push(Some(ArchivedSideRowOutcome::HeldBack(
+                    RetainedSideHeldBackReason::InvalidValue,
+                )));
+                staged.push(None);
+                continue;
+            }
+        };
+        let index = outcomes.len();
+        outcomes.push(None);
+        let by_holder = stored.by_holder;
+        staged.push(Some((key, stored, mode, scope, spec)));
+        if by_holder {
+            holder_order.push(index);
+        } else {
+            owner_order.push(index);
+        }
+    }
+
+    for index in owner_order {
+        let (key, stored, mode, scope, spec) = staged[index].as_ref().expect("staged owner row");
+        let outcome = install_archived_row(&SETTING, vault, txn, permit, key, &rows[index])?;
+        if matches!(outcome, ArchivedSideRowOutcome::Installed)
+            && (*scope == SettingScope::Vault || *mode == SettingMode::Seed)
+        {
+            crate::learning::project::reproject_setting_cells_in_txn(
+                vault, txn, spec.key, stored.at,
+            )?;
+        }
+        outcomes[index] = Some(outcome);
+    }
+
+    for index in holder_order {
+        let (key, stored, mode, scope, spec) = staged[index].as_ref().expect("staged holder row");
+        let Some(class) = holder::holder_class_for_archive_restore(spec.key) else {
+            outcomes[index] = Some(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::LocalAuthorityMismatch,
+            ));
+            continue;
+        };
+        match holder::owner_rows_admit_archived_holder_in_txn(
+            vault,
+            &*txn,
+            *spec,
+            scope,
+            *mode,
+            class,
+            stored.value,
+        ) {
+            Ok(()) => {}
+            Err(Error::InvalidClaimBody(_)) => {
+                outcomes[index] = Some(ArchivedSideRowOutcome::HeldBack(
+                    RetainedSideHeldBackReason::LocalAuthorityMismatch,
+                ));
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+        let outcome = install_archived_row(&SETTING, vault, txn, permit, key, &rows[index])?;
+        if matches!(outcome, ArchivedSideRowOutcome::Installed)
+            && (*scope == SettingScope::Vault || *mode == SettingMode::Seed)
+        {
+            crate::learning::project::reproject_setting_cells_in_txn(
+                vault, txn, spec.key, stored.at,
+            )?;
+        }
+        outcomes[index] = Some(outcome);
+    }
+
+    Ok(outcomes
+        .into_iter()
+        .map(|outcome| outcome.expect("every archived row has its outcome"))
+        .collect())
+}

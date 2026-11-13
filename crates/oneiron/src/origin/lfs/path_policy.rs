@@ -7,11 +7,20 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{LfsAssetClass, LfsPathPolicy};
+use super::{LfsAssetClass, LfsPathPolicy, lfs_repo_id};
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::git_path_bytes;
+use crate::git_wire::{GitWire, git_path_bytes};
+use crate::origin::smart_http::{
+    ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, validate_repo_name,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::code_snapshot::validation::validate_manifest_path;
 
@@ -168,5 +177,104 @@ impl Vault {
         };
         PATH_POLICY.put(&self.store, txn, &repo_id, &policy)?;
         Ok(Ok(policy))
+    }
+}
+
+/// The holdback reason for `repo_id`'s live state, or `None` when a served route resolves to
+/// it. The read-only scan reads git identity first: no live repository anywhere under the
+/// serving root derives to `repo_id` and the repo is missing, while a live identity with no
+/// served name and route is a non-portable reference. Repository identity is filesystem
+/// state, not an entity row — registration writes no LMDB record — so the scan is the whole
+/// live check and it never creates an origin.
+///
+/// # Errors
+/// The serving root cannot be listed.
+fn origin_repo_holdback(
+    vault: &Vault,
+    repo_id: &EntityId,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    let root = vault.store.env.path().join(ORIGIN_SERVING_ROOT_NAME);
+    if !root.is_dir() {
+        return Ok(Some(RetainedSideHeldBackReason::MissingLiveEntity));
+    }
+    let wire = GitWire::new(vault)?;
+    let mut live = false;
+    for entry in std::fs::read_dir(&root)? {
+        let entry = entry?;
+        let Ok(identity) = wire.repository_identity(&entry.path()) else {
+            continue;
+        };
+        if lfs_repo_id(&identity.as_hex())? != *repo_id {
+            continue;
+        }
+        live = true;
+        let file_name = entry.file_name();
+        let Some(name) = file_name
+            .to_str()
+            .and_then(|name| name.strip_suffix(ORIGIN_REPO_DIR_SUFFIX))
+        else {
+            continue;
+        };
+        if validate_repo_name(name).is_err() {
+            continue;
+        }
+        if vault.served_mirror_repo_id(name).ok().as_ref() == Some(repo_id) {
+            return Ok(None);
+        }
+    }
+    if live {
+        Ok(Some(RetainedSideHeldBackReason::NonPortableReference))
+    } else {
+        Ok(Some(RetainedSideHeldBackReason::MissingLiveEntity))
+    }
+}
+
+/// Lands one archived `ORIGIN_LFS_PATH_POLICY` envelope in `txn`: canonical decode and the
+/// credential predicate, then rule validation, then the live served origin and its binding.
+/// An accepted policy installs with its stored revision; the revision never increments here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_origin_lfs_path_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (repo_id, value) = match decode_archived_row(&PATH_POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if validate_origin_lfs_path_rules(&value.rules).is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if let Some(reason) = origin_repo_holdback(vault, &repo_id)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&PATH_POLICY, vault, txn, permit, &repo_id, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `ORIGIN_LFS_PATH_POLICY` envelopes in input order, one
+    /// outcome per row: an absent policy installs, an identical policy is unchanged, and a
+    /// different policy stays live. Stored revisions are preserved, never incremented.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_origin_lfs_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_origin_lfs_path_policy_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
     }
 }

@@ -1,6 +1,13 @@
 //! Durable owner policy; no token or partial content is stored here.
 use super::*;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::edge::EdgeActorClass;
+use crate::error::Result;
 use crate::memory::support::verify_owner_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
 
@@ -77,5 +84,31 @@ impl Memory<'_> {
             Ok(())
         })?;
         Ok(())
+    }
+}
+
+impl Vault {
+    /// Lands one archived `MESSAGE_STREAM_POLICY` envelope in `txn`: canonical decode and the
+    /// credential predicate, then the setter's own validation. Agent override ids are dormant
+    /// match keys, so they need no lookup; open sessions keep their snapped settings.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcome.
+    pub(crate) fn land_archived_message_stream_policy_row_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        row: &ArchiveRetainedSideRow,
+    ) -> Result<ArchivedSideRowOutcome> {
+        let (key, value) = match decode_archived_row(&POLICY, row) {
+            Ok(decoded) => decoded,
+            Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+        };
+        if value.validate().is_err() {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+        install_archived_row(&POLICY, vault, txn, permit, &key, row)
     }
 }

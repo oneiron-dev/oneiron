@@ -246,6 +246,11 @@ impl Vault {
         } else {
             BTreeMap::new()
         };
+        let retrieval_tuning_guard = if owner.is_some() {
+            Some(self.store.archive_retrieval_tuning_guard()?)
+        } else {
+            None
+        };
         let mut wtxn = self.store.env.write_txn()?;
         let seeds = EngineSeedIdentities::load()?;
         let restore_fresh =
@@ -679,12 +684,14 @@ impl Vault {
         let owed_secrets = owed_secrets_in_txn(self, &wtxn, &archive.manifest.fold_only_secrets)?;
         // Actor and actorless doors retain only; the owner door installs tables with a
         // landing group and retains the rest, after imported persons, results and secrets.
+        let mut side_refresh = super::archive_side_install::ArchivedSideRowRefresh::default();
         let retained_side_rows =
             super::archive_retained_side_rows::install_or_retain_side_rows_in_txn(
                 self,
                 &mut wtxn,
                 &archive,
                 permit.as_ref(),
+                &mut side_refresh,
             )?;
         // OF-013: each lineage's floor rises to the archive's and never falls.
         super::epoch_floors::restore_epoch_floors_in_txn(&self.store, &mut wtxn, &archive.spool)?;
@@ -694,7 +701,9 @@ impl Vault {
             super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &archive)?;
         let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        drop(retrieval_tuning_guard);
         cleanup.committed = true;
+        side_refresh.after_commit(self);
         self.embedding_setup_committed(setup_rows);
         let mut remapped_entities = BTreeMap::new();
         for entry in archive.index.entries(Tag::Model)? {

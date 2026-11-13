@@ -16,6 +16,12 @@ use serde::{Deserialize, Serialize};
 
 use super::applied::{self, AppliedMaintenance, MaintenanceInverse, MaintenanceRevert};
 use super::{MAINTENANCE_QUEUE_KIND, invalid, proposals, validate_owner_in_txn};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
 use crate::edge::EdgeActorClass;
@@ -451,4 +457,28 @@ pub(super) fn run(
                 .map(Some)
         })
     })
+}
+
+/// Lands one archived `DREAMER_ACTION_MODE_POLICY` envelope in `txn`: canonical decode and the
+/// credential predicate, then the setter's own validation. Effect agents are future patch
+/// targets, so they need no lookup; nothing is measured or applied.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(crate) fn land_archived_dreamer_action_mode_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
 }

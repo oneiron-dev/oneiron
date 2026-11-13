@@ -186,6 +186,12 @@ pub(crate) fn unseen_drafter_line_in_txn(
                 through = through.max(Some(event.id));
                 continue;
             }
+            // An owner archive restore's local Stock repair: a policy
+            // consequence, not a retrain to report.
+            DrafterEventKind::ArchiveRestore { .. } => {
+                through = through.max(Some(event.id));
+                continue;
+            }
             DrafterEventKind::Qualify {
                 version, passed, ..
             } => (

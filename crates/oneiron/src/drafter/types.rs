@@ -363,6 +363,9 @@ pub enum DrafterActor {
     Erase,
     /// An actor since erased.
     Erased,
+    /// The owner's archive restore, moving a binding to stock as a local
+    /// consistency repair under the restored policy.
+    ArchiveRestore,
 }
 
 impl DrafterActor {
@@ -496,6 +499,9 @@ pub enum DrafterEventKind {
         generation: u64,
         draft_digest: Option<String>,
     },
+    /// An owner archive restore moved a binding to stock under the restored
+    /// policy, at the restored policy's revision.
+    ArchiveRestore { policy_revision: u64 },
 }
 
 /// One content-free drafter event, kept for the owner's history and the
