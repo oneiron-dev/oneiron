@@ -16,7 +16,9 @@
 //! goes to custody as one record (or keeps the handle of the record that
 //! holds it whole), and its handle takes its place. A value the owner ruled
 //! no secret in the record is no hit there, so a write that puts it back
-//! lands as written.
+//! lands as written. A body no decoder reads whole (bytes that are no text,
+//! a frame, a tree nested past its decoder's depth) is sealed whole: no
+//! reading can say it holds no secret.
 //!
 //! Not sealed, so their hit still refuses the write: a file (its bytes stay
 //! the owner's, marked), a phonetic code, a replayed batch, a body its
