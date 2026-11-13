@@ -177,6 +177,10 @@ fn preflight_with_owner(
         return Err(invalid("an offline preflight requires held-out evidence"));
     }
     let plan = super::live::goal_axis_plan(&definition, 0);
+    // The goal the preflight reads under, for a host scorer: the honesty
+    // cases (review round 1 of #7553) and the offline floors (review round 2
+    // of #7614).
+    let edit_goal = super::goal_axis::edit_goal_of(&definition);
     let offline = crate::skill_optimize::goal_axes::score_offline_goal_axes(
         target,
         &current,
@@ -184,10 +188,8 @@ fn preflight_with_owner(
         &plan.offline,
         &held_out,
         scorer,
+        Some(&edit_goal),
     )?;
-    // The goal the preflight reads under, for a host scorer (review round 1
-    // of #7553).
-    let edit_goal = super::goal_axis::edit_goal_of(&definition);
     let before = HeldOutReplayCase {
         skill: target,
         skill_id: &current.skill_id,

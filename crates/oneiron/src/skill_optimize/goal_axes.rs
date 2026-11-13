@@ -14,7 +14,8 @@ use crate::skill::SkillRecord;
 use crate::skill::learning_judge::HONESTY_AXIS;
 
 use super::gate::{
-    HeldOutReplayCase, HeldOutReplayNotes, held_out_receipts, skill_body_binding_digest,
+    HeldOutReplayCase, HeldOutReplayNotes, SkillEditGoal, held_out_receipts,
+    skill_body_binding_digest,
 };
 
 /// Offline axes are judged on the reserved set; online axes sample live arms.
@@ -239,6 +240,7 @@ fn replay_case<'a>(
     skill: EntityId,
     record: &'a SkillRecord,
     receipts: &'a [String],
+    goal: Option<&'a SkillEditGoal>,
 ) -> HeldOutReplayCase<'a> {
     HeldOutReplayCase {
         skill,
@@ -246,13 +248,16 @@ fn replay_case<'a>(
         version: &record.version,
         instructions: &record.desc,
         held_out_receipts: receipts,
-        goal: None,
+        goal,
     }
 }
 
 /// Score both versions on each offline axis over the held-out evidence: the
 /// offline part of [`measure_goal_axes`], and the preflight a proposal's
-/// floors pass before any live run is routed to it.
+/// floors pass before any live run is routed to it. Each case carries
+/// `goal`, the goal the gate resolved for the acting reader, so a host
+/// scorer reads it instead of the Coach's goal read (review round 2 of
+/// #7614); `None` where no gate resolved one.
 ///
 /// # Errors
 ///
@@ -264,9 +269,10 @@ pub(super) fn score_offline_goal_axes(
     axes: &[String],
     held_out: &[String],
     replay: &dyn super::HeldOutReplayNotes,
+    goal: Option<&SkillEditGoal>,
 ) -> Result<Vec<(String, AxisScores)>> {
-    let before_case = replay_case(skill, incumbent, held_out);
-    let after_case = replay_case(skill, candidate, held_out);
+    let before_case = replay_case(skill, incumbent, held_out, goal);
+    let after_case = replay_case(skill, candidate, held_out, goal);
     let mut offline = Vec::with_capacity(axes.len());
     for axis in axes {
         offline.push((
@@ -293,10 +299,14 @@ pub(super) fn score_offline_goal_axes(
 /// from it; the honesty audit, floors, preferences and the responsible role
 /// still rule there.
 ///
+/// `goal` is the goal the gate resolved for the acting reader; each offline
+/// case carries it to `replay`.
+///
 /// # Errors
 ///
 /// Empty or invalid plans, missing held-out evidence, bad scores/bounds, or
 /// scorer, bandit and storage errors. No online pull occurs on an offline error.
+#[allow(clippy::too_many_arguments)]
 pub fn measure_goal_axes(
     vault: &Vault,
     skill: EntityId,
@@ -305,6 +315,7 @@ pub fn measure_goal_axes(
     plan: &GoalAxisPlan,
     replay: &dyn super::HeldOutReplayNotes,
     bandit: &dyn GoalAxisBandit,
+    goal: Option<&SkillEditGoal>,
 ) -> Result<GoalAxisReport> {
     if (plan.offline.is_empty() && plan.online.is_empty())
         || (!plan.online.is_empty() && plan.pulls_per_axis < 2)
@@ -352,6 +363,7 @@ pub fn measure_goal_axes(
         &plan.offline,
         &held_out,
         replay,
+        goal,
     )?;
     let mut spent = [0.0f64; 2];
     let mut timed = [0u32; 2];

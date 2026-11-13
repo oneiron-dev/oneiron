@@ -204,12 +204,15 @@ fn measure_with_owner(
     let current = vault
         .get_skill_record(&target)?
         .ok_or(Error::EntityNotFound)?;
-    let (plan, goal_revision, judge) = {
+    // The goal the measurement reads under goes to the scorer with each
+    // offline case (review round 2 of #7614).
+    let (plan, edit_goal, goal_revision, judge) = {
         let txn = vault.store.env.read_txn()?;
         let reader = goal_reader_in_txn(vault, &txn, owner)?;
         let definition = goal_definition_in_txn(vault, &txn, &target, Some(reader))?;
         (
             goal_axis_plan(&definition, pulls_per_axis),
+            super::goal_axis::edit_goal_of(&definition),
             definition.revision,
             JudgeBinding::in_txn(vault, &txn, scorer.judge_revision())?,
         )
@@ -241,7 +244,16 @@ fn measure_with_owner(
             }
         }
     }
-    let report = measure_goal_axes(vault, target, &current, &staged, &plan, scorer, bandit)?;
+    let report = measure_goal_axes(
+        vault,
+        target,
+        &current,
+        &staged,
+        &plan,
+        scorer,
+        bandit,
+        Some(&edit_goal),
+    )?;
     vault.with_write_txn_grouped(|txn| {
         let reader = goal_reader_in_txn(vault, txn, owner)?;
         let staged_now = vault.read_skill_record_in_txn(&*txn, proposal)?;
