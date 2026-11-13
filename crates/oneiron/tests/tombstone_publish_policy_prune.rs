@@ -12,6 +12,7 @@
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::sync::bridge::Materializer;
@@ -38,12 +39,21 @@ fn config() -> VaultConfig {
     cfg
 }
 
+/// Opens the vault and installs this install's keystore on it, as a host does
+/// after each open: the row's hard delete refuses `KeystoreUnavailable`
+/// without one.
+fn open_vault(path: &Path) -> Arc<Vault> {
+    let vault = Arc::new(Vault::open(path, config()).unwrap());
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault
+}
+
 /// The live leg: the window is open, so the publication commits on its
 /// shared document.
 #[test]
 fn tombstone_publish_prunes_unreached_policy() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), config()).unwrap());
+    let vault = open_vault(dir.path());
     let (row, source, thread) =
         thread_bound_row(&vault, EntityId::now(), T0).expect("land a thread-bound row");
     let manager = Arc::new(WindowManager::new(
@@ -80,7 +90,7 @@ fn tombstone_publish_prunes_unreached_policy() {
 #[test]
 fn transient_tombstone_publish_prunes_unreached_policy() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), config()).unwrap());
+    let vault = open_vault(dir.path());
     let (row, source, thread) =
         thread_bound_row(&vault, EntityId::now(), T0).expect("land a thread-bound row");
     let key = WindowKey::new(WINDOW);
