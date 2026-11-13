@@ -36,6 +36,8 @@ pub(crate) use turn_text::{
 };
 mod types;
 mod vector_refill;
+#[cfg(feature = "sync")]
+pub(crate) use vector_refill::mark_vector_refill_in_txn;
 pub(crate) use vector_refill::schedule_vector_refills;
 
 pub(crate) use storage::capture_entity_document;

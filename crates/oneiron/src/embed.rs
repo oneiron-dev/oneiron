@@ -769,6 +769,24 @@ impl PendingEmbeddingReconciler {
             {
                 return Ok(());
             }
+            // A world whose order named its own text space since this row was
+            // leased takes it now (DEC-0005 #private-world-vectors): no vault
+            // vector lands, the lease goes, and the row stays pending for the
+            // world's space, as the lease loop leaves it. The sweep that saw
+            // the new map ran before this vector existed, so only this writer
+            // can keep it out of the vault's index.
+            if !world_space::WorldTextSpaces::read_in(&self.vault, wtxn)?
+                .of_row(&self.vault.store, wtxn, &work.input.entity_id)?
+                .is_empty()
+            {
+                clear_pending_embedding_lease_if_matches(
+                    &self.vault,
+                    wtxn,
+                    &work.input.entity_id,
+                    &work.lease,
+                )?;
+                return Ok(());
+            }
             let current_before = self
                 .vault
                 .store
