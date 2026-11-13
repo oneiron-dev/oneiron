@@ -28,7 +28,7 @@ use crate::{Error, Result};
 /// Bytes a read is widened by on each side, at the least, so that a secret
 /// span it cuts is found whole: the head a card's shape is sniffed from,
 /// which holds the longest private-key block the text rules place.
-pub(super) const SECRET_SPAN_REACH: usize = 64 * 1024;
+const SECRET_SPAN_REACH: usize = 64 * 1024;
 
 /// The values custody knows, as `storage`'s output sweeps read them: its
 /// ids and handles, each pass reading the values again (KS-3).
