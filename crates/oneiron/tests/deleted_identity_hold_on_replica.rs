@@ -13,6 +13,13 @@
 //! Vault A makes the identity in [`WINDOW`] and deletes it. Only then does
 //! A open the window and vault B take all of it, so B never holds the row.
 //!
+//! A retracted head is what holds the address, so no writer may make one
+//! (Engine RULING L3-14-RETAINED-HOLD-FORGE = A, 14 Nov 05:22): at the local
+//! generic claim door a `channel_identity.*` claim is born Active, about a
+//! live CHANNEL_IDENTITY row. A forged hold then cannot block the owner's
+//! own create, and a correction head on a live identity still re-keys it
+//! (OF-272).
+//!
 //! `cargo test --locked -p oneiron --all-features --test deleted_identity_hold_on_replica`.
 // MemoryKeystore needs test-support (it forwards oneiron-keystore/test-keystore).
 #![cfg(all(feature = "sync", feature = "test-support"))]
@@ -23,8 +30,11 @@ use std::sync::Arc;
 use loro::ExportMode;
 use oneiron::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, DelegatedGrant, DelegatedGrantScope,
-    DelegatedProvisionRequest, SelfHeldShape, delegated_custody_scopes,
+    DelegatedProvisionRequest, PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+    PREDICATE_CHANNEL_IDENTITY_CHANNEL, PREDICATE_CHANNEL_IDENTITY_SHAPE, SelfHeldShape,
+    delegated_custody_scopes,
 };
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
     SecretCustodyStatus, decode_secret_custody_body,
@@ -33,7 +43,10 @@ use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::LoadedWindow;
-use oneiron::{DeleteReason, EntityId, ErrorKind, HnswConfig, Vault, VaultConfig};
+use oneiron::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, DeleteReason, EntityId,
+    ErrorKind, HnswConfig, TimeRange, Vault, VaultConfig,
+};
 use rmpv::Value;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -300,5 +313,168 @@ fn a_deleted_delegated_identity_frees_its_address_on_a_replica() -> TestResult {
         .a
         .create_channel_identity(&EntityId::now(), &self_held(address))
         .expect("a deleted delegated identity's address is free where it was deleted");
+    Ok(())
+}
+
+/// A `channel_identity.*` head as any writer with claim write authority
+/// builds it: the same constructor and fields as the engine's own heads.
+fn generic_head(
+    subject: EntityId,
+    predicate: &str,
+    value: &str,
+    lifecycle: ClaimLifecycleStatus,
+) -> ClaimBody {
+    ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        Value::from(value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        lifecycle,
+    )
+    .expect("claim body")
+}
+
+/// Puts `body` at a fresh id through the public generic claim door.
+fn put_generic(vault: &Vault, body: &ClaimBody) -> Result<EntityId, oneiron::Error> {
+    let id = EntityId::now();
+    vault.put_claim(&id, body, TimeRange { start: T0, end: T0 }, T0)?;
+    Ok(id)
+}
+
+fn refused_kind(put: &Result<EntityId, oneiron::Error>) -> Option<ErrorKind> {
+    put.as_ref().err().map(oneiron::Error::kind)
+}
+
+/// A plain PERSON row: an entity any writer may put claims about.
+fn put_person(vault: &Vault) -> TestResult<EntityId> {
+    let id = EntityId::now();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &Value::Map(vec![(Value::from("name"), Value::from("Decoy"))]),
+    )?;
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: T0, end: T0 },
+        T0,
+        &body,
+    )?;
+    Ok(id)
+}
+
+/// RULING L3-14-RETAINED-HOLD-FORGE = A: a `channel_identity.*` claim is
+/// born Active. A born-retracted address head is refused even on a live
+/// identity.
+#[test]
+fn the_generic_claim_door_refuses_a_born_retracted_identity_head() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let id = EntityId::now();
+    vault.create_channel_identity(&id, &self_held("live-holder@example.test"))?;
+    let forged = put_generic(
+        &vault,
+        &generic_head(
+            id,
+            PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+            "victim-live@example.test",
+            ClaimLifecycleStatus::Retracted,
+        ),
+    );
+    assert_eq!(
+        refused_kind(&forged),
+        Some(ErrorKind::InvalidClaimBody),
+        "a writer must not make a retracted channel_identity head: {forged:?}",
+    );
+    Ok(())
+}
+
+/// RULING L3-14-RETAINED-HOLD-FORGE = A: a `channel_identity.*` claim is
+/// about a live CHANNEL_IDENTITY row. The forge the ruling closes: three
+/// retracted heads naming an address, put on a PERSON the writer then
+/// deletes. Every head is refused, an Active one too, so after the delete
+/// the owner's own create at that address lands.
+#[test]
+fn identity_heads_on_another_entity_are_refused_and_cannot_hold_an_address() -> TestResult {
+    let address = "victim@example.test";
+    let (_dir, vault) = open_vault()?;
+    let decoy = put_person(&vault)?;
+    for (predicate, value) in [
+        (PREDICATE_CHANNEL_IDENTITY_CHANNEL, CHANNEL),
+        (PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, address),
+        (PREDICATE_CHANNEL_IDENTITY_SHAPE, "dedicated_address"),
+    ] {
+        let forged = put_generic(
+            &vault,
+            &generic_head(decoy, predicate, value, ClaimLifecycleStatus::Retracted),
+        );
+        assert_eq!(
+            refused_kind(&forged),
+            Some(ErrorKind::InvalidClaimBody),
+            "a retracted {predicate} head on a PERSON must be refused: {forged:?}",
+        );
+    }
+    let active = put_generic(
+        &vault,
+        &generic_head(
+            decoy,
+            PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+            address,
+            ClaimLifecycleStatus::Active,
+        ),
+    );
+    assert_eq!(
+        refused_kind(&active),
+        Some(ErrorKind::InvalidClaimBody),
+        "an Active channel_identity head on a PERSON must be refused: {active:?}",
+    );
+    vault
+        .delete_entity_with_reason(&decoy, DeleteReason::UserDelete)
+        .map_err(|error| format!("fixture: the decoy's delete: {error:?}"))?;
+    vault
+        .create_channel_identity(&EntityId::now(), &self_held(address))
+        .expect("no forged hold blocks the owner's own create");
+    Ok(())
+}
+
+/// Control (passes on main too): the OF-272 correction still works through
+/// the generic doors. An Active address head on a live identity, then its
+/// supersession of the old head, re-keys the identity's slot.
+#[test]
+fn a_correction_head_on_a_live_identity_still_rekeys_its_slot() -> TestResult {
+    let (old_address, new_address) = ("before@example.test", "after@example.test");
+    let (_dir, vault) = open_vault()?;
+    let id = EntityId::now();
+    vault.create_channel_identity(&id, &self_held(old_address))?;
+    let mut old_head = None;
+    for claim in vault.claims_for_subject(&id)? {
+        if vault.get_claim(&claim)?.is_some_and(|body| {
+            body.predicate == PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE
+                && body.lifecycle == ClaimLifecycleStatus::Active
+        }) {
+            old_head = Some(claim);
+        }
+    }
+    let old_head = old_head.ok_or("fixture: the identity has no Active address head")?;
+    let correction = put_generic(
+        &vault,
+        &generic_head(
+            id,
+            PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+            new_address,
+            ClaimLifecycleStatus::Active,
+        ),
+    )
+    .map_err(|error| format!("the correction head is refused: {error:?}"))?;
+    vault
+        .supersede_claim(&correction, &old_head, T0 + 60)
+        .map_err(|error| format!("the correction's supersession is refused: {error:?}"))?;
+    assert_eq!(
+        vault
+            .channel_identity_by_assignment(CHANNEL, new_address)?
+            .map(|(held, _)| held),
+        Some(id),
+        "the corrected address routes to the identity",
+    );
     Ok(())
 }

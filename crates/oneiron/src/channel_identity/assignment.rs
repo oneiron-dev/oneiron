@@ -329,6 +329,52 @@ fn retained_hold_in_txn(
     Ok(None)
 }
 
+/// The local generic claim door's rule for the `channel_identity.*` family
+/// (Engine RULING L3-14-RETAINED-HOLD-FORGE = A, 14 Nov 05:22). Retracted
+/// heads are what [`retained_hold_in_txn`] reads, so a writer must not be
+/// able to make one: a claim of the family is born Active, about a live
+/// CHANNEL_IDENTITY row. A put that rewrites the stored claim at the same id,
+/// with the same predicate and subject, may close it (a retraction or a
+/// supersession of that identity's own head), and an Active correction head
+/// on a live identity still re-keys its slot (OF-272).
+///
+/// `admit_claim_put` asks this for local puts through the generic doors
+/// only. The replicated door and the engine's own writers (the reserved
+/// door: the head writer and the delete's retraction) never reach it.
+pub(crate) fn guard_generic_claim_put_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+) -> Result<()> {
+    if !is_channel_identity_claim_predicate(&body.predicate) {
+        return Ok(());
+    }
+    let ClaimSubject::Entity(subject) = body.subject else {
+        return Err(Error::InvalidClaimBody(
+            "channel_identity claim subject must be an entity",
+        ));
+    };
+    // A soft erase leaves a header-only shell, which is no live row.
+    if !store
+        .port_entity_record(txn, &subject)?
+        .is_some_and(|row| row.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY && !row.body.is_empty())
+    {
+        return Err(Error::InvalidClaimBody(
+            "a channel_identity claim must be about a live channel identity",
+        ));
+    }
+    if body.lifecycle != ClaimLifecycleStatus::Active
+        && !stored_claim_body(store, txn, id)?
+            .is_some_and(|prior| prior.predicate == body.predicate && prior.subject == body.subject)
+    {
+        return Err(Error::InvalidClaimBody(
+            "a channel_identity claim is born active",
+        ));
+    }
+    Ok(())
+}
+
 /// The one slot law for put, claim re-key and rebuild (OF-272). An occupying
 /// identity takes the occupant slot and never evicts another occupant. A
 /// retiring delegated identity leaves the occupant slot for the predecessor
