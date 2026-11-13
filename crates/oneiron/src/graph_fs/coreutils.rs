@@ -702,7 +702,7 @@ impl GraphFsResolver<'_, '_> {
                 decision.stable_label(),
                 decision_reason
             );
-            let record = RetrievalRunRecord::new(
+            let mut record = RetrievalRunRecord::new(
                 run_id,
                 RetrievalAction::GraphFsCoreutils,
                 started_at,
@@ -713,6 +713,9 @@ impl GraphFsResolver<'_, '_> {
                 0,
                 Some(telemetry_reason),
             );
+            // A leased run's mount read counts toward the read shape its
+            // attempt woke under (census L9-37), as its search runs do.
+            record.dispatch_attempt = self.dispatch_attempt;
             match self.scoped_read.vault().store.record_retrieval_run(&record) {
                 Ok(()) => Some(run_id),
                 Err(error) => {

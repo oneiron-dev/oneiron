@@ -46,6 +46,23 @@ impl Vault {
         self.store.stamp_read_shape(attempt, model, pick)
     }
 
+    /// Picks the shape `attempt`'s run reads through as it wakes on `model`,
+    /// drawing on this thread's generator, and stamps the attempt with it:
+    /// [`Self::pick_read_shape`] then [`Self::stamp_read_shape`]. A re-leased
+    /// attempt keeps its first wake's stamp. Returns the stamp in force.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::pick_read_shape`] and [`Self::stamp_read_shape`].
+    pub fn stamp_wake_read_shape(
+        &self,
+        attempt: AttemptId,
+        model: &ModelId,
+    ) -> Result<ReadShapeStamp> {
+        let pick = self.pick_read_shape(model, &mut rand::thread_rng())?;
+        self.stamp_read_shape(attempt, model, pick)
+    }
+
     /// The read-shape stamp `attempt` holds, if its run woke under one.
     ///
     /// # Errors
@@ -56,7 +73,8 @@ impl Vault {
     }
 
     /// Records the model units `attempt`'s run settled, for the token cost
-    /// term of its read-shape reward. A later, larger total replaces it.
+    /// term of its read-shape reward. A later, larger total replaces it. A
+    /// run's spend scope records them itself as it settles.
     ///
     /// # Errors
     ///

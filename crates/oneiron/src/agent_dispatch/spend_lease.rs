@@ -722,6 +722,20 @@ impl AgentDispatcher<'_> {
             &scope.unit,
             scope.spent_units,
         )?;
+        // The read-shape reward's token cost term reads the tokens the run
+        // settled (census L9-37, ARCH-0051 #decision-r9-bench). A run that
+        // woke under no read-shape stamp records nothing, and a failed
+        // record never stops the settlement.
+        if scope.unit == crate::llm::run_admission::LeaseUnit::tokens()
+            && let Err(error) = crate::store::read_shape_policy::record_read_shape_units_in_txn(
+                &self.vault.store,
+                txn,
+                *child,
+                scope.spent_units,
+            )
+        {
+            tracing::warn!(?error, attempt = ?child, "a settled run's read-shape units were not recorded");
+        }
         Ok(Some(SpendSettlement {
             scope: id,
             charged_to,

@@ -465,17 +465,11 @@ impl Store {
             ));
         }
         let mut txn = self.env.write_txn()?;
-        let mut stamp = STAMP
-            .get(self, &txn, &attempt)?
-            .ok_or_else(|| Error::InvalidConfig("attempt holds no read shape stamp".to_owned()))?;
-        let total = stamp
-            .model_units
-            .map_or(units, |recorded| recorded.max(units));
-        if stamp.model_units == Some(total) {
-            return Ok(());
+        if !record_read_shape_units_in_txn(self, &mut txn, attempt, units)? {
+            return Err(Error::InvalidConfig(
+                "attempt holds no read shape stamp".to_owned(),
+            ));
         }
-        stamp.model_units = Some(total);
-        STAMP.put(self, &mut txn, &attempt, &stamp)?;
         txn.commit()?;
         Ok(())
     }
@@ -485,6 +479,29 @@ impl Store {
         let txn = self.env.read_txn()?;
         STAMP.get(self, &txn, &attempt)
     }
+}
+
+/// Records the model units `attempt`'s run settled, in `txn`: a run's spend
+/// scope settles them in its own closing write (census L9-37). A later,
+/// larger total replaces a recorded one. Answers whether the attempt holds a
+/// stamp; an attempt with none records nothing.
+pub(crate) fn record_read_shape_units_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    units: u64,
+) -> Result<bool> {
+    let Some(mut stamp) = STAMP.get(store, txn, &attempt)? else {
+        return Ok(false);
+    };
+    let total = stamp
+        .model_units
+        .map_or(units, |recorded| recorded.max(units));
+    if stamp.model_units != Some(total) {
+        stamp.model_units = Some(total);
+        STAMP.put(store, txn, &attempt, &stamp)?;
+    }
+    Ok(true)
 }
 
 fn read_shape_pins_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<ReadShapePins> {

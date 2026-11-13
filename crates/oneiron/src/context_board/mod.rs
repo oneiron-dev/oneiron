@@ -68,9 +68,10 @@ pub use self_brief::{
     BriefCeilingTarget, BriefClassPrecedence, BriefClassReads, BriefClassSource, BriefClassVerdict,
     BriefClassVerdicts, BriefConnectorCeiling, BriefContextBound, BriefCredentialCeiling,
     BriefDefaultRule, BriefGrant, BriefGrants, BriefOutboundScope, BriefParentBound,
-    BriefParentCeiling, BriefPerActCheck, BriefPlacement, BriefRunCeiling, BriefSkillRow,
-    BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief, SelfBrief,
-    SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling, brief_run_ceiling,
+    BriefParentCeiling, BriefPerActCheck, BriefPlacement, BriefReadShape, BriefRunCeiling,
+    BriefSkillRow, BriefWorkingHandle, BriefWorkingSet, CommunicationLimits, PlacedSelfBrief,
+    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState, brief_credential_ceiling,
+    brief_run_ceiling,
 };
 mod hook_pins;
 mod memories;
