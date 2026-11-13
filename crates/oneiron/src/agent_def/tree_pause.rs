@@ -36,7 +36,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::doors::stands;
-use super::made_by::{branch_id, takes_boundary_pause};
+use super::made_by::branch_id;
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, InterveneAttempt,
@@ -45,7 +45,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
-use crate::run_tree::{RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter};
+use crate::run_tree::{
+    RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter, takes_boundary_pause,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_record::AttemptPause;
 use crate::store::scan_count::ScanCount;
