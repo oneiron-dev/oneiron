@@ -10,6 +10,7 @@ use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecord
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
 use crate::pipeline::Signal;
+use crate::vault::Vault;
 
 use super::context_pack::{
     CoreContextPackAccounting, CoreContextPackAccountingReason, CoreContextPackEdgeProvenance,
@@ -20,8 +21,9 @@ use super::context_pack::{
 };
 use super::error::{NOT_FOUND_ENGINE_CODE, VaultReadError, VaultReadResult};
 use super::types::{
-    CoreBatchShortIdHydrateItem, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus,
-    CoreMemoryTimelineRecord, CoreMemoryTimelineResponse, CoreShortIdHydrateOutcome, View,
+    CoreBatchShortIdHydrateItem, CoreBodyOmitted, CoreEntityRecord, CoreHydrateResponse,
+    CoreHydrateStatus, CoreMemoryTimelineRecord, CoreMemoryTimelineResponse,
+    CoreShortIdHydrateOutcome, PROJECTION_BYTES_EXCEEDED_CODE, View,
 };
 
 /// Decodes already-clamped entity bytes into the public JSON projection.
@@ -48,7 +50,92 @@ pub(super) fn entity_record_from_parts(
         learned_at,
         score,
         body,
+        body_omitted: None,
     }
+}
+
+/// The stored body bytes one multi-row read may still decode, its host's
+/// `[limits].projection_body_bytes` (H27), as the `/v1` doors bound theirs.
+/// Each body is charged at its stored length before it decodes. A body the
+/// rest of the budget cannot hold is not decoded, and the budget keeps its
+/// credit.
+#[derive(Debug)]
+pub(super) struct ProjectionBodyBudget {
+    bound: usize,
+    remaining: usize,
+}
+
+impl ProjectionBodyBudget {
+    pub(super) const fn new(bound: usize) -> Self {
+        Self {
+            bound,
+            remaining: bound,
+        }
+    }
+
+    /// Charges a body of `bytes` when the rest of the budget holds it.
+    pub(super) fn admits(&mut self, bytes: usize) -> bool {
+        match self.remaining.checked_sub(bytes) {
+            Some(remaining) => {
+                self.remaining = remaining;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The bytes the rest of the budget holds: the bound an image's
+    /// nothing-fits ask reports (FIX 680).
+    pub(super) fn remaining(&self) -> u64 {
+        u64::try_from(self.remaining).unwrap_or(u64::MAX)
+    }
+
+    /// The record of `row`, whose admitted body the budget left out: its id,
+    /// kind, time and score, and the marker in place of the body, which was
+    /// never decoded. The marker's ref is the row's short id with its stored
+    /// revision's content hash, or its hex id when it has no short id.
+    pub(super) fn omitted(&self, vault: &Vault, row: OmittedRow) -> CoreEntityRecord {
+        let OmittedRow {
+            id,
+            entity_type,
+            learned_at,
+            score,
+            body_bytes,
+            content_hash,
+        } = row;
+        let short =
+            crate::retrieval_depth::short_ref_or_hex(vault, &id).unwrap_or_else(|_| id.to_hex());
+        let reference = match short.split_once(':') {
+            Some((name, _)) => format!("{name}:{content_hash:02x}"),
+            None => short,
+        };
+        CoreEntityRecord {
+            id: id.to_hex(),
+            entity_type,
+            learned_at,
+            score,
+            body: None,
+            body_omitted: Some(CoreBodyOmitted {
+                code: PROJECTION_BYTES_EXCEEDED_CODE.to_owned(),
+                max_bytes: u64::try_from(self.bound).unwrap_or(u64::MAX),
+                body_bytes: u64::try_from(body_bytes).unwrap_or(u64::MAX),
+                reference,
+            }),
+        }
+    }
+}
+
+/// The facts of an admitted row that [`ProjectionBodyBudget::omitted`]
+/// projects without its body.
+pub(super) struct OmittedRow {
+    pub(super) id: EntityId,
+    pub(super) entity_type: u8,
+    pub(super) learned_at: u64,
+    pub(super) score: Option<f32>,
+    /// The stored length of the body left out.
+    pub(super) body_bytes: usize,
+    /// The content-hash byte of the stored revision the row was read from.
+    pub(super) content_hash: u8,
 }
 
 fn project_signal(signal: Signal) -> CoreContextPackSignal {

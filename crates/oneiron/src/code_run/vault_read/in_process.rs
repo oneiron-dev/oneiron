@@ -26,8 +26,8 @@ use super::error::{
     invalid_request, named_row,
 };
 use super::projection::{
-    batch_item_from_result, entity_record_from_parts, project_context_pack,
-    project_memory_timeline, timeline_is_absent,
+    OmittedRow, ProjectionBodyBudget, batch_item_from_result, entity_record_from_parts,
+    project_context_pack, project_memory_timeline, timeline_is_absent,
 };
 use super::sealed;
 use super::types::{
@@ -51,6 +51,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     media_memory: Option<&'v crate::host_memory::MachineMemory>,
     image_pick: Option<crate::memory::ImagePick<'v>>,
     deferred_forms: Option<&'v DeferredServedForms>,
+    projection_body_bytes: Option<usize>,
 }
 
 /// The engine code a context pack or query naming `media` is refused with
@@ -94,7 +95,31 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             media_memory: None,
             image_pick: None,
             deferred_forms: None,
+            projection_body_bytes: None,
         }
+    }
+
+    /// Bounds the stored body bytes one `memory.query` or
+    /// `memory.hydrate_many` answer decodes to `bound`, its host's
+    /// `[limits].projection_body_bytes` (H27), as the `/v1` doors bound
+    /// theirs. A Summary or Full body the rest of the budget cannot hold is
+    /// not decoded: its row keeps its id, kind and time and carries
+    /// [`super::CoreBodyOmitted`] in its place. A single hydrate takes no
+    /// budget and returns its body whole. Without this every admitted body
+    /// decodes.
+    #[must_use]
+    pub fn with_projection_body_bytes(mut self, bound: usize) -> Self {
+        self.projection_body_bytes = Some(bound);
+        self
+    }
+
+    /// A fresh body budget for one multi-row answer in `view`: none for a
+    /// Standard answer, which decodes no body.
+    fn body_budget(&self, view: View) -> Option<ProjectionBodyBudget> {
+        if matches!(view, View::Standard) {
+            return None;
+        }
+        self.projection_body_bytes.map(ProjectionBodyBudget::new)
     }
 
     /// Searches `seeds`, which the host embedded from a context pack's or
@@ -252,6 +277,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         narrowing.restrict_with(&projected.receipt);
         let total = projected.value.iter().filter(|row| row.is_some()).count();
         let mut items = Vec::with_capacity(total.min(limit));
+        let mut bodies = self.body_budget(view);
         for (result, row) in admitted.value.into_iter().zip(projected.value) {
             if items.len() >= limit {
                 break;
@@ -260,19 +286,37 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 entity_type,
                 learned_at,
                 body: Some(body),
+                content_hash,
                 ..
             }) = row
             else {
                 continue;
             };
-            items.push(entity_record_from_parts(
-                &result.id,
-                entity_type,
-                learned_at,
-                Some(result.score),
-                &body,
-                view,
-            ));
+            // A body decodes only while the answer's budget holds it (H27).
+            let decoded = bodies
+                .as_mut()
+                .is_none_or(|bodies| bodies.admits(body.len()));
+            items.push(match bodies.as_ref() {
+                Some(bodies) if !decoded => bodies.omitted(
+                    self.scoped_read.vault(),
+                    OmittedRow {
+                        id: result.id,
+                        entity_type,
+                        learned_at,
+                        score: Some(result.score),
+                        body_bytes: body.len(),
+                        content_hash,
+                    },
+                ),
+                _ => entity_record_from_parts(
+                    &result.id,
+                    entity_type,
+                    learned_at,
+                    Some(result.score),
+                    &body,
+                    view,
+                ),
+            });
         }
         Ok(CoreQueryResponse {
             access: crate::access_grant::GrantedData::new(
@@ -445,14 +489,17 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             reader,
             row,
             &mut narrowing,
+            None,
         )
     }
 
     /// One hydrated item, and the form it serves `reader` in place of an
-    /// image's body: the caller records it before it answers.
+    /// image's body: the caller records it before it answers. An item of a
+    /// batch decodes its body only while the batch's `bodies` budget holds
+    /// it; a single hydrate passes none.
     #[expect(
         clippy::too_many_arguments,
-        reason = "one hydrated item: its method, ref, view, reader, row and receipt"
+        reason = "one hydrated item: its method, ref, view, reader, row, receipt and the batch's body budget"
     )]
     fn project_hydrate(
         &self,
@@ -463,6 +510,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         reader: &crate::memory::AssetConsumer,
         hydrated: Option<ReadRow>,
         narrowing: &mut crate::claim::ScopedReadReceipt,
+        mut bodies: Option<&mut ProjectionBodyBudget>,
     ) -> VaultReadResult<(CoreHydrateResponse, Option<ServedForm>)> {
         // A missing row and a clamp-denied claim are the SAME answer here. The
         // adapter never probes the naked vault to tell them apart.
@@ -472,6 +520,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             learned_at,
             deletion,
             body,
+            content_hash: stored_hash,
             ..
         }) = hydrated
         else {
@@ -491,44 +540,49 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             };
             return Ok((response, None));
         };
-        // A generated image is served down its ladder for `reader` (OF-329):
-        // its bytes, its thumbnail beside its ASSET_TEXT, or the text, each
-        // read through this lane.
+        // An item of a batch decodes its body only while the batch's budget
+        // holds it (H27).
+        let mut decoded = bodies
+            .as_deref_mut()
+            .is_none_or(|bodies| bodies.admits(body.len()));
+        // A generated image is served down its ladder for `reader` (OF-329).
         let mut served = None;
-        if entity_type == ENTITY_TYPE_ASSET {
-            let lane = &self.scoped_read;
-            let asset = crate::memory::hydrated_asset(
-                lane,
-                id,
-                reader,
-                self.image_pick.as_ref(),
-                &mut |_| true,
-                None,
-            )
-            .map_err(|error| engine_failure(method, &error))?;
-            narrowing.restrict_with(&asset.receipt);
-            served = match asset.value {
-                crate::memory::HydratedAsset::Served { body, text, form } => {
-                    if let Some(producers) = self.producers {
-                        producers.list(text);
-                    }
-                    Some((body, form))
+        if decoded && entity_type == ENTITY_TYPE_ASSET {
+            match self.hydrate_asset(method, id, reader, bodies.as_deref_mut(), narrowing)? {
+                crate::memory::HydratedAsset::Served { body, form, .. } => {
+                    served = Some((body, form));
                 }
-                crate::memory::HydratedAsset::Stored
-                | crate::memory::HydratedAsset::Omitted { .. } => None,
-            };
+                crate::memory::HydratedAsset::Stored => {}
+                crate::memory::HydratedAsset::Omitted { .. } => decoded = false,
+            }
         }
-        // This adapter serves MCP tools: a repo file reads masked (FIX 7608).
-        let body = masked_asset_body(self.scoped_read.vault(), &id, entity_type, body)
-            .map_err(|error| engine_failure(method, &error))?;
-        let item = entity_record_from_parts(
-            &id,
-            entity_type,
-            learned_at,
-            None,
-            served.as_ref().map_or(&body, |(form, _)| form),
-            view,
-        );
+        let item = match bodies.as_deref() {
+            Some(bodies) if !decoded => bodies.omitted(
+                self.scoped_read.vault(),
+                OmittedRow {
+                    id,
+                    entity_type,
+                    learned_at,
+                    score: None,
+                    body_bytes: body.len(),
+                    content_hash: stored_hash,
+                },
+            ),
+            _ => {
+                // This adapter serves MCP tools: a repo file reads masked
+                // (FIX 7608).
+                let body = masked_asset_body(self.scoped_read.vault(), &id, entity_type, body)
+                    .map_err(|error| engine_failure(method, &error))?;
+                entity_record_from_parts(
+                    &id,
+                    entity_type,
+                    learned_at,
+                    None,
+                    served.as_ref().map_or(&body, |(form, _)| form),
+                    view,
+                )
+            }
+        };
         // A Standard item carries no body, so it serves no form.
         let served = served
             .filter(|_| !matches!(view, View::Standard))
@@ -544,6 +598,42 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             item: Some(item),
         };
         Ok((response, served))
+    }
+
+    /// What the live ASSET `id` serves `reader` (OF-329): its bytes, its
+    /// thumbnail beside its ASSET_TEXT, or the text, each read through this
+    /// lane and charged to `bodies`, a batch's budget, when it has one; with
+    /// nothing left that fits, it is omitted and the vault asks.
+    fn hydrate_asset(
+        &self,
+        method: VaultReadMethod,
+        id: crate::entity_id::EntityId,
+        reader: &crate::memory::AssetConsumer,
+        mut bodies: Option<&mut ProjectionBodyBudget>,
+        narrowing: &mut crate::claim::ScopedReadReceipt,
+    ) -> VaultReadResult<crate::memory::HydratedAsset> {
+        let room_left = bodies.as_deref().map(ProjectionBodyBudget::remaining);
+        let mut admits = |len: usize| {
+            bodies
+                .as_deref_mut()
+                .is_none_or(|bodies| bodies.admits(len))
+        };
+        let asset = crate::memory::hydrated_asset(
+            &self.scoped_read,
+            id,
+            reader,
+            self.image_pick.as_ref(),
+            &mut admits,
+            room_left,
+        )
+        .map_err(|error| engine_failure(method, &error))?;
+        narrowing.restrict_with(&asset.receipt);
+        if let crate::memory::HydratedAsset::Served { text, .. } = &asset.value
+            && let Some(producers) = self.producers
+        {
+            producers.list(*text);
+        }
+        Ok(asset.value)
     }
 
     fn hydrate_op(&self, request: &CoreHydrateRequest) -> VaultReadResult<CoreHydrateResponse> {
@@ -584,6 +674,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let mut values = hydrated.value.into_iter();
         let mut results = Vec::with_capacity(request.refs.len());
         let mut served = Vec::new();
+        let mut bodies = self.body_budget(view);
         for (reference, parsed) in request.refs.iter().zip(parsed) {
             let Some((short_id, content_hash)) = parsed else {
                 results.push(CoreBatchShortIdHydrateItem {
@@ -614,6 +705,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     &reader,
                     row,
                     &mut narrowing,
+                    bodies.as_mut(),
                 )
                 .map(|(response, form)| {
                     served.extend(form);
