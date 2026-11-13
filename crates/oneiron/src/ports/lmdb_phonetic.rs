@@ -1,6 +1,6 @@
 //! Phonetic candidate retrieval over canonical and session snapshots.
-use super::query::{PHONETIC_IDS_PER_CHECKPOINT, phonetic_checkpoint};
 use super::RetrievalIndexRead;
+use super::query::{PHONETIC_IDS_PER_CHECKPOINT, phonetic_checkpoint};
 use crate::EntityId;
 use crate::Vault;
 use crate::entity_id::ENTITY_ID_LEN;
