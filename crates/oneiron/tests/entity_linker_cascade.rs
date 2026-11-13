@@ -37,7 +37,8 @@
 //! order of the same candidates leaves a kept-separate ask kept. A tie,
 //! a candidate with no vector, or a winner under the floor keeps the key's
 //! order, as on main. These tests store exact vectors in a four-dimensional
-//! space, as the embed worker would; no step embeds a person yet.
+//! space, as the embed worker would; tests/person_vector_linker.rs runs
+//! the worker that fills them.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test entity_linker_cascade`.
