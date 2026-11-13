@@ -57,6 +57,36 @@ pub struct CoreEntityRecord {
     /// Decoded entity body, when the view includes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<Value>,
+    /// In place of `body`, when the read's projection body budget could not
+    /// hold it (H27).
+    #[serde(
+        rename = "bodyOmitted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub body_omitted: Option<CoreBodyOmitted>,
+}
+
+/// The `code` of every [`CoreBodyOmitted`] marker.
+pub const PROJECTION_BYTES_EXCEEDED_CODE: &str = "PROJECTION_BYTES_EXCEEDED";
+
+/// The marker a row of a multi-row read carries in place of a body the rest
+/// of its host's `[limits].projection_body_bytes` budget could not hold
+/// (H27), as the `/v1` doors' `bodyOmitted`. The body was not decoded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoreBodyOmitted {
+    /// Always [`PROJECTION_BYTES_EXCEEDED_CODE`].
+    pub code: String,
+    /// The read's whole body budget.
+    #[serde(rename = "maxBytes")]
+    pub max_bytes: u64,
+    /// The omitted body's stored length.
+    #[serde(rename = "bodyBytes")]
+    pub body_bytes: u64,
+    /// The row's short id with the omitted body's own content hash, which a
+    /// single hydrate reads whole; the hex id when the row has no short id.
+    #[serde(rename = "ref")]
+    pub reference: String,
 }
 
 /// Count metadata reported by [`CoreQueryResponse`].
