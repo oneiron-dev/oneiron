@@ -154,7 +154,7 @@ pub(crate) const fn binds_turn_words(kind: EdgeKind) -> bool {
 
 /// One batch's writes and removals of edges that bind a TURN's words
 /// ([`binds_turn_words`]), each with whether it was stored before the batch
-/// applied, and the rows the batch puts.
+/// applied, and the TURNs the batch births.
 ///
 /// An edge rewire or a speaker rebinding changes what a TURN says with no
 /// write to the TURN or to its MESSAGEs' text, so no publication door tells
@@ -163,19 +163,19 @@ pub(crate) const fn binds_turn_words(kind: EdgeKind) -> bool {
 /// changed is re-dirtied and marked as a publication of its text marks it.
 pub(crate) struct RewiredTurnEdges {
     edges: Vec<(EntityId, EdgeKind, EntityId, bool)>,
-    put: BTreeSet<EntityId>,
+    born: BTreeSet<EntityId>,
 }
 
 impl RewiredTurnEdges {
     /// Reads, in `txn` before the batch `ops` applies, whether each edge it
-    /// writes or removes of a kind that binds a TURN's words is stored. An
-    /// edge out of a row `ops` also puts is left out: the door that puts the
-    /// row tells its turns' listeners itself (a witness, an import, a
-    /// re-put's publication mark).
+    /// writes or removes of a kind that binds a TURN's words is stored, and
+    /// which TURNs it puts that no row holds yet. An edge out of a row the
+    /// batch also puts counts like any other: a MESSAGE the batch births
+    /// into a stored TURN (an archive restore) changes that turn's words.
     ///
     /// # Errors
     ///
-    /// The edge reads.
+    /// The edge and row reads.
     pub(crate) fn before(vault: &Vault, txn: &heed::RoTxn<'_>, ops: &[BatchOp]) -> Result<Self> {
         let candidates: Vec<_> = ops
             .iter()
@@ -191,31 +191,36 @@ impl RewiredTurnEdges {
         if candidates.is_empty() {
             return Ok(Self {
                 edges: Vec::new(),
-                put: BTreeSet::new(),
+                born: BTreeSet::new(),
             });
         }
-        let put: BTreeSet<EntityId> = ops
-            .iter()
-            .filter_map(|op| match op {
-                BatchOp::Put { id, .. } => Some(*id),
-                _ => None,
-            })
-            .collect();
-        let mut edges = Vec::with_capacity(candidates.len());
-        for (src, kind, tgt) in candidates {
-            if !put.contains(&src) {
-                let stored = edge_stored_in_txn(&vault.store, txn, &src, kind, &tgt)?;
-                edges.push((src, kind, tgt, stored));
+        let mut born = BTreeSet::new();
+        for op in ops {
+            if let BatchOp::Put {
+                id,
+                entity_type: ENTITY_TYPE_TURN,
+                ..
+            } = op
+                && vault.store.port_entity_record(txn, id)?.is_none()
+            {
+                born.insert(*id);
             }
         }
-        Ok(Self { edges, put })
+        let mut edges = Vec::with_capacity(candidates.len());
+        for (src, kind, tgt) in candidates {
+            let stored = edge_stored_in_txn(&vault.store, txn, &src, kind, &tgt)?;
+            edges.push((src, kind, tgt, stored));
+        }
+        Ok(Self { edges, born })
     }
 
     /// Admits, in the batch's transaction after it applied, each live TURN
     /// whose word binding one of the edges changed (the edge was stored
     /// before and is gone, or was not and is now) as a TURN whose words
-    /// changed ([`admit_rewired_turn_in_txn`]). A TURN the batch put is new
-    /// work on its own key already.
+    /// changed ([`admit_rewired_turn_in_txn`]). A TURN the batch births is
+    /// new work on its own key already; a stored TURN the batch puts again
+    /// is admitted like any other, since a put of its row says nothing of
+    /// its new words to the tagger or the embedder.
     ///
     /// # Errors
     ///
@@ -227,7 +232,7 @@ impl RewiredTurnEdges {
                 turns.extend(turns_bound_by_in_txn(&vault.store, txn, &src, kind, &tgt)?);
             }
         }
-        for turn in turns.difference(&self.put) {
+        for turn in turns.difference(&self.born) {
             if is_live(&vault.store, txn, turn)? {
                 admit_rewired_turn_in_txn(vault, txn, turn)?;
             }

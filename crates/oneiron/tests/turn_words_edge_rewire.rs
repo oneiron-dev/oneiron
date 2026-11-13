@@ -24,10 +24,10 @@
 
 use oneiron::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::turn_words::{
-    embedding_marker, redirty_pending, settle_every_scope_on_turn,
+    embedding_marker, redirty_pending, settle_every_scope_on_turn, stored_turn,
 };
 use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -295,6 +295,44 @@ fn a_rewired_turn_is_marked_for_its_vector_at_its_new_words() {
     assert!(
         !fixture.redirty_pending(&turn),
         "a turn no round has passed takes no carrier"
+    );
+}
+
+/// A batch that puts a read turn again as it stands and unlinks one of its
+/// MESSAGEs changes the turn's words: the turn is marked for its vector at
+/// them and is pending again for every scope. A put of a stored TURN's row
+/// tells the embedder nothing; only a TURN the batch births is new work on its
+/// own key.
+#[test]
+fn a_read_turn_put_again_beside_an_unlink_is_marked_at_its_new_words() {
+    let fixture = fixture(true);
+    let (turn, messages) = fixture.witness_turn(&["the ferry leaves at nine", "bring the map"]);
+    fixture.read_by_every_scope(&turn);
+    let witnessed = embedding_marker(&fixture.vault, &turn)
+        .expect("read the marker")
+        .expect("the witness marks the turn for its vector");
+    let (occurred, learned_at, body) = stored_turn(&fixture.vault, &turn)
+        .expect("read the turn")
+        .expect("the turn is stored");
+
+    fixture
+        .vault
+        .batch()
+        .put(&turn, ENTITY_TYPE_TURN, occurred, learned_at, &body)
+        .delete_edge(&messages[1], EdgeKind::PartOf, &turn)
+        .commit()
+        .expect("put the turn again and unlink its second message");
+
+    let rewired = embedding_marker(&fixture.vault, &turn)
+        .expect("read the marker")
+        .expect("the turn still owes a vector");
+    assert_ne!(
+        rewired, witnessed,
+        "the marker is written again at the turn's new words"
+    );
+    assert!(
+        fixture.redirty_pending(&turn),
+        "the read turn whose words lost a message is pending again"
     );
 }
 
