@@ -22,8 +22,12 @@ async fn mcp_endpoints_register_distinct_tool_listings() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(primary["result"]["surfaceMode"], Value::from("primary"));
-    // ONE-1704 B1: the primary catalog is the one tool this release ships.
-    assert_eq!(mcp_listed_tool_names(&primary), vec!["setup_oneiron"]);
+    // ONE-1704 B1: the primary catalog is the setup tool, and OF-181's one
+    // action door (6faca031456, #2527) on both endpoints.
+    assert_eq!(
+        mcp_listed_tool_names(&primary),
+        vec!["setup_oneiron", "invoke_action"]
+    );
     assert!(
         !serde_json::to_string(&primary["result"])
             .expect("listing serializes")
@@ -45,10 +49,25 @@ async fn mcp_endpoints_register_distinct_tool_listings() {
         tool_first["result"]["surfaceMode"],
         Value::from("tool_first")
     );
+    // The generated verb tools, sorted, then OF-181's action door.
+    let mut expected = mcp_expected_generated_names();
+    expected.push("invoke_action");
+    let listed = mcp_listed_tool_names(&tool_first);
+    // The difference first: a failure line is cut, and the lists are long.
+    let only_listed: Vec<&str> = listed
+        .iter()
+        .copied()
+        .filter(|name| !expected.iter().any(|row| row == name))
+        .collect();
+    let only_expected: Vec<&str> = expected
+        .iter()
+        .copied()
+        .filter(|name| !listed.iter().any(|tool| tool == name))
+        .collect();
     assert_eq!(
-        mcp_listed_tool_names(&tool_first),
-        mcp_expected_generated_names(),
-        "the tool-first listing is generated from the exported verb rows"
+        listed, expected,
+        "the tool-first listing is generated from the exported verb rows; \
+         listed only {only_listed:?}, expected only {only_expected:?}"
     );
     for name in mcp_listed_tool_names(&tool_first) {
         assert!(!name.starts_with("oneiron."), "{name} must not be listed");
@@ -215,6 +234,9 @@ async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
 /// An unverified fixture host cannot enable execution. Both endpoints refuse
 /// before creating a run, under full and narrowed credentials alike. The real
 /// QuickJS-host test separately proves verified production registration.
+/// Since DOOR-070 (b7e35a2c505, #3044) `execute_code` on tool-first is the
+/// generated foreign-code verb: it is listed there, and its input refuses
+/// this durable-task shape before any run.
 #[tokio::test]
 async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
     bind_mcp_test_code_host();
@@ -260,12 +282,16 @@ async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
                 ),
             )
             .await;
-            assert_mcp_structured_error(&body, "code_host_unbound");
-            assert_eq!(
-                body["error"]["data"]["field"],
-                Value::from("name"),
-                "{label} on {path}: {body:?}"
-            );
+            if path == MCP_TOOL_FIRST_PATH {
+                assert_mcp_structured_error(&body, "tool_args_invalid");
+            } else {
+                assert_mcp_structured_error(&body, "code_host_unbound");
+                assert_eq!(
+                    body["error"]["data"]["field"],
+                    Value::from("name"),
+                    "{label} on {path}: {body:?}"
+                );
+            }
             // Nothing a run would have published reaches the wire: no run
             // handle, no resume block, no terminal claim, no durable wait.
             let serialized = serde_json::to_string(&body).expect("refusal serializes");
@@ -285,13 +311,15 @@ async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
         "zero runs were created: the bound host was never entered",
     );
 
-    // The tool is not listed on either endpoint either.
-    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+    // The primary endpoint does not list the tool; tool-first lists the
+    // generated verb of that name.
+    for (path, listed) in [("/mcp", false), (MCP_TOOL_FIRST_PATH, true)] {
         let (_, listing) =
             route_json(server.clone(), mcp_list_request(path, wide, "code-list")).await;
-        assert!(
-            !mcp_listed_tool_names(&listing).contains(&"execute_code"),
-            "{path} must not list a tool this release cannot run: {listing:?}"
+        assert_eq!(
+            mcp_listed_tool_names(&listing).contains(&"execute_code"),
+            listed,
+            "{path}: {listing:?}"
         );
     }
 }
@@ -673,7 +701,7 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
             MCP_TOOL_FIRST_PATH,
             credential,
             id,
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({ "arguments": arguments }),
@@ -769,7 +797,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-exact",
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({
@@ -799,7 +827,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-first",
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({
@@ -825,7 +853,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 MCP_TOOL_FIRST_PATH,
                 credential,
                 "room-next",
-                "rooms.messages",
+                "vault.rooms.messages",
                 mcp_merge_args(
                     mcp_endpoint_envelope(owner, "read_room"),
                     json!({
@@ -865,7 +893,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 MCP_TOOL_FIRST_PATH,
                 credential,
                 "room-claim",
-                "rooms.claim",
+                "vault.rooms.claim",
                 mcp_merge_args(
                     mcp_endpoint_envelope(actor, "claim_turn"),
                     json!({
@@ -897,7 +925,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-list-first",
-            "rooms.list",
+            "vault.rooms.list",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({"page": {"limit": 1}}),
@@ -920,7 +948,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-list-next",
-            "rooms.list",
+            "vault.rooms.list",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({
@@ -959,14 +987,14 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
         })
         .expect("thread");
     for (verb, args) in [
-        ("rooms.render", json!({"room_ref":room.to_hex()})),
-        ("rooms.find", json!({"room_ref":room.to_hex()})),
+        ("vault.rooms.render", json!({"room_ref":room.to_hex()})),
+        ("vault.rooms.find", json!({"room_ref":room.to_hex()})),
         (
-            "rooms.get",
+            "vault.rooms.get",
             json!({"room_ref":room.to_hex(),"turn_ref":thread.to_hex()}),
         ),
         (
-            "rooms.trunk",
+            "vault.rooms.trunk",
             json!({"room_ref":room.to_hex(),"turn_ref":turns[0].to_hex()}),
         ),
     ] {
@@ -1201,7 +1229,7 @@ async fn mcp_room_messages(
             MCP_TOOL_FIRST_PATH,
             credential,
             request_id,
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({"arguments": arguments, "page": page}),

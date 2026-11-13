@@ -43,23 +43,19 @@ use super::{
 const DEFAULT_CONTEXT_PACK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl<'a> ContextPackBuilder<'a> {
+    /// Assembles the pack and leaves its retrieval run provisional, for the
+    /// caller to finalize after its own filters and cuts.
+    ///
+    /// An assembly issued INSIDE a room defers too (census row L6-12): both
+    /// finalizing doors, [`UnfinalizedContextPack::finish_projected_json`] and
+    /// [`UnfinalizedContextPack::finish_post_filter`], return a room's failed
+    /// registration as their `Err`, so the retrieval fails with it (ONE-1570
+    /// Arm B) and no warning passes it.
+    ///
     /// # Errors
     ///
-    /// Refuses an assembly issued INSIDE a room (ONE-1570 Arm B). The deferred
-    /// door hands the caller an [`UnfinalizedContextPack`] whose finalize runs
-    /// in [`UnfinalizedContextPack::finish_projected_json`] as best effort —
-    /// so a room's failed registration would have nowhere to go but a
-    /// warning, and a warning past it is the log-and-continue the settle
-    /// contract forbids. A room's assembly takes the finalizing doors, which
-    /// can fail.
+    /// Propagates a failed assembly.
     pub fn run_unfinalized_with_telemetry(self) -> Result<UnfinalizedContextPack<'a>> {
-        if self.session.is_some() {
-            return Err(Error::InvalidConfig(
-                "a context pack assembled inside an off-record session cannot defer \
-                 finalization: the deferred door has no channel for a failed registration"
-                    .to_owned(),
-            ));
-        }
         let run = self.run_unfinalized()?;
         Ok(UnfinalizedContextPack {
             value: run.pack,

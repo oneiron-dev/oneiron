@@ -303,6 +303,9 @@ impl EngineNativeExecutor<'_> {
                 )?,
             };
             let turn = CodeRunHistoryTurn { code, console };
+            // The interrupts that reached the model before it wrote this
+            // step's program, where its turn read them.
+            messages.extend(self.turn_interrupts_message(record, seq as u64));
             messages.push(LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
@@ -326,6 +329,7 @@ impl EngineNativeExecutor<'_> {
             // console, as it stands now: never inside the console (FIX 8277).
             messages.extend(self.step_feedback_message(record, seq as u64));
             messages.extend(self.step_board_frames_message(record, seq as u64));
+            messages.extend(self.step_signals_message(record, seq as u64));
             if let Some(output) = resumed.get(&(seq as u64)) {
                 messages.push(self.resumed_reply_message(record, seq as u64, output)?);
             }
@@ -358,6 +362,9 @@ impl EngineNativeExecutor<'_> {
         }
         // An approved continuation's note, its own message (FIX 3694).
         messages.extend(turn_note(continuation, completed_steps));
+        // The interrupts this turn took, read just before its instruction
+        // ([INTERRUPT-CUTS-MODEL-REQUEST-IN-FLIGHT]).
+        messages.extend(self.turn_interrupts_message(record, completed_steps));
         messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {

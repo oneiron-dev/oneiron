@@ -18,6 +18,15 @@
 //! engine never stands one again on its own: a later grant is the owner's
 //! signed act ([`Vault::grant_dreamer_weave`]).
 //!
+//! Every base agent's Steward row, the engine's default and the owner's
+//! grant back alike, holds the scope the vault's grant-policy rows resolve
+//! for a Steward on the vault's root with that agent as holder
+//! ([`Vault::steward_policy_scope_in_txn`]), met with the Steward preset
+//! (RULING REMINT-POLICY-ROWS = A, Engine 13 Nov): the rows are the owner's
+//! standing word on what a role holds, as for every membership mint. A
+//! manifest that resolves no scope stands no default and refuses the grant
+//! back, with the reason.
+//!
 //! The grant rows decide (ruling S63-P13-STATE = A, Engine 11 Nov; review of
 //! #6913): a base agent's reach is the meet of every Steward grant row that
 //! stands naming it ([`steward_reach_in`]). The rows are entity rows, so they
@@ -140,13 +149,16 @@ impl StewardReach {
             .then(|| self.scope.meet(&super::scope_codec::read_preset()))
     }
 
-    /// Whether the reach is already the default grant of `verbs`: every
-    /// standing row gives exactly those verbs, and none narrows a data axis
-    /// (review of #7057: the verbs alone decided, so a grant back left the
-    /// narrower worlds, facets, record kinds, audience or sensitivity of a
-    /// standing row in force).
-    fn is_default_of(&self, verbs: &BTreeSet<String>) -> bool {
-        let mut whole = grant_scope::membership_preset(FederationGrantRole::Steward);
+    /// Whether the reach is already the default grant of `verbs` under the
+    /// policy scope `policy` ([`Vault::steward_policy_scope_in_txn`]): every
+    /// standing row gives exactly those verbs, and the rows hold each data
+    /// axis exactly as `policy` resolves it (review of #7057: the verbs alone
+    /// decided, so a grant back left the narrower worlds, facets, record
+    /// kinds, audience or sensitivity of a standing row in force; RULING
+    /// REMINT-POLICY-ROWS = A: the structural preset decided, so a grant
+    /// back left a row wider than the owner's policy rows in force).
+    fn is_default_of(&self, verbs: &BTreeSet<String>, policy: &Scope) -> bool {
+        let mut whole = policy.clone();
         whole.verbs = self.scope.verbs.clone();
         self.verbs == *verbs && self.scope == whole
     }
@@ -397,7 +409,46 @@ fn copied_verbs(reads: bool, lands: bool) -> BTreeSet<String> {
     verbs.iter().map(|verb| (*verb).to_owned()).collect()
 }
 
+/// `verbs` held to the policy scope `policy` (RULINGS REMINT-POLICY-ROWS and
+/// REMINT-POLICY-VERBS = A, Engine 13 Nov): a Steward verb (`read`, `derive`, `archive`,
+/// `delete`) stays only while the resolved verb axis holds it. An
+/// `engine.controls` class stays as the agent's default gives it: no role
+/// default names one, so a Steward member holds one only by the owner's own
+/// row, and the Coach by its default (S66-1).
+fn verbs_within_policy(verbs: BTreeSet<String>, policy: &Scope) -> BTreeSet<String> {
+    verbs
+        .into_iter()
+        .filter(|verb| {
+            !grant_scope::STEWARD_VERBS.contains(&verb.as_str()) || policy.verbs.contains(verb)
+        })
+        .collect()
+}
+
 impl Vault {
+    /// The scope the vault's grant-policy rows resolve for a Steward on
+    /// this vault's root ([`Self::steward_root_scope_in_txn`]) with base
+    /// agent `agent` as holder, met with the Steward preset
+    /// ([`Self::grant_default_scope_in_txn`]): the data axes every Steward
+    /// row of a base agent holds (RULING REMINT-POLICY-ROWS = A).
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` when the manifest is fail-closed or its rows resolve
+    /// no Steward scope (no precedence row, no Steward role default); a store
+    /// failure.
+    pub(crate) fn steward_policy_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<Scope> {
+        let FederationGrantScope::Vault { vault_id } = self.steward_root_scope_in_txn(txn)? else {
+            return Err(crate::error::Error::InvariantViolation(
+                "a Steward grant names a vault root",
+            ));
+        };
+        self.grant_default_scope_in_txn(txn, FederationGrantRole::Steward, vault_id, agent)
+    }
+
     /// Where the base agent's Steward grant stands, as its rows give it;
     /// `None` while no row stands.
     pub(crate) fn system_agent_grant_state_in(
@@ -497,6 +548,9 @@ impl Vault {
                 if steward_reach_in(&self.store, &*txn, actor)?.is_some() {
                     return Ok(());
                 }
+                // The scope the owner's grant-policy rows give this agent;
+                // a manifest that resolves none stands no default here.
+                let policy_scope = self.steward_policy_scope_in_txn(&*txn, actor)?;
                 let verbs = match agent {
                     SystemAgent::Dreamer => {
                         let policy = crate::gate::resolve_policy_manifest(&self.store, &*txn)?;
@@ -506,12 +560,13 @@ impl Vault {
                     }
                     SystemAgent::Coach => agent.default_verbs(),
                 };
+                let verbs = verbs_within_policy(verbs, &policy_scope);
                 if verbs.is_empty() {
-                    // The owner had removed every row: the record of his
+                    // The owner had removed every row: the record of the
                     // opt-out, which grants nothing and so has no receipt.
-                    self.put_steward_grant_row_in_txn(txn, actor, verbs, None)?;
+                    self.put_steward_grant_row_in_txn(txn, actor, verbs, Some(&policy_scope))?;
                 } else {
-                    self.stand_engine_default_grant_in_txn(txn, actor, verbs)?;
+                    self.stand_engine_default_grant_in_txn(txn, actor, verbs, &policy_scope)?;
                 }
                 Ok(())
             });
@@ -534,32 +589,44 @@ impl Vault {
     }
 
     /// The owner's act (`oneiron dreamer grant`): the Dreamer holds the
-    /// whole Steward default from now on. Mints it unless its standing rows
-    /// already give every Steward verb with every data axis whole (`false`
-    /// then). Every row that stands is revoked first, an opt-out's record
-    /// among them, by the owner's signed act in the same writer, so the
-    /// Dreamer holds one Steward grant.
+    /// Steward default from now on, as the vault's grant-policy rows resolve
+    /// it ([`Self::steward_policy_scope_in_txn`]). Mints it unless its
+    /// standing rows already give those verbs with every data axis as the
+    /// rows resolve it (`false` then). Every row that stands is revoked
+    /// first, an opt-out's record among them, by the owner's signed act in
+    /// the same writer, so the Dreamer holds one Steward grant.
     pub(crate) fn grant_dreamer_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
         self.grant_system_agent_default(owner, SystemAgent::Dreamer)
     }
 
     /// The owner's act: the Coach holds its default grant (`read`,
     /// the four `engine.controls` classes) from now on, the way back after he narrowed or
-    /// revoked it (6.6). `false` when its standing rows already give it with
-    /// every data axis whole.
+    /// revoked it (6.6), held to the scope the vault's grant-policy rows
+    /// resolve for it ([`Self::steward_policy_scope_in_txn`]). `false` when
+    /// its standing rows already give it with every data axis as the rows
+    /// resolve it.
     ///
     /// # Errors
     ///
     /// An owner refusal; a store failure; `AuthorityRefused` when this
-    /// install cannot carry the owner's act.
+    /// install cannot carry the owner's act; `InvalidConfig` when the
+    /// manifest resolves no Steward scope.
     pub fn grant_coach_steward(&self, owner: &AuthenticatedOwner) -> Result<bool> {
         self.grant_system_agent_default(owner, SystemAgent::Coach)
     }
 
     /// Mints `agent`'s default Steward grant as `owner`'s act unless its
     /// standing rows already give it ([`StewardReach::is_default_of`]): a
-    /// row that holds a narrower data axis is revoked with the rest, so the
-    /// grant back restores the records as well as the verbs.
+    /// row that holds another data axis is revoked with the rest, so the
+    /// grant back restores the records as well as the verbs. The grant it
+    /// mints holds the scope the vault's grant-policy rows resolve for the
+    /// agent ([`Self::steward_policy_scope_in_txn`]; RULING
+    /// REMINT-POLICY-ROWS = A): to widen it, the owner edits those rows.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig`, changing nothing, when the manifest resolves no
+    /// Steward scope or its rows leave the agent no verb of its default.
     fn grant_system_agent_default(
         &self,
         owner: &AuthenticatedOwner,
@@ -569,16 +636,25 @@ impl Vault {
             SystemAgent::Dreamer => self.dreamer_authority()?.entity_ref(),
             SystemAgent::Coach => self.coach_authority()?.entity_ref(),
         };
-        let full = agent.default_verbs();
         let minted = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
+            let policy_scope = self.steward_policy_scope_in_txn(&*txn, actor)?;
+            let full = verbs_within_policy(agent.default_verbs(), &policy_scope);
+            if full.is_empty() {
+                // A grant with no verb would only revoke the standing one:
+                // the narrowing door is that act.
+                return Err(crate::error::Error::InvalidConfig(
+                    "the vault's grant-policy rows give this agent no Steward verb; edit the rows first"
+                        .into(),
+                ));
+            }
             if steward_reach_in(&self.store, &*txn, actor)?
-                .is_some_and(|reach| reach.is_default_of(&full))
+                .is_some_and(|reach| reach.is_default_of(&full, &policy_scope))
             {
                 return Ok(false);
             }
             self.revoke_standing_steward_grants_in_txn(txn, owner, actor)?;
-            self.mint_steward_grant_in_txn(txn, owner, actor, full.clone(), None)?;
+            self.mint_steward_grant_in_txn(txn, owner, actor, full, Some(&policy_scope))?;
             Ok(true)
         })?;
         if minted {
@@ -675,7 +751,7 @@ impl Vault {
 
     /// The vault root a Steward grant on this vault names: the shared vault,
     /// else this install's own residence.
-    pub(super) fn steward_root_scope_in_txn(
+    pub(crate) fn steward_root_scope_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<FederationGrantScope> {
@@ -785,15 +861,19 @@ impl Vault {
     }
 
     /// Stands `agent`'s Steward grant with `verbs` as the engine's default at
-    /// vault creation, in the caller's writer: the FEDERATION_GRANT row and
-    /// its [`EngineDefaultGrant`] receipt, and no owner act.
+    /// vault creation, in the caller's writer: the FEDERATION_GRANT row,
+    /// holding the data axes of `data_axes` (the policy scope,
+    /// [`Self::steward_policy_scope_in_txn`]), and its
+    /// [`EngineDefaultGrant`] receipt, and no owner act.
     fn stand_engine_default_grant_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         agent: EntityId,
         verbs: BTreeSet<String>,
+        data_axes: &Scope,
     ) -> Result<EntityId> {
-        let (id, _) = self.put_steward_grant_row_in_txn(txn, agent, verbs.clone(), None)?;
+        let (id, _) =
+            self.put_steward_grant_row_in_txn(txn, agent, verbs.clone(), Some(data_axes))?;
         let created_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         ENGINE_DEFAULT_GRANT.put(
             &self.store,
@@ -815,8 +895,9 @@ impl Vault {
     /// whose worlds, facets, record kinds, audience and sensitivity the row
     /// holds: the reach of the rows it replaces, for the narrowing door
     /// (review of #7057: its row came with every axis whole, so taking a
-    /// verb gave back the records a standing row had taken). `None` leaves
-    /// each axis whole, as a default grant has it. Returns its id and body.
+    /// verb gave back the records a standing row had taken); the policy
+    /// scope ([`Self::steward_policy_scope_in_txn`]) for a default grant.
+    /// `None` leaves each axis whole. Returns its id and body.
     fn put_steward_grant_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

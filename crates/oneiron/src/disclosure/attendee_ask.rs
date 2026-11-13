@@ -312,7 +312,7 @@ impl Memory<'_> {
                 }
                 Some(_) => return Err(invalid_ask()),
                 None => {
-                    let claim = ClaimBody::new(
+                    let mut claim = ClaimBody::new(
                         PREDICATE_DISCLOSURE_ATTENDEE_ASK,
                         ClaimSubject::Entity(self.actor()),
                         record.to_value(),
@@ -321,6 +321,10 @@ impl Memory<'_> {
                         ClaimLifecycleStatus::Active,
                     )?;
                     let now = vault.store.clock.now_recorded_at();
+                    // Only a PERSON subject has a substrate FACET; any other subject takes
+                    // the vault default facet (a birth gate refusal otherwise, #4389).
+                    claim.scope_facet =
+                        vault.claim_put_facet_keeping_in_txn(txn, &ask_ref, claim.scope_facet)?;
                     vault.put_disclosure_claim_in_txn(txn, &ask_ref, &claim, now)?;
                 }
             }
@@ -393,7 +397,7 @@ impl Memory<'_> {
             }
             Some(_) => return Err(invalid_ask().into()),
             None => {
-                let claim = ClaimBody::new(
+                let mut claim = ClaimBody::new(
                     PREDICATE_DISCLOSURE_ATTENDEE_ASK,
                     ClaimSubject::Entity(self.actor()),
                     record.to_value(),
@@ -402,6 +406,10 @@ impl Memory<'_> {
                     ClaimLifecycleStatus::Active,
                 )?;
                 let now = vault.store.clock.now_recorded_at();
+                // Only a PERSON subject has a substrate FACET; any other subject takes
+                // the vault default facet (a birth gate refusal otherwise, #4389).
+                claim.scope_facet =
+                    vault.claim_put_facet_keeping_in_txn(txn, &ask_ref, claim.scope_facet)?;
                 vault.put_disclosure_claim_in_txn(txn, &ask_ref, &claim, now)?;
             }
         }
@@ -495,7 +503,7 @@ impl Vault {
         // id without the slot is not an answer, and is overwritten.
         let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
         self.take_decision_slot_in_txn(txn, &attendee_identity_slot(&identity_ref), decision_id)?;
-        let claim = ClaimBody::new(
+        let mut claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_ATTENDEE_IDENTITY,
             ClaimSubject::Entity(*ask_ref),
             identity_value(roster_revision, choice),
@@ -503,6 +511,9 @@ impl Vault {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )?;
+        // The subject is the ask claim, whose derived substrate id is no
+        // FACET: the answer is born in the facet the ask was born under.
+        claim.scope_facet = self.claim_put_facet_of_record_in_txn(txn, &identity_ref, *ask_ref)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         self.put_disclosure_claim_in_txn(txn, &identity_ref, &claim, now)?;
         Ok(AttendeeIdentityResolution {

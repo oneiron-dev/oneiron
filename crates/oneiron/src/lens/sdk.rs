@@ -20,14 +20,14 @@ use serde::{Deserialize, Serialize};
 use super::{
     AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, GeneratedUiSurfaceCapabilities,
     HostedLensRender, LedgerCell, LedgerRowAtom, LensBackingRefToken, LensBackingTarget,
-    LensHandleName, LensHandleRole, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText,
-    SectionAtom, compose_default_vault,
+    LensHandleName, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
+    compose_default_vault,
 };
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
+use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::thread_lens::ThreadLensEntry;
 use crate::{EntityId, Error, Result};
 
@@ -313,16 +313,10 @@ fn admit_row(
     let Some(body) = row.body.clone() else {
         return Ok(());
     };
-    let (target, role) = if row.entity_type == ENTITY_TYPE_CLAIM {
-        (
-            LensBackingTarget::claim(row.id, row.id.to_hex(), row.content_hash)?,
-            LensHandleRole::ClaimSet,
-        )
-    } else {
-        (
-            LensBackingTarget::entity(row.id, row.id.to_hex(), row.content_hash)?,
-            LensHandleRole::EntitySet,
-        )
+    // A row with no short id is left out, as a missing one is: no backing
+    // ref can name it.
+    let Some((target, role)) = LensBackingTarget::of_read_row(read.vault(), &row)? else {
+        return Ok(());
     };
     let token = frame.mint_backing_ref(
         read,

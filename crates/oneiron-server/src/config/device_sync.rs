@@ -6,11 +6,12 @@
 //!
 //! File-only, like `[native_mail]`. `oneiron device enrol` records the home
 //! this machine enrolled with (`crate::device_enrolment`), and `serve` dials
-//! it with no section at all. A section names the worlds this machine follows
-//! and may name a home by hand instead, all three of `home_machine`,
-//! `home_url` and `credential_file` together. With neither a section nor an
-//! enrolment, this machine dials no one. The credential stays in its own
-//! file, never in this one.
+//! it with no section at all. A section may name a home by hand instead, all
+//! three of `home_machine`, `home_url` and `credential_file` together. With
+//! neither a section nor an enrolment, this machine dials no one. The
+//! credential stays in its own file, never in this one. The worlds this
+//! machine follows are the owner's pick in the vault, set by
+//! `vault.residence.worlds`, never a key here.
 
 use std::path::PathBuf;
 
@@ -34,9 +35,6 @@ pub struct DeviceSyncConfig {
     /// it.
     #[serde(default)]
     pub credential_file: Option<PathBuf>,
-    /// The worlds this machine follows, by id; none until named.
-    #[serde(default)]
-    pub worlds: Vec<String>,
     /// The home's sync node id, as `oneiron whoami` prints it there
     /// (`sync_node_id`). Named, this machine keeps that node as its own
     /// always-on candidate for the home, beside the vault's declarations, and
@@ -56,6 +54,12 @@ pub struct DeviceSyncConfig {
     /// while its Dreamer runs. Off by default.
     #[serde(default)]
     pub primary: bool,
+    /// The file still names the removed `worlds` key. Its value is read and
+    /// dropped; `validate` refuses the section and names what replaced the
+    /// key. A parse failure prints no message (FIX 9477), so the key parses
+    /// and the refusal is a validation error.
+    #[serde(default, rename = "worlds", deserialize_with = "key_present")]
+    names_removed_worlds: bool,
 }
 
 /// A home named by hand: all three of its fields.
@@ -83,29 +87,28 @@ impl DeviceSyncConfig {
         }
     }
 
-    /// The worlds this machine follows.
-    pub(crate) fn followed_worlds(&self) -> anyhow::Result<Vec<EntityId>> {
-        self.worlds
-            .iter()
-            .map(|world| {
-                EntityId::from_hex(world.trim())
-                    .map_err(|_| anyhow::anyhow!("[device_sync] worlds: {world} is not a world id"))
-            })
-            .collect()
-    }
-
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.names_removed_worlds,
+            "`[device_sync] worlds` was removed; set a device's projects with \
+             vault.residence.worlds"
+        );
         if let Some(home) = self.named_home()? {
             validate_home_url(home.url)
                 .map_err(|error| anyhow::anyhow!("[device_sync] {error}"))?;
         }
-        self.followed_worlds()?;
         anyhow::ensure!(
             self.home_node_id != Some(0),
             "[device_sync] home_node_id is the home's sync node id, never 0"
         );
         Ok(())
     }
+}
+
+/// True for a key the file names, whatever its value; the value is read and
+/// dropped.
+fn key_present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| true)
 }
 
 /// A home's MACHINE id.

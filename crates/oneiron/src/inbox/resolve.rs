@@ -164,6 +164,9 @@ impl Vault {
                             vec![INBOX_REASON_BUNDLE_REJECT.to_owned()],
                             Some(bundle_ref.clone()),
                         )? {
+                            // The action the row parked goes with it, as the
+                            // bundle and settle declines cancel theirs.
+                            self.cancel_deferred_claim_in_txn(wtxn, &id)?;
                             if let (Some((actor, target)), Some(reviewed)) =
                                 (learning, reviewed.as_ref())
                             {
@@ -543,7 +546,7 @@ fn accept_member_with_amendment_in_txn(
     if !delta_reasons.is_empty() {
         bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
     }
-    vault.complete_deferred_claim_in_txn(wtxn, id, false, now, learning.map(|(actor, _)| actor))?;
+    vault.complete_deferred_claim_in_txn(wtxn, id, None, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,
         wtxn,
