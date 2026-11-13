@@ -501,7 +501,7 @@ pub(crate) mod test_door {
 
     /// The home's ensure of `request`, asked by its target itself, over the
     /// kept generations `kept`.
-    pub fn ensure_as_target(
+    pub(crate) fn ensure_as_target(
         vault: &Vault,
         kept: &[SealedBundleGeneration],
         request: &PadAccessRequest,
