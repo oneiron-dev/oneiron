@@ -157,12 +157,13 @@ fn seed_base_claim(vault: &Vault, owner: EntityId) {
         .expect("the owner's base claim");
 }
 
-/// The owner's one turn, holding [`TURN_WORD`].
+/// The owner's one turn, holding [`TURN_WORD`]. A base witness parses its
+/// conversation ref as an entity ref, so the turn names a fresh conversation.
 fn witness_turn(vault: &Vault, owner: EntityId) {
     vault
         .memory(owner, EdgeActorClass::Human)
         .witness(&WitnessTurn {
-            conversation_ref: String::new(),
+            conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
             messages: vec![WitnessMessage {
@@ -176,7 +177,7 @@ fn witness_turn(vault: &Vault, owner: EntityId) {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: 900,
+            occurred_at: vault.now_recorded_at(),
             assertions: Default::default(),
         })
         .expect("the owner's witnessed turn");
