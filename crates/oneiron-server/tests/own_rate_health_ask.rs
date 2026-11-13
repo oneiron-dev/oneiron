@@ -16,7 +16,7 @@ use oneiron::authority::MachineRole;
 use oneiron::llm::decision::{AnswerActor, AskTo, DecisionAnswer, DecisionAsk};
 use oneiron::own_rate::OwnRateKind;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::test_doors::own_rate_crossing::count_own_acts;
+use oneiron::test_doors::advisory_rate_window::count_own_acts;
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_server::ENGINE_THREAD_STACK_BYTES;
 use oneiron_server::server::SyncServer;
