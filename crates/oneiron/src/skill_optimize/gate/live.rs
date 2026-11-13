@@ -154,7 +154,7 @@ pub fn skill_goal_axis_plan(
 ) -> Result<GoalAxisPlan> {
     let txn = vault.store.env.read_txn()?;
     Ok(goal_axis_plan(
-        &goal_definition_in_txn(vault, &txn, skill)?,
+        &goal_definition_in_txn(vault, &txn, skill, Some(coach_reader()?))?,
         pulls_per_axis,
     ))
 }
@@ -206,7 +206,8 @@ fn measure_with_owner(
         .ok_or(Error::EntityNotFound)?;
     let (plan, goal_revision, judge) = {
         let txn = vault.store.env.read_txn()?;
-        let definition = goal_definition_in_txn(vault, &txn, &target)?;
+        let reader = goal_reader_in_txn(vault, &txn, owner)?;
+        let definition = goal_definition_in_txn(vault, &txn, &target, Some(reader))?;
         (
             goal_axis_plan(&definition, pulls_per_axis),
             definition.revision,
@@ -242,9 +243,7 @@ fn measure_with_owner(
     }
     let report = measure_goal_axes(vault, target, &current, &staged, &plan, scorer, bandit)?;
     vault.with_write_txn_grouped(|txn| {
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(vault, txn)?;
-        }
+        let reader = goal_reader_in_txn(vault, txn, owner)?;
         let staged_now = vault.read_skill_record_in_txn(&*txn, proposal)?;
         let current_now = vault.read_skill_record_in_txn(&*txn, &target)?;
         let proposal_digest = skill_body_binding_digest(&staged_now)?;
@@ -262,7 +261,7 @@ fn measure_with_owner(
                 "the reserved evidence moved while the goal axes were measured",
             ));
         }
-        let definition = goal_definition_in_txn(vault, txn, &target)?;
+        let definition = goal_definition_in_txn(vault, txn, &target, Some(reader))?;
         if goal_axis_plan(&definition, pulls_per_axis) != plan
             || definition.revision != goal_revision
         {
@@ -336,7 +335,7 @@ pub fn skill_edit_needs_goal_axis_report(
     let staged = vault.read_skill_record_in_txn(&txn, proposal)?;
     require_open_optimizer_proposal(&staged)?;
     let target = target_of(&staged)?;
-    let definition = goal_definition_in_txn(vault, &txn, &target)?;
+    let definition = goal_definition_in_txn(vault, &txn, &target, Some(coach_reader()?))?;
     let plan = goal_axis_plan(&definition, 0);
     if definition.project.is_none() || plan.online.is_empty() {
         return Ok(false);
