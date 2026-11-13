@@ -88,8 +88,6 @@ pub(crate) fn export_source_body_with(
     ))
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-PACK-CATALOG-TESTS]: the lib test target's type check fails here (13 errors: E0599 x7, E0308 x4, E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

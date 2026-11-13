@@ -14,6 +14,7 @@ fn bind(
         binding: super::super::HostInferenceBinding::Advertised {
             model: request.model.clone(),
             locality: request.envelope.locality,
+            keyless: false,
         },
         extraction_egress: egress,
     };
@@ -67,6 +68,8 @@ fn resident_rows_roundtrip_and_change_resolution() {
         tier: TierPrecedence::for_purpose(&CallPurpose::AnswerGen, ModelTierRef("global".into())),
         response_format: super::super::ResponseFormat::Text,
         locality: ModelLocality::ThirdParty,
+        host_keyless: false,
+        host_paid: false,
     };
     vault.apply_purpose_defaults(&mut envelope).unwrap();
     assert_eq!(envelope.tier.resolved().as_str(), "resident-answer");
@@ -126,7 +129,7 @@ fn resident_rows_roundtrip_and_change_resolution() {
     let mut wider = nonlocal.clone();
     wider.extraction_max_locality = ModelLocality::ThirdParty;
     assert!(matches!(
-        vault.set_resident_purpose_default_table(&wider, |_| Ok(())),
+        vault.set_resident_purpose_default_table(&wider, |_| Ok(None)),
         Err(Error::InvalidConfig(_))
     ));
 }
@@ -187,7 +190,7 @@ fn voice_precedence_is_editable_but_override_cannot_widen_vault() {
     let mut resident = stored;
     resident.voice_precedence = VoicePrecedence::NestedNarrowing;
     assert!(matches!(
-        vault.set_resident_purpose_default_table(&resident, |_| Ok(())),
+        vault.set_resident_purpose_default_table(&resident, |_| Ok(None)),
         Err(Error::InvalidConfig(_))
     ));
 }
@@ -210,6 +213,8 @@ fn nonlocal_extraction_without_stored_table_still_requires_host_egress() {
             ),
             response_format: super::super::ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -257,6 +262,8 @@ fn nonlocal_extraction_requires_host_egress_verdict_before_binding() {
             ),
             response_format: super::super::ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -324,6 +331,8 @@ fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
             ),
             response_format: super::super::ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -370,12 +379,16 @@ fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
                     output_per_million: "1".into(),
                     cache_read_per_million: None,
                     cache_write_per_million: None,
+                    currency: None,
                 }),
                 capabilities: vec![],
                 metadata: Default::default(),
             },
             scores: Default::default(),
             fetched_at: Default::default(),
+            tokens_per_o200k: None,
+            stale_since: None,
+            source_rows: None,
         })
         .unwrap();
     assert!(matches!(
