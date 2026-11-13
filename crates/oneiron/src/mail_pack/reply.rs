@@ -32,16 +32,16 @@
 //! minted for exactly that send's digest. A group sender is refused, not
 //! dropped.
 //!
-//! A Google or a Microsoft 365 mailbox's reply may carry files (fix list
-//! row 17645, `reply_attachments`): each one exact version of an artifact
-//! the drafter reads, every recipient cleared for each. Its message is
-//! written once at draft, kept sealed beside the draft with its files'
-//! manifest, and a Gmail reply's kept plan (`reply_custody`), and sent
-//! exactly as it was frozen, through Gmail or through Graph's one MIME
-//! `sendMail`; the draft's own row names the files only by the manifest's
-//! digest. An erase of a row it depends on ends the draft whole
-//! (`reply_erase`). An IMAP reply with files is refused before anything is
-//! read.
+//! A reply may carry files (fix list row 17645, `reply_attachments`): each
+//! one exact version of an artifact the drafter reads, every recipient
+//! cleared for each. Its message is written once at draft, kept sealed
+//! beside the draft with its files' manifest, and a Gmail reply's kept plan
+//! (`reply_custody`), and sent exactly as it was frozen, through Gmail,
+//! through Graph's one MIME `sendMail` or over SMTP submission; the draft's
+//! own row names the files only by the manifest's digest. An IMAP reply
+//! with files first asks its submission server the size it takes, before
+//! any file is read, and again before each press (`reply_smtp`). An erase
+//! of a row it depends on ends the draft whole (`reply_erase`).
 //!
 //! Each new revision asks the mailbox's person in their inbox (fix list
 //! row 17644, `reply_ask`); the Ask clears when that revision is
@@ -54,8 +54,8 @@ use super::inbox::sources_by_audience_in;
 use super::reply_ask::{clear_reply_ask_in_txn, raise_reply_ask_in_txn};
 use super::reply_attachments::{
     AnsweredMessage, AttachedRail, MailReplyAttachment, MailReplyAttachmentView, ReplyAttached,
-    ReplyManifestRef, ReplyRetainedMessage, answered_refusal_in, freeze_gmail_reply,
-    freeze_graph_reply, frozen_addresses, held_manifest, held_manifest_in,
+    ReplyManifestRef, ReplyRetainedMessage, answered_refusal_in, freeze_account_reply,
+    freeze_gmail_reply, frozen_addresses, held_manifest, held_manifest_in,
     reader_reads_attachments_in, readmit_reply_attachments_in, reply_send_completed,
     standing_refusal_in,
 };
@@ -67,11 +67,12 @@ use super::reply_mime::{
 };
 use super::reply_recipients::{addresses_in, reply_recipients};
 use super::reply_send::{ReplySink, ReplyTransport};
+use super::reply_smtp::{SmtpSizeCheck, check_smtp_size};
 use super::source::{MailProvider, MailSourceKind, MailSourceRow, MailSourceStatus, SOURCES};
 use super::state::{
     MailOccurrence, MailPresence, MailReplyHeaders, MailReplyRecipients, OCCURRENCES,
 };
-use super::wire::{MailAddressHeaders, MailProviderWire};
+use super::wire::{MailAddressHeaders, MailProviderWire, MailSyncSource};
 use crate::channel_identity_provider::gmail::{
     GmailDelegatedAdapter, GmailReplyThread, GmailSendPlan, GmailSendSink, HttpGmailSendWire,
 };
@@ -159,11 +160,17 @@ pub(super) struct MailReplyDraftRow {
     drafted_at: u64,
     updated_at: u64,
     /// The frozen message an IMAP or Microsoft 365 reply sends; `None` for a
-    /// Gmail reply, whose plan the Gmail plan store keeps. A Microsoft 365
-    /// reply with files names them here only by their manifest's digest
-    /// (fix list row 17645).
+    /// Gmail reply, whose plan the Gmail plan store keeps. An IMAP or a
+    /// Microsoft 365 reply with files names them here only by their
+    /// manifest's digest (fix list row 17645).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) message: Option<ReplyMessage>,
+    /// What an IMAP mailbox's submission server named of the size it takes,
+    /// when it was last asked for this revision with files (fix list row
+    /// 17645, `reply_smtp`): read at draft and again before each press, for
+    /// the reviewer, never a lasting permission; `None` for any other reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) smtp_size: Option<SmtpSizeCheck>,
     /// The digest of the manifest a reply with files froze, the ref of its
     /// message's carrier and the nonce its landing drew (fix list row
     /// 17645): the manifest itself, its files, its exact message and the
@@ -203,13 +210,16 @@ pub struct MailReplyDraftRequest {
     /// these together name at most 50 recipients; more is refused, not cut.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc: Vec<String>,
-    /// Files the reply carries, in their order, from a Google or a Microsoft
-    /// 365 mailbox only, not an IMAP one: each one exact version of an
+    /// Files the reply carries, in their order: each one exact version of an
     /// artifact the caller reads, sent as the caller's own copy of it. Every
     /// recipient must be cleared to see every file; one who is not refuses
     /// the whole draft, never dropped. The whole message, files included, is
-    /// at most Gmail's 35 MiB, or for Microsoft 365 at most 4,000,000 bytes
-    /// as Graph's one sendMail body carries it in base64 (3,000,000 octets).
+    /// at most Gmail's 35 MiB from a Google mailbox; from Microsoft 365 at
+    /// most 4,000,000 bytes as Graph's one sendMail body carries it in base64
+    /// (3,000,000 octets); from an IMAP mailbox at most the size its
+    /// submission server names when asked, at draft and again before the
+    /// press, else this host's setting. A server that cannot be asked
+    /// refuses the draft.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<MailReplyAttachment>,
     /// The caller's key for this draft: the same key with the same body,
@@ -246,12 +256,22 @@ pub struct MailReplyDraftView {
     pub attachments: Vec<MailReplyAttachmentView>,
     /// The length in octets of the exact message a reply with files sends,
     /// as its provider receives it before its own transport encoding
-    /// (Gmail's base64url, Graph's base64).
+    /// (Gmail's base64url, Graph's base64, SMTP's dot-stuffing).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_octets: Option<u64>,
     /// BLAKE3 of that exact message, 64 lower-hex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_blake3: Option<String>,
+    /// The most octets that message may have, as an IMAP mailbox's
+    /// submission server named it when last asked (its SIZE), else this
+    /// host's setting for a server that names none: for an IMAP reply with
+    /// files. It is asked again before the press and at the send; this is
+    /// no lasting permission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_limit_octets: Option<u64>,
+    /// When that limit was read, unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_limit_read_at: Option<u64>,
     /// The frozen send plan the owner approves, exactly.
     pub plan_ref: String,
     pub state: MailReplyDraftState,
@@ -332,6 +352,8 @@ fn view(
         message_octets: attached.map(|attached| attached.message.octets),
         message_blake3: attached
             .map(|attached| crate::blob_artifact::hash_hex(&attached.message.blake3)),
+        smtp_limit_octets: row.smtp_size.as_ref().map(|check| check.limit),
+        smtp_limit_read_at: row.smtp_size.as_ref().map(|check| check.read_at),
         plan_ref: row.plan_ref.clone(),
         state: row.state,
         outcome: row.outcome.clone(),
@@ -394,11 +416,14 @@ fn thread_in(
 /// Why the revision `row`, a reply with files that froze `attached`, may
 /// not land, read in `txn`, the writer that would land it (fix list row
 /// 17645): its thread no longer one `actor` reads, its mailbox source no
-/// longer the one `owner` owns that replies as `route`, or the message it
-/// answers gone ([`answered_refusal_in`]). An erase that committed after the
-/// draft was read finds no draft to end yet; this writer sees it, and
-/// nothing that erase would have ended is published. A reply without files
-/// lands as before.
+/// longer the one `owner` owns that replies as `route`, an IMAP reply's size
+/// check no longer bound to that source, its credential and its server as
+/// they stand here, or to this host's setting now
+/// ([`smtp_size_unbound_in`]), or its exact frozen message above that
+/// check's limit, or the message it answers gone ([`answered_refusal_in`]).
+/// An erase that committed after the draft was read finds no draft to end
+/// yet; this writer sees it, and nothing that erase would have ended is
+/// published. A reply without files lands as before.
 fn publication_refusal_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -420,17 +445,71 @@ fn publication_refusal_in(
             "the thread is gone, or no longer read by the drafter; draft it again".to_owned(),
         ));
     }
-    let routed = SOURCES
+    let Some(mailbox) = SOURCES
         .get(&vault.store, txn, &row.source)?
-        .is_some_and(|mailbox| {
-            mailbox.owner == owner && reply_route(&mailbox).is_ok_and(|now| now == route)
-        });
-    if !routed {
+        .filter(|mailbox| {
+            mailbox.owner == owner && reply_route(mailbox).is_ok_and(|now| now == route)
+        })
+    else {
         return Ok(Some(
             "the mailbox changed while the reply was drafted; draft it again".to_owned(),
         ));
+    };
+    // An IMAP reply stands on the size its server named only while that
+    // check is bound to the mailbox as it stands here; then its exact frozen
+    // message must fit it.
+    if let Some(refusal) = smtp_size_unbound_in(
+        vault,
+        txn,
+        row.smtp_size.as_ref(),
+        route == ReplyRoute::Account(ReplyTransport::Smtp),
+        row.source,
+        &mailbox,
+    )? {
+        return Ok(Some(format!("{refusal}; draft it again")));
+    }
+    if let Some(refusal) = row
+        .smtp_size
+        .as_ref()
+        .and_then(|check| check.refusal(attached.message.octets))
+    {
+        return Ok(Some(refusal));
     }
     Ok(answered_refusal_in(vault, txn, row, attached)?)
+}
+
+/// Why `check` is no size an SMTP reply from the mailbox source
+/// `source_ref`, `source` as it stands in `txn`, may stand on in that
+/// writer (fix list row 17645); `None` while it is, and for a reply that
+/// sends by no SMTP rail (`smtp` false) and names no check. An SMTP reply
+/// stands only on a check bound to that source, the credential it names in
+/// `txn` and the server that credential names, and, when its server named no
+/// limit, to this host's setting now ([`SmtpSizeCheck::binds_in`]). A check
+/// on another rail, none on SMTP's, or one no longer bound refuses that
+/// write: the caller asks the server again outside it. The caller judges
+/// the exact frozen message against a check that stands.
+///
+/// # Errors
+///
+/// Storage failures.
+fn smtp_size_unbound_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    check: Option<&SmtpSizeCheck>,
+    smtp: bool,
+    source_ref: EntityId,
+    source: &MailSourceRow,
+) -> Result<Option<&'static str>> {
+    Ok(match (check, smtp) {
+        (None, false) => None,
+        (Some(check), true) => (!check.binds_in(vault, txn, source_ref, source)?).then_some(
+            "the mailbox's submission credential, its server or this host's size setting \
+             changed since the server was asked the size it takes",
+        ),
+        (None, true) | (Some(_), false) => {
+            Some("the mailbox's submission server was not asked the size it takes")
+        }
+    })
 }
 
 /// How a source's replies leave it.
@@ -469,15 +548,31 @@ fn reply_route(row: &MailSourceRow) -> MemoryResult<ReplyRoute> {
     }
 }
 
-/// The rail a reply leaving by `route` carries files on (fix list row
-/// 17645): Gmail's, or Graph's for a Microsoft 365 mailbox; `None` for an
-/// IMAP mailbox's, which carries none.
-const fn files_rail(route: ReplyRoute) -> Option<AttachedRail> {
-    match route {
-        ReplyRoute::Gmail(_) => Some(AttachedRail::Gmail),
-        ReplyRoute::Account(ReplyTransport::Graph) => Some(AttachedRail::Graph),
-        ReplyRoute::Account(ReplyTransport::Smtp) => None,
-    }
+/// The rail a reply leaving by `route` from the mailbox source `source`,
+/// `row`, carries files on (fix list row 17645): Gmail's, Graph's for a
+/// Microsoft 365 mailbox, or SMTP submission's for an IMAP one, under the
+/// size its submission server names when asked here, through the mailbox's
+/// own credential (`reply_smtp`).
+///
+/// # Errors
+///
+/// An IMAP mailbox whose submission server could not be asked, or a host
+/// that installs no runner to ask it on.
+fn files_rail(
+    vault: &Vault,
+    route: ReplyRoute,
+    source: EntityId,
+    row: &MailSourceRow,
+) -> MemoryResult<AttachedRail> {
+    Ok(match route {
+        ReplyRoute::Gmail(_) => AttachedRail::Gmail,
+        ReplyRoute::Account(ReplyTransport::Graph) => AttachedRail::Graph,
+        ReplyRoute::Account(ReplyTransport::Smtp) => AttachedRail::Smtp(check_smtp_size(
+            vault,
+            &MailSyncSource::of(source, row),
+            &row.address,
+        )?),
+    })
 }
 
 /// The actor a delegated identity is bound to: its sends go out as that
@@ -737,10 +832,9 @@ fn human_actor(person: EntityId) -> OutboundDispatchActor {
 /// that revision and send, to exactly its recipients (each of a reply to
 /// several, fix list row 17645, the Gate judging each as the counterparty),
 /// from an active IMAP or Microsoft 365 personal mailbox whose owner is that
-/// actor; one with files (fix list row 17645) from a Microsoft 365 mailbox
-/// only, its draft naming them. The gate takes the owner's one press for
-/// exactly that send's digest as its authority, as it takes a member-mail
-/// press.
+/// actor; one with files (fix list row 17645) only while its draft names
+/// them. The gate takes the owner's one press for exactly that send's digest
+/// as its authority, as it takes a member-mail press.
 ///
 /// # Errors
 ///
@@ -811,11 +905,10 @@ pub(crate) fn approved_source_reply_in_txn(
     Ok(source.owner == Some(actor)
         && source.status == MailSourceStatus::Active
         && source.kind == MailSourceKind::PersonalMailbox
-        && match source.provider {
-            MailProvider::Imap => !attached,
-            MailProvider::Microsoft365 => true,
-            _ => false,
-        })
+        && matches!(
+            source.provider,
+            MailProvider::Imap | MailProvider::Microsoft365
+        ))
 }
 
 /// The ref of the one dispatch a draft's revision `row` is: its logical
@@ -901,18 +994,15 @@ impl Memory<'_> {
             (source, row, messages, prior, floor)
         };
         let route = reply_route(&row)?;
-        // Files ride a Google or a Microsoft 365 mailbox's reply: an IMAP
-        // reply with files is refused before any file is read (fix list row
-        // 17645).
-        let rail = match (input.attachments.is_empty(), files_rail(route)) {
-            (true, _) => None,
-            (false, Some(rail)) => Some(rail),
-            (false, None) => {
-                return Err(MemoryError::bad_request(
-                    "a reply carries files from a Google or a Microsoft 365 mailbox only; \
-                     draft it without them",
-                ));
-            }
+        // Files ride a reply from any mailbox; an IMAP one's asks its
+        // submission server the size it takes first, before any file is read
+        // and before anything is published or asked, and is refused when it
+        // cannot, on a host with no blocking runner too (fix list row 17645).
+        // No store transaction is open while it asks.
+        let rail = if input.attachments.is_empty() {
+            None
+        } else {
+            Some(files_rail(vault, route, source, &row)?)
         };
         // The mailbox's own person approves it, so they are asked.
         let mailbox_owner = row.owner;
@@ -949,7 +1039,7 @@ impl Memory<'_> {
         // under the caller's own read lane, then its copy exported once, so
         // a redraft with the same copies is the same revision (fix list row
         // 17645). The lane judges them again in the writer.
-        let (lane, admitted) = if let Some(rail) = rail {
+        let (lane, admitted) = if let Some(rail) = &rail {
             let lane = self.read_lane(ClaimReadStatus::Recorded)?;
             let (to, listed) = split_recipients(&recipients)?;
             let addresses = frozen_addresses(to, listed)
@@ -1029,6 +1119,9 @@ impl Memory<'_> {
                 Some((admitted, answered, dependencies))
             }
         };
+        // The size an IMAP reply's server named, bound to what it was read
+        // from; the writer below takes it only while that still stands.
+        let smtp_size = rail.as_ref().and_then(AttachedRail::smtp_size).cloned();
         let mut frozen = None;
         let (identity, plan_ref, to, frozen_recipients, body_html, message) = match route {
             ReplyRoute::Gmail(identity) => {
@@ -1079,11 +1172,12 @@ impl Memory<'_> {
                     raw_html,
                     now,
                 )?;
-                // A Microsoft 365 reply with files names them by their
-                // manifest's digest in its frozen message, which rides in
-                // its draft's row as one without files does.
-                if let Some((admitted, answered, dependencies)) = attaching {
-                    let (bound, reply) = freeze_graph_reply(
+                // A Microsoft 365 or an IMAP reply with files names them by
+                // their manifest's digest in its frozen message, which rides
+                // in its draft's row as one without files does.
+                if let (Some((admitted, answered, dependencies)), Some(rail)) = (attaching, rail) {
+                    let (bound, reply) = freeze_account_reply(
+                        rail,
                         message,
                         admitted,
                         &id,
@@ -1124,6 +1218,7 @@ impl Memory<'_> {
             drafted_at: prior.as_ref().map_or(now, |prior| prior.drafted_at),
             updated_at: now,
             message,
+            smtp_size,
             attached: frozen.as_ref().map(|frozen| frozen.held.clone()),
         };
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
@@ -1345,14 +1440,18 @@ impl Vault {
         // The mailbox's own person, owner of the vault or not: the door
         // acts only on their own mailbox's reply.
         let actor = owner.revalidate_person(self)?;
-        let (row, source) = {
+        // The size check the draft holds as this press reads it, before the
+        // press asks its server again: the writer keeps the new one only
+        // over exactly this one (fix list row 17645). The read is closed
+        // before any server is asked.
+        let (held_size, row, source) = {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
             super::pack::require_pack_active_in(self, &txn)?;
             let row = DRAFTS.get(&self.store, &txn, &id)?.ok_or_else(unknown)?;
             let source = SOURCES
                 .get(&self.store, &txn, &row.source)?
                 .ok_or_else(unknown)?;
-            (row, source)
+            (row.smtp_size.clone(), row, source)
         };
         if source.owner != Some(actor) {
             return Err(MemoryError::bad_request(
@@ -1382,8 +1481,8 @@ impl Vault {
         // settles before today's route or identity is asked for: a paused
         // mailbox or a withdrawn identity holds none of it back, and nothing
         // of today's files, recipients or message is judged (fix list row
-        // 17645). A Gmail reply's send went through its identity; a Graph
-        // reply's through none.
+        // 17645). A Gmail reply's send went through its identity; a Graph or
+        // an SMTP reply's through none.
         if row.attached.is_some()
             && let Some(sender) =
                 reply_send_completed(self, &reply_intent_ref(&row), &row.plan_ref, row.identity)?
@@ -1392,7 +1491,7 @@ impl Vault {
         }
         // The reply leaves the way its draft froze, while the mailbox still
         // sends that way.
-        let (request, digest, dispatcher) = match (
+        let (request, digest, dispatcher, rechecked) = match (
             reply_route(&source)?,
             row.identity,
             &row.message,
@@ -1412,7 +1511,7 @@ impl Vault {
                     adapter: Box::new(adapter),
                     identity,
                 };
-                (request, digest, dispatcher)
+                (request, digest, dispatcher, None)
             }
             (ReplyRoute::Account(transport), None, Some(message)) => {
                 // Sent as the mailbox's own account, by its owner; the one
@@ -1426,14 +1525,36 @@ impl Vault {
                         invalid_state("the reply's send resolves a sender identity; draft again")
                     })?;
                 let mail_source = self.mail_sync_source(row.source)?.ok_or_else(unknown)?;
+                // An IMAP reply with files asks its submission server again,
+                // before every press and outside its writer, the size it
+                // takes now: the size its draft read is no lasting
+                // permission (fix list row 17645).
+                let rechecked = if transport == ReplyTransport::Smtp && row.attached.is_some() {
+                    Some(check_smtp_size(self, &mail_source, &message.from)?)
+                } else {
+                    None
+                };
                 let sink = ReplySink::new(self, mail_source, message.clone(), transport);
-                (request, digest, ReplyDispatcher::Account(Box::new(sink)))
+                (
+                    request,
+                    digest,
+                    ReplyDispatcher::Account(Box::new(sink)),
+                    rechecked,
+                )
             }
             _ => {
                 return Err(invalid_state(
                     "the mailbox now sends another way or through another identity; draft again",
                 ));
             }
+        };
+        // The press stands at the size its server named just now.
+        let row = match &rechecked {
+            Some(check) => MailReplyDraftRow {
+                smtp_size: Some(check.clone()),
+                ..row
+            },
+            None => row,
         };
         // A reply with files sends only the message it was frozen with:
         // before the press, its send still stands and that message opens as
@@ -1444,17 +1565,17 @@ impl Vault {
         };
         let row = self.try_with_write_txn_grouped(|txn| -> MemoryResult<MailReplyDraftRow> {
             // Every press, a retry too, proves the owner again in the writer
-            // that acts, and finds the mailbox still theirs.
-            if owner.revalidate_person_in_txn(self, txn)? != actor
-                || SOURCES
-                    .get(&self.store, txn, &row.source)?
-                    .and_then(|source| source.owner)
-                    != Some(actor)
-            {
+            // that acts, and finds the mailbox still theirs, as it stands in
+            // that writer.
+            let proven = owner.revalidate_person_in_txn(self, txn)? == actor;
+            let Some(mailbox) = SOURCES
+                .get(&self.store, txn, &row.source)?
+                .filter(|source| proven && source.owner == Some(actor))
+            else {
                 return Err(MemoryError::bad_request(
                     "only the mailbox's own person approves its replies",
                 ));
-            }
+            };
             let mut held = DRAFTS.get(&self.store, txn, &id)?.ok_or_else(unknown)?;
             if held.revision != row.revision || held.plan_ref != row.plan_ref {
                 return Err(invalid_state(
@@ -1469,7 +1590,35 @@ impl Vault {
                     "the draft was discarded, sent or left uncertain since it was read",
                 ));
             }
-            // And it still stands in the writer that presses it.
+            // An IMAP reply with files stands at the size its server named
+            // for this press, kept only over the check the draft held when
+            // this press read it: a press that kept another in between wins,
+            // this one is refused, and the next press asks again. No clock
+            // orders two checks. The check stands only while it is bound to
+            // the mailbox's credential and its server as they stand in this
+            // writer, and to this host's setting now; a check no longer
+            // bound refuses the press, and the next press asks again. Its
+            // exact frozen message is judged against it below, and the draft
+            // keeps it for its reviewer (fix list row 17645).
+            if held.smtp_size != held_size {
+                return Err(invalid_state(
+                    "another press asked the mailbox's submission server the size it takes \
+                     since this one read the draft; approve it again",
+                ));
+            }
+            let verdict = rechecked.clone();
+            let smtp = held.attached.is_some() && mailbox.provider == MailProvider::Imap;
+            if let Some(refusal) =
+                smtp_size_unbound_in(self, txn, verdict.as_ref(), smtp, row.source, &mailbox)?
+            {
+                return Err(MemoryError::bad_request(format!(
+                    "{refusal}; approve it again"
+                )));
+            }
+            let verdict_changed = held.smtp_size != verdict;
+            held.smtp_size = verdict;
+            // And it still stands in the writer that presses it, its exact
+            // frozen message within that size.
             if let Some(refusal) = standing_refusal_in(self, txn, &id, &held)? {
                 return Err(MemoryError::bad_request(refusal));
             }
@@ -1481,6 +1630,8 @@ impl Vault {
                 DRAFTS.put(&self.store, txn, &id, &held)?;
                 // The press answers the revision's Ask.
                 clear_reply_ask_in_txn(self, txn, &id, held.revision)?;
+            } else if verdict_changed {
+                DRAFTS.put(&self.store, txn, &id, &held)?;
             }
             Ok(held)
         })?;
@@ -1525,8 +1676,8 @@ impl Vault {
     /// send the ledger already completed as `sender` (fix list row 17645),
     /// approved by `owner`, the mailbox's own person `actor`: the revision's
     /// frozen request, rebuilt from the draft as it was dispatched (a Gmail
-    /// reply's as its identity's bound sender, a Graph reply's as the
-    /// mailbox's owner), is replayed through the recorded dispatch door,
+    /// reply's as its identity's bound sender, a Graph or an SMTP reply's as
+    /// the mailbox's owner), is replayed through the recorded dispatch door,
     /// which validates it whole against the ledger's frozen request and
     /// answers with the recorded outcome; nothing is sent, and no live route,
     /// identity, grant or send capability is needed. In one writer that

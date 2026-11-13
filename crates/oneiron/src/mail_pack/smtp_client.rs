@@ -10,6 +10,16 @@
 //! and every command ends by a deadline. Once the data's final dot is
 //! written, a missing answer is no proof the message was not taken: the
 //! submission is uncertain, never refused.
+//!
+//! The server's `EHLO` over TLS names the most octets it takes (`SIZE`, RFC
+//! 1870): a positive number is its limit; `SIZE` absent, with no number or
+//! with 0 names none (fix list row 17645). A message with files is counted
+//! as its CRLF octets, not its dot-stuffed data or the final `.<CRLF>`, and
+//! is refused before `MAIL` above that limit, else above the limit its
+//! caller gives for a server that names none; where the server offers
+//! `SIZE`, `MAIL FROM` declares the message's octets. A message without
+//! files is submitted as before. The size check's `QUIT` must be answered
+//! by its deadline; a send's ends the session whatever is answered.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -39,6 +49,7 @@ const SMTP_TLS: TlsRefusals = TlsRefusals {
     setup: "smtp_tls_setup_failed",
     host: "smtp_host_invalid",
     unresolved: "smtp_host_unresolved",
+    resolution_timed_out: "smtp_host_resolution_timed_out",
     connect: "smtp_connect_failed",
 };
 
@@ -115,6 +126,9 @@ pub(super) struct SmtpSession {
     extensions: BTreeSet<String>,
     /// The `AUTH` mechanisms it offered, upper case.
     mechanisms: BTreeSet<String>,
+    /// The most octets one message may have, as the server's `EHLO` over TLS
+    /// named it (`SIZE` with a positive number); `None` when it names none.
+    size_limit: Option<u64>,
     /// The name this client gives itself in `EHLO`.
     client_name: String,
 }
@@ -142,6 +156,7 @@ impl SmtpSession {
             wire: Wire::Clear(BufReader::new(stream)),
             extensions: BTreeSet::new(),
             mechanisms: BTreeSet::new(),
+            size_limit: None,
             client_name: client_name.to_owned(),
         };
         if security == SmtpSecurity::Tls {
@@ -195,7 +210,8 @@ impl SmtpSession {
         }
     }
 
-    /// `EHLO`: what the server offers, from scratch.
+    /// `EHLO`: what the server offers, from scratch, its message size limit
+    /// with it.
     fn ehlo(&mut self) -> Result<()> {
         let line = format!("EHLO {}", self.client_name);
         self.write_line(&line)?;
@@ -205,6 +221,7 @@ impl SmtpSession {
         }
         self.extensions.clear();
         self.mechanisms.clear();
+        self.size_limit = None;
         for line in reply.lines.iter().skip(1) {
             let mut words = line.split_ascii_whitespace();
             let Some(keyword) = words.next() else {
@@ -219,13 +236,26 @@ impl SmtpSession {
                 Some((keyword, first)) => (keyword, Some(first)),
                 None => (keyword, None),
             };
-            if keyword == "AUTH" {
-                self.mechanisms.extend(first);
-                self.mechanisms.extend(words.map(str::to_ascii_uppercase));
+            match keyword.as_str() {
+                "AUTH" => {
+                    self.mechanisms.extend(first);
+                    self.mechanisms.extend(words.map(str::to_ascii_uppercase));
+                }
+                "SIZE" => {
+                    self.size_limit = size_limit(first.as_deref().or_else(|| words.next()));
+                }
+                _ => {}
             }
             self.extensions.insert(keyword);
         }
         Ok(())
+    }
+
+    /// The most octets one message may have, as the server's `EHLO` over TLS
+    /// named it (fix list row 17645): its positive `SIZE`; `None` when it
+    /// named none.
+    pub(super) const fn advertised_size(&self) -> Option<u64> {
+        self.size_limit
     }
 
     /// Authenticates as `username`: a token by `XOAUTH2`; a password by
@@ -282,18 +312,47 @@ impl SmtpSession {
     }
 
     /// Submits `message` from `from` to every address of `recipients`, one
-    /// `RCPT` each, its data dot-stuffed. Any refused envelope command is
-    /// `smtp_envelope_refused`, as for a send to one. A message to several
-    /// whose recipient is refused resets the transaction before `DATA`: no
-    /// subset of its recipients is sent to.
-    pub(super) fn submit(&mut self, from: &str, recipients: &[&str], message: &[u8]) -> Submitted {
+    /// `RCPT` each, its data dot-stuffed. A message with files comes with
+    /// `unadvertised_limit`, the limit for a server that names none (fix
+    /// list row 17645): above this session's limit, the server's own `SIZE`
+    /// or else that one, it is `smtp_message_too_large` before `MAIL`, and
+    /// where the server offers `SIZE`, `MAIL FROM` declares its octets. A
+    /// message without files comes with `None` and is submitted as it always
+    /// was: no limit judged here, no `SIZE` declared. Any refused envelope
+    /// command is `smtp_envelope_refused`, as for a send to one. A message
+    /// to several whose recipient is refused resets the transaction before
+    /// `DATA`: no subset of its recipients is sent to.
+    pub(super) fn submit(
+        &mut self,
+        from: &str,
+        recipients: &[&str],
+        message: &[u8],
+        unadvertised_limit: Option<u64>,
+    ) -> Submitted {
         if recipients.is_empty()
             || !envelope_address(from)
             || !recipients.iter().copied().all(envelope_address)
         {
             return Submitted::NotSent("smtp_envelope_address_unsupported");
         }
-        match self.command(&format!("MAIL FROM:<{from}>")) {
+        let mail = match unadvertised_limit {
+            None => format!("MAIL FROM:<{from}>"),
+            Some(unadvertised_limit) => {
+                // The message's own CRLF octets, as the frozen message is:
+                // not its dot-stuffed data, nor the final `.<CRLF>` (RFC 1870
+                // §3).
+                let octets = message.len() as u64;
+                if octets > self.size_limit.unwrap_or(unadvertised_limit) {
+                    return Submitted::NotSent("smtp_message_too_large");
+                }
+                if self.extensions.contains("SIZE") {
+                    format!("MAIL FROM:<{from}> SIZE={octets}")
+                } else {
+                    format!("MAIL FROM:<{from}>")
+                }
+            }
+        };
+        match self.command(&mail) {
             Ok(250) => {}
             Ok(_) => return Submitted::NotSent("smtp_envelope_refused"),
             Err(_) => return Submitted::NotSent("smtp_connection_lost"),
@@ -340,10 +399,27 @@ impl SmtpSession {
         }
     }
 
-    /// Ends the session; what the server answers changes nothing.
+    /// Ends the session after a send; what the server answers changes
+    /// nothing: the send's outcome is already known.
     pub(super) fn quit(mut self) {
         if self.command("QUIT").is_err() {
             tracing::debug!("smtp session ended without its QUIT answered");
+        }
+    }
+
+    /// Ends the session and requires the server's answer, within the command
+    /// deadline (fix list row 17645): the size check's last step. A `QUIT`
+    /// that times out or loses its connection is `smtp_quit_unanswered`; any
+    /// answer but `221` (RFC 5321 §4.1.1.10) is `smtp_quit_refused`.
+    ///
+    /// # Errors
+    ///
+    /// The `QUIT` unanswered or refused.
+    pub(super) fn quit_answered(mut self) -> Result<()> {
+        match self.command("QUIT") {
+            Ok(221) => Ok(()),
+            Ok(_) => Err(refused("smtp_quit_refused")),
+            Err(_) => Err(refused("smtp_quit_unanswered")),
         }
     }
 
@@ -402,6 +478,18 @@ impl SmtpSession {
         let code = code.ok_or_else(|| refused("smtp_reply_malformed"))?;
         Ok(Reply { code, lines })
     }
+}
+
+/// The limit a `SIZE` keyword's `argument` names (RFC 1870 §4): a positive
+/// decimal number of octets. No argument, one that is no plain decimal
+/// number, or 0 names none.
+fn size_limit(argument: Option<&str>) -> Option<u64> {
+    argument
+        .filter(|argument| {
+            !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        .and_then(|argument| argument.parse::<u64>().ok())
+        .filter(|limit| *limit > 0)
 }
 
 fn write_all(writer: &mut dyn Write, bytes: &[u8]) -> std::io::Result<()> {
