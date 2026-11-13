@@ -322,7 +322,9 @@ fn connect_and_import(
 /// The vault's, or a seeded step the vault refuses.
 #[doc(hidden)]
 pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| memory_invalid("embedded owner", error))?;
     crate::mail_pack::install_mail_calendar_pack_embedded(
         &vault.memory(owner, EdgeActorClass::Human),
     )
@@ -374,7 +376,9 @@ pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
 /// The vault's, or a seeded step the vault refuses.
 #[doc(hidden)]
 pub fn seed_microsoft_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| memory_invalid("embedded owner", error))?;
     crate::mail_pack::install_mail_calendar_pack_embedded(
         &vault.memory(owner, EdgeActorClass::Human),
     )
@@ -406,7 +410,9 @@ pub fn seed_microsoft_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread
 /// The vault's, or a seeded step the vault refuses.
 #[doc(hidden)]
 pub fn seed_imap_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| memory_invalid("embedded owner", error))?;
     crate::mail_pack::install_mail_calendar_pack_embedded(
         &vault.memory(owner, EdgeActorClass::Human),
     )
