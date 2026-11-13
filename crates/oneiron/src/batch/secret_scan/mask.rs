@@ -26,8 +26,8 @@
 //! What the door finds but no span places is sealed whole (`seal_whole`):
 //! the smallest value that reads as the hit alone goes to custody, and its
 //! handle takes its place; the scan never refuses a write for it. What no
-//! seal can take still refuses the whole write: a key split over a file's
-//! members, an entity the engine itself authors or a peer replicated, a
+//! seal can take still refuses the whole write: a key in a file that no
+//! mark places, an entity the engine itself authors or a peer replicated, a
 //! phonetic code, and a replayed batch. A plan runs first on a copy, with a
 //! stand-in handle for each secret and each file's keys overwritten, and
 //! the door reads that copy again; only a clean copy mints custody records.
