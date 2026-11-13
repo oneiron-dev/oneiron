@@ -60,10 +60,25 @@ export const FULL_GRID_HYPERLINK_SHEET = worksheet(
 );
 
 /**
- * A shared formula whose master text is `masterLength` characters, followed by
- * `followers` cells below it; every cell caches the value 1.
+ * One cell and one hyperlink whose single address decodes to row 2^53, where
+ * SheetJS's `++R` leaves the row as it was: its loop never ends.
  */
-export function fanOutSheet(masterLength: number, followers: number): string {
+export const HUGE_ROW_HYPERLINK_SHEET = worksheet(
+  `<row r="1"><c r="A1"><v>1</v></c></row>`,
+  `<hyperlinks><hyperlink ref="A9007199254740994" location="S1!A1"/></hyperlinks>`,
+);
+
+/**
+ * A shared formula whose master text is `masterLength` characters, followed by
+ * `followers` cells below it; every cell caches the value 1. Each follower
+ * names the master with `followerTag`: the standard self-closing formula by
+ * default, or a tag SheetJS's fallback formula reader also takes.
+ */
+export function fanOutSheet(
+  masterLength: number,
+  followers: number,
+  followerTag = `<f t="shared" si="0"/>`,
+): string {
   // References, so each follower gets its own shifted copy, not the master's
   // string back unchanged.
   const master = "A1+".repeat(Math.floor(masterLength / 3)).padEnd(masterLength, "1");
@@ -71,7 +86,7 @@ export function fanOutSheet(masterLength: number, followers: number): string {
     `<row r="1"><c r="A1"><f t="shared" ref="A1:A${followers + 1}" si="0">${master}</f><v>1</v></c></row>`,
   ];
   for (let row = 2; row <= followers + 1; row += 1) {
-    rows.push(`<row r="${row}"><c r="A${row}"><f t="shared" si="0"/><v>1</v></c></row>`);
+    rows.push(`<row r="${row}"><c r="A${row}">${followerTag}<v>1</v></c></row>`);
   }
   return worksheet(rows.join(""));
 }
@@ -96,7 +111,12 @@ function unfinishedDeflatePackage(): Uint8Array {
   return bytes;
 }
 
-export type CraftedKind = "unfinished-deflate" | "full-grid-hyperlink" | "shared-formula-fan-out";
+export type CraftedKind =
+  | "unfinished-deflate"
+  | "full-grid-hyperlink"
+  | "shared-formula-fan-out"
+  | "huge-row-hyperlink"
+  | "fallback-formula-fan-out";
 
 /** The crafted package of `kind`; its sheet is S1. */
 export function craftedPackage(kind: CraftedKind): Uint8Array {
@@ -109,5 +129,10 @@ export function craftedPackage(kind: CraftedKind): Uint8Array {
       // 64 KiB of master text copied to 300,000 cells: 19.7 billion
       // characters, from about 21 MB of stored XML.
       return sheetsPackage([text(fanOutSheet(64 * 1024, 300_000))]);
+    case "huge-row-hyperlink":
+      return sheetsPackage([text(HUGE_ROW_HYPERLINK_SHEET)]);
+    case "fallback-formula-fan-out":
+      // The same fan-out, each follower an unknown `<foo si="0"/>`.
+      return sheetsPackage([text(fanOutSheet(64 * 1024, 300_000, `<foo si="0"/>`))]);
   }
 }

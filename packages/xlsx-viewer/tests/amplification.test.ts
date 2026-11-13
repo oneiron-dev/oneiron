@@ -2,9 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { deflateRawSync } from "node:zlib";
 import type { ICellData, IWorksheetData } from "@univerjs/core";
 import { PREVIEW_BUDGET, WorkbookBudgetError, preflightPackage, type BudgetLine } from "../src/bridge/budget";
+import { checkSheetExpansion } from "../src/bridge/expansion";
 import { readSheet, readWorkbook, readWorkbookOutline } from "../src/bridge/parse";
 import {
   FULL_GRID_HYPERLINK_SHEET,
+  HUGE_ROW_HYPERLINK_SHEET,
   PLAIN_SHEET,
   fanOutSheet,
   sheetsPackage,
@@ -88,6 +90,46 @@ describe("xlsx preview: what SheetJS would expand is refused before it reads", (
     },
     TEST_LIMIT_MS,
   );
+
+  it(
+    "refuses a hyperlink whose one address lies past 2^53, where SheetJS's loop cannot step",
+    () => {
+      expect(readInChild("huge-row-hyperlink")).toEqual({ refused: "sheetCells" });
+    },
+    TEST_LIMIT_MS,
+  );
+
+  it(
+    "refuses a shared formula copied through SheetJS's fallback formula reader",
+    () => {
+      expect(readInChild("fallback-formula-fan-out")).toEqual({ refused: "sheetTextChars" });
+    },
+    TEST_LIMIT_MS,
+  );
+
+  it("counts what SheetJS would expand before it reads: far addresses, browser-decoded ranges, fallback followers", () => {
+    const sheetPart = "xl/worksheets/sheet1.xml";
+    const check = (bytes: Uint8Array, formulaText = false, budget = PREVIEW_BUDGET) => () =>
+      checkSheetExpansion(sheetPart, bytes, budget, formulaText);
+    // One address at row 2^53, alone or as both ends of a range.
+    refusedWith("sheetCells", check(text(HUGE_ROW_HYPERLINK_SHEET)));
+    refusedWith(
+      "sheetCells",
+      check(text(worksheet("", `<hyperlinks><hyperlink ref="A9007199254740994:A9007199254740994"/></hyperlinks>`))),
+    );
+    // E0 80 BA in place of the colon: SheetJS keeps byte 80 as its own
+    // character, and its browser UTF-8 decode (utf8reada) reads the three
+    // bytes as ':', so the ref names the whole grid.
+    const marked = text(worksheet("", `<hyperlinks><hyperlink ref="A1|XFD1048576"/></hyperlinks>`));
+    const bar = marked.indexOf(0x7c);
+    const spliced = Uint8Array.from([...marked.subarray(0, bar), 0xe0, 0x80, 0xba, ...marked.subarray(bar + 1)]);
+    refusedWith("sheetCells", check(spliced));
+    // 100 characters copied to 50 cells through `<foo si="0"/>`, over a
+    // 1,000-character line; one per cell, as SheetJS reads one.
+    const budget = { ...PREVIEW_BUDGET, sheetTextChars: 1_000 };
+    refusedWith("sheetTextChars", check(text(fanOutSheet(100, 50, `<foo si="0"/>`)), true, budget));
+    expect(check(text(fanOutSheet(100, 9, `<foo si="0"/><foo si="0"/>`)), true, budget)).not.toThrow();
+  });
 
   it("refuses a deflate stream an inflater cannot finish inside its entry, from the preflight alone", () => {
     const stream = deflateRawSync(MIXED_XML);

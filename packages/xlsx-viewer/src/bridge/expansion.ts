@@ -16,11 +16,14 @@
  * text against `sheetTextChars`, here first.
  *
  * The counts are upper bounds of what SheetJS reads, never less: the part is
- * read the ways SheetJS decodes it (bytes as characters, and UTF-16 after a
- * byte-order mark), a hyperlink tag also after SheetJS's lenient UTF-8 decode,
- * each hyperlink counted on its own even where ranges overlap, and every
- * formula naming a shared index counted at the longest master text that index
- * names anywhere in the part. A shifted copy can be a few characters longer
+ * read the ways SheetJS decodes it (each byte as the one character of its
+ * value, and UTF-16 after a byte-order mark), a hyperlink tag also after
+ * SheetJS's lenient UTF-8 decode, each hyperlink counted on its own even where
+ * ranges overlap, an address SheetJS's loop cannot step past counted as no
+ * end, every formula naming a shared index counted at the longest master text
+ * that index names anywhere in the part, and so is the first self-closing tag
+ * of a cell that SheetJS's fallback formula reader takes (`<f[^<>]*\/>`, which
+ * also matches `<foo si="0"/>`). A shifted copy can be a few characters longer
  * than its master; the check on the parsed sheet still bounds that.
  */
 import { WorkbookBudgetError } from "./budget";
@@ -31,11 +34,14 @@ const HYPERLINK_TAG = /<(?:\w+:)?hyperlink [^<>]*>/g;
 /** SheetJS's attribute pattern (`attregexg`). */
 const ATTRIBUTE = /\s([^"\s?>/]+)\s*=\s*((?:")([^"]*)(?:")|(?:')([^']*)(?:')|([^'">\s]+))/g;
 /**
- * A formula element's start tag (self-closing or not) or its end tag, else
- * where SheetJS cuts the sheet data into a new cell or row (`cellregex`,
- * `rowregex`): it looks for a formula's end inside its own cell only.
+ * A formula element's start tag (self-closing or not) or its end tag, or a
+ * self-closing tag whose name only starts with `f`, which SheetJS's fallback
+ * formula reader (`/<f[^<>]*\/>/`, first match of a cell) takes as a formula
+ * too; else where SheetJS cuts the sheet data into a new cell or row
+ * (`cellregex`, `rowregex`): it looks for a formula's end inside its own cell
+ * only.
  */
-const FORMULA_SCAN = /(<(?:\w+:)?f\b[^<>]*>)|(<\/(?:\w+:)?f>)|<(?:\w+:)?c[ />]|<\/(?:\w+:)?row>/g;
+const FORMULA_SCAN = /(<(?:\w+:)?f\b[^<>]*>)|(<\/(?:\w+:)?f>)|(<f[^<>]*\/>)|<(?:\w+:)?c[ />]|<\/(?:\w+:)?row>/g;
 
 /**
  * The key SheetJS files an attribute under, lower case (`parsexmltag`): a
@@ -94,7 +100,10 @@ function lenientUtf8(text: string): string {
  * How many addresses SheetJS visits for one range text: its loop runs over
  * every row of the range, and over every column of each row
  * (`safe_decode_range` has no clamp to Excel's grid, so a long row number
- * counts in full, and a row loop with no columns still runs).
+ * counts in full, and a row loop with no columns still runs). An address that
+ * decodes past the safe integers counts as no end: there `++R` or `++C` leaves
+ * the double as it was, so SheetJS's loop never ends, even over one address
+ * (`A9007199254740994` decodes to row 2^53).
  */
 function rangeVisits(range: string): number {
   let i = 0;
@@ -112,26 +121,44 @@ function rangeVisits(range: string): number {
   };
   const startColumn = part(true);
   const startRow = part(false);
+  if (!Number.isSafeInteger(startColumn) || !Number.isSafeInteger(startRow)) {
+    return Number.POSITIVE_INFINITY;
+  }
   if (i === range.length || code !== 10) {
     return 1;
   }
   i += 1;
   const endColumn = part(true);
   const endRow = part(false);
+  if (!Number.isSafeInteger(endColumn) || !Number.isSafeInteger(endRow)) {
+    return Number.POSITIVE_INFINITY;
+  }
   const rows = endRow >= startRow ? endRow - startRow + 1 : 0;
   if (rows === 0) {
     return 0;
   }
   const columns = endColumn >= startColumn ? endColumn - startColumn + 1 : 0;
-  const visits = rows * Math.max(columns, 1);
-  // Two row numbers past the largest double both read as Infinity; SheetJS's
-  // loop then never ends.
-  return Number.isNaN(visits) ? Number.POSITIVE_INFINITY : visits;
+  return rows * Math.max(columns, 1);
+}
+
+/**
+ * The bytes as one character each, of the byte's own value: what SheetJS's
+ * `cc2str` makes of a part with no byte-order mark. Its browser path decodes
+ * windows-1252 and then maps the characters of 80-9F back to their bytes, so
+ * a windows-1252 decode alone would read `E0 80 BA` as other than `:` after
+ * the lenient UTF-8 decode.
+ */
+function byteText(bytes: Uint8Array): string {
+  let out = "";
+  for (let at = 0; at < bytes.length; at += 8192) {
+    out += String.fromCharCode(...bytes.subarray(at, at + 8192));
+  }
+  return out;
 }
 
 /** The part as the strings SheetJS may parse it as (`cc2str`). */
 function partTexts(bytes: Uint8Array): string[] {
-  const texts = [new TextDecoder("windows-1252").decode(bytes)];
+  const texts = [byteText(bytes)];
   if (bytes[0] === 0xff && bytes[1] === 0xfe) {
     texts.push(new TextDecoder("utf-16le").decode(bytes.subarray(2)));
   }
@@ -164,8 +191,17 @@ function checkSharedFormulas(text: string, budget: PreviewBudget): void {
   const followers = new Map<string, number>();
   /** Formula start tags in the current cell that name a shared index and wait for an end tag. */
   let open: { readonly indexes: readonly string[]; readonly textStart: number }[] = [];
+  /** Whether the current cell's first fallback-only tag has been seen: SheetJS reads no other. */
+  let fallbackSeen = false;
   for (const match of text.matchAll(FORMULA_SCAN)) {
-    if (match[1] !== undefined) {
+    if (match[3] !== undefined) {
+      if (!fallbackSeen) {
+        fallbackSeen = true;
+        for (const index of attributeValues(match[3], "si")) {
+          followers.set(index, (followers.get(index) ?? 0) + 1);
+        }
+      }
+    } else if (match[1] !== undefined) {
       const indexes = attributeValues(match[1], "si");
       for (const index of indexes) {
         followers.set(index, (followers.get(index) ?? 0) + 1);
@@ -184,6 +220,7 @@ function checkSharedFormulas(text: string, budget: PreviewBudget): void {
       open = [];
     } else {
       open = [];
+      fallbackSeen = false;
     }
   }
   let copied = 0;
