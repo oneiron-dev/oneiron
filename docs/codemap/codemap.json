@@ -10294,13 +10294,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/seal/auto_commit.rs",
      "purpose": "Native policy checker for the verified SealJob producer",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -10474,7 +10474,7 @@
      "path": "src/blob_artifact/made_by.rs",
      "purpose": "The made_by receipt every blob version carries (ARCH-0078 \"The provenance receipt\", ARCH-0035 Rule A): what…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -46494,7 +46494,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 13
      }
     },
@@ -49287,7 +49287,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LinearEffectKind",
@@ -52707,7 +52707,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarDetailSetting",
@@ -52725,7 +52725,7 @@
       "const": 1,
       "crate-vis": 7,
       "enum": 6,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -62646,7 +62646,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ServeReport",
@@ -102286,6 +102286,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/delegation_expiry_wall_clock.rs",
+     "purpose": "A delegation's end is wall time (census L7-18)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/delete_authority.rs",
      "purpose": "DEL-2: the delete authority on every delete (ARCH-0043, owner DEL-2 = A, 9 Oct: \"Members delete their own…",
      "surface": {}
@@ -103520,6 +103528,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/mail_active_sources.rs",
+     "purpose": "[VAULT-STORE-FIELD-PUBLIC]: the host steps of `oneiron-mail-pack` (`mail_sources_due`, `mail_sync_sources`)…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/mail_late_address_headers.rs",
      "purpose": "Fix list row 20852: an IMAP or mbox landing reads From, Reply-To, To and Cc from the message's whole header…",
      "surface": {}
@@ -103618,6 +103634,14 @@
      "notable": [],
      "path": "tests/origin_register_host_git.rs",
      "purpose": "Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/origin_serve_command_section_deadline.rs",
+     "purpose": "Census L4-31, ARCH-0068 #ra1-push-spool-open: \"deadline for a trickling command section\"",
      "surface": {}
     },
     {
@@ -104574,6 +104598,14 @@
      "notable": [],
      "path": "tests/store_split_compilefail/c_session_route_is_engine_only.rs",
      "purpose": "[SESSION-OVERLAY-ROUTE-OVERLAY-PUBLIC]: `SessionWriteRoute::overlay` is `pub` in the store, but the engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/store_split_compilefail/d_vault_store_is_engine_only.rs",
+     "purpose": "[VAULT-STORE-FIELD-PUBLIC]: core split slice 0 (#6862) made `Vault::store` `pub` so the lifted mail pack…",
      "surface": {}
     },
     {
@@ -105801,7 +105833,7 @@
     "linear_sync": {
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
@@ -106597,10 +106629,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 272,
+   "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7495,
-   "test_files": 1207
+   "test_files": 1211
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -123572,6 +123604,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sandbox/syscall_filter.rs",
+     "purpose": "The syscall filter on Linux (census L4-09, ARCH-0075 \"Syscalls\"): a seccomp deny-list that every organ…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -123791,6 +123833,14 @@
      "path": "tests/organ_fence.rs",
      "purpose": "OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/organ_syscall_filter.rs",
+     "purpose": "The organ's syscall filter (census L4-09, ARCH-0075 \"Syscalls\"): an organ that calls ptrace dies by the…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -123921,7 +123971,7 @@
      "purpose": "Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on…"
     },
     "sandbox": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -123958,8 +124008,8 @@
    },
    "over_bar": 2,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 49,
-   "test_files": 4
+   "source_files": 50,
+   "test_files": 5
   },
   "oneiron-organ-protocol": {
    "files": [
@@ -148036,11 +148086,27 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_empty_beside_l2_base.rs",
+     "purpose": "A context pack its rows left empty says so, with the owner's L2 base beside it or not (FIX 22309, E2E…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/delete_authority_served_door.rs",
      "purpose": "DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/doctor_off_record_dump_suppression.rs",
+     "purpose": "Census row L6-18: `oneiron doctor` reports the operator's core-dump switch for a process that holds an…",
      "surface": {}
     },
     {
@@ -149242,7 +149308,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1862,
-   "test_files": 232
+   "test_files": 234
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -154453,7 +154519,7 @@
      "path": "src/origin/smart_http/paths.rs",
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
-      "const": 23,
+      "const": 24,
       "fn": 6
      }
     },
@@ -156238,6 +156304,18 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/dump_suppression.rs",
+     "purpose": "Core-dump suppression for a process that holds off-record room bytes (ARCH-0052 threat-model note…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [
       "ObservedAllocator",
@@ -156292,7 +156370,7 @@
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
      "surface": {
       "mod": 7,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -158325,6 +158403,22 @@
       "static": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session_overlay_dump_suppression.rs",
+     "purpose": "Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session_overlay_dump_suppression_off.rs",
+     "purpose": "Census row L6-18: the operator's off switch",
+     "surface": {}
     }
    ],
    "modules": {
@@ -159652,7 +159746,7 @@
      "purpose": "Store-layer modules of core `serialize`; core re-exports each one at its old path"
     },
     "session_overlay": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -159892,8 +159986,8 @@
    },
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 643,
-   "test_files": 4
+   "source_files": 644,
+   "test_files": 6
   },
   "oneiron-testkit": {
    "files": [

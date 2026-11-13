@@ -261,6 +261,7 @@ pub(super) fn step_state_write(
         progression,
         StepStateOwners::default(),
         response_payload,
+        None,
         now_ms,
     )
     .map(|_| ())

@@ -892,7 +892,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/render_tests.rs` | test | m | — | — | Parsed-PDF fixtures exercised through the public preparation byte API |
 | `src/blob_artifact/esign/reseal.rs` | src | s | 2 fn | — | Owner-tier reseal admission and the repair sweep |
 | `src/blob_artifact/esign/seal.rs` | src | m | 2 struct · 1 enum · 3 fn · 5 crate-vis | EsignSealError, SealedDocument, SealedItem | Lease-fenced seal job |
-| `src/blob_artifact/esign/seal/auto_commit.rs` | src | s | 21 crate-vis | — | Native policy checker for the verified SealJob producer |
+| `src/blob_artifact/esign/seal/auto_commit.rs` | src | m | 22 crate-vis | — | Native policy checker for the verified SealJob producer |
 | `src/blob_artifact/esign/seal_run.rs` | src | s | 1 enum · 1 fn | EsignSealRun | The seal task's runner (ARCH-0064 section 7: the seal "runs as a task, never inline in a request") |
 | `src/blob_artifact/esign/sealer.rs` | src | s | 1 struct · 2 trait · 1 re-export | EsignSealInput, EsignSealProducer, EsignSealer | Core half of `blob_artifact::esign::sealer`: its store-layer items live in… |
 | `src/blob_artifact/esign/signature_image.rs` | src | m | 1 struct · 7 fn · 4 crate-vis | SignatureImagePlan | Capability-bound, decoded and re-encoded signature images |
@@ -907,7 +907,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/family.rs` | src | m | 4 struct · 1 enum · 11 fn · 4 crate-vis | ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView, VersionReconciliation | The artifact family contract (ARCH-0078): every deliverable is an artifact, and every kind gives the same… |
 | `src/blob_artifact/holders.rs` | src | s | 8 crate-vis | — | Which records hold one record's bytes, read for a delete's impact preview |
 | `src/blob_artifact/lifecycle.rs` | src | m | 11 crate-vis | — | Blob artifact delete path: version-chain, head, and asset-ref cleanup, and the release of one response… |
-| `src/blob_artifact/made_by.rs` | src | s | 6 crate-vis | — | The made_by receipt every blob version carries (ARCH-0078 "The provenance receipt", ARCH-0035 Rule A): what… |
+| `src/blob_artifact/made_by.rs` | src | s | 7 crate-vis | — | The made_by receipt every blob version carries (ARCH-0078 "The provenance receipt", ARCH-0035 Rule A): what… |
 | `src/blob_artifact/mod.rs` | src | s | 2 mod · 19 re-export · 23 crate-vis | — | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `src/blob_artifact/provenance.rs` | src | s | 1 enum · 2 fn · 7 crate-vis | BlobVersionProvenance | Blob version provenance: producer enum and claim-envelope value constructors |
 | `src/blob_artifact/references.rs` | src | m | 17 crate-vis | — | Which artifacts hold which version bytes, on every vault (H125) |
@@ -3832,7 +3832,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/integrity_refusal.rs` | src | s | 3 crate-vis | — | The engine's integrity refusals on the type-76 family: a deletion's or a redaction's signed refusal of a… |
 | `src/identity_topology/ledger_fold.rs` | src | m | 2 struct · 1 enum · 1 fn · 2 crate-vis | IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyFold | The deterministic fold over the append-only op log: the action/event/fold shapes, the undo-currency rule… |
 | `src/identity_topology/lifecycle_state.rs` | src | s | 2 fn · 1 re-export · 8 crate-vis | — | Entity lifecycle state ([`EntityLifecycleState`]), its CRDT join, the zero-head-split ledger witness, and… |
-| `src/identity_topology/mod.rs` | src | s | 13 re-export · 22 crate-vis | — | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
+| `src/identity_topology/mod.rs` | src | s | 13 re-export · 23 crate-vis | — | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
 | `src/identity_topology/op_apply.rs` | src | m | 1 struct · 1 enum · 4 fn · 9 crate-vis | IdentityOpOutcome, IdentityOpWrite | The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct… |
 | `src/identity_topology/op_undo.rs` | src | m | 2 fn · 1 crate-vis | — | The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event… |
 | `src/identity_topology/op_vocabulary.rs` | src | s | 6 struct · 2 enum · 1 fn · 3 crate-vis | AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp, SurvivorshipPlan | The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the… |
@@ -4042,7 +4042,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
 | `src/linear_sync/custody.rs` | src | m | 3 enum · 8 fn · 3 crate-vis | LinearBody, LinearBodyRole, LinearFreeze | The frozen bodies of one Linear mirror operation, kept as body occurrences of the TASK it mirrors (FIX 8609… |
 | `src/linear_sync/door_recheck.rs` | src | s | 4 crate-vis | — | FIX 6823 (Engine 09:39 ruling A): the recorded outbound door's live recheck of a retried Linear send reads… |
-| `src/linear_sync/effect.rs` | src | m | 1 struct · 1 enum · 5 fn · 4 crate-vis | LinearEffectKind, LinearEffectRequest | External-effect admission for Linear mirror mutations |
+| `src/linear_sync/effect.rs` | src | L | 1 struct · 1 enum · 5 fn · 4 crate-vis | LinearEffectKind, LinearEffectRequest | External-effect admission for Linear mirror mutations |
 | `src/linear_sync/engine.rs` | src | m | 1 struct · 8 fn · 2 crate-vis | LinearSyncAdapter | LinearSyncAdapter push/pull/apply verbs with replay, conflict, and receipt logic |
 | `src/linear_sync/facade.rs` | src | m | 3 fn | — | The TASK ↔ issue mirror doors (OF-427 C6, C7) |
 | `src/linear_sync/facade_types.rs` | src | s | 8 struct · 1 enum · 1 fn · 1 const | LinearLinkView, LinearMappingEdit, LinearMappingEditReceipt, LinearMappingOp, LinearMappingRequest, LinearMappingView, LinearProvenanceEntry, LinearProvenancePage +1 | The wire shapes of the TASK ↔ issue mirror doors (OF-427 C6, C7): `vault.tasks.linear.mapping`… |
@@ -4301,7 +4301,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mail_pack/search.rs` | src | s | 2 struct · 3 fn | MailSearchReport, MailSourceSearchRequest | Searching a mailbox at its provider (fix list row 15424, its remote search slice)… |
 | `src/mail_pack/share.rs` | src | s | 2 struct · 2 fn | MailThreadShareReceipt, MailThreadShareRequest | Sharing one mail thread (owner ruling 2026-11-03, ARCH-0063 #thread-sharing): connecting a mailbox shares… |
 | `src/mail_pack/smtp_client.rs` | src | m | 8 crate-vis | — | A native SMTP submission client (RFC 6409 over RFC 5321) for the pack's drafted replies from IMAP mailboxes… |
-| `src/mail_pack/source.rs` | src | s | 2 struct · 6 enum · 5 fn · 1 const · 7 crate-vis | CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting, MailSourceKind, MailSourceRow, MailSourceStatus, MailSourceView | One connected mail or calendar source: what it is, whose it is, what it keeps |
+| `src/mail_pack/source.rs` | src | m | 2 struct · 6 enum · 6 fn · 1 const · 7 crate-vis | CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting, MailSourceKind, MailSourceRow, MailSourceStatus, MailSourceView | One connected mail or calendar source: what it is, whose it is, what it keeps |
 | `src/mail_pack/state.rs` | src | m | 1 struct · 2 enum · 22 crate-vis | MailPresence, MailStage, MailSyncStatusView | What the importer keeps per source and per provider message: where its listing and its change feed stand… |
 | `src/mail_pack/tables.rs` | src | s | — | — | The side tables `mail_pack` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/mail_pack/tls_stream.rs` | src | s | 6 crate-vis | — | The TLS client stack the pack's mail protocols share: IMAP reads and SMTP submission (fix list row 17872) |
@@ -5091,7 +5091,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/recreate_tests.rs` | test | m | — | — | A ref deleted and pushed again at a tip it was already published at lands on that earlier publication: the… |
 | `src/origin/smart_http/scan_cap_tests.rs` | test | s | — | — | No origin scan refuses for how many rows it reads (rule 5): a repository keeps taking pushes, advertisements… |
 | `src/origin/smart_http/secret_marks.rs` | src | m | 1 struct · 8 crate-vis | ReceiveSecretMarks | The marks a push's admitted scan hits carry from the door window to the push's intent (FIX 7608, owner… |
-| `src/origin/smart_http/serve.rs` | src | m | 1 struct · 1 trait · 6 fn · 5 crate-vis | ServeReport, ServeSink | One-request orchestration: coordinator lock, reconcile, threaded exchange, finish |
+| `src/origin/smart_http/serve.rs` | src | L | 1 struct · 1 trait · 6 fn · 5 crate-vis | ServeReport, ServeSink | One-request orchestration: coordinator lock, reconcile, threaded exchange, finish |
 | `src/origin/smart_http/serve_cmd.rs` | src | m | 2 struct · 10 fn · 1 re-export · 8 crate-vis | ServeChild, ServeCommand | Core half of `origin::smart_http::serve_cmd`: its store-layer items live in… |
 | `src/origin/smart_http/tests.rs` | test | m | 29 crate-vis | — | Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin |
 | `src/origin/tables.rs` | src | s | — | — | The side tables `origin` keeps (core split slice 1): each row declares one, and the crate's build script… |
@@ -8385,6 +8385,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/dag_append_source_label.rs` | test | s | — | — | A person's own DAG append is that person's word (Engine ruling DAG-APPEND-SOURCE-LABEL = A) |
 | `tests/decision_token_cap.rs` | test | m | — | — | ARCH-0076 #receipt: a typed decision's receipt names why the call stopped, "done, deadline, token cap or… |
 | `tests/default_facet_owner_door.rs` | test | s | — | — | ARCH-0022 #facets (the owner, 2026-09-23): "Every vault has one default facet ... the owner may set… |
+| `tests/delegation_expiry_wall_clock.rs` | test | m | — | — | A delegation's end is wall time (census L7-18) |
 | `tests/delete_authority.rs` | test | m | — | — | DEL-2: the delete authority on every delete (ARCH-0043, owner DEL-2 = A, 9 Oct: "Members delete their own… |
 | `tests/derivation_floor.rs` | test | s | — | — | The derivation floor (untangle 6.7a, decision C-3): GATE-12 holds every derivation-class claim, not only a… |
 | `tests/derive_archive.rs` | test | s | — | — | Archive items of a derivation batch (untangle 6.7a): an agent archives its own weak claim, reversibly, under… |
@@ -8537,6 +8538,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/linked_self_verb_surface.rs` | test | s | — | — | The verb table is closed over the linked `self.*` operations (F2.1): each operation a code-mode guest can… |
 | `tests/live_run_claim_put.rs` | test | s | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
 | `tests/machine_peer_binding_facet.rs` | test | s | — | — | A MACHINE's actor bookkeeping lands in the vault default facet (FIX 23050, PRIVACY-02's Dreamer summary… |
+| `tests/mail_active_sources.rs` | test | s | — | — | [VAULT-STORE-FIELD-PUBLIC]: the host steps of `oneiron-mail-pack` (`mail_sources_due`, `mail_sync_sources`)… |
 | `tests/mail_late_address_headers.rs` | test | s | — | — | Fix list row 20852: an IMAP or mbox landing reads From, Reply-To, To and Cc from the message's whole header… |
 | `tests/microvm_intermediate_symlink.rs` | test | s | — | — | [MICROVM-INTERMEDIATE-SYMLINK-NOTFOUND]: a base-mount read whose path crosses a symlinked directory is… |
 | `tests/named_agent_principal_standing.rs` | test | s | — | — | A named agent's PERSON (the principal `Vault::ensure_agent_principal` derives from its name: `oneiron token… |
@@ -8550,6 +8552,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/off_record_continuation_shell.rs` | test | s | — | — | Each on-record stretch of an off-record session is a conversation of its own (FIX 22388) |
 | `tests/origin_lfs_path_policy.rs` | test | s | — | — | NO-DOOR REPO-LFS-PATH-POLICY (tests/e2e/code-custody.test.ts CODE-CUSTODY-06; Engine CODECUSTODY-LFS Q1 =… |
 | `tests/origin_register_host_git.rs` | test | s | — | — | Origin registration on the host's Git (E2E CODE-CUSTODY-06, `origin.register`) |
+| `tests/origin_serve_command_section_deadline.rs` | test | m | — | — | Census L4-31, ARCH-0068 #ra1-push-spool-open: "deadline for a trickling command section" |
 | `tests/origin_serve_lazy_fetch_pinned.rs` | test | s | — | — | Census L4-32, ARCH-0068 #push-cert-open: "Pin `GIT_NO_LAZY_FETCH=1` for the backend, or refuse promisor… |
 | `tests/outbound_undo_send.rs` | test | m | — | — | DEC-0006 #undo-send (owner ruling REV-8 = B, 2026-10-09): "undo send is a great idea, yeah. like email has… |
 | `tests/owner_approval_criticality_floor.rs` | test | m | — | — | The owner's approval lands past the criticality floor ([CRITICALITY-FLOOR-PENDS-OWNER-WRITES]) |
@@ -8669,6 +8672,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/store_split_compilefail/a_receipt_key_is_engine_only.rs` | test | s | — | — | [RECEIPT-ROW-FIELD-CONSTS-PUBLIC]: the engine-only receipt keys (the proposal-outcome, amendment… |
 | `tests/store_split_compilefail/b_reserved_claim_door_is_engine_only.rs` | test | s | — | — | [RESERVED-PREDICATE-FLAG-PUBLIC]: `decode_claim_body` and `validate_predicate` take `allow_reserved` as a… |
 | `tests/store_split_compilefail/c_session_route_is_engine_only.rs` | test | s | — | — | [SESSION-OVERLAY-ROUTE-OVERLAY-PUBLIC]: `SessionWriteRoute::overlay` is `pub` in the store, but the engine… |
+| `tests/store_split_compilefail/d_vault_store_is_engine_only.rs` | test | s | — | — | [VAULT-STORE-FIELD-PUBLIC]: core split slice 0 (#6862) made `Vault::store` `pub` so the lifted mail pack… |
 | `tests/strength_observations_page.rs` | test | m | — | — | Pages the Dreamer's observations under the caller's live read grant |
 | `tests/sufficiency_like_for_like.rs` | test | s | — | — | A sufficiency card reads unknown, not worse, when the comparison is not like for like: the set or rubric… |
 | `tests/summary_as_record_permit.rs` | test | L | — | — | The owner's summary-as-record lands on a default vault (Engine ruling SUMMARY-AS-RECORD-PERMIT-SHAPE = A) |
