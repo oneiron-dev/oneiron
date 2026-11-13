@@ -211,6 +211,7 @@ fn went(act_class: &str, role: &str, mode: &str, basis: &str) -> Option<CheckInD
         mode: Some(mode.to_owned()),
         basis: basis.to_owned(),
         check_in: None,
+        requester: None,
     })
 }
 
@@ -351,6 +352,7 @@ fn a_deputys_remove_waits_for_the_owner_and_the_approved_recall_runs_once() {
             mode: Some("manual".to_owned()),
             basis: "approved".to_owned(),
             check_in: Some(first.clone()),
+            requester: None,
         }),
         "the receipt names the check-in the remove spent"
     );
