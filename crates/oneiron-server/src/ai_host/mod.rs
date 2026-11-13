@@ -141,6 +141,9 @@ pub struct AiHandle {
     raw_budget_units: u64,
     /// Each paid recall's line for its rerank calls (`[models.recall]`).
     rerank_budget_units: u64,
+    /// What a rerank call is priced at a pair beside its words
+    /// (`[models.recall] rerank_pair_template_units`).
+    rerank_pair_template_units: u64,
     turns: TurnTracker,
     /// When the last turn landed, in seconds: the inbound silence the
     /// Dreamer's wake policy waits out before an idle recipe.
