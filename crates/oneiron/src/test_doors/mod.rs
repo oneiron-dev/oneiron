@@ -33,6 +33,8 @@ pub mod fanout_admission;
 pub mod feeds;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+#[cfg(feature = "sync")]
+pub mod guest_turn_counterparty;
 pub mod house_link;
 pub mod identity_recheck;
 pub mod inquiry;
