@@ -228,15 +228,28 @@ pub fn own_device_grant_states(
 /// asked for, a row of another kind or holder, and a tombstone over a row of
 /// another kind are refused, and nothing is written for them.
 ///
+/// The rows and tombstones carry no signature of their own, and a replayed
+/// withdrawal erases the grant for good. So `home`, the machine the answering
+/// connection proved, must still stand here as a machine of this vault on
+/// the key it proved; from any other answerer every grant is refused and
+/// nothing is written.
+///
 /// # Errors
 ///
 /// Storage errors, and a tombstone replay that fails here.
 pub fn admit_own_device_grants(
     vault: &Vault,
+    home: PeerMachine,
     asked: &BTreeMap<EntityId, BTreeSet<String>>,
     served: Vec<(EntityId, OwnDeviceGrantState)>,
 ) -> Result<OwnDeviceGrantAdmission> {
     let mut admission = OwnDeviceGrantAdmission::default();
+    if !matches!(vault.peer_machine_stands(home), PeerMachine::Proven { .. }) {
+        admission
+            .refused
+            .extend(served.into_iter().map(|(id, _)| id));
+        return Ok(admission);
+    }
     for (id, state) in served {
         let Some(holders) = asked.get(&id) else {
             admission.refused.insert(id);
