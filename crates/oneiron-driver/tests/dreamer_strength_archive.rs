@@ -10,6 +10,10 @@
 //! --all-features --test dreamer_strength_archive` (the driver's dev
 //! dependency turns on the engine's `test-support` feature).
 #![cfg(oneiron_test_support)]
+// The layout of `run_wake_pass`'s future (the wake driver, the dispatch and
+// the job adapter, all async) needs a query depth of about 130, past
+// rustc's default limit of 128.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 
