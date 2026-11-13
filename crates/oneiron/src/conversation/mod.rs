@@ -52,8 +52,8 @@ pub use turn_actions::{
 };
 pub(crate) use visibility::{
     AudienceCache, anchors_own_windows_admit_in, conversation_summary_covers,
-    gate_claim_anchors_in, gate_claim_anchors_store_in, private_thread_word_turns_in,
-    private_threads_readable_with_read_in, room_for_record_in,
+    gate_claim_anchors_in, gate_claim_anchors_store_in, hangs_under_in,
+    private_thread_word_turns_in, private_threads_readable_with_read_in, room_for_record_in,
 };
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};

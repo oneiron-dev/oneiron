@@ -311,6 +311,7 @@ impl<'a> ScopedRead<'a> {
             room_ceiling: Mutex::new(room_ceiling),
             room_ceilings_built: AtomicUsize::new(0),
             session_view: self.session_view,
+            stretch: self.stretch,
             claim_status: ClaimReadStatus::Recorded,
             recall_authority: Mutex::new(None),
             room_peer: self.room_peer,

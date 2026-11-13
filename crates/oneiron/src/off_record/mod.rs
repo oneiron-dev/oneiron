@@ -33,6 +33,7 @@ mod promote;
 mod run_view;
 pub(crate) mod tables;
 
+pub(crate) use lifecycle::StretchRoom;
 pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordCreator,
     OffRecordMode, OffRecordNotice, OffRecordNoticeAct, OffRecordSaveSuggestion, OffRecordSession,

@@ -155,7 +155,10 @@ impl AudienceCache {
     /// Whether `audience` reads `id`'s revision `raw` by its own rules and
     /// every cover its words came from by theirs; see the module doc. A
     /// cover meets its room's windows as the row it covers does, and walks
-    /// no private thread turn by turn.
+    /// no private thread turn by turn. `stretch` reads the row itself, when
+    /// a room stretch staged it, through that stretch's view
+    /// ([`Self::readable_raw`]); every cover is read on base, so a cover only
+    /// a stretch holds does not read.
     #[expect(clippy::too_many_arguments)]
     pub(super) fn readable_with_covers(
         &mut self,
@@ -166,8 +169,11 @@ impl AudienceCache {
         audience: &[EntityId],
         current: bool,
         personal: Option<EntityId>,
+        stretch: Option<(&crate::store::StoreRead<'_>, crate::off_record::StretchRoom)>,
     ) -> Result<bool> {
-        if !self.readable_raw_at_depth(vault, txn, id, raw, audience, current, personal, 0)? {
+        if !self
+            .readable_raw_at_depth(vault, txn, id, raw, audience, current, personal, 0, stretch)?
+        {
             return Ok(false);
         }
         let mut stack = vec![CoverFrame::new(id, Cow::Borrowed(raw), 0)];
@@ -190,7 +196,7 @@ impl AudienceCache {
                     break false;
                 };
                 if !self.readable_raw_at_depth(
-                    vault, txn, cover, &raw, audience, false, personal, depth,
+                    vault, txn, cover, &raw, audience, false, personal, depth, None,
                 )? {
                     break false;
                 }

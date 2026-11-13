@@ -400,7 +400,8 @@ impl ScopedRead<'_> {
     /// relationship grant admits, is read on a `ConversationMessages` grant
     /// over its conversation, found on this read's content as the
     /// transcript finds it (the MESSAGE PartOf a TURN, the TURN ChildOf the
-    /// conversation). The grant stands in for the relationship check alone;
+    /// conversation; over a room stretch, its shell is its room). The grant
+    /// stands in for the relationship check alone;
     /// every other check on the row still binds. Edges that do not read
     /// admit nothing.
     fn conversation_message_granted_in(
@@ -428,6 +429,9 @@ impl ScopedRead<'_> {
                 self.edge_targets_in(txn, turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
             })
             .any(|conversation| {
+                let conversation = self
+                    .stretch
+                    .map_or(conversation, |stretch| stretch.room_of(conversation));
                 context.allows_conversation_message_at_snapshot(conversation, record)
             })
     }

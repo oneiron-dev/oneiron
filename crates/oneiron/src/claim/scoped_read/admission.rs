@@ -15,6 +15,7 @@ impl crate::vault::Vault {
             room_ceiling: Mutex::new(None),
             room_ceilings_built: AtomicUsize::new(0),
             session_view: None,
+            stretch: None,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
             room_peer: false,
@@ -47,6 +48,7 @@ impl crate::vault::Vault {
             // R22): a row it cannot place is absent for it, and the rest of
             // the room still reads (`ScopedRead::room_row_placed_in`).
             session_view: Some(view),
+            stretch: None,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
             room_peer: false,
@@ -495,7 +497,9 @@ impl ScopedRead<'_> {
             return Ok(ReadAdmission::OpaqueAbsent);
         };
         // Inside a room turn a withheld row may be another room's or a peer's
-        // private one; its count would say it exists, so it reads as absent.
+        // private one; its count would say it exists, so it reads as absent,
+        // and so does a row a room stretch staged that a member's own windows
+        // or a private thread keep from them.
         // A row outside the worlds the read asked for is not withheld by
         // policy; scope honesty names its world instead. A row in a world the
         // credential cannot read, or one a device-local world keeps from a
@@ -503,6 +507,7 @@ impl ScopedRead<'_> {
         // neither has a TASK outside the credential's worlds or facets, nor
         // any row outside the facets it is limited to.
         if self.actor_key.room_turn.is_none()
+            && !self.stretch_staged_in(txn, id, &row)?
             && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
             && !self.device_withholds_in(txn, id, None)?
@@ -515,6 +520,28 @@ impl ScopedRead<'_> {
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
         }
+    }
+
+    /// Whether `row` is one this member's read over a room stretch finds
+    /// staged under that stretch's shell; false for the owner's read and any
+    /// read over no room stretch.
+    fn stretch_staged_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+    ) -> Result<bool> {
+        let Some(stretch) = self.stretch.filter(|stretch| stretch.member().is_some()) else {
+            return Ok(false);
+        };
+        crate::conversation::hangs_under_in(
+            self.vault,
+            &self.store_read(),
+            txn,
+            *id,
+            &row.encode(),
+            stretch.shell(),
+        )
     }
 
     /// A code-memory payload projection counts only a readable, non-opaque row.
