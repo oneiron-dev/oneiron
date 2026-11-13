@@ -200,7 +200,7 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     guard: &BudgetGuard,
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
-    retries: &TransportRetries<'_>,
+    retries: &TransportRetries,
 ) -> DurableStepResult<StepOutcome> {
     durable_step(ctx, backend, guard, request, fallbacks, None, retries, None).await
 }
@@ -212,7 +212,7 @@ async fn durable_step(
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
     check: Option<&ReplyCheck>,
-    retries: &TransportRetries<'_>,
+    retries: &TransportRetries,
     mut unsaved_usage: Option<&mut Option<LlmUsage>>,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
