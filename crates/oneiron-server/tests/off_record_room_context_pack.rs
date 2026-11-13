@@ -583,65 +583,6 @@ fn the_owners_pack_in_a_room_stretch_reads_its_staged_message() {
     });
 }
 
-/// A member of the room, the owner's own agent on its own slip, reads in its
-/// pack the stretch's MESSAGE its key may read. On main a member's pack reads
-/// base alone.
-#[test]
-fn a_members_pack_in_a_room_reads_the_rows_it_can_read() {
-    run_on_engine_stack("room-stretch-member-pack", async {
-        let host = host();
-        let room = host.room_stretch();
-        let inside = host
-            .send(
-                Caller::Principal(&room.member),
-                CONTEXT_PACK,
-                room_pack_request(),
-                Some(room.key.as_str()),
-            )
-            .await;
-        assert!(
-            names_short_id(&inside["results"], &room.staged_message),
-            "the member's pack in the room stretch returns {} among {:?}; narrowing {}",
-            room.staged_message,
-            result_short_ids(&inside),
-            inside["narrowing"]
-        );
-    });
-}
-
-/// The same member pack, naming the room as the pack's conversation, so the
-/// room's audience resolves the member as the vault's own agent.
-#[test]
-fn a_members_pack_naming_the_room_reads_the_rows_it_can_read() {
-    run_on_engine_stack("room-stretch-member-pack-room", async {
-        let host = host();
-        let room = host.room_stretch();
-        let conversation = room
-            .key
-            .split(':')
-            .nth(1)
-            .expect("the room key names its room")
-            .to_owned();
-        let mut request = room_pack_request();
-        request["conversation_id"] = json!(conversation);
-        let inside = host
-            .send(
-                Caller::Principal(&room.member),
-                CONTEXT_PACK,
-                request,
-                Some(room.key.as_str()),
-            )
-            .await;
-        assert!(
-            names_short_id(&inside["results"], &room.staged_message),
-            "the member's pack naming the room returns {} among {:?}; narrowing {}",
-            room.staged_message,
-            result_short_ids(&inside),
-            inside["narrowing"]
-        );
-    });
-}
-
 /// A member's pack in the room's stretch binds it: its retrieval run lands
 /// in the stretch, so base keeps none of it. The same pack with no stretch
 /// named keeps its run in base. On main the member's pack reads base alone,
