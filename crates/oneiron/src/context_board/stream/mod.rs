@@ -26,10 +26,14 @@ pub use self::frames::{
 pub use self::publish::CommittedTaskBoardState;
 pub(crate) use self::publish::task_body_for_announcement;
 pub(crate) use self::publish::task_for_announcement;
-pub use self::registry::{BoardStreamRegistry, HANDED_WAKES_CAP, StreamConnectionState};
+pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
 pub use self::review::PendingDiaryReview;
 pub use self::room_wake::{PendingRoomWake, RoomWakeRead};
-pub use self::wake::{WakeDelivery, WakeEnvelope};
+pub use self::wake::WakeEnvelope;
+
+// The envelope-id acknowledgement record (RC99, census L8-18).
+pub use self::registry::HANDED_WAKES_CAP;
+pub use self::wake::WakeDelivery;
 
 use super::one_line_token;
 
