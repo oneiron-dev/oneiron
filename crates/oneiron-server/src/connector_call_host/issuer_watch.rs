@@ -7,17 +7,26 @@
 //! no redirect. When the metadata names the endpoint as its resource and no
 //! longer lists the issuer a binding answers for, the core door records the
 //! change and holds every dependent row until the owner accepts it. Nothing
-//! here changes the refused send's answer.
+//! here changes the refused send's answer. The baseline it compares with
+//! comes from the owner's admission of the connector, which reads the same
+//! metadata (Engine ruling L5-11-BASELINE = C).
 
 use std::io::Read;
 
-use oneiron::connector_key::{ConnectorCredentialBinding, ConnectorIssuerDetection};
+use oneiron::connector_key::{
+    ConnectorBindingDependent, ConnectorCredentialBinding, ConnectorIssuerDetection,
+    ConnectorIssuerObservation,
+};
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::{EntityId, Vault};
 use reqwest::header::{ACCEPT, HeaderMap, WWW_AUTHENTICATE};
 use reqwest::{StatusCode, Url};
 use serde::Deserialize;
 
-use super::HANDSHAKE_TIMEOUT;
+use super::{HANDSHAKE_TIMEOUT, connector_client};
+
+/// The credential slot a catalog connector's route presents from.
+const ROUTE_SLOT: &str = "route";
 
 /// The RFC 9728 §3.1 well-known path the metadata is read at.
 const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
@@ -97,9 +106,28 @@ fn challenge_schemes(value: &str) -> Vec<&str> {
     schemes
 }
 
-/// The issuers `endpoint`'s metadata lists, read once with no credential:
-/// `None` unless it answers 200 with JSON within the size bound, naming
-/// exactly `endpoint` as its resource (RFC 9728 §3.3).
+/// The issuers `endpoint`'s metadata lists, read once with no credential,
+/// and the witness of that read: `None` unless it answers 200 with JSON
+/// within the size bound, naming exactly `endpoint` as its resource (RFC
+/// 9728 §3.3) and at least one issuer.
+fn read_listed_issuers(
+    client: &reqwest::blocking::Client,
+    endpoint: &str,
+) -> Option<(Vec<String>, String)> {
+    let metadata_url = resource_metadata_url(endpoint)?;
+    let issuers = listed_issuers(client, endpoint, &metadata_url)?;
+    if issuers.is_empty() {
+        return None;
+    }
+    let witness = format!(
+        "protected-resource metadata at {}{} lists {issuers:?}",
+        metadata_url.origin().ascii_serialization(),
+        metadata_url.path(),
+    );
+    Some((issuers, witness))
+}
+
+/// The issuers the metadata at `metadata_url` lists for `endpoint`.
 fn listed_issuers(
     client: &reqwest::blocking::Client,
     endpoint: &str,
@@ -145,47 +173,59 @@ pub(crate) fn detect_at_refusal(
     if status != StatusCode::UNAUTHORIZED || !bearer_challenge(headers) {
         return Ok(Vec::new());
     }
-    let Some(metadata_url) = resource_metadata_url(endpoint) else {
+    let Some((authorization_servers, read)) = read_listed_issuers(client, endpoint) else {
         return Ok(Vec::new());
     };
-    let Some(authorization_servers) = listed_issuers(client, endpoint, &metadata_url) else {
-        return Ok(Vec::new());
-    };
-    if authorization_servers.is_empty() {
-        return Ok(Vec::new());
-    }
-    let witness = format!(
-        "protected-resource metadata at {}{} lists {authorization_servers:?} after a 401",
-        metadata_url.origin().ascii_serialization(),
-        metadata_url.path(),
-    );
     vault.detect_connector_credential_issuer(&ConnectorIssuerDetection {
         key_ref: *key_ref,
         authorization_servers,
-        witness,
+        witness: format!("{read} after a 401"),
     })
 }
 
-/// The baseline of a catalog connector recorded inside the owner's
-/// admission of it (L5-11-BASELINE = C seam): records nothing yet.
+/// The baseline of catalog connector `connector` (key `catalog_key`),
+/// recorded inside the owner's admission of it (Engine ruling
+/// L5-11-BASELINE = C; closes FIX 9302): its route's slot answers for the
+/// first issuer its metadata lists, and every row of the key depends on it.
+/// A route with no credential has no issuer to bind, and a connector whose
+/// metadata is missing, mismatched or lists no issuer gets no binding. A
+/// slot the owner already bound keeps its binding (the observation at
+/// generation 0 meets it). Answers the binding recorded now, if any.
 ///
 /// # Errors
-/// None yet.
+/// The client build and the observe door's, past a binding that exists.
 pub(crate) fn baseline_at_admission(
     vault: &Vault,
-    owner: &oneiron::consent::AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     connector: &str,
     catalog_key: &EntityId,
     endpoint: &str,
     credential_ref: Option<&str>,
 ) -> oneiron::Result<Option<ConnectorCredentialBinding>> {
-    let _ = (
-        vault,
+    let Some(credential_ref) = credential_ref else {
+        return Ok(None);
+    };
+    let Some((issuers, read)) = read_listed_issuers(&connector_client()?, endpoint) else {
+        return Ok(None);
+    };
+    let observed = vault.observe_connector_credential_issuer(
         owner,
-        connector,
-        catalog_key,
-        endpoint,
-        credential_ref,
+        &ConnectorIssuerObservation {
+            connector: connector.to_owned(),
+            slot: ROUTE_SLOT.to_owned(),
+            issuer: issuers[0].clone(),
+            credential_ref: credential_ref.to_owned(),
+            expected_generation: 0,
+            dependents: vec![ConnectorBindingDependent {
+                key_ref: *catalog_key,
+                tool: None,
+            }],
+            witness: format!("{read} at the owner's admission"),
+        },
     );
-    Ok(None)
+    match observed {
+        Ok(binding) => Ok(Some(binding)),
+        Err(oneiron::Error::ConcurrentWrite(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
