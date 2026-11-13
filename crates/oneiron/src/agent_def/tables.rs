@@ -11,6 +11,12 @@ crate::side_table::side_tables! {
     /// Empty marker: an agent's birth source has been retired. Key: id16.
     AGENT_DEF_BIRTH_RETIRED: VaultMeta b"agent_def/birth-retired/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The owner who created a definition through the owner's create door, stamped in that
+    /// write and in no other: an imported, replicated, seeded or agent-written row has none.
+    /// A delete of the definition removes it. Authority, so a restore keeps the live rows.
+    /// Key: id16 (definition); value: id16 (owner).
+    AGENT_DEF_CREATING_OWNER: VaultMeta b"agent_def/creating-owner/v1\0" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// What an agent id answers to on every later put, across a delete: the widest ceiling a
     /// row at the id may hold (one byte, 0 proposed, 1 auto), then the 16-byte parent row it was
     /// born forked from, if any. Key: id16.
@@ -20,11 +26,21 @@ crate::side_table::side_tables! {
     /// agent's genuine local birth. Key: id16.
     AGENT_DEF_PORTABLE_BIRTH: VaultMeta b"agent_def/portable-birth/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// An agent's plan mode (plan mode, SETTING = A): one byte, 0 `off`, 1 `optional`, 2
+    /// `required`; an agent with no row is `optional`. Key: id16(agent). The owner's authority,
+    /// so a restore keeps the live rows.
+    AGENT_DEF_PLAN_MODE: VaultMeta b"agent_def/plan-mode/v1\0" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The grant powers one holder has (ARCH-0053:20, SPAWN-KNOB): one byte, bit 0 `spawn`,
     /// bit 1 `save_agent`; a holder with no row has both ON. Key: a tag byte (0 agent, 1 attempt, 2 reader
     /// task) then the holder's id16. Authority, so a restore keeps the live rows.
     AGENT_DEF_POWER_GRANT: VaultMeta b"agent_def/power-grant/v1\0" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// An owner's pause of what one agent made (AUTHOR-OFF, `vault.agents.pause_tree`): the
+    /// agent, each member the pause switched off, paused or held, its receipt, and the resume
+    /// once it ran. Key: id16 (pause).
+    AGENT_DEF_TREE_PAUSE: VaultMeta b"agent_def/tree-pause/v1\0" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 4472: the model an agent's last wake ran on, so a wake on another model notes it in
     /// the agent's own diary. Key: id16(agent).
     AGENT_DEF_WAKE_MODEL: VaultMeta b"agent_def/wake-model/v1\0" Named

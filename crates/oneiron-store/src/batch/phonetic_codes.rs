@@ -13,8 +13,91 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 /// readings are entity-specific: pass a known kana/romaji reading separately
 /// rather than guessing a pronunciation from the written name.
 pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
-    let normalized: String = name.nfkc().flat_map(char::to_lowercase).collect();
     let mut codes = BTreeSet::new();
+    match spelling(&normalize(name)) {
+        Spelling::Kana { folded, romaji } => {
+            codes.insert(format!("kana:{folded}"));
+            add_romaji(&mut codes, &romaji);
+        }
+        Spelling::Latin(latin) => {
+            add_romaji(&mut codes, &latin);
+            add_soundex(&mut codes, &latin);
+            // Each part also finds a multi-part name from a single mention.
+            for part in parts(&latin) {
+                add_romaji(&mut codes, part);
+                add_soundex(&mut codes, part);
+            }
+        }
+        Spelling::Other => {}
+    }
+    codes.into_iter().collect()
+}
+
+/// The codes the entity linker matches a mention on (ARCH-0024 signal 2),
+/// all of them among the codes [`generate_phonetic_codes`] writes. A name of
+/// one part has none: one part alone, a first name, is too common to name
+/// one person.
+#[derive(Debug, Default)]
+pub struct LinkingCodes {
+    /// The codes of the name taken whole: its romaji key, and its kana key
+    /// when it is written in kana. A person who holds one of them matches.
+    pub whole: Vec<String>,
+    /// The Soundex code of each part of a Latin name. A person who holds
+    /// every one of them matches. The whole name's Soundex code is not used:
+    /// Soundex stops at four characters, so over a joined name it can end
+    /// inside or before the last part ("owen snow" and "owen smith" are
+    /// both O525).
+    pub every_part: Vec<String>,
+}
+
+/// The [`LinkingCodes`] of a name or a mention.
+pub fn linking_codes(name: &str) -> LinkingCodes {
+    let normalized = normalize(name);
+    let mut whole = BTreeSet::new();
+    let mut every_part = BTreeSet::new();
+    match spelling(&normalized) {
+        // Kana parts are counted before the folding drops the separators.
+        Spelling::Kana { folded, romaji } if parts(&normalized).count() >= 2 => {
+            whole.insert(format!("kana:{folded}"));
+            add_romaji(&mut whole, &romaji);
+        }
+        // Latin parts are counted once their marks are stripped: a part of
+        // marks alone is no part.
+        Spelling::Latin(latin) if parts(&latin).count() >= 2 => {
+            add_romaji(&mut whole, &latin);
+            for part in parts(&latin) {
+                add_soundex(&mut every_part, part);
+            }
+        }
+        _ => {}
+    }
+    LinkingCodes {
+        whole: whole.into_iter().collect(),
+        every_part: every_part.into_iter().collect(),
+    }
+}
+
+fn normalize(name: &str) -> String {
+    name.nfkc().flat_map(char::to_lowercase).collect()
+}
+
+/// The nonempty parts of a name, between its separators.
+fn parts(name: &str) -> impl Iterator<Item = &str> {
+    name.split(is_separator).filter(|part| !part.is_empty())
+}
+
+/// How the codes read a normalized name.
+enum Spelling {
+    /// Kana: folded to hiragana with its separators dropped, and its Hepburn
+    /// romaji.
+    Kana { folded: String, romaji: String },
+    /// Latin letters and separators, with their marks stripped.
+    Latin(String),
+    /// Anything else, which takes no codes.
+    Other,
+}
+
+fn spelling(normalized: &str) -> Spelling {
     let kana: String = normalized
         .chars()
         .map(|c| match c {
@@ -23,34 +106,29 @@ pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
         })
         .collect();
     if kana.chars().any(|c| matches!(c, 'ぁ'..='ゖ')) {
-        if let Some(romaji) = romanize(&kana) {
-            let folded: String = kana.chars().filter(|c| !is_separator(*c)).collect();
-            codes.insert(format!("kana:{folded}"));
-            add_romaji(&mut codes, &romaji);
-        }
-    } else {
-        let latin: String = normalized
-            .nfkd()
-            .filter(|c| !is_combining_mark(*c))
-            .collect();
-        if latin
-            .chars()
-            .all(|c| c.is_ascii_alphabetic() || is_separator(c))
-        {
-            add_romaji(&mut codes, &latin);
-            if let Some(code) = soundex(&latin) {
-                codes.insert(format!("en:soundex:{code}"));
-            }
-            // Each part also finds a multi-part name from a single mention.
-            for part in latin.split(is_separator).filter(|part| !part.is_empty()) {
-                add_romaji(&mut codes, part);
-                if let Some(code) = soundex(part) {
-                    codes.insert(format!("en:soundex:{code}"));
-                }
-            }
-        }
+        return romanize(&kana).map_or(Spelling::Other, |romaji| Spelling::Kana {
+            folded: kana.chars().filter(|c| !is_separator(*c)).collect(),
+            romaji,
+        });
     }
-    codes.into_iter().collect()
+    let latin: String = normalized
+        .nfkd()
+        .filter(|c| !is_combining_mark(*c))
+        .collect();
+    if latin
+        .chars()
+        .all(|c| c.is_ascii_alphabetic() || is_separator(c))
+    {
+        Spelling::Latin(latin)
+    } else {
+        Spelling::Other
+    }
+}
+
+fn add_soundex(codes: &mut BTreeSet<String>, text: &str) {
+    if let Some(code) = soundex(text) {
+        codes.insert(format!("en:soundex:{code}"));
+    }
 }
 
 /// Only explicit name/alias/reading fields feed this index, never prose or

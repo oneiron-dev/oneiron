@@ -55,7 +55,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/home_room_project.rs` | src | s | 1 fn | — | The project a home-room body names, read by an importer to order a room after its project |
 | `src/batch/export/secret_supplement_record.rs` | src | s | 2 struct · 1 enum | HolderExportNeed, OpenedSecretSupplement, SecretSupplementImport | Snapshot needs and opened secret-supplement import values |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 fn | — | Final-state leader-chat TURN candidates, independent of batch op order |
-| `src/batch/phonetic_codes.rs` | src | m | 2 fn | — | Deterministic name codes for the first phonetic rung (OF-101) |
+| `src/batch/phonetic_codes.rs` | src | m | 1 struct · 3 fn | LinkingCodes | Deterministic name codes for the first phonetic rung (OF-101) |
 | `src/batch/put_apply/mod.rs` | src | s | 2 struct · 1 enum · 1 fn | AppliedPut, BatchEntityPut, EffectiveEntity | Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers |
 | `src/batch/row_put.rs` | src | s | 1 enum | RowPut | What a put is to the row it writes, as the record-scope stamp reads it |
 | `src/batch/secret_scan.rs` | src | s | 7 mod | — | Store-layer modules of core `batch::secret_scan`; core re-exports each one at its old path |
@@ -318,7 +318,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 3 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |
 | `src/merge_queue/types.rs` | src | s | 8 struct · 3 enum · 7 fn | BatchState, CheckReport, EffectIntent, LandingPermit, MergeFile, MergeFileExpected, MergeProposal, MergeQueuePointers +3 | Persisted queue records and sealed landing/check boundaries |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
-| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 54 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 56 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
 | `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
@@ -375,7 +375,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/held.rs` | src | s | 2 struct · 1 trait · 8 fn | AtDiskFloor, HeldBytes, SpillFloor | Bytes of one exchange held whole before they move on: a push's command section, read ahead of the backend to… |
 | `src/origin/smart_http/hooks.rs` | src | m | 2 fn · 1 const | — | The per-request door-owned hook directory and the vetted pre-receive script it carries |
 | `src/origin/smart_http/maintain.rs` | src | s | 1 struct · 2 enum · 1 fn · 3 const | Gc, Run, ServedRepositoryMaintenance | Maintenance of the served repositories |
-| `src/origin/smart_http/paths.rs` | src | s | 6 fn · 23 const | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
+| `src/origin/smart_http/paths.rs` | src | s | 6 fn · 24 const | — | Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and… |
 | `src/origin/smart_http/push_paths.rs` | src | s | 1 fn · 1 type | — | A checkout push's changed paths (FIX 6867, G1-PUSH): the stream the vetted hook lists while the objects are… |
 | `src/origin/smart_http/retained_reasons.rs` | src | s | 1 struct · 5 fn · 2 const | RetainedReasons | A push refusal's reasons, bounded where they are kept (FIX 5942) |
 | `src/origin/smart_http/serve_cmd.rs` | src | s | 1 struct · 6 fn | ServeRequest | The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle |
@@ -509,10 +509,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/types.rs` | src | s | 1 enum · 1 type · 2 const | GroupKey | Cross-cutting types shared by every `serialize` submodule |
 | `src/serialize/value_json.rs` | src | s | 3 fn | — | The opaque MessagePack value a record carries, to and from the JSON public APIs read and write |
 | `src/serialize/yaml_format.rs` | src | s | 3 fn | — | YAML section writer and YAML scalar/key quoting rules |
+| `src/session_overlay/dump_suppression.rs` | src | s | 2 fn · 3 const · 1 crate-vis | — | Core-dump suppression for a process that holds off-record room bytes (ARCH-0052 threat-model note… |
 | `src/session_overlay/hygiene_tests.rs` | test | s | 1 struct · 1 enum · 7 fn | ObservedAllocator, ShortIdScratch | Allocation-boundary teardown observer for session-owned buffers |
 | `src/session_overlay/journal.rs` | src | m | 4 struct · 1 enum · 10 fn · 4 crate-vis | JournalEntry, JournalRole, JournalScope, PromotePlan, PublishedEntry | Typed session-overlay journal: entries, promotion plans, and replay |
 | `src/session_overlay/keyspace.rs` | src | m | 1 enum · 1 fn · 13 crate-vis | OverlayKeyspace | Overlay keyspace manifest: the 28 named databases and their mutations |
-| `src/session_overlay/mod.rs` | src | s | 7 mod · 5 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
+| `src/session_overlay/mod.rs` | src | s | 7 mod · 6 re-export | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `src/session_overlay/overlay/held.rs` | src | s | 11 crate-vis | — | What the overlay's readers hold beyond its published state, counted in what the overlay retains (FIX 11083)… |
 | `src/session_overlay/overlay/lifecycle.rs` | src | m | 1 struct · 8 fn · 10 crate-vis | SessionOverlay | Overlay lifecycle state machine, leases, seal/rearm/close |
 | `src/session_overlay/overlay/mod.rs` | src | s | 1 fn · 8 mod · 3 re-export · 4 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
@@ -658,3 +659,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/world_access_predicates.rs` | src | s | 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `tests/session_overlay_dump_suppression.rs` | test | s | — | — | Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core… |
+| `tests/session_overlay_dump_suppression_off.rs` | test | s | — | — | Census row L6-18: the operator's off switch |

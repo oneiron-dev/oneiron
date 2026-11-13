@@ -1,5 +1,5 @@
 //! The host doors of the owner's residence rows (OF-534, FIX 531):
-//! `vault.residence.mode`, `.open`, `.index` and `.prune`. Each takes the
+//! `vault.residence.mode`, `.worlds`, `.open`, `.index` and `.prune`. Each takes the
 //! vault owner's proof, as `/v1/owner` does, and the machine id the call
 //! names; the named machine's own `SyncConnection`, as this host registered
 //! it (`crate::residence_machines`), applies it. A machine with no
@@ -10,9 +10,9 @@
 //! `state: "applied"` with what the machine did.
 //!
 //! Each lists its rows (`host_door_lists`): the item an open fetched, and
-//! each entry the thin index shows (its title is that row's). A mode switch
-//! and a prune answer the machine's windows and counts, and list none; a
-//! queued directive lists none.
+//! each entry the thin index shows (its title is that row's). A mode switch,
+//! a world pick and a prune answer the machine's windows, worlds and counts,
+//! and list none; a queued directive lists none.
 //!
 //! `vault.residence.directives` (FIX 4346) reads those directives back, with
 //! each machine's result as this replica received it, under the same owner
@@ -24,6 +24,7 @@
 //! home's answer to each; a machine with no connection here answers
 //! `state: "unreached"`, and nothing is queued. Its rows are digests and
 //! sizes, so it lists none.
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::authority::ResidenceAct;
@@ -34,7 +35,8 @@ use oneiron::task_verb::sdk::{
     ResidenceDirectiveView, ResidenceDirectivesRequest, ResidenceIndexAnswer,
     ResidenceMachineRequest, ResidenceModeAnswer, ResidenceModeName, ResidenceModeRequest,
     ResidenceOpenAnswer, ResidenceOpenRequest, ResidenceOpened, ResidencePruneAnswer,
-    ResidencePruneRequest, ResidencePruned, ResidenceQueued, SyncOutboxAnswer, SyncOutboxUnreached,
+    ResidencePruneRequest, ResidencePruned, ResidenceQueued, ResidenceWorldsAnswer,
+    ResidenceWorldsPicked, ResidenceWorldsRequest, SyncOutboxAnswer, SyncOutboxUnreached,
 };
 
 use super::host_doors::support::{Listed, internal, naming, owner_proof};
@@ -266,6 +268,40 @@ async fn residence_directives(
     })
     .await
     .map_err(|_| internal(VERB))?
+}
+
+/// [`vault_residence_worlds`]'s answer: sets the worlds the named machine
+/// follows, the owner's pick (ARCH-0023b #partial-sync).
+async fn residence_worlds(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceWorldsRequest,
+) -> MemoryResult<ResidenceWorldsAnswer> {
+    const VERB: &str = "vault.residence.worlds";
+    let worlds: BTreeSet<oneiron::EntityId> = input.worlds.into_iter().collect();
+    let act = ResidenceAct::Follow {
+        worlds: worlds.clone(),
+    };
+    let connection = match machine_connection(server, auth, VERB, &input.machine, act)? {
+        Reach::Connection(connection) => connection,
+        Reach::Queued(queued) => return Ok(ResidenceWorldsAnswer::Queued(queued)),
+    };
+    let picked = connection
+        .set_followed_worlds(worlds)
+        .map_err(|error| refused(VERB, &error))?;
+    Ok(ResidenceWorldsAnswer::Applied(ResidenceWorldsPicked {
+        worlds: picked.into_iter().collect(),
+    }))
+}
+
+/// `vault.residence.worlds`: sets the worlds the named machine follows,
+/// listing no row.
+pub(crate) async fn vault_residence_worlds(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidenceWorldsRequest,
+) -> Listed<ResidenceWorldsAnswer> {
+    naming(residence_worlds(server, auth, input).await, |_| Vec::new())
 }
 
 /// `vault.residence.mode`: switches the named machine's residence mode, listing no row.

@@ -69,7 +69,10 @@ pub struct DerivationEnvelope {
 pub enum MentionLink {
     /// The label maps to no entity kind: the span stays a tag.
     Tag,
-    /// The identity key named these entities, real or provisional, or the
+    /// The identity key named these entities, real or provisional; or, for
+    /// a person's name of two or more parts the key misses, the phonetic
+    /// rung found two or more persons it sounds like (ARCH-0024 signal 2;
+    /// one alone mints, and the nightly re-check asks about it); or the
     /// span took them from what it corefers with: an antecedent, an earlier
     /// turn's saved span, or the turn's speaker or addressee. A hit, even a
     /// single one, is a soft link: the linker decides whether the mention is

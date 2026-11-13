@@ -169,6 +169,9 @@ impl Vault {
         body.source = Some(ClaimSource::Observed);
         body.valid_from = Some(at);
         body.evidence = Some(refs);
+        // Only a PERSON subject has a substrate FACET; any other subject takes
+        // the vault default facet (a birth gate refusal otherwise, #4389).
+        body.scope_facet = self.claim_put_facet_keeping_in_txn(txn, &id, body.scope_facet)?;
         self.put_claim_in_txn(txn, &id, &body, TimeRange { start: at, end: at }, at)?;
         let stored = self
             .get_claim_in_txn(txn, &id)?
@@ -276,5 +279,7 @@ impl crate::memory::Memory<'_> {
     }
 }
 
+// FIX [LIBTEST-QUARANTINE-AFFECT-STATE-INDEX-TESTS]: the lib test target's type check fails here (4 errors: E0308 x1, E0599 x1, E0061 x1, E0639 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;

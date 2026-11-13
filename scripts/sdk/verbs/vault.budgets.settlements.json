@@ -1,11 +1,12 @@
 {
   "name": "vault.budgets.settlements",
-  "description": "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced.",
+  "description": "Reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced: the owner reads every one, another caller those stamped with its own agent id.",
   "input": "crate::agent_dispatch::budget_doors::RunSettlementsRequest",
   "output": "crate::agent_dispatch::budget_doors::RunSettlementsView",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.budgets.settlements\", &input)?",
   "host_door": true,
   "host_door_lists": true,
+  "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {
@@ -13,5 +14,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "run_reader"
 }

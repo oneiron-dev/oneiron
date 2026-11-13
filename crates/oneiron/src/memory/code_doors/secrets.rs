@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::code_document::CodeOpProvenance;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
-use crate::repo_mutation::proposal::RepoProposalReview;
+use crate::repo_mutation::proposal::{OwnerRequestAttribution, RepoProposalReview};
 use crate::repo_mutation::{
     RepoSecretMarkEntry, RepoSecretMarkSeen, RepoSecretRemediation, RepoSecretRemediationAction,
     RepoSecretRemediationLinkEntry, RepoSecretRemediationRequest, RepoSecretRemediationStatus,
@@ -73,17 +72,14 @@ pub struct CodeRepoSecretsView {
     pub remediations: Vec<CodeRepoSecretRemediationLink>,
 }
 
-/// Stages the remediation of one repository's current code. Attribution as
-/// for a proposal submit; the engine reads the current HEAD itself.
+/// Stages the remediation of one repository's current code. The engine
+/// reads the current HEAD itself and attributes the bundle to this request
+/// (`owner_request`): the caller names no session or provenance claim.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeRepoSecretProposeRequest {
     /// An existing CODE_ARTIFACT naming a local repository.
     pub repo: EntityId,
-    /// An existing SESSION. Attribution, not authority.
-    pub session: EntityId,
-    /// An existing active `repo.provenance` CLAIM.
-    pub provenance_claim: EntityId,
     pub op_provenance: CodeOpProvenance,
     /// The owner's own review catalog for the bundle; omitted, the vault's
     /// review policy holds it.
@@ -179,10 +175,9 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeRepoSecretProposeRequest,
     ) -> MemoryResult<CodeRepoSecretRemediation> {
+        let attribution = OwnerRequestAttribution::new("vault.code.secrets.propose", &input)?;
         let actor = self.code_owner(owner)?;
         let repo_ref = self.code_repo(input.repo)?;
-        self.code_readable(input.session, Some(ENTITY_TYPE_SESSION))?;
-        self.code_readable(input.provenance_claim, Some(ENTITY_TYPE_CLAIM))?;
         let provenance = &input.op_provenance;
         for id in [
             provenance.turn,
@@ -197,11 +192,12 @@ impl Memory<'_> {
         }
         let remediation = self.vault.propose_repo_secret_remediation_as_owner(
             owner,
+            input.repo,
             RepoSecretRemediationRequest {
                 repo_ref,
                 actor_id: actor,
-                session_id: input.session,
-                provenance_claim_id: input.provenance_claim,
+                session_id: None,
+                provenance_claim_id: None,
                 op_provenance: input.op_provenance,
                 actor_class: Some(self.actor_class),
                 review: input.catalog.map_or(
@@ -209,6 +205,7 @@ impl Memory<'_> {
                     RepoProposalReview::Explicit,
                 ),
             },
+            &attribution,
         )?;
         if let Some(proposal) = remediation.proposal {
             self.produced_from([proposal]);

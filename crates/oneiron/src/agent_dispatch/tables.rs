@@ -11,7 +11,9 @@ crate::side_table::side_tables! {
     AGENT_DISPATCH_CHILD_WAIT: VaultMeta b"agent.dispatch.child_wait.v1\0" Raw Authored [accepts: crate::agent_dispatch::agent_dispatch_child_wait_accepts_masked]
         [restore: content] [family: unclassified] [tier: canonical];
     /// The index rows of the waits over AGENT children, by a one-byte tag: `w` id16(child
-    /// attempt) + id16(wait) (a child's unsettled waits; a presence marker).
+    /// attempt) + id16(wait) (a child's unsettled waits; a presence marker); `d` u64be(until
+    /// ms) + id16(wait) (an unsettled wait's deadline, read by the due sweep; a presence
+    /// marker).
     AGENT_DISPATCH_CHILD_WAIT_INDEX: VaultMeta b"agent.dispatch.child_wait_index.v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 1380: one running child's comm widening, its per-reach asks to its parent and the
@@ -48,6 +50,11 @@ crate::side_table::side_tables! {
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The class one message to a busy resident took (AGM-2 = C): its class, its sender's kind,
+    /// the classifier's read when one was lent, and the ask an unsure interrupt put to its
+    /// sender. Ids only, no text. Key: blake3 (32) of the message's wake key.
+    AGENT_DISPATCH_RESIDENT_MESSAGE_CLASS: VaultMeta b"agent.dispatch.resident_message_class.v1\0" Named Engine
         [restore: content] [family: unclassified] [tier: canonical];
     /// Dedupe index from a caller-supplied dedupe key to the workflow root attempt id. Key: hash32.
     AGENT_WORKFLOW_DEDUPE: VaultMeta b"agent.workflow.dedupe.v1\0" Raw
