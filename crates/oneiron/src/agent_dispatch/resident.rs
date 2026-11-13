@@ -11,6 +11,7 @@ use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::error::{ArtifactError, Error, Result};
+use crate::run_tree::{RunSignalKind, RunSignalState};
 use crate::task_verb::ConsultPayloadRef;
 use crate::write_envelope::ClaimCandidate;
 use crate::{
@@ -101,6 +102,21 @@ fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
         "invalid resident binding",
     ))
+}
+
+/// A resident's run as one inbox pass reads it (AGM-2 = C, AGM-4 = C).
+struct ResidentRunView {
+    /// Every wake key its run already took: each wake's dedupe key, each key
+    /// a held wake carries, and each message a wake took between its steps,
+    /// once applied or while that wake has not ended.
+    woken: HashSet<String>,
+    /// Whether a wake of its run is queued, scheduled or running. A busy
+    /// resident gets no second wake for a message. A wake parked on a
+    /// durable wait, or paused, is not busy: nothing of it runs, so a
+    /// message wakes the resident as it would a sleeping one.
+    busy: bool,
+    /// The wake of its run that is running, which a message lands on.
+    running: Option<AttemptId>,
 }
 
 impl Vault {
@@ -240,6 +256,8 @@ impl AgentDispatcher<'_> {
     /// whose thread's open TASK it holds, wakes it next, under its wake mode
     /// (FIX 15647), and then each message to its inbox. Turns of one room,
     /// and messages, hold for its wake hold and join one wake (AGM-4 = C).
+    /// A message to a busy resident wakes nothing: its class decides when it
+    /// reaches the resident (AGM-2 = C).
     pub fn dispatch_resident_inbox(
         &self,
         agent: EntityId,
@@ -254,7 +272,13 @@ impl AgentDispatcher<'_> {
             return Ok(ResidentInboxDispatch::default());
         };
         validate(self.vault, &spec)?;
-        let woken = self.resident_woken_keys(agent)?;
+        // AGM-2: a message that landed on a wake which then paused or parked
+        // returns to the inbox before the run is read, so this pass routes it.
+        if spec.wake != ResidentWakeMode::Manual {
+            self.withdraw_stranded_messages(agent)?;
+        }
+        let view = self.resident_run_view(agent)?;
+        let woken = &view.woken;
         let mut pass = ResidentInboxDispatch::default();
         if diary_review_wakes(spec.wake) {
             for item in self.vault.diary_read_inbox_items()? {
@@ -314,22 +338,52 @@ impl AgentDispatcher<'_> {
             }
         }
         // FIX 15647: its staged room wakes; Manual settles them unwoken.
-        self.dispatch_resident_room_wakes(&spec, &woken, limit, now, &mut pass)?;
+        self.dispatch_resident_room_wakes(&spec, woken, limit, now, &mut pass)?;
         if spec.wake == ResidentWakeMode::Manual {
             return Ok(pass);
         }
-        self.dispatch_resident_message_wakes(&spec, &woken, limit, now, &mut pass)?;
+        self.dispatch_resident_message_wakes(&spec, &view, limit, now, &mut pass)?;
         Ok(pass)
     }
 
-    /// Every wake key resident `agent`'s run already took: each attempt's
-    /// dedupe key, and each key a held wake carries besides its own
-    /// (AGM-4). Completion retires a wake's dedupe entry, so a message, turn
-    /// or review whose wake already ran is known by its key on the run.
-    fn resident_woken_keys(&self, agent: EntityId) -> Result<HashSet<String>> {
+    /// Resident `agent`'s run as an inbox pass reads it. Its woken keys are
+    /// each attempt's dedupe key, each key a held wake carries besides its
+    /// own (AGM-4), and each message a wake took between its steps (AGM-2):
+    /// once its run applied it, or while that wake has not ended. Completion
+    /// retires a wake's dedupe entry, so a message, turn or review whose
+    /// wake already ran is known by its key on the run. A message an ended
+    /// wake never applied is not woken, so it wakes the next run.
+    fn resident_run_view(&self, agent: EntityId) -> Result<ResidentRunView> {
         let carrier = format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:resident:{}:", agent.to_hex());
-        let mut woken = HashSet::new();
+        let mut view = ResidentRunView {
+            woken: HashSet::new(),
+            busy: false,
+            running: None,
+        };
+        let woken = &mut view.woken;
         for row in AttemptQueue::new(self.vault).list_run(&resident_run_id(agent))? {
+            let ended = row.state.is_terminal();
+            for signal in &row.signals {
+                if matches!(signal.kind, RunSignalKind::Interject { .. })
+                    && (signal.state == RunSignalState::Settled || !ended)
+                {
+                    woken.insert(format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{}", signal.key));
+                }
+            }
+            // A wake parked on a durable wait (or on an outage or its payer)
+            // keeps its lease, so its row still reads Leased, but it runs no
+            // step: like a paused wake, it is not busy (#7327 review round 1).
+            if !ended
+                && row.state != AttemptState::Paused
+                && crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                    .parked_attempt(row.id)?
+                    .is_none()
+            {
+                view.busy = true;
+                if row.state.is_running() && view.running.is_none() {
+                    view.running = Some(row.id);
+                }
+            }
             let Some(key) = row.dedupe_key.as_deref() else {
                 continue;
             };
@@ -351,7 +405,7 @@ impl AgentDispatcher<'_> {
             }
             woken.insert(key.to_owned());
         }
-        Ok(woken)
+        Ok(view)
     }
 }
 
