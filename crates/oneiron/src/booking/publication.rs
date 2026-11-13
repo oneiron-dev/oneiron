@@ -406,7 +406,7 @@ pub(crate) use write_index::{
     guard_publication_put, index_publication_in_txn, publication_setting_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-BOOKING-PUBLICATION-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-BOOKING-PUBLICATION-TESTS]: the lib test target's type check fails here (6 errors: E0061 x5, E0063 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

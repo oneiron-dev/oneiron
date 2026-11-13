@@ -924,7 +924,7 @@ pub use policy_change::{
     SharedActPolicyChangeState,
 };
 
-// FIX [LIBTEST-QUARANTINE-FEDERATION-PENDING-ACT-TESTS]: the lib test target's type check fails here (5 errors: unstreamed x5); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-FEDERATION-PENDING-ACT-TESTS]: the lib test target's type check fails here (5 errors: E0639 x2, E0061 x2, E0063 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -58,7 +58,7 @@ fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> 
     record.validate()?;
     Ok(record)
 }
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-GOAL-TESTS]: the lib test target's type check fails here (8 errors: unstreamed x8); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-GOAL-TESTS]: the lib test target's type check fails here (8 errors: E0061 x7, E0063 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

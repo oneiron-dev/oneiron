@@ -87,7 +87,7 @@ pub use self::types::{
 
 #[cfg(test)]
 mod bulk_review_tests;
-// FIX [LIBTEST-QUARANTINE-INGEST-DOCS-TESTS]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-INGEST-DOCS-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0277 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod docs_tests;

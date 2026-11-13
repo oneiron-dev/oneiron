@@ -652,7 +652,7 @@ fn unsupported_remote_passport_relationships_cannot_bridge_other_roots() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-THREAD-PASSPORT-SYNC-REGRESSIONS]: the lib test target's type check fails here (3 errors: unstreamed x3); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-THREAD-PASSPORT-SYNC-REGRESSIONS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
 #[cfg(any())]
 #[cfg(feature = "sync")]
 #[path = "sync_regressions.rs"]

@@ -1,29 +1,29 @@
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-QUALIFICATION]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-QUALIFICATION]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
 #[cfg(any())]
 mod connector_qualification;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-SCHEDULE]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-SCHEDULE]: the lib test target's type check fails here (2 errors: E0639 x1, E0063 x1); port it, then drop this gate
 #[cfg(any())]
 mod connector_schedule;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-DISPATCH-BUDGET]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-DISPATCH-BUDGET]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
 #[cfg(any())]
 mod dispatch_budget;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-SENDER-SELECTION-FACET-SELECTION]: the lib test target's type check fails here (1 errors: unstreamed x1); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-SENDER-SELECTION-FACET-SELECTION]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
 #[cfg(any())]
 #[path = "sender_selection/facet_selection.rs"]
 mod facet_selection;
 mod gate_window;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-LINKEDIN-CONNECT]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-LINKEDIN-CONNECT]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
 #[cfg(any())]
 mod linkedin_connect;
 mod linkedin_send;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-PIPELINE-CONTRACT]: the lib test target's type check fails here (3 errors: unstreamed x3); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-PIPELINE-CONTRACT]: the lib test target's type check fails here (3 errors: E0639 x2, E0063 x1); port it, then drop this gate
 #[cfg(any())]
 mod pipeline_contract;
 mod quiet_window;
 mod retry_audit;
 mod sender_selection;
 mod space_posting;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-STEP-FAILURE]: the lib test target's type check fails here (3 errors: unstreamed x3); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-STEP-FAILURE]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
 #[cfg(any())]
 mod step_failure;
 
@@ -75,10 +75,8 @@ impl TimedVault {
 fn temp_vault() -> (tempfile::TempDir, TimedVault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let clock = crate::ports::ManualClock::new(0);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let vault = Vault::open(tmp.path(), config).expect("open vault");
     (tmp, TimedVault { vault, clock })
 }
@@ -147,6 +145,7 @@ fn put_claim_body(vault: &Vault, seed: u8, body: &ClaimBody) -> crate::Result<()
         ENTITY_TYPE_CLAIM,
         crate::temporal::TimeRange { start: 1, end: 1 },
         1,
+        0,
         &data,
     );
 
@@ -212,6 +211,7 @@ fn connector_task_draft(
         trigger_ref: trigger_ref.to_owned(),
         job_ref: None,
         occurred_at: Some(occurred_at),
+        mention: None,
     }
 }
 
@@ -586,6 +586,7 @@ fn one_1768_draft(channel: &str, verb: &str, key: &str) -> crate::memory::Outbou
         trigger_ref: format!("session:{key}"),
         job_ref: None,
         occurred_at: Some(ONE_1768_SCHEDULED_AT),
+        mention: None,
     }
 }
 

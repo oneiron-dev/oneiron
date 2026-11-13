@@ -790,7 +790,7 @@ impl RawValue for StoredExport {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-RESERVOIR-TESTS]: the lib test target's type check fails here (10 errors: unstreamed x10); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-RESERVOIR-TESTS]: the lib test target's type check fails here (10 errors: E0061 x5, E0560 x2, E0308 x2, E0599 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

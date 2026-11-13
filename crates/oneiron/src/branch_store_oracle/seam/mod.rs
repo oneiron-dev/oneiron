@@ -1,8 +1,6 @@
 //! Thinnest plausible seam for the machinery the arming tickets own; the oracle tests reach it through these re-exports.
 
 mod binding;
-// FIX [LIBTEST-QUARANTINE-BRANCH-STORE-ORACLE-SEAM-SESSION]: the lib test target's type check fails here (8 errors: E0063 x6, E0639 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod session;
 mod substrate;
 

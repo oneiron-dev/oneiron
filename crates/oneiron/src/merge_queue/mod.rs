@@ -43,7 +43,7 @@ mod tested_export;
 mod tested_received;
 mod tested_store;
 mod tested_types;
-// FIX [LIBTEST-QUARANTINE-MERGE-QUEUE-TESTS]: the lib test target's type check fails here (4 errors: unstreamed x4); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-MERGE-QUEUE-TESTS]: the lib test target's type check fails here (4 errors: E0063 x2, E0308 x2); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

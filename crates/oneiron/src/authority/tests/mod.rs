@@ -49,8 +49,6 @@ mod handoff_arrival_order;
 // FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HANDOFF-SETTLEMENT]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
 #[cfg(any())]
 mod handoff_settlement;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HISTORY-TRANSFER]: the lib test target's type check fails here (2 errors: E0639 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod history_transfer;
 mod host_node;
 // FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-HOST-RE-ROOT]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
@@ -102,8 +100,6 @@ mod world_orphan;
 // FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-PIN-DOORS]: the lib test target's type check fails here (21 errors: E0061 x16, E0308 x5); port it, then drop this gate
 #[cfg(any())]
 mod world_pin_doors;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-WORLD-PRIVACY]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 mod world_privacy;
 mod world_race;
 mod world_read_cost;

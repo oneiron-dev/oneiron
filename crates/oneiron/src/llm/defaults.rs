@@ -119,7 +119,7 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-LLM-DEFAULTS-TESTS]: the lib test target's type check fails here (9 errors: unstreamed x9); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-LLM-DEFAULTS-TESTS]: the lib test target's type check fails here (9 errors: E0063 x7, E0308 x2); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 #[path = "defaults/tests.rs"]
