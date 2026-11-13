@@ -25,6 +25,16 @@
 //! alone. The owner's pack in the same stretch is the fixture's control: it
 //! returns the staged MESSAGE.
 //!
+//! A staged row hangs under the stretch's own conversation shell, not under
+//! the room, so a member's pack that names the room (`conversation_id`)
+//! meets the room's rules only once the read maps that shell to its room:
+//! the member reads the staged turn, a member who joined with no history
+//! reads nothing staged before the join, a member who left reads base alone,
+//! and a private thread the member is out of stays out of their pack and its
+//! counts. The owner's pack that names the room reads the staged turn while
+//! the owner's agent in the room, a peer of that read, holds a grant to the
+//! room's messages, and not without one.
+//!
 //! The owner cases drive the real route with the owner's host-root
 //! credential (on a profiled install, as a serving start enrols it); the
 //! member cases with an agent slip signed by the agent's own key.
@@ -42,6 +52,9 @@ use axum::{
     http::{Request, StatusCode},
 };
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::authority::{
     AgentTier, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
@@ -76,6 +89,10 @@ const ROOM_STRETCH: &str = "room-pack-room-stretch";
 /// The one word the room stretch's staged MESSAGE holds, which no base row
 /// and no other stretch holds.
 const ROOM_WORD: &str = "kingfisher";
+/// The word of a turn the room stretch staged before a late joiner's join.
+const EARLY_WORD: &str = "heron";
+/// The word of a private thread's root the member is out of.
+const THREAD_WORD: &str = "plover";
 
 struct Host {
     _dir: tempfile::TempDir,
@@ -224,10 +241,29 @@ enum Caller<'a> {
 struct RoomStretch {
     /// The key `x-oneiron-session` names the stretch by.
     key: String,
+    room: EntityId,
+    member_id: EntityId,
     member: Principal,
     stranger: Principal,
     /// The short id of the MESSAGE the owner's turn staged in the stretch.
     staged_message: String,
+    /// With [`RoomPlan::late_joiner`], the MESSAGE staged before the join.
+    early_message: Option<String>,
+    /// With [`RoomPlan::private_thread`], the thread root's MESSAGE.
+    thread_message: Option<String>,
+}
+
+/// How [`Host::room_stretch_planned`] seats the member and what it stages.
+#[derive(Clone, Copy, Default)]
+struct RoomPlan {
+    /// Seat the member with no history after a first staged turn
+    /// ([`EARLY_WORD`]), then stage the room's turn ([`ROOM_WORD`]).
+    late_joiner: bool,
+    /// Open a private thread on the room's turn whose audience is the owner
+    /// alone, its root saying [`THREAD_WORD`].
+    private_thread: bool,
+    /// Give the member a grant to read the room's messages.
+    member_reads_messages: bool,
 }
 
 impl Host {
@@ -263,9 +299,17 @@ impl Host {
     /// A Group room seating the owner and their agent, with a stretch the
     /// owner entered there and one turn they witnessed into it.
     fn room_stretch(&self) -> RoomStretch {
+        self.room_stretch_planned(RoomPlan::default())
+    }
+
+    /// [`Self::room_stretch`] as `plan` seats the member and stages. Every
+    /// time is at or before now, as the roster is read at now: the room is
+    /// made 100 s back, an early turn staged 50 s back, a late join 10 s back.
+    fn room_stretch_planned(&self, plan: RoomPlan) -> RoomStretch {
         let vault = &self.vault;
         let proof = self.owner_proof();
         let by_owner = || WriteActor::new(self.owner, EdgeActorClass::Human);
+        let now = vault.now_recorded_at();
         let member = vault
             .ensure_agent_principal("yuki")
             .expect("the member agent");
@@ -292,40 +336,65 @@ impl Host {
                     ..Default::default()
                 },
                 by_owner(),
-                vault.now_recorded_at(),
+                now.saturating_sub(100),
             )
             .expect("create the room");
-        vault
-            .join_member(
-                room,
-                member,
-                by_owner(),
-                vault.now_recorded_at(),
-                HistoryChoice::Share,
-            )
-            .expect("seat the member agent");
+        if !plan.late_joiner {
+            vault
+                .join_member(
+                    room,
+                    member,
+                    by_owner(),
+                    now.saturating_sub(100),
+                    HistoryChoice::Share,
+                )
+                .expect("seat the member agent");
+        }
         let stretch = vault
             .off_record_session_vault()
             .enter_in_room_as(ROOM_STRETCH, OffRecordBackendClass::Local, room, &proof)
             .expect("enter the room stretch");
-        let receipt = vault
-            .memory(self.owner, EdgeActorClass::Human)
-            .witness_into_session_as(
-                &proof,
-                &stretch,
-                &owner_turn(
-                    format!("the room says {ROOM_WORD}"),
-                    vault.now_recorded_at(),
-                ),
-                None,
-                None,
-            )
-            .expect("the owner's turn in the room stretch");
+        let witness = |turn: WitnessTurn| {
+            vault
+                .memory(self.owner, EdgeActorClass::Human)
+                .witness_into_session_as(&proof, &stretch, &turn, None, None)
+                .expect("the owner's turn in the room stretch")
+        };
+        let early_message = plan.late_joiner.then(|| {
+            let early = witness(owner_turn(
+                format!("the room said {EARLY_WORD}"),
+                now.saturating_sub(50),
+            ));
+            vault
+                .join_member(
+                    room,
+                    member,
+                    by_owner(),
+                    now.saturating_sub(10),
+                    HistoryChoice::None,
+                )
+                .expect("seat the member agent with no history");
+            first_message(&early)
+        });
+        let receipt = witness(owner_turn(format!("the room says {ROOM_WORD}"), now));
+        let thread_message = plan.private_thread.then(|| {
+            let mut root = owner_turn(format!("between us, {THREAD_WORD}"), now);
+            root.thread_audience = Some(BTreeSet::from([self.owner]));
+            root.messages[0].metadata = Some(json!({"room_thread_of": receipt.turn_id.to_hex()}));
+            first_message(&witness(root))
+        });
+        if plan.member_reads_messages {
+            grant_room_messages(vault, room, member);
+        }
         RoomStretch {
             key: room_session_key(room, ROOM_STRETCH),
+            room,
+            member_id: member,
             member: self.agent_slip(member, 0x71),
             stranger: self.agent_slip(stranger, 0x72),
             staged_message: first_message(&receipt),
+            early_message,
+            thread_message,
         }
     }
 
@@ -409,6 +478,30 @@ impl Host {
             .expect("base retrieval runs")
             .len()
     }
+}
+
+/// `principal` reads `room`'s MESSAGEs under an active grant.
+fn grant_room_messages(vault: &Vault, room: EntityId, principal: EntityId) {
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    vault
+        .create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                authority_scope,
+                principal_ref: principal,
+                scope: AccessGrantScope::ConversationMessages {
+                    conversation_ref: room,
+                },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: vault.now_recorded_at(),
+                revoked_at: None,
+                expires_at: None,
+                companion_bounds: None,
+            },
+        )
+        .expect("grant the room's messages");
 }
 
 /// The pack request every case sends: the staged word, as a text query.
@@ -558,6 +651,29 @@ fn room_pack_request() -> Value {
     json!({"query": ROOM_WORD, "limit": 10})
 }
 
+/// A pack request for `query` that names `room`'s room as its conversation,
+/// so the room's audience resolves its reader.
+fn room_request(room: &RoomStretch, query: &str) -> Value {
+    json!({"query": query, "limit": 10, "conversation_id": room.room.to_hex()})
+}
+
+/// What a pack says about its rows withheld: its narrowing's and its
+/// access block's suppressed counts, each 0 when absent.
+fn suppressed_counts(pack: &Value) -> (u64, u64) {
+    (
+        pack["narrowing"]["suppressed_count"].as_u64().unwrap_or(0),
+        pack["access"]["accessLimited"]["suppressedCount"]
+            .as_u64()
+            .unwrap_or(0),
+    )
+}
+
+/// `caller`'s pack in `room`'s stretch for `request`.
+async fn room_pack(host: &Host, caller: Caller<'_>, room: &RoomStretch, request: Value) -> Value {
+    host.send(caller, CONTEXT_PACK, request, Some(room.key.as_str()))
+        .await
+}
+
 /// The owner's pack in the room's stretch returns the MESSAGE they staged
 /// there: the fixture's control, so a member case that misses that MESSAGE
 /// misses it by the member's read, not by the fixture.
@@ -579,6 +695,240 @@ fn the_owners_pack_in_a_room_stretch_reads_its_staged_message() {
             "the owner's pack in the room stretch returns {} among {:?}",
             room.staged_message,
             result_short_ids(&inside)
+        );
+    });
+}
+
+/// A member of the room, the owner's own agent on its own slip, reads in its
+/// pack the stretch's MESSAGE its key may read. On main a member's pack reads
+/// base alone.
+#[test]
+fn a_members_pack_in_a_room_reads_the_rows_it_can_read() {
+    run_on_engine_stack("room-stretch-member-pack", async {
+        let host = host();
+        let room = host.room_stretch();
+        let inside = host
+            .send(
+                Caller::Principal(&room.member),
+                CONTEXT_PACK,
+                room_pack_request(),
+                Some(room.key.as_str()),
+            )
+            .await;
+        assert!(
+            names_short_id(&inside["results"], &room.staged_message),
+            "the member's pack in the room stretch returns {} among {:?}; narrowing {}",
+            room.staged_message,
+            result_short_ids(&inside),
+            inside["narrowing"]
+        );
+    });
+}
+
+/// The same member pack, naming the room as the pack's conversation, so the
+/// room's audience resolves the member as the vault's own agent.
+#[test]
+fn a_members_pack_naming_the_room_reads_the_rows_it_can_read() {
+    run_on_engine_stack("room-stretch-member-pack-room", async {
+        let host = host();
+        let room = host.room_stretch();
+        let inside = room_pack(
+            &host,
+            Caller::Principal(&room.member),
+            &room,
+            room_request(&room, ROOM_WORD),
+        )
+        .await;
+        assert!(
+            names_short_id(&inside["results"], &room.staged_message),
+            "the member's pack naming the room returns {} among {:?}; narrowing {}; access {}",
+            room.staged_message,
+            result_short_ids(&inside),
+            inside["narrowing"],
+            inside["access"]
+        );
+    });
+}
+
+/// A member who joined with no history reads, in a pack naming the room,
+/// the turn the stretch staged after the join and none staged before it.
+/// The owner's pack reads that earlier turn: the member's own windows keep
+/// it out, not the fixture.
+#[test]
+fn a_late_joiners_pack_reads_nothing_staged_before_the_join() {
+    run_on_engine_stack("room-stretch-late-joiner", async {
+        let host = host();
+        let room = host.room_stretch_planned(RoomPlan {
+            late_joiner: true,
+            ..RoomPlan::default()
+        });
+        let early = room
+            .early_message
+            .clone()
+            .expect("the early turn's MESSAGE");
+        let member = Caller::Principal(&room.member);
+        let after = room_pack(&host, member, &room, room_request(&room, ROOM_WORD)).await;
+        assert!(
+            names_short_id(&after["results"], &room.staged_message),
+            "the late joiner's pack returns {}, staged after the join, among {:?}; narrowing {}; access {}",
+            room.staged_message,
+            result_short_ids(&after),
+            after["narrowing"],
+            after["access"]
+        );
+        let before = room_pack(&host, member, &room, room_request(&room, EARLY_WORD)).await;
+        assert!(
+            !names_short_id(&before, &early),
+            "the late joiner's pack holds no turn staged before the join: {:?}",
+            result_short_ids(&before)
+        );
+        assert_eq!(
+            suppressed_counts(&before),
+            (0, 0),
+            "the late joiner's pack counts no turn staged before the join"
+        );
+        let owner = room_pack(
+            &host,
+            Caller::Owner,
+            &room,
+            json!({"query": EARLY_WORD, "limit": 10}),
+        )
+        .await;
+        assert!(
+            names_short_id(&owner["results"], &early),
+            "the owner's pack returns the early turn {early} among {:?}",
+            result_short_ids(&owner)
+        );
+    });
+}
+
+/// A member reads the room's stretch while on its roster; once they leave
+/// it, their pack reads base alone.
+#[test]
+fn a_former_members_pack_reads_the_room_stretch_no_more() {
+    run_on_engine_stack("room-stretch-former-member", async {
+        let host = host();
+        let room = host.room_stretch();
+        let member = Caller::Principal(&room.member);
+        let seated = room_pack(&host, member, &room, room_request(&room, ROOM_WORD)).await;
+        assert!(
+            names_short_id(&seated["results"], &room.staged_message),
+            "the seated member's pack returns {} among {:?}; narrowing {}; access {}",
+            room.staged_message,
+            result_short_ids(&seated),
+            seated["narrowing"],
+            seated["access"]
+        );
+        host.vault
+            .leave_member(
+                room.room,
+                room.member_id,
+                WriteActor::new(host.owner, EdgeActorClass::Human),
+                host.vault.now_recorded_at(),
+            )
+            .expect("the member leaves the room");
+        let before = host.base_runs();
+        let left = room_pack(&host, member, &room, room_pack_request()).await;
+        assert!(
+            !names_short_id(&left, &room.staged_message),
+            "a former member's pack reads none of the room stretch: {:?}",
+            result_short_ids(&left)
+        );
+        assert_eq!(
+            host.base_runs(),
+            before + 1,
+            "a former member's pack reads base, and keeps its run there"
+        );
+    });
+}
+
+/// A private thread the member is out of stays out of their pack, and out
+/// of its counts, while they read the room's turn the thread hangs on. The
+/// owner, in the thread's audience, reads its root.
+#[test]
+fn a_members_pack_reads_no_private_thread_it_is_out_of() {
+    run_on_engine_stack("room-stretch-private-thread", async {
+        let host = host();
+        let room = host.room_stretch_planned(RoomPlan {
+            private_thread: true,
+            ..RoomPlan::default()
+        });
+        let thread = room
+            .thread_message
+            .clone()
+            .expect("the thread root's MESSAGE");
+        let member = Caller::Principal(&room.member);
+        let trunk = room_pack(&host, member, &room, room_request(&room, ROOM_WORD)).await;
+        assert!(
+            names_short_id(&trunk["results"], &room.staged_message),
+            "the member's pack returns the room's turn {} among {:?}; narrowing {}; access {}",
+            room.staged_message,
+            result_short_ids(&trunk),
+            trunk["narrowing"],
+            trunk["access"]
+        );
+        let hidden = room_pack(&host, member, &room, room_request(&room, THREAD_WORD)).await;
+        assert!(
+            !names_short_id(&hidden, &thread),
+            "the member's pack holds no row of a thread it is out of: {:?}",
+            result_short_ids(&hidden)
+        );
+        assert_eq!(
+            suppressed_counts(&hidden),
+            (0, 0),
+            "the member's pack counts no row of a thread it is out of"
+        );
+        let owner = room_pack(
+            &host,
+            Caller::Owner,
+            &room,
+            json!({"query": THREAD_WORD, "limit": 10}),
+        )
+        .await;
+        assert!(
+            names_short_id(&owner["results"], &thread),
+            "the owner's pack returns the thread root {thread} among {:?}",
+            result_short_ids(&owner)
+        );
+    });
+}
+
+/// The owner's pack naming the room reads its staged turn while their agent
+/// in the room, a peer of that read, holds a grant to the room's messages:
+/// the peer reads the staged MESSAGE as one of the room's.
+#[test]
+fn the_owners_pack_naming_the_room_reads_its_staged_message_beside_a_granted_agent() {
+    run_on_engine_stack("room-stretch-owner-names-room", async {
+        let host = host();
+        let room = host.room_stretch_planned(RoomPlan {
+            member_reads_messages: true,
+            ..RoomPlan::default()
+        });
+        let pack = room_pack(&host, Caller::Owner, &room, room_request(&room, ROOM_WORD)).await;
+        assert!(
+            names_short_id(&pack["results"], &room.staged_message),
+            "the owner's pack naming the room returns {} among {:?}; narrowing {}; access {}",
+            room.staged_message,
+            result_short_ids(&pack),
+            pack["narrowing"],
+            pack["access"]
+        );
+    });
+}
+
+/// The same pack beside an agent with no grant to the room's messages holds
+/// no MESSAGE that agent cannot read: mapping the stretch to its room opens
+/// no grant.
+#[test]
+fn the_owners_pack_naming_the_room_reads_no_message_an_ungranted_agent_cannot() {
+    run_on_engine_stack("room-stretch-owner-ungranted-peer", async {
+        let host = host();
+        let room = host.room_stretch();
+        let pack = room_pack(&host, Caller::Owner, &room, room_request(&room, ROOM_WORD)).await;
+        assert!(
+            !names_short_id(&pack, &room.staged_message),
+            "the owner's pack beside an ungranted agent holds none of its MESSAGEs: {:?}",
+            result_short_ids(&pack)
         );
     });
 }
