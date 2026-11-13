@@ -205,9 +205,14 @@ impl PackSource {
 
 /// A script or hook body: code a source carries as a file.
 fn is_script_or_hook_file(file: &HubFile) -> bool {
-    file.path.starts_with("scripts/")
-        || file.path.contains("/scripts/")
-        || file.path.starts_with("hooks/")
+    is_script_or_hook_path(&file.path)
+}
+
+/// Whether a file at `path` is a script or hook body: under `scripts/` at
+/// any depth, or under a top-level `hooks/`. A skill_optimize draft never
+/// replaces one (census L9-02).
+pub(crate) fn is_script_or_hook_path(path: &str) -> bool {
+    path.starts_with("scripts/") || path.contains("/scripts/") || path.starts_with("hooks/")
 }
 
 /// A pack-carried board recipe. Its verbs and authority are permission requests,

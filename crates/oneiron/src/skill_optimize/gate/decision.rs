@@ -238,15 +238,15 @@ fn rule_on_proposal(
                 if let Some(standing) = standing {
                     return Ok(Prepared::Ruled(Box::new(standing)));
                 }
+                let (target_instructions, proposal_instructions) =
+                    super::rule_policy::gate_instruction_pair_in_txn(
+                        vault, &*wtxn, &target, &current, proposal, &staged,
+                    );
                 Ok(Prepared::Score(Box::new(ScoreInputs {
                     judge_rubric_digest: judge_rubric_digest_in_txn(vault, &*wtxn)?,
                     outcomes,
-                    proposal_instructions: super::rule_policy::gate_instructions_in_txn(
-                        vault, &*wtxn, proposal, &staged,
-                    ),
-                    target_instructions: super::rule_policy::gate_instructions_in_txn(
-                        vault, &*wtxn, &target, &current,
-                    ),
+                    proposal_instructions,
+                    target_instructions,
                     proposal: staged,
                     target,
                     target_record: current,

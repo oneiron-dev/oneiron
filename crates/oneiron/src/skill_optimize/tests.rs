@@ -252,6 +252,7 @@ impl StubAuthor {
             answer: SkillEditDraft::Edit {
                 desc: DRAFTED_DESC.to_owned(),
                 rationale: "five attributed defects name the missing check".to_owned(),
+                files: Vec::new(),
             },
             seen: RefCell::new(Vec::new()),
         }

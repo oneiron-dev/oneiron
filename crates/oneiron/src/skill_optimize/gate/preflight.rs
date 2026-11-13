@@ -158,10 +158,10 @@ fn preflight_with_owner(
     {
         return Ok(row.into());
     }
-    let current_instructions =
-        super::rule_policy::gate_instructions_in_txn(vault, &txn, &target, &current);
-    let staged_instructions =
-        super::rule_policy::gate_instructions_in_txn(vault, &txn, proposal, &staged);
+    let (current_instructions, staged_instructions) =
+        super::rule_policy::gate_instruction_pair_in_txn(
+            vault, &txn, &target, &current, proposal, &staged,
+        );
     drop(txn);
     if held_out.is_empty() {
         return Err(invalid("an offline preflight requires held-out evidence"));

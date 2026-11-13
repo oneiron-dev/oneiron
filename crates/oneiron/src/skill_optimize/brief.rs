@@ -38,6 +38,18 @@ pub const SKILL_OPTIMIZE_RATIONALE_MAX_BYTES: usize = 1024;
 /// are budgeted and audited as their own class.
 pub const SKILL_OPTIMIZE_CALL_PURPOSE_NAME: &str = "skill_optimize_draft";
 
+/// Most files a brief carries whole, and most files one draft may replace
+/// (census L9-02, Engine ruling 13 Nov 22:39).
+pub const SKILL_OPTIMIZE_MAX_DRAFT_FILES: usize = 16;
+
+/// Largest file a brief carries whole, and largest replacement text a draft
+/// may give one file, in bytes.
+pub const SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES: usize = 16 * 1024;
+
+/// Most bytes of file text one brief carries whole, and most bytes of
+/// replacement text one draft gives its files together.
+pub const SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES: usize = 64 * 1024;
+
 /// Everything the author is allowed to reason from: the instructions as they
 /// stand, and what real usage did with them.
 ///
@@ -97,6 +109,14 @@ pub struct SkillOptimizeBrief {
     /// by naming its key with the new number (`key: 4`), which the improved
     /// revision's `policy.json` then takes. `None` when it carries none.
     pub policy_dials: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The target's files a draft may replace whole (census L9-02): its text
+    /// and data files, path-sorted, never a script, hook, callable entry or
+    /// site declaration. `SKILL.md` stands for its body below the
+    /// frontmatter, which the engine writes; a workflow skill's body is its
+    /// `desc`, so its `SKILL.md` is not listed. Within the brief's bounds a
+    /// file carries its whole text; past them it is listed by path only and
+    /// a draft cannot replace it. Empty for a skill with no package.
+    pub files: Vec<SkillBriefFile>,
     /// The rows this brief was read from (FIX 7102): the DEV attempt rows, the
     /// forwarded proposals, the rejected verdicts with their proposals, the
     /// prior's rows and the reliability claim, unioned. `None` unless every
@@ -146,12 +166,36 @@ pub struct RejectedSkillEdit {
     pub rejection_reason: RejectedSkillEditReason,
 }
 
+/// One file of the target's tree as its brief carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillBriefFile {
+    /// The file's path in the skill's tree.
+    pub path: String,
+    /// Its whole text; `None` when it is past the brief's bounds, listed by
+    /// path only.
+    pub content: Option<String>,
+}
+
+/// One whole-file replacement a draft proposes: `path` names a file its brief
+/// carried whole, and `content` is that file's complete new text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillFileEdit {
+    pub path: String,
+    pub content: String,
+}
+
 /// The author's answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SkillEditDraft {
-    /// Replacement instructions the evidence supports, and why.
-    Edit { desc: String, rationale: String },
+    /// Replacement instructions the evidence supports, and why, with the
+    /// files of the brief it replaces whole (empty for an instructions-only
+    /// edit). A file edit may restate the current instructions.
+    Edit {
+        desc: String,
+        rationale: String,
+        files: Vec<SkillFileEdit>,
+    },
     /// The evidence does not support an edit. Declining is a first-class
     /// answer: a job that must always produce something produces churn.
     Decline { rationale: String },
@@ -392,7 +436,12 @@ pub(crate) fn optimize_brief_bound_at(
     .max()
     .unwrap_or(0);
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
-    let (policy_dials, policy_rows) = policy_dials(vault, &candidate.skill, &record);
+    let PackageBrief {
+        policy_dials,
+        files,
+        rows: policy_rows,
+    } = package_brief(vault, &candidate.skill, &record);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, files.len() as u64);
     let source_rows = union_source_rows([
         Some(vec![candidate.skill]),
         policy_rows,
@@ -421,34 +470,46 @@ pub(crate) fn optimize_brief_bound_at(
         rejected_edits,
         failure: None,
         policy_dials,
+        files,
         source_rows,
     })
 }
 
-/// The top-level entries of `skill`'s `policy.json`, when its package
-/// carries one that reads as one JSON object (FIX 12071): the dials the
-/// improved revision's re-derive moves. A package that does not read shows
-/// none, and the brief goes on. Source rows name the package read on the
-/// same snapshot; an unknown witness never changes the dial values.
-fn policy_dials(
+/// What a brief reads from its target's package, on one snapshot.
+struct PackageBrief {
+    policy_dials: Option<serde_json::Map<String, serde_json::Value>>,
+    files: Vec<SkillBriefFile>,
+    rows: Option<Vec<EntityId>>,
+}
+
+/// What `skill`'s package gives its brief: the top-level entries of its
+/// `policy.json`, when it carries one that reads as one JSON object
+/// (FIX 12071), the dials the improved revision's re-derive moves; and its
+/// files a draft may replace (census L9-02), each whole while the brief's
+/// bounds hold and by path only past them. A package that does not read
+/// shows neither, and the brief goes on. Source rows name the package read
+/// on the same snapshot; an unknown witness never changes what it shows.
+fn package_brief(
     vault: &Vault,
     skill: &EntityId,
     record: &crate::skill::SkillRecord,
-) -> (
-    Option<serde_json::Map<String, serde_json::Value>>,
-    Option<Vec<EntityId>>,
-) {
+) -> PackageBrief {
+    let unread = PackageBrief {
+        policy_dials: None,
+        files: Vec::new(),
+        rows: None,
+    };
     let Ok(rtxn) = vault.store.env.read_txn() else {
-        return (None, None);
+        return unread;
     };
     let package = match vault.runtime_skill_package_in_txn(&rtxn, skill, record) {
         Ok(package) => package,
         Err(error) => {
             tracing::debug!(kind = ?error.kind(), "a skill's package is unreadable for its brief");
-            return (None, None);
+            return unread;
         }
     };
-    let source_rows = if package.is_some() {
+    let rows = if package.is_some() {
         vault
             .runtime_package_carrier_in_txn(&rtxn, skill, record)
             .map(|carrier| carrier.into_iter().collect())
@@ -456,17 +517,58 @@ fn policy_dials(
     } else {
         Some(Vec::new())
     };
-    let dials = (|| {
-        let policy = package?
-            .files
-            .into_iter()
-            .find(|file| file.path == REVIEWER_POLICY_FILE)?;
-        match serde_json::from_slice::<serde_json::Value>(&policy.content).ok()? {
-            serde_json::Value::Object(entries) => Some(entries),
-            _ => None,
+    let Some(package) = package else {
+        return PackageBrief {
+            policy_dials: None,
+            files: Vec::new(),
+            rows,
+        };
+    };
+    let policy_dials = package
+        .files
+        .iter()
+        .find(|file| file.path == REVIEWER_POLICY_FILE)
+        .and_then(|policy| {
+            match serde_json::from_slice::<serde_json::Value>(&policy.content).ok()? {
+                serde_json::Value::Object(entries) => Some(entries),
+                _ => None,
+            }
+        });
+    let files = match crate::skill_hub::draftable_skill_texts(record, &package.files) {
+        Ok(texts) => bounded_brief_files(texts),
+        Err(error) => {
+            tracing::debug!(kind = ?error.kind(), "a skill's files are unreadable for its brief");
+            Vec::new()
         }
-    })();
-    (dials, source_rows)
+    };
+    PackageBrief {
+        policy_dials,
+        files,
+        rows,
+    }
+}
+
+/// `texts` as the brief carries them: whole, in path order, while the count,
+/// per-file and total bounds hold; by path only once a file is past them.
+fn bounded_brief_files(texts: Vec<(String, String)>) -> Vec<SkillBriefFile> {
+    let mut carried = 0_usize;
+    let mut bytes = 0_usize;
+    texts
+        .into_iter()
+        .map(|(path, text)| {
+            let fits = carried < SKILL_OPTIMIZE_MAX_DRAFT_FILES
+                && text.len() <= SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES
+                && bytes + text.len() <= SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES;
+            if fits {
+                carried += 1;
+                bytes += text.len();
+            }
+            SkillBriefFile {
+                path,
+                content: fits.then_some(text),
+            }
+        })
+        .collect()
 }
 
 /// Whether every receipt a proposal rests on falls on the DEV side of this
