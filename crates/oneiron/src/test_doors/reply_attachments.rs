@@ -229,7 +229,9 @@ impl MailProviderWire for ReceivedMailWire {
 /// The vault's, or a seeded step the vault refuses.
 #[doc(hidden)]
 pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| memory_invalid("embedded owner", error))?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
     crate::mail_pack::install_mail_calendar_pack_embedded(&memory)
         .map_err(|error| memory_invalid("mail pack install", error))?;
