@@ -60,6 +60,8 @@ pub(crate) use session_media::{RoomMediaDrops, drop_room_media_copies_in_txn};
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 #[cfg(feature = "sync")]
 pub use space::MediaVectorReplica;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use space::install_media_vector_replica_in_txn;
 pub(crate) use space::checkpoint;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
