@@ -103031,6 +103031,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/pack_member_count.rs",
+     "purpose": "A reader's context pack counts no row it cannot read (FIX-LIST ROOM-PACK-MEMBER-COUNT; the lead's ruling on…",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -105770,7 +105778,7 @@
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7463,
-   "test_files": 1157
+   "test_files": 1158
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -141898,7 +141906,7 @@
       "const": 15,
       "crate-vis": 10,
       "enum": 4,
-      "fn": 18,
+      "fn": 19,
       "struct": 3
      }
     },
@@ -142149,6 +142157,16 @@
      "surface": {
       "crate-vis": 20,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/cooldown/owner_fallback_door.rs",
+     "purpose": "The owner's standing quota fallback, kept as a `use_fallback` answer keeps it, for the integration tests…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -142422,7 +142440,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -142511,6 +142529,16 @@
      "purpose": "A call-local view of the models its reader inherited from the agent",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/owner_fallback_door.rs",
+     "purpose": "The owner's standing quota fallback for each offer of a ladder, for the integration tests (FIX-LIST…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -142791,7 +142819,7 @@
      "path": "src/models/media/scoped_job_door.rs",
      "purpose": "Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a video job…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -146181,6 +146209,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/mcp_surface.rs",
+     "purpose": "Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ScopedJobSpend",
       "ScopedMediaJob"
@@ -146188,7 +146226,7 @@
      "path": "src/test_doors/media_job_spend.rs",
      "purpose": "Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a scoped…",
      "surface": {
-      "fn": 9,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -146199,7 +146237,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 8
+      "mod": 10
      }
     },
     {
@@ -146210,6 +146248,16 @@
      "purpose": "Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/replay_admission.rs",
+     "purpose": "Doors to an exact replay's admission (FIX-LIST REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG): a runtime whose…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -147393,6 +147441,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/mcp_surface_registration_latency.rs",
+     "purpose": "FIX SLOW-FACADE-CALLS-COORDINATION-08: the MCP surface registers once per process, not on every request that…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/media_job_staged_spend.rs",
      "purpose": "[MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1: a media job its run's spend scope funds books its own…",
      "surface": {}
@@ -147427,6 +147483,14 @@
      "notable": [],
      "path": "tests/openapi_off_record_rooms.rs",
      "purpose": "The participants' off-record room routes (`/v1/core/off-record`) are in the served OpenAPI document, with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/replay_owner_fallback.rs",
+     "purpose": "An exact replay of a call the owner's quota fallback answered (FIX-LIST…",
      "surface": {}
     },
     {
@@ -147924,7 +147988,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 148,
+     "files": 150,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -148036,7 +148100,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 9,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -148101,8 +148165,8 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1846,
-   "test_files": 216
+   "source_files": 1850,
+   "test_files": 218
   },
   "oneiron-skill-attribution": {
    "files": [
