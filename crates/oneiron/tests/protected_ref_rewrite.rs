@@ -9,6 +9,11 @@
 //! `git_push` Grant could force-push or delete the default branch like any
 //! other: the door refused only names it cannot journal and its secret scan.
 //!
+//! The rewrite asks the owner instead (DEC-0006: a one-way act asks): the
+//! door puts the owner one question per exact move, and the owner's leave is
+//! `vault.consent.approve_once` on the digest it shows. The same push then
+//! lands, once. A plain "yes" to the question is no leave.
+//!
 //! The holder pushes with a stock `git` through the real smart-HTTP wire
 //! ([`oneiron::origin::smart_http::serve_bounded_as`], the host's entry with
 //! the pusher it authenticated), the owner through the in-process serve. The
@@ -32,7 +37,10 @@ use std::time::Duration;
 use std::{io, thread};
 
 use oneiron::authority::ActSurface;
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::consent::lifecycle::{ApproveOnceRequest, approve_once};
 use oneiron::federation::{GitPushCaller, GitPushCredential};
+use oneiron::llm::decision::{DecisionAnswer, DecisionAsk};
 use oneiron::origin::smart_http::{
     self, DoorSeam, DoorWindowVerdict, ExchangeBounds, SERVE_IDLE_TIMEOUT, ScanBounds, ServeReport,
     ServeRequest, ServeSink,
@@ -45,6 +53,9 @@ use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 /// The typed reason the door refuses a protected-ref delete or rewrite with.
 const PROTECTED_REF_REWRITE: &str = "protected_ref_rewrite";
+
+/// The queue the door puts the owner its question about one rewrite on.
+const PROTECTED_REF_ASK_QUEUE: &str = "origin.protected_ref_rewrite";
 
 // ---------------------------------------------------------------------------
 // git helpers
@@ -124,6 +135,8 @@ impl Pusher {
 /// with an agent that holds a `git_push` Grant on it.
 struct TestOrigin {
     _dir: tempfile::TempDir,
+    vault: Arc<Vault>,
+    proof: AuthenticatedOwner,
     addr: SocketAddr,
     repo_dir: PathBuf,
     reports: Arc<Mutex<Vec<ServeReport>>>,
@@ -206,6 +219,8 @@ impl TestOrigin {
 
         let origin = Self {
             _dir: dir,
+            vault,
+            proof,
             addr,
             repo_dir,
             reports,
@@ -289,6 +304,30 @@ impl TestOrigin {
                 | DoorWindowVerdict::AdmitMarked { .. } => None,
             })
             .collect()
+    }
+
+    /// Every question the door put the owner about one protected-ref move,
+    /// oldest first, open or not.
+    fn protected_ref_asks(&self) -> Vec<DecisionAsk> {
+        self.vault
+            .decision_asks(None, 1024, false)
+            .expect("read the decision asks")
+            .into_iter()
+            .filter(|ask| ask.queue_pin.model == PROTECTED_REF_ASK_QUEUE)
+            .collect()
+    }
+
+    /// The approve-once digest the one question about a protected-ref move
+    /// shows the owner.
+    fn asked_digest(&self) -> String {
+        let asks = self.protected_ref_asks();
+        assert_eq!(asks.len(), 1, "the door asked the owner once: {asks:?}");
+        asks[0]
+            .pack_state
+            .as_ref()
+            .and_then(|state| state["approval_digest"].as_str())
+            .expect("the question shows the move's approve-once digest")
+            .to_owned()
     }
 
     /// A clone of the origin's `main`, fetched as the owner.
@@ -701,4 +740,131 @@ fn the_owners_force_push_of_the_default_branch_lands() {
         "the door refused nothing of the owner's"
     );
     assert_eq!(origin.landed().len(), 1, "and it landed");
+}
+
+/// The refused rewrite puts the owner one question, which names the exact
+/// move and the digest of the leave it needs. Sent again, the same push asks
+/// nothing more, and the owner's plain "yes" to the question is no leave: the
+/// push is still refused.
+#[test]
+fn a_refused_rewrite_asks_the_owner_once_and_a_plain_yes_lands_nothing() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+
+    let rewritten = rewrite_tip(&clone, "history rewritten");
+    origin.push_as_holder();
+    for _ in 0..2 {
+        let push = git_output(&clone, &["push", "--force", "origin", "main"]);
+        assert!(!push.status.success(), "the rewrite is refused");
+    }
+
+    let digest = origin.asked_digest();
+    assert_eq!(digest.len(), 64, "a 64-hex approve-once digest");
+    let asks = origin.protected_ref_asks();
+    let ask = &asks[0];
+    assert!(ask.is_open(), "the question waits for the owner");
+    let state = ask
+        .pack_state
+        .as_ref()
+        .expect("the question names the move");
+    assert_eq!(state["ref"], "refs/heads/main");
+    assert_eq!(state["old_oid"], seed.as_str());
+    assert_eq!(state["new_oid"], rewritten.as_str());
+    assert_eq!(state["pusher"], origin.holder.to_hex().as_str());
+
+    origin
+        .vault
+        .answer_decision_ask(&origin.proof, ask.seq, DecisionAnswer::Noul(true))
+        .expect("the owner answers yes");
+    let push = git_output(&clone, &["push", "--force", "origin", "main"]);
+    assert!(
+        !push.status.success(),
+        "a plain yes to the question lets no rewrite land"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main still names the owner's commit"
+    );
+    assert_eq!(
+        origin.asked_digest(),
+        digest,
+        "the same move is never asked again"
+    );
+    assert!(origin.landed().is_empty(), "nothing moved, nothing landed");
+}
+
+/// The owner's leave (`vault.consent.approve_once` on the digest the question
+/// shows) lands that exact rewrite once: the same push sent again lands, and
+/// the question is withdrawn. The leave is then spent: once the owner has put
+/// `main` back, the same move is refused again, and nothing is asked.
+#[test]
+fn the_owners_approve_once_lands_the_exact_rewrite_once() {
+    let source = tempfile::tempdir().expect("source tempdir");
+    let seed = seed_source_repo(source.path(), "base\n");
+    let origin = TestOrigin::start(source.path());
+    let work = tempfile::tempdir().expect("work tempdir");
+    let clone = origin.clone_main(work.path());
+
+    let rewritten = rewrite_tip(&clone, "history rewritten");
+    origin.push_as_holder();
+    let push = git_output(&clone, &["push", "--force", "origin", "main"]);
+    assert!(!push.status.success(), "refused until the owner leaves it");
+    let digest = origin.asked_digest();
+
+    approve_once(
+        &origin.vault,
+        &origin.proof,
+        ApproveOnceRequest {
+            effect_digest: digest.clone(),
+        },
+    )
+    .expect("the owner leaves this exact move once");
+    git(&clone, &["push", "--force", "origin", "main"]);
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(rewritten.as_str()),
+        "the move the owner left lands"
+    );
+    assert_eq!(origin.landed().len(), 1, "and it is journaled");
+    let asks = origin.protected_ref_asks();
+    assert_eq!(asks.len(), 1, "no second question: {asks:?}");
+    assert!(
+        asks[0].withdrawn_at.is_some(),
+        "the leave spent, its question is withdrawn"
+    );
+
+    origin.push_as_owner();
+    git(
+        source.path(),
+        &["push", "--force", &origin.url(), "main:refs/heads/main"],
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "the owner put main back"
+    );
+    origin.push_as_holder();
+    let push = git_output(&clone, &["push", "--force", "origin", "main"]);
+    assert!(!push.status.success(), "a spent leave lands nothing more");
+    let refusals = origin.door_refusals();
+    assert!(
+        refusals.last().is_some_and(|reason| {
+            reason.contains(PROTECTED_REF_REWRITE) && reason.contains("already spent")
+        }),
+        "the door refused the same move again, its leave spent: {refusals:?}"
+    );
+    assert_eq!(
+        origin.origin_ref("refs/heads/main").as_deref(),
+        Some(seed.as_str()),
+        "main still names the owner's commit"
+    );
+    assert_eq!(
+        origin.asked_digest(),
+        digest,
+        "a spent move is never asked again"
+    );
 }

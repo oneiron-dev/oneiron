@@ -26,6 +26,7 @@ use super::paths::{
     origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
 use super::projected_serve::{ProjectedExchange, select_projected_exchange};
+use super::protected_ref_confirm::ProtectedRef;
 use super::push_admission::{ServeCaller, admit_push, stamp_admission};
 use super::read_projection::RepoGitBackend;
 use super::recipient_serve::RepoGitReadContext;
@@ -35,7 +36,7 @@ use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::git_push::GitPushStamp;
-use crate::git_wire::{lock_repository, lock_repository_within, try_lock_repository};
+use crate::git_wire::{GitWire, lock_repository, lock_repository_within, try_lock_repository};
 use crate::origin::RepoPortableId;
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 use crate::store::code_snapshot::RepoRef;
@@ -350,7 +351,7 @@ pub(super) fn serve_request(
     // Read under the canonical coordinator, from the canonical store: an
     // ingress is a copy, and its HEAD is not the repository's.
     let protected_ref = match &coordinator {
-        Some(_) if guards_protected_ref => protected_default_ref(&repo_dir)?,
+        Some(_) if guards_protected_ref => protected_default_ref(vault, &repo_dir)?,
         _ => None,
     };
     // The ingress's own coordinator, after the canonical one, never before.
@@ -429,7 +430,7 @@ pub(super) fn serve_request(
                 admission: admission.as_ref(),
                 scan,
                 spill_floor: spill_floor.as_ref(),
-                protected_ref: protected_ref.as_deref(),
+                protected_ref: protected_ref.as_ref(),
             },
             repo_dir: &served_dir,
             hooks: &hooks,
@@ -509,12 +510,12 @@ pub(super) fn repo_common_dir(repo_dir: &Path) -> Result<PathBuf> {
     Ok(common.canonicalize()?)
 }
 
-/// The branch the served repository's HEAD names, as a full ref: the ref a
-/// push by anyone but the vault's owner may neither delete nor rewrite
-/// (L8-51). `None` when HEAD is detached or names no branch. Read through
-/// git, which reads either ref store; a read that fails for any other reason
-/// refuses the push.
-fn protected_default_ref(repo_dir: &Path) -> Result<Option<String>> {
+/// The branch the served repository's HEAD names, as a full ref, with the
+/// repository's identity: the ref a push by anyone but the vault's owner may
+/// neither delete nor rewrite (L8-51). `None` when HEAD is detached or names
+/// no branch. Read through git, which reads either ref store; a read that
+/// fails for any other reason refuses the push.
+fn protected_default_ref(vault: &Vault, repo_dir: &Path) -> Result<Option<ProtectedRef>> {
     let args = ["symbolic-ref", "--quiet", "HEAD"].map(str::to_owned);
     let output = crate::git_wire::run_bridged_git_argv(repo_dir, &args)?;
     if output.timed_out || output.truncated {
@@ -530,7 +531,13 @@ fn protected_default_ref(repo_dir: &Path) -> Result<Option<String>> {
     let name = String::from_utf8(output.stdout)
         .map_err(|_| serve_failed("the served repository's HEAD is not UTF-8"))?;
     let name = name.trim_end_matches(['\r', '\n']);
-    Ok(name.starts_with("refs/heads/").then(|| name.to_owned()))
+    if !name.starts_with("refs/heads/") {
+        return Ok(None);
+    }
+    Ok(Some(ProtectedRef {
+        name: name.to_owned(),
+        repo_identity_hex: GitWire::new(vault)?.repository_identity(repo_dir)?.as_hex(),
+    }))
 }
 
 /// A repo_ref that names the repository before any commit is pinned to it.
