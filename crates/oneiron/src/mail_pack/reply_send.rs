@@ -131,9 +131,10 @@ impl<'v> ReplySink<'v> {
             Ok(client) => client,
             Err(_) => return Submitted::NotSent("graph_client_unavailable"),
         };
+        // Microsoft's newer grant, when its refresh answer names one.
+        let mut successor = None;
         let body = base64::engine::general_purpose::STANDARD.encode(raw);
         let mut outcome = None;
-        let mut successor = None;
         let door = self.vault.with_source_token_at_door(
             &self.source,
             WireReads::Mailbox,

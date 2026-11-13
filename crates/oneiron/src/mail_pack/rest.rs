@@ -13,10 +13,11 @@ use dom_query::Document;
 use reqwest::header::HeaderValue;
 use serde_json::Value;
 
+use crate::EntityId;
+use crate::Vault;
 use crate::connector_key::{GrantAccess, ProviderConnectionChecks};
 use crate::error::{Error, Result};
 use crate::secret_lease::DoorInjectionReceipt;
-use crate::{EntityId, Vault};
 
 /// The largest provider answer read: a whole message with its inline parts.
 const MAX_REST_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
