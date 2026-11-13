@@ -367,7 +367,7 @@ fn admit(f: &Fixture) -> Option<DreamerAdmittedAttempt> {
         })
         .expect("the Coach host queue admits")
     {
-        DreamerAdmissionOutcome::Admitted(admitted) => Some(admitted),
+        DreamerAdmissionOutcome::Admitted(admitted) => Some(*admitted),
         _ => None,
     }
 }
