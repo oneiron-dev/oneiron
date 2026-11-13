@@ -90,12 +90,17 @@ impl Memory<'_> {
         Ok(owner)
     }
 
-    /// Installs a pack folder as the vault's embedded owner.
+    /// Installs a pack folder as the vault's embedded owner, for the owner
+    /// verb `verb` that installs it (`vault.packs.put`, or
+    /// `vault.mail.pack.install` for the engine's own Mail & Calendar pack):
+    /// a bound handle's credential must reach that verb, as
+    /// [`Self::embedded_owner`] says.
     pub fn put_pack_as_embedded_owner(
         &self,
+        verb: &str,
         files: Vec<HubFile>,
     ) -> MemoryResult<PackInstallDisposition> {
-        let proof = self.embedded_owner("vault.packs.put")?;
+        let proof = self.embedded_owner(verb)?;
         Ok(self.vault.put_pack(&proof, files)?)
     }
 }
