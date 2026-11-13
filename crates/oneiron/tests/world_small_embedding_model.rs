@@ -934,3 +934,106 @@ fn a_fill_leased_before_the_order_names_the_space_never_lands() {
         .expect("the world's text space fills");
     assert_eq!(media.embedded, 1, "S takes A");
 }
+
+#[test]
+fn a_world_caption_published_at_idle_before_the_sweep_comes_back_on_inherit() {
+    let fixture = world_space_fixture();
+    let reconciler = fixture.reconciler();
+    fixture.set_models(ModelOrder::Inherit);
+    let caption = inheriting_world_caption(&fixture);
+    reconciler
+        .reconcile_once()
+        .expect("text pass while W inherits");
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_some(),
+        "the caption holds a vault-index vector while W inherits",
+    );
+
+    // A same-id put keeps the caption's picture link; its text and writer vector wait at idle.
+    let caption_text = "rewritten caption of the private-world picture";
+    let caption_body = rmp_serde::to_vec_named(&json!({ "content": caption_text }))
+        .expect("rewritten caption body");
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .batch()
+        .put(
+            &caption,
+            ENTITY_TYPE_ASSET_TEXT,
+            TimeRange { start: at, end: at },
+            at,
+            &caption_body,
+        )
+        .text(&caption, &[("content", caption_text)])
+        .vector(&caption, &text_vector(caption_text.as_bytes()))
+        .commit()
+        .expect("rewrite the caption in place with a staged writer vector");
+    let live = fixture
+        .vault
+        .pin_entity_revision(&caption)
+        .expect("pin the caption's rewrite");
+    assert_ne!(
+        fixture
+            .vault
+            .indexed_revision(&caption)
+            .expect("caption's indexed revision"),
+        Some(live),
+        "the rewrite waits for idle publication",
+    );
+
+    // Publish before a text pass can sweep the changed map and mark the caption's old vector.
+    fixture.set_models(ModelOrder::Ordered(vec![WORLD_SPACE_ID.to_owned()]));
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("no idle delay");
+    let idle = RecordingIndexedEmbedder::default();
+    let published = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle publication before the world-space sweep");
+    assert!(
+        !idle.seen().contains(&caption),
+        "idle publication handed the caption to the vault's embedder: {published:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_none(),
+        "the caption gets no vault-index vector at idle while W names S",
+    );
+    assert!(
+        published.refreshed.contains(&(caption, live)),
+        "the caption's rewrite still publishes its text: {published:?}",
+    );
+    reconciler
+        .reconcile_once()
+        .expect("text pass after idle publication while W names S");
+
+    fixture.set_models(ModelOrder::Inherit);
+    reconciler
+        .reconcile_once()
+        .expect("text pass after W inherits again");
+    let back = fixture
+        .vault
+        .refresh_indexed_at_idle(u64::MAX, &idle)
+        .expect("idle refill after W inherits again");
+    assert!(
+        idle.seen().contains(&caption),
+        "the idle refill embeds the caption published while W named S: {back:?}",
+    );
+    assert!(
+        fixture
+            .vault
+            .get_vector(&caption)
+            .expect("caption vector read")
+            .is_some(),
+        "the vault's index takes the caption again",
+    );
+}
