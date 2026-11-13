@@ -4,7 +4,8 @@
 //! prints the QR page with a fresh 256-bit capability as its fragment; the
 //! page that capability opens shows the seal's metadata and hashes, never an
 //! email or the token; an unknown, foreign, expired or revoked capability
-//! gets one refusal; and the owner sets its expiry or revokes it.
+//! gets one refusal; the owner sets its expiry or revokes it; and it opens
+//! no PDF door, which only a party's own signing link reads.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -369,5 +370,47 @@ fn the_owner_expires_and_revokes_a_documents_qr_capability() -> TestResult {
         "an expiry change leaves a revoked capability revoked"
     );
     assert!(vault.esign_qr_page(&token).is_err());
+    Ok(())
+}
+
+/// The QR capability is no possession factor (ARCH-0064a section 6: the
+/// PDF sits behind a separate one): it has the signing capability's form,
+/// so it reaches the signing doors' parser, and every door that reads the
+/// PDF or loads the signing page refuses it. The party's own signing link
+/// still reads the sealed copy after the seal: that is the factor.
+#[test]
+fn a_qr_capability_opens_no_pdf_door_and_the_signing_link_reads_the_sealed_copy() -> TestResult {
+    let sealed = sealed()?;
+    let (fragment, _) = printed_capability(&sealed.printed)?;
+    let vault = &sealed.vault;
+    let manifest = vault
+        .sealed_esign_document(sealed.id)?
+        .ok_or("the sealed manifest")?;
+    let as_signing = EsignCapability::parse(&fragment)?;
+    assert!(
+        vault
+            .esign_pdf_for_capability(&as_signing, 0, None, None)
+            .is_err(),
+        "a QR capability reads no PDF"
+    );
+    assert!(
+        vault
+            .esign_preview_for_capability(&as_signing, 0, None, None)
+            .is_err(),
+        "a QR capability opens no preview"
+    );
+    assert!(
+        vault
+            .execute_signing_action(&as_signing, &SigningAction::Load, None, None)
+            .is_err(),
+        "a QR capability loads no signing page"
+    );
+
+    let copy = vault.esign_pdf_for_capability(&sealed.signing, 0, None, None)?;
+    assert_eq!(
+        hex(&Sha256::digest(&copy)),
+        hex(&manifest.items[0].sha256),
+        "the signing link reads the sealed, hash-checked copy"
+    );
     Ok(())
 }

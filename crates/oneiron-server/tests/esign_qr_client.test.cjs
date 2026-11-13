@@ -83,6 +83,14 @@ test("a sealed report keeps a missing trust root and a changed document in two s
   assert.match(changed[0], /nothing has changed since it was sealed/);
 });
 
+test("a sealed report sends each party to its own signing link for the PDF", async () => {
+  const {rows, paragraphs} = await open(`#${"ab".repeat(32)}`);
+  const pdf = paragraphs.filter(text => text.includes("never shows the signed PDF"));
+  assert.equal(pdf.length, 1, "the page says once that it shows no PDF");
+  assert.match(pdf[0], /from their own signing link/, "the possession factor is the party's signing link");
+  assert.ok(!rows.some(text => /\.pdf|download/i.test(text)), "no report row offers the PDF");
+});
+
 test("a later QR fragment in the same tab reloads the page instead of keeping the first report", async () => {
   const {requests, listeners, reloads, rows} = await open(`#${"ab".repeat(32)}`);
   assert.equal(requests.length, 1);

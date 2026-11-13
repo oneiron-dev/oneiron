@@ -77,6 +77,11 @@
       say(
         "If the SHA-256 of your copy differs from the item's SHA-256 above, this document was changed after signing. If it is the same, nothing has changed since it was sealed.",
       );
+      // The QR capability is no possession factor: the sealed PDF is read
+      // only through a party's own signing link (ARCH-0064a section 6).
+      say(
+        "This page never shows the signed PDF. Each party downloads the sealed copy from their own signing link.",
+      );
     })
     .catch(() => {
       status.textContent =

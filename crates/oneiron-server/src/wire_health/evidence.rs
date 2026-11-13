@@ -70,14 +70,15 @@ fn named_of(counts: &BTreeMap<String, u64>, names: &BTreeSet<String>) -> Vec<(St
 }
 
 /// The wire crossed set: everyone and everything past its row in the
-/// question, every one of them. A later actor or verb makes a new set (FIX
-/// 9531). Each name is length-prefixed under its kind. The subject prefix of
-/// each revision of the set.
+/// question, every one of them. A later actor, verb or refusing route makes
+/// a new set (FIX 9531). Each name is length-prefixed under its kind. The
+/// subject prefix of each revision of the set.
 fn wire_set(question: &WireQuestion) -> String {
     let mut hasher = blake3::Hasher::new();
     for (kind, names) in [
         (b'a', &question.crossed.actors),
         (b'v', &question.crossed.verbs),
+        (b'r', &question.crossed.capability_refusals),
     ] {
         for name in names {
             hasher.update(&[kind]);
@@ -114,6 +115,7 @@ fn wire_crossing(key: String, question: &WireQuestion, thresholds: &WireThreshol
             "crossed": {
                 "actors": question.crossed.actors,
                 "verbs": question.crossed.verbs,
+                "capability_refusals": question.crossed.capability_refusals,
             },
             // Which tools the named callers called and who called each named
             // tool; MCP envelopes and their errors with no caller ride beside
@@ -122,6 +124,9 @@ fn wire_crossing(key: String, question: &WireQuestion, thresholds: &WireThreshol
             "tool_callers": tool_callers(window, &verbs),
             "mcp_envelopes": window.mcp_envelopes,
             "mcp_errors": window.mcp_errors,
+            // Capabilities keyless routes refused, by route and under no
+            // caller: guesses beside the calls that carried them.
+            "capability_refusals": window.capability_refusals,
         }),
         read: Some((CURSOR_WIRE.to_owned(), key)),
         revises: Some(set),

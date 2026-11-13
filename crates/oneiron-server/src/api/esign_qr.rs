@@ -4,11 +4,14 @@
 //! the address bar and posts it only in the `x-oneiron-esign-qr-capability`
 //! header of `/esign/verify/report`, which answers the vault's projection
 //! ([`oneiron::blob_artifact::esign::EsignQrPage`]): metadata, each item's
-//! hash and its seal-time validation, never the PDF. The page says in two
-//! separate sentences that a reader without the signer's trust root and a
-//! changed document are different facts (ARCH-0064a section 9). Every
-//! response is noindex, no-referrer and no-store. An unusable capability
-//! gets one refusal, and no call is refused for its rate.
+//! hash and its seal-time validation, never the PDF. The PDF stays behind a
+//! separate possession factor (ARCH-0064a section 6): each party's own
+//! signing link, which reads the sealed copy after the seal, and the page
+//! says so. The page says in two separate sentences that a reader without
+//! the signer's trust root and a changed document are different facts
+//! (ARCH-0064a section 9). Every response is noindex, no-referrer and
+//! no-store. An unusable capability gets one refusal, counted in the wire
+//! window under no caller, and no call is refused for its rate.
 use crate::server::SyncServer;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
@@ -59,18 +62,24 @@ async fn report(State(server): State<Arc<SyncServer>>, headers: HeaderMap) -> Re
         .and_then(|value| value.to_str().ok())
         .and_then(|raw| EsignQrCapability::parse(raw).ok())
     else {
-        return refused();
+        return refused(&server);
     };
     let vault = Arc::clone(&server.vault);
     match tokio::task::spawn_blocking(move || vault.esign_qr_page(&token)).await {
         Ok(Ok(page)) => Json(page).into_response(),
-        Ok(Err(_)) | Err(_) => refused(),
+        Ok(Err(_)) | Err(_) => refused(&server),
     }
 }
 
 /// One answer for every unusable capability: unknown, revoked, expired or
-/// erased alike.
-fn refused() -> Response {
+/// erased alike. Each refusal counts in the wire window beside the report's
+/// call, under no caller, so guesses at a capability ask the call-volume
+/// question past the per-verb row; none is refused for its rate.
+fn refused(server: &SyncServer) -> Response {
+    let _ = server.wire_telemetry.record_capability_refusal(
+        &format!("POST {QR_REPORT_PATH}"),
+        oneiron_vault_contract::now_ts(),
+    );
     (
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error":{"code":"verification_unavailable"}})),

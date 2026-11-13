@@ -39,6 +39,13 @@ pub struct WireWindowReceipt {
     /// category and under no caller.
     #[serde(default)]
     pub mcp_errors: BTreeMap<String, u64>,
+    /// Capabilities a keyless route refused (unknown, revoked, expired or
+    /// erased alike), by matched route and under no caller: guesses at a
+    /// capability, beside the calls that carried them. Past the per-verb row
+    /// they ask the call-volume question too; nothing is refused for its
+    /// rate, and no refusal writes to the vault on its own.
+    #[serde(default)]
+    pub capability_refusals: BTreeMap<String, u64>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -69,9 +76,14 @@ pub struct WireQuestion {
 pub struct WireCrossed {
     pub actors: BTreeSet<String>,
     pub verbs: BTreeSet<String>,
+    /// Every keyless route whose refused capabilities are past the per-verb
+    /// row.
+    #[serde(default)]
+    pub capability_refusals: BTreeSet<String>,
 }
 impl WireCrossed {
-    /// Every actor and verb `window` counts past its row in `thresholds`.
+    /// Every actor, verb and refusing route `window` counts past its row in
+    /// `thresholds`.
     fn of(window: &WireWindowReceipt, thresholds: &WireThresholds) -> Self {
         let over = |counts: &BTreeMap<String, u64>, row: u64| {
             counts
@@ -83,6 +95,7 @@ impl WireCrossed {
         Self {
             actors: over(&window.by_actor, thresholds.per_actor),
             verbs: over(&window.by_verb, thresholds.per_verb),
+            capability_refusals: over(&window.capability_refusals, thresholds.per_verb),
         }
     }
 }
@@ -359,6 +372,7 @@ fn resume(window: &mut WireWindowReceipt, kept: &WireWindowReceipt) {
     further(&mut window.by_actor, &kept.by_actor);
     further(&mut window.mcp_envelopes, &kept.mcp_envelopes);
     further(&mut window.mcp_errors, &kept.mcp_errors);
+    further(&mut window.capability_refusals, &kept.capability_refusals);
     for (actor, tools) in &kept.by_actor_tool {
         further(
             window.by_actor_tool.entry(actor.clone()).or_default(),
@@ -378,6 +392,17 @@ fn count_call(
     let actor_crossed = count_in(&mut window.by_actor, actor) > thresholds.per_actor;
     (verb_crossed && !asked.verbs.contains(verb))
         || (actor_crossed && !asked.actors.contains(actor))
+}
+/// Whether a keyless route's refused capabilities are past the per-verb row
+/// and the window's questions do not name the route yet: a new crossing.
+fn refusal_crossed(
+    window: &WireWindowReceipt,
+    thresholds: &WireThresholds,
+    asked: &WireCrossed,
+) -> bool {
+    window.capability_refusals.iter().any(|(route, refused)| {
+        *refused > thresholds.per_verb && !asked.capability_refusals.contains(route)
+    })
 }
 impl WireTelemetry {
     pub fn new(vault: Arc<Vault>) -> Self {
@@ -525,10 +550,20 @@ impl WireTelemetry {
             count_in(&mut window.mcp_errors, category);
         })
     }
+    /// Records one capability a keyless route refused, on its matched route
+    /// and under no caller. Its call already counted on the route; past the
+    /// per-verb row the refusals ask the call-volume question as well, and
+    /// the count is kept with the window, never per refusal.
+    pub(crate) fn record_capability_refusal(&self, route: &str, now: u64) -> Result<()> {
+        self.observe(now, None, |window| {
+            count_in(&mut window.capability_refusals, route);
+        })
+    }
     /// Counts in the window `now` falls in, kept and rolled over first: a
     /// `call`'s verb and actor in the totals the rows read, and `count`'s
     /// evidence beside them. Each call that puts another verb or actor past
-    /// its row asks: the window as it stands is kept as the next question.
+    /// its row asks, and so does a refusing route past the per-verb row: the
+    /// window as it stands is kept as the next question.
     fn observe(
         &self,
         now: u64,
@@ -572,7 +607,8 @@ impl WireTelemetry {
         let window = active.window.as_mut().expect("installed above");
         count(window);
         active.persisted = false;
-        let crossed = call.is_some_and(|call| count_call(window, &thresholds, &active.asked, call));
+        let crossed = call.is_some_and(|call| count_call(window, &thresholds, &active.asked, call))
+            || refusal_crossed(window, &thresholds, &active.asked);
         if crossed {
             let crossed = WireCrossed::of(window, &thresholds);
             let seq = self.keep_question(window, &crossed, active.next_seq)?;

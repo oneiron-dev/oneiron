@@ -228,7 +228,13 @@ fn state(vault: &Vault, owner: EntityId, check: &HealthCheck) -> Value {
         .as_array()
         .map(|actors| actors.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
+    // Refused capabilities are no caller's: no grant makes guesses at a
+    // capability a valid burst.
+    let refusals_crossed = check.crossing["crossed"]["capability_refusals"]
+        .as_array()
+        .is_some_and(|routes| !routes.is_empty());
     let granted = !crossed.is_empty()
+        && !refusals_crossed
         && crossed
             .iter()
             .all(|actor| known_under_grant(vault, owner, actor));
