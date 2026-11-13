@@ -3,9 +3,25 @@
 //! The engine publishes pending wakes and nothing more. Adapter install,
 //! preference order and degrade are host-side, in the wake-adapters package
 //! (ARCH-0067 §7, "Pinned 2026-08-05 — where the wake ladder lives").
+//!
+//! The host's acknowledgement of one envelope id (RC99) is recorded per
+//! connection, in memory only: [`BoardStreamRegistry::acknowledge_wake`]
+//! and [`BoardStreamRegistry::wake_delivery`].
 
 use super::frames::StreamConnectionId;
 use super::registry::BoardStreamRegistry;
+
+/// Where one envelope a connection was handed stands (RC99, ARCH-0067
+/// `#wake-envelope-id`). An acknowledgement says the wake arrived. It names
+/// one occurrence, so a later failure of the same TASK, with its own
+/// envelope id, reads `Handed` until it is acknowledged too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeDelivery {
+    /// Drained to the host; no acknowledgement yet.
+    Handed,
+    /// The host acknowledged this occurrence.
+    Acked,
+}
 
 /// One pending wake, minted from a committed TASK, from a pending
 /// diary-read review (FIX 2879), or from a staged room wake (FIX 15647).
@@ -65,10 +81,49 @@ impl BoardStreamRegistry {
     /// ([`super::PendingDiaryReview::is_pending`]) and dropped once answered.
     /// A failed delivery is the host's to retry or degrade; the TASK or the
     /// review row stays in the vault as the durable mailbox.
+    ///
+    /// Each envelope handed over is recorded as [`WakeDelivery::Handed`]
+    /// until the host acknowledges it ([`Self::acknowledge_wake`]).
     pub fn drain_wakes(&mut self, c: &StreamConnectionId) -> Vec<WakeEnvelope> {
-        self.connections
+        let Some(st) = self.connections.get_mut(c) else {
+            return Vec::new();
+        };
+        let wakes: Vec<WakeEnvelope> = st.wakes.drain(..).collect();
+        for wake in &wakes {
+            st.record_handed(&wake.event_ref);
+        }
+        wakes
+    }
+
+    /// Records the host's acknowledgement of envelope id `event_ref` on
+    /// connection `c`: that wake arrived (RC99). It names that one occurrence
+    /// and never the TASK, so it acknowledges no other envelope. True when
+    /// `c` was handed `event_ref`, now or already acknowledged. False, and
+    /// nothing recorded, for an id `c` was never handed or no longer
+    /// remembers. The record lives in memory only: a restart or a re-attach
+    /// starts it empty (ARCH-0067 §7: no durable pending-wake store). Retry
+    /// and degrade stay the host's.
+    pub fn acknowledge_wake(&mut self, c: &StreamConnectionId, event_ref: &str) -> bool {
+        let Some((_, delivery)) = self
+            .connections
             .get_mut(c)
-            .map(|st| st.wakes.drain(..).collect())
-            .unwrap_or_default()
+            .and_then(|st| st.handed.iter_mut().find(|(id, _)| id == event_ref))
+        else {
+            return false;
+        };
+        *delivery = WakeDelivery::Acked;
+        true
+    }
+
+    /// Where envelope id `event_ref`, handed to connection `c`, stands.
+    /// `None` for an id `c` was never handed or no longer remembers.
+    #[must_use]
+    pub fn wake_delivery(&self, c: &StreamConnectionId, event_ref: &str) -> Option<WakeDelivery> {
+        self.connections
+            .get(c)?
+            .handed
+            .iter()
+            .find(|(id, _)| id == event_ref)
+            .map(|(_, delivery)| *delivery)
     }
 }

@@ -40,6 +40,11 @@ impl Inbox {
         self.directory.join(format!("{key}.{extension}"))
     }
 
+    /// Whether this exact occurrence was acknowledged here.
+    pub(super) fn is_acknowledged(&self, event_ref: &str) -> bool {
+        self.path(event_ref, "ack").exists()
+    }
+
     /// False means this exact occurrence was already handed over or acked.
     pub(super) fn enqueue(&self, wake: &WakeEnvelope) -> anyhow::Result<bool> {
         self.ensure_directory()?;

@@ -84,6 +84,33 @@ impl CommittedTaskBoardState {
     }
 }
 
+#[cfg(oneiron_test_support)]
+impl CommittedTaskBoardState {
+    /// A failed TASK's committed state, as [`Self::read`] gives it, for
+    /// `test_doors::wake_envelope_ack`: TASK `task_ref`, owned by
+    /// `owner_ref`, at committed state `revision`, failed by the attempt
+    /// heads `failed_attempts` (sorted). Never API.
+    pub(crate) fn failed_for_test_door(
+        task_ref: &str,
+        owner_ref: &str,
+        revision: &str,
+        failed_attempts: &[&str],
+    ) -> Self {
+        Self {
+            task_ref: task_ref.to_owned(),
+            owner_ref: owner_ref.to_owned(),
+            consultee_ref: None,
+            status: TaskBoardStatus::Failed,
+            line: format!("{task_ref} failed"),
+            revision: revision.to_owned(),
+            failed_attempts: failed_attempts
+                .iter()
+                .map(|attempt| (*attempt).to_owned())
+                .collect(),
+        }
+    }
+}
+
 /// The id a committed TASK carrier announces to board subscribers.
 ///
 /// An authority fact announces its subject TASK; every other carrier keeps

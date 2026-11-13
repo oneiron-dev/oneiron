@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::context_board::WakeEnvelope;
+use oneiron::context_board::{HANDED_WAKES_CAP, WakeEnvelope};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -17,6 +17,11 @@ struct WakePoll {
     instance_key: String,
     #[serde(default)]
     retained: Vec<WakeEnvelope>,
+    /// The envelope ids this host acknowledged since its last poll (RC99).
+    /// Each marks that one occurrence acknowledged on this instance's
+    /// connection, when the connection was handed it.
+    #[serde(default)]
+    acked: Vec<String>,
 }
 
 pub(super) async fn poll(
@@ -37,10 +42,23 @@ pub(super) async fn poll(
             "instance_key must be 64 lowercase hex characters",
         ));
     }
+    if poll.acked.len() > HANDED_WAKES_CAP {
+        return Err(McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "acked names more envelope ids than one connection remembers handing over",
+        ));
+    }
     let (connection, wakes) = {
         let mut registry = server.mcp_registry.lock().await;
         let connection = registry.bind_wake_instance(actor, &poll.instance_key);
-        let wakes = registry.streams_mut().drain_wakes(&connection);
+        let streams = registry.streams_mut();
+        // An acknowledgement names one envelope this connection was handed
+        // before; an id it was never handed records nothing.
+        for event_ref in &poll.acked {
+            streams.acknowledge_wake(&connection, event_ref);
+        }
+        let wakes = streams.drain_wakes(&connection);
         (connection, wakes)
     };
     let server = Arc::clone(server);

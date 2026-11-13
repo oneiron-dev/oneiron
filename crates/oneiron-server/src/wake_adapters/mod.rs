@@ -104,6 +104,13 @@ impl Instance {
             inbox: inbox::Inbox::new(directory.join("oneiron-wakes")),
         })
     }
+
+    /// Whether this host acknowledged envelope id `event_ref` (RC99): a
+    /// helper's zero exit, `wake inbox` or `wake ack` recorded it in the
+    /// local inbox. The bridge's wake pump reports it at its next poll.
+    pub(crate) fn acknowledged(&self, event_ref: &str) -> bool {
+        self.inbox.is_acknowledged(event_ref)
+    }
 }
 
 pub(crate) fn command(args: WakeArgs) -> anyhow::Result<()> {
