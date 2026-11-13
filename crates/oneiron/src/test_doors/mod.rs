@@ -42,6 +42,7 @@ pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod mail_landing;
 pub mod membership;
+pub mod mesh_machine_endpoint_index;
 pub mod model_binding_proposer;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;

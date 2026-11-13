@@ -55,6 +55,7 @@ pub(in crate::batch) fn stage_entity_body_row(
         Some((entity_type, data)),
     )?;
     crate::ports::reindex_named_entities(store, wtxn, id, Some((entity_type, data)))?;
+    crate::authority::reindex_mesh_machine_endpoint(store, wtxn, id, Some((entity_type, data)))?;
     let mut payload = RowEnvelope(Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len()));
     payload.0.push(entity_type);
     payload.0.extend_from_slice(&occurred.start.to_be_bytes());
