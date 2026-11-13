@@ -144,26 +144,18 @@ fn create_campaign_json(
     .map(|reply| reply.body)
 }
 
-/// One claimed enrollment attempt on a launched campaign whose one email step
-/// has a filed body, a live sender and an active contact for the member.
-struct Leg {
-    _dir: tempfile::TempDir,
+/// What every leg shares: the vault, its owner, the step's sender identity
+/// and the saved query its members match.
+struct Base {
+    dir: tempfile::TempDir,
     vault: Vault,
-    campaign: EntityId,
-    program: EntityId,
-    step: EntityId,
-    attempt: AttemptRecord,
-    /// The drive's wall instant, milliseconds, after every fixture write.
-    drive_at_ms: u64,
+    owner: EntityId,
+    sender: EntityId,
+    query: EntityId,
 }
 
-/// Builds the leg. `review` gives the campaign's copy-review keys, from the
-/// vault and its owner (a test names a voice guide NOTE through it).
-fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
+fn base() -> Base {
     let (dir, vault, owner) = open_vault();
-    let member = oneiron::comm::resolve_or_create_comm_party(&vault, MEMBER_ADDRESS)
-        .expect("the member PERSON");
-    put_claim(&vault, member, SENIORITY, "vp");
     let sender = EntityId::now();
     let identity = common::self_held_identity_in_state(
         CHANNEL,
@@ -174,12 +166,6 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
         1,
     );
     vault.create_channel_identity(&sender, &identity).unwrap();
-    vault
-        .create_counterparty_contact(
-            &EntityId::now(),
-            &CounterpartyContactRecord::user_introduction(sender, MEMBER_ADDRESS, 1).unwrap(),
-        )
-        .unwrap();
     let query = create_saved_query(
         &vault,
         owner,
@@ -199,9 +185,65 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
         },
         1,
     )
-    .unwrap();
-    let keys = review(&vault, owner);
-    let created = create_campaign_json(&vault, owner, keys).expect("the campaign");
+    .unwrap()
+    .query_ref;
+    Base {
+        dir,
+        vault,
+        owner,
+        sender,
+        query,
+    }
+}
+
+/// A member the query matches: a comm PERSON at `address`, with an active
+/// contact from the sender.
+fn add_member(base: &Base, address: &str) -> EntityId {
+    let member = oneiron::comm::resolve_or_create_comm_party(&base.vault, address)
+        .expect("the member PERSON");
+    put_claim(&base.vault, member, SENIORITY, "vp");
+    base.vault
+        .create_counterparty_contact(
+            &EntityId::now(),
+            &CounterpartyContactRecord::user_introduction(base.sender, address, 1).unwrap(),
+        )
+        .unwrap();
+    member
+}
+
+/// One email step from the sender, sending `body` at `call_seq`, tagged `arm`.
+fn step_draft(
+    base: &Base,
+    step: EntityId,
+    call_seq: u64,
+    body: &[u8],
+    arm: Option<&str>,
+) -> CampaignProgramStepDraft {
+    CampaignProgramStepDraft {
+        step_ref: step,
+        channel: CHANNEL.to_owned(),
+        sender_ref: base.sender,
+        basis_evidence: EntityId::now(),
+        outbound: Some(CampaignProgramOutbound {
+            call_seq,
+            verb: "send".to_owned(),
+            payload: body.to_vec(),
+            idempotency_supported: true,
+            subject: Some("A plan for you".to_owned()),
+        }),
+        arm: arm.map(str::to_owned),
+    }
+}
+
+/// A launched campaign, created through the JSON door with `keys`, with one
+/// program of `steps`, each step's body filed, and this node its home node.
+fn launched_campaign(
+    base: &Base,
+    keys: Value,
+    steps: Vec<CampaignProgramStepDraft>,
+) -> (EntityId, EntityId) {
+    let (vault, owner) = (&base.vault, base.owner);
+    let created = create_campaign_json(vault, owner, keys).expect("the campaign");
     let campaign = EntityId::from_hex(created["campaign_ref"].as_str().unwrap()).unwrap();
     let version = created["definition"]["definition_version"]
         .as_u64()
@@ -210,27 +252,14 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
     // seconds); every later write is dated at or after it, or the launch
     // refuses an `updated_at` before `created_at`.
     let now = vault.now_recorded_at();
-    let step = EntityId::now();
     let program = create_campaign_program(
-        &vault,
+        vault,
         owner,
         campaign,
         CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         &CampaignProgramDraft {
             name: "copy review program".to_owned(),
-            steps: vec![CampaignProgramStepDraft {
-                step_ref: step,
-                channel: CHANNEL.to_owned(),
-                sender_ref: sender,
-                basis_evidence: EntityId::now(),
-                outbound: Some(CampaignProgramOutbound {
-                    call_seq: CALL_SEQ,
-                    verb: "send".to_owned(),
-                    payload: BODY.to_vec(),
-                    idempotency_supported: true,
-                    subject: Some("A plan for you".to_owned()),
-                }),
-            }],
+            steps: steps.clone(),
             audience: None,
         },
         now,
@@ -240,38 +269,56 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
     .program_ref;
     // The free door files no body; the leg sends only a body filed for the
     // step that matches the program row byte for byte.
-    vault
-        .save_campaign_step_body(
-            program,
-            step,
-            CALL_SEQ,
-            BODY,
-            WriteActor::new(owner, EdgeActorClass::Human),
-            now,
-        )
-        .unwrap();
-    launch_campaign(&vault, owner, EdgeActorClass::Human, campaign, version, now).unwrap();
+    for step in &steps {
+        let outbound = step.outbound.as_ref().expect("an email step");
+        vault
+            .save_campaign_step_body(
+                program,
+                step.step_ref,
+                outbound.call_seq,
+                &outbound.payload,
+                WriteActor::new(owner, EdgeActorClass::Human),
+                now,
+            )
+            .unwrap();
+    }
+    launch_campaign(vault, owner, EdgeActorClass::Human, campaign, version, now).unwrap();
     elect_campaign_home_node_designation(
-        &vault,
+        vault,
         &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],
         now,
     )
     .unwrap();
-    let read = sweep_owner_read(&vault, owner, EdgeActorClass::Human)
+    (campaign, program)
+}
+
+/// `member`'s enrollment at `step`, detected, enqueued and claimed by this
+/// node.
+fn claimed_attempt(
+    base: &Base,
+    campaign: EntityId,
+    program: EntityId,
+    step: EntityId,
+    member: EntityId,
+) -> AttemptRecord {
+    let vault = &base.vault;
+    // After the launch, on the vault's clock (see `launched_campaign`).
+    let now = vault.now_recorded_at();
+    let read = sweep_owner_read(vault, base.owner, EdgeActorClass::Human)
         .unwrap()
         .expect("the owner has a usable read");
     let grants = QueryScope::default();
     let evaluator = SavedQueryEvaluator {
-        vault: &vault,
+        vault,
         owner_grants: &grants,
         owner_read: &read,
         judge: None,
     };
     let event = match block_on(detect_enrollment(
         &evaluator,
-        owner,
+        base.owner,
         &DetectEnrollment {
-            query_ref: query.query_ref,
+            query_ref: base.query,
             campaign_ref: campaign,
             entity_ref: member,
             now: now + 1,
@@ -282,7 +329,7 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
         EnrollmentDetection::Recorded(event) => *event,
         EnrollmentDetection::NoTransition => panic!("expected a recorded transition"),
     };
-    let runner = CampaignEnrollmentRunner::new(&vault);
+    let runner = CampaignEnrollmentRunner::new(vault);
     match runner
         .enqueue(
             &CampaignEnrollmentAttemptPayload {
@@ -298,21 +345,46 @@ fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
         EnqueueOutcome::Enqueued(_) | EnqueueOutcome::Existing(_) => {}
         other => panic!("unexpected enqueue outcome: {other:?}"),
     }
-    let attempt = match runner
+    match runner
         .claim_if_home(HOME_NODE, format!("worker:{HOME_NODE}"), now + 3)
         .unwrap()
     {
         CampaignEnrollmentClaim::Queue(ClaimOutcome::Claimed(record)) => record,
         other => panic!("expected a claim, got {other:?}"),
-    };
+    }
+}
+
+/// One claimed enrollment attempt on a launched campaign whose one email step
+/// has a filed body, a live sender and an active contact for the member.
+struct Leg {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    campaign: EntityId,
+    program: EntityId,
+    step: EntityId,
+    attempt: AttemptRecord,
+}
+
+/// Builds the leg. `review` gives the campaign's copy-review keys, from the
+/// vault and its owner (a test names a voice guide NOTE through it).
+fn leg(review: impl FnOnce(&Vault, EntityId) -> Value) -> Leg {
+    let base = base();
+    let member = add_member(&base, MEMBER_ADDRESS);
+    let keys = review(&base.vault, base.owner);
+    let step = EntityId::now();
+    let (campaign, program) = launched_campaign(
+        &base,
+        keys,
+        vec![step_draft(&base, step, CALL_SEQ, BODY, None)],
+    );
+    let attempt = claimed_attempt(&base, campaign, program, step, member);
     Leg {
-        _dir: dir,
-        vault,
+        _dir: base.dir,
+        vault: base.vault,
         campaign,
         program,
         step,
         attempt,
-        drive_at_ms: (now + 4) * 1000,
     }
 }
 
@@ -353,11 +425,12 @@ impl OutboundResultSender for NoSend {
     }
 }
 
-/// Drives the leg; it must be held for the owner's press.
-fn drive_held(leg: &Leg) {
-    let drive = leg
-        .vault
-        .drive_enrollment_outbound_leg(HOME_NODE, &leg.attempt, &mut NoSend, leg.drive_at_ms)
+/// Drives the leg, at wall milliseconds after its claim; it must be held for
+/// the owner's press.
+fn drive_held(vault: &Vault, attempt: &AttemptRecord) {
+    let at_ms = (vault.now_recorded_at() + 4) * 1000;
+    let drive = vault
+        .drive_enrollment_outbound_leg(HOME_NODE, attempt, &mut NoSend, at_ms)
         .unwrap();
     assert!(
         matches!(drive, EnrollmentLegDrive::AwaitingApproval { .. }),
@@ -396,7 +469,7 @@ fn strings(state: &Value, key: &str) -> Vec<String> {
 #[test]
 fn a_voice_guided_send_with_no_review_is_held_for_copy_review() {
     let leg = leg(|vault, owner| json!({ "voice_guide_ref": voice_guide(vault, owner).to_hex() }));
-    drive_held(&leg);
+    drive_held(&leg.vault, &leg.attempt);
     let state = held_ask_state(&leg.vault);
     assert!(
         strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
@@ -412,7 +485,7 @@ fn a_voice_guided_send_with_no_review_is_held_for_copy_review() {
 #[test]
 fn a_human_review_campaign_holds_its_send_for_the_owner() {
     let leg = leg(|_, _| json!({ "copy_review": "human" }));
-    drive_held(&leg);
+    drive_held(&leg.vault, &leg.attempt);
     let state = held_ask_state(&leg.vault);
     assert!(
         strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
@@ -429,7 +502,7 @@ fn a_human_review_campaign_holds_its_send_for_the_owner() {
 #[test]
 fn a_campaign_without_a_voice_guide_is_not_held_for_copy_review() {
     let leg = leg(|_, _| json!({}));
-    drive_held(&leg);
+    drive_held(&leg.vault, &leg.attempt);
     let state = held_ask_state(&leg.vault);
     assert!(
         !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
@@ -583,7 +656,7 @@ mod judged {
             Some("claims".to_owned()),
             "the verdict is stored with its reason"
         );
-        drive_held(&leg);
+        drive_held(&leg.vault, &leg.attempt);
         let state = held_ask_state(&leg.vault);
         assert!(
             strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
@@ -625,7 +698,7 @@ mod judged {
             matches!(&outcome, CopyReviewOutcome::Reviewed(verdict) if verdict.passed),
             "the judge passes the copy: {outcome:?}"
         );
-        drive_held(&leg);
+        drive_held(&leg.vault, &leg.attempt);
         let state = held_ask_state(&leg.vault);
         assert!(
             !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
@@ -721,7 +794,7 @@ mod judged {
             matches!(edited, NoteProgramEditOutcome::Edited { .. }),
             "the owner's edit of the guide lands: {edited:?}"
         );
-        drive_held(&leg);
+        drive_held(&leg.vault, &leg.attempt);
         let state = held_ask_state(&leg.vault);
         assert!(
             strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
@@ -811,7 +884,7 @@ mod judged {
             ),
             "no verdict covers the copy: {outcome:?}"
         );
-        drive_held(&leg);
+        drive_held(&leg.vault, &leg.attempt);
         let state = held_ask_state(&leg.vault);
         assert!(
             strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
@@ -820,6 +893,190 @@ mod judged {
         assert!(
             strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
             "the receipt says no review covers the copy: {state}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Copy A/B arms (new API)
+// ---------------------------------------------------------------------------
+
+mod arms {
+    use super::*;
+    use oneiron::campaign::claims::{StageEvidenceClass, StageKey};
+    use oneiron::campaign::enrollment::{CampaignArmOutcome, campaign_outcomes_by_arm};
+    use oneiron::campaign::stage::{
+        CodedCommReply, NO_SHOW_BUMP_AFTER_SECS, NoShowRecoveryRule, PromotionMode, ReplyCode,
+        ReplyDisposition, ReplyRouteRule, StageDefinition, StageLadderDefinition,
+        StageProjectResult, StageTransitionRule, apply_coded_reply,
+    };
+    use std::collections::BTreeMap;
+
+    const REPLIED: &str = "replied";
+    const HUMAN_BODY: &[u8] = b"Hi, I wrote this one myself. Could we talk next week?";
+
+    fn key(token: &str) -> StageKey {
+        StageKey(token.to_owned())
+    }
+
+    fn transition(
+        from: Option<&str>,
+        to: &str,
+        evidence_class: StageEvidenceClass,
+        owner_attested_allowed: bool,
+    ) -> StageTransitionRule {
+        StageTransitionRule {
+            from: from.map(key),
+            to: key(to),
+            evidence_class,
+            owner_attested_allowed,
+        }
+    }
+
+    fn route(code: ReplyCode, disposition: ReplyDisposition) -> ReplyRouteRule {
+        ReplyRouteRule { code, disposition }
+    }
+
+    /// The stage ladder oracle's test ladder (tests/it/campaign_stage_ladder_oracle.rs):
+    /// a PositiveNow reply promotes a member to `replied`.
+    fn ladder() -> StageLadderDefinition {
+        StageLadderDefinition {
+            key: "copy-arms.v1".to_owned(),
+            stages: [
+                REPLIED,
+                "call_booked",
+                "call_held",
+                "proposal_sent",
+                "deposit_paid",
+                "desk_active",
+            ]
+            .into_iter()
+            .map(|token| StageDefinition {
+                key: key(token),
+                label: token.to_owned(),
+            })
+            .collect(),
+            transitions: vec![
+                transition(None, REPLIED, StageEvidenceClass::MeaningfulReply, false),
+                transition(
+                    Some(REPLIED),
+                    "call_booked",
+                    StageEvidenceClass::CalendarEvent,
+                    true,
+                ),
+                transition(
+                    Some("call_booked"),
+                    "call_held",
+                    StageEvidenceClass::CalendarEventOutcome,
+                    false,
+                ),
+                transition(
+                    Some("call_held"),
+                    "proposal_sent",
+                    StageEvidenceClass::DocumentArtifactAndSendReceipt,
+                    false,
+                ),
+                transition(
+                    Some("proposal_sent"),
+                    "deposit_paid",
+                    StageEvidenceClass::CounterpartyLedger,
+                    true,
+                ),
+                transition(
+                    Some("deposit_paid"),
+                    "desk_active",
+                    StageEvidenceClass::RecurringCommitment,
+                    true,
+                ),
+            ],
+            reply_routes: vec![
+                route(
+                    ReplyCode::PositiveNow,
+                    ReplyDisposition::Promote {
+                        stage: key(REPLIED),
+                    },
+                ),
+                route(ReplyCode::PositiveLater, ReplyDisposition::Snooze),
+                route(ReplyCode::Referral, ReplyDisposition::RouteReferral),
+                route(ReplyCode::Objection, ReplyDisposition::RecordOnly),
+                route(ReplyCode::NotInterested, ReplyDisposition::Exit),
+                route(ReplyCode::Complaint, ReplyDisposition::Suppress),
+            ],
+            no_show_recovery: NoShowRecoveryRule {
+                same_day_reschedule: true,
+                bump_after_secs: NO_SHOW_BUMP_AFTER_SECS,
+                snooze_after_failed_bump: true,
+            },
+        }
+    }
+
+    /// The census case: two arms, one positive reply on arm `model`, and the
+    /// campaign's outcome splits by arm.
+    #[test]
+    fn two_arms_give_outcomes_keyed_per_arm() {
+        let base = base();
+        let model_member = add_member(&base, MEMBER_ADDRESS);
+        let human_member = add_member(&base, "owen@example.org");
+        let (model_step, human_step) = (EntityId::now(), EntityId::now());
+        let (campaign, program) = launched_campaign(
+            &base,
+            json!({}),
+            vec![
+                step_draft(&base, model_step, CALL_SEQ, BODY, Some("model")),
+                step_draft(&base, human_step, CALL_SEQ + 1, HUMAN_BODY, Some("human")),
+            ],
+        );
+        let model_attempt = claimed_attempt(&base, campaign, program, model_step, model_member);
+        drive_held(&base.vault, &model_attempt);
+        // A redrive of the held send records the same arm once.
+        drive_held(&base.vault, &model_attempt);
+        let human_attempt = claimed_attempt(&base, campaign, program, human_step, human_member);
+        drive_held(&base.vault, &human_attempt);
+
+        // The reply comes after every send, on the vault's clock.
+        let reply_at = base.vault.now_recorded_at() + 10;
+        let replied = apply_coded_reply(
+            &base.vault,
+            &ladder(),
+            &CodedCommReply {
+                party_ref: model_member,
+                campaign_ref: campaign,
+                membership_claim_ref: EntityId::now(),
+                message_ref: EntityId::now(),
+                thread_ref: None,
+                code: ReplyCode::PositiveNow,
+                occurred_at: reply_at,
+            },
+            PromotionMode::Auto,
+        )
+        .unwrap();
+        assert!(
+            matches!(replied, StageProjectResult::Advanced { .. }),
+            "the positive reply promotes its member: {replied:?}"
+        );
+
+        let outcomes = campaign_outcomes_by_arm(&base.vault, base.owner, campaign).unwrap();
+        assert_eq!(
+            outcomes,
+            vec![
+                CampaignArmOutcome {
+                    arm: "human".to_owned(),
+                    members: 1,
+                    advanced: 0,
+                    stages: BTreeMap::new(),
+                },
+                CampaignArmOutcome {
+                    arm: "model".to_owned(),
+                    members: 1,
+                    advanced: 1,
+                    stages: BTreeMap::from([(REPLIED.to_owned(), 1)]),
+                },
+            ],
+            "the campaign's outcome is keyed per arm"
+        );
+        assert!(
+            campaign_outcomes_by_arm(&base.vault, EntityId::now(), campaign).is_err(),
+            "only the campaign's owner reads its arms"
         );
     }
 }

@@ -32,6 +32,7 @@
 
 mod approval;
 mod audience;
+mod copy_arms;
 mod copy_review;
 mod detection;
 mod held;
@@ -57,6 +58,7 @@ pub(crate) use self::reconcile::{
 pub(crate) use self::runner::reentry_dedupe_key;
 
 pub use self::audience::{AudienceWakeReport, audience_programs, enroll_audience_wake};
+pub use self::copy_arms::{CampaignArmOutcome, campaign_outcomes_by_arm};
 pub use self::copy_review::{
     CAMPAIGN_COPY_REVIEW_DIAL, COPY_REVIEW_REASONS, CampaignCopyReviewDecisions,
     CampaignCopyReviewWording, CopyReviewOutcome, CopyReviewVerdict,
@@ -77,9 +79,10 @@ pub use self::outbound_leg::{
 };
 pub(crate) use self::program::admit_campaign_leg_in_txn;
 pub use self::program::{
-    AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition,
-    CampaignProgramDraft, CampaignProgramStepDraft, archive_campaign_program,
-    create_campaign_program, read_campaign_program, update_campaign_program,
+    AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_ARM_MAX_BYTES,
+    CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition, CampaignProgramDraft,
+    CampaignProgramStepDraft, archive_campaign_program, create_campaign_program,
+    read_campaign_program, update_campaign_program,
 };
 pub use self::program::{
     CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, campaign_program,
