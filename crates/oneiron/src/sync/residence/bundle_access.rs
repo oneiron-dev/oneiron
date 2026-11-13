@@ -462,3 +462,74 @@ impl Vault {
         })
     }
 }
+
+/// The home's own steps under [`ensure_sealed_pad_access`] and
+/// [`offer_sealed_pad_access`], past the authority fold, for the integration
+/// tests (FIX 22389; `test_doors::pad_offer_invalidation`).
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_door {
+    use super::{ACCESS, OFFERED, PENDING, PadAccessRequest, ensure_in, grant_key};
+    use crate::Vault;
+    use crate::error::Result;
+    use crate::world_keys::{PadAdmissionTarget, SealedBundleGeneration};
+
+    /// One grant row as stored: no grant yet, an offer and its grant's
+    /// bytes, or bytes of neither form.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum GrantRow {
+        Pending,
+        Offered(Vec<u8>),
+        Other(Vec<u8>),
+    }
+
+    /// The home's ensure of `request`, asked by its target itself, over the
+    /// kept generations `kept`.
+    pub fn ensure_as_target(
+        vault: &Vault,
+        kept: &[SealedBundleGeneration],
+        request: &PadAccessRequest,
+    ) -> Result<()> {
+        vault.with_write_txn_grouped(|wtxn| {
+            ensure_in(
+                vault,
+                wtxn,
+                kept,
+                &request.target,
+                request.generations.as_deref(),
+                &request.invalid,
+            )
+        })
+    }
+
+    /// Keeps `grant` as `target`'s offer in `generation`, as an accepted
+    /// offer is stored.
+    pub fn put_offer(
+        vault: &Vault,
+        generation: &SealedBundleGeneration,
+        target: &PadAdmissionTarget,
+        grant: &[u8],
+    ) -> Result<()> {
+        let row = [&[OFFERED][..], grant].concat();
+        vault.with_write_txn_grouped(|wtxn| {
+            ACCESS.put(&vault.store, wtxn, &grant_key(generation, target), &row)
+        })
+    }
+
+    /// `target`'s grant row in `generation`, if any.
+    pub fn grant_row(
+        vault: &Vault,
+        generation: &SealedBundleGeneration,
+        target: &PadAdmissionTarget,
+    ) -> Result<Option<GrantRow>> {
+        let txn = vault.store.env.read_txn()?;
+        let Some(row) = ACCESS.get_bytes(&vault.store, &txn, &grant_key(generation, target))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(match row.as_slice() {
+            [PENDING] => GrantRow::Pending,
+            [OFFERED, grant @ ..] => GrantRow::Offered(grant.to_vec()),
+            other => GrantRow::Other(other.to_vec()),
+        }))
+    }
+}
