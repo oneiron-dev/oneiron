@@ -495,6 +495,17 @@ pub const QUOTA_SPENT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which class a message to a busy agent takes (AGM-2 = C; ARCH-0079 #message-classes):
+/// interrupt, steer, follow_up or digest. Read on the rule and local rungs only, from the
+/// message's stamped envelope and its first line fenced as data; an unsure interrupt is asked
+/// of the person who sent it, and that tap tunes these bands. The class sets only when the
+/// message reaches the agent and never gives it authority. Keyed by the sender's kind.
+pub const MESSAGE_CLASS: QuestionFamily = QuestionFamily {
+    name: "agents.message_class",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -549,4 +560,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     CLAIM_SOURCE_SUPPORT,
     SEAL_OBJECTIVE_FLAW,
     QUOTA_SPENT,
+    MESSAGE_CLASS,
 ];

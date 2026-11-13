@@ -23,6 +23,7 @@ mod record;
 mod repl;
 pub mod reply_evidence;
 mod run_position;
+mod run_signals;
 mod self_brief;
 mod shadow_step;
 mod skill_call;
