@@ -254,6 +254,22 @@ fn head_re_roots_to(
         && matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *key))
 }
 
+/// [`Vault::re_root_authority`] signed by the live host root `current`, to
+/// `next`'s key: the raw move alone, with none of [`Vault::re_root_host`]'s
+/// carried rows. For the integration tests' door (L7-31).
+#[cfg(oneiron_test_support)]
+pub(crate) fn re_root_authority_as_host_for_test(
+    vault: &Vault,
+    current: &HostSlipIssuer,
+    next: &HostSlipIssuer,
+) -> Result<AuthorityLogEntry> {
+    vault.re_root_authority(
+        next.root_device(vault.privacy_posture()),
+        current.public_key(),
+        |transcript| Ok(current.sign_slip(transcript)),
+    )
+}
+
 /// Every target with a trusted history pin, readable or not.
 fn pinned_machine_history_targets(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
     let mut targets = Vec::new();
