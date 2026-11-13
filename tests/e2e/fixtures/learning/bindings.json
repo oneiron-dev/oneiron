@@ -186,8 +186,8 @@
       "rows": [
         "OF-545"
       ],
-      "todo_reason": "waits on typed campaign output-archive descriptor/placement/best reads and coverage-floor admission setup",
-      "binding_note": "CampaignArchivePin is a reference consumed by promotion_basis, not a typed archive descriptor/output-placement authoring and per-cell view API."
+      "todo_reason": "waits on the canon producers: a Coach archive-axes job with its proposal receipt, a typed placement judgment and an archive quality score; install and record take those receipts from the caller unchecked",
+      "binding_note": "vault.research.archive.install/record/best/get/coverage/repropose and promotion_basis with a CampaignArchivePin exist; their proposal, placement and score receipts have no public producer (archive/records.rs ReceiptedRecipe/ReceiptedPlacement)."
     },
     {
       "id": "LEARNING-06",
