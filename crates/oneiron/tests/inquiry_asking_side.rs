@@ -24,6 +24,9 @@
 //!   (pact, epoch, member vault, the member's edge grant) and not held with
 //!   the task; its world is not registered to the pact, so the copy does not
 //!   read stale when the member leaves; a re-send lands on the same CLAIMs;
+//! - a caller re-using one inquiry id for a second member lands that
+//!   member's copy on CLAIMs of its own: the first member's copies keep
+//!   their subject, world, text and attribution;
 //! - a `task` answer and an unanswered `copy` inquiry land nothing.
 //!
 //! The member host is a double in this process; the member-side admit and
@@ -58,6 +61,8 @@ const SHARED: u64 = 42;
 const ASKER_BYTES: [u8; 16] = [0xE1; 16];
 const COMPANY: &str = "Acme";
 const MEMBER: &str = "owen";
+/// The second member, for the copy tests that ask two members.
+const OTHER_MEMBER: &str = "yuki";
 const MEMBER_HOST: &str = "https://member.example";
 const QUESTION: &str = "Is owen in the office on Thursday?";
 /// The member's word.
@@ -175,7 +180,7 @@ fn asking() -> Asking {
         )
         .expect("the company's shared vault");
     let seat = seat(&company);
-    let edge = activate_edge(&member, &company);
+    let edge = activate_edge(&member, &company, MEMBER);
     let slip = mint_slip(&member, &edge, company.issuer.binding_key());
     let fixture = Asking {
         member,
@@ -213,8 +218,9 @@ fn seat(company: &Side) -> EntityId {
 }
 
 /// The member's inquiry edge to the company and the company's reciprocal
-/// grant, bound by the existing Connect offer and accept.
-fn activate_edge(member: &Side, company: &Side) -> InquiryEdge {
+/// grant for the member `name`, bound by the existing Connect offer and
+/// accept.
+fn activate_edge(member: &Side, company: &Side, name: &str) -> InquiryEdge {
     let edge = member
         .vault
         .mint_inquiry_edge(
@@ -224,7 +230,7 @@ fn activate_edge(member: &Side, company: &Side) -> InquiryEdge {
         .expect("the member mints the inquiry edge");
     let reciprocal = company
         .vault
-        .mint_inquiry_edge_reciprocal_grant(&company.proof, member.vault_id, MEMBER)
+        .mint_inquiry_edge_reciprocal_grant(&company.proof, member.vault_id, name)
         .expect("the company Owner mints the reciprocal grant");
     let offer = member
         .vault
@@ -330,10 +336,16 @@ impl Asking {
 
     /// Every inquiry-statement CLAIM about the member in the company vault.
     fn copies(&self) -> Vec<(EntityId, oneiron::claim::ClaimBody)> {
+        self.copies_about(self.seat)
+    }
+
+    /// Every inquiry-statement CLAIM about the PERSON `seat` in the company
+    /// vault.
+    fn copies_about(&self, seat: EntityId) -> Vec<(EntityId, oneiron::claim::ClaimBody)> {
         let mut copies: Vec<_> = self
             .company
             .vault
-            .claims_for_subject(&self.seat)
+            .claims_for_subject(&seat)
             .expect("claims about the member")
             .into_iter()
             .filter_map(|id| {
@@ -343,6 +355,21 @@ impl Asking {
             .collect();
         copies.sort_by_key(|(id, _)| *id);
         copies
+    }
+
+    /// The foreign WORLD the member's copies land in: derived from the
+    /// company's pact with the member's vault and the world the member
+    /// opened.
+    fn copy_world(&self) -> EntityId {
+        let (pact, _) = self.company_pact();
+        oneiron::federation::pact_foreign_world(
+            &self.company.vault.authority_fold().expect("fold"),
+            &pact,
+            self.edge.terms.opened_world,
+        )
+        .expect("derive")
+        .expect("the pact")
+        .entity_id()
     }
 
     /// The company's Active Connect pact with the member's vault, and its
@@ -824,14 +851,7 @@ fn a_copy_answer_lands_foreign_attributed_and_is_not_held() {
     assert_eq!(fixture.held(fixture.task, &sent), None);
 
     let (pact, epoch) = fixture.company_pact();
-    let world = oneiron::federation::pact_foreign_world(
-        &fixture.company.vault.authority_fold().expect("fold"),
-        &pact,
-        fixture.edge.terms.opened_world,
-    )
-    .expect("derive")
-    .expect("the pact")
-    .entity_id();
+    let world = fixture.copy_world();
     let copies = fixture.copies();
     assert_eq!(copies.len(), 2, "one CLAIM per statement: {copies:?}");
     let mut landed = Vec::new();
@@ -916,6 +936,103 @@ fn a_copy_answer_lands_foreign_attributed_and_is_not_held() {
     let again: Vec<EntityId> = fixture.copies().iter().map(|(id, _)| *id).collect();
     assert_eq!(again, ids, "a re-send lands on the same CLAIMs");
     assert_eq!(fixture.receipts(&sent.inquiry).len(), 2);
+}
+
+#[test]
+fn a_re_used_id_for_another_member_lands_on_that_members_own_claims() {
+    let fixture = asking();
+    fixture.install_keep("copy");
+    let valid_until = fixture.company.vault.now_recorded_at() + 3_600;
+    let host = MemberHost::new(Reply::AnsweredWithCompanion { valid_until });
+    let first = fixture.send(&host, fixture.task);
+    assert_eq!(first.outcome, InquiryOutcome::Answered);
+    let first_ids: Vec<EntityId> = fixture.copies().iter().map(|(id, _)| *id).collect();
+    assert_eq!(first_ids.len(), 2, "the first member's two statements land");
+
+    // A second member: its own vault, seat, inquiry edge, Connect pact and
+    // route.
+    let other = side(0x44);
+    let other_seat = seat(&fixture.company);
+    let other_edge = activate_edge(&other, &fixture.company, OTHER_MEMBER);
+    let other_slip = mint_slip(&other, &other_edge, fixture.company.issuer.binding_key());
+    fixture
+        .company
+        .vault
+        .open_inquiry_route(
+            &fixture.company.proof,
+            &fixture.company.issuer,
+            &InquiryRouteRequest {
+                shared_vault_id: SHARED,
+                member: other_seat,
+                member_vault_id: other.vault_id,
+                member_host: MEMBER_HOST.to_owned(),
+                slip: other_slip,
+            },
+        )
+        .expect("the company Owner opens the second member's route");
+
+    host.set(Reply::Answered { valid_until });
+    let mut request = fixture.request(fixture.task, Some(first.inquiry.id));
+    request.member = other_seat;
+    let second = fixture
+        .company
+        .vault
+        .send_inquiry(&request, &host)
+        .expect("the send to the second member");
+    assert_eq!(second.outcome, InquiryOutcome::Answered);
+    assert_eq!(
+        second.inquiry.id, first.inquiry.id,
+        "the caller re-used the first inquiry's id"
+    );
+
+    let world = fixture.copy_world();
+    let first_copies = fixture.copies();
+    let ids: Vec<EntityId> = first_copies.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, first_ids, "the first member's copies stand");
+    let mut texts_landed = Vec::new();
+    for (_, body) in &first_copies {
+        let about_first = matches!(
+            body.subject,
+            oneiron::ClaimSubject::Entity(subject) if subject == fixture.seat
+        );
+        assert!(
+            about_first,
+            "a first member's copy stays about the first member"
+        );
+        assert_eq!(body.world, Some(world), "and in the first member's world");
+        texts_landed.push(body.value.as_str().expect("text").to_owned());
+    }
+    texts_landed.sort();
+    assert_eq!(texts_landed, [BUSY_THURSDAY, OUT_THURSDAY]);
+
+    let second_copies = fixture.copies_about(other_seat);
+    assert_eq!(
+        second_copies.len(),
+        1,
+        "the second member's statement lands once: {second_copies:?}"
+    );
+    let (second_id, second_body) = &second_copies[0];
+    assert!(
+        !first_ids.contains(second_id),
+        "the second member's copy lands on a CLAIM of its own"
+    );
+    assert!(
+        second_body.world.is_some() && second_body.world != Some(world),
+        "the second member's copy sits in its own foreign world"
+    );
+
+    let history = fixture
+        .company
+        .vault
+        .federation_delivery_history(&first_ids)
+        .expect("delivery history");
+    assert_eq!(history.len(), 2, "one delivery per first copy: {history:?}");
+    for record in &history {
+        assert_eq!(
+            record.source_vault, fixture.member.vault_id,
+            "each first copy is attributed to the first member's vault"
+        );
+    }
 }
 
 #[test]
