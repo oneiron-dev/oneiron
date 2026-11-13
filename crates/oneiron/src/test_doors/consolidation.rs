@@ -267,7 +267,7 @@ pub fn consolidate_unbound_turn_pair(
 /// Witnesses `words`, spoken by a fresh PERSON, as one visible user MESSAGE
 /// carrying `metadata` into a fresh TURN of `conversation` at `occurred_at`;
 /// `(turn, message)`.
-fn witness_user_turn(
+pub(super) fn witness_user_turn(
     vault: &Vault,
     conversation: EntityId,
     words: &str,
