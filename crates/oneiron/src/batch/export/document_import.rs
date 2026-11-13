@@ -174,6 +174,17 @@ impl Vault {
         self.import_whole_vault_archive_as(source, None, Some(owner))
     }
 
+    /// RED PIN ONLY (never for main): takes the choice, imports as own.
+    pub fn import_whole_vault_archive_from_with_speakers<R: Read + Seek>(
+        &self,
+        source: R,
+        speakers: super::ArchiveSpeakers,
+    ) -> Result<WholeVaultImportReceipt> {
+        let mut receipt = self.import_whole_vault_archive_as(source, None, None)?;
+        receipt.speakers = speakers;
+        Ok(receipt)
+    }
+
     fn import_whole_vault_archive_as<R: Read + Seek>(
         &self,
         source: R,
@@ -676,6 +687,7 @@ impl Vault {
         }
         Ok(WholeVaultImportReceipt {
             authority,
+            speakers: super::ArchiveSpeakers::Own,
             owner_restore_receipt_ref: receipt_ref,
             inserted_entities,
             unchanged_entities,

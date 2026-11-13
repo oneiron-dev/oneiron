@@ -405,9 +405,17 @@ pub struct ExportDerivationEnvelope {
     pub receipts: Vec<super::ExportReceiptSource>,
 }
 
+/// RED PIN ONLY (never for main): the choice's type, with no behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveSpeakers {
+    Own,
+    Foreign,
+}
+
 #[derive(Debug, Clone)]
 pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
+    pub speakers: ArchiveSpeakers,
     /// Durable `gate:<32 hex>` owner-act receipt naming this archive's full document-manifest
     /// digest. Present only for the owner-authenticated restore entry, not a reusable grant.
     pub owner_restore_receipt_ref: Option<String>,
