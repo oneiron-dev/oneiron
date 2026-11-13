@@ -6,7 +6,9 @@
 //! issuer, the dependent row holds and an unrelated row keeps running. A
 //! metadata reply for another resource, or one that still lists the bound
 //! issuer (an expired token), records nothing; any other refusal reads no
-//! metadata at all.
+//! metadata at all. The owner's admission of the connector records the
+//! baseline from the same metadata (Engine ruling L5-11-BASELINE = C), so a
+//! later refusal under another issuer holds every row of the key.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --features oneiron/test-support --test connector_issuer_prm_refusal`
 #![cfg(oneiron_test_support)]
@@ -22,9 +24,12 @@ use oneiron::connector_key::{
     ConnectorCatalogEntry, ConnectorIssuerObservation, ConnectorKeySpec, SlateDataClass,
     SlateToolManifest, draft_connector_slate,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultConfig};
-use oneiron_server::test_doors::connector_issuer_watch::{resource_metadata_url, watch_refusal};
+use oneiron_server::test_doors::connector_issuer_watch::{
+    baseline_at_admission, resource_metadata_url, watch_refusal,
+};
 use serde_json::json;
 
 const NOW: u64 = 1_700_000_000;
@@ -36,9 +41,11 @@ const OLD_ISSUER: &str = "https://as-old.test";
 const NEW_ISSUER: &str = "https://as-new.test";
 const BEARER_CHALLENGE: &str = "Bearer error=\"invalid_token\"";
 const METADATA_REQUEST_LINE: &str = "GET /.well-known/oauth-protected-resource/mcp HTTP/1.1";
+const ROUTE_CUSTODY: &str = "custody:route-token";
 
 struct Fixture {
     vault: Vault,
+    owner: AuthenticatedOwner,
     /// The attested catalog key of `CONNECTOR`.
     key: EntityId,
     _dir: tempfile::TempDir,
@@ -65,6 +72,31 @@ fn tool(name: &str) -> SlateToolManifest {
 /// `write`) and baselined its route's issuer as `OLD_ISSUER`, with only the
 /// `write` row depending on it.
 fn fixture() -> Fixture {
+    let fixture = unbound_fixture();
+    fixture
+        .vault
+        .observe_connector_credential_issuer(
+            &fixture.owner,
+            &ConnectorIssuerObservation {
+                connector: CONNECTOR.to_owned(),
+                slot: "route".to_owned(),
+                issuer: OLD_ISSUER.to_owned(),
+                credential_ref: ROUTE_CUSTODY.to_owned(),
+                expected_generation: 0,
+                dependents: vec![ConnectorBindingDependent {
+                    key_ref: fixture.key,
+                    tool: Some(WRITE_ROW.to_owned()),
+                }],
+                witness: "owner read the route's issuer".to_owned(),
+            },
+        )
+        .expect("owner baselines the route's issuer");
+    fixture
+}
+
+/// A rooted vault whose owner attested `CONNECTOR` (rows `read` and
+/// `write`), with no issuer binding yet.
+fn unbound_fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
@@ -114,25 +146,9 @@ fn fixture() -> Fixture {
     vault
         .attest_connector_key(&owner, &key, PROTOCOL_REVISION, NOW + 1)
         .expect("owner attests the connector active");
-    vault
-        .observe_connector_credential_issuer(
-            &owner,
-            &ConnectorIssuerObservation {
-                connector: CONNECTOR.to_owned(),
-                slot: "route".to_owned(),
-                issuer: OLD_ISSUER.to_owned(),
-                credential_ref: "custody:route-token".to_owned(),
-                expected_generation: 0,
-                dependents: vec![ConnectorBindingDependent {
-                    key_ref: key,
-                    tool: Some(WRITE_ROW.to_owned()),
-                }],
-                witness: "owner read the route's issuer".to_owned(),
-            },
-        )
-        .expect("owner baselines the route's issuer");
     Fixture {
         vault,
+        owner,
         key,
         _dir: dir,
     }
@@ -383,4 +399,166 @@ fn non_401_or_no_bearer_challenge_fetches_nothing() {
     assert_eq!(origin.heads(), Vec::<String>::new(), "no metadata read");
     assert_eq!(open_halt(&fixture), None);
     assert_eq!(hold(&fixture, WRITE_ROW), None);
+}
+
+#[test]
+fn owner_admission_baselines_from_prm() {
+    let fixture = unbound_fixture();
+    let origin = ConnectorOrigin::serve(
+        |endpoint| json!({ "resource": endpoint, "authorization_servers": [OLD_ISSUER, "https://as-other.test"] }),
+    );
+
+    let binding = baseline_at_admission(
+        &fixture.vault,
+        &fixture.owner,
+        CONNECTOR,
+        &fixture.key,
+        &origin.endpoint,
+        Some(ROUTE_CUSTODY),
+    )
+    .expect("the admission reads the metadata")
+    .expect("the admission records the baseline");
+
+    assert_eq!(origin.heads().len(), 1, "the metadata was read once");
+    assert!(
+        !origin.heads()[0]
+            .to_ascii_lowercase()
+            .contains("\r\nauthorization:"),
+        "the metadata read presents no credential"
+    );
+    assert_eq!(
+        binding.issuer, OLD_ISSUER,
+        "the first listed issuer is bound"
+    );
+    assert_eq!(binding.slot, "route");
+    assert_eq!(binding.credential_ref, ROUTE_CUSTODY);
+    assert_eq!(binding.generation, 1);
+    assert!(binding.transition.is_none(), "a baseline is no change");
+    assert_eq!(
+        binding.dependents.iter().cloned().collect::<Vec<_>>(),
+        vec![ConnectorBindingDependent {
+            key_ref: fixture.key,
+            tool: None,
+        }],
+        "every row of the catalog key depends on its route"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .connector_credential_binding(&binding.binding_ref)
+            .expect("the binding reads")
+            .as_ref(),
+        Some(&binding),
+        "the baseline is durable as answered"
+    );
+    assert_eq!(hold(&fixture, WRITE_ROW), None, "a baseline holds nothing");
+
+    let again = baseline_at_admission(
+        &fixture.vault,
+        &fixture.owner,
+        CONNECTOR,
+        &fixture.key,
+        &origin.endpoint,
+        Some(ROUTE_CUSTODY),
+    )
+    .expect("a second admission reads the metadata");
+    assert_eq!(again, None, "a bound slot keeps its binding");
+    assert_eq!(
+        fixture
+            .vault
+            .connector_credential_binding(&binding.binding_ref)
+            .expect("the binding reads"),
+        Some(binding),
+        "the binding is unchanged"
+    );
+}
+
+#[test]
+fn admission_baseline_lets_a_later_refusal_hold_every_row() {
+    let fixture = unbound_fixture();
+    let before = ConnectorOrigin::serve(
+        |endpoint| json!({ "resource": endpoint, "authorization_servers": [OLD_ISSUER] }),
+    );
+    baseline_at_admission(
+        &fixture.vault,
+        &fixture.owner,
+        CONNECTOR,
+        &fixture.key,
+        &before.endpoint,
+        Some(ROUTE_CUSTODY),
+    )
+    .expect("the admission reads the metadata")
+    .expect("the admission records the baseline");
+    let after = ConnectorOrigin::serve(
+        |endpoint| json!({ "resource": endpoint, "authorization_servers": [NEW_ISSUER] }),
+    );
+
+    let drifted = watch_refusal(
+        &fixture.vault,
+        &after.endpoint,
+        &fixture.key,
+        401,
+        Some(BEARER_CHALLENGE),
+    )
+    .expect("the watch reads the refusal");
+
+    assert_eq!(drifted.len(), 1, "the admitted route drifted: {drifted:?}");
+    let halt = open_halt(&fixture).expect("the connector shows the open change");
+    assert_eq!(halt.old_issuer, OLD_ISSUER);
+    assert_eq!(halt.new_issuer, NEW_ISSUER);
+    assert_eq!(
+        halt.dependent_rows,
+        vec![READ_ROW.to_owned(), WRITE_ROW.to_owned()]
+    );
+    assert_eq!(hold(&fixture, READ_ROW), Some(CONNECTOR_ISSUER_HOLD_REASON));
+    assert_eq!(
+        hold(&fixture, WRITE_ROW),
+        Some(CONNECTOR_ISSUER_HOLD_REASON)
+    );
+}
+
+#[test]
+fn admission_without_credential_or_metadata_binds_nothing() {
+    let fixture = unbound_fixture();
+    let origin = ConnectorOrigin::serve(
+        |endpoint| json!({ "resource": endpoint.replace("/mcp", "/other"), "authorization_servers": [OLD_ISSUER] }),
+    );
+
+    let no_credential = baseline_at_admission(
+        &fixture.vault,
+        &fixture.owner,
+        CONNECTOR,
+        &fixture.key,
+        &origin.endpoint,
+        None,
+    )
+    .expect("an admission with no credential reads nothing");
+    assert_eq!(no_credential, None);
+    assert_eq!(origin.heads().len(), 0, "no credential, no metadata read");
+
+    let mismatched = baseline_at_admission(
+        &fixture.vault,
+        &fixture.owner,
+        CONNECTOR,
+        &fixture.key,
+        &origin.endpoint,
+        Some(ROUTE_CUSTODY),
+    )
+    .expect("the admission reads the metadata");
+    assert_eq!(
+        mismatched, None,
+        "another resource's metadata binds nothing"
+    );
+    assert_eq!(origin.heads().len(), 1, "the metadata was read once");
+
+    let drifted = watch_refusal(
+        &fixture.vault,
+        &origin.endpoint,
+        &fixture.key,
+        401,
+        Some(BEARER_CHALLENGE),
+    )
+    .expect("the watch reads the refusal");
+    assert!(drifted.is_empty(), "no baseline, no change: {drifted:?}");
+    assert_eq!(open_halt(&fixture), None);
 }

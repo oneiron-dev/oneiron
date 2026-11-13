@@ -165,3 +165,27 @@ pub(crate) fn detect_at_refusal(
         witness,
     })
 }
+
+/// The baseline of a catalog connector recorded inside the owner's
+/// admission of it (L5-11-BASELINE = C seam): records nothing yet.
+///
+/// # Errors
+/// None yet.
+pub(crate) fn baseline_at_admission(
+    vault: &Vault,
+    owner: &oneiron::consent::AuthenticatedOwner,
+    connector: &str,
+    catalog_key: &EntityId,
+    endpoint: &str,
+    credential_ref: Option<&str>,
+) -> oneiron::Result<Option<ConnectorCredentialBinding>> {
+    let _ = (
+        vault,
+        owner,
+        connector,
+        catalog_key,
+        endpoint,
+        credential_ref,
+    );
+    Ok(None)
+}
