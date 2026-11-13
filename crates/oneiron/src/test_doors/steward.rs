@@ -282,6 +282,26 @@ pub fn open_owner_carrier_vault(path: &std::path::Path) -> Result<Vault> {
     Ok(vault)
 }
 
+/// The managed host's account recovery on a hosted vault (census L7-14):
+/// [`Vault::recover_cloud_account`] under the owner's proof, the vault's
+/// current host root `issuer` signing the move to `new_device` as a managed
+/// host signs its root migration. The host root's key signs only inside this
+/// door.
+///
+/// # Errors
+///
+/// [`Vault::recover_cloud_account`]'s.
+pub fn recover_cloud_account_signed_by_host_root(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    issuer: &crate::authority::HostSlipIssuer,
+    new_device: crate::authority::DeviceAuthority,
+) -> Result<crate::authority::AuthorityLogEntry> {
+    vault.recover_cloud_account(owner, new_device, issuer.public_key(), |bytes| {
+        Ok(issuer.sign_claim_handoff(bytes).to_vec())
+    })
+}
+
 /// The shipped policy with every row naming the Dreamer taken out, as an
 /// owner who removed them before the first mint leaves it.
 ///
