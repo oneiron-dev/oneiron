@@ -456,6 +456,114 @@ async fn a_failing_steps_retries_spend_one_step_budget() {
     host.shutdown().await;
 }
 
+/// L1-28 (ARCH-0053 #paid-leg-built): a failed workflow try's spend lived
+/// only in the step runner's process, so a retry after a host restart
+/// replayed an estimate: one reservation per rung of the ladder it had then.
+/// Try 1 sends two metered rungs (16,000 units, the whole step budget); the
+/// host restarts with one rung. The estimate (8,000) let the retry send once
+/// more; the exact carried spend holds it at the budget before any call.
+#[tokio::test]
+async fn a_failed_steps_exact_carried_spend_survives_a_host_restart() {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+    use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+    let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let (_dir, vault) = rooted_vault();
+    let only = saved_agent(&vault, "carried-spend", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("carried-spend", vec![only])
+                .unwrap(),
+            2,
+        )
+        .unwrap();
+    // Distinct wire models, so no rung's health rest crosses the restart.
+    let config = |rungs: &str, backoff: u64| {
+        metered_models(models_toml(&format!(
+            r#"
+[providers.account]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = {rungs}
+[dreamer]
+enabled = false
+[workflows]
+retry_backoff_secs = {backoff}
+step_budget_units = 16000
+"#,
+            fake.base_url
+        )))
+    };
+    // The first host's backoff keeps the retry waiting past its shutdown.
+    let first = config(
+        r#"[{ model = "account:first" }, { model = "account:second" }]"#,
+        600,
+    );
+    let second = config(r#"[{ model = "account:after-restart" }]"#, 0);
+    let host = AiHost::start(vault.clone(), Some(&first), true).await;
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("carried-spend".into()),
+            run_id: Some("carried-spend".into()),
+            now: 10,
+        })
+        .unwrap();
+    let queue = AttemptQueue::new(&vault);
+    let scheduled_retry = || {
+        queue.list().unwrap().into_iter().find(|row| {
+            row.state == AttemptState::Scheduled
+                && row.retry_of.is_some_and(|parent| {
+                    queue
+                        .get(parent)
+                        .unwrap()
+                        .is_some_and(|prior| prior.state == AttemptState::Failed)
+                })
+        })
+    };
+    assert!(
+        eventually(Duration::from_secs(20), || scheduled_retry().is_some()).await,
+        "try 1 never failed into a scheduled retry; status {:?}",
+        host.handle().status().workflows
+    );
+    let retry = scheduled_retry().unwrap();
+    // No spend lease bounds this step: only its own budget can hold it.
+    assert!(
+        dispatcher
+            .spend_scope_for_attempt(retry.id)
+            .unwrap()
+            .is_none()
+    );
+    host.shutdown().await;
+    assert_eq!(fake.seen().len(), 2, "try 1 sent both rungs");
+    assert_eq!(
+        queue.get(retry.id).unwrap().unwrap().state,
+        AttemptState::Scheduled
+    );
+    let host = AiHost::start(vault.clone(), Some(&second), true).await;
+    // Cuts only the first host's backoff wait; spend and lineage stay.
+    let woke = dispatcher.wake_workflow_retries(unix_now()).unwrap();
+    let held = eventually(Duration::from_secs(20), || {
+        workflow_is_held_for_budget(&vault)
+    })
+    .await;
+    let status = host.handle().status().workflows;
+    host.shutdown().await;
+    assert!(
+        held,
+        "the retry did not hold at its step budget; woke {woke}, status {status:?}"
+    );
+    assert_eq!(
+        fake.seen().len(),
+        2,
+        "the retry after the restart replayed an estimate, not what try 1 spent"
+    );
+}
+
 /// Greptile #1304 P1: each retry of a failing step built a fresh meter, so a
 /// policy row's cap (the agent's, the purpose's) renewed with every try.
 #[tokio::test]
