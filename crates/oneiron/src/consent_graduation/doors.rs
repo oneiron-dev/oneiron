@@ -227,9 +227,9 @@ impl Vault {
     /// Delegate whose Owner-minted `policy.change` grant names
     /// [`RAMP_DEMOTE_GRANT_TARGET`]. Both are found again in the write's
     /// transaction, and a role label alone demotes nothing. The scope's own
-    /// actor, or that actor's parent, steps it back through
-    /// [`crate::memory::Memory::demote_own_ramp_scope`] instead. Re-graduation
-    /// stays the owner's tap ([`Vault::accept_graduation_offer`]).
+    /// actor, or the agent whose run spawned it, steps it back through
+    /// [`crate::memory::Memory::demote_own_ramp_scope`] instead.
+    /// Re-graduation stays the owner's tap ([`Vault::accept_graduation_offer`]).
     /// Every way the act is said out loud, which is the unconditional receipt
     /// (oracle `ms06_self_demotion_is_receipted_never_silent`): a scope with no
     /// live grant still records the act, so a demotion is never inferred from
@@ -354,17 +354,53 @@ fn holds_ramp_demote_power_in_txn(
     )
 }
 
+/// Whether the agent `parent` spawned the actor `child` names: `child` is an
+/// agent id whose pin binds the attempt whose spawn minted it as an
+/// attenuated fork (FIX 9559), and that attempt dispatched `parent`. The
+/// step the Gate's delegation-chain read takes (`gate::definition_ceiling`),
+/// one level up. An unpinned id, or an attempt row that is gone, names no
+/// parent.
+fn spawned_by_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    child: &str,
+    parent: crate::entity_id::EntityId,
+) -> Result<bool> {
+    let Ok(child) = crate::entity_id::EntityId::from_hex(child) else {
+        return Ok(false);
+    };
+    let Some(attempt) = crate::agent_def::delegation_parent_in_txn(&vault.store, txn, &child)?
+    else {
+        return Ok(false);
+    };
+    let Some(row) =
+        crate::attempt_queue::AttemptQueue::from_store(&vault.store).get_in_txn(txn, attempt)?
+    else {
+        return Ok(false);
+    };
+    Ok(crate::agent_dispatch::record_dispatch_input(&row)
+        .and_then(|input| input.target.agent_definition_ref().ok())
+        == Some(parent))
+}
+
 impl crate::memory::Memory<'_> {
-    /// The scope's own actor steps back to the propose lane on its own
-    /// judgment ([`DemotionReason::AgentJudgment`]), receipted like any
-    /// demotion. Reducing one's own authority needs no owner proof; reducing
-    /// another actor's does, so the scope must name this facade's actor.
+    /// The scope's own actor, or the agent that spawned it, steps the scope
+    /// back to the propose lane on its own judgment
+    /// ([`DemotionReason::AgentJudgment`]), receipted like any demotion.
+    /// Narrowing one's own authority, or a child's, needs no owner proof
+    /// (ARCH-0082 `#changing`: "Tighten a child's row ...: the parent or
+    /// grantor, nothing. Narrowing is delegation."). The child is the
+    /// attenuated fork the dispatcher minted for this actor's run and pinned
+    /// to it (FIX 9559), read from the engine's own pin, never from a
+    /// caller-supplied body; direct children only. Any other actor's scope
+    /// is the owner's or a policy holder's to demote
+    /// ([`Vault::demote_scope_to_propose`]).
     ///
     /// # Errors
     ///
-    /// `forbidden` when the scope belongs to another actor or the actor binding
-    /// fails, plus the scope and storage errors of
-    /// [`Vault::demote_scope_to_propose`].
+    /// `forbidden` when the scope belongs to an actor that is neither this one
+    /// nor its spawned child, or the actor binding fails, plus the scope and
+    /// storage errors of [`Vault::demote_scope_to_propose`].
     pub fn demote_own_ramp_scope(
         &self,
         scope: &RampScope,
@@ -374,11 +410,13 @@ impl crate::memory::Memory<'_> {
         // Giving up one's own grant requires the actor binding, not a content-write grant.
         vault.write_txn_door(crate::store::Callback::Audited, |wtxn| {
             scope.validate()?;
-            if scope.actor != self.actor().to_hex() {
+            if scope.actor != self.actor().to_hex()
+                && !spawned_by_in_txn(vault, wtxn, &scope.actor, self.actor())?
+            {
                 return Err(oneiron_contracts::memory::MemoryError::new(
                     oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
-                    "an actor demotes only its own ramp scope",
-                    &["Ask the owner to demote another actor's scope."],
+                    "an actor demotes only its own ramp scope or its spawned child's",
+                    &["Ask the owner or a policy holder to demote another actor's scope."],
                 ));
             }
             crate::memory::verify_actor_binding_in_txn(
