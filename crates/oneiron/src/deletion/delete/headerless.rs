@@ -5,8 +5,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::gate::{
-    GatedDeletion, refuse_claim, reverify_deletion_authority_when_unpublished,
-    revoke_guest_grants_in_txn,
+    GatedDeletion, journal_deletion_in_txn, refuse_claim,
+    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
@@ -270,6 +270,15 @@ impl Vault {
             id,
             tombstone.reason,
         )?;
+        if existed {
+            journal_deletion_in_txn(
+                self,
+                gate,
+                &mut wtxn,
+                id,
+                reason.active_store_hard_purge_v1(),
+            )?;
+        }
         if reason == DeleteReason::UserDelete {
             // A headerless soft deletion still retires proposals. Its
             // cancellation and this evidence must become visible together.

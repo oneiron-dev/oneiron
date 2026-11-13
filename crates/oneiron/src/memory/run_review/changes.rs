@@ -4,8 +4,9 @@
 //! longer assembles them. Membership is what the run wrote, from the run
 //! reference its dispatcher bound, never guessed from an actor or a time.
 //! `Memory::run_changes_as_owner` is its call surface;
-//! `record_run_claim_in_txn` is its claim writer and
-//! `record_run_topology_in_txn` its identity-topology writer. A run nobody
+//! `record_run_claim_in_txn` is its claim writer,
+//! `record_run_topology_in_txn` its identity-topology writer and
+//! `record_run_deletion_in_txn` its delete and erase writer. A run nobody
 //! settled is reverted from this journal (`journal_members_in_txn`), and each
 //! change's compensation is kept on its first row.
 
@@ -105,6 +106,29 @@ pub(crate) fn record_run_topology_in_txn(
     )
 }
 
+/// Records that `run` deleted `entity`, an erase when `erase`, in the write
+/// that commits the deletion: the soft delete's scrub, or the erase's purge
+/// beside its `dt:` marker. A revert reports the change backup-only or
+/// one-way; it never undoes it.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_deletion_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    entity: &EntityId,
+    erase: bool,
+) -> crate::Result<()> {
+    let entity_ref = entity.to_hex();
+    let change = if erase {
+        RunReviewChange::Erase { entity_ref }
+    } else {
+        RunReviewChange::Delete { entity_ref }
+    };
+    record_change_in_txn(store, txn, run, change)
+}
+
 /// Appends `change` after the run's last recorded change.
 fn record_change_in_txn(
     store: &crate::store::Store,
@@ -192,6 +216,11 @@ fn journal_member_in_txn(
         RunReviewChange::Claim { claim_ref } => claim_member_in_txn(memory, txn, &row, claim_ref)?,
         RunReviewChange::Topology { event_ref } => {
             topology_member_in_txn(memory.vault(), txn, event_ref)?
+        }
+        // Journaled in the write that committed it, so it landed; the revert
+        // reports it backup-only or one-way from the entity's marker now.
+        RunReviewChange::Delete { .. } | RunReviewChange::Erase { .. } => {
+            (RunChangeVerdict::Landed, None)
         }
         _ => {
             return Err(MemoryError::bad_request(
