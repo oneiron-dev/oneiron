@@ -305,6 +305,12 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# GENUI-STATE-PERSIST: the served fixture roots its vault from a `MemoryKeystore`.
+[[test]]
+name = "lens_frame_state_door"
+path = "tests/lens_frame_state_door.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "off_record_room_context_pack"
