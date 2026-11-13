@@ -6,6 +6,13 @@
 //! doors refuse those kinds, a presented capsule opens nothing on the live
 //! vault, and a host-managed or supervisor-delivered key cannot enter it.
 //!
+//! Its switch "any 2 pieces" (PR 2; PIECES = A, FLIP = A, OLD-DEVICE = A):
+//! turning it on issues a data-key kit over three homes in the same write,
+//! the synced passkey's piece sealed into a `kit_point` wrap, and removes the
+//! sheet's wrap too. Then one piece opens nothing, and two do: the paper
+//! piece and the passkey, or the paper piece and the trusted person's.
+//! Turning it off prints a fresh sheet, and the kit stays usable.
+//!
 //! A fresh device is a host with no vault: it opens a sealed checkpoint's
 //! carried key header ([`CheckpointKey::unlock`]), or reopens the vault with
 //! no keystore, so no device wrap opens.
@@ -18,9 +25,10 @@
 use std::path::Path;
 
 use oneiron::recovery::checkpoint::CheckpointKey;
+use oneiron::recovery::{CodeKeeping, KitIssue, KitPiece, PassphraseCost, PieceHome};
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::world_keys::{
-    RecoveryPreset, RecoverySheet, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapKind,
+    KitPasskey, RecoveryPreset, RecoverySheet, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapKind,
     escrow_recipient,
 };
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig, VaultDataKeyCustody, VaultPrivacyConfig};
@@ -53,6 +61,24 @@ fn carried_ids(image: &Path) -> Vec<String> {
         .into_iter()
         .map(|info| info.id)
         .collect()
+}
+
+const PAPER: PieceHome = PieceHome::RecoveryCode(CodeKeeping::Paper);
+
+/// A data-key kit of `vault`'s key over `homes`, with no passphrase home.
+fn kit_issue(vault: &Vault, homes: [PieceHome; 3]) -> KitIssue<'static> {
+    KitIssue {
+        vault_id: vault.vault_key_vault_id(),
+        homes,
+        passphrase: None,
+        cost: PassphraseCost::DEFAULT,
+        only_machine: false,
+    }
+}
+
+/// The piece the owner types back from its printed recovery code.
+fn typed_back(piece: &KitPiece) -> KitPiece {
+    KitPiece::from_recovery_code(piece.recovery_code().reveal()).expect("the code reads back")
 }
 
 fn refused_by_preset<T: std::fmt::Debug>(result: oneiron::Result<T>, what: &str) {
@@ -325,4 +351,351 @@ fn the_world_kit_escrow_label_is_its_confirms_alone() {
         "refused for the label: {refusal}"
     );
     assert!(!wrap_ids(&vault).contains(&"escrow:world-kit".to_owned()));
+}
+
+#[test]
+fn any_two_pieces_opens_with_two_pieces_and_never_with_one() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("vault");
+    let vault = keyed_vault(&path);
+    let owner_proof = owner(&vault).expect("owner proof");
+    let old_sheet = vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .expect("the owner enters \"Nobody but me\"")
+        .sheet
+        .expect("its sheet");
+    let prf = Zeroizing::new([6u8; 32]);
+    let passkey = KitPasskey {
+        credential: "phone",
+        prf: &prf,
+    };
+
+    let switched = vault
+        .set_recovery_preset_any_two_as(
+            &owner_proof,
+            &kit_issue(
+                &vault,
+                [PAPER, PieceHome::Passkey, PieceHome::TrustedPerson],
+            ),
+            Some(passkey),
+        )
+        .expect("the owner turns on \"any 2 pieces\"");
+    assert_eq!(switched.change.previous, RecoveryPreset::NobodyButMe);
+    assert_eq!(switched.change.preset, RecoveryPreset::NobodyButMeAnyTwo);
+    assert_eq!(
+        vault.recovery_preset().expect("preset"),
+        RecoveryPreset::NobodyButMeAnyTwo
+    );
+    assert!(
+        switched.change.sheet.is_none(),
+        "no full-key sheet is printed"
+    );
+    assert!(
+        switched
+            .change
+            .removed
+            .iter()
+            .any(|info| info.id == "sheet"),
+        "the full-key sheet's wrap goes"
+    );
+    assert!(switched.kit.listed, "the kit is listed in the same write");
+    let ids = wrap_ids(&vault);
+    assert!(
+        ids.iter()
+            .all(|id| id.starts_with("device:") || id.starts_with("kit_point:")),
+        "only this device's wrap and the passkey's kit piece stay: {ids:?}"
+    );
+    assert!(
+        ids.iter()
+            .any(|id| id.starts_with("kit_point:") && id.ends_with(":phone")),
+        "the passkey's piece rides in a kit_point wrap: {ids:?}"
+    );
+    let vault_id = switched.kit.vault_id;
+    let mut pieces = switched.kit.pieces;
+    assert_eq!(pieces.len(), 2, "the passkey's piece is handed to no one");
+    let trusted = typed_back(&pieces.pop().expect("the trusted person's piece"));
+    let paper = pieces.pop().expect("the paper piece");
+    assert_eq!(
+        paper.home(),
+        Some(&PAPER),
+        "the paper piece is the new sheet"
+    );
+    let paper = typed_back(&paper);
+
+    let image = directory.path().join("image");
+    vault
+        .snapshot_checkpoint(&image, 100)
+        .expect("seal a checkpoint under the switch");
+    let carried = carried_ids(&image);
+    assert!(
+        !carried.iter().any(|id| id == "sheet"),
+        "the checkpoint carries no full-key sheet: {carried:?}"
+    );
+    let kit_unlock = |pieces: &'_ [KitPiece], passkey: Option<KitPasskey<'_>>| {
+        CheckpointKey::unlock(
+            &image,
+            &VaultKeyUnlock::Kit {
+                vault_id,
+                pieces,
+                passphrase: None,
+                passkey,
+                keystore: None,
+            },
+        )
+    };
+    kit_unlock(std::slice::from_ref(&paper), Some(passkey))
+        .expect("on a host with no vault, the paper piece and the passkey open the checkpoint");
+    assert!(
+        kit_unlock(std::slice::from_ref(&paper), None).is_err(),
+        "the paper piece alone opens nothing"
+    );
+    let no_piece: &[KitPiece] = &[];
+    assert!(
+        kit_unlock(no_piece, Some(passkey)).is_err(),
+        "the passkey's piece alone opens nothing"
+    );
+    assert!(
+        CheckpointKey::unlock(
+            &image,
+            &VaultKeyUnlock::Passkey {
+                credential: "phone",
+                prf: &prf,
+            },
+        )
+        .is_err(),
+        "the passkey opens no wrap of the key"
+    );
+    assert!(
+        CheckpointKey::unlock(&image, &VaultKeyUnlock::Sheet(&old_sheet)).is_err(),
+        "the old sheet opens nothing sealed after the switch"
+    );
+
+    drop(vault);
+    let fresh = Vault::open(&path, VaultConfig::device()).expect("reopen with no keystore");
+    let refusal = fresh
+        .unlock_vault_key_with_kit(&vault_id, std::slice::from_ref(&paper), None)
+        .expect_err("one piece is not two");
+    assert!(refusal.to_string().contains("two"), "{refusal}");
+    assert!(
+        fresh.unlock_vault_key_with_sheet(&old_sheet).is_err(),
+        "the old sheet opens nothing on the vault"
+    );
+    fresh
+        .unlock_vault_key_with_kit_and_passkey(
+            &vault_id,
+            std::slice::from_ref(&paper),
+            None,
+            passkey,
+        )
+        .expect("the paper piece and the synced passkey open the vault key");
+    assert_eq!(
+        fresh.vault_key_status().expect("status"),
+        VaultKeyStatus::Unlocked
+    );
+
+    drop(fresh);
+    let fresh = Vault::open(&path, VaultConfig::device()).expect("reopen with no keystore");
+    fresh
+        .unlock_vault_key_with_kit(&vault_id, &[paper, trusted], None)
+        .expect("the paper piece and the trusted person's open the vault key");
+    assert_eq!(
+        fresh.vault_key_status().expect("status"),
+        VaultKeyStatus::Unlocked
+    );
+}
+
+#[test]
+fn any_two_pieces_refuses_every_single_secret_wrap() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    let prf = Zeroizing::new([5u8; 32]);
+    vault
+        .add_vault_key_passkey("laptop", &prf)
+        .expect("a passkey wrap on the standard preset");
+    vault
+        .set_vault_key_password(b"correct horse battery staple", None)
+        .expect("a vault password on the standard preset");
+    let refusal = vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMeAnyTwo)
+        .expect_err("\"any 2 pieces\" is turned on with its kit");
+    assert!(refusal.to_string().contains("issues the kit"), "{refusal}");
+
+    let switched = vault
+        .set_recovery_preset_any_two_as(
+            &owner_proof,
+            &kit_issue(
+                &vault,
+                [
+                    PAPER,
+                    PieceHome::TrustedPerson,
+                    PieceHome::RecoveryCode(CodeKeeping::PasswordManager),
+                ],
+            ),
+            None,
+        )
+        .expect("straight from the standard preset");
+    assert_eq!(switched.change.previous, RecoveryPreset::Standard);
+    let mut removed: Vec<String> = switched
+        .change
+        .removed
+        .iter()
+        .map(|info| info.id.clone())
+        .collect();
+    removed.sort();
+    assert_eq!(removed, ["passkey:laptop", "password"]);
+    assert_eq!(switched.kit.pieces.len(), 3);
+    let ids = wrap_ids(&vault);
+    assert!(
+        ids.iter().all(|id| id.starts_with("device:")),
+        "only this device's wrap stays: {ids:?}"
+    );
+
+    refused_by_preset(
+        vault.add_vault_key_passkey("tablet", &prf),
+        "a new passkey wrap",
+    );
+    refused_by_preset(
+        vault.set_vault_key_password(b"another long password", None),
+        "a new vault password",
+    );
+    let recipient = escrow_recipient(&[7u8; 32]).expect("escrow recipient");
+    refused_by_preset(
+        vault.add_vault_key_escrow_as(&owner_proof, "box", recipient.public_key()),
+        "a new host escrow",
+    );
+    assert_eq!(wrap_ids(&vault), ids, "a refused add changes no wrap");
+}
+
+#[test]
+fn turning_any_two_pieces_off_prints_a_fresh_sheet_and_the_kit_stays() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("vault");
+    let vault = keyed_vault(&path);
+    let owner_proof = owner(&vault).expect("owner proof");
+    let first = vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .expect("enter \"Nobody but me\"")
+        .sheet
+        .expect("the first sheet");
+    let switched = vault
+        .set_recovery_preset_any_two_as(
+            &owner_proof,
+            &kit_issue(
+                &vault,
+                [
+                    PAPER,
+                    PieceHome::TrustedPerson,
+                    PieceHome::RecoveryCode(CodeKeeping::PasswordManager),
+                ],
+            ),
+            None,
+        )
+        .expect("turn on \"any 2 pieces\"");
+    let vault_id = switched.kit.vault_id;
+    let pieces: Vec<KitPiece> = switched.kit.pieces.iter().map(typed_back).collect();
+
+    let off = vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .expect("turn \"any 2 pieces\" off");
+    assert_eq!(off.previous, RecoveryPreset::NobodyButMeAnyTwo);
+    let second = off
+        .sheet
+        .expect("turning the switch off prints a fresh sheet");
+    assert_ne!(
+        first.code().as_str(),
+        second.code().as_str(),
+        "the fresh sheet is a new code"
+    );
+    assert!(wrap_ids(&vault).contains(&"sheet".to_owned()));
+
+    drop(vault);
+    let fresh = Vault::open(&path, VaultConfig::device()).expect("reopen with no keystore");
+    assert!(
+        fresh.unlock_vault_key_with_sheet(&first).is_err(),
+        "the first sheet opens nothing"
+    );
+    fresh
+        .unlock_vault_key_with_sheet(&second)
+        .expect("the fresh sheet alone unlocks the vault key");
+
+    drop(fresh);
+    let fresh = Vault::open(&path, VaultConfig::device()).expect("reopen with no keystore");
+    fresh
+        .unlock_vault_key_with_kit(&vault_id, &pieces[..2], None)
+        .expect("the kit stays usable");
+}
+
+#[test]
+fn a_passkey_piece_joins_a_data_key_kit_and_never_a_world_kit() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("vault");
+    let vault = keyed_vault(&path);
+    let owner_proof = owner(&vault).expect("owner proof");
+    let prf = Zeroizing::new([4u8; 32]);
+    let passkey = KitPasskey {
+        credential: "phone",
+        prf: &prf,
+    };
+    let homes = [PAPER, PieceHome::Passkey, PieceHome::TrustedPerson];
+    let missing = vault
+        .issue_vault_key_recovery_kit_with_passkey_as(
+            &owner_proof,
+            &kit_issue(&vault, homes.clone()),
+            None,
+        )
+        .expect_err("a passkey home needs its passkey");
+    assert!(missing.to_string().contains("PRF output"), "{missing}");
+    let world = vault
+        .issue_world_kit(&owner_proof, &kit_issue(&vault, homes.clone()))
+        .expect_err("a synced passkey restores the vault key only");
+    assert!(
+        world.to_string().contains("never of the world kit"),
+        "{world}"
+    );
+
+    let issued = vault
+        .issue_vault_key_recovery_kit_with_passkey_as(
+            &owner_proof,
+            &kit_issue(&vault, homes),
+            Some(passkey),
+        )
+        .expect("a data-key kit with the passkey's piece, on the standard preset");
+    assert_eq!(
+        vault.recovery_preset().expect("preset"),
+        RecoveryPreset::Standard
+    );
+    assert_eq!(
+        issued.pieces.len(),
+        2,
+        "the passkey's piece is handed to no one"
+    );
+    let paper = typed_back(&issued.pieces[0]);
+    let vault_id = issued.vault_id;
+
+    drop(vault);
+    let fresh = Vault::open(&path, VaultConfig::device()).expect("reopen with no keystore");
+    let wrong = Zeroizing::new([3u8; 32]);
+    assert!(
+        fresh
+            .unlock_vault_key_with_kit_and_passkey(
+                &vault_id,
+                std::slice::from_ref(&paper),
+                None,
+                KitPasskey {
+                    credential: "phone",
+                    prf: &wrong,
+                },
+            )
+            .is_err(),
+        "another passkey's output opens no piece"
+    );
+    fresh
+        .unlock_vault_key_with_kit_and_passkey(
+            &vault_id,
+            std::slice::from_ref(&paper),
+            None,
+            passkey,
+        )
+        .expect("the paper piece and the passkey open the vault key");
 }
