@@ -197,6 +197,20 @@ impl Vault {
         state: &InspectionState,
         project: impl FnOnce(&heed::RoTxn<'_>, Option<ReadRow>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let _bodies = read.prepare_point_read::<E>()?;
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        self.inspect_state_projected_in_txn(read, &txn, state, project)
+    }
+
+    /// [`Self::inspect_state_projected`] in the caller's snapshot `txn`.
+    /// Prepare `read`'s grant clock and body pins before opening `txn`.
+    pub(crate) fn inspect_state_projected_in_txn<T, E: From<Error>>(
+        &self,
+        read: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        state: &InspectionState,
+        project: impl FnOnce(&heed::RoTxn<'_>, Option<ReadRow>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
         if !std::ptr::eq(read.vault(), self) {
             return Err(Error::InvalidConfig(
                 "an inspection reads through this vault's own scoped read".to_owned(),
@@ -205,7 +219,8 @@ impl Vault {
         }
         let target = state.target_ref;
         let kind = state.target_kind;
-        read.read_projected_opaque(
+        read.read_projected_opaque_in_txn(
+            txn,
             &[PointRead::id(target)],
             None,
             |_, id| Ok(*id == target),

@@ -3,105 +3,128 @@
 use super::model::GraphFsResolver;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::repo_secret_reads::repo_asset_body_known_in_txn;
+use crate::memory::repo_secret_reads::repo_asset_body_in_txn;
 use crate::ports::ScopedReadResult;
 use crate::ports::{PointRead, ReadRow};
 use oneiron_contracts::gate::RetrievalFilter;
 
 impl GraphFsResolver<'_, '_> {
+    /// The mount's file rows for `reads`. A mount whose handle reads repo
+    /// bytes masked reads them in the known-value pass's own snapshot (FIX
+    /// 8966), so the thread holds one read transaction (FIX
+    /// REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
     pub(super) fn file_rows(
         &self,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
-        self.scoped_read
-            .read_projected(reads, requested, |txn, rows| {
-                rows.into_iter()
-                    .map(|row| {
-                        let Some(mut row) = row else { return Ok(None) };
-                        // A repo ASSET reads as its projection on a mount
-                        // whose handle reads repo bytes masked, the owner's
-                        // key included (FIX 8964), before the owner's
-                        // exact return.
-                        if self.repo_masked()
-                            && let Some(body) = row.body.as_mut()
-                            && let Some(projected) = repo_asset_body_known_in_txn(
-                                self.scoped_read.vault(),
-                                txn,
-                                &row.id,
-                                row.entity_type,
-                                body,
-                            )?
-                        {
-                            *body = projected;
+        if !self.repo_masked() {
+            return self
+                .scoped_read
+                .read_projected(reads, requested, |txn, rows| {
+                    self.served_file_rows_in_txn(txn, rows, None)
+                });
+        }
+        let _bodies = self.scoped_read.prepare_point_read::<Error>()?;
+        self.scoped_read.vault().with_known_snapshot(|known, txn| {
+            self.scoped_read
+                .read_projected_in_txn(txn, reads, requested, |txn, rows| {
+                    self.served_file_rows_in_txn(txn, rows, Some(known))
+                })
+        })
+    }
+
+    /// [`Self::file_rows`]'s projection of the admitted rows in `txn`.
+    /// `known` is the known-value pass a repo-masked mount's snapshot took;
+    /// any other mount passes `None`.
+    fn served_file_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        rows: Vec<Option<ReadRow>>,
+        known: Option<Option<&crate::store::known_value_index::KnownValues>>,
+    ) -> Result<Vec<Option<ReadRow>>> {
+        rows.into_iter()
+            .map(|row| {
+                let Some(mut row) = row else { return Ok(None) };
+                // A repo ASSET reads as its projection on a mount
+                // whose handle reads repo bytes masked, the owner's
+                // key included (FIX 8964), before the owner's
+                // exact return.
+                if let Some(known) = known
+                    && let Some(body) = row.body.as_mut()
+                    && let Some(projected) = repo_asset_body_in_txn(
+                        self.scoped_read.vault(),
+                        txn,
+                        &row.id,
+                        row.entity_type,
+                        body,
+                        known,
+                    )?
+                {
+                    *body = projected;
+                }
+                if self.scoped_read.actor_key().reads_as_vault_owner() {
+                    return Ok(Some(row));
+                }
+                let Some(body) = row.body.as_mut() else {
+                    return Ok(Some(row));
+                };
+                if row.entity_type == crate::registry::ENTITY_TYPE_ASSET {
+                    // A file no masked copy is served of, or one the
+                    // release scan reads a key in, has no body here,
+                    // as a withheld row has none: it is no error that
+                    // fails a listing or a walk over it (FIX
+                    // RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
+                    row.body = crate::store::file_key_masks::served_bytes_in_txn(
+                        &self.scoped_read.vault().store,
+                        txn,
+                        std::mem::take(body),
+                        None,
+                        crate::file_secret_marks::SecretSight::Masked,
+                    )?;
+                    return Ok(Some(row));
+                } else {
+                    let mut cursor = std::io::Cursor::new(body.as_slice());
+                    let value = rmpv::decode::read_value(&mut cursor)
+                        .ok()
+                        .filter(|_| cursor.position() == body.len() as u64);
+                    if let Some(mut value) = value {
+                        let mut texts = Vec::new();
+                        strings(&value, &mut texts);
+                        let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
+                            &self.scoped_read.vault().store,
+                            txn,
+                            texts,
+                        )?;
+                        if mask(&mut value, &keys) {
+                            let mut bytes = Vec::new();
+                            rmpv::encode::write_value(&mut bytes, &value).map_err(|_| {
+                                Error::InvariantViolation("masked graph-fs body did not encode")
+                            })?;
+                            *body = bytes;
                         }
-                        if self.scoped_read.actor_key().reads_as_vault_owner() {
-                            return Ok(Some(row));
+                    } else if let Ok(text) = std::str::from_utf8(body) {
+                        let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
+                            &self.scoped_read.vault().store,
+                            txn,
+                            [text],
+                        )?;
+                        if let Some(masked) = keys.masked(text) {
+                            *body = masked.into_bytes();
                         }
-                        let Some(body) = row.body.as_mut() else {
-                            return Ok(Some(row));
-                        };
-                        if row.entity_type == crate::registry::ENTITY_TYPE_ASSET {
-                            // A file no masked copy is served of, or one the
-                            // release scan reads a key in, has no body here,
-                            // as a withheld row has none: it is no error that
-                            // fails a listing or a walk over it (FIX
-                            // RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
-                            row.body = crate::store::file_key_masks::served_bytes_in_txn(
-                                &self.scoped_read.vault().store,
-                                txn,
-                                std::mem::take(body),
-                                None,
-                                crate::file_secret_marks::SecretSight::Masked,
-                            )?;
-                            return Ok(Some(row));
-                        } else {
-                            let mut cursor = std::io::Cursor::new(body.as_slice());
-                            let value = rmpv::decode::read_value(&mut cursor)
-                                .ok()
-                                .filter(|_| cursor.position() == body.len() as u64);
-                            if let Some(mut value) = value {
-                                let mut texts = Vec::new();
-                                strings(&value, &mut texts);
-                                let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
-                                    &self.scoped_read.vault().store,
-                                    txn,
-                                    texts,
-                                )?;
-                                if mask(&mut value, &keys) {
-                                    let mut bytes = Vec::new();
-                                    rmpv::encode::write_value(&mut bytes, &value).map_err(
-                                        |_| {
-                                            Error::InvariantViolation(
-                                                "masked graph-fs body did not encode",
-                                            )
-                                        },
-                                    )?;
-                                    *body = bytes;
-                                }
-                            } else if let Ok(text) = std::str::from_utf8(body) {
-                                let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(
-                                    &self.scoped_read.vault().store,
-                                    txn,
-                                    [text],
-                                )?;
-                                if let Some(masked) = keys.masked(text) {
-                                    *body = masked.into_bytes();
-                                }
-                            }
-                            // The credential filter an entity view and an
-                            // export read a body by: a row stored while the
-                            // write door's scan was off holds keys no lift
-                            // recorded, and serve still redacts
-                            // (`SecretScanMode::Off`; FIX
-                            // RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
-                            let stored = std::mem::take(body);
-                            *body = crate::batch::export::redacted_memory_payload(stored)?;
-                        }
-                        Ok(Some(row))
-                    })
-                    .collect::<Result<Vec<_>>>()
+                    }
+                    // The credential filter an entity view and an
+                    // export read a body by: a row stored while the
+                    // write door's scan was off holds keys no lift
+                    // recorded, and serve still redacts
+                    // (`SecretScanMode::Off`; FIX
+                    // RAWBODY-CENSUS-UNTRACED-SERVE-PATHS).
+                    let stored = std::mem::take(body);
+                    *body = crate::batch::export::redacted_memory_payload(stored)?;
+                }
+                Ok(Some(row))
             })
+            .collect::<Result<Vec<_>>>()
     }
 
     pub(super) fn file_row(&self, id: EntityId) -> Result<ScopedReadResult<Option<ReadRow>>> {

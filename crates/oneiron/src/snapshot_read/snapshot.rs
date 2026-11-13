@@ -430,8 +430,12 @@ pub fn snapshot_page(
     let reader = memory.with_read_filter(handle.filter.as_ref());
     let lane = reader.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = lane.prepare_point_read::<MemoryError>()?;
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let changes = ChangesSinceOpen::read_in(vault, &txn, &handle)?;
+    // The known-value pass's own snapshot for a reader of masked repo bytes
+    // (FIX REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
+    let snapshot = reader.lane_snapshot()?;
+    let known = snapshot.known();
+    let txn = snapshot.txn();
+    let changes = ChangesSinceOpen::read_in(vault, txn, &handle)?;
     let mut rows = Vec::new();
     let mut oversized = Vec::new();
     let mut bytes = 0u64;
@@ -452,7 +456,7 @@ pub fn snapshot_page(
         let entity_type = handle.kinds[kind_at].entity_type();
         let ids = vault.entities_by_type_page_in_txn(&txn, entity_type, after.as_ref(), want)?;
         let exhausted = ids.len() < want;
-        let views = reader.read_views_in_txn(&lane, &txn, &ids)?;
+        let views = reader.read_views_in_txn(&lane, txn, known, &ids)?;
         receipt = Some(match receipt.take() {
             None => views.receipt,
             Some(mut kept) => {
@@ -514,9 +518,9 @@ pub fn snapshot_page(
     }
     let receipt = match receipt {
         Some(receipt) => receipt,
-        None => reader.read_views_in_txn(&lane, &txn, &[])?.receipt,
+        None => reader.read_views_in_txn(&lane, txn, known, &[])?.receipt,
     };
-    drop(txn);
+    drop(snapshot);
     let count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
     // The rows are counted against the handle in one write, judged again
     // there: a page read at the same time may have used them (review of

@@ -8,6 +8,7 @@ mod skill_package_read;
 use super::support::*;
 use super::*;
 
+use super::repo_secret_reads::KnownPass;
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadActorKey, ScopedReadReceipt,
     ScopedReadResult,
@@ -543,18 +544,20 @@ impl Memory<'_> {
     /// [`Self::read_views`] reads them, so a snapshot page versions each row
     /// it serves in the same transaction (primitive A,
     /// `crate::snapshot_read`). The caller prepared the lane's grant clock and
-    /// body pins before opening `txn`.
+    /// body pins before opening `txn` with [`Self::lane_snapshot`], whose
+    /// pass is `known`.
     pub(crate) fn read_views_in_txn(
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
+        known: KnownPass<'_>,
         ids: &[EntityId],
     ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
         lane.read_projected_in_txn(txn, &reads, None, |txn, rows| {
             rows.into_iter()
                 .map(|row| match row {
-                    Some(row) => self.slot_view_in(lane, txn, row, ReadMode::Live, false),
+                    Some(row) => self.slot_view_in(lane, txn, known, row, ReadMode::Live, false),
                     None => Ok(None),
                 })
                 .collect::<MemoryResult<Vec<_>>>()
@@ -599,14 +602,17 @@ impl Memory<'_> {
         whole_body: bool,
         after_read: impl FnOnce(),
     ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
-        lane.read_projected(&point_reads(targets), None, |txn, value| {
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = self.lane_snapshot()?;
+        let known = snapshot.known();
+        lane.read_projected_in_txn(snapshot.txn(), &point_reads(targets), None, |txn, value| {
             after_read();
             let mut rows = value.into_iter();
             let mut views = Vec::with_capacity(targets.len());
             for target in targets {
                 let view = match target {
                     Some((_, mode)) => match rows.next().flatten() {
-                        Some(row) => self.slot_view_in(lane, txn, row, *mode, whole_body)?,
+                        Some(row) => self.slot_view_in(lane, txn, known, row, *mode, whole_body)?,
                         None => None,
                     },
                     None => None,
@@ -627,15 +633,19 @@ impl Memory<'_> {
         lane: &ScopedRead<'_>,
         targets: &[ReadTargetSlot],
     ) -> MemoryResult<ScopedReadResult<Vec<NamedView>>> {
-        lane.with_grant_read_snapshot(|txn| self.read_named_views_in_txn(lane, txn, targets))
+        lane.persist_grant_clock()?;
+        let snapshot = self.lane_snapshot()?;
+        self.read_named_views_in_txn(lane, snapshot.txn(), snapshot.known(), targets)
     }
 
     /// [`Self::read_named_views`] in the caller's snapshot `txn`, which the
-    /// caller opened: it persists no grant time of its own.
+    /// caller opened with [`Self::lane_snapshot`], whose pass is `known`: it
+    /// persists no grant time of its own.
     fn read_named_views_in_txn(
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
+        known: KnownPass<'_>,
         targets: &[ReadTargetSlot],
     ) -> MemoryResult<ScopedReadResult<Vec<NamedView>>> {
         lane.read_named_projected_in_txn(txn, &point_reads(targets), None, |txn, value| {
@@ -644,7 +654,7 @@ impl Memory<'_> {
             for target in targets {
                 let view = match target.map(|(_, mode)| (mode, slots.next())) {
                     Some((mode, Some(Ok(Some(row))))) => {
-                        Ok(self.slot_view_in(lane, txn, row, mode, false)?)
+                        Ok(self.slot_view_in(lane, txn, known, row, mode, false)?)
                     }
                     Some((_, Some(Err(refusal)))) => Err(refusal),
                     _ => Ok(None),
@@ -666,30 +676,34 @@ impl Memory<'_> {
     }
 
     /// [`Self::read_named_view`] in the caller's snapshot `txn`, which the
-    /// caller opened: it persists no grant time of its own (FIX 22102).
+    /// caller opened with [`Self::lane_snapshot`], whose pass is `known`: it
+    /// persists no grant time of its own (FIX 22102).
     pub(super) fn read_named_view_in_txn(
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
+        known: KnownPass<'_>,
         target: ReadTargetSlot,
     ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
-        one_named_view(self.read_named_views_in_txn(lane, txn, &[target])?)
+        one_named_view(self.read_named_views_in_txn(lane, txn, known, &[target])?)
     }
 
     /// A resolved live id as `get_entity` serves it, with admission, its
     /// narrowing receipt and the native view in the caller's snapshot.
-    /// Prepare `lane` and persist its grant clock before opening `txn`.
+    /// Prepare `lane` and persist its grant clock before opening `txn` with
+    /// [`Self::lane_snapshot`], whose pass is `known`.
     pub(crate) fn get_entity_in_txn(
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
+        known: KnownPass<'_>,
         id: EntityId,
     ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
         let ScopedReadResult { value, receipt } =
             lane.read_named_projected_in_txn(txn, &[PointRead::id(id)], None, |txn, slots| {
                 let view = match slots.into_iter().next() {
                     Some(Ok(Some(row))) => {
-                        Ok(self.slot_view_in(lane, txn, row, ReadMode::Live, false)?)
+                        Ok(self.slot_view_in(lane, txn, known, row, ReadMode::Live, false)?)
                     }
                     Some(Err(refusal)) => Err(refusal),
                     _ => Ok(None),
@@ -733,6 +747,7 @@ impl Memory<'_> {
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
+        known: KnownPass<'_>,
         row: ReadRow,
         mode: ReadMode,
         whole_body: bool,
@@ -743,7 +758,7 @@ impl Memory<'_> {
                 .as_deref()
                 .is_some_and(crate::batch::export::write_door_refuses_body);
         Ok(self
-            .entity_view_of_in_txn(lane, txn, row, mode)?
+            .entity_view_of_in_txn(lane, txn, known, row, mode)?
             .map(|view| EntityView {
                 body: view.body.filter(|_| !refused),
                 ..view
@@ -795,11 +810,13 @@ impl Memory<'_> {
     /// Projects one admitted row to the typed entity view. A deleted shell
     /// has no body and projects to nothing.
     /// Projects a row `lane` admitted; its short ref is read where the lane
-    /// reads, a room's view included.
+    /// reads, a room's view included. `known` is the known-value pass `txn`'s
+    /// snapshot took ([`Self::lane_snapshot`]).
     pub(super) fn entity_view_of_in_txn(
         &self,
         lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
+        known: KnownPass<'_>,
         row: ReadRow,
         mode: ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
@@ -817,7 +834,7 @@ impl Memory<'_> {
             }
         });
         // A repo file's bytes read masked but at the owner's own door (FIX 7608).
-        let stored_body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body)?;
+        let stored_body = self.repo_lane_body_in_txn(txn, &row.id, row.entity_type, body, known)?;
         let mut body = decode_body_json(&stored_body);
         // A key the lift sweep marked in a record's text reads as its handle
         // to all but the owner (OF-067).

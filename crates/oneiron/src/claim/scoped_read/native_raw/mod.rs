@@ -27,47 +27,71 @@ impl<'a> NativeRawRead<'a> {
     /// A masked reader is served an ASSET as `file_key_masks::served_bytes_in_txn`
     /// serves it: a file no masked copy is served of, and bytes in which the
     /// release scan still reads a credential, answer `None`, as a withheld row
-    /// does (FIX NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS).
+    /// does (FIX NATIVE-RAW-ENTITY-BODY-SHIPS-SCAN-OFF-CREDENTIALS). A masked
+    /// reader's snapshot is the known-value pass's own (FIX 8966), so a repo
+    /// file reads with each value custody knows as its handle and the thread
+    /// holds one read transaction (FIX REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
     pub fn entity_body(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let reads = [PointRead::id(*id)];
+        if self.lane.actor_key.secret_sight() != crate::secret_custody::SecretSight::Masked {
+            return Ok(self
+                .lane
+                .read_projected(&reads, None, |txn, rows| {
+                    self.served_body_in_txn(txn, id, rows, None)
+                })?
+                .value);
+        }
+        let _bodies = self.lane.prepare_point_read::<Error>()?;
         Ok(self
             .lane
-            .read_projected(
-                &[PointRead::id(*id)],
-                None,
-                |txn, rows| -> Result<Option<Vec<u8>>> {
-                    let Some(row) = rows.into_iter().next().flatten() else {
-                        return Ok(None);
-                    };
-                    let Some(body) = row.body else {
-                        return Ok(None);
-                    };
-                    let body = if self.lane.actor_key.secret_sight()
-                        == crate::secret_custody::SecretSight::Masked
-                    {
-                        crate::memory::repo_secret_reads::repo_asset_body_known_in_txn(
-                            self.lane.vault,
-                            txn,
-                            id,
-                            row.entity_type,
-                            &body,
-                        )?
-                        .unwrap_or(body)
-                    } else {
-                        body
-                    };
-                    if row.entity_type != crate::registry::ENTITY_TYPE_ASSET {
-                        return Ok(Some(body));
-                    }
-                    crate::store::file_key_masks::served_bytes_in_txn(
-                        &self.lane.vault.store,
-                        txn,
-                        body,
-                        None,
-                        self.lane.actor_key.secret_sight(),
-                    )
-                },
-            )?
+            .vault
+            .with_known_snapshot(|known, txn| {
+                self.lane
+                    .read_projected_in_txn(txn, &reads, None, |txn, rows| {
+                        self.served_body_in_txn(txn, id, rows, Some(known))
+                    })
+            })?
             .value)
+    }
+
+    /// [`Self::entity_body`]'s projection of the admitted row in `txn`.
+    /// `known` is the known-value pass a masked reader's snapshot took; an
+    /// unmasked reader passes `None` and reads repo bytes as stored.
+    fn served_body_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        rows: Vec<Option<ReadRow>>,
+        known: Option<Option<&crate::store::known_value_index::KnownValues>>,
+    ) -> Result<Option<Vec<u8>>> {
+        let Some(row) = rows.into_iter().next().flatten() else {
+            return Ok(None);
+        };
+        let Some(body) = row.body else {
+            return Ok(None);
+        };
+        let body = match known {
+            Some(known) => crate::memory::repo_secret_reads::repo_asset_body_in_txn(
+                self.lane.vault,
+                txn,
+                id,
+                row.entity_type,
+                &body,
+                known,
+            )?
+            .unwrap_or(body),
+            None => body,
+        };
+        if row.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            return Ok(Some(body));
+        }
+        crate::store::file_key_masks::served_bytes_in_txn(
+            &self.lane.vault.store,
+            txn,
+            body,
+            None,
+            self.lane.actor_key.secret_sight(),
+        )
     }
 
     /// The admitted live entity's stored type byte.

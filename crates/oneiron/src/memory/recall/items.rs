@@ -16,10 +16,14 @@ impl Memory<'_> {
         // What the lane admits from is what the item is projected from: a
         // room's view, or base.
         let content = lane.store_read();
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = self.lane_snapshot()?;
+        let known = snapshot.known();
+        let reads = [PointRead::id(*id).at(mode)];
         let ScopedReadResult {
             value: admitted,
             receipt: read,
-        } = lane.read_projected(&[PointRead::id(*id).at(mode)], None, |txn, rows| {
+        } = lane.read_projected_in_txn(snapshot.txn(), &reads, None, |txn, rows| {
             let Some(row) = rows.into_iter().next().flatten() else {
                 return Ok::<_, MemoryError>(None);
             };
@@ -101,7 +105,7 @@ impl Memory<'_> {
             } else {
                 None
             };
-            let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
+            let view = self.entity_view_of_in_txn(lane, txn, known, row, mode)?;
             Ok(Some((entity_type, body, view, turn, stale, handle)))
         })?;
         receipt.restrict_with(&read);
