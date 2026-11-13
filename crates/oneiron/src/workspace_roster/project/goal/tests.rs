@@ -41,6 +41,7 @@ pub(super) fn transcript_record() -> GoalRecord {
         exploration_budget: GoalExplorationBudget {
             max_spend: 1000,
             exploration_slice: 100,
+            unit: crate::run_budget::LeaseUnit::tokens(),
             human_minutes: 20,
         },
     }
@@ -227,6 +228,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
                 vault.project_type_byte()?,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &encode(&project_body)?,
             )
             .commit()
@@ -252,6 +254,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 3, end: 3 },
                 3,
+                None,
                 &crate::claim::encode_claim_body(&claim)?,
             )
             .commit()
@@ -266,6 +269,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 3, end: 3 },
             3,
+            None,
             &crate::claim::encode_claim_body(&claim)?,
         )
         .commit()?;
@@ -277,6 +281,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
             vault.project_type_byte()?,
             TimeRange { start: 3, end: 3 },
             3,
+            None,
             &encode(&current_project)?,
         )
         .commit()?;
@@ -293,6 +298,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
                 vault.project_type_byte()?,
                 TimeRange { start: 4, end: 4 },
                 4,
+                None,
                 &encode(&cleared)?,
             )
             .commit()
@@ -339,6 +345,7 @@ fn intake_does_not_supersede_a_claim_named_by_a_corrupt_project_pointer() -> Res
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &crate::claim::encode_claim_body(&body)?,
         )
         .commit()?;
@@ -515,6 +522,7 @@ fn receiving_vault_keeps_unverified_goal_out_of_authority() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             TimeRange { start: 2, end: 2 },
             2,
+            None,
             &body[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )
         .commit()

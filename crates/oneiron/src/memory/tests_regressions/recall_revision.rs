@@ -104,6 +104,9 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
                 format: Some("json"),
                 lease: None,
                 composer: None,
+                budget: None,
+                token_budget: None,
+                reader_agent_ref: None,
             },
         )
         .unwrap();

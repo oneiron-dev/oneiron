@@ -20,8 +20,6 @@ mod outbound_actor_scope;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-REGRESSIONS-RECALL]: the lib test target's type check fails here (37 errors: E0063 x34, E0639 x3); port it, then drop this gate
 #[cfg(any())]
 mod recall;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-REGRESSIONS-RECALL-REVISION]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod recall_revision;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-REGRESSIONS-RECALL-SECURITY]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
 #[cfg(any())]

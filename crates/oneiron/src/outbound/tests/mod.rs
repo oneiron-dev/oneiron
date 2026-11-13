@@ -3,8 +3,6 @@ mod connector_schedule;
 // FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-DISPATCH-BUDGET]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
 #[cfg(any())]
 mod dispatch_budget;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-SENDER-SELECTION-FACET-SELECTION]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "sender_selection/facet_selection.rs"]
 mod facet_selection;
 mod gate_window;

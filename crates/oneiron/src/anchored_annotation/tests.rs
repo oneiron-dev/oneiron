@@ -541,6 +541,7 @@ fn agent_proposed_head_does_not_override_human_head() -> Result<()> {
         state: ThreadState::Resolved,
         locator: thread.anchor.locator.clone(),
         drift: thread.drift,
+        body: thread.anchor.body.clone(),
     };
     let agent_head_id = vault.with_write_txn(|wtxn| {
         vault.write_thread_head_in_txn(
@@ -834,20 +835,33 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
         conversation: room,
         parent,
         reply_to: None,
+        quote: None,
         address: crate::conversation_dag::AddressMode::Broadcast,
         recipients: vec![],
         advance,
         kind: crate::registry::ENTITY_TYPE_TURN,
+        containing_turn: None,
         occurred: test_time(12),
         learned_at: 12,
         body: vec![0x80],
         text: vec![],
         session: None,
         actor: human,
+        thread_audience: None,
     };
-    let root = vault.append_dag_record(&record(None, true))?.id;
-    let trunk = vault.append_dag_record(&record(Some(root), true))?.id;
-    let fork = vault.reply_in_thread(root, &record(Some(root), false))?.id;
+    let writer = vault.memory(human.entity_ref(), human.actor_class());
+    let root = vault
+        .append_dag_record(&writer, &record(None, true))
+        .expect("append")
+        .id;
+    let trunk = vault
+        .append_dag_record(&writer, &record(Some(root), true))
+        .expect("append")
+        .id;
+    let fork = vault
+        .reply_in_thread(&writer, root, &record(Some(root), false))
+        .expect("append")
+        .id;
     let node = AnnotationConversationNode {
         conversation_ref: room,
         turn_ref: fork,
@@ -861,16 +875,20 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
         .witness(&crate::memory::WitnessTurn {
             conversation_ref: other_room.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             occurred_at: 12,
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::memory::WitnessAuthor::User,
                 message_type: "text".to_owned(),
                 content: "message".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: crate::memory::WitnessAssertions::default(),
         })
         .expect("witness other conversation");
     assert!(
@@ -1035,6 +1053,7 @@ fn reanchor_honours_a_held_drift_head_and_never_moves_a_held_head() -> Result<()
             drifted_at_version: 2,
             pinned_version: 1,
         }),
+        body: drifting.anchor.body.clone(),
     };
     let drift_id = vault.with_write_txn(|wtxn| {
         vault.write_thread_head_in_txn(
@@ -1108,20 +1127,33 @@ fn a_held_conversation_node_binding_vetoes_rebinding_but_never_stands_in() -> Re
         conversation: room,
         parent,
         reply_to: None,
+        quote: None,
         address: crate::conversation_dag::AddressMode::Broadcast,
         recipients: vec![],
         advance,
         kind: crate::registry::ENTITY_TYPE_TURN,
+        containing_turn: None,
         occurred: test_time(12),
         learned_at: 12,
         body: vec![0x80],
         text: vec![],
         session: None,
         actor: human,
+        thread_audience: None,
     };
-    let root = vault.append_dag_record(&record(None, true))?.id;
-    let trunk = vault.append_dag_record(&record(Some(root), true))?.id;
-    let fork = vault.reply_in_thread(root, &record(Some(root), false))?.id;
+    let writer = vault.memory(human.entity_ref(), human.actor_class());
+    let root = vault
+        .append_dag_record(&writer, &record(None, true))
+        .expect("append")
+        .id;
+    let trunk = vault
+        .append_dag_record(&writer, &record(Some(root), true))
+        .expect("append")
+        .id;
+    let fork = vault
+        .reply_in_thread(&writer, root, &record(Some(root), false))
+        .expect("append")
+        .id;
     let node = |turn_ref| AnnotationConversationNode {
         conversation_ref: room,
         turn_ref,

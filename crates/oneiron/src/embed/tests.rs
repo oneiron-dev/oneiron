@@ -586,6 +586,4 @@ fn zero_remote_lease_duration_is_rejected() {
 #[cfg(any())]
 mod device;
 mod device_local;
-// FIX [LIBTEST-QUARANTINE-EMBED-TESTS-PAYLOAD]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod payload;

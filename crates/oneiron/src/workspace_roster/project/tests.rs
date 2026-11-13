@@ -21,8 +21,6 @@ mod history_cycles_kept;
 mod history_cycles_named;
 #[cfg(feature = "sync")]
 mod history_doors;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-REFRESH-ORDER]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 mod history_refresh_order;
 #[cfg(feature = "sync")]

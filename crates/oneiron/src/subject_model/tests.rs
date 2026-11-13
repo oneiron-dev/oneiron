@@ -18,8 +18,6 @@ use crate::test_util::{entity, open_test_vault_with, seed_agent_definition};
 // (or 1_800_000_000), merge/split at 300, undo/retry at 400, replacement
 // at 500. Rejection checks use the attempted write's time, not wall clock.
 mod anchor_admission;
-// FIX [LIBTEST-QUARANTINE-SUBJECT-MODEL-TESTS-ANCHOR-SESSION-ADMISSION]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod anchor_session_admission;
 // FIX [LIBTEST-QUARANTINE-SUBJECT-MODEL-TESTS-ARCHIVE]: the lib test target's type check fails here (4 errors: E0599 x3, E0308 x1); port it, then drop this gate
 #[cfg(any())]

@@ -77,6 +77,7 @@ fn record(name: &str, value: &[u8]) -> SecretCustodyRecord {
         name: name.to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: true,
         value_bytes: value.to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: AT_REGISTERED,
@@ -570,7 +571,7 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
     let raw = b"build finished\n";
     let output = CodeRunRawOutput::from_bytes("out/build.log", raw).expect("raw output");
     vault
-        .put_code_run_raw_output_tainted(&output, raw, &[taint(SECRET, 0)])
+        .put_code_run_raw_output_tainted(None, &output, raw, &[taint(SECRET, 0)])
         .expect("tainted persist");
 
     // The exhaust bytes are still readable exactly as an untainted put's
@@ -583,12 +584,14 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
         Some(&raw[..])
     );
     assert_eq!(
-        vault.code_run_raw_output_taint_refs(&output).expect("refs"),
+        vault
+            .code_run_raw_output_taint_refs(None, &output)
+            .expect("refs"),
         vec![taint(SECRET, 0)]
     );
     assert_eq!(
         vault
-            .code_run_raw_output_taint_state(&output)
+            .code_run_raw_output_taint_state(None, &output)
             .expect("state"),
         ArtifactTaintState::TaintedLive
     );
@@ -598,7 +601,7 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
         .expect("rotate");
     assert_eq!(
         vault
-            .code_run_raw_output_taint_state(&output)
+            .code_run_raw_output_taint_state(None, &output)
             .expect("state"),
         ArtifactTaintState::TaintedStale
     );
@@ -607,17 +610,17 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
     let clean_raw = b"nothing secret here\n";
     let clean = CodeRunRawOutput::from_bytes("out/clean.log", clean_raw).expect("raw output");
     vault
-        .put_code_run_raw_output(&clean, clean_raw)
+        .put_code_run_raw_output(None, &clean, clean_raw)
         .expect("untainted persist");
     assert_eq!(
         vault
-            .code_run_raw_output_taint_state(&clean)
+            .code_run_raw_output_taint_state(None, &clean)
             .expect("state"),
         ArtifactTaintState::Clean
     );
     assert!(
         vault
-            .code_run_raw_output_taint_refs(&clean)
+            .code_run_raw_output_taint_refs(None, &clean)
             .expect("refs")
             .is_empty()
     );

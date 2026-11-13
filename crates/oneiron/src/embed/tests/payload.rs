@@ -34,11 +34,13 @@ fn mint_pending_summary(vault: &Vault) -> Result<EntityId> {
     use crate::compaction::{CompactionBackendRegistry, CompactionDriver, CompactionWindowMessage};
     use crate::llm::ModelTierRef;
 
-    let crate::session_lifecycle::SessionMintOutcome::Minted(session) = vault.mint_session(10)?
+    let actor = entity_id(0x71);
+    let key = vault.local_session_key(actor)?;
+    let crate::session_lifecycle::SessionMintOutcome::Minted(session) =
+        vault.mint_session(key, 10)?
     else {
         panic!("fresh session");
     };
-    let actor = entity_id(0x71);
     let turn = entity_id(0x72);
     for (id, kind) in [
         (actor, crate::registry::ENTITY_TYPE_PERSON),
