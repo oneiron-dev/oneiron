@@ -539,6 +539,10 @@ mod judged {
         DecisionProvider, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
         ProviderPin,
     };
+    use oneiron::note::{NoteProgramEdit, NoteProgramEditOutcome, NoteReadRequest};
+    use oneiron::registry::ENTITY_TYPE_PERSON;
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// The judge's one model rung: whether the copy follows the guide, and
     /// the reason class it answers with.
@@ -699,6 +703,196 @@ mod judged {
         assert!(
             !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
             "passing copy is not held for copy review: {state}"
+        );
+    }
+
+    /// A judge that passes every body and counts how often it is asked.
+    struct CountingJudge {
+        inner: CopyJudge,
+        calls: AtomicUsize,
+    }
+
+    impl CountingJudge {
+        fn passing() -> Self {
+            Self {
+                inner: CopyJudge {
+                    follows: true,
+                    reason: "on_voice",
+                },
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl DecisionProvider for CountingJudge {
+        fn pin(&self) -> ProviderPin {
+            self.inner.pin()
+        }
+
+        fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.decide(call)
+        }
+    }
+
+    /// A voice-guided leg whose guide is the NOTE `guide` makes on the leg's
+    /// vault, and that NOTE.
+    fn leg_with_guide(guide: impl FnOnce(&Vault, EntityId) -> EntityId) -> (Leg, EntityId) {
+        let made = Cell::new(None);
+        let leg = leg(|vault, owner| {
+            let note = guide(vault, owner);
+            made.set(Some(note));
+            json!({ "voice_guide_ref": note.to_hex() })
+        });
+        let note = made.take().expect("the leg names its voice guide");
+        (leg, note)
+    }
+
+    /// An edit that appends `words` to the NOTE's text.
+    fn append(vault: &Vault, note: EntityId, words: &str) -> NoteProgramEdit {
+        let doc = vault
+            .note_program_document(note)
+            .expect("read the NOTE document")
+            .expect("the NOTE document");
+        NoteProgramEdit::InsertAfter {
+            anchor: doc.anchor(doc.text().chars().count()).expect("end anchor"),
+            text: words.to_owned(),
+        }
+    }
+
+    /// A passing verdict covers its body only at the guide version it was
+    /// judged at. The owner edits the guide after the review passed, and no
+    /// review runs again (the judge abstains or is unavailable): the send is
+    /// held for copy review, not sent under the old guide's verdict.
+    #[test]
+    fn a_voice_guide_edited_after_a_passing_review_holds_the_send() {
+        let (leg, guide) = leg_with_guide(voice_guide);
+        let judge = CountingJudge::passing();
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        assert!(
+            matches!(&outcome, CopyReviewOutcome::Reviewed(verdict) if verdict.passed),
+            "the judge passes the copy under the first guide: {outcome:?}"
+        );
+        let first_review = judge.calls();
+        let owner = leg.vault.ensure_embedded_owner_actor().unwrap();
+        let edited = leg
+            .vault
+            .edit_note(
+                guide,
+                &append(&leg.vault, guide, " Never name a price."),
+                WriteActor::new(owner, EdgeActorClass::Human),
+            )
+            .expect("the owner edits the voice guide");
+        assert!(
+            matches!(edited, NoteProgramEditOutcome::Edited { .. }),
+            "the owner's edit of the guide lands: {edited:?}"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a review of the old guide does not cover the send: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "the receipt says no review covers the copy: {state}"
+        );
+        // Reviewed again, the copy is judged against the edited guide.
+        let again = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        assert!(
+            matches!(again, CopyReviewOutcome::Reviewed(_)),
+            "the edited guide asks the judge again: {again:?}"
+        );
+        assert!(
+            judge.calls() > first_review,
+            "the judge is asked again for the edited guide"
+        );
+    }
+
+    const DIARY_ENTRY: &str = "A private diary entry of an agent, shared with no one.";
+
+    /// The judge reads the voice guide only as the campaign's owner reads
+    /// it. A campaign names an agent's diary entry, which no Grant opens to
+    /// the owner, as its guide: no judge is asked (a provider never sees the
+    /// entry), and the send is held for copy review.
+    #[test]
+    fn a_voice_guide_its_owner_cannot_read_asks_no_judge() {
+        let (leg, guide) = leg_with_guide(|vault, _owner| {
+            let agent = EntityId::now();
+            vault
+                .put_entity(
+                    &agent,
+                    ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"agent",
+                )
+                .expect("the agent PERSON");
+            vault
+                .create_note(
+                    "diary",
+                    DIARY_ENTRY,
+                    WriteActor::new(agent, EdgeActorClass::Agent),
+                )
+                .expect("the agent's diary entry")
+        });
+        let owner = leg.vault.ensure_embedded_owner_actor().unwrap();
+        // The fixture's premise, on main as well: the entry's text is stored,
+        // and the owner's scoped NOTE read does not admit it.
+        assert_eq!(
+            leg.vault.note_text(guide).expect("the entry's stored text"),
+            DIARY_ENTRY
+        );
+        let read = leg
+            .vault
+            .memory(owner, EdgeActorClass::Human)
+            .read_note(&NoteReadRequest {
+                note_ref: guide.to_hex(),
+                reason: Some("copy review fixture".to_owned()),
+                version: None,
+                spans: Vec::new(),
+            });
+        let admitted = matches!(&read, Ok(result) if result.value.is_some());
+        assert!(
+            !admitted,
+            "the owner's scoped read does not admit the agent's diary entry"
+        );
+        let judge = CountingJudge::passing();
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        assert_eq!(
+            judge.calls(),
+            0,
+            "no judge is asked about a guide the owner cannot read: {outcome:?}"
+        );
+        assert!(
+            !matches!(
+                outcome,
+                CopyReviewOutcome::Reviewed(_) | CopyReviewOutcome::Cached(_)
+            ),
+            "no verdict covers the copy: {outcome:?}"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "the send is held for copy review: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "the receipt says no review covers the copy: {state}"
         );
     }
 }
