@@ -178,7 +178,7 @@ suite.test(test, "SYNC-01", "Two machines of one vault converge on home's anchor
   const mode = await device.client.call("vault.residence.mode", { machine, mode: "all" });
   if (mode.state !== "applied") throw new Error(`device residence switch answered ${mode.state}`);
   expect(mode.mode).toBe("all");
-  await awaitPublic(() => device.client.call("vault.notes.read", { note_ref: note.id_hex }),
+  await awaitPublic(() => withWireReason("SYNC-01 device notes.read", device.client.call("vault.notes.read", { note_ref: note.id_hex })),
     read => read.value?.markdown === authored.base && read.value.source === "local",
     { label: "device holds the authored note", timeoutMs: 15_000 });
   const scope = await ownerBaseClaimScope(home.client, owner);
@@ -462,7 +462,11 @@ suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens 
   expect((await device.client.call("vault.notes.read", { note_ref: unopened.id_hex })).value).toBeNull();
 
   // Search for unopened text goes to home through the device's own route.
-  const remote = await sync04Search(device, query);
+  // Bounded poll: the home indexes the unopened body after vault.notes.create
+  // answers; a deadline prints the last residence block (source, complete, hits).
+  const remote = await awaitPublic(() => sync04Search(device, query),
+    found => found.residence?.source === "home" && found.residence.hits.some(hit => hit.id === unopened.id_hex),
+    { label: "device search through home finds the unopened item", timeoutMs: 10_000 });
   expect(remote.residence?.source).toBe("home");
   expect(typeof remote.residence?.complete).toBe("boolean");
   expect(remote.residence?.hits.map(hit => hit.id)).toContain(unopened.id_hex);
@@ -551,7 +555,7 @@ function sync05Span(text: string, word: string): Sync05Span {
   return { start, end: start + word.length };
 }
 async function sync05LocalBody(device: DevicePeer, noteRef: string): Promise<string | undefined> {
-  const read = await device.client.call("vault.notes.read", { note_ref: noteRef });
+  const read = await withWireReason("SYNC-05 device notes.read", device.client.call("vault.notes.read", { note_ref: noteRef }));
   return read.value?.source === "local" ? read.value.markdown : undefined;
 }
 async function sync05Standing(client: EngineFixture["client"], predicate: string) {
