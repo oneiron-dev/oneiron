@@ -1,0 +1,16 @@
+{
+  "name": "vault.agents.grants.restore",
+  "description": "The owner gives the Dreamer or the Coach its default Steward grant back after a narrowing or a revoke; the answer says whether anything changed, and a repeat changes nothing.",
+  "input": "crate::task_verb::sdk::SystemAgentGrantRestoreRequest",
+  "output": "crate::task_verb::sdk::SystemAgentGrantRestored",
+  "call": "crate::task_verb::sdk::restore_system_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.restore\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "grant_widen",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

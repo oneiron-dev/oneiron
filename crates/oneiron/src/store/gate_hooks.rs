@@ -220,6 +220,14 @@ pub(crate) trait StoreGateHooks: Send + Sync {
         effect: &crate::gate::ExternalEffectGateInput,
         now_utc: u64,
     ) -> Result<Option<crate::gate::dispatch_compliance::ComplianceVerdict>>;
+
+    /// The engine's `campaign::enrollment::campaign_copy_review_gate`.
+    fn campaign_copy_review_gate(
+        &self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        effect: &crate::gate::ExternalEffectGateInput,
+    ) -> Result<Option<crate::campaign::enrollment::CopyReviewHold>>;
 }
 
 /// The actor scrub `PROPOSAL_ACTOR_COUNT` declares:

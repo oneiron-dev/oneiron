@@ -2,6 +2,7 @@
 
 use super::documents::{NOTE_HEAD, NOTE_PROPOSAL_DOC};
 use super::lifecycle::NOTE_SEAL;
+use super::plan_doc::PLAN_DOC_REVIEW;
 use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_RECEIPT};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result};
@@ -20,6 +21,7 @@ pub(crate) fn scope_exists(vault: &Vault, txn: &heed::RoTxn<'_>, note: &EntityId
 
     if NOTE_HEAD.contains(&vault.store, txn, note)?
         || NOTE_SEAL.contains(&vault.store, txn, note)?
+        || PLAN_DOC_REVIEW.contains(&vault.store, txn, note)?
         || super::overrides::note_overrides_in_txn(&vault.store, txn, note)?.is_some()
         || crate::context_board::scratchpad_erase_scope_exists(vault, txn, note)?
         || !NOTE_PROPOSAL_DOC
@@ -52,6 +54,7 @@ pub(crate) fn scope_exists(vault: &Vault, txn: &heed::RoTxn<'_>, note: &EntityId
 pub(crate) fn purge(vault: &Vault, txn: &mut heed::RwTxn<'_>, note: &EntityId) -> Result<bool> {
     let mut removed = NOTE_HEAD.delete(&vault.store, txn, note)?;
     removed |= NOTE_SEAL.delete(&vault.store, txn, note)?;
+    removed |= PLAN_DOC_REVIEW.delete(&vault.store, txn, note)?;
     removed |= super::overrides::delete_overrides_in_txn(&vault.store, txn, note)?;
     removed |= crate::context_board::erase_scratchpad_rows_in_txn(vault, txn, note)?;
     // Workflow markers can span several notes. Conservatively discard all on hard erasure.

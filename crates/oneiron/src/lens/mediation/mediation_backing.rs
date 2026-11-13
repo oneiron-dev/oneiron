@@ -55,6 +55,39 @@ impl LensBackingTarget {
         )
     }
 
+    /// The backing target of a row a lens read admitted: a CLAIM backs a
+    /// claim set and any other row an entity set. Each is named by the
+    /// engine short id and content hash of the row's short-id row, the
+    /// reference [`crate::lens::LensRenderFrame::mint_backing_ref`] reads
+    /// back. A hex entity id is no short reference (FIX
+    /// WEAVE-LENS-BACKING-REF-FULL-HEX). `None` for a row with no short id
+    /// (a kind with no short-id prefix): no backing ref can name it.
+    pub(crate) fn of_read_row(
+        vault: &crate::Vault,
+        row: &crate::claim::ReadRow,
+    ) -> Result<Option<(Self, LensHandleRole)>> {
+        let reference = {
+            let txn = vault.store.env.read_txn()?;
+            crate::ports::ShortIdStoreRead::port_short_id_reference(&vault.store, &txn, &row.id)?
+        };
+        let Some((short_id, content_hash)) = reference else {
+            return Ok(None);
+        };
+        Ok(Some(
+            if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                (
+                    Self::claim(row.id, short_id, content_hash)?,
+                    LensHandleRole::ClaimSet,
+                )
+            } else {
+                (
+                    Self::entity(row.id, short_id, content_hash)?,
+                    LensHandleRole::EntitySet,
+                )
+            },
+        ))
+    }
+
     fn new(
         kind: LensBackingTargetKind,
         entity_id: EntityId,

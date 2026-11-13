@@ -59,12 +59,14 @@ use crate::{ClaimSource, Vault, WriteActor};
 
 use self::admission::{admit_recorded_answer, gate_rejection};
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::agent_verb::resumed_write_meets_recorded_row;
 pub(crate) use self::agent_verb::write_receipt_may_have_run;
 pub(crate) use self::coordination::agent_attempt_run_ref;
-pub(crate) use self::envelope::check_write_gate_against_vault;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
+pub(crate) use self::envelope::{check_write_gate_against_vault, envelope_run_ref};
 pub(crate) use self::executor_reply::{ExecutorReply, ExecutorReplyPublisher};
 use self::human_speech::HumanWaitDispatchTarget;
 pub use self::leader::{HostPlannerBinding, HostPlannerDecisions};
