@@ -224,6 +224,28 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
     let (_dir, _prompts, server, _host) = retained_row_server(&fake.base_url).await;
     let conversation = oneiron::EntityId::now().to_hex();
 
+    // A chat window compacts one sitting's turns, and with the Dreamer off no
+    // AppOpen ever mints that sitting: open the owner's sitting on this
+    // machine first, under the key each turn's witness bumps, so every turn
+    // below joins it.
+    let owner = server
+        .vault()
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let sitting = server
+        .vault()
+        .local_session_key(owner)
+        .expect("local session key");
+    assert!(
+        matches!(
+            server
+                .vault()
+                .mint_session(sitting, server.vault().now_recorded_at()),
+            Ok(oneiron::session_lifecycle::SessionMintOutcome::Minted(_))
+        ),
+        "the owner's sitting opens for the turns to join"
+    );
+
     // The cold-start threshold is 750 tokens for this 1500-token window.
     // A tiny first flight can be rejected; later flights include a long answer.
     let mut turn = 0;
