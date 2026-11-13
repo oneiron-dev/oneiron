@@ -19,7 +19,9 @@ pub mod coach;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_run_answer;
+pub mod code_run_write_identity;
 pub mod code_view_fork;
+pub mod connector_key_suspend;
 pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;
@@ -31,8 +33,13 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
+pub mod free_time_cycle_writer;
+#[cfg(feature = "sync")]
+pub mod free_time_handoff;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+#[cfg(feature = "sync")]
+pub mod home_handoff_retire;
 #[cfg(feature = "sync")]
 pub mod home_sections;
 pub mod house_link;
@@ -40,10 +47,12 @@ pub mod identity_recheck;
 pub mod inquiry;
 pub mod label_writers;
 pub mod learning_claim_value;
+pub mod learning_setting_sourced;
 pub mod lifted_text;
 pub mod live_run_claim_put;
 pub mod mail_landing;
 pub mod membership;
+pub mod meso_extraction_width;
 pub mod model_binding_proposer;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
