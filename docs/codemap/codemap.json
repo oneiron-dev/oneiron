@@ -4304,7 +4304,7 @@
      "path": "src/authority/clock_repair/caller.rs",
      "purpose": "Who asks for the owner's repair of the authority clock, as its ingress took them before anything read the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 8,
       "struct": 1
      }
@@ -24813,13 +24813,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/consent/doors/owner.rs",
      "purpose": "The owner-proof doors: authenticate, bind, recheck and the proof's read key",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -34364,7 +34364,7 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 2,
       "re-export": 2,
@@ -34457,7 +34457,7 @@
      "path": "src/dreamer_runner/maintenance/identity/recheck.rs",
      "purpose": "The nightly recheck: finds uncertain person mentions and opens their asks",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -89382,13 +89382,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/tagging/save.rs",
      "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -92458,6 +92458,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/identity_recheck.rs",
+     "purpose": "The nightly identity re-check, one page, run from a test, and the open identity asks after it (census item…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/inquiry.rs",
      "purpose": "Door for `tests/inquiry_records.rs` (INQUIRE-1 PR 1): the writers of the member's log and the asking side's…",
      "surface": {
@@ -92532,7 +92542,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 60,
+      "mod": 61,
       "re-export": 1
      }
     },
@@ -101960,6 +101970,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/embedded_owner_bound_credential.rs",
+     "purpose": "[EMBEDDED-OWNER-IGNORES-BOUND-PROOF] (FIX-LIST 23014): the embedded owner's door (`Memory::embedded_owner`)…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101997,6 +102015,14 @@
      "notable": [],
      "path": "tests/engine_default_owner_act.rs",
      "purpose": "The engine's default Steward grants are not the owner's act (lead 10 Nov 06:5x; Engine S6C-PLACE-1 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/entity_linker_cascade.rs",
+     "purpose": "The entity linker's phonetic rung (census item 12; ARCH-0024 signal 2)",
      "surface": {}
     },
     {
@@ -102088,6 +102114,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_ledger_page_read_cost.rs",
+     "purpose": "FIX RECEIPTS-PAGE-READ-COST-GROWS: one `vault.receipts` page of the gate ledger costs a bounded amount per…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -102117,6 +102151,14 @@
      "notable": [],
      "path": "tests/gate_pins_claim_record_producers.rs",
      "purpose": "OPUS-T0-F gate pins, PR 7 (Engine NOTE 13 Nov 02:19): green pins for claim and record producer gates of…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_pins_code_repo_import.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 8b (Engine NOTE 13 Nov 02:19): the green pin of G198 `Vault::require_admitted_push`…",
      "surface": {}
     },
     {
@@ -105689,7 +105731,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 63,
+     "files": 64,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105864,10 +105906,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 265,
+   "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7467,
-   "test_files": 1162
+   "source_files": 7468,
+   "test_files": 1166
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -146309,6 +146351,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/live_run_step.rs",
+     "purpose": "Door for `tests/run_step_live_run.rs` ([RUN-STEP-DOOR-SERVER-TEST]): a leased agent run on a test's server…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/mcp_surface.rs",
      "purpose": "Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the…",
      "surface": {
@@ -146336,7 +146388,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 10
+      "mod": 11
      }
     },
     {
@@ -147205,7 +147257,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/gate_pin_landing_facet.rs",
@@ -147229,7 +147281,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/house_finish_role.rs",
@@ -147644,6 +147696,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_step_live_run.rs",
+     "purpose": "[RUN-STEP-DOOR-SERVER-TEST] (FIX-LIST 23040, 23150, 23621): `ai.steps.submit` on an agent's attached live…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/runtime_clock.rs",
      "purpose": "The server's `[runtime] clock`, checked through public paths only: the shipped binaries, `build_app`, and…",
      "surface": {}
@@ -147657,13 +147717,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/support/engine_stack.rs",
+     "purpose": "Runs a server test as the server's binary runs its app: on a multi-thread runtime whose threads have the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/support/eval_authoring_fixture.rs",
      "purpose": "Shared fixture for the `vault.evals.authoring.execute` server tests: a rooted vault served over the real…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 21
      }
     },
     {
@@ -148207,7 +148277,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -148272,8 +148342,8 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1851,
-   "test_files": 219
+   "source_files": 1852,
+   "test_files": 221
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -148977,11 +149047,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "LinkingCodes"
+     ],
      "path": "src/batch/phonetic_codes.rs",
      "purpose": "Deterministic name codes for the first phonetic rung (OF-101)",
      "surface": {
-      "fn": 2
+      "fn": 3,
+      "struct": 1
      }
     },
     {
