@@ -161,10 +161,10 @@ fn exported_entity_keys(node: &TestNode) -> Vec<String> {
 fn a_grant_written_on_one_node_never_leaves_it() {
     let (a, mut b) = vault_pair();
     let g = Grant::new();
-    g.put_agent(&a);
-    g.put_agent(&b);
-    g.put_grant(&a);
-    g.put_default(&a);
+    g.put_agent(&a.vault);
+    g.put_agent(&b.vault);
+    g.put_grant(&a.vault);
+    g.put_default(&a.vault);
     let beside = EntityId::now();
     a.vault
         .put_entity(&beside, ENTITY_TYPE_PERSON, time_range(T0), T0, b"beside")
@@ -210,9 +210,9 @@ fn a_grant_written_on_one_node_never_leaves_it() {
 fn an_older_peers_grant_is_dropped_on_arrival() {
     let (a, b) = vault_pair();
     let g = Grant::new();
-    g.put_agent(&a);
-    g.put_agent(&b);
-    g.put_grant(&a);
+    g.put_agent(&a.vault);
+    g.put_agent(&b.vault);
+    g.put_grant(&a.vault);
     let grant_blob = a.vault.get_raw(&g.grant).unwrap().expect("grant on A");
     let beside = EntityId::now();
     a.put_entity_in_window(
@@ -254,9 +254,9 @@ fn an_older_peers_grant_is_dropped_on_arrival() {
 fn a_replayed_grant_is_dropped() {
     let (a, b) = vault_pair();
     let g = Grant::new();
-    g.put_agent(&a);
-    g.put_agent(&b);
-    g.put_grant(&a);
+    g.put_agent(&a.vault);
+    g.put_agent(&b.vault);
+    g.put_grant(&a.vault);
     let raw = a.vault.get_raw(&g.grant).unwrap().expect("grant on A");
     let header = EntityMetadataHeader::parse(&raw).expect("grant header");
 
@@ -286,8 +286,8 @@ fn a_replayed_grant_is_dropped() {
 fn a_grant_written_here_governs_here() {
     let (_a, b) = vault_pair();
     let g = Grant::new();
-    g.put_agent(&b);
-    g.put_grant(&b);
+    g.put_agent(&b.vault);
+    g.put_grant(&b.vault);
 
     let here = g.authority(&b.vault);
     assert_eq!(here.allowed_claim_ids, vec![g.grant]);
