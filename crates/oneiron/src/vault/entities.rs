@@ -210,6 +210,23 @@ impl Vault {
         })
     }
 
+    /// [`Self::put_vector`] for a host that embeds on its own, marked with the
+    /// device and runtime that computed the vector (ARCH-0036 device mark), so
+    /// `oneiron doctor` names them instead of `unknown`. An unknown device
+    /// leaves the vector unmarked, as [`Self::put_vector`] does.
+    pub fn put_vector_with_provenance(
+        &self,
+        id: &EntityId,
+        vector: &[f32],
+        provenance: crate::embed::EmbeddingProvenance,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            self.batch_in()
+                .vector_with_provenance(id, vector, provenance)
+                .apply(txn)
+        })
+    }
+
     /// Retrieves a vector for an entity.
     pub fn get_vector(&self, id: &EntityId) -> Result<Option<Vec<f32>>> {
         let txn = self.store.env.read_txn()?;

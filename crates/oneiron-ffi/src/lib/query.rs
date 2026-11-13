@@ -254,6 +254,62 @@ pub unsafe extern "C" fn oneiron_vault_put_vector(
     })
 }
 
+/// Store a vector embedding for an entity, marked with the device and runtime
+/// that computed it (ARCH-0036 device mark), so `oneiron doctor` names them
+/// instead of `unknown`.
+///
+/// `device_ptr` is UTF-8 `cpu`, `cuda`, `metal`, `remote` or `unknown`
+/// (`unknown` leaves the vector unmarked); `runtime_ptr` is the runtime's
+/// UTF-8 name and version, 1 to 128 bytes with no control characters. Any
+/// other mark returns `InvalidArg` and stores nothing. Otherwise as
+/// `oneiron_vault_put_vector`.
+///
+/// # Safety
+///
+/// `vault` is null or a live handle from `oneiron_vault_open`, not freed
+/// during the call. Each non-null input pointer covers its length in readable
+/// values, for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a C entry passes each slice as a pointer and a length"
+)]
+pub unsafe extern "C" fn oneiron_vault_put_vector_with_provenance(
+    vault: *mut OneironVault,
+    id_ptr: *const u8,
+    id_len: usize,
+    vector_ptr: *const f64,
+    vector_len: usize,
+    device_ptr: *const u8,
+    device_len: usize,
+    runtime_ptr: *const u8,
+    runtime_len: usize,
+) -> OneironStatus {
+    ffi_guard(|| {
+        let result = with_vault(vault, |handle| {
+            let id = parse_entity_id(id_ptr, id_len)?;
+            let vector = with_required_slice(vector_ptr, vector_len, |values| {
+                convert_query_vector(values, handle.dimensions)
+            })?;
+            let device = string_from_required(device_ptr, device_len)?;
+            let runtime = string_from_required(runtime_ptr, runtime_len)?;
+            let provenance = oneiron::embed::EmbeddingProvenance::from_host(&device, &runtime)
+                .map_err(|_| OneironStatus::InvalidArg)?;
+            match handle.bound_memory() {
+                Some(memory) => {
+                    memory_result(memory.raw_put_vector_with_provenance(&id, &vector, provenance))
+                }
+                None => engine(
+                    handle
+                        .vault
+                        .put_vector_with_provenance(&id, &vector, provenance),
+                ),
+            }
+        });
+        result.map_or_else(|status| status, |()| OneironStatus::Ok)
+    })
+}
+
 /// Run a context-pack query and return UTF-8 bytes.
 ///
 /// `query_text_ptr`, `query_vector_ptr`, `format_ptr` and `media_json_ptr`

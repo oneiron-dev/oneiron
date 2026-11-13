@@ -121,6 +121,9 @@ impl std::str::FromStr for EmbeddingDevice {
     }
 }
 
+/// The longest runtime a vector's mark may name, in bytes.
+pub const MAX_EMBEDDING_RUNTIME_BYTES: usize = 128;
+
 /// The device family and runtime that computed a vector: provenance only,
 /// never part of the embedding space.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -148,5 +151,31 @@ impl EmbeddingProvenance {
 
     pub fn is_unknown(&self) -> bool {
         self.device == EmbeddingDevice::Unknown
+    }
+
+    /// Whether the runtime is fit to store: not empty, at most
+    /// [`MAX_EMBEDDING_RUNTIME_BYTES`] bytes, and free of control characters.
+    #[must_use]
+    pub fn runtime_is_storable(&self) -> bool {
+        !self.runtime.is_empty()
+            && self.runtime.len() <= MAX_EMBEDDING_RUNTIME_BYTES
+            && !self.runtime.chars().any(char::is_control)
+    }
+
+    /// The mark a host that embeds on its own hands in with a vector
+    /// (ARCH-0036 device mark): the device family it names and its runtime.
+    ///
+    /// # Errors
+    ///
+    /// When `device` names no family [`EmbeddingDevice`] knows, or the runtime
+    /// is not [storable](Self::runtime_is_storable).
+    pub fn from_host(device: &str, runtime: &str) -> Result<Self, String> {
+        let provenance = Self::new(device.parse()?, runtime);
+        if !provenance.runtime_is_storable() {
+            return Err(format!(
+                "runtime must be 1 to {MAX_EMBEDDING_RUNTIME_BYTES} bytes with no control characters"
+            ));
+        }
+        Ok(provenance)
     }
 }
