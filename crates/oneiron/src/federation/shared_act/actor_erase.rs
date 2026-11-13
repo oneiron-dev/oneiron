@@ -17,6 +17,11 @@
 //! run: [`Vault::execute_completed_shared_act`] refuses it with
 //! [`ERASED_MEMBER_ACT_REFUSAL`] ([`refuse_an_erased_member_act`]).
 //! A held erase is no such act: it names its record, and runs.
+//!
+//! `start_authority_act` checks a built-in act's name, not its plan, so a
+//! stored plan may not decode. Such an act cannot run. The scrub reads its
+//! plan as text, writes the erased marker over each spelling of the person's
+//! hex, and goes on: one malformed act never stops an erase.
 
 use super::{
     AddOwnerPlan, EraseAskStatus, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind,
@@ -121,6 +126,49 @@ fn scrub_erase_ask(ask: &mut SharedEraseAsk, actor: &EntityId) -> bool {
     changed
 }
 
+/// Writes [`ERASED_CALL_IDENTITY`] over each spelling of `actor`'s hex in a
+/// plan that does not decode. Returns whether it did.
+fn scrub_plan_text(payload: &mut Vec<u8>, actor: &EntityId) -> bool {
+    let hex = actor.to_hex();
+    let mut scrubbed = Vec::with_capacity(payload.len());
+    let mut rest = payload.as_slice();
+    let mut changed = false;
+    while let Some((&byte, tail)) = rest.split_first() {
+        if let Some((head, after)) = rest.split_at_checked(hex.len())
+            && head.eq_ignore_ascii_case(hex.as_bytes())
+        {
+            scrubbed.extend_from_slice(ERASED_CALL_IDENTITY.as_bytes());
+            rest = after;
+            changed = true;
+        } else {
+            scrubbed.push(byte);
+            rest = tail;
+        }
+    }
+    if changed {
+        *payload = scrubbed;
+    }
+    changed
+}
+
+/// Scrubs a built-in plan's operands through `operands`; a plan that does
+/// not decode is scrubbed as text ([`scrub_plan_text`]). Returns whether the
+/// payload changed.
+fn scrub_plan<P: serde::Serialize + serde::de::DeserializeOwned>(
+    payload: &mut Vec<u8>,
+    actor: &EntityId,
+    operands: impl FnOnce(&mut P) -> bool,
+) -> Result<bool> {
+    let Ok(mut plan) = decode::<P>(payload.as_slice()) else {
+        return Ok(scrub_plan_text(payload, actor));
+    };
+    if !operands(&mut plan) {
+        return Ok(false);
+    }
+    *payload = encode(&plan)?;
+    Ok(true)
+}
+
 /// Scrubs a pending act's starter, its objections and its plan's operands.
 fn scrub_pending_act(act: &mut PendingAuthorityAct, actor: &EntityId) -> Result<bool> {
     let mut changed = scrub(&mut act.starter, actor);
@@ -129,33 +177,29 @@ fn scrub_pending_act(act: &mut PendingAuthorityAct, actor: &EntityId) -> Result<
         act.objections.insert(ERASED_CALL_IDENTITY.to_owned());
         changed = true;
     }
-    match SharedActKind::parse(&act.act) {
+    changed |= match SharedActKind::parse(&act.act) {
         Some(SharedActKind::AddOwner) => {
-            let mut plan: AddOwnerPlan = decode(&act.payload)?;
-            if scrub(&mut plan.owner, actor) {
-                act.payload = encode(&plan)?;
-                changed = true;
-            }
+            scrub_plan(&mut act.payload, actor, |plan: &mut AddOwnerPlan| {
+                scrub(&mut plan.owner, actor)
+            })?
         }
-        Some(SharedActKind::TransferOwnership) => {
-            let mut plan: TransferOwnershipPlan = decode(&act.payload)?;
-            let from = scrub(&mut plan.from, actor);
-            if scrub(&mut plan.to, actor) || from {
-                act.payload = encode(&plan)?;
-                changed = true;
-            }
-        }
+        Some(SharedActKind::TransferOwnership) => scrub_plan(
+            &mut act.payload,
+            actor,
+            |plan: &mut TransferOwnershipPlan| {
+                let from = scrub(&mut plan.from, actor);
+                scrub(&mut plan.to, actor) || from
+            },
+        )?,
         Some(SharedActKind::RemoveOwner) => {
-            let mut plan: RemoveOwnerPlan = decode(&act.payload)?;
-            let target = scrub(&mut plan.target, actor);
-            if scrub_optional(&mut plan.successor, actor) || target {
-                act.payload = encode(&plan)?;
-                changed = true;
-            }
+            scrub_plan(&mut act.payload, actor, |plan: &mut RemoveOwnerPlan| {
+                let target = scrub(&mut plan.target, actor);
+                scrub_optional(&mut plan.successor, actor) || target
+            })?
         }
         // A delete names no one; a held erase names its record, scaffold.
-        Some(SharedActKind::DeleteVault | SharedActKind::Erase) | None => {}
-    }
+        Some(SharedActKind::DeleteVault | SharedActKind::Erase) | None => false,
+    };
     Ok(changed)
 }
 
