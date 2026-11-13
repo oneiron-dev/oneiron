@@ -22,6 +22,12 @@
 //! - So is a Deputy's move of a member to Steward or Deputy: only an Owner
 //!   gives those roles (main's #7439), so the move opens no check-in.
 //!
+//! The vault is rooted, and a rooted vault admits only a writer its
+//! authority log binds. The host key holds one live binding, so each
+//! person's acts run while the fixture binds the key to that person, and the
+//! key goes back to the owner after (`Org::as_person`, as delete_authority.rs
+//! does).
+//!
 //! On the base (P2.4a) this file does not build: the receipt has no
 //! `check_in` field, and `remove_shared_member_with_check_in`,
 //! `SharedMemberRemoveRequest` and `Error::CheckInPending` do not exist.
@@ -33,9 +39,10 @@
 
 use std::sync::Arc;
 
-use oneiron::authority::MachineRole;
+use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::check_in::CheckInDecision;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::ClaimError;
 use oneiron::federation::{
     FederationGrantRole as Role, InitialSharedMember, MemberAskChange, MemberAskStatus,
 };
@@ -43,6 +50,7 @@ use oneiron::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDI
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::verbs::{SharedMemberRemoveRequest, remove_shared_member_as};
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig};
@@ -55,6 +63,7 @@ const HOUSE_WORKSPACE: &str = "check-in-membership-workspace";
 struct Org {
     _dir: tempfile::TempDir,
     vault: Vault,
+    issuer: HostSlipIssuer,
     owner: EntityId,
     deputy: EntityId,
     admin: EntityId,
@@ -117,8 +126,7 @@ impl Org {
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
-        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)
-            .expect("the owner's binding");
+        bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
         let [deputy, admin, steward, member_a, member_b] = std::array::from_fn(|_| EntityId::now());
         for id in [deputy, admin, steward, member_a, member_b] {
             person(&vault, id);
@@ -151,6 +159,7 @@ impl Org {
         Self {
             _dir: dir,
             vault,
+            issuer,
             owner,
             deputy,
             admin,
@@ -158,6 +167,17 @@ impl Org {
             member_a,
             member_b,
         }
+    }
+
+    /// Runs `act` with the host key bound to `person`, then binds the key
+    /// back to the owner: a rooted vault admits only a bound writer, and the
+    /// host key holds one live binding.
+    fn as_person<T>(&self, person: EntityId, act: impl FnOnce() -> T) -> T {
+        bind_host_actor(&self.vault, &self.issuer, person, "human")
+            .expect("the host key bound to the person for its act");
+        let answer = act();
+        bind_host_owner(&self.vault, &self.issuer, self.owner).expect("the owner's binding again");
+        answer
     }
 
     /// The role `member` holds in the shared vault now, from its grant rows.
@@ -236,14 +256,15 @@ fn an_owner_and_an_admin_change_members_at_once_and_the_receipt_records_it() {
     );
     assert_eq!(org.role_of(org.member_a), None, "the Member is gone");
     let moved = org
-        .vault
-        .change_shared_member_role(
-            &proof(&org.vault, org.admin),
-            SHARED,
-            org.member_b,
-            Role::Viewer,
-            None,
-        )
+        .as_person(org.admin, || {
+            org.vault.change_shared_member_role(
+                &proof(&org.vault, org.admin),
+                SHARED,
+                org.member_b,
+                Role::Viewer,
+                None,
+            )
+        })
         .expect("the Admin moves a Member to Viewer");
     assert_eq!(
         moved.check_in,
@@ -260,8 +281,10 @@ fn a_deputys_add_and_raise_go_on_their_own_judgment() {
     let newcomer = EntityId::now();
     person(&org.vault, newcomer);
     let invited = org
-        .vault
-        .add_shared_member(&deputy, SHARED, newcomer, Some(Role::Member))
+        .as_person(org.deputy, || {
+            org.vault
+                .add_shared_member(&deputy, SHARED, newcomer, Some(Role::Member))
+        })
         .expect("the Deputy invites a member");
     assert_eq!(
         invited.check_in,
@@ -269,8 +292,10 @@ fn a_deputys_add_and_raise_go_on_their_own_judgment() {
         "a Deputy asks when unsure on an add, and a person's own act is sure"
     );
     let raised = org
-        .vault
-        .change_shared_member_role(&deputy, SHARED, org.member_a, Role::Admin, None)
+        .as_person(org.deputy, || {
+            org.vault
+                .change_shared_member_role(&deputy, SHARED, org.member_a, Role::Admin, None)
+        })
         .expect("the Deputy raises a Member to Admin");
     assert_eq!(
         raised.check_in,
@@ -284,26 +309,29 @@ fn a_deputys_add_and_raise_go_on_their_own_judgment() {
 fn a_deputys_remove_waits_for_the_owner_and_the_approved_recall_runs_once() {
     let org = Org::new();
     let deputy = proof(&org.vault, org.deputy);
-    let first = pending_id(
+    let first = pending_id(org.as_person(org.deputy, || {
         org.vault
-            .remove_shared_member(&deputy, SHARED, org.member_a, None),
-    );
+            .remove_shared_member(&deputy, SHARED, org.member_a, None)
+    }));
     assert_eq!(
         org.role_of(org.member_a),
         Some(Role::Member),
         "a waiting remove changes nothing"
     );
-    let refused = remove_shared_member_as(
-        &org.vault,
-        &deputy,
-        None,
-        SharedMemberRemoveRequest {
-            vault_id: SHARED,
-            member: org.member_a.to_hex(),
-            check_in_ref: None,
-        },
-    )
-    .expect_err("the verb answers the wait");
+    let refused = org
+        .as_person(org.deputy, || {
+            remove_shared_member_as(
+                &org.vault,
+                &deputy,
+                None,
+                SharedMemberRemoveRequest {
+                    vault_id: SHARED,
+                    member: org.member_a.to_hex(),
+                    check_in_ref: None,
+                },
+            )
+        })
+        .expect_err("the verb answers the wait");
     assert_eq!(
         (refused.code.as_str(), refused.reason_codes.clone()),
         (
@@ -312,13 +340,15 @@ fn a_deputys_remove_waits_for_the_owner_and_the_approved_recall_runs_once() {
         ),
         "a repeat of the same remove names the same check-in: {refused:?}"
     );
-    let early = org.vault.remove_shared_member_with_check_in(
-        &deputy,
-        SHARED,
-        org.member_a,
-        None,
-        Some(EntityId::from_hex(&first).expect("a check-in id")),
-    );
+    let early = org.as_person(org.deputy, || {
+        org.vault.remove_shared_member_with_check_in(
+            &deputy,
+            SHARED,
+            org.member_a,
+            None,
+            Some(EntityId::from_hex(&first).expect("a check-in id")),
+        )
+    });
     assert!(
         early.is_err(),
         "no holder answered, so the ref runs nothing: {early:?}"
@@ -327,21 +357,30 @@ fn a_deputys_remove_waits_for_the_owner_and_the_approved_recall_runs_once() {
 
     org.owner_approves(&first);
     let check_in = EntityId::from_hex(&first).expect("a check-in id");
-    let other = org.vault.remove_shared_member_with_check_in(
-        &deputy,
-        SHARED,
-        org.member_b,
-        None,
-        Some(check_in),
-    );
+    let other = org.as_person(org.deputy, || {
+        org.vault.remove_shared_member_with_check_in(
+            &deputy,
+            SHARED,
+            org.member_b,
+            None,
+            Some(check_in),
+        )
+    });
     assert!(
         other.is_err(),
         "the approval is over one effect, not another member's removal: {other:?}"
     );
     assert_eq!(org.role_of(org.member_b), Some(Role::Member));
     let removed = org
-        .vault
-        .remove_shared_member_with_check_in(&deputy, SHARED, org.member_a, None, Some(check_in))
+        .as_person(org.deputy, || {
+            org.vault.remove_shared_member_with_check_in(
+                &deputy,
+                SHARED,
+                org.member_a,
+                None,
+                Some(check_in),
+            )
+        })
         .expect("the approved remove runs");
     assert_eq!(
         removed.check_in,
@@ -367,10 +406,10 @@ fn a_deputys_remove_waits_for_the_owner_and_the_approved_recall_runs_once() {
 fn a_deputys_demote_waits_for_the_owner() {
     let org = Org::new();
     let deputy = proof(&org.vault, org.deputy);
-    pending_id(
+    pending_id(org.as_person(org.deputy, || {
         org.vault
-            .change_shared_member_role(&deputy, SHARED, org.admin, Role::Member, None),
-    );
+            .change_shared_member_role(&deputy, SHARED, org.admin, Role::Member, None)
+    }));
     assert_eq!(
         org.role_of(org.admin),
         Some(Role::Admin),
@@ -382,17 +421,20 @@ fn a_deputys_demote_waits_for_the_owner() {
 fn a_deputys_apply_of_a_stewards_ask_waits_and_the_approved_recall_closes_it() {
     let org = Org::new();
     let ask = org
-        .vault
-        .ask_shared_member_change(
-            &proof(&org.vault, org.steward),
-            SHARED,
-            MemberAskChange::Remove {
-                member: org.member_a.to_hex(),
-            },
-        )
+        .as_person(org.steward, || {
+            org.vault.ask_shared_member_change(
+                &proof(&org.vault, org.steward),
+                SHARED,
+                MemberAskChange::Remove {
+                    member: org.member_a.to_hex(),
+                },
+            )
+        })
         .expect("the Steward asks to remove a Member");
     let deputy = proof(&org.vault, org.deputy);
-    let first = pending_id(org.vault.apply_shared_member_ask(&deputy, &ask.id, None));
+    let first = pending_id(org.as_person(org.deputy, || {
+        org.vault.apply_shared_member_ask(&deputy, &ask.id, None)
+    }));
     assert_eq!(
         org.role_of(org.member_a),
         Some(Role::Member),
@@ -406,8 +448,10 @@ fn a_deputys_apply_of_a_stewards_ask_waits_and_the_approved_recall_closes_it() {
     org.owner_approves(&first);
     let check_in = EntityId::from_hex(&first).expect("a check-in id");
     let receipt = org
-        .vault
-        .apply_shared_member_ask_with_check_in(&deputy, &ask.id, None, Some(check_in))
+        .as_person(org.deputy, || {
+            org.vault
+                .apply_shared_member_ask_with_check_in(&deputy, &ask.id, None, Some(check_in))
+        })
         .expect("the approved apply runs");
     assert_eq!(
         receipt.proposer,
@@ -432,7 +476,9 @@ fn a_deputys_apply_of_a_stewards_ask_waits_and_the_approved_recall_closes_it() {
 /// A rooted, profiled vault (as a host starts one) whose shared vault holds
 /// the owner and a person Deputy who accepted, and whose stored workspace's
 /// house, the seeded `sys.default` agent, the owner binds as a Member. It
-/// answers the vault, the Deputy and the house.
+/// answers the vault, the Deputy and the house, with the host key bound to
+/// the Deputy, who alone acts in the house cases (a rooted vault admits only
+/// a bound writer).
 fn house_org() -> (tempfile::TempDir, Vault, EntityId, EntityId) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
@@ -442,7 +488,7 @@ fn house_org() -> (tempfile::TempDir, Vault, EntityId, EntityId) {
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("this install's live machine profile");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
     let owner_proof = proof(&vault, owner);
     let signer = vault
         .owner_project_signer(&issuer)
@@ -501,6 +547,7 @@ fn house_org() -> (tempfile::TempDir, Vault, EntityId, EntityId) {
     vault
         .bind_workspace_house_leader(HOUSE_WORKSPACE, Role::Member, &owner_proof, &signer)
         .expect("the owner binds the house as a Member");
+    bind_host_actor(&vault, &issuer, deputy, "human").expect("the host key bound to the Deputy");
     (dir, vault, deputy, house)
 }
 
@@ -535,11 +582,17 @@ fn a_deputys_move_to_a_role_only_an_owner_gives_is_refused_and_opens_no_check_in
     let org = Org::new();
     let deputy = proof(&org.vault, org.deputy);
     for role in [Role::Steward, Role::Deputy] {
-        let moved = org
-            .vault
-            .change_shared_member_role(&deputy, SHARED, org.member_a, role, None);
+        let moved = org.as_person(org.deputy, || {
+            org.vault
+                .change_shared_member_role(&deputy, SHARED, org.member_a, role, None)
+        });
         assert!(
-            matches!(moved, Err(Error::Claim(_))),
+            matches!(
+                moved,
+                Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+                    reason: "only an owner of the vault gives the Steward or Deputy role"
+                }))
+            ),
             "only an Owner gives {role:?}, so the move is refused, not asked: {moved:?}"
         );
     }
