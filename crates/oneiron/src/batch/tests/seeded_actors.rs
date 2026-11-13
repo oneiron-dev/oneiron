@@ -1053,7 +1053,7 @@ fn a_restore_pins_a_definition_its_live_vault_never_held() -> Result<()> {
     // id, and no pin.
     let pin_key = [&b"agent_def/id-pin/v1\0"[..], custom_id.as_bytes()].concat();
     vault.with_write_txn(|txn| {
-        crate::batch::deindex_entity_for_test(&vault.store, txn, &custom_id)?;
+        crate::batch::deindex_entity_for_test(&vault, txn, &custom_id)?;
         vault.store.vault_meta.delete(txn, &pin_key)?;
         Ok(())
     })?;
