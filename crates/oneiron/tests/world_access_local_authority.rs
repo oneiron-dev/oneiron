@@ -12,10 +12,11 @@
 //!
 //! Rows cross the real Loro delta path between two `Vault`s
 //! (`reverse_rematerialize`, the window export door, Observer B), or the
-//! explicit-tier replay door.
+//! explicit-tier replay door. The whole-vault import's routing (a cfg door)
+//! keeps both tiers as archive data.
 //!
-//! Run: `cargo test --locked -p oneiron --all-features --no-fail-fast --test
-//! world_access_local_authority`.
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --no-fail-fast --test world_access_local_authority`.
 #![cfg(all(feature = "sync", feature = "test-support"))]
 
 #[path = "it_sync/sync_harness/mod.rs"]
@@ -295,4 +296,23 @@ fn a_grant_written_here_governs_here() {
         here.allowed_set,
         WorldAuthoritySet::new(true, [g.world]).unwrap()
     );
+}
+
+/// The whole-vault import keeps both tiers as archive data, as it keeps an
+/// ACCESS_GRANT row: the importing node's owner grants its own agents their
+/// worlds. On main both took the generic claim door and landed Imported +
+/// Proposed.
+#[cfg(oneiron_test_support)]
+#[test]
+fn the_archive_import_keeps_both_tiers_as_archive_data() {
+    for predicate in [
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    ] {
+        assert_eq!(
+            oneiron::test_doors::archive_import::reserved_claim_import(predicate).as_deref(),
+            Some("ArchiveOnly(LocalAuthorityNotRestored)"),
+            "{predicate}"
+        );
+    }
 }

@@ -7,10 +7,8 @@ use loro::LoroMap;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::decode_claim_body;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::{
-    EntityId, PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, Result,
-    Vault,
-};
+use crate::write_envelope::world_access_predicates::is_world_access_tier_predicate;
+use crate::{EntityId, Result, Vault};
 
 use super::bridge::parse_edge_key;
 use super::loro_support::map_for_each_value_bytes;
@@ -26,7 +24,8 @@ pub(super) fn claim_sync_allowed(raw: &[u8]) -> bool {
     }
     EntityMetadataHeader::parse(raw).is_some()
         && decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).is_ok_and(|body| {
-            !body.predicate.starts_with("esign.") && !world_access_predicate(&body.predicate)
+            !body.predicate.starts_with("esign.")
+                && !is_world_access_tier_predicate(&body.predicate)
         })
 }
 
@@ -39,12 +38,7 @@ pub(super) fn claim_sync_allowed(raw: &[u8]) -> bool {
 /// older peer's window still lands. Every row the world-authority fold reads
 /// was therefore written on this node.
 pub(super) fn world_access_claim(data: &[u8]) -> bool {
-    decode_claim_body(data, true).is_ok_and(|body| world_access_predicate(&body.predicate))
-}
-
-fn world_access_predicate(predicate: &str) -> bool {
-    predicate == PREDICATE_WORLD_ACCESS_ALLOWED_SET
-        || predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
+    decode_claim_body(data, true).is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
 }
 
 pub(super) fn local_claim_sync_allowed(vault: &Vault, id: &EntityId) -> Result<bool> {
