@@ -5,11 +5,14 @@
 //! proof, lands at once". So a policy holder (the vault owner, or an Admin or
 //! Delegate whose Owner-minted `policy.change` grant names the demotion
 //! target) demotes under its own person proof. A role label alone demotes
-//! nothing, and a Member without the power is refused. Re-graduation stays
-//! the owner's tap.
+//! nothing, and a Member without the power is refused. "Tighten a child's
+//! row ...: the parent or grantor, nothing": the agent whose run spawned a
+//! child demotes the child's scope on its own facade, and another agent may
+//! not. Re-graduation stays the owner's tap.
 //!
 //! The shipped grant rows give the `policy.change` verb to no role, so the
-//! owner first lets the Admin role carry it, through the hidden door in
+//! owner first lets the Admin role carry it, and a run spawns its child
+//! through the dispatcher, both through the hidden doors in
 //! `oneiron::test_doors::ramp_demotion`, built only under
 //! `--cfg oneiron_test_support`; every assertion is here. Without that cfg
 //! this target is empty. Run:
@@ -26,7 +29,8 @@ use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::test_doors::ramp_demotion as doors;
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
 
@@ -60,12 +64,8 @@ struct Roster {
 
 fn shared_roster(vault: &Vault) -> Roster {
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
-    oneiron::test_doors::ramp_demotion::admit_policy_verb(
-        vault,
-        &proof(vault, owner),
-        &[Role::Admin],
-    )
-    .expect("the owner lets an Admin carry the policy verb");
+    doors::admit_policy_verb(vault, &proof(vault, owner), &[Role::Admin])
+        .expect("the owner lets an Admin carry the policy verb");
     let admin = EntityId::now();
     let member = EntityId::now();
     person(vault, admin);
@@ -246,4 +246,55 @@ fn a_person_without_the_policy_power_is_refused() {
         .expect("the owner demotes, as before");
     assert!(!grant_is_live(&vault, &scope));
     assert_eq!(demotion_receipts(&vault).len(), 1);
+}
+
+/// The agent whose run spawned a child demotes the child's graduated scope
+/// on its own facade, with no owner proof: the grant is revoked and the
+/// demotion receipt is written. The child is the attenuated fork the
+/// dispatcher minted for the parent's run, pinned to it by the engine. Before
+/// that, a sibling agent no pin ties to the child is refused and changes
+/// nothing. Red on main: an actor demoted only its own scope there, so the
+/// parent was refused too.
+#[test]
+fn a_parent_agent_demotes_its_spawned_childs_graduated_scope() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let parent = doors::define_agent(&vault, "ramp parent").expect("the parent agent");
+    let sibling = doors::define_agent(&vault, "ramp sibling").expect("a sibling agent");
+    let child = doors::spawn_attenuated_child(&vault, parent).expect("the parent spawns a child");
+    let scope = graduated_scope(&vault, owner, &child.to_hex());
+
+    let refused = vault
+        .memory(sibling, EdgeActorClass::Agent)
+        .demote_own_ramp_scope(&scope);
+    assert!(
+        refused.is_err(),
+        "an agent must not strip another agent's earned lane: {refused:?}"
+    );
+    assert!(
+        grant_is_live(&vault, &scope),
+        "the refusal leaves the grant"
+    );
+    assert!(
+        demotion_receipts(&vault).is_empty(),
+        "the refusal writes no receipt"
+    );
+
+    vault
+        .memory(parent, EdgeActorClass::Agent)
+        .demote_own_ramp_scope(&scope)
+        .expect("the parent demotes its spawned child's scope with no owner proof");
+    assert!(
+        !grant_is_live(&vault, &scope),
+        "the demotion revokes the child's standing grant"
+    );
+    assert_eq!(
+        demotion_receipts(&vault),
+        vec![(
+            Some(child.to_hex()),
+            Some(scope.grant_ref().expect("grant ref"))
+        )],
+        "one demotion receipt, naming the child's scope and the revoked grant"
+    );
 }
