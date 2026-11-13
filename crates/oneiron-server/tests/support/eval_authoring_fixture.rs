@@ -6,7 +6,6 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeSet;
-use std::future::Future;
 use std::sync::Arc;
 
 use axum::{
@@ -32,7 +31,7 @@ use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
 use oneiron_server::config::{SyncServerConfig, models::ModelsConfig};
-use oneiron_server::{ENGINE_THREAD_STACK_BYTES, build_app, server::SyncServer};
+use oneiron_server::{build_app, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -66,33 +65,6 @@ pub(crate) struct Fixture {
     pub(crate) owner_slip: CapabilitySlip,
     pub(crate) owner_token: String,
     pub(crate) model: FakeLlm,
-}
-
-/// Runs `test` on an engine-sized stack and runtime (the facade's generated
-/// dispatch needs more than a test thread's default stack; the Coach's
-/// model call blocks on this runtime). `test` builds the future inside the
-/// thread, so the future itself need not be `Send`.
-pub(crate) fn run_on_engine_stack<F, Fut>(name: &str, test: F)
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()>,
-{
-    let run = std::thread::Builder::new()
-        .name(name.into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(test())
-        })
-        .expect("spawn the engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
