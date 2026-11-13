@@ -18,6 +18,8 @@
 //! as JSON, the shape the verbs answer.
 //!
 //! `cargo test --locked -p oneiron --all-features --test room_turn_for_org`.
+// The fixture binds the host owner through oneiron::test_support.
+#![cfg(feature = "test-support")]
 
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
