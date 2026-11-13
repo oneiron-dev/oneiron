@@ -26,13 +26,13 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(mut self) -> Result<PipelineOutput> {
-        if self.eval {
-            self.refuse_nondeterminism()?;
-        }
         // A project filter is the ingest door's project id, held to its
         // bounds before any index, expansion or telemetry work (H38).
         if let Some(project_id) = self.project_id_filter.as_deref() {
             crate::codebase::validate_project_id(project_id)?;
+        }
+        if self.eval {
+            self.refuse_nondeterminism()?;
         }
         // Scoped search already denies before counting candidates. Also stop
         // resolved-deny builders before index trust checks, host expansion,

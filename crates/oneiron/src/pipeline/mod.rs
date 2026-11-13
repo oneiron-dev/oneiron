@@ -35,7 +35,7 @@ pub(crate) use world_authority::{
     ResolvedWorldScope, WorldGrantIndex, reading_default, resolve_world_authority,
 };
 
-pub use self::builder::{BlendWeightsSource, PipelineBuilder, RetrievalEvalSpec};
+pub use self::builder::PipelineBuilder;
 pub use self::types::{
     ActiveWorldSelection, DEFAULT_RECENCY_HALF_LIFE_DAYS, DreamerWorkingSet,
     DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode,
@@ -44,6 +44,8 @@ pub use self::types::{
     RetrievalWithTelemetry, ScoredEntity, Signal, WORLD_ACCESS_SCHEMA_VERSION, WorldAuthoritySet,
     WorldScope, decode_world_access_claim_value, world_access_claim_body,
 };
+
+pub use self::builder::{BlendWeightsSource, RetrievalEvalSpec};
 
 pub(crate) use self::authority::{
     claim_ceiling_allowed, claim_scalars_ceiling_allowed, type_allowed as retrieval_type_allowed,
