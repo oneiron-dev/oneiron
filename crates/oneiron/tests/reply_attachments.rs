@@ -2,10 +2,14 @@
 //! Fix list row 17645, slice 3: a drafted reply carries files, each one
 //! exact version of an artifact the drafter reads, frozen with the draft.
 //!
-//! Red on origin/main: a draft request that names a file is refused (the
-//! request has no `attachments` field, and `mail_pack/reply.rs` refuses
-//! files), so the first assertion, that the draft lands, fails. On the head
-//! the draft lands, and its row names the manifest of the version it pinned.
+//! `reply_draft_pins_artifact_version` (a Google mailbox, slice 3a) is red on
+//! origin/main: a draft request that names a file is refused (the request
+//! has no `attachments` field, and `mail_pack/reply.rs` refuses files), so
+//! its first check, that the draft lands, fails. On the head the draft
+//! lands, and its row names the manifest of the version it pinned.
+//! `graph_reply_draft_pins_artifact_version` (a Microsoft 365 mailbox, slice
+//! 3b) is red on slice 3a, which refuses files from any mailbox but a
+//! Google one.
 
 use std::sync::Arc;
 
@@ -38,20 +42,13 @@ fn now_sec() -> Result<u64, Box<dyn std::error::Error>> {
         .as_secs())
 }
 
-/// A Gmail reply that names version 1 of an artifact whose head is version
-/// 2 lands as a draft that pins version 1: the draft's row names its
-/// manifest by digest, and its reader sees the one file at version 1, with
-/// version 1's stored bytes, and the exact message it sends.
-#[test]
-fn reply_draft_pins_artifact_version() -> TestResult {
-    let directory = tempfile::tempdir()?;
-    let vault = open_vault(directory.path())?;
-    let seeded = doors::seed_gmail_thread(&vault, now_sec()?)?;
-    let artifact = doors::seed_artifact(&vault, seeded.owner, &[FIRST_VERSION, SECOND_VERSION])?;
-
-    let drafted =
-        doors::draft_reply_with_file(&vault, seeded.owner, &seeded.thread_ref, artifact, 1);
-
+/// Checks that `drafted` is a draft of `artifact`'s version 1 alone, with
+/// version 1's stored bytes, its manifest named by the draft's row and the
+/// exact message it sends.
+fn assert_pins_first_version(
+    drafted: Result<doors::DraftedReply, String>,
+    artifact: oneiron::EntityId,
+) {
     let drafted = match drafted {
         Ok(drafted) => drafted,
         Err(refusal) => {
@@ -75,5 +72,38 @@ fn reply_draft_pins_artifact_version() -> TestResult {
         drafted.message_octets.is_some() && drafted.message_blake3.is_some(),
         "the draft names the exact message it sends"
     );
+}
+
+/// A Gmail reply that names version 1 of an artifact whose head is version
+/// 2 lands as a draft that pins version 1: the draft's row names its
+/// manifest by digest, and its reader sees the one file at version 1, with
+/// version 1's stored bytes, and the exact message it sends.
+#[test]
+fn reply_draft_pins_artifact_version() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = open_vault(directory.path())?;
+    let seeded = doors::seed_gmail_thread(&vault, now_sec()?)?;
+    let artifact = doors::seed_artifact(&vault, seeded.owner, &[FIRST_VERSION, SECOND_VERSION])?;
+
+    let drafted =
+        doors::draft_reply_with_file(&vault, seeded.owner, &seeded.thread_ref, artifact, 1);
+
+    assert_pins_first_version(drafted, artifact);
+    Ok(())
+}
+
+/// The same reply from a Microsoft 365 mailbox lands the same way: Graph
+/// carries files too, and the draft's row names only the manifest's digest.
+#[test]
+fn graph_reply_draft_pins_artifact_version() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = open_vault(directory.path())?;
+    let seeded = doors::seed_microsoft_thread(&vault, now_sec()?)?;
+    let artifact = doors::seed_artifact(&vault, seeded.owner, &[FIRST_VERSION, SECOND_VERSION])?;
+
+    let drafted =
+        doors::draft_reply_with_file(&vault, seeded.owner, &seeded.thread_ref, artifact, 1);
+
+    assert_pins_first_version(drafted, artifact);
     Ok(())
 }
