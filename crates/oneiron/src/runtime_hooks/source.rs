@@ -23,7 +23,10 @@ use crate::{EntityId, Error, Result, Vault};
 use super::{filter, store};
 
 pub(super) use schedule::TickDetails;
-pub(crate) use schedule::{index_task_due_in_txn, next_tick_release_at, release_due_ticks};
+pub(crate) use schedule::{
+    hold_task_tick_in_txn, index_task_due_in_txn, next_tick_release_at, release_due_ticks,
+    release_task_tick_hold_in_txn, releases_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
+};
 pub(super) use settlement::{SettledRow, prepare_settlement_in_txn, settlement_fact_in_txn};
 pub(crate) use settlement::{record_settlement_in_txn, record_timeout_demotion_in_txn};
 pub(super) use surface_inbound::SurfaceInboundRow;
@@ -571,8 +574,6 @@ pub(crate) struct SettledFeedFacts {
     pub(crate) facts: Vec<SettledFeedFact>,
     /// The last position scanned, kept or not.
     pub(crate) through: Option<SettlementPosition>,
-    /// The read stopped at its bound before the feed's end.
-    pub(crate) more: bool,
 }
 
 /// Up to `max_entries` settled proposals after `after` (exclusive) in the
@@ -616,11 +617,7 @@ pub(crate) fn settled_feed_facts_after_in_txn(
             point: super::read::fact_point(&entry),
         });
     }
-    Ok(SettledFeedFacts {
-        facts,
-        through,
-        more: batch.more,
-    })
+    Ok(SettledFeedFacts { facts, through })
 }
 
 /// The hook feed rows at or before `floor`, the lowest cursor of every
@@ -671,7 +668,9 @@ pub(super) fn scrub_hook_feeds_in_txn(
     settlement::scrub_settlements_in_txn(vault, txn, ids)?;
     schedule::scrub_task_ticks_in_txn(vault, txn, ids)?;
     surface_inbound::scrub_inbound_events_in_txn(vault, txn, ids)?;
-    crate::feeds::scrub_withdrawn_types_in_txn(&vault.store, txn, ids)
+    crate::feeds::scrub_withdrawn_types_in_txn(&vault.store, txn, ids)?;
+    // Untangle slice 6.8b: the change feed's edge and redirty rows go with the same erase.
+    crate::feeds::scrub_feeds_in_txn(vault, txn, ids)
 }
 
 /// The changelog position of a binding claim's latest write, in the

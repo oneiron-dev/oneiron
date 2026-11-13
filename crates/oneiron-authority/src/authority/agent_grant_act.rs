@@ -22,6 +22,14 @@
 //! its bytes. A mint that names the host wallet the Grant funds its work
 //! from (FIX 7766) carries it under one more key, `wallet_ref`, after every
 //! other mint key; a mint without one keeps its form and its bytes. The
+//! owner's Steward grant to a base agent (ARCH-0043's Steward role, untangle
+//! 6.3) carries `role: "steward"` as one more key after the seven; it rides
+//! a plain Access mint only (no repo bounds, classes, wallet or git push,
+//! no expiry), and a mint without it keeps its form and its bytes. A mint
+//! that binds its repo bounds to one owner working view (row 6
+//! WORKING-VIEW-EDIT) carries the view and its account under one more key,
+//! `working_view_bounds`, last; it rides an Access mint with repo bounds
+//! only, and a mint without it keeps its form and its bytes. The
 //! FEDERATION_GRANT row is
 //! the state; this record is the signed account of his will, a main-log
 //! entry every machine the owner admits folds.
@@ -39,9 +47,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::repo_scope::{decode_repo_bounds_value, repo_bounds_value};
 use crate::federation::{
-    FederationGrantKind, GitPushBounds, KEY_VERB_CLASSES, KEY_WALLET_REF, RepoAccessBounds, Scope,
-    WalletRef, decode_verb_classes_value, decode_wallet_ref_value, verb_class_name_is_valid,
-    verb_classes_value, wallet_ref_value,
+    FederationGrantKind, GitPushBounds, KEY_VERB_CLASSES, KEY_WALLET_REF, KEY_WORKING_VIEW_BOUNDS,
+    RepoAccessBounds, Scope, WalletRef, WorkingViewEditBounds, decode_verb_classes_value,
+    decode_wallet_ref_value, decode_working_view_bounds_value, verb_class_name_is_valid,
+    verb_classes_value, wallet_ref_value, working_view_bounds_value,
 };
 
 use super::*;
@@ -70,6 +79,22 @@ const AGENT_GRANT_ACT_REPO_KEYS: [&str; 8] = [
     KEY_REPO_BOUNDS,
 ];
 const KEY_REPO_BOUNDS: &str = "repo_bounds";
+/// The Steward mint's one extra key (untangle 6.3): present only on the
+/// owner's Steward grant, always with [`ROLE_STEWARD`].
+const KEY_ROLE: &str = "role";
+/// The one value [`KEY_ROLE`] takes.
+const ROLE_STEWARD: &str = "steward";
+/// The Steward mint form: the seven keys and `role`.
+const AGENT_GRANT_ACT_STEWARD_KEYS: [&str; 8] = [
+    OP_KEY_KIND,
+    OP_KEY_ACT,
+    "machine",
+    "grant",
+    "member",
+    "scope",
+    "expires_at",
+    KEY_ROLE,
+];
 /// The mint form that names verb classes (FIX 8735): the seven keys and
 /// `verb_classes`.
 const AGENT_GRANT_ACT_CLASS_KEYS: [&str; 8] = [
@@ -128,7 +153,11 @@ pub enum AgentGrantChange {
     /// exact verbs (FIX 8735); empty for a mint that names none, and always
     /// for a `GitPush` mint. `wallet_ref` names the host wallet the work
     /// the Grant funds draws on (FIX 7766); `None` for a mint that names
-    /// none, and always for a `GitPush` mint.
+    /// none, and always for a `GitPush` mint. `steward` marks the owner's
+    /// Steward grant to a base agent (untangle 6.3): a Steward row, not a
+    /// Delegate, on a plain Access mint with no expiry.
+    /// `working_view_bounds` binds `repo_bounds` to one owner working view
+    /// (row 6 WORKING-VIEW-EDIT); `None` for a mint that names none.
     Mint {
         member: EntityId,
         scope: Scope,
@@ -138,6 +167,8 @@ pub enum AgentGrantChange {
         git_push_bounds: Option<GitPushBounds>,
         verb_classes: BTreeSet<String>,
         wallet_ref: Option<WalletRef>,
+        steward: bool,
+        working_view_bounds: Option<WorkingViewEditBounds>,
     },
     /// The owner revokes the Grant, acknowledging exactly the topology
     /// decision tokens `acknowledged_topology` the revoke writer collected
@@ -189,14 +220,28 @@ impl AgentGrantActRecord {
         }
         if let AgentGrantChange::Mint {
             scope,
+            expires_at,
             repo_bounds,
             grant_kind,
             git_push_bounds,
             verb_classes,
             wallet_ref,
+            steward,
+            working_view_bounds,
             ..
         } = &self.change
         {
+            // A Steward grant is a plain Access mint, standing until revoked.
+            if *steward
+                && (*grant_kind != FederationGrantKind::Access
+                    || expires_at.is_some()
+                    || repo_bounds.is_some()
+                    || git_push_bounds.is_some()
+                    || !verb_classes.is_empty()
+                    || wallet_ref.is_some())
+            {
+                return Err(invalid_authority());
+            }
             git_push::validate_mint(
                 scope,
                 *grant_kind,
@@ -218,41 +263,55 @@ impl AgentGrantActRecord {
             }) {
                 return Err(invalid_authority());
             }
+            // A working view bound narrows the repo bounds of an Access mint
+            // (row 6 WORKING-VIEW-EDIT): it never rides without them.
+            if working_view_bounds.is_some()
+                && (*grant_kind != FederationGrantKind::Access || repo_bounds.is_none())
+            {
+                return Err(invalid_authority());
+            }
         }
         Ok(())
     }
 }
 
 pub(super) fn agent_grant_act_value(record: &AgentGrantActRecord) -> Value {
-    let (member, scope, expires_at, repo_bounds, classes, push, wallet) = match &record.change {
-        AgentGrantChange::Mint {
-            member,
-            scope,
-            expires_at,
-            repo_bounds,
-            grant_kind,
-            git_push_bounds,
-            verb_classes,
-            wallet_ref,
-        } => (
-            Value::from(member.to_hex()),
-            super::slip_wire::scope_value(scope),
-            expires_at.map_or(Value::Nil, Value::from),
-            repo_bounds.as_ref(),
-            (!verb_classes.is_empty()).then_some(verb_classes),
-            git_push::mint_entries(*grant_kind, git_push_bounds.as_ref()),
-            wallet_ref.as_ref(),
-        ),
-        AgentGrantChange::Revoke { .. } => (
-            Value::Nil,
-            Value::Nil,
-            Value::Nil,
-            None,
-            None,
-            Vec::new(),
-            None,
-        ),
-    };
+    let (member, scope, expires_at, repo_bounds, classes, push, wallet, steward, view) =
+        match &record.change {
+            AgentGrantChange::Mint {
+                member,
+                scope,
+                expires_at,
+                repo_bounds,
+                grant_kind,
+                git_push_bounds,
+                verb_classes,
+                wallet_ref,
+                steward,
+                working_view_bounds,
+            } => (
+                Value::from(member.to_hex()),
+                super::slip_wire::scope_value(scope),
+                expires_at.map_or(Value::Nil, Value::from),
+                repo_bounds.as_ref(),
+                (!verb_classes.is_empty()).then_some(verb_classes),
+                git_push::mint_entries(*grant_kind, git_push_bounds.as_ref()),
+                wallet_ref.as_ref(),
+                *steward,
+                working_view_bounds.as_ref(),
+            ),
+            AgentGrantChange::Revoke { .. } => (
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                None,
+                None,
+                Vec::new(),
+                None,
+                false,
+                None,
+            ),
+        };
     let mut entries = vec![
         (
             Value::from(OP_KEY_KIND),
@@ -277,6 +336,15 @@ pub(super) fn agent_grant_act_value(record: &AgentGrantActRecord) -> Value {
     entries.extend(push);
     if let Some(wallet) = wallet {
         entries.push((Value::from(KEY_WALLET_REF), wallet_ref_value(wallet)));
+    }
+    if steward {
+        entries.push((Value::from(KEY_ROLE), Value::from(ROLE_STEWARD)));
+    }
+    if let Some(view) = view {
+        entries.push((
+            Value::from(KEY_WORKING_VIEW_BOUNDS),
+            working_view_bounds_value(view),
+        ));
     }
     if let AgentGrantChange::Revoke {
         acknowledged_topology,
@@ -304,8 +372,11 @@ pub(super) fn agent_grant_act_value(record: &AgentGrantActRecord) -> Value {
 /// Repo bounds ride a mint only, under their own key, and only when given;
 /// so do verb classes (FIX 8735), on an Access mint only, as a nonempty
 /// ascending array of valid names; so does a wallet (FIX 7766), on an
-/// Access mint only, as one key more beside whichever of those forms rides.
-/// The envelope's canonical re-encode then pins every value's form.
+/// Access mint only, as one key more beside whichever of those forms rides;
+/// so does the Steward mark (untangle 6.3), `role: "steward"`, as the one
+/// key beside the seven; so does a working view bound (row 6
+/// WORKING-VIEW-EDIT), on an Access mint with repo bounds only, as the last
+/// key. The envelope's canonical re-encode then pins every value's form.
 pub(super) fn decode_agent_grant_act(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
     let repo_bounds = entries
         .iter()
@@ -316,12 +387,25 @@ pub(super) fn decode_agent_grant_act(entries: &[(Value, Value)]) -> Result<Autho
     let wallet_ref = entries
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some(KEY_WALLET_REF)).then_some(value));
+    let working_view_bounds = entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(KEY_WORKING_VIEW_BOUNDS)).then_some(value));
     let push = git_push::carried(entries);
     let acknowledged_topology = entries.iter().find_map(|(key, value)| {
         (key.as_str() == Some(KEY_ACKNOWLEDGED_TOPOLOGY)).then_some(value)
     });
+    let role = entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(KEY_ROLE)).then_some(value));
+    let steward = match role {
+        None => false,
+        Some(value) if value.as_str() == Some(ROLE_STEWARD) => true,
+        Some(_) => return Err(invalid_authority()),
+    };
     if acknowledged_topology.is_some() {
         validate_keys(entries, &AGENT_GRANT_ACT_REVOKE_KEYS)?;
+    } else if steward {
+        validate_keys(entries, &AGENT_GRANT_ACT_STEWARD_KEYS)?;
     } else {
         let mint_keys: &[&str] = match (repo_bounds.is_some(), verb_classes.is_some(), push) {
             (false, false, false) => &AGENT_GRANT_ACT_KEYS,
@@ -331,16 +415,21 @@ pub(super) fn decode_agent_grant_act(entries: &[(Value, Value)]) -> Result<Autho
             (false, false, true) => &git_push::AGENT_GRANT_ACT_GIT_PUSH_KEYS,
             (_, _, true) => return Err(invalid_authority()),
         };
-        match wallet_ref {
-            None => validate_keys(entries, mint_keys)?,
-            // A wallet rides an Access mint only, as one key more (FIX 7766).
-            Some(_) if !push => {
-                let mut keys = mint_keys.to_vec();
-                keys.push(KEY_WALLET_REF);
-                validate_keys(entries, &keys)?;
-            }
-            Some(_) => return Err(invalid_authority()),
+        // A wallet rides an Access mint only, as one key more (FIX 7766); a
+        // working view bound rides one with repo bounds, last (row 6).
+        if (push && (wallet_ref.is_some() || working_view_bounds.is_some()))
+            || (working_view_bounds.is_some() && repo_bounds.is_none())
+        {
+            return Err(invalid_authority());
         }
+        let mut keys = mint_keys.to_vec();
+        if wallet_ref.is_some() {
+            keys.push(KEY_WALLET_REF);
+        }
+        if working_view_bounds.is_some() {
+            keys.push(KEY_WORKING_VIEW_BOUNDS);
+        }
+        validate_keys(entries, &keys)?;
     }
     let act = super::owner_act::decode_owner_act(required(entries, OP_KEY_ACT)?)?;
     let member = required(entries, "member")?;
@@ -371,6 +460,12 @@ pub(super) fn decode_agent_grant_act(entries: &[(Value, Value)]) -> Result<Autho
                 wallet_ref: wallet_ref
                     .map(|value| decode_wallet_ref_value(value).ok_or_else(invalid_authority))
                     .transpose()?,
+                steward,
+                working_view_bounds: working_view_bounds
+                    .map(|value| {
+                        decode_working_view_bounds_value(value).ok_or_else(invalid_authority)
+                    })
+                    .transpose()?,
             }
         }
         OwnerActKind::GrantRevoke
@@ -380,7 +475,9 @@ pub(super) fn decode_agent_grant_act(entries: &[(Value, Value)]) -> Result<Autho
                 && repo_bounds.is_none()
                 && verb_classes.is_none()
                 && wallet_ref.is_none()
-                && !push =>
+                && working_view_bounds.is_none()
+                && !push
+                && !steward =>
         {
             let Some(acked) = acknowledged_topology else {
                 return Err(invalid_authority());

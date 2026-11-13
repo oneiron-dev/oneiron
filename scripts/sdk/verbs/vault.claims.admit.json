@@ -14,6 +14,7 @@
   "output": "crate::memory::CommitReceipt",
   "call": "memory.admit_imported_claim(&input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -346,16 +346,17 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
         .expect("durable milestone");
     assert_eq!(milestone.kind, DreamerMilestoneKind::CheckpointReached);
 
-    // Queue-lease cleanup: the cut attempt's stale lease is reclaimable through
-    // the normal path, so the attempt re-queues for the next pass.
+    // Queue-lease cleanup: the cut attempt is parked, so it keeps its lease
+    // however old (FIX RUN-LEASE); a later pass resumes its park.
     let queue = AttemptQueue::new(&vault);
     let cleaned = queue.cleanup_leases(CleanupAttemptLeases {
         now: 200,
         lease_timeout_secs: 10,
     })?;
-    assert_eq!(cleaned.stale_requeued, 1, "hard-cut lease reclaimed");
+    assert_eq!(cleaned.stale_requeued, 0, "a parked lease is not reclaimed");
     let status = store.status(queued.attempt.id)?.expect("attempt status");
-    assert_eq!(status.attempt.state, AttemptState::Queued);
+    assert_eq!(status.attempt.state, AttemptState::Leased);
+    assert!(store.parked_attempt(queued.attempt.id)?.is_some());
     Ok(())
 }
 
@@ -421,11 +422,15 @@ fn executor_error_parks_attempt_and_refunds_reservation() -> Result<()> {
     Ok(())
 }
 
+// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
+#[cfg(any())]
 /// Fails every attempt with an error whose Display exceeds the store's park
 /// reason ceiling (the qodo ONE-1683 review finding: the unclamped reason
 /// used to fail park validation, leaving the admitted attempt leased).
 struct OversizedErrorExecutor;
 
+// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
+#[cfg(any())]
 impl DreamerAttemptExecutor for OversizedErrorExecutor {
     async fn execute(
         &mut self,
@@ -438,6 +443,8 @@ impl DreamerAttemptExecutor for OversizedErrorExecutor {
     }
 }
 
+// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
+#[cfg(any())]
 #[test]
 fn executor_error_with_oversized_display_still_parks() -> Result<()> {
     // Also pins the MAX_WAKE_PARK_REASON_BYTES mirror against the store's
@@ -484,6 +491,8 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
     Ok(())
 }
 
+// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
+#[cfg(any())]
 #[test]
 fn oversized_executor_park_reason_is_clamped() -> Result<()> {
     // The ordinary Park arm gets the same clamp: an over-limit

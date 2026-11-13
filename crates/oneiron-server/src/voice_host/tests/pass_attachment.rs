@@ -214,6 +214,8 @@ fn consolidation_factory(fixture: &Fixture) -> ConsolidationExecutorFactory {
         oneiron::llm::HostInferenceBinding::Advertised {
             model,
             locality: oneiron::ModelLocality::OwnServer,
+            // Paid, as before FIX 10592: no keyless attestation.
+            keyless: false,
         },
         Some(Arc::new(|_: &oneiron::LlmRequest| true)),
         Box::new(UnusedSink),
@@ -222,6 +224,9 @@ fn consolidation_factory(fixture: &Fixture) -> ConsolidationExecutorFactory {
 
 fn voice_config(vault: &Arc<Vault>) -> VoiceHostConfig {
     let mut runtime = RuntimeConfig::default();
+    runtime.role_defaults.summarizer.mode = crate::runtime::RuntimeMode::OneironCloud;
+    runtime.role_defaults.summarizer.provider_kind =
+        crate::runtime::RuntimeProviderKind::OneironCloud;
     runtime.role_defaults.summarizer.model = "test/tiny@v1".to_owned();
     VoiceHostConfig::new(
         Arc::clone(vault),
@@ -261,10 +266,13 @@ fn seven_units() -> LlmResponse {
             role: LlmMessageRole::Assistant,
             content: vec![ContentPart::Text {
                 text: r#"{"entity_labels":[],"salient_terms":[]}"#.to_owned(),
+                signature: None,
             }],
         },
         usage,
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -354,6 +362,9 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
         now_ms: 11_000,
         prepared_wake: None,
         prepared_attempt: None,
+        cancel: None,
+        device_cancel: None,
+        spend_meter: None,
     };
     let mut executor = factory.executor(&guard).unwrap();
     let execution = executor.execute(&admitted, &mut ctx);
@@ -442,8 +453,9 @@ async fn either_shutdown_owner_cancels_voice_and_stops_existing_supervisor() {
         let factory = consolidation_factory(&fx).with_pass_attachment(Box::new(config));
         let token = host.open("pending".to_owned()).unwrap();
         let work = host.prepare(&token, 1, "text".to_owned(), false).unwrap();
-        let (ticks, _wake, _hint) =
-            PushTick::channel(oneiron_driver::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+        // The coalesce floor at the vault's shipped `session_idle_floor_seconds`
+        // (1,200 s): the driver's constant became that policy row (db6e935657e).
+        let (ticks, _wake, _hint) = PushTick::channel(1_200 * 1_000);
         let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
         let handle = supervisor.shutdown_handle();
         let (result, report, call) = tokio::join!(work.run(), supervisor.run(), async {

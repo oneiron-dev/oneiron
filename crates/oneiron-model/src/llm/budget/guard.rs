@@ -174,7 +174,7 @@ impl BudgetGuard {
     /// policy or spend (FIX 8623). The usage a call reports stays its own.
     pub fn admit_local(&self) -> Result<BudgetAdmission, BudgetDenied> {
         let mut state = self.lock_state();
-        let lease = state.issue_lease(0, false, "local", None);
+        let lease = state.issue_lease(0, false, "local", None)?;
         let read = state.read();
         Ok(BudgetAdmission {
             lease,

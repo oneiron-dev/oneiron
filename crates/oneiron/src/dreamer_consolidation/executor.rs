@@ -113,6 +113,12 @@ pub(super) enum PartitionRun {
     Refused {
         reason: String,
     },
+    /// A spend scope refused a step for good: the try ends `Failed` with
+    /// `reason`, `refusal` typed beside it (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    BudgetRefused {
+        reason: String,
+        refusal: crate::store::model_step_submission::StepBudgetRefusal,
+    },
     Held {
         candidates: Vec<VerifiedCandidate>,
         retry_at_ms: u64,
@@ -120,6 +126,16 @@ pub(super) enum PartitionRun {
 }
 
 impl PartitionRun {
+    /// The run a failed step ends: a spend scope's refusal for good,
+    /// typed, or a refusal the attempt asks again after its retry delay.
+    pub(super) fn refused_by(error: DurableStepError) -> Self {
+        let reason = error.to_string();
+        match error {
+            DurableStepError::BudgetRefused(refusal) => Self::BudgetRefused { reason, refusal },
+            _ => Self::Refused { reason },
+        }
+    }
+
     /// This run with work that waits on a role's answer: what it took is kept,
     /// and the attempt comes back to read the ask again.
     pub(super) fn waiting_on_ask(self, now_ms: u64) -> Self {
@@ -297,6 +313,9 @@ impl ConsolidationExecutor<'_> {
                 charges.record_usage(&usage);
                 Ok(PartitionRun::Checkpoint)
             }
+            // A spend scope refused the step for good: the try ends Failed,
+            // and no open conflict waits for a merge that never runs.
+            error @ DurableStepError::BudgetRefused(_) => Err(error),
             error => {
                 resources.require_output(resources.scope())?;
                 let mut decisions = Vec::new();

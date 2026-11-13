@@ -12,13 +12,11 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
-use super::codec::commitment_claim_candidate_from_body;
+use super::codec::{commitment_claim_candidate_from_body, inert_commitment_claim_candidate};
 use super::{
     CommitmentRecord, CommitmentStatus, PREDICATE_COMMITMENT_RECORD, commitment_claim_candidate,
     decode_commitment_claim, decode_commitment_value,
 };
-
-pub(super) use crate::write_envelope::commitment_transition::STATUS_CHANGE_MINTS_SUCCESSOR;
 
 impl Vault {
     /// The head of a commitment's status chain: `id` itself, or the
@@ -112,6 +110,30 @@ impl Vault {
         self.apply_commitment_candidate(id, candidate, envelope, valid_time, learned_at)
     }
 
+    /// Births an INERT `commitment.record` claim at `id` in the caller's
+    /// transaction: a promise a signing document's draft names before anyone
+    /// signs it (ARCH-0064 §3). It enters no due index. When the document
+    /// completes, [`Self::update_commitment_status_in_txn`] opens it; a
+    /// decline, void or expiry releases it.
+    pub(crate) fn put_inert_commitment_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &CommitmentRecord,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        if self.store.port_entity_record(wtxn, id)?.is_some() {
+            return Err(Error::InvalidClaimBody(
+                "commitment claim id already exists",
+            ));
+        }
+        let candidate = inert_commitment_claim_candidate(record)?
+            .with_validity(Some(occurred.start), Some(occurred.end));
+        apply_commitment_ops(self, wtxn, *id, candidate, envelope, occurred, learned_at)
+    }
+
     /// Reads a `commitment.record` claim at the head of its status chain, so
     /// the status is the commitment's current one. Missing claims return
     /// `Ok(None)`; non-commitment CLAIM entities fail typed.
@@ -189,9 +211,9 @@ impl Vault {
     /// The status writer shared by the native lifecycle and credential-bound
     /// doors. Target, transition, evidence and Gate are judged in this writer.
     ///
-    /// With [`STATUS_CHANGE_MINTS_SUCCESSOR`], the new status is a successor
-    /// claim that supersedes `id` in this transaction, and a retry that finds
-    /// the chain already closed with `next` writes nothing.
+    /// The new status is a successor claim that supersedes `id` in this
+    /// transaction (FIX 9726), and a retry that finds the chain already closed
+    /// with `next` writes nothing.
     pub(crate) fn update_commitment_status_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -201,14 +223,12 @@ impl Vault {
         learned_at: u64,
         evidence: Option<rmpv::Value>,
     ) -> Result<()> {
-        if STATUS_CHANGE_MINTS_SUCCESSOR {
-            let head = self.commitment_head_in_txn(wtxn, id)?;
-            if head != *id
-                && let Some(body) = self.get_claim_in_txn(wtxn, &head)?
-                && decode_commitment_claim(&body)?.is_some_and(|record| record.status == next)
-            {
-                return Ok(());
-            }
+        let head = self.commitment_head_in_txn(wtxn, id)?;
+        if head != *id
+            && let Some(body) = self.get_claim_in_txn(wtxn, &head)?
+            && decode_commitment_claim(&body)?.is_some_and(|record| record.status == next)
+        {
+            return Ok(());
         }
         let body = self.require_named_claim_target_active_in(wtxn, id)?;
         if body.predicate != PREDICATE_COMMITMENT_RECORD {
@@ -226,7 +246,7 @@ impl Vault {
         let mut record = decode_commitment_value(&body.value)?;
         if !record.status.can_transition_to(next) {
             return Err(Error::InvalidClaimBody(
-                "commitment status transition requires open source status",
+                "commitment status transition is not allowed from its source status",
             ));
         }
         record.status = next;
@@ -238,11 +258,6 @@ impl Vault {
             start: header.occurred_start,
             end: header.occurred_end,
         };
-        if !STATUS_CHANGE_MINTS_SUCCESSOR {
-            return apply_commitment_ops(
-                self, wtxn, *id, candidate, envelope, occurred, learned_at,
-            );
-        }
         // The predecessor keeps the status it held; the successor carries the
         // new one, and the lifecycle closes and links the two together.
         let successor = EntityId::now();

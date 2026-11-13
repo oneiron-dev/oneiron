@@ -150,7 +150,7 @@ async fn barrier(socket: &mut Socket) {
     send(
         socket,
         TAG_RPC,
-        json!({"method":"hydrate","requestId":7,"params":{"refs":[]}}),
+        json!({"method":"vault.hydrate","requestId":7,"params":{"refs":[]}}),
     )
     .await;
     let reply = app(socket, TAG_RPC).await;
@@ -204,7 +204,7 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":7,"method":"hydrate",
+        json!({"requestId":7,"method":"vault.hydrate",
         "params":{"refs":witnessed.message_short_ids}}),
     )
     .await;
@@ -242,7 +242,7 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":8,"method":"hydrate","params":{"refs":[pinned_ref]}}),
+        json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[pinned_ref]}}),
     )
     .await;
     let pinned = app(&mut socket, TAG_RPC).await;
@@ -267,7 +267,7 @@ async fn production_read_socket_closes_after_bound_jti_revocation() {
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":7,"method":"hydrate","params":{"refs":[ACTOR]}}),
+        json!({"requestId":7,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
     )
     .await;
     let read = app(&mut socket, TAG_RPC).await;
@@ -279,7 +279,7 @@ async fn production_read_socket_closes_after_bound_jti_revocation() {
     send(
         &mut socket,
         TAG_RPC,
-        json!({"requestId":8,"method":"hydrate","params":{"refs":[ACTOR]}}),
+        json!({"requestId":8,"method":"vault.hydrate","params":{"refs":[ACTOR]}}),
     )
     .await;
     revoked_close(&mut socket).await;
@@ -383,6 +383,10 @@ async fn production_sub_errors_keep_engine_codes_and_scope_refusals_are_not_clos
                 world_ref: None,
                 facet: Some("zz999:ff".to_owned()),
                 kinds: None,
+                worlds: None,
+                project_refs: Vec::new(),
+                conversation_refs: Vec::new(),
+                person_ref: None,
             },
             100,
             None,
@@ -469,9 +473,20 @@ async fn established_socket_resumes_slim_on_work_but_not_keepalive() {
             b"socket test sender",
         )
         .unwrap();
+    // The owner mints it, as the owner's own act; the vault stamps its time.
+    let owner_actor = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(
+            owner_actor,
+            &owner_actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
     vault
         .mint_standing_outbound_grant(
-            &oneiron::EntityId::from_bytes([0xBC; 16]).unwrap(),
+            &owner,
+            oneiron::EntityId::from_bytes([0xBC; 16]).unwrap(),
             &GrantMintIntent {
                 principal_ref: actor_id.to_hex(),
                 origin_component_id: "socket-slim-test".into(),
@@ -481,7 +496,6 @@ async fn established_socket_resumes_slim_on_work_but_not_keepalive() {
                     verb_class: "send".into(),
                 },
             },
-            2,
         )
         .unwrap();
     let runtime = tokio::runtime::Handle::current();

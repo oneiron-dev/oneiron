@@ -77,10 +77,15 @@ pub(crate) mod tests {
         let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
         let tempdir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(tempdir.path(), beam_vault_config()).expect("vault opens");
-        load_dataset(&vault, &manifest, Some(&fixture)).expect("fixture loads");
+        let loaded = load_dataset(&vault, &manifest, Some(&fixture)).expect("fixture loads");
 
-        let pack =
-            run_deterministic_context_pack(&vault, &fixture.cases[0]).expect("deterministic run");
+        // The arm's own call (arms.rs): the case's query vector from the loaded dataset.
+        let query_vector = loaded
+            .query_vector_by_case_id
+            .get(&fixture.cases[0].case_id)
+            .map(Vec::as_slice);
+        let pack = run_deterministic_context_pack(&vault, &fixture.cases[0], query_vector)
+            .expect("deterministic run");
         let serialized_text =
             std::str::from_utf8(&pack.serialized).expect("serialized context pack is UTF-8");
 
@@ -194,7 +199,8 @@ neighbors:
             offline_amortized_cost: CostComponentInput::default(),
         };
 
-        let pack = super::super::arms::configured_context_pack_builder(&vault, &case)
+        // The case carries no query embedding, so the arm passes no query vector.
+        let pack = super::super::arms::configured_context_pack_builder(&vault, &case, None)
             .run()
             .expect("a pack");
 

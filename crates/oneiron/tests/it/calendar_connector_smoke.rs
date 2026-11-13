@@ -34,6 +34,10 @@ use oneiron::calendar::claims::{
     CalendarOrigin, CalendarPassportDirection, PREDICATE_CALENDAR_ORIGIN,
     PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND,
 };
+use oneiron::calendar::connectors::door::{
+    self, CalendarConnectorConfigureRequest, CalendarConnectorKillRequest,
+    CalendarConnectorOperation, CalendarConnectorRequest,
+};
 use oneiron::calendar::connectors::{
     CALDAV_SYNC_ATTEMPT_KIND, CalendarConnectorError, CalendarConnectorSeatConfig,
     CalendarConnectorSeatState, CalendarConnectorSyncPayload, CalendarRemoteTransport,
@@ -50,12 +54,15 @@ use oneiron::calendar::{
     CalendarError, PREDICATE_CALENDAR_EVENT_OUTCOME, WallTime, parse_ics_feed, utc_to_wall,
     wall_to_utc,
 };
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::ingest::ICS_FEED_SOURCE_ID;
+use oneiron::memory::{ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest};
 use oneiron::registry::ENTITY_TYPE_EVENT;
+use oneiron::store::GateDecisionId;
 use oneiron::{
-    AttemptQueue, ClaimLifecycleStatus, ClaimSource, EntityId, TimeRange, Vault, VaultConfig,
-    attempt_queue::AttemptState, attempt_queue::ClaimAttempt, attempt_queue::ClaimOutcome,
-    attempt_queue::CompleteAttempt,
+    AttemptQueue, ClaimLifecycleStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault,
+    VaultConfig, attempt_queue::AttemptState, attempt_queue::ClaimAttempt,
+    attempt_queue::ClaimOutcome, attempt_queue::CompleteAttempt,
 };
 
 /// Fixed run instants.
@@ -224,6 +231,11 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open_unseeded_for_test(dir.path(), cfg).expect("open vault");
+    // The host installs this device's keystore after each open; the delete
+    // door loads this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
@@ -236,6 +248,11 @@ fn temp_vault_seeded() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
+    // The host installs this device's keystore after each open; the delete
+    // door loads this install's keys from it (P6c).
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     crate::common::provision_engine_machines(&vault);
     (dir, vault)
 }
@@ -668,14 +685,132 @@ impl GoogleInternalWire for StubGoogleInternalWire {
 // Run + claim readers
 // ---------------------------------------------------------------------------
 
-/// One connector sync run with the oracle's fixed jitter seed.
+/// The CalDAV discovery URL every seat here is installed with.
+const SEAT_ENDPOINT: &str = "https://calendar.example.test/";
+
+/// The vault's owner, authenticated: the seats here are the owner's.
+fn seat_owner(vault: &Vault) -> (EntityId, AuthenticatedOwner) {
+    let id = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let owner = vault
+        .authenticate_owner(id, "principal:owner", true, GateDecisionId::now())
+        .expect("owner proof");
+    (id, owner)
+}
+
+/// The owner approves every passport the import filed on `event`. The import
+/// gate files them pending review, and a write takes its UID and SEQUENCE only
+/// from an admitted passport (FIX 8650, #4292; Engine ruling
+/// T0F-CALDAV-PENDING-PASSPORT-UID = A, Tue 10 Nov 09:02), so a write-back of
+/// a pulled EVENT follows the owner's approval of the import.
+fn approve_import_passports(vault: &Vault, event: EntityId) {
+    let (id, owner) = seat_owner(vault);
+    let memory = vault.memory(id, EdgeActorClass::Human);
+    for (passport, _) in live_passports_for_event(vault, &event).expect("passports") {
+        let claim_ref = passport.to_hex();
+        let review = memory
+            .claim_review_as_owner(
+                &owner,
+                &ClaimProposalReviewRequest {
+                    claim_ref: claim_ref.clone(),
+                    grant_ref: None,
+                },
+            )
+            .expect("review the import's passport");
+        memory
+            .claim_settle_as_owner(
+                &owner,
+                &ClaimSettleRequest {
+                    claim_ref,
+                    review_id: review.review_id,
+                    decision: ClaimSettleDecision::Approve,
+                    grant_ref: None,
+                },
+            )
+            .expect("approve the import's passport");
+    }
+}
+
+/// The installed registration of `seat`'s config, read through the owner's
+/// door.
+fn installed_row(
+    vault: &Vault,
+    seat: &CalendarConnectorSeatState,
+) -> door::CalendarConnectorRegistration {
+    let (id, owner) = seat_owner(vault);
+    door::get(
+        &vault.memory(id, EdgeActorClass::Human),
+        &owner,
+        &CalendarConnectorRequest {
+            seat_ref: seat.config.seat_ref.clone(),
+        },
+    )
+    .expect("read the installed seat")
+    .expect("the seat is installed")
+}
+
+/// The calendar operation on `seat` (FIX 12531/12496, 11b8ba72a77): its owner
+/// installs the seat through the configure door, as the host does, and the
+/// operation binds that owner to the exact installed row. A killed `seat` is
+/// killed through the owner's kill door, with its reason.
+fn operation(vault: &Vault, seat: &CalendarConnectorSeatState) -> CalendarConnectorOperation {
+    let (id, owner) = seat_owner(vault);
+    let memory = vault.memory(id, EdgeActorClass::Human);
+    door::configure(
+        &memory,
+        &owner,
+        &CalendarConnectorConfigureRequest {
+            config: seat.config.clone(),
+            endpoint: SEAT_ENDPOINT.to_owned(),
+        },
+    )
+    .expect("the owner installs the seat");
+    let mut row = installed_row(vault, seat);
+    if let Some(kill) = &seat.kill_switch
+        && !row.seat.kill_switch_engaged()
+    {
+        row = door::kill(
+            &memory,
+            &owner,
+            &CalendarConnectorKillRequest {
+                seat_ref: seat.config.seat_ref.clone(),
+                reason_ref: kill.reason_ref.clone(),
+            },
+        )
+        .expect("the owner kills the seat");
+    }
+    CalendarConnectorOperation::new(vault, owner, row).expect("the operation on the installed seat")
+}
+
+/// Records `outcome` on `seat`'s installed row, as the host does after each
+/// sync it runs: a re-enqueued sync's cursor is where the next one resumes.
+fn observe_sync(vault: &Vault, seat: &CalendarConnectorSeatState, outcome: &CalendarSyncOutcome) {
+    let (id, owner) = seat_owner(vault);
+    door::observe_sync(
+        &vault.memory(id, EdgeActorClass::Human),
+        &owner,
+        &installed_row(vault, seat),
+        outcome,
+    )
+    .expect("the host records the sync");
+}
+
+/// One connector sync run with the oracle's fixed jitter seed, on the
+/// installed seat; the run reads `seat`'s cursor.
 fn run_sync(
     vault: &Vault,
     seat: &CalendarConnectorSeatState,
     transport: &dyn CalendarRemoteTransport,
     now: u64,
 ) -> CalendarSyncOutcome {
-    run_calendar_connector_sync(vault, seat, transport, now, 7).expect("connector sync")
+    let operation = operation(vault, seat);
+    assert_eq!(
+        operation.registration().seat.cursor,
+        seat.cursor,
+        "the installed seat resumes from this run's cursor"
+    );
+    run_calendar_connector_sync(vault, &operation, transport, now, 7).expect("connector sync")
 }
 
 /// Destructures a `Reenqueued` outcome's counters.
@@ -844,7 +979,12 @@ fn register_secret_canary(vault: &Vault, name: &str, canary: &str) {
         ),
     ]);
     let record_body = Value::Map(vec![
-        (Value::from("schema_version"), Value::from(1_u64)),
+        (
+            Value::from("schema_version"),
+            Value::from(u64::from(
+                oneiron::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+            )),
+        ),
         (Value::from("name"), Value::from(name)),
         (Value::from("class"), Value::from("custody-portable")),
         (Value::from("device_only"), Value::from(false)),
@@ -860,6 +1000,9 @@ fn register_secret_canary(vault: &Vault, name: &str, canary: &str) {
         (Value::from("manifest_ref"), Value::from("")),
         (Value::from("declared_paths"), Value::Array(vec![])),
         (Value::from("policy_floor_snapshot"), floor),
+        // An ordinary registration's model-access flag (#5169): stored
+        // explicitly, as the custody doors register it.
+        (Value::from("model_reveal_allowed"), Value::from(true)),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &record_body).expect("encode custody body");
@@ -892,7 +1035,10 @@ fn caldav_sync_token_resume_is_idempotent() {
     let CalendarSyncOutcome::Reenqueued { next_cursor, .. } = &first else {
         panic!("re-enqueued");
     };
-    assert_eq!(next_cursor.as_deref(), Some("tok-resume-1"));
+    // The cursor records the zone the sync gave the collection's resources
+    // beside the DAV token (FIX 19192, 28b461cf238; Engine ruling
+    // T0F-CALDAV-CURSOR-ZONE = A). The stub collection names none.
+    assert_eq!(next_cursor.as_deref(), Some("oneiron-zone:\ntok-resume-1"));
     assert_eq!(connector.wire().sync_cursors(), vec![None]);
     let event = resolve_event_by_uid(&vault, "uid-resume@x")
         .expect("resolve")
@@ -914,7 +1060,10 @@ fn caldav_sync_token_resume_is_idempotent() {
         "/stub/work/uid-resume.ics",
         Some("v1"),
     )));
-    let resumed_seat = caldav_seat().with_cursor("tok-resume-1");
+    observe_sync(&vault, &seat, &first);
+    // The resumed seat reads the bare DAV token back out of that cursor: the
+    // wire is sent `tok-resume-1` below.
+    let resumed_seat = caldav_seat().with_cursor(next_cursor.as_deref().expect("a resume cursor"));
     let second = run_sync(&vault, &resumed_seat, &connector, T1);
     assert_eq!(
         counters(&second),
@@ -966,7 +1115,8 @@ fn caldav_local_write_then_poll_is_acknowledged_not_reemitted() {
 
     // The local write stages its outbox, PUTs conditionally, and records the
     // outbound passport.
-    let receipt = write_calendar_event(&vault, &seat, &connector, event, T1).expect("write");
+    let receipt = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T1)
+        .expect("write");
     assert!(receipt.uid.ends_with("@calendar.invalid"));
     let puts = connector.wire().put_requests();
     assert_eq!(puts.len(), 1, "exactly one conditional PUT");
@@ -1041,6 +1191,7 @@ fn caldav_outbox_is_durable_before_remote_call() {
     let event = resolve_event_by_uid(&vault, "uid-durable@x")
         .expect("resolve")
         .expect("event");
+    approve_import_passports(&vault, event);
 
     // Inject a transport failure: the provider call never lands.
     connector
@@ -1050,7 +1201,7 @@ fn caldav_outbox_is_durable_before_remote_call() {
             operation: "put",
             detail: "connection reset by peer".to_owned(),
         })));
-    let failed = write_calendar_event(&vault, &seat, &connector, event, T1);
+    let failed = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T1);
     assert!(
         matches!(failed, Err(CalendarConnectorError::Transport { .. })),
         "the transport failure propagates: {failed:?}"
@@ -1085,7 +1236,8 @@ fn caldav_outbox_is_durable_before_remote_call() {
     connector
         .wire()
         .queue_put(PutScript::AcceptWithEtag("v2".to_owned()));
-    let receipt = write_calendar_event(&vault, &seat, &connector, event, T2).expect("retry lands");
+    let receipt = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T2)
+        .expect("retry lands");
     assert_eq!(receipt.etag.as_deref(), Some("v2"));
     assert_eq!(receipt.sequence, 2);
     let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
@@ -1127,7 +1279,7 @@ fn caldav_remote_applied_resume_commits_without_second_upsert() {
 
     // The provider accepts the write, then the fixture removes the local EVENT
     // before passport commit. The durable receipt must remain RemoteApplied.
-    let failed = write_calendar_event(&vault, &seat, &transport, event, T1);
+    let failed = write_calendar_event(&vault, &operation(&vault, &seat), &transport, event, T1);
     assert!(
         failed.is_err(),
         "the forced local split must interrupt commit"
@@ -1151,7 +1303,7 @@ fn caldav_remote_applied_resume_commits_without_second_upsert() {
         mint_local_event(&vault, 0x52, "resume after remote success"),
         event
     );
-    let resumed = write_calendar_event(&vault, &seat, &transport, event, T2)
+    let resumed = write_calendar_event(&vault, &operation(&vault, &seat), &transport, event, T2)
         .expect("remote-applied resume commits locally");
     assert_eq!(resumed, persisted_receipt);
     assert_eq!(
@@ -1179,7 +1331,7 @@ fn caldav_remote_applied_divergent_receipt_settles_on_the_staged_hash() {
 
     // The provider accepts the exact UID/SEQUENCE but canonicalizes the stored
     // representation. A forced local split leaves that receipt durable.
-    let failed = write_calendar_event(&vault, &seat, &transport, event, T1);
+    let failed = write_calendar_event(&vault, &operation(&vault, &seat), &transport, event, T1);
     assert!(
         failed.is_err(),
         "the forced local split must interrupt commit"
@@ -1211,7 +1363,7 @@ fn caldav_remote_applied_divergent_receipt_settles_on_the_staged_hash() {
         mint_local_event(&vault, 0x53, "resume canonicalized remote success"),
         event
     );
-    let resumed = write_calendar_event(&vault, &seat, &transport, event, T2)
+    let resumed = write_calendar_event(&vault, &operation(&vault, &seat), &transport, event, T2)
         .expect("divergent receipt hash commits");
     assert_eq!(resumed, persisted_receipt);
     assert_eq!(transport.requests().len(), 1, "resume performs zero PUTs");
@@ -1253,6 +1405,7 @@ fn caldav_if_match_mismatch_reconciles_before_retry() {
     let event = resolve_event_by_uid(&vault, "uid-mismatch@x")
         .expect("resolve")
         .expect("event");
+    approve_import_passports(&vault, event);
     let passport_id = live_passports_for_event(&vault, &event)
         .expect("passports")
         .first()
@@ -1275,7 +1428,7 @@ fn caldav_if_match_mismatch_reconciles_before_retry() {
         Some("v2"),
     )));
 
-    let result = write_calendar_event(&vault, &seat, &connector, event, T1);
+    let result = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T1);
     let (expected, actual) = match result {
         Err(CalendarConnectorError::EtagMismatch {
             expected, actual, ..
@@ -1307,7 +1460,7 @@ fn caldav_if_match_mismatch_reconciles_before_retry() {
 
     // A blind retry remains blocked on the reconciliation row. It neither
     // re-derives SEQUENCE 2 with ETag v2 nor mutates the provider again.
-    let retry = write_calendar_event(&vault, &seat, &connector, event, T2);
+    let retry = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T2);
     assert!(matches!(
         retry,
         Err(CalendarConnectorError::EtagMismatch {
@@ -1530,6 +1683,7 @@ fn google_internal_dogfood_reads_and_writes_own_calendar() {
         next_cursor: Some("g-tok-2".to_owned()),
         changes: Vec::new(),
     }));
+    observe_sync(&vault, &seat, &first);
     let resumed = run_sync(
         &vault,
         &google_seat().with_cursor("g-tok-1"),
@@ -1545,7 +1699,9 @@ fn google_internal_dogfood_reads_and_writes_own_calendar() {
 
     // Conditional write to the same calendar: UID preserved, SEQUENCE bumped,
     // the known ETag rides as the precondition.
-    let receipt = write_calendar_event(&vault, &seat, &connector, event, T2).expect("write");
+    approve_import_passports(&vault, event);
+    let receipt = write_calendar_event(&vault, &operation(&vault, &seat), &connector, event, T2)
+        .expect("write");
     assert_eq!(receipt.uid, "gid-standup@x", "write preserves the UID");
     assert_eq!(receipt.sequence, 2, "the calendar mutation bumps SEQUENCE");
     let upserts = connector.wire().upsert_requests();
@@ -1621,7 +1777,9 @@ fn credential_canaries_never_escape_custody() {
     let event = resolve_event_by_uid(&vault, "uid-canary@x")
         .expect("resolve")
         .expect("event");
-    let receipt = write_calendar_event(&vault, &caldav_seat, &caldav, event, T1).expect("write");
+    let receipt =
+        write_calendar_event(&vault, &operation(&vault, &caldav_seat), &caldav, event, T1)
+            .expect("write");
 
     let mut google_cfg = google_config();
     google_cfg.secret_ref = "google-internal:dogfood-token".to_owned();
@@ -1649,6 +1807,7 @@ fn credential_canaries_never_escape_custody() {
     assert_eq!(
         caldav.wire().secret_refs(),
         vec![
+            "caldav:work-app-password".to_owned(),
             "caldav:work-app-password".to_owned(),
             "caldav:work-app-password".to_owned(),
         ]
@@ -1796,7 +1955,7 @@ fn calendar_connector_kill_switch_revokes_and_stops() {
         sync_calls_before,
         "no transport I/O ran"
     );
-    let write = write_calendar_event(&vault, &killed, &caldav, event, T2);
+    let write = write_calendar_event(&vault, &operation(&vault, &killed), &caldav, event, T2);
     assert!(matches!(
         write,
         Err(CalendarConnectorError::KillSwitchEngaged)
@@ -2137,7 +2296,14 @@ fn connector_drift_preserves_native_origin_and_authored_fields() {
         )
         .unwrap();
     let connector = CalDavConnector::new(StubCalDavWire::default());
-    let receipt = write_calendar_event(&vault, &caldav_seat(), &connector, event, T0).unwrap();
+    let receipt = write_calendar_event(
+        &vault,
+        &operation(&vault, &caldav_seat()),
+        &connector,
+        event,
+        T0,
+    )
+    .unwrap();
     let mut spec = EventSpec::new("native-drift@x", receipt.sequence + 1);
     spec.summary = "remote title";
     let drift = String::from_utf8(body(&[spec]))

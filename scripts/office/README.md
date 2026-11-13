@@ -68,13 +68,17 @@ requiring a flaky real hang. The local clean source was generated with
 
 ## Environment approval and receipt gates
 
-`environment.json` (version 2) is the versioned approved Mac/renderer pin. It
+`environment.json` (version 3) is the versioned approved Mac/renderer pin. It
 fixes the PowerPoint and macOS builds, PDFKit version, observer, locale, raster
-scale and harness version, and holds one approved font-inventory digest per
-account in `approved_font_inventories`. The oracle records the observed pin,
-with the effective account (`font_account`) and its `font_inventory_sha256`,
-and refuses to open a candidate when any approved field differs or the
-account's digest is not the approved one. Update the configuration explicitly
+scale and harness version, holds one approved font-inventory digest per role
+(`owner`, `isolated`) in `approved_font_inventories`, and lists the isolated
+test accounts in `isolated_accounts`. The owner role is held by the account
+that the untracked file `~/.config/oneiron/office-owner-account` names; any
+other account holds no role. The oracle records the observed pin, with the
+effective account (`font_account`), its role (`font_role`) and its
+`font_inventory_sha256`, and refuses to open a candidate when any approved
+field differs, the account holds no role, or the role's digest is not the
+approved one. Update the configuration explicitly
 after checking a deliberate Mac or Office upgrade; never change it just to turn
 an unsupported result green. The committed Mac mini receipts predate the
 per-account font pin and show the other reference values.
@@ -84,16 +88,16 @@ session's activated list: sorted JSON rows `{root_label, relative_path, bytes,
 sha256}` over `/System/Library/Fonts`, `/Library/Fonts`, the account's
 `~/Library/Fonts` and PowerPoint's bundled `Contents/Resources/DFonts` and
 `Fonts`, with a row for each missing root or unreadable file. Approve it on vel,
-in a source checkout, once per account (`owen` over ssh, `decktest` in its own
-logged-in Terminal):
+in a source checkout, once per role, as an account that holds it (the owner
+account over ssh, `decktest` in its own logged-in Terminal):
 
 ```sh
 python3 -I scripts/office/deck_oracle.py fonts
 python3 -I scripts/office/deck_oracle.py fonts --approve scripts/office/environment.json
 ```
 
-`fonts` prints the rows and the digest; `--approve` writes only the running
-account's digest, atomically. A refusal prints the observed digest and this
+`fonts` prints the rows, the role and the digest; `--approve` writes only the
+running account's digest, under its role, atomically. A refusal prints the observed digest and this
 command. Commit the change and start a new run.
 
 Before PowerPoint opens a deck, the oracle checks that the private staged

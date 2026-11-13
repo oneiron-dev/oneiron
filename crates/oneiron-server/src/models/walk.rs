@@ -339,6 +339,8 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
         LlmError::BudgetDenied(BudgetDenied::HostCheck) => "host_check",
+        LlmError::BudgetDenied(BudgetDenied::Unfunded) => "unfunded",
+        LlmError::BudgetDenied(BudgetDenied::ResidentShareSpent { .. }) => "resident_share_spent",
     }
 }
 

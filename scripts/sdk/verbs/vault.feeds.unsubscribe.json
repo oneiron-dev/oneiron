@@ -1,0 +1,11 @@
+{
+  "name": "vault.feeds.unsubscribe",
+  "description": "Ends one of the caller's change feed subscriptions; answers whether it stood.",
+  "input": "crate::feeds::FeedSubscriptionRequest",
+  "output": "bool",
+  "call": "memory.feed_unsubscribe(input.subscription)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "openapi": true,
+  "section": false
+}

@@ -61,7 +61,7 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                 let owner_key = authority_key_from_ed(&owner);
                 let consent_key = authority_key_from_ed(&consent);
                 let signer_key = authority_key_from_ed(&signer);
-                let genesis = genesis_entry(100, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+                let genesis = genesis_entry(100, 1);
                 let vault = genesis_vault_id(&genesis).unwrap();
                 let enroll_consent = enroll_device_entry(
                     vault,

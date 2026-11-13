@@ -15,6 +15,7 @@ fn put_op(data: Vec<u8>) -> BatchOp {
         entity_type: 1,
         occurred: TimeRange { start: 1, end: 1 },
         learned_at: 1,
+        row_version: None,
         data,
         allow_maintenance: false,
         allow_reserved_predicate: false,
@@ -31,6 +32,7 @@ fn journal_entry(scope: JournalScope, role: JournalRole, op: BatchOp) -> Journal
         learned_at: 1,
         occurred: TimeRange { start: 1, end: 1 },
         op,
+        source_run: None,
     }
 }
 

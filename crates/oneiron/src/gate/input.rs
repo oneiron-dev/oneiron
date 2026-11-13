@@ -25,6 +25,8 @@ pub(crate) enum GateContentKind {
     /// ONE-1686 (RT-04): one witnessed MESSAGE envelope, gated at the shared
     /// `Memory::witness` write boundary. See `gate::witness_message`.
     WitnessMessage,
+    /// SPAWN-KNOB: one act an agent's grant powers decide (`spawn`, `save_agent`).
+    AgentPower,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -39,6 +41,7 @@ impl GateContentKind {
             Self::ExternalEffect => "external_effect",
             Self::Repair => "repair",
             Self::WitnessMessage => "witness_message",
+            Self::AgentPower => "agent_power",
         }
     }
 }
@@ -64,6 +67,11 @@ pub(crate) struct GateProvenanceHandles {
     /// one-shot digest only. Never an authority source; no Grant reads it.
     pub(crate) approval_target: Option<super::effect::ApprovalTarget>,
     pub(crate) dreamer_run_id: Option<String>,
+    /// Whether the write is a `vault.derive` commit's (untangle 6.7a): the
+    /// import floor that holds a Dreamer run's write holds it too, since its
+    /// source is the trust of the rows it cites. Read off the write's own
+    /// provenance where the claim door builds this. Never an authority source.
+    pub(crate) derive_commit: bool,
     /// FIX 11921: the agent-dispatch attempt whose run makes this effect, by
     /// its 16 id bytes ([`crate::WriteActor::run_attempt`]), filled where a
     /// run's actor builds the effect. The external-effect door meets that

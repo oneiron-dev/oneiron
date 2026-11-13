@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::StandingBlockEditReceipt",
   "call": "crate::task_verb::sdk::edit_own_standing_block(memory, input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "proposes": true,
   "admission": {
     "unrestricted_record_scope": true

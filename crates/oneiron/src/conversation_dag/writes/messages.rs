@@ -36,9 +36,9 @@ const MESSAGE_AXES: [&str; 7] = [
     "order",
 ];
 
-/// Appends `input`, a MESSAGE of its `containing_turn`, at `id`. A thread
-/// reply, a summary reply, HEAD, a session, recipients and an audience are
-/// its TURN's, never a MESSAGE's.
+/// Appends `input`, a MESSAGE of its `containing_turn`, at `id`, its record
+/// gate-checked by `check_policy`. A thread reply, a summary reply, HEAD, a
+/// session, recipients and an audience are its TURN's, never a MESSAGE's.
 pub(super) fn append_message_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -46,6 +46,7 @@ pub(super) fn append_message_in_txn(
     summary: Option<EntityId>,
     thread: bool,
     id: EntityId,
+    check_policy: super::AppendPolicy,
 ) -> Result<AppendedRecord> {
     let turn = input
         .containing_turn
@@ -145,7 +146,7 @@ pub(super) fn append_message_in_txn(
         &bytes,
         &policy,
     )?;
-    super::super::policy::check_append_policy(vault, txn, &id, input, &bytes)?;
+    check_policy(vault, txn, &id, input, &bytes)?;
     if let Some(quote) = &quote {
         quote::pin_in_txn(vault, txn, quote, input.actor)?;
     }
@@ -183,6 +184,9 @@ pub(super) fn append_message_in_txn(
         batch = batch.text(&id, &[("content", envelope.content)]);
     }
     batch.apply(txn)?;
+    // A TURN that keeps a room row lists the MESSAGE there too
+    // (THREAD-TASK-ONE-SURFACE).
+    crate::workspace_roster::record_room_message_in_txn(vault, txn, turn, id)?;
     // The TURN's words changed: new work for consolidation and the sieve.
     crate::dreamer_consolidation::redirty::redirty_turn_in_txn(vault, txn, &turn)?;
     Ok(AppendedRecord {

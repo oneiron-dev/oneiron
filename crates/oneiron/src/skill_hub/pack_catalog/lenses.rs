@@ -113,6 +113,7 @@ pub(super) fn seed_weave_lens_pack_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'
             source_id,
             hub: &hub,
             publisher: ENGINE_PUBLISHER,
+            agent_author: None,
             foreign: None,
             verdict: PackFitVerdict {
                 fits: true,

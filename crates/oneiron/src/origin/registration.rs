@@ -30,11 +30,13 @@ impl Vault {
         let staged = tempfile::Builder::new()
             .prefix(".register-")
             .tempdir_in(&root)?;
+        // Git before 2.45 rejects --ref-format with a usage exit. The cleared
+        // environment, GIT_CONFIG_NOSYSTEM=1 and GIT_CONFIG_GLOBAL=/dev/null
+        // leave Git's built-in default ref store; GitWire reads files or reftable.
         let args: Vec<String> = [
             "init".to_owned(),
             "--bare".to_owned(),
             "--object-format=sha1".to_owned(),
-            "--ref-format=files".to_owned(),
             "--template=".to_owned(),
             format!(
                 "--initial-branch={}",
@@ -45,13 +47,15 @@ impl Vault {
         .into();
         let initialized = crate::git_wire::run_bridged_git_argv(staged.path(), &args)?;
         if !initialized.success {
-            return Err(Error::InvalidConfig(
+            // The engine builds this argv from validated input, so a non-zero
+            // exit is a host fault (INTERNAL, HTTP 500), not a request-shape error.
+            return Err(Error::Io(std::io::Error::other(
                 crate::git_wire::redact_bridged_failure(
                     &args,
                     initialized.exit_code,
                     &initialized.stderr,
                 ),
-            ));
+            )));
         }
         let destination = root.join(format!("{repo_name}{ORIGIN_REPO_DIR_SUFFIX}"));
         let _guard = lock_repository(&root)?;

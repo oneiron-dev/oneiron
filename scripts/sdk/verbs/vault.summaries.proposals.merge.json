@@ -5,6 +5,7 @@
   "output": "crate::scope_summary::SummaryProposalView",
   "call": "memory.settle_summary_proposal(&input, crate::entity_doc::SettleVerb::Merge)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

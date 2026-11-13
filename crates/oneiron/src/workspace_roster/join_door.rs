@@ -185,14 +185,16 @@ impl Memory<'_> {
 /// Files and decides `request` in the caller's write transaction, so a write
 /// that joins (a DAG append, an offer's settlement) commits with its join.
 ///
-/// `caller` must be a live, bound actor that is the subject's own actor or
-/// its principal: a companion's person, an agent's person, or a live owner
-/// for the vault's own agent. Its filing is the subject's own yes. A payer
-/// filing under a scope it funds gives that payer's yes. The same intent
-/// replays: Ready and refused joins return as stored, a held one decides
-/// again against live facts. The same intent key with another request
-/// refuses. A raw-transaction owner pushes the outcome to live windows once
-/// it commits ([`JoinOutcome::publish_after_commit`], FIX 3458).
+/// `caller` must be a live, bound actor, or one of the vault's own agents
+/// whose definition stands (`Vault::verify_own_agent_write_actor_in_txn`),
+/// that is the subject's own actor or its principal: a companion's person,
+/// an agent's person, or a live owner for the vault's own agent. Its filing
+/// is the subject's own yes. A payer filing under a scope it funds gives
+/// that payer's yes. The same intent replays: Ready and refused joins
+/// return as stored, a held one decides again against live facts. The same
+/// intent key with another request refuses. A raw-transaction owner pushes
+/// the outcome to live windows once it commits
+/// ([`JoinOutcome::publish_after_commit`], FIX 3458).
 pub fn rooms_join_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -200,7 +202,7 @@ pub fn rooms_join_in_txn(
     caller: WriteActor,
     now: u64,
 ) -> Result<JoinOutcome> {
-    vault.verify_write_actor_in_txn(txn, &caller)?;
+    vault.verify_own_agent_write_actor_in_txn(txn, &caller)?;
     let principal = caller_stands_for_in_txn(vault, txn, caller, &request.subject, now)?;
     file_join_in_txn(
         vault,
@@ -517,7 +519,9 @@ fn consent_in_txn(
     now: u64,
     lane: Option<&crate::claim::ScopedRead<'_>>,
 ) -> Result<JoinOutcome> {
-    vault.verify_write_actor_in_txn(txn, &caller)?;
+    // An agent answers the parts a join asks of it as itself: its own
+    // subject yes, or a room's admission as the nearest project's leader.
+    vault.verify_own_agent_write_actor_in_txn(txn, &caller)?;
     let receipt = super::join_history::live_join(&vault.store, txn, &answer.join_ref)?
         .ok_or(Error::EntityNotFound)?;
     if receipt.is_settled() {

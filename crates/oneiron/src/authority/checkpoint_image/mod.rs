@@ -80,7 +80,13 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// 28: a root request's basis carries its bound anchor and its anchor heads' parents (FIX 6556).
 /// 29: an owner's agent Grant mint an image carries may name verb classes (FIX 8735).
 /// 30: an owner's agent Grant mint an image carries may name a host wallet (FIX 7766).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 30;
+/// 31: the fold keeps each world an agent edited with all of its edits and their judged strengths,
+/// for a view that holds any of those edits' Grants refused (FIX 22381).
+/// 32: beside those worlds, an install's fold keeps the cap the fold with no vouch puts on
+/// them, so such a view reads them under the same cap (FIX 23218).
+/// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
+/// working view (row 6 WORKING-VIEW-EDIT).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 33;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

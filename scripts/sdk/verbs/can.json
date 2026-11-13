@@ -5,6 +5,7 @@
   "output": "crate::memory::CanAnswer",
   "call": "memory.can(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "task_work": true,
   "admission": {
     "unrestricted_record_scope": true

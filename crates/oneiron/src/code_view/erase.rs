@@ -4,9 +4,10 @@
 //! repository and tested revision of an owner's view, or the repository of
 //! a run's work. The permanent hard-delete marker of any of them retires
 //! the view: its directory goes, copied build outputs included, then each
-//! blob no remaining view holds, then its receipt and build outcomes. A blob
-//! another live view holds stays. Rows go only after the files, so a
-//! removal that fails is found again by the next pass.
+//! blob no remaining view holds, then its receipt, build outcomes and fork
+//! rows (row 6 WORKING-VIEW-EDIT). A blob another live view holds stays.
+//! Rows go only after the files, so a removal that fails is found again by
+//! the next pass.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -104,6 +105,7 @@ pub fn collect_erased_views(vault: &Vault) -> Result<usize> {
     vault.with_write_txn_grouped(|txn| {
         for receipt in &erased {
             VIEW_RECEIPTS.delete(&vault.store, txn, &receipt.view_id)?;
+            super::fork::delete_view_fork_in_txn(vault, txn, receipt.view_id)?;
             for key in
                 VIEW_BUILD_OUTCOMES.scan_keys(&vault.store, txn, receipt.view_id.as_bytes())?
             {

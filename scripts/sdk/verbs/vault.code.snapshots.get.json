@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::codebase_doors::CodeSnapshotView>",
   "call": "memory.code_snapshot_get_as(&memory.embedded_owner(\"vault.code.snapshots.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

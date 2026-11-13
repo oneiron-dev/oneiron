@@ -5,6 +5,7 @@
   "output": "crate::memory::code_run_doors::CodeRunModelHealCountView",
   "call": "memory.code_run_model_heal_count_as(&memory.embedded_owner(\"vault.code.model_heal_count\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

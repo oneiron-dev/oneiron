@@ -78,6 +78,16 @@ pub enum PolicySetting {
     FreeTimePolicy,
     /// The owner's board cap and board layout layers (BOARD-LAYOUT).
     BoardLayout,
+    /// The most of a context pack's claims worlds other than base may hold
+    /// (ARCH-0004 #world-scope; WORLD-SHARE-FRACTION-NO-OWNER-DOOR).
+    NonBaseWorldClaimFraction,
+    /// The FACET a write with no active mask is born under (ARCH-0022
+    /// #facets: "Every vault has one default facet ... the owner may set
+    /// another").
+    DefaultFacet,
+    /// The undo-send window every send waits in on each outbound channel
+    /// (DEC-0006 #undo-send; REV-8 = B).
+    UndoSend,
 }
 
 impl PolicySetting {
@@ -91,6 +101,9 @@ impl PolicySetting {
             Self::RoomThreadAdmin => "settings.room_thread_admin",
             Self::FreeTimePolicy => "settings.free_time_policy",
             Self::BoardLayout => "settings.board_layout",
+            Self::NonBaseWorldClaimFraction => "settings.non_base_world_claim_fraction",
+            Self::DefaultFacet => "settings.default_facet",
+            Self::UndoSend => "settings.undo_send",
         }
     }
 
@@ -103,6 +116,9 @@ impl PolicySetting {
             Self::RoomThreadAdmin => "room_thread_admin",
             Self::FreeTimePolicy => "free_time_policy",
             Self::BoardLayout => "board_layout",
+            Self::NonBaseWorldClaimFraction => "non_base_world_claim_fraction",
+            Self::DefaultFacet => "default_facet",
+            Self::UndoSend => "undo_send",
         }
     }
 
@@ -115,6 +131,9 @@ impl PolicySetting {
             "room_thread_admin" => Self::RoomThreadAdmin,
             "free_time_policy" => Self::FreeTimePolicy,
             "board_layout" => Self::BoardLayout,
+            "non_base_world_claim_fraction" => Self::NonBaseWorldClaimFraction,
+            "default_facet" => Self::DefaultFacet,
+            "undo_send" => Self::UndoSend,
             _ => return None,
         })
     }
@@ -126,7 +145,10 @@ impl PolicySetting {
             Self::DreamerWakePolicy
             | Self::InferenceDefaults
             | Self::RoomThreadAdmin
-            | Self::BoardLayout => OwnerActKind::PolicySetting,
+            | Self::BoardLayout
+            | Self::NonBaseWorldClaimFraction
+            | Self::DefaultFacet
+            | Self::UndoSend => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

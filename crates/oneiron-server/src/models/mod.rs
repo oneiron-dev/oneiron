@@ -115,6 +115,8 @@ pub(crate) use http::{codec_token, encode_request_body, is_cloud_node, mark_clou
 pub(crate) use ladder::{AnsweringRung, ModelCallBinding};
 pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::AgentMediaCall;
+#[cfg(oneiron_test_support)]
+pub(crate) use media::JobSpendLedger;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};

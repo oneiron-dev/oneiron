@@ -5,6 +5,7 @@
   "output": "crate::policy_manifest_doors::GateCheckerReceipt",
   "call": "crate::policy_manifest_doors::set_gate_checker_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.checker.set\")?, input).map_err(crate::memory::MemoryError::from)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

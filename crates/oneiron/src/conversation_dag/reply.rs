@@ -320,9 +320,8 @@ fn roots_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Vec<E
 }
 
 /// A room-handle aggregate or a root-first native DAG chain, and its derived
-/// metadata. On a project room's indexed turn it is every live reply of
-/// every thread the room's index selects for the handle, with each native
-/// DAG append on the chain that has no room row, by `(at, reply id)`; its
+/// metadata. On a room's indexed turn it is every live reply of every
+/// thread the room's index selects for the handle, by `(at, reply id)`; its
 /// `root` is then the earliest of them, the aggregate's representative, not
 /// a claim that the threads are one chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -446,9 +445,8 @@ pub(crate) fn invalidate_thread_meta_for_turn_put(
     Ok(())
 }
 
-/// The [`Thread`] a project room's indexed turn `trunk` selects: every live
-/// reply of every thread the room's index holds for it, quoted or not, with
-/// each live native DAG append on its chain that has no room row. `None`
+/// The [`Thread`] a room's indexed turn `trunk` selects: every live reply
+/// of every thread the room's index holds for it, quoted or not. `None`
 /// when the room indexes no such turn, so the caller reads the DAG chain; an
 /// indexed handle with no live reply is an empty thread, never a sibling
 /// chain. Never cached: an ordinary room row does not dirty the DAG's meta.
@@ -473,17 +471,6 @@ fn room_thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result
             rows.insert(id, turn.at);
         }
     }
-    // A native append lands no room row, so only the DAG chain holds it.
-    if let Some(native) = selected_thread_in_txn(vault, txn, trunk)? {
-        for id in native.replies {
-            if crate::workspace_roster::replicated_turn_in(vault, txn, id)?.is_none() {
-                let row =
-                    crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &id)?
-                        .ok_or(Error::EntityNotFound)?;
-                rows.insert(id, row.occurred.start);
-            }
-        }
-    }
     let mut rows: Vec<(u64, EntityId)> = rows.into_iter().map(|(id, at)| (at, id)).collect();
     rows.sort_unstable();
     let spoken = || rows.iter().filter(|(_, id)| !edits.contains(id));
@@ -498,8 +485,8 @@ fn room_thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result
 
 impl Vault {
     /// Finds all immediate thread roots; a canonical fork is not a root. On a
-    /// project room's indexed turn they are the live roots of every room
-    /// thread anchored on it, with each native DAG root that has no room row.
+    /// room's indexed turn they are the live roots of every room thread
+    /// anchored on it.
     pub fn thread_roots(&self, trunk: EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         let room = conversation_of(&self.store, &txn, &trunk)?;
@@ -521,11 +508,6 @@ impl Vault {
                 if live_entity_row_in_txn(&self.store, &txn, &id)?.is_live() {
                     roots.push(id);
                 }
-            }
-        }
-        for root in roots_in_txn(self, &txn, trunk)? {
-            if crate::workspace_roster::replicated_turn_in(self, &txn, root)?.is_none() {
-                roots.push(root);
             }
         }
         roots.sort_unstable();
@@ -740,6 +722,8 @@ impl Vault {
                 input.reply_to = Some(target);
             }
             input.advance = false;
+            // Its append keeps its room row and stages its wakes in this
+            // write (THREAD-TASK-ONE-SURFACE).
             let appended = super::append_in_txn(self, txn, &input, None, true)?;
             // A nested reply also changes the ancestor trunk's meta line.
             let mut cursor = Some(target);

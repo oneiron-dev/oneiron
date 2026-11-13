@@ -21,6 +21,7 @@
 //! lattice.
 
 mod agent_run;
+mod agent_wait;
 mod attenuation;
 mod brief;
 pub mod budget_doors;
@@ -73,6 +74,8 @@ mod project_conversation;
 mod project_proposal;
 mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
+mod research_root;
+pub(crate) use self::research_root::ResearchRootRequest;
 mod resident;
 mod room_join;
 mod run_effects;
@@ -114,6 +117,7 @@ mod types;
 mod widen;
 pub mod widen_doors;
 mod widen_record;
+mod work_room;
 mod workflow;
 mod workflow_host;
 mod workflow_pump;
@@ -152,12 +156,18 @@ pub use self::spend_calibration::{
     AgentSpendCalibration, DollarBasis, ExpectedSpend, LAUNCH_COST_PRIOR_UNITS, LaunchUsdPrices,
     SpendBasis, UsdPriceTarget, UsdUnitPrice,
 };
-pub(crate) use self::spend_lease::payer_binds_in_txn;
+pub(crate) use self::spend_lease::{SpendCapRefusal, payer_binds_in_txn};
+pub(crate) use self::spend_record::erase_spend_scope_actor_in_txn;
 pub use self::spend_record::{
-    ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendPayer, SpendRead, SpendRefused,
-    SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, GrantSpendBinding, SpendCalibrationSample, SpendCapGeneration, SpendPayer,
+    SpendRead, SpendRefused, SpendScope, SpendScopeId, SpendSettlement, SpendSignal, SpendState,
 };
 
+pub use self::agent_wait::{AgentWaitChild, AgentWaitSetResult};
+pub(crate) use self::agent_wait::{
+    AgentWaitOpen, AgentWaitPolicy, agent_dispatch_child_wait_accepts_masked, agent_wait_attempt,
+    open_agent_wait, settle_agent_child_waits_in_txn,
+};
 pub(crate) use self::budget_hold::erase_plan_hold_actor_in_txn;
 pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,

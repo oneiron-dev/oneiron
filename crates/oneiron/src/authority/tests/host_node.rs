@@ -54,7 +54,13 @@ fn the_hosts_node_is_never_mine_and_never_returns_once_removed() {
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .unwrap();
     vault
-        .set_machine_role(&issuer, &owner, id, MachineRole::Removed)
+        .set_machine_role(
+            &owner,
+            ActSurface::ThisInstall,
+            id,
+            MachineRole::Removed,
+            None,
+        )
         .unwrap();
     drop(vault);
     let vault = open_hosted(dir.path());

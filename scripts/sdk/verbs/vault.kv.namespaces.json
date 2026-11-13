@@ -5,6 +5,7 @@
   "output": "Vec<Vec<String>>",
   "call": "memory.key_value_namespaces(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

@@ -85,9 +85,15 @@ async fn origin_holding(limits: LimitsConfig, status_memory: Option<usize>) -> O
     let token = format!(
         "{}scope=core:read,core:write;principal_ref={}",
         crate::test_credentials::RECIPE_PREFIX,
-        oneiron::EntityId::now().to_hex()
+        vault
+            .ensure_embedded_owner_actor()
+            .expect("embedded owner")
+            .to_hex()
     );
-    let mut server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
+    let mut server = Arc::new(
+        crate::test_credentials::server_with_fixture_keystore(Arc::clone(&vault), config)
+            .expect("server"),
+    );
     if let Some(bytes) = status_memory {
         Arc::get_mut(&mut server)
             .expect("the only server handle")
