@@ -4,9 +4,10 @@
 //! longer assembles them. Membership is what the run wrote, from the run
 //! reference its dispatcher bound, never guessed from an actor or a time.
 //! `Memory::run_changes_as_owner` is its call surface;
-//! `record_run_claim_in_txn` is its claim writer. A run nobody settled is
-//! reverted from this journal (`journal_members_in_txn`), and each change's
-//! compensation is kept on its first row.
+//! `record_run_claim_in_txn` is its claim writer and
+//! `record_run_topology_in_txn` its identity-topology writer. A run nobody
+//! settled is reverted from this journal (`journal_members_in_txn`), and each
+//! change's compensation is kept on its first row.
 
 use super::*;
 use crate::claim::ClaimApprovalStatus;
@@ -78,6 +79,28 @@ pub(crate) fn record_run_claim_in_txn(
         run,
         RunReviewChange::Claim {
             claim_ref: id.to_hex(),
+        },
+    )
+}
+
+/// Records that `run` wrote the identity-topology event `event` (a merge,
+/// split or facet judgment, applied or parked as a proposal), in the event's
+/// own write transaction.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_topology_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    event: EntityId,
+) -> crate::Result<()> {
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::Topology {
+            event_ref: event.to_hex(),
         },
     )
 }
@@ -157,45 +180,23 @@ pub(super) fn journal_members_in_txn(
 }
 
 /// One journal change as a revert member. A compensated change keeps its
-/// receipt. A claim the gate still holds, or refused, never landed. A landed
-/// claim takes the undo a settle would give it: Authored, from the claim's
-/// own author, bound to the claim as it stands now; the revert's own checks
-/// then keep it when a later change rests on it. A claim deleted since the
-/// run wrote it has no undo, so the revert reports it as dependent.
+/// receipt; any other change takes the verdict and undo a settle would give
+/// it, read as it stands now.
 fn journal_member_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     row: RunChangeRow,
 ) -> MemoryResult<StoredChange> {
-    let (verdict, inverse) = if row.compensation.is_some() {
-        (RunChangeVerdict::Landed, None)
-    } else {
-        let RunReviewChange::Claim { claim_ref } = &row.change else {
+    let (verdict, inverse) = match &row.change {
+        _ if row.compensation.is_some() => (RunChangeVerdict::Landed, None),
+        RunReviewChange::Claim { claim_ref } => claim_member_in_txn(memory, txn, &row, claim_ref)?,
+        RunReviewChange::Topology { event_ref } => {
+            topology_member_in_txn(memory.vault(), txn, event_ref)?
+        }
+        _ => {
             return Err(MemoryError::bad_request(
                 "the run journal holds a change kind it does not record",
             ));
-        };
-        let vault = memory.vault();
-        let id = EntityId::from_hex(claim_ref)?;
-        let state = crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?;
-        let body = if state.deleted {
-            None
-        } else {
-            vault.get_claim_in_txn(txn, &id)?
-        };
-        match body {
-            None => (RunChangeVerdict::Landed, None),
-            Some(body) => match body.approval {
-                ClaimApprovalStatus::Proposed => (RunChangeVerdict::Waiting, None),
-                ClaimApprovalStatus::Rejected => (RunChangeVerdict::Rejected, None),
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved => (
-                    RunChangeVerdict::Landed,
-                    Some(RunInverse::Authored {
-                        author: snapshot::claim_author(&body)?.to_hex(),
-                        fingerprint: fingerprint(&snapshot::binding(memory, txn, &row.change)?.0),
-                    }),
-                ),
-            },
         }
     };
     Ok(StoredChange {
@@ -205,6 +206,65 @@ fn journal_member_in_txn(
         compensation: row.compensation,
         unrestored: row.unrestored,
     })
+}
+
+/// A journal claim's verdict and undo. A claim the gate still holds, or
+/// refused, never landed. A landed claim takes the undo a settle would give
+/// it: Authored, from the claim's own author, bound to the claim as it
+/// stands now; the revert's own checks then keep it when a later change
+/// rests on it. A claim deleted since the run wrote it has no undo, so the
+/// revert reports it as dependent.
+fn claim_member_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    row: &RunChangeRow,
+    claim_ref: &str,
+) -> MemoryResult<(RunChangeVerdict, Option<RunInverse>)> {
+    let vault = memory.vault();
+    let id = EntityId::from_hex(claim_ref)?;
+    let state = crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &id)?;
+    let body = if state.deleted {
+        None
+    } else {
+        vault.get_claim_in_txn(txn, &id)?
+    };
+    Ok(match body {
+        None => (RunChangeVerdict::Landed, None),
+        Some(body) => match body.approval {
+            ClaimApprovalStatus::Proposed => (RunChangeVerdict::Waiting, None),
+            ClaimApprovalStatus::Rejected => (RunChangeVerdict::Rejected, None),
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved => (
+                RunChangeVerdict::Landed,
+                Some(RunInverse::Authored {
+                    author: snapshot::claim_author(&body)?.to_hex(),
+                    fingerprint: fingerprint(&snapshot::binding(memory, txn, &row.change)?.0),
+                }),
+            ),
+        },
+    })
+}
+
+/// A journal topology event's verdict and undo, from the effective ledger
+/// as a settle reads them (FIX 9966): an applied event landed and is its own
+/// undo; a proposal waits until a ruling retires it, and once approved its
+/// undo is the op that ruling applied. An event the ledger no longer holds
+/// has no undo, so the revert reports it as dependent.
+fn topology_member_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: &str,
+) -> MemoryResult<(RunChangeVerdict, Option<RunInverse>)> {
+    let id = EntityId::from_hex(event_ref)?;
+    let Some(event) = vault.identity_topology_decision_in_txn(txn, &id)? else {
+        return Ok((RunChangeVerdict::Landed, None));
+    };
+    let outcome = super::topology::topology_outcome_in_txn(vault, txn, id, &event)?;
+    Ok((
+        outcome.verdict,
+        outcome.applied.map(|event| RunInverse::Topology {
+            event: event.to_hex(),
+        }),
+    ))
 }
 
 /// Takes back the journal change at `key` in the caller's write, and keeps
@@ -253,6 +313,16 @@ pub(crate) fn journal_row_sizes(
         .iter_raw_from(&vault.store, &txn, &run_hash(run))?
         .map(|row| row.map(|(key, value)| (prefix + key.len(), value.len())))
         .collect()
+}
+
+/// The run's changes in write order, each once, read without an owner.
+#[cfg(oneiron_test_support)]
+pub(crate) fn journal_changes(vault: &crate::Vault, run: &str) -> crate::Result<serde_json::Value> {
+    let txn = vault.store.env.read_txn()?;
+    let changes = run_changes_in_txn(&vault.store, &txn, run)
+        .map_err(|error| crate::Error::InvalidConfig(format!("run journal: {error:?}")))?;
+    serde_json::to_value(changes)
+        .map_err(|error| crate::Error::InvalidConfig(format!("run journal: {error}")))
 }
 
 impl Memory<'_> {
