@@ -8,7 +8,9 @@
 //! in process: the home's answer (`own_device_grant_states`, which
 //! `residence.authority.grants` serves a proven linked machine through
 //! `own_device_grants_for`) and the device's admission
-//! (`admit_own_device_grants`). Built only under `--cfg oneiron_test_support`.
+//! (`admit_own_device_grants`), which takes an answer only from a home that
+//! proved itself a machine of the vault. Built only under
+//! `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -120,9 +122,29 @@ fn admits(vault: &Vault, id: &[u8; 32]) -> bool {
     matches!(vault.capability_slip_id_is_live(id), Ok(true))
 }
 
+/// The home's machine as `device` judges a connection proof the home signs:
+/// proven once the authority history the device took names the home's
+/// machine key, as a residence socket's home proof is judged.
+fn proven_home(home: &Home, device: &Vault) -> PeerMachine {
+    let (token, timestamp, nonce) = ("residence-socket", 1_700_000_000, "home-proof-nonce");
+    let (machine, signature) = home
+        .vault
+        .machine_connection_proof(token, timestamp, nonce)
+        .expect("the home signs its machine proof")
+        .expect("the home is a machine of its vault");
+    let peer = device
+        .verify_machine_connection_proof(machine, &signature, token, timestamp, nonce)
+        .expect("the device judges the home's proof");
+    assert!(
+        matches!(peer, PeerMachine::Proven { machine: proven, .. } if proven == machine),
+        "the device's authority history names the home's machine key: {peer:?}"
+    );
+    peer
+}
+
 /// One grant catch-up round: the device asks about the grants its live
 /// slips name and the own-device grants it holds, the home answers, and the
-/// device admits the answer.
+/// device admits the answer of the home it proved.
 fn catch_up(
     home: &Home,
     device: &Vault,
@@ -135,8 +157,9 @@ fn catch_up(
     let ids: BTreeSet<EntityId> = asked.keys().copied().collect();
     let served =
         own_device_grant_states(&home.vault, &ids).expect("the home answers the device's ask");
-    let admission = admit_own_device_grants(device, &asked, served.clone())
-        .expect("the device admits the home's answer");
+    let admission =
+        admit_own_device_grants(device, proven_home(home, device), &asked, served.clone())
+            .expect("the device admits the home's answer");
     (asked, served, admission)
 }
 
@@ -227,8 +250,8 @@ fn withdrawn_own_device_grant_crosses_and_refuses_the_owner_slip() {
         "the withdrawal crossed: the opened device refuses the owner's slip"
     );
 
-    let stale =
-        admit_own_device_grants(&device, &asked, live).expect("the device judges a stale live row");
+    let stale = admit_own_device_grants(&device, proven_home(&home, &device), &asked, live)
+        .expect("the device judges a stale live row");
     assert!(
         stale.landed.is_empty(),
         "a stale live row of the withdrawn grant does not land again: {stale:?}"
@@ -252,8 +275,13 @@ fn grant_catchup_serves_only_a_proven_machine_and_lands_only_asked_grants() {
 
     let served =
         own_device_grant_states(&home.vault, &ids).expect("the home answers the device's ask");
-    let admission = admit_own_device_grants(&device, &BTreeMap::new(), served)
-        .expect("the device judges an answer it did not ask for");
+    let admission = admit_own_device_grants(
+        &device,
+        proven_home(&home, &device),
+        &BTreeMap::new(),
+        served,
+    )
+    .expect("the device judges an answer it did not ask for");
     assert!(
         admission.landed.is_empty() && admission.refused.contains(&home.grant),
         "a grant the device did not ask about is refused: {admission:?}"
@@ -262,4 +290,55 @@ fn grant_catchup_serves_only_a_proven_machine_and_lands_only_asked_grants() {
         !admits(&device, &home.slip_id),
         "nothing landed: the device still refuses the slip"
     );
+}
+
+/// Review round 1 of #7485: a residence endpoint that proved no machine of
+/// this vault, or proved the home's machine on a key the vault does not hold
+/// for it, answers the grants ask with an empty tombstone for the live grant.
+/// A replayed withdrawal would erase the grant for good, so the device takes
+/// nothing from it: the grant stands, the owner's slip is still admitted, and
+/// the genuine home's next answer still finds the row.
+#[test]
+fn grant_catchup_takes_no_withdrawal_from_a_home_that_proved_no_machine_of_the_vault() {
+    let home = home();
+    let (device, _dir) = opened_device(&home);
+    let (asked, _, admission) = catch_up(&home, &device);
+    assert_eq!(admission.landed, BTreeSet::from([home.grant]));
+    assert!(
+        admits(&device, &home.slip_id),
+        "precondition: the device admits the owner's slip once the grant row landed"
+    );
+
+    let PeerMachine::Proven { machine, .. } = proven_home(&home, &device) else {
+        unreachable!("proven_home asserts a proven machine");
+    };
+    for answerer in [
+        PeerMachine::Unknown,
+        PeerMachine::Proven {
+            machine,
+            key: [0x42; 32],
+        },
+    ] {
+        let forged = vec![(home.grant, OwnDeviceGrantState::Withdrawn(Vec::new()))];
+        let admission = admit_own_device_grants(&device, answerer, &asked, forged)
+            .expect("the device judges the unproven answer");
+        assert!(
+            admission.withdrawn.is_empty()
+                && admission.landed.is_empty()
+                && admission.refused == BTreeSet::from([home.grant]),
+            "an answer from {answerer:?} is refused whole: {admission:?}"
+        );
+        assert!(
+            admits(&device, &home.slip_id),
+            "the grant still stands after the answer from {answerer:?}: the owner's slip is admitted"
+        );
+    }
+
+    let (_, _, again) = catch_up(&home, &device);
+    assert_eq!(
+        again.landed,
+        BTreeSet::from([home.grant]),
+        "the genuine home's next answer still finds the row: {again:?}"
+    );
+    assert!(admits(&device, &home.slip_id));
 }
