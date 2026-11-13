@@ -16,10 +16,12 @@ fn pinned(vault: &Vault) -> Option<RecoveryRootId> {
     vault.owner_root_view(None, 0).unwrap().pinned
 }
 
-/// A remote call to any pin door, a fully valid request other than the one
-/// the new machine shows, and a request with no code change neither the pin
-/// nor any chain, and append nothing. The new machine's own request with
-/// the code it shows is anchored under the pinned root, and the pin stays.
+/// A fully valid request other than the one the new machine shows, and a
+/// request with no code, change neither the pin nor any chain, and append
+/// nothing. The new machine's own request with the code it shows is
+/// anchored under the pinned root, and the pin stays. The pin doors take no
+/// origin: an owner-authenticated call from another machine runs them (owner
+/// principle 10-19 (1); FIX 4499, 4528).
 #[test]
 fn only_this_machines_own_call_moves_its_pin_or_anchors() {
     let host = host();
@@ -27,51 +29,21 @@ fn only_this_machines_own_call_moves_its_pin_or_anchors() {
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     let root = prepared.seed().public(&host.vault_id).unwrap().id;
-    let here = EditOrigin::ThisMachine;
     host.vault
-        .activate_owner_root(&host.owner, here, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let new = request_for(host.vault_id, EntityId::now(), &ed_key(71));
     let substitute = request_for(host.vault_id, EntityId::now(), &ed_key(72));
     let stored = stored_entries(&host.vault).len();
 
-    let remote = EditOrigin::Peer(PeerMachine::Unknown);
-    let next = host.vault.prepare_owner_root(&host.owner).unwrap();
     assert!(
         host.vault
-            .activate_owner_root(&host.owner, remote, next, &BTreeSet::new())
+            .anchor_machine(&host.owner, &seed, &substitute, Some(new.code()), None)
             .is_err()
     );
     assert!(
         host.vault
-            .anchor_machine(&host.owner, remote, &seed, &new, Some(new.code()), None)
-            .is_err()
-    );
-    assert!(
-        host.vault
-            .restore_world_keys(&host.owner, remote, &seed, None)
-            .is_err()
-    );
-    assert!(
-        host.vault
-            .pin_owner_root(&host.owner, remote, root)
-            .is_err()
-    );
-    assert!(
-        host.vault
-            .anchor_machine(
-                &host.owner,
-                here,
-                &seed,
-                &substitute,
-                Some(new.code()),
-                None
-            )
-            .is_err()
-    );
-    assert!(
-        host.vault
-            .anchor_machine(&host.owner, here, &seed, &new, None, None)
+            .anchor_machine(&host.owner, &seed, &new, None, None)
             .is_err()
     );
     assert_eq!(stored_entries(&host.vault).len(), stored);
@@ -82,7 +54,7 @@ fn only_this_machines_own_call_moves_its_pin_or_anchors() {
 
     let anchored = host
         .vault
-        .anchor_machine(&host.owner, here, &seed, &new, Some(new.code()), None)
+        .anchor_machine(&host.owner, &seed, &new, Some(new.code()), None)
         .unwrap();
     assert!(anchored.repin.is_none());
     assert_eq!(pinned(&host.vault), Some(root));
@@ -100,9 +72,8 @@ fn an_install_anchors_another_machine_only_with_its_pinned_roots_seed() {
     enrol_own(&host);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let first = prepared.seed().public(&host.vault_id).unwrap().id;
-    let here = EditOrigin::ThisMachine;
     host.vault
-        .activate_owner_root(&host.owner, here, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let drawn = RecoveryRootSeed::generate().unwrap();
     let second = publish_root(&host, &drawn);
@@ -112,7 +83,7 @@ fn an_install_anchors_another_machine_only_with_its_pinned_roots_seed() {
 
     assert!(
         host.vault
-            .anchor_machine(&host.owner, here, &seed, &new, Some(new.code()), None)
+            .anchor_machine(&host.owner, &seed, &new, Some(new.code()), None)
             .is_err()
     );
     assert_eq!(stored_entries(&host.vault).len(), stored);
@@ -121,12 +92,12 @@ fn an_install_anchors_another_machine_only_with_its_pinned_roots_seed() {
     let own = own_request(&host.vault);
     let moved = host
         .vault
-        .anchor_machine(&host.owner, here, &seed, &own, None, None)
+        .anchor_machine(&host.owner, &seed, &own, None, None)
         .unwrap();
     assert!(moved.repin.is_some());
     assert_eq!(pinned(&host.vault), Some(second));
     host.vault
-        .anchor_machine(&host.owner, here, &seed, &new, Some(new.code()), None)
+        .anchor_machine(&host.owner, &seed, &new, Some(new.code()), None)
         .unwrap();
     let fold = host.vault.authority_fold().unwrap();
     let trusted = fold.trusted_machine(new.machine).unwrap();
@@ -149,27 +120,26 @@ fn a_world_that_reads_everywhere_is_reported_and_never_wrapped_by_a_pin_door() {
     let not_private = |report: &RepinReport| {
         report.rewrapped.is_empty() && report.withheld == vec![(key, Withheld::NotPrivate)]
     };
-    let here = EditOrigin::ThisMachine;
 
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     let activated = host
         .vault
-        .activate_owner_root(&host.owner, here, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     assert!(not_private(&activated.keys));
     let other = publish_root(&host, &RecoveryRootSeed::generate().unwrap());
-    let repinned = host.vault.pin_owner_root(&host.owner, here, other).unwrap();
+    let repinned = host.vault.pin_owner_root(&host.owner, other).unwrap();
     assert!(not_private(&repinned));
     let own = own_request(&host.vault);
     let anchored = host
         .vault
-        .anchor_machine(&host.owner, here, &seed, &own, None, None)
+        .anchor_machine(&host.owner, &seed, &own, None, None)
         .unwrap();
     assert!(not_private(anchored.repin.as_ref().unwrap()));
     let restored = host
         .vault
-        .restore_world_keys(&host.owner, here, &seed, None)
+        .restore_world_keys(&host.owner, &seed, None)
         .unwrap();
     assert!(restored.usable.is_empty());
     assert_eq!(restored.withheld, vec![(key, Withheld::NotPrivate)]);

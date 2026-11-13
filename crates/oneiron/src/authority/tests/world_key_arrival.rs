@@ -14,7 +14,6 @@ use super::*;
 use crate::world_keys::{RecoveryRootSeed, WorldKey, WorldKeyBinding, seal_world_key};
 use crate::{Vault, VaultConfig};
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
 const AT: TimeRange = TimeRange { start: 3, end: 3 };
 
 /// A host with this install's machine and an owner root, the root's kit
@@ -25,7 +24,7 @@ fn rooted() -> (Host, RecoveryRootSeed, EntityId) {
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault
-        .activate_owner_root(&host.owner, HERE, prepared, &BTreeSet::new())
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let world = world_row(&host);
     (host, seed, world)
@@ -99,7 +98,7 @@ fn a_key_record_that_arrives_after_a_later_edit_still_restores_from_the_kit() {
     for (row, _) in [&rows[0], &rows[2], &rows[1]] {
         fresh.put_authority_log_entry(row, AT, 3).unwrap();
     }
-    let restore = fresh.restore_world_keys(&owner, HERE, &seed, None).unwrap();
+    let restore = fresh.restore_world_keys(&owner, &seed, None).unwrap();
     assert_eq!(restore.usable, vec![key]);
     assert_eq!(fresh.world_key(world).unwrap().id(), &key);
 }
@@ -298,7 +297,8 @@ impl Graph {
             policy: record.policy,
             commitment: key.commitment(),
         };
-        let envelope = seal_world_key(&binding, to, public, &key).unwrap();
+        let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+        let envelope = seal_world_key(&binding, to, public, &key, &pad).unwrap();
         let record = WorldKeyWrapsRecord {
             key: *key.id(),
             commitment: key.commitment(),
@@ -366,7 +366,7 @@ fn a_kit_restore_after_a_reversed_arrival_and_a_removal_keeps_the_key() {
         }
         let restore = install
             .vault
-            .restore_world_keys(&install.owner, HERE, &graph.root.seed, None)
+            .restore_world_keys(&install.owner, &graph.root.seed, None)
             .unwrap();
         assert_eq!(
             restore.usable,

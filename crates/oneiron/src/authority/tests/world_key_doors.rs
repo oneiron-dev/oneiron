@@ -42,11 +42,13 @@ pub(super) fn keyed_machine(host: &Host, seed: u8) -> Keyed {
         suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
         key: secret.public_key().to_bytes(),
     };
+    let device_class = MachineDeviceClass::Computer;
     let machine_proof = signing
         .sign(&machine_profile_proof_transcript(
             &host.vault_id,
             machine,
             &machine_key,
+            device_class,
             &encryption_key,
         ))
         .to_bytes();
@@ -54,15 +56,17 @@ pub(super) fn keyed_machine(host: &Host, seed: u8) -> Keyed {
         vault_id: host.vault_id,
         machine,
         machine_key,
+        device_class,
         encryption_key,
         machine_proof,
     };
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     Keyed {
@@ -81,10 +85,11 @@ pub(super) fn enrol_own(host: &Host) -> EntityId {
         .unwrap();
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     request.machine
@@ -121,8 +126,10 @@ pub(super) fn fresh_install_with(host: &Host, config: VaultConfig) -> Fresh {
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
+    let checkpoint_key = host.vault.checkpoint_key().unwrap();
     let (vault, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &backups.path().join("fresh"),
         config.clone(),
         RestoreReason::Restore,
@@ -191,6 +198,30 @@ pub(super) fn key_records(vault: &Vault, world: EntityId) -> Vec<WorldKeyWrapsRe
         .collect()
 }
 
+/// `id`'s pad on this replica, the half its wraps seal against: the one
+/// its pad row carries or rests beside, or else the one custody holds.
+fn pad_for(vault: &Vault, id: &WorldKeyId) -> oneiron_store::world_pad_codec::WorldKeyPad {
+    let txn = vault.store.env.read_txn().unwrap();
+    let row = oneiron_store::world_pad_codec::pad_row_id(id).unwrap();
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &row).unwrap();
+    if let Some(raw) = raw {
+        let body = oneiron_store::world_pad_codec::decode_pad_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .unwrap();
+        if let Some(pad) = body.into_pad() {
+            return pad;
+        }
+    }
+    let item = oneiron_store::world_pad_codec::pad_item(id);
+    vault
+        .store
+        .world_pad_in_custody(&item)
+        .unwrap()
+        .map(oneiron_store::world_pad_codec::WorldKeyPad::from_bytes)
+        .unwrap()
+}
+
 /// The commitments of key `id` that `secret`, opening as `opener`, gets out
 /// of the stored wraps: every envelope of every record is tried, whoever it
 /// names.
@@ -201,6 +232,7 @@ pub(super) fn opened_by(
     opener: WrapRecipient,
     secret: &HybridSecretKey,
 ) -> BTreeSet<[u8; 32]> {
+    let pad = pad_for(vault, &id);
     key_records(vault, id.world)
         .into_iter()
         .filter(|record| record.key == id)
@@ -217,7 +249,7 @@ pub(super) fn opened_by(
                 .into_iter()
                 .filter_map(move |(_, bytes)| {
                     let envelope = oneiron_crypto::Envelope::parse(&bytes).ok()?;
-                    open_world_key(&binding, opener, secret, &envelope).ok()
+                    open_world_key(&binding, opener, secret, &envelope, &pad).ok()
                 })
                 .map(|key| key.commitment())
         })
@@ -324,12 +356,7 @@ fn a_world_key_opens_only_where_its_world_reads_and_for_the_kit() {
     let kit_bytes = prepared.seed().kit_bytes();
     let activated = host
         .vault
-        .activate_owner_root(
-            &host.owner,
-            EditOrigin::ThisMachine,
-            prepared,
-            &BTreeSet::new(),
-        )
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     assert_eq!(activated.root, root.id);
     assert_eq!(activated.keys.rewrapped, vec![id]);
@@ -562,36 +589,21 @@ fn a_kit_issue_that_never_activates_publishes_nothing() {
         .unwrap();
     for confirm in [
         None,
-        Some(KitConfirmation::Owner),
+        Some(KitConfirmation::Owner(root.id)),
         Some(KitConfirmation::Fingerprint(root.id)),
     ] {
         assert!(
             host.vault
-                .restore_world_keys(
-                    &host.owner,
-                    EditOrigin::ThisMachine,
-                    prepared.seed(),
-                    confirm
-                )
+                .restore_world_keys(&host.owner, prepared.seed(), confirm)
                 .is_err()
         );
         assert!(
             host.vault
-                .anchor_machine(
-                    &host.owner,
-                    EditOrigin::ThisMachine,
-                    prepared.seed(),
-                    &own,
-                    None,
-                    confirm
-                )
+                .anchor_machine(&host.owner, prepared.seed(), &own, None, confirm)
                 .is_err()
         );
     }
-    let report = host
-        .vault
-        .pin_owner_root(&host.owner, EditOrigin::ThisMachine, root.id)
-        .unwrap();
+    let report = host.vault.pin_owner_root(&host.owner, root.id).unwrap();
     assert_eq!(report.awaiting, Some(root.id));
     assert_eq!(stored_entries(&host.vault).len(), stored);
     let view = host.vault.owner_root_view(None, 0).unwrap();
@@ -649,12 +661,7 @@ fn a_kit_restore_honours_erasure_and_one_machine_and_reports_every_key() {
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let seed = kit_seed(host.vault_id, prepared.seed());
     host.vault
-        .activate_owner_root(
-            &host.owner,
-            EditOrigin::ThisMachine,
-            prepared,
-            &BTreeSet::new(),
-        )
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let shared = world_row(&host);
     set(&host, shared, ReadLocation::MyMachines);
@@ -687,9 +694,7 @@ fn a_kit_restore_honours_erasure_and_one_machine_and_reports_every_key() {
         owner,
         ..
     } = fresh_install(&host);
-    let restore = fresh
-        .restore_world_keys(&owner, EditOrigin::ThisMachine, &seed, None)
-        .unwrap();
+    let restore = fresh.restore_world_keys(&owner, &seed, None).unwrap();
     assert_eq!(restore.usable, vec![shared_key]);
     assert_eq!(restore.needs_rehome, vec![kept_key]);
     let withheld: BTreeMap<_, _> = restore.withheld.iter().copied().collect();

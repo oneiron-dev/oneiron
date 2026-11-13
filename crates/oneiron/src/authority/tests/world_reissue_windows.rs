@@ -11,7 +11,7 @@ use super::*;
 use crate::world_keys::RecoveryRootSeed;
 use crate::{Vault, VaultConfig};
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
+const HERE: ActSurface = ActSurface::ThisInstall;
 
 fn anchor_key(seed: &RecoveryRootSeed) -> [u8; 32] {
     seed.anchor().verifying_key().to_bytes()
@@ -166,7 +166,7 @@ fn old_root_writes_after_a_re_issue_change_nothing() {
     set_on(&a, offline, ReadLocation::MyMachines);
     let widening = live(&a, offline);
     sync(&issuer.vault, &a.vault);
-    a.vault.pin_owner_root(&a.owner, HERE, second.root).unwrap();
+    a.vault.pin_owner_root(&a.owner, second.root).unwrap();
     a.vault
         .reassert_world_privacy(
             &a.owner,
@@ -258,7 +258,7 @@ fn a_compromised_old_seed_only_narrows_and_the_owner_recovers() {
     let own = own_request(&a.vault);
     let report = a
         .vault
-        .anchor_machine(&a.owner, HERE, &second.seed, &own, None, None)
+        .anchor_machine(&a.owner, &second.seed, &own, None, None)
         .unwrap();
     assert!(
         report

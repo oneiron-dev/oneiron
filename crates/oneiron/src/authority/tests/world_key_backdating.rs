@@ -17,7 +17,6 @@ use super::world_reissue::{admit, issue, pinned, set_on, sync};
 use super::*;
 use crate::world_keys::{Withheld, WorldKey, WorldKeyBinding, WorldKeyStatus, seal_world_key};
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
 const AT: TimeRange = TimeRange { start: 3, end: 3 };
 
 /// The graph, and machine C, which R anchors last. B wraps K to C: a record
@@ -91,7 +90,7 @@ fn a_removed_machines_backdated_key_never_becomes_current() {
     let install = graph.receiver(&[&rows[0], &rows[1], &rows[2], by_b, &removal]);
     install
         .vault
-        .pin_owner_root(&install.owner, HERE, graph.root.root)
+        .pin_owner_root(&install.owner, graph.root.root)
         .unwrap();
     install
         .vault
@@ -179,7 +178,7 @@ fn a_kit_restore_wraps_no_key_only_a_removed_machine_signed() {
     let install = graph.receiver(&[&rows[0], &rows[1], k3, &removal, &backdated]);
     let restore = install
         .vault
-        .restore_world_keys(&install.owner, HERE, &graph.root.seed, None)
+        .restore_world_keys(&install.owner, &graph.root.seed, None)
         .unwrap();
     let usable: BTreeSet<_> = restore.usable.iter().copied().collect();
     assert_eq!(usable, BTreeSet::from([graph.key, forged]));
@@ -259,10 +258,11 @@ fn a_re_pin_never_wraps_a_key_whose_signers_the_new_pin_removed() {
     for install in [&a, &b] {
         host.vault
             .enroll_machine(
-                &host.issuer,
                 &host.owner,
+                ActSurface::ThisInstall,
                 &own_request(&install.vault),
                 MachineRole::Owned(MachineOwnership::Yours),
+                None,
             )
             .unwrap();
     }
@@ -331,7 +331,7 @@ fn a_re_pin_never_wraps_a_key_whose_signers_the_new_pin_removed() {
     let report = graph
         .b
         .vault
-        .pin_owner_root(&graph.b.owner, HERE, graph.root.root)
+        .pin_owner_root(&graph.b.owner, graph.root.root)
         .unwrap();
     assert_eq!(report.withheld.len(), 2, "{:?}", report.withheld);
     for id in [key, j] {
@@ -371,7 +371,7 @@ fn a_removed_machines_copy_of_a_key_never_conflicts_it() {
     let install = graph.receiver(&[&rows[0], k2, k3, by_b, &removal, &copy]);
     let restore = install
         .vault
-        .restore_world_keys(&install.owner, HERE, &graph.root.seed, None)
+        .restore_world_keys(&install.owner, &graph.root.seed, None)
         .unwrap();
     assert!(restore.usable.contains(&graph.key));
     let fold = install.vault.authority_fold().unwrap();
@@ -434,7 +434,7 @@ fn a_removed_machines_flood_of_envelopes_never_hides_a_genuine_one() {
     let install = graph.receiver(&arrival);
     let restore = install
         .vault
-        .restore_world_keys(&install.owner, HERE, &graph.root.seed, None)
+        .restore_world_keys(&install.owner, &graph.root.seed, None)
         .unwrap();
     assert!(restore.usable.contains(&graph.key));
     let fold = install.vault.authority_fold().unwrap();
@@ -475,7 +475,7 @@ fn an_own_record_of_a_key_id_vouches_for_no_other_bytes() {
     let root = issue(&second, &[]);
     admit(&second, &root, &a);
     sync(&second.vault, &b.vault);
-    b.vault.pin_owner_root(&b.owner, HERE, root.root).unwrap();
+    b.vault.pin_owner_root(&b.owner, root.root).unwrap();
     let graph = Graph {
         host,
         world,
@@ -524,7 +524,15 @@ fn an_own_record_of_a_key_id_vouches_for_no_other_bytes() {
         policy: record.policy,
         commitment: j.commitment(),
     };
-    let envelope = seal_world_key(&binding, to_root, graph.root.recovery.public_key(), &j).unwrap();
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let envelope = seal_world_key(
+        &binding,
+        to_root,
+        graph.root.recovery.public_key(),
+        &j,
+        &pad,
+    )
+    .unwrap();
     let forged = graph.signed_as_a(
         minted,
         1,
@@ -550,7 +558,7 @@ fn an_own_record_of_a_key_id_vouches_for_no_other_bytes() {
     graph
         .b
         .vault
-        .restore_world_keys(&graph.b.owner, HERE, &graph.root.seed, None)
+        .restore_world_keys(&graph.b.owner, &graph.root.seed, None)
         .unwrap();
     let by_b = graph.rows_by(&graph.b.vault, graph.b.machine());
     assert!(by_b.iter().all(|entry| !matches!(&entry.op,
@@ -624,7 +632,6 @@ fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
         .vault
         .anchor_machine(
             &second.owner,
-            HERE,
             &r1.seed,
             &request,
             Some(request.code()),
@@ -682,7 +689,8 @@ fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
         policy: record.policy,
         commitment: j.commitment(),
     };
-    let envelope = seal_world_key(&binding, to_b, &public, &j).unwrap();
+    let pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let envelope = seal_world_key(&binding, to_b, &public, &j, &pad).unwrap();
     let forged = graph.signed_as_a(
         minted,
         1,
@@ -703,7 +711,7 @@ fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
     let report = graph
         .b
         .vault
-        .pin_owner_root(&graph.b.owner, HERE, graph.root.root)
+        .pin_owner_root(&graph.b.owner, graph.root.root)
         .unwrap();
     assert!(
         report.withheld.contains(&(id, Withheld::Conflicted)),
@@ -719,7 +727,7 @@ fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
     let report = graph
         .b
         .vault
-        .pin_owner_root(&graph.b.owner, HERE, r0.root)
+        .pin_owner_root(&graph.b.owner, r0.root)
         .unwrap();
     assert!(
         report.withheld.contains(&(id, Withheld::Conflicted)),

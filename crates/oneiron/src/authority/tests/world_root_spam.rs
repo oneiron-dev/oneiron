@@ -14,8 +14,6 @@ use super::*;
 use crate::HostingPrivacyPosture::Hosted;
 use crate::world_keys::RecoveryRootSeed;
 
-const HERE: EditOrigin = EditOrigin::ThisMachine;
-
 /// Every foreign root `vault` shows, page by page.
 fn every_page(vault: &crate::Vault, limit: usize) -> BTreeMap<RecoveryRootId, usize> {
     let mut seen = BTreeMap::new();
@@ -44,7 +42,7 @@ fn root_spam_pages_and_never_hides_an_operative_root() {
     let ours = prepared.seed().public(&host.vault_id).unwrap().id;
     issuer
         .vault
-        .activate_owner_root(&issuer.owner, HERE, prepared, &BTreeSet::new())
+        .activate_owner_root(&issuer.owner, prepared, &BTreeSet::new())
         .unwrap();
     sync(&issuer.vault, &host.vault);
     let host_seed = RecoveryRootSeed::generate().unwrap();
@@ -75,10 +73,7 @@ fn root_spam_pages_and_never_hides_an_operative_root() {
     assert!(!foreign.contains_key(&ours));
 
     let fresh = fresh_install(&host);
-    fresh
-        .vault
-        .pin_owner_root(&fresh.owner, HERE, ours)
-        .unwrap();
+    fresh.vault.pin_owner_root(&fresh.owner, ours).unwrap();
     assert_eq!(
         fresh.vault.owner_root_view(None, 0).unwrap().pinned,
         Some(ours)
