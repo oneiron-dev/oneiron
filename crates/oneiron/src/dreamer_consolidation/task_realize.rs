@@ -285,6 +285,17 @@ pub async fn run_task_realize(
                 charges.record_usage(usage);
             }
             ctx.note_spend_before_error(charges.units, &charges.step_bindings);
+            // A spent model seat refused the step: the try parks on that seat
+            // (SEAT-PARK-MODEL-STEP-PATH).
+            if let Some((seat, reset_at_s)) =
+                crate::dreamer_runner::dreamer_seat_refusal_of_step(&other)
+            {
+                return Ok(DreamerAttemptExecution::ParkOnSeat {
+                    reason: other.to_string(),
+                    seat: *seat.as_bytes(),
+                    reset_at_s,
+                });
+            }
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
                 cause: crate::dreamer_runner::dreamer_park_cause_of_step(&other),

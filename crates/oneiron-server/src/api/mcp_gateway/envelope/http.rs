@@ -427,8 +427,8 @@ fn mcp_notification_accepted(method: &str) -> bool {
 /// One POSTed notification or response (MCP Streamable HTTP): accepted, it
 /// answers 202 Accepted with no body, under its connection's receipt; else
 /// [`MCP_REFUSED_MESSAGE_STATUS`] with the JSON-RPC error and no id. Its
-/// caller is required, as for every method, and is resolved as a
-/// handshake's is.
+/// caller is required, as for every method but `server/discover`, and is
+/// resolved as a handshake's is.
 async fn mcp_accept_message(
     mode: McpSurfaceMode,
     headers: &HeaderMap,

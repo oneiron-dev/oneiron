@@ -303,6 +303,56 @@ impl RunTreeAdapter<'_> {
         Ok((record.run_id.as_deref() == Some(run_id)).then_some(record.signals))
     }
 
+    /// Withdraws the pending interjections `actor` landed on `branch`, a
+    /// branch of run `run_id` that runs no step: one paused, or parked on a
+    /// durable wait (or on an outage or its payer). No step of it takes them
+    /// while it waits, so each leaves the branch untaken, with its kept
+    /// intent, and its actor keeps it where it came from. The branch's state
+    /// and park are read in this same writer, so a branch that has resumed
+    /// keeps them for its next step, and one that resumes later never takes
+    /// them. Answers the keys withdrawn.
+    pub(crate) fn withdraw_idle_interjections(
+        &self,
+        branch: AttemptId,
+        run_id: &str,
+        actor: &str,
+    ) -> Result<Vec<String>> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let Some(mut record) = self.queue.get_in_txn(&txn, branch)? else {
+            return Ok(Vec::new());
+        };
+        if record.run_id.as_deref() != Some(run_id) || record.state.is_terminal() {
+            return Ok(Vec::new());
+        }
+        if record.state != AttemptState::Paused
+            && crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                .parked_attempt_in_txn(&txn, branch)?
+                .is_none()
+        {
+            return Ok(Vec::new());
+        }
+        let mut withdrawn = Vec::new();
+        record.signals.retain(|signal| {
+            let idle = signal.state == RunSignalState::Pending
+                && signal.actor == actor
+                && matches!(signal.kind, RunSignalKind::Interject { .. });
+            if idle {
+                withdrawn.push(signal.key.clone());
+            }
+            !idle
+        });
+        if withdrawn.is_empty() {
+            return Ok(withdrawn);
+        }
+        record
+            .signal_intents
+            .retain(|intent| !withdrawn.contains(&intent.key));
+        self.save(&mut txn, &mut record)?;
+        txn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(withdrawn)
+    }
+
     /// Worker-owned safe breakpoint. A stale lease consumes nothing. Cancel
     /// co-commits the existing soft request receipt; it never force-cancels.
     /// The returned intents are the only instructions this branch should apply.

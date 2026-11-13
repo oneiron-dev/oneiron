@@ -35,6 +35,7 @@ pub(crate) mod schedule;
 pub(crate) mod secret_bindings;
 pub(crate) mod secrets;
 pub(crate) mod stamp;
+pub(crate) mod synced_folder;
 pub(crate) mod vault_key;
 
 use oneiron::consent::AuthenticatedOwner;
