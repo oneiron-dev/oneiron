@@ -37,3 +37,5 @@ pub(crate) use self::endpoints_merge::openapi_document;
 // The `openapi_document` test door counts the assemblies.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::endpoints_merge::openapi_document_assemblies;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::endpoints_merge::openapi_document_stage_ms;

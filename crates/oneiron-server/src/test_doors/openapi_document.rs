@@ -17,3 +17,9 @@ pub fn assemblies() -> usize {
 pub fn spawn_precompute() -> std::io::Result<std::thread::JoinHandle<()>> {
     crate::api::spawn_openapi_document_precompute()
 }
+
+/// Diagnostic, pin only: the assembly's stages, timed in milliseconds.
+#[must_use]
+pub fn stage_ms() -> Vec<(&'static str, f64)> {
+    crate::api::openapi_document_stage_ms()
+}

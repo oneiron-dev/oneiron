@@ -155,6 +155,66 @@ pub(crate) fn openapi_document_assemblies() -> usize {
     OPENAPI_DOCUMENT_ASSEMBLIES.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// Diagnostic, pin only: [`openapi_document`]'s stages and the
+/// serialization, each timed in milliseconds, then the bytes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn openapi_document_stage_ms() -> Vec<(&'static str, f64)> {
+    let mut stages: Vec<(&'static str, f64)> = Vec::new();
+    let mut clock = std::time::Instant::now();
+    let mut lap = |stages: &mut Vec<(&'static str, f64)>, name: &'static str| {
+        stages.push((name, clock.elapsed().as_secs_f64() * 1000.0));
+        clock = std::time::Instant::now();
+    };
+    let doc = ApiDoc::openapi();
+    lap(&mut stages, "ApiDoc::openapi");
+    let mut spec = serde_json::to_value(doc).expect("serialize generated OpenAPI");
+    lap(&mut stages, "to_value");
+    merge_error_components(&mut spec);
+    lap(&mut stages, "merge_error_components");
+    merge_booking_components(&mut spec);
+    lap(&mut stages, "merge_booking_components");
+    merge_retrieval_depth_components(&mut spec);
+    lap(&mut stages, "merge_retrieval_depth_components");
+    super::owner_paths::merge_owner_paths(&mut spec);
+    lap(&mut stages, "merge_owner_paths");
+    super::left_slip_paths::merge_left_slip_paths(&mut spec);
+    lap(&mut stages, "merge_left_slip_paths");
+    super::facade_paths::merge_facade_paths(&mut spec);
+    lap(&mut stages, "merge_facade_paths");
+    super::openai_proxy_paths::merge_openai_proxy_paths(&mut spec);
+    lap(&mut stages, "merge_openai_proxy_paths");
+    super::anonymous_chat_paths::merge_anonymous_chat_paths(&mut spec);
+    lap(&mut stages, "merge_anonymous_chat_paths");
+    super::off_record_room_paths::merge_off_record_room_paths(&mut spec);
+    lap(&mut stages, "merge_off_record_room_paths");
+    super::signing_paths::merge_signing_paths(&mut spec);
+    lap(&mut stages, "merge_signing_paths");
+    super::signing_paths::merge_editor_paths(&mut spec);
+    lap(&mut stages, "merge_editor_paths");
+    super::voice_bank_paths::merge_voice_bank_paths(&mut spec);
+    lap(&mut stages, "merge_voice_bank_paths");
+    super::pairing_paths::merge_pairing_paths(&mut spec);
+    lap(&mut stages, "merge_pairing_paths");
+    merge_typed_rest_bodies(&mut spec);
+    lap(&mut stages, "merge_typed_rest_bodies");
+    add_security_scheme(&mut spec);
+    lap(&mut stages, "add_security_scheme");
+    mark_entity_response_as_binary(&mut spec);
+    lap(&mut stages, "mark_entity_response_as_binary");
+    fill_schema_description_gaps(&mut spec);
+    lap(&mut stages, "fill_schema_description_gaps");
+    let bytes = serde_json::to_vec(&spec).expect("serialize generated OpenAPI");
+    lap(&mut stages, "to_vec");
+    let paths = spec["paths"].as_object().map_or(0, serde_json::Map::len);
+    let schemas = spec["components"]["schemas"]
+        .as_object()
+        .map_or(0, serde_json::Map::len);
+    stages.push(("paths", paths as f64));
+    stages.push(("schemas", schemas as f64));
+    stages.push(("bytes", bytes.len() as f64));
+    stages
+}
+
 pub(crate) fn openapi_document() -> Value {
     #[cfg(oneiron_test_support)]
     OPENAPI_DOCUMENT_ASSEMBLIES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
