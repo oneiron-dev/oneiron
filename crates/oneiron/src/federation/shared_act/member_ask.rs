@@ -303,6 +303,27 @@ impl Vault {
         ask_id: &str,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
+        self.apply_shared_member_ask_with_check_in(applier, ask_id, slips, None)
+    }
+
+    /// [`Self::apply_shared_member_ask`], spending `check_in_ref`, the
+    /// check-in an earlier call's `CHECK_IN_PENDING` named, when the
+    /// applier's act waits on one (2i): the ask stays open while it waits,
+    /// and the re-call with the settled check-in applies and closes it
+    /// (review of P2.4b).
+    ///
+    /// # Errors
+    /// As [`Self::apply_shared_member_ask`]; [`Error::CheckInPending`] when
+    /// the act waits.
+    ///
+    /// [`Error::CheckInPending`]: crate::error::Error::CheckInPending
+    pub fn apply_shared_member_ask_with_check_in(
+        &self,
+        applier: &AuthenticatedOwner,
+        ask_id: &str,
+        slips: Option<&HostSlipIssuer>,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<SharedActExecutionReceipt> {
         let id = EntityId::from_hex(ask_id)?;
         let ask = {
             let txn = self.store.env.read_txn()?;
@@ -316,16 +337,21 @@ impl Vault {
         let member = ask.change.member()?;
         let ask_ref = Some(ask.id.as_str());
         match ask.change {
-            MemberAskChange::Add { role, .. } => {
-                self.add_shared_member_for_ask(applier, ask.vault_id, member, role, ask_ref, None)
-            }
+            MemberAskChange::Add { role, .. } => self.add_shared_member_for_ask(
+                applier,
+                ask.vault_id,
+                member,
+                role,
+                ask_ref,
+                check_in_ref,
+            ),
             MemberAskChange::Remove { .. } => self.remove_shared_member_for_ask(
                 applier,
                 ask.vault_id,
                 member,
                 slips,
                 ask_ref,
-                None,
+                check_in_ref,
             ),
             MemberAskChange::AssignRole { role, .. } => self.change_shared_member_role_for_ask(
                 applier,
@@ -334,7 +360,7 @@ impl Vault {
                 role,
                 slips,
                 ask_ref,
-                None,
+                check_in_ref,
             ),
         }
     }
