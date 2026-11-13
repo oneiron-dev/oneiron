@@ -79,7 +79,7 @@ pub(crate) fn record_engine_delivery_in_txn(
             .entities
             .get(txn, record.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        *blake3::hash(row).as_bytes()
+        *blake3::hash(&row).as_bytes()
     };
     let place = encode_delivered_record(&DeliveredRecord {
         origin,
