@@ -51,11 +51,11 @@ use oneiron::dreamer_runner::maintenance::coach::{
     COACH_DRAFTER_RETRAIN_FACET, COACH_EVAL_AUTHORING_FACET, COACH_EVAL_MEASUREMENT_FACET,
     COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET,
     COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET,
-    COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET, COACH_SITE_SKILLS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_THINK_THRESHOLD_FACET,
-    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
-    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
-    ThinkThresholdPolicy,
+    COACH_RESEARCH_SELECT_FACET, COACH_RETRIEVAL_SKILL_REVIEW_FACET, COACH_SEAL_CHECKS_FACET,
+    COACH_SITE_SKILLS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_THINK_THRESHOLD_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
+    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET,
+    PersonThresholdPolicy, ThinkThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -84,6 +84,7 @@ mod attribution_labels;
 mod fork_promote;
 mod judge_label_rechecks;
 mod research_oracle;
+mod retrieval_skill_review;
 pub(super) mod seal_checks;
 mod topology_audit;
 mod type_tree_upkeep;
@@ -358,6 +359,8 @@ pub(super) fn run_one(
         COACH_WEAVE_DIGEST_SETTINGS_FACET => weave_digest_settings::run(server, admitted, now),
         COACH_RESEARCH_SELECT_FACET => research_oracle::run(server, admitted, now),
         COACH_RESEARCH_RUN_FACET => vault.run_coach_research(admitted, now),
+        // Census L1-18: the slow retrieval loop, after the nightly bandit update.
+        COACH_RETRIEVAL_SKILL_REVIEW_FACET => retrieval_skill_review::run(server, admitted, now),
         COACH_TRADEOFF_ROUTE_FACET => {
             let report = vault.run_coach_tradeoff_route(admitted, now)?;
             tracing::debug!(?report, "the Coach's tradeoff routes");
