@@ -468,7 +468,9 @@ impl<'w> MeteredDriveWire<'w> {
         };
         Ok(Some(match read {
             StoredText::Pdf => match crate::ingest::pdf_text(&bytes) {
-                Ok(pdf) if !(pdf.unread > 0 && pdf.text.trim().is_empty()) => DriveText::Text {
+                // A PDF none of whose text could be read is unreadable;
+                // one with no text at all is blank.
+                Ok(pdf) if pdf.unread == 0 || !pdf.text.trim().is_empty() => DriveText::Text {
                     markdown: pdf.text,
                     raw_hash: Some(blake3::hash(&bytes).to_hex().to_string()),
                 },
@@ -610,21 +612,15 @@ impl Vault {
         let mut read = Vec::new();
         let mut kept = Vec::new();
         let mut failed: Vec<String> = Vec::new();
-        let mut stopped = false;
         let mut left = Vec::new();
-        let mut tried = 0;
-        for file in std::mem::take(&mut sync.owed) {
-            if stopped || tried >= budget.texts {
-                kept.push(file);
-                continue;
-            }
-            tried += 1;
+        let mut owed = std::mem::take(&mut sync.owed).into_iter();
+        for file in owed.by_ref().take(budget.texts) {
             match metered.text(&drive.origin, &file) {
                 Ok(Some(text)) => read.push((file, text)),
                 Ok(None) => left.push(file.id),
                 Err(error) if is_resting(&error) => {
-                    stopped = true;
                     kept.push(file);
+                    break;
                 }
                 Err(error) => {
                     failed.push(error.to_string());
@@ -632,6 +628,7 @@ impl Vault {
                 }
             }
         }
+        kept.extend(owed);
         report.texts = read.len();
         let mut rescan = FolderRescan {
             folder: folder.to_owned(),
