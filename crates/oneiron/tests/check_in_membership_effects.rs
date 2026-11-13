@@ -19,6 +19,8 @@
 //! - A Deputy's remove or move of a house mind is refused at once, as the
 //!   door refuses it, and opens no check-in: only the house doors move a
 //!   house (review of P2.4b).
+//! - So is a Deputy's move of a member to Steward or Deputy: only an Owner
+//!   gives those roles (main's #7439), so the move opens no check-in.
 //!
 //! On the base (P2.4a) this file does not build: the receipt has no
 //! `check_in` field, and `remove_shared_member_with_check_in`,
@@ -525,5 +527,25 @@ fn a_deputys_remove_or_move_of_a_house_is_refused_and_opens_no_check_in() {
         role_in(&vault, house),
         Some(Role::Member),
         "the house keeps its role"
+    );
+}
+
+#[test]
+fn a_deputys_move_to_a_role_only_an_owner_gives_is_refused_and_opens_no_check_in() {
+    let org = Org::new();
+    let deputy = proof(&org.vault, org.deputy);
+    for role in [Role::Steward, Role::Deputy] {
+        let moved = org
+            .vault
+            .change_shared_member_role(&deputy, SHARED, org.member_a, role, None);
+        assert!(
+            matches!(moved, Err(Error::Claim(_))),
+            "only an Owner gives {role:?}, so the move is refused, not asked: {moved:?}"
+        );
+    }
+    assert_eq!(
+        org.role_of(org.member_a),
+        Some(Role::Member),
+        "the Member keeps its role"
     );
 }
