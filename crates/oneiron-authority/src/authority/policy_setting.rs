@@ -85,6 +85,9 @@ pub enum PolicySetting {
     /// #facets: "Every vault has one default facet ... the owner may set
     /// another").
     DefaultFacet,
+    /// The undo-send window every send waits in on each outbound channel
+    /// (DEC-0006 #undo-send; REV-8 = B).
+    UndoSend,
 }
 
 impl PolicySetting {
@@ -100,6 +103,7 @@ impl PolicySetting {
             Self::BoardLayout => "settings.board_layout",
             Self::NonBaseWorldClaimFraction => "settings.non_base_world_claim_fraction",
             Self::DefaultFacet => "settings.default_facet",
+            Self::UndoSend => "settings.undo_send",
         }
     }
 
@@ -114,6 +118,7 @@ impl PolicySetting {
             Self::BoardLayout => "board_layout",
             Self::NonBaseWorldClaimFraction => "non_base_world_claim_fraction",
             Self::DefaultFacet => "default_facet",
+            Self::UndoSend => "undo_send",
         }
     }
 
@@ -128,6 +133,7 @@ impl PolicySetting {
             "board_layout" => Self::BoardLayout,
             "non_base_world_claim_fraction" => Self::NonBaseWorldClaimFraction,
             "default_facet" => Self::DefaultFacet,
+            "undo_send" => Self::UndoSend,
             _ => return None,
         })
     }
@@ -141,7 +147,8 @@ impl PolicySetting {
             | Self::RoomThreadAdmin
             | Self::BoardLayout
             | Self::NonBaseWorldClaimFraction
-            | Self::DefaultFacet => OwnerActKind::PolicySetting,
+            | Self::DefaultFacet
+            | Self::UndoSend => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }
