@@ -737,13 +737,6 @@ fn validate_open(request: &OpenPendingCheckIn, now: u64) -> Result<()> {
 /// window's end or the rung's wait passed; a mismatched digest; a person not
 /// pinned on the current rung, or one who may no longer answer; storage
 /// errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "2l answers through it; until then only the test door does"
-    )
-)]
 pub(crate) fn answer_pending_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
