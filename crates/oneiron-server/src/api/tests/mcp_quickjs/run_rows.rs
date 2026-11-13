@@ -73,20 +73,31 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     .await;
     assert!(body.get("error").is_none(), "{body}");
     // 04edd1261e6 (#1365): a verb call is recorded as `self.verbs.call`, in
-    // the guest's order: the search, then the claim. The run's end comes
-    // first in the message: a failure line is cut.
+    // the guest's order: the search, then the claim. Whether the claim was
+    // stored, then each step's effect and outcome, come first in the message:
+    // a failure line is cut.
     let structured = &body["result"]["structuredContent"];
+    let stored = mode.vault.get_claim(&claim).unwrap().is_some();
+    let steps: Vec<String> = structured["steps"]
+        .as_array()
+        .map(|steps| {
+            steps
+                .iter()
+                .map(|step| format!("{}: {}", step["effect"], step["outcome"]))
+                .collect()
+        })
+        .unwrap_or_default();
     assert_eq!(
         verb_call_outcomes(&body),
         [
             verb_refusal("mcp_verb_not_bound"),
             verb_refusal("mcp_verb_not_bound")
         ],
-        "result {} steps_run {} | {body}",
+        "claim stored {stored}; steps {steps:?}; result {} steps_run {} | {body}",
         structured["result"],
         structured["steps_run"]
     );
-    assert!(mode.vault.get_claim(&claim).unwrap().is_none(), "{body}");
+    assert!(!stored, "{body}");
 
     let named = seeded_test_entity_id(0x0024_65b4);
     register_bound_verb_mcp_actor(
