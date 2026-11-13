@@ -26,6 +26,7 @@ fn error_variants(method: VaultReadMethod) -> [VaultReadError; 6] {
         },
         VaultReadError::Engine {
             narrowing: None,
+            legal_hold: None,
             method,
             engine_code: "CUSTOM_ENGINE_CODE".to_owned(),
             message: "preserve the engine detail".to_owned(),
@@ -87,6 +88,8 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
             refs: vec![reference.clone()],
             view: None,
             filter: None,
+            image_input: false,
+            task: None,
         };
         let timeline = CoreMemoryTimelineRequest {
             id: admitted_id.to_hex(),

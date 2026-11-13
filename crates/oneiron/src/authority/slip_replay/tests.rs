@@ -37,10 +37,8 @@ fn a_wall_clock_stepped_back_across_a_reopen_never_readmits_an_evicted_proof() {
     let start = 1_900_000_000;
     let clock = crate::ports::ManualClock::new(start);
     let open = || {
-        let config = crate::VaultConfig {
-            store_clock: clock.bundle(),
-            ..crate::VaultConfig::default()
-        };
+        let mut config = crate::VaultConfig::device();
+        config.store_clock = clock.bundle();
         Vault::open(dir.path(), config).unwrap()
     };
     let vault = open();
@@ -113,10 +111,8 @@ impl Holder {
         use ed25519_dalek::Signer;
         let dir = crate::test_support::restore_tempdir();
         let clock = crate::ports::ManualClock::new(start);
-        let config = crate::VaultConfig {
-            store_clock: clock.bundle(),
-            ..crate::VaultConfig::default()
-        };
+        let mut config = crate::VaultConfig::device();
+        config.store_clock = clock.bundle();
         let vault = Vault::open_owned(dir.path(), config).unwrap();
         let issuer = HostSlipIssuer::from_secret(b"clock-recovery-issuer").unwrap();
         vault.ensure_host_root_slip(&issuer).unwrap();
@@ -432,12 +428,12 @@ fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
         .vault
         .snapshot_checkpoint(&image, start + 50)
         .unwrap();
-    let config = crate::VaultConfig {
-        store_clock: holder.clock.bundle(),
-        ..crate::VaultConfig::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.store_clock = holder.clock.bundle();
+    let checkpoint_key = holder.vault.checkpoint_key().unwrap();
     let (replacement, _) = Vault::restore_checkpoint_replacing(
         &image,
+        &checkpoint_key,
         &root.path().join("staged"),
         config,
         &holder.vault,

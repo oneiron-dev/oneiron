@@ -36,8 +36,6 @@ mod remote;
 mod types;
 mod validate;
 
-// FIX [LIBTEST-QUARANTINE-CODE-RUN-VAULT-READ-TESTS]: the lib test target's type check fails here (8 errors: E0063 x8); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

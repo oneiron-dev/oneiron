@@ -83,8 +83,6 @@ mod support;
 #[cfg(any())]
 mod trust_boundary;
 mod vad_vetting;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-WITNESS-MESSAGE]: the lib test target's type check fails here (6 errors: E0061 x3, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod witness_message;
 
 mod burst_retired;
