@@ -327,6 +327,8 @@ pub(crate) use home_pick::{
 };
 pub(crate) use host_action::StoredHostAction;
 pub use host_action::{HostActionAuthority, HostActionIdentity};
+#[cfg(oneiron_test_support)]
+pub(crate) use host_re_root::re_root_authority_as_host_for_test;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
