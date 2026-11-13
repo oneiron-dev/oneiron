@@ -239,7 +239,7 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     scrub_local_only_carriers(vault, key, old)?;
     scrub_local_claim_carriers(vault, key, old)?;
     scrub_redacted_attribution_carriers(vault, key, old)?;
-    scrub_withdrawn_delete_carriers(vault, key, old)?;
+    scrub_withdrawn_delete_carriers(vault, old, Some(key))?;
     super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, old)?;
     // A pending mirror is this vault's own write that a crash kept off the window: it goes into
     // the old window, so the carry-over judges it like any other unseen write and never puts it

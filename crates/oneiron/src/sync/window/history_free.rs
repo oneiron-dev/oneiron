@@ -757,7 +757,7 @@ fn scrub_for_export(
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
-    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, doc, Some(key))?;
     let generations_scrubbed =
         super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, doc)?;
     let rooms_scrubbed = crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
