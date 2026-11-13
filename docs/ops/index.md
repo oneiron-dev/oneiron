@@ -33,6 +33,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot
   credential.
+- [Gmail push](gmail-push.md) — the `[gmail_push]` section: the owner's Pub/Sub topic and push
+  subscription, the keyless `POST /v1/hooks/gmail/push` and its Google OIDC check, channel upkeep,
+  and the 300 s pass as the reconcile.
 - [Sync a machine to its home](device-sync.md) — the `[device_sync]` section: the home a
   machine dials over the paired mesh, the credential file the `/ws` upgrade presents, its MACRO
   home candidacy, and what the log shows.

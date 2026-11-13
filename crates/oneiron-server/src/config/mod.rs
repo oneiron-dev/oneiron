@@ -15,6 +15,7 @@ mod embedder_space;
 mod embedding;
 mod failure_signals;
 mod feedback;
+pub mod gmail_push;
 pub mod import;
 mod keystore;
 mod limits;
@@ -59,6 +60,7 @@ pub(crate) use feedback::github_issue_source;
 pub use feedback::{
     CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig,
 };
+pub use gmail_push::{GOOGLE_OIDC_JWKS_URI, GmailPushConfig};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;
