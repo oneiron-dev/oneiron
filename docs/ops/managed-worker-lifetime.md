@@ -112,9 +112,12 @@ unchanged: free work (a local payer, no key) stays free, and a paid
 provider's call is charged to its payer under its run's budget line, as its
 own-server call is. A local-payer keyless provider at locality `third_party`
 gets no on-device offer, because on device its paid calls would turn free.
-The reranker keeps its HTTP route, so the device-only reranking guard still
-sends it a device-only row empty. Other Unix targets retain their existing
-transport semantics: no PID check, no on-device offer.
+A reranker keeps its HTTP route, unless its worker row listens on a Unix
+socket of its own (`listen = "unix"`, L9-15; run-with-models.md section 8):
+that launch is reached on its socket alone, each connection after the same
+UID and PID check, and the reranker seat gets the same kind of on-device
+offer. Other Unix targets retain their existing transport semantics: no PID
+check, no on-device offer, and no `listen = "unix"` row.
 
 ## Non-vault model worker controller
 

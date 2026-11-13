@@ -17,7 +17,11 @@
 //! and kept only when its bytes hash to the alias's digest and it names the
 //! alias's epoch and the configured wire id. This is the awaitable startup
 //! check: the serving resolver (FIX 7895) stays nonblocking and is not used
-//! here.
+//! here. A launch that serves as a reranker on its own Unix socket
+//! (`listen = "unix"`, L9-15) answers no chat: it is qualified there by one
+//! rerank that names no model, whose reply names the launch's alias, and its
+//! manifest is fetched on the same socket, each exchange over a connection
+//! checked against the supervised child.
 //!
 //! The media workers, VoxCPM2 speech and local ASR, are qualified by one
 //! actual render or transcription ([`super::media_worker::probe`]).
@@ -29,6 +33,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::PoisonError;
+use std::time::Duration;
 
 use oneiron::llm::{
     CacheDigest, CacheEpoch, CacheIdentity, INFERENCE_CALLS_KEY, SCHEDULING_CAPABILITY,
@@ -41,9 +46,14 @@ use serde_json::{Value as JsonValue, json};
 
 use super::super::ModelHostBudgets;
 use super::super::http::{
-    KeyStyle, MAX_REPLY_BYTES, ProviderHttp, charge_read, holding_chat_replies,
+    BytesReply, HttpFailure, KeyStyle, MAX_REPLY_BYTES, ProviderHttp, charge_read,
+    holding_chat_replies,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use super::super::http::{get_within_on, post_json_on};
 use super::super::llama_identity::verify_llama_header;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use super::super::rerank::RERANK_PATH;
 use super::launch_manifest::{LaunchRecord, LaunchSlot};
 use crate::config::models::{ProviderConfig, ProviderKind};
 
@@ -63,12 +73,27 @@ fn qualification_request(wire_model: &str) -> JsonValue {
     })
 }
 
+/// The rerank qualification input (L9-15): one query over one document,
+/// naming no model, so llama.cpp's reply names the launch's own alias.
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+fn rerank_qualification_request() -> JsonValue {
+    json!({
+        "query": "Reply with one word.",
+        "documents": ["one word"],
+        "top_n": 1,
+        "return_documents": false,
+    })
+}
+
 /// One house worker's probe, on its provider's route.
 pub(super) struct HouseProbe {
     http: Result<ProviderHttp, String>,
     wire_model: String,
     /// A managed worker's current launch; `None` for an external worker.
     slot: Option<Arc<LaunchSlot>>,
+    /// The bound on one exchange on a launch's own socket: its provider's
+    /// timeout.
+    socket_timeout: Duration,
 }
 
 impl HouseProbe {
@@ -100,6 +125,7 @@ impl HouseProbe {
             http,
             wire_model: wire_model.to_owned(),
             slot,
+            socket_timeout: Duration::from_secs(provider.timeout_secs),
         }
     }
 
@@ -206,7 +232,16 @@ impl HouseProbe {
     }
 
     async fn llama(&self, http: &ProviderHttp, expected: &WorkerSpec) -> WorkerReadiness {
-        let body = match self.answer(http).await {
+        let launch = self.launch();
+        // A launch on its own socket is asked there, and only there.
+        let on_socket = launch
+            .as_ref()
+            .filter(|launch| launch.http_socket.is_some());
+        let answered = match on_socket {
+            Some(launch) => socket_answer(launch, self.socket_timeout).await,
+            None => self.answer(http).await,
+        };
+        let body = match answered {
             Ok(body) => body,
             Err(readiness) => return readiness,
         };
@@ -214,7 +249,6 @@ impl HouseProbe {
         let Some(alias) = returned.and_then(parse_llama_alias) else {
             return WorkerReadiness::Unverified { observed: None };
         };
-        let launch = self.launch();
         if let Some(launch) = &launch
             && launch.llama_alias.as_deref() != returned
         {
@@ -222,7 +256,11 @@ impl HouseProbe {
             return failed(WorkerFailure::BuildMismatch, Some(observed));
         }
         let path = format!("/{}.json", alias.manifest.as_str());
-        let manifest = match http.get_native_within(&path, MAX_REPLY_BYTES).await {
+        let fetched = match on_socket {
+            Some(launch) => socket_get(launch, &path, self.socket_timeout).await,
+            None => http.get_native_within(&path, MAX_REPLY_BYTES).await,
+        };
+        let manifest = match fetched {
             Ok(reply) => {
                 let _held = charge_read(reply.body.len());
                 if (200..300).contains(&reply.status) {
@@ -290,6 +328,68 @@ impl WorkerProbe for HouseProbe {
             }
         })
     }
+}
+
+/// The rerank qualification answer of a launch that serves HTTP on its own
+/// Unix socket (L9-15), over a connection checked against its supervised
+/// child: the reply's body, or how it failed.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn socket_answer(
+    launch: &LaunchRecord,
+    timeout: Duration,
+) -> Result<JsonValue, WorkerReadiness> {
+    let launch = launch
+        .socket_launch()
+        .ok_or_else(|| failed(WorkerFailure::Unreachable, None))?;
+    let reply = post_json_on(
+        &launch,
+        RERANK_PATH,
+        &rerank_qualification_request(),
+        timeout,
+    )
+    .await
+    .map_err(|_| failed(WorkerFailure::Unreachable, None))?;
+    let answered = reply
+        .body
+        .pointer("/results/0")
+        .is_some_and(JsonValue::is_object);
+    if !(200..300).contains(&reply.status) || !answered {
+        return Err(failed(WorkerFailure::InvalidReply, None));
+    }
+    Ok(reply.body)
+}
+
+/// No socket's peer is checked against the supervised child here, so no
+/// launch is reached on one.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+async fn socket_answer(
+    launch: &LaunchRecord,
+    timeout: Duration,
+) -> Result<JsonValue, WorkerReadiness> {
+    let _ = (launch, timeout);
+    Err(failed(WorkerFailure::Unreachable, None))
+}
+
+/// `path` read on a launch's own socket (L9-15), bounded as an identity
+/// read is.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn socket_get(
+    launch: &LaunchRecord,
+    path: &str,
+    timeout: Duration,
+) -> Result<BytesReply, HttpFailure> {
+    let launch = launch.socket_launch().ok_or(HttpFailure::Connection)?;
+    get_within_on(&launch, path, MAX_REPLY_BYTES, timeout).await
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+async fn socket_get(
+    launch: &LaunchRecord,
+    path: &str,
+    timeout: Duration,
+) -> Result<BytesReply, HttpFailure> {
+    let _ = (launch, path, timeout);
+    Err(HttpFailure::Connection)
 }
 
 /// A llama.cpp answer whose manifest did not resolve: its epoch alone.

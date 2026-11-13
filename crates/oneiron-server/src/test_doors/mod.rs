@@ -20,4 +20,6 @@ pub mod replay_admission;
 pub mod resident_pump;
 pub mod siwc_seat;
 pub mod solved_runs;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod supervised_rerank;
 pub mod workflow_park;

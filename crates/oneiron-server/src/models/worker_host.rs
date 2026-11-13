@@ -54,6 +54,8 @@ mod replacement;
 mod reporting;
 mod routes;
 mod session;
+#[cfg(all(oneiron_test_support, any(target_os = "linux", target_os = "macos")))]
+pub(crate) mod socket_launch_door;
 mod stock;
 pub(super) use stock::{StockWeights, capture as stock_weights};
 
@@ -78,6 +80,8 @@ use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
 #[cfg(unix)]
 pub(super) use launch_manifest::NativeLaunch;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) use launch_manifest::SocketLaunch;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
 
@@ -142,6 +146,17 @@ impl Hosted {
     /// native socket.
     fn native_slot(&self) -> Option<&Arc<LaunchSlot>> {
         if self.row.has_native_launch() {
+            self.slot.as_ref()
+        } else {
+            None
+        }
+    }
+
+    /// A `listen = "unix"` llama.cpp worker's launch slot (L9-15): a
+    /// launch whose record names the socket it serves HTTP on.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    fn socket_slot(&self) -> Option<&Arc<LaunchSlot>> {
+        if self.row.listens_on_socket() {
             self.slot.as_ref()
         } else {
             None
@@ -690,37 +705,109 @@ pub(super) fn native_local_routes(
     provider: &ProviderConfig,
     rows: &[WorkerConfig],
 ) -> BTreeMap<String, NativeRoute> {
+    hosted_slots(provider_name, provider, rows, Hosted::native_slot)
+        .into_iter()
+        .map(|(wire_model, worker, slot)| {
+            let route = NativeRoute {
+                worker,
+                slot,
+                wire_model: wire_model.clone(),
+            };
+            (wire_model, route)
+        })
+        .collect()
+}
+
+/// A `listen = "unix"` llama.cpp worker's route (L9-15): the slot its
+/// launcher records each launch in, the socket the launch serves HTTP on
+/// among it.
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+#[derive(Clone)]
+pub(super) struct SocketRoute {
+    pub(super) worker_id: String,
+    slot: Arc<LaunchSlot>,
+}
+
+impl SocketRoute {
+    /// The current launch's socket and supervised child; `None` before a
+    /// launch, or while its child is not in custody.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(super) fn socket_launch(&self) -> Option<SocketLaunch> {
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()?
+            .socket_launch()
+    }
+}
+
+/// The routes of `provider_name`'s `listen = "unix"` llama.cpp workers,
+/// captured when a runtime is built (L9-15), by wire model, under the rule
+/// [`native_local_routes`] keeps: a row whose hosted row and provider still
+/// match exactly, in a process that launches it, on Linux or macOS, where
+/// each connection is checked against the supervised child. A route is
+/// captured whether or not a launch is current: the reranker that holds it
+/// sends only on that worker's socket, or does not send.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) fn socket_routes(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    rows: &[WorkerConfig],
+) -> BTreeMap<String, SocketRoute> {
+    hosted_slots(provider_name, provider, rows, Hosted::socket_slot)
+        .into_iter()
+        .map(|(wire_model, worker, slot)| {
+            let route = SocketRoute {
+                worker_id: worker.spec().worker_id.clone(),
+                slot,
+            };
+            (wire_model, route)
+        })
+        .collect()
+}
+
+/// No socket here names its peer process, so no worker is reached on one.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(super) fn socket_routes(
+    _provider_name: &str,
+    _provider: &ProviderConfig,
+    _rows: &[WorkerConfig],
+) -> BTreeMap<String, SocketRoute> {
+    BTreeMap::new()
+}
+
+/// Each of `rows` bound to `provider_name` whose hosted row and provider
+/// still match exactly, in a process that launches workers, with the slot
+/// `slot_of` gives it: its wire model, supervisor and slot.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn hosted_slots(
+    provider_name: &str,
+    provider: &ProviderConfig,
+    rows: &[WorkerConfig],
+    slot_of: fn(&Hosted) -> Option<&Arc<LaunchSlot>>,
+) -> Vec<(String, InferenceWorker, Arc<LaunchSlot>)> {
     let Some(host) = HOST.get() else {
-        return BTreeMap::new();
+        return Vec::new();
     };
     if !host.launch_permitted.load(Ordering::Relaxed) {
-        return BTreeMap::new();
+        return Vec::new();
     }
     let workers = host.lock();
-    let mut routes = BTreeMap::new();
-    for row in rows {
-        if row.binding.provider != provider_name {
-            continue;
-        }
-        let Some(hosted) = workers.get(&row.id) else {
-            continue;
-        };
-        if hosted.row != *row || hosted.provider != *provider {
-            continue;
-        }
-        let Some(slot) = hosted.native_slot() else {
-            continue;
-        };
-        routes.insert(
-            row.binding.model.clone(),
-            NativeRoute {
-                worker: hosted.worker.clone(),
-                slot: Arc::clone(slot),
-                wire_model: row.binding.model.clone(),
-            },
-        );
-    }
-    routes
+    rows.iter()
+        .filter(|row| row.binding.provider == provider_name)
+        .filter_map(|row| {
+            let hosted = workers.get(&row.id)?;
+            if hosted.row != *row || hosted.provider != *provider {
+                return None;
+            }
+            let slot = slot_of(hosted)?;
+            Some((
+                row.binding.model.clone(),
+                hosted.worker.clone(),
+                Arc::clone(slot),
+            ))
+        })
+        .collect()
 }
 
 /// No native channel here checks its peer against the supervised child, so

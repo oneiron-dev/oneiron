@@ -11,6 +11,8 @@ use super::catalog::engine_model_id;
 use super::ladder::OfferLadder;
 use super::offer::provider_offer;
 use super::{referenced_models, reranker_models};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::config::models::WorkerConfig;
 use crate::config::models::{ModelsConfig, ProviderConfig};
 
 /// Each model by id: where it runs and the ladder that serves it.
@@ -291,12 +293,14 @@ impl ModelRouter {
     }
 }
 
-/// The on-device offers of `provider`'s chat models a plain `serve` built
-/// from `config` binds (I2-LOCAL), read from `config` alone: each model a
-/// chat ladder names on `provider` that a row whose supervisor holds a
-/// native launch slot serves (`WorkerConfig::has_native_launch`, the
-/// worker host's own rule), as `build_native_local` and `native_rung` bind
-/// it. No supervisor is made and nothing is launched.
+/// The on-device offers of `provider`'s models a plain `serve` built from
+/// `config` binds (I2-LOCAL), read from `config` alone: each model a chat
+/// ladder names on `provider` that a row whose supervisor holds a native
+/// launch slot serves (`WorkerConfig::has_native_launch`, the worker host's
+/// own rule), as `build_native_local` and `native_rung` bind it; and each
+/// model the reranker's ladder names on it that a `listen = "unix"` row
+/// serves (`WorkerConfig::listens_on_socket`, L9-15), as `build_reranker`
+/// binds it. No supervisor is made and nothing is launched.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn configured_on_device_offers(
     name: &str,
@@ -306,28 +310,46 @@ fn configured_on_device_offers(
     use super::catalog::catalog_entry;
     use super::offer::native_local_binding;
 
-    if !super::speaks_native_local(provider) {
-        return Vec::new();
-    }
-    let workers: BTreeMap<&str, &str> = config
-        .workers
-        .iter()
-        .filter(|row| row.binding.provider == name && row.has_native_launch())
-        .map(|row| (row.binding.model.as_str(), row.id.as_str()))
-        .collect();
-    referenced_models(config, name)
-        .iter()
+    let chat_rows = serving_rows(config, name, WorkerConfig::has_native_launch);
+    let chat = super::speaks_native_local(provider)
+        .then(|| referenced_models(config, name))
+        .unwrap_or_default()
+        .into_iter()
         .filter(|model| catalog_entry(model, provider).is_ok())
         .filter_map(|model| {
-            let worker = workers.get(model.model.as_str())?;
-            let id = engine_model_id(model, provider).ok()?;
-            native_local_binding(provider, id, worker).ok()
-        })
+            let worker = chat_rows.get(model.model.as_str())?;
+            let id = engine_model_id(&model, provider).ok()?;
+            native_local_binding(provider, id, worker, false).ok()
+        });
+    let rerank_rows = serving_rows(config, name, WorkerConfig::listens_on_socket);
+    let rerank = reranker_models(config, name)
+        .into_iter()
+        .filter_map(|model| {
+            let worker = rerank_rows.get(model.model.as_str())?;
+            let id = engine_model_id(&model, provider).ok()?;
+            native_local_binding(provider, id, worker, true).ok()
+        });
+    chat.chain(rerank).collect()
+}
+
+/// The worker id that serves each wire model of provider `name`, among the
+/// rows `serves` picks.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn serving_rows<'a>(
+    config: &'a ModelsConfig,
+    name: &str,
+    serves: fn(&WorkerConfig) -> bool,
+) -> BTreeMap<&'a str, &'a str> {
+    config
+        .workers
+        .iter()
+        .filter(|row| row.binding.provider == name && serves(row))
+        .map(|row| (row.binding.model.as_str(), row.id.as_str()))
         .collect()
 }
 
-/// No native channel here checks its peer against the supervised child, so
-/// no chat model has an on-device view.
+/// No native channel or socket here checks its peer against the supervised
+/// child, so no model has an on-device view.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn configured_on_device_offers(
     _name: &str,
