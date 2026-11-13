@@ -703,7 +703,7 @@ impl Import<'_> {
             // Every row the turn stamped is bound in its own write, under the
             // conversation's thread of its container's policy.
             if let Some(policy) = &self.sharing {
-                let thread = source_audience::thread_policy_in_txn(
+                let thread = sharing::conversation_thread_in_txn(
                     self.vault,
                     wtxn,
                     policy,

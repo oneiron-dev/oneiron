@@ -10,6 +10,9 @@
 //! no longer names reads none of the container's rows from that import on,
 //! as a group address's edited member list does. Each conversation lands
 //! under its own thread policy below the container's, as a mail thread does.
+//! The Dreamer reads each such thread, as it reads every import: what it
+//! extracts lands Proposed under the import's review, held by lineage to
+//! the rows' readers.
 
 use std::collections::BTreeSet;
 
@@ -69,6 +72,28 @@ pub(super) fn container_policy_in_txn(
         source_audience::create_source_policy_in_txn(vault, txn, readers, false, actor, at)?;
     POLICIES.put(&vault.store, txn, &key, &policy)?;
     Ok(policy)
+}
+
+/// The thread policy the conversation `native_id` lands under, below its
+/// container's source policy `policy`, written in `txn` the first time and
+/// shared with the Dreamer then. Without the share the Dreamer, a MACHINE
+/// that is no reader, would read none of a shared import's words.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn conversation_thread_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    policy: &EntityId,
+    native_id: &str,
+    actor: EntityId,
+    at: u64,
+) -> Result<EntityId> {
+    let thread = source_audience::thread_policy_in_txn(vault, txn, policy, native_id, actor, at)?;
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+    source_audience::share_thread_in_txn(vault, txn, &thread, dreamer, true, actor, at)?;
+    Ok(thread)
 }
 
 /// Whether `id` is a live PERSON in `txn`.

@@ -3,8 +3,9 @@
 //! members the owner mapped to a PERSON and to the importer, through the
 //! read judge every scoped read applies (`readable_with_read_in`); a later
 //! import that names fewer members takes the read away from the ones it no
-//! longer names. On main the import binds no row, so every row reads to
-//! everyone the vault's other rules let read.
+//! longer names. The Dreamer reads it too, as it reads every import. On main
+//! the import binds no row, so every row reads to everyone the vault's other
+//! rules let read.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test history_import_source_sharing`
 #![cfg(oneiron_test_support)]
@@ -211,6 +212,31 @@ fn a_reimport_without_a_member_takes_that_members_read_away() -> TestResult {
             "a member the source no longer names reads nothing of {row:?}"
         );
         assert!(reads(&fixture.vault, row, &[fixture.owen])?);
+    }
+    Ok(())
+}
+
+/// The Dreamer reads a shared import, as it reads every import: what it
+/// extracts lands under the import's review, held by lineage to the rows'
+/// readers. The rows stay bound, so a person the source did not share with
+/// still reads none of them.
+#[test]
+fn a_shared_import_reads_to_the_dreamer() -> TestResult {
+    let fixture = fixture()?;
+    import(
+        &fixture,
+        &conversation(shared_with(vec![member("U1", Some(fixture.owen))])),
+    )?;
+    let dreamer = fixture.vault.dreamer_authority()?.entity_ref();
+    for row in landed(&fixture)? {
+        assert!(
+            !reads(&fixture.vault, row, &[fixture.yuki])?,
+            "the source's sharing binds {row:?}"
+        );
+        assert!(
+            reads(&fixture.vault, row, &[dreamer])?,
+            "the Dreamer reads {row:?}"
+        );
     }
     Ok(())
 }
