@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{ExportJudge, ExportMet};
 use crate::EntityId;
 use crate::error::Result;
+use crate::provenance::side_sources::{RowSources, SideSources};
 
 impl ExportJudge<'_, '_, '_> {
     /// Whether the copy carries what was made from exactly the rows `inputs`
@@ -27,6 +28,21 @@ impl ExportJudge<'_, '_, '_> {
             carried &= self.carries(*id, None)?;
         }
         Ok(carried)
+    }
+
+    /// What the side ledgers `recorded` (read in this pass's snapshot) and
+    /// the row's birth record the body of `id` was made from (fix list rows
+    /// 22344 and 22345), read in the pass's snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn recorded_sources<'r>(
+        &self,
+        recorded: &'r SideSources,
+        id: EntityId,
+    ) -> Result<RowSources<'r>> {
+        recorded.of(&self.judge.vault.store, self.judge.txn, id)
     }
 
     /// The pass's settled verdicts, kept past its snapshot, for a copy

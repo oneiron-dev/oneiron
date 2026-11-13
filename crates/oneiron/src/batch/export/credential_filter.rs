@@ -292,7 +292,7 @@ impl Vault {
             .as_ref()
             .map(|plan| plan.judge(self, &dbs, &txn))
             .transpose()?;
-        let lineage = BundleLineage::read_in(&self.store, &txn, judge.is_some())?;
+        let mut lineage = BundleLineage::read_in(&self.store, &txn, judge.is_some())?;
         let exported: std::collections::BTreeSet<EntityId> = ids.iter().copied().collect();
         let mut records = Vec::new();
         let mut nulled = false;
@@ -380,7 +380,7 @@ impl Vault {
             // The copy carries a member's mailbox only through a row it ships
             // (fix list row 15416).
             if let Some(judge) = judge.as_mut() {
-                BundleLineage::ships(judge, *id, sources);
+                lineage.ships(judge, *id, sources);
             }
             records.push((
                 *id,

@@ -141,14 +141,13 @@ impl MailboxLineage {
         let Some(judge) = judge else {
             return Ok(true);
         };
-        let carried = judge.carries(id, raw)?;
-        match self.recorded.admitted(judge, id)? {
-            Some(sources) if carried => {
+        match self.recorded.admitted(judge, id, raw)? {
+            Some(sources) => {
                 self.folded
                     .extend(sources.into_iter().map(|source| (id, source)));
                 Ok(true)
             }
-            Some(_) | None => Ok(false),
+            None => Ok(false),
         }
     }
 
@@ -222,7 +221,7 @@ impl MailboxLineage {
         let Some(judge) = judge else {
             return Ok(true);
         };
-        if !judge.carries_all(names)? {
+        if !self.recorded.carries_all(judge, names)? {
             return Ok(false);
         }
         self.folded
@@ -247,15 +246,14 @@ impl MailboxLineage {
         let (Some(judge), Some(source)) = (judge, source) else {
             return Ok(true);
         };
-        let carried = judge.carries(*source, None)?;
-        match self.recorded.admitted(judge, *source)? {
-            Some(recorded) if carried => {
+        match self.recorded.admitted(judge, *source, None)? {
+            Some(recorded) => {
                 self.folded.push((row, *source));
                 self.folded
                     .extend(recorded.into_iter().map(|recorded| (row, recorded)));
                 Ok(true)
             }
-            Some(_) | None => Ok(false),
+            None => Ok(false),
         }
     }
 
@@ -267,15 +265,14 @@ impl MailboxLineage {
     ///
     /// Storage failures.
     pub(super) fn folds_unwritten(
-        &self,
+        &mut self,
         judge: Option<&mut ExportJudge<'_, '_, '_>>,
         source: Option<&EntityId>,
     ) -> Result<bool> {
         let (Some(judge), Some(source)) = (judge, source) else {
             return Ok(true);
         };
-        let carried = judge.carries(*source, None)?;
-        Ok(self.recorded.admitted(judge, *source)?.is_some() && carried)
+        Ok(self.recorded.admitted(judge, *source, None)?.is_some())
     }
 
     /// Why the pass's `judge`, when it has one, keeps home a saved output
@@ -293,7 +290,7 @@ impl MailboxLineage {
         let Some(judge) = judge else {
             return Ok(None);
         };
-        if judge.carries_all(inputs)? {
+        if self.recorded.carries_all(judge, inputs)? {
             self.carried.extend(inputs.into_iter().flatten().copied());
             return Ok(None);
         }
@@ -380,7 +377,7 @@ impl MailboxLineage {
         receipt_id: &str,
         inputs: Option<Vec<EntityId>>,
     ) -> Result<Option<ReceiptSourceOmission>> {
-        if !judge.carries_all(inputs.as_deref())? {
+        if !self.recorded.carries_all(judge, inputs.as_deref())? {
             return Ok(Some(if inputs.is_some() {
                 ReceiptSourceOmission::MemberMailbox
             } else {
@@ -411,23 +408,28 @@ impl MailboxLineage {
         let (Some(plan), Some(mut verdicts)) = (plan, verdicts) else {
             return (Vec::new(), None);
         };
-        for row in rows.difference(unlogged) {
-            verdicts.ships(*row);
-        }
-        for (row, source) in &self.folded {
-            if rows.contains(row) && !unlogged.contains(row) {
-                verdicts.ships(*source);
-            }
-        }
+        let shipped = |row: &EntityId| {
+            rows.contains(row) && !unlogged.contains(row) || self.carried.contains(row)
+        };
+        // Each row the copy ships, writes outside its entity rows, or folds
+        // or names beside a shipped row, and every row those were recorded
+        // as made from, over every hop its judge walked (fix list rows 22344
+        // and 22345).
+        let mut roots: Vec<EntityId> = rows.difference(unlogged).copied().collect();
+        roots.extend(self.carried.iter().copied());
+        roots.extend(
+            self.folded
+                .iter()
+                .filter(|(row, _)| shipped(row))
+                .map(|(_, source)| *source),
+        );
         for (cited, inputs) in &self.receipts {
             if receipts.contains(cited) && !unlogged.contains(&cited.0) {
-                for input in inputs {
-                    verdicts.ships(*input);
-                }
+                roots.extend(inputs.iter().copied());
             }
         }
-        for row in &self.carried {
-            verdicts.ships(*row);
+        for row in self.recorded.reached(roots) {
+            verdicts.ships(row);
         }
         plan.outcome(&verdicts.met())
     }

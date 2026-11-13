@@ -44,7 +44,7 @@ impl BundleLineage {
     ///
     /// Storage failures.
     pub(super) fn admitted(
-        &self,
+        &mut self,
         judge: Option<&mut ExportJudge<'_, '_, '_>>,
         id: EntityId,
         entity_type: u8,
@@ -52,13 +52,12 @@ impl BundleLineage {
     ) -> Result<Option<Vec<EntityId>>> {
         let mut sources = Vec::new();
         if let Some(judge) = judge {
-            let carried = judge.carries(id, Some(raw))?;
-            match self.recorded.admitted(judge, id)? {
-                Some(admitted) if carried => sources = admitted,
-                Some(_) | None => return Ok(None),
+            match self.recorded.admitted(judge, id, Some(raw))? {
+                Some(admitted) => sources = admitted,
+                None => return Ok(None),
             }
             if let Some(names) = version_claim_names(entity_type, raw) {
-                if !judge.carries_all(names.as_deref())? {
+                if !self.recorded.carries_all(judge, names.as_deref())? {
                     return Ok(None);
                 }
                 sources.extend(names.into_iter().flatten());
@@ -74,22 +73,28 @@ impl BundleLineage {
     ///
     /// Storage failures.
     pub(super) fn carried_by(
-        &self,
+        &mut self,
         judge: Option<&mut ExportJudge<'_, '_, '_>>,
         id: EntityId,
     ) -> Result<bool> {
         let Some(judge) = judge else {
             return Ok(true);
         };
-        let carried = judge.carries(id, None)?;
-        Ok(self.recorded.admitted(judge, id)?.is_some() && carried)
+        Ok(self.recorded.admitted(judge, id, None)?.is_some())
     }
 
     /// The row `id` goes into the copy, and with it the rows `sources` its
-    /// admission ([`Self::admitted`]) counts as carried once it ships.
-    pub(super) fn ships(judge: &mut ExportJudge<'_, '_, '_>, id: EntityId, sources: Vec<EntityId>) {
+    /// admission ([`Self::admitted`]) counts as carried once it ships, and
+    /// every row those were recorded as made from, over every hop (fix list
+    /// rows 22344 and 22345).
+    pub(super) fn ships(
+        &self,
+        judge: &mut ExportJudge<'_, '_, '_>,
+        id: EntityId,
+        sources: Vec<EntityId>,
+    ) {
         judge.ships(id);
-        for source in sources {
+        for source in self.recorded.reached(sources) {
             judge.ships(source);
         }
     }

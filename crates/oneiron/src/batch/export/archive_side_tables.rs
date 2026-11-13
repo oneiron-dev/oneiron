@@ -115,6 +115,28 @@ fn lent_tables() -> Vec<LentSideTable> {
     tables
 }
 
+/// Every stored row of `family`'s table, as its owner lends it to the
+/// archive: the key after the table's prefix, and the stored value. The
+/// side-source reader reads the families that record a row's sources
+/// through it ([`crate::provenance::side_sources`], fix list row 22344).
+///
+/// # Errors
+///
+/// Storage failures, and a family its owner does not lend.
+pub(crate) fn side_family_rows(
+    family: ArchiveSideFamily,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    lent(family)?.stored_rows(store, rtxn)
+}
+
+/// The entity id at byte `at` of a side-table key, when the key holds one
+/// there.
+pub(crate) fn side_family_key_id(key: &[u8], at: usize) -> Option<EntityId> {
+    id_at(key, at)
+}
+
 pub(super) fn lent(family: ArchiveSideFamily) -> Result<LentSideTable> {
     let name = family.spec().decl.name;
     lent_tables()

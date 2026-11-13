@@ -21,7 +21,9 @@ pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
     ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason,
 };
-pub(crate) use archive_side_tables::{LentSideTable, SideRowBytes, archive_side_rows_in_txn};
+pub(crate) use archive_side_tables::{
+    LentSideTable, SideRowBytes, archive_side_rows_in_txn, side_family_key_id, side_family_rows,
+};
 pub(crate) use archive_spool::{FileSpool, RecordSpool};
 pub use archive_types::*;
 use oneiron_store::batch::export::archive_types;

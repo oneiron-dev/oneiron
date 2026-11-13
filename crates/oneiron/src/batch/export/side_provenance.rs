@@ -1,204 +1,282 @@
-//! What the side ledgers record each entity row's body was made from, as an
-//! Owner's copy judges it before it reads a body (fix list row 15416).
+//! An Owner's copy's judgement of what the side ledgers and each row's birth
+//! record its body was made from (fix list rows 15416, 22344 and 22345),
+//! before it reads a body. The records come from the one shared reader
+//! ([`SideSources`], Engine ruling EXPORT-EDGES = C); this module only
+//! judges them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;
 
-use super::archive_side_tables::{ArchiveSideFamily, id_at, lent};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::provenance::side_sources::SideSources;
 use crate::source_audience::ExportJudge;
 use crate::store::Store;
 
-/// What the side ledgers record each entity row's body was made from, read
-/// once in an Owner's copy's own snapshot (fix list row 15416), through each
-/// family's own codec and the codec of each record inside it: the copy judges
-/// these before it reads a body, so a body whose words came from a member's
-/// mailbox it leaves out stays home though no edge or stamp names that row.
-///
-/// - each version of a blob artifact's chain (its version and head records)
-///   and each stored `blob.version` claim whose subject it is, which a replica
-///   holds without the chain and before any `claim_of` edge to it: every row
-///   its made_by names is a source of the artifact and of the version's ledger
-///   claim, and, with the artifact, of one use of the ASSET its bytes are;
-/// - a born-from row: its task, ask or skill source, of its artifact;
-/// - an edit settlement: every row its record names, of its artifact;
-/// - a code revision's record, integrity fold, stranded proposal (the
-///   revision inside it read through the revision's own codec) and promotion:
-///   every row they name, its provenance claim among them, of the
-///   CODE_ARTIFACT the revision is;
-/// - a fork record: its parent session and base revision, of the forked
-///   SESSION.
-///
-/// No other family records a source of a row's body: an LFS, codebase or
-/// code-document row names no entity row's source, a code-memory value binds
-/// a payload that stands as a row of its own, and a deck's marks, a claimed
-/// hash pair, a refcount marker, a high-water mark, a revision's frontier and
-/// every index repeat what these records hold.
+/// What the side ledgers and births record each row's body was made from,
+/// read once in an Owner's copy's own snapshot, and the copy's verdict on
+/// each row it judged by them: a body whose words came from a member's
+/// mailbox the copy leaves out stays home though no edge or stamp names
+/// that row, however many recorded hops lie between them.
 #[derive(Default)]
 pub(crate) struct SideProvenance {
-    /// Each row whose body a side ledger records sources of, and every row
-    /// those records name beside it: its body goes only when the copy carries
-    /// every one. `None` when one of its records does not read.
-    owned: BTreeMap<EntityId, Option<BTreeSet<EntityId>>>,
-    /// Each content-addressed ASSET a blob version holds, and each recorded
-    /// use of its bytes: the version's artifact and every row its made_by
-    /// names, `None` when that does not read. Shared bytes go when the copy
-    /// carries every row of one use; they stay home only when it carries no
-    /// use whole.
-    uses: BTreeMap<EntityId, Vec<Option<BTreeSet<EntityId>>>>,
+    recorded: SideSources,
+    /// Each row's settled verdict: a refusal holds whatever row asks, a carry
+    /// only once no row still being judged stood in for it.
+    settled: BTreeMap<EntityId, bool>,
+    /// The sources each carried row's records name, for the rows that count
+    /// as carried once a row ships ([`Self::reached`]).
+    named: BTreeMap<EntityId, Vec<EntityId>>,
+}
+
+/// One row on the walk: every row its records name must go, and, for bytes a
+/// blob version holds, every row of one recorded use of them.
+struct Frame {
+    id: EntityId,
+    /// The row's requirements in order: its named sources, then each use.
+    groups: Vec<Vec<EntityId>>,
+    /// Whether it has uses to meet (groups past the first).
+    has_uses: bool,
+    /// Whether one of its uses does not read.
+    unreadable_use: bool,
+    group: usize,
+    at: usize,
+    /// Whether every named source so far went.
+    named_ok: bool,
+    /// Whether every row of the current use so far went.
+    use_ok: bool,
+    /// Whether some use went whole.
+    kept_use: bool,
+    /// The lowest walk depth of a row still being judged that this frame
+    /// took as carried; its own depth when none.
+    low: usize,
+    /// Its sources that count as carried with it: every named source, and
+    /// the rows of each use that went whole.
+    sources: Vec<EntityId>,
 }
 
 impl SideProvenance {
-    /// What the side ledgers record each row's body was made from, read in
-    /// the snapshot `rtxn`.
+    /// What the side ledgers record, read in the snapshot `rtxn`.
     ///
     /// # Errors
     ///
     /// Storage failures.
     pub(crate) fn read_in(store: &Store, rtxn: &RoTxn<'_>) -> Result<Self> {
-        use crate::code_revision::ArchivedRevisionTable as R;
-        use ArchiveSideFamily as F;
-        let mut recorded = Self::default();
-        for family in [
-            F::BlobVersion,
-            F::BlobHead,
-            F::BlobBornFrom,
-            F::BlobSettlement,
-            F::CodeRevisionRecord,
-            F::CodeRevisionIntegrity,
-            F::CodeRevisionProposal,
-            F::CodeRevisionPromotion,
-            F::CodeRevisionFork,
-        ] {
-            for (key, value) in lent(family)?.stored_rows(store, rtxn)? {
-                // The row a record is of, by its table's own key: a blob
-                // row's artifact, a revision's CODE_ARTIFACT, a fork's
-                // SESSION.
-                let at = if family == F::BlobBornFrom {
-                    ENTITY_ID_LEN + 1
-                } else {
-                    0
-                };
-                let Some(owner) = id_at(&key, at) else {
-                    continue;
-                };
-                let rows = match family {
-                    F::BlobVersion | F::BlobHead => {
-                        match crate::blob_artifact::archive_version_source(&value) {
-                            Some(version) => {
-                                recorded.version(owner, version);
-                                continue;
-                            }
-                            None => None,
-                        }
-                    }
-                    F::BlobBornFrom => crate::blob_artifact::archive_born_from_rows(&key, &value),
-                    F::BlobSettlement => crate::edit_settle::archive_settlement_rows(&value),
-                    F::CodeRevisionRecord => {
-                        crate::code_revision::archive_revision_rows(R::Record, &value)
-                    }
-                    F::CodeRevisionIntegrity => {
-                        crate::code_revision::archive_revision_rows(R::Integrity, &value)
-                    }
-                    F::CodeRevisionProposal => {
-                        crate::code_revision::archive_revision_rows(R::Proposal, &value)
-                    }
-                    F::CodeRevisionPromotion => {
-                        crate::code_revision::archive_revision_rows(R::Promotion, &value)
-                    }
-                    F::CodeRevisionFork => {
-                        crate::code_revision::archive_revision_rows(R::Fork, &value)
-                    }
-                    _ => continue,
-                };
-                recorded.record(owner, rows);
-            }
-        }
-        for (artifact, version) in crate::blob_artifact::archive_claimed_versions(store, rtxn)? {
-            recorded.version(artifact, version);
-        }
-        Ok(recorded)
+        Ok(Self {
+            recorded: SideSources::read_in(store, rtxn)?,
+            ..Self::default()
+        })
     }
 
-    /// The rows a record of `owner` names as sources of its body (`None`: a
-    /// record that does not read), but `owner` itself.
-    fn record(&mut self, owner: EntityId, rows: Option<Vec<EntityId>>) {
-        let named = self
-            .owned
-            .entry(owner)
-            .or_insert_with(|| Some(BTreeSet::new()));
-        match rows {
-            Some(rows) => {
-                if let Some(named) = named {
-                    named.extend(rows.into_iter().filter(|row| *row != owner));
-                }
-            }
-            None => *named = None,
-        }
-    }
-
-    /// One version of `artifact`: what made its bytes is a source of the
-    /// artifact and of the version's ledger claim, and, with the artifact,
-    /// one use of the ASSET those bytes are.
-    fn version(
-        &mut self,
-        artifact: EntityId,
-        version: crate::blob_artifact::ArchivedVersionSource,
-    ) {
-        self.record(artifact, version.made_by.clone());
-        self.record(version.claim, version.made_by.clone());
-        let asset = version.asset;
-        let named: Option<BTreeSet<EntityId>> = version.made_by.map(|rows| {
-            rows.into_iter()
-                .chain([artifact])
-                .filter(|row| *row != asset)
-                .collect()
-        });
-        self.uses.entry(asset).or_default().push(named);
-    }
-
-    /// The rows the side ledgers record the body of `id` was made from, when
-    /// `judge` carries every row its records name and, for bytes a blob
-    /// version holds, every row of one recorded use of them: those rows, to
-    /// count as carried once the body ships. `None` when the body stays home.
-    /// A row no side ledger names goes as its own lineage judges it, with
-    /// nothing beside it. Every recorded source is judged, so the copy's
-    /// notices name each mailbox one of them is of.
+    /// The rows the side ledgers and its birth record the body of `id` was
+    /// made from, when `judge` carries `id` (its bytes `raw`, else as the
+    /// pass's view holds them) and every row they name, each judged again by
+    /// its own records (a row whose own recorded source stays home stays home
+    /// too; a row met again on the same walk counts as carried), and, for
+    /// bytes a blob version holds, every row of one recorded use of them:
+    /// those rows, to count as carried once the body ships
+    /// ([`Self::reached`]). `None` when the body stays home. A row nothing
+    /// records goes as its own lineage judges it, with nothing beside it.
+    /// Every recorded source is judged, so the copy's notices name each
+    /// mailbox one of them is of.
     ///
     /// # Errors
     ///
     /// Storage failures.
     pub(crate) fn admitted(
-        &self,
+        &mut self,
+        judge: &mut ExportJudge<'_, '_, '_>,
+        id: EntityId,
+        raw: Option<&[u8]>,
+    ) -> Result<Option<Vec<EntityId>>> {
+        if let Some(settled) = self.settled.get(&id) {
+            return Ok(settled.then(|| self.named.get(&id).cloned().unwrap_or_default()));
+        }
+        let own = judge.carries(id, raw)?;
+        let recorded = self.walk(judge, id)?.filter(|_| own);
+        self.settled.insert(id, recorded.is_some());
+        match &recorded {
+            Some(sources) => self.named.insert(id, sources.clone()),
+            None => self.named.remove(&id),
+        };
+        Ok(recorded)
+    }
+
+    /// Whether every row the records of `id` name goes, as
+    /// [`Self::admitted`] judges each, and the rows that count as carried
+    /// with it; `id`'s own lineage is its caller's. Settles each row below
+    /// `id` that no row still on the walk stood in for.
+    fn walk(
+        &mut self,
         judge: &mut ExportJudge<'_, '_, '_>,
         id: EntityId,
     ) -> Result<Option<Vec<EntityId>>> {
-        let mut sources = Vec::new();
-        let mut carried = true;
-        if let Some(named) = self.owned.get(&id) {
-            let named: Option<Vec<EntityId>> =
-                named.as_ref().map(|named| named.iter().copied().collect());
-            carried &= judge.carries_all(named.as_deref())?;
-            sources.extend(named.into_iter().flatten());
-        }
-        if let Some(uses) = self.uses.get(&id) {
-            let mut kept = false;
-            for named in uses.iter().flatten() {
-                let named: Vec<EntityId> = named.iter().copied().collect();
-                if judge.carries_all(Some(named.as_slice()))? {
-                    kept = true;
-                    sources.extend(named);
+        let mut walk = vec![self.frame(judge, id, 0)?];
+        loop {
+            let depth = walk.len() - 1;
+            let (current, next) = {
+                let frame = &mut walk[depth];
+                (frame.id, frame.next())
+            };
+            if let Some(child) = next {
+                let carried = if child == current {
+                    Some(true)
+                } else if let Some(settled) = self.settled.get(&child) {
+                    Some(*settled)
+                } else if let Some(on_walk) = walk.iter().position(|open| open.id == child) {
+                    let frame = &mut walk[depth];
+                    frame.low = frame.low.min(on_walk);
+                    Some(true)
+                } else if judge.carries(child, None)? {
+                    None
+                } else {
+                    self.settled.insert(child, false);
+                    Some(false)
+                };
+                match carried {
+                    Some(carried) => walk[depth].took(child, carried),
+                    None => {
+                        let opened = self.frame(judge, child, depth + 1)?;
+                        walk.push(opened);
+                    }
                 }
+                continue;
             }
-            // A use whose made_by does not read is of a source this vault
-            // cannot name, and keeps nothing.
-            if !kept && uses.iter().any(Option::is_none) {
-                judge.carries_all(None)?;
+            let frame = walk.pop().ok_or(crate::error::Error::InvariantViolation(
+                "side provenance walk lost its frame",
+            ))?;
+            let carried = frame.carried(judge)?;
+            let Some(parent) = walk.last_mut() else {
+                return Ok(carried.then_some(frame.sources));
+            };
+            parent.low = parent.low.min(frame.low);
+            parent.took(frame.id, carried);
+            if carried {
+                self.named.insert(frame.id, frame.sources);
             }
-            carried &= kept;
+            if !carried || frame.low >= depth {
+                self.settled.insert(frame.id, carried);
+            }
         }
-        Ok(carried.then_some(sources))
+    }
+
+    /// Whether `judge` carries every row of `rows` and every row each was
+    /// recorded as made from, over every hop ([`Self::admitted`]); `None`,
+    /// rows not all known, is carried by no judge. Every row is judged.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub(crate) fn carries_all(
+        &mut self,
+        judge: &mut ExportJudge<'_, '_, '_>,
+        rows: Option<&[EntityId]>,
+    ) -> Result<bool> {
+        let Some(rows) = rows else {
+            return judge.carries_all(None);
+        };
+        let mut carried = true;
+        for row in rows {
+            carried &= self.admitted(judge, *row, None)?.is_some();
+        }
+        Ok(carried)
+    }
+
+    /// Every row the rows `roots` were recorded as made from, over every
+    /// hop the walk carried ([`Self::admitted`]): what counts as carried
+    /// once a row whose sources they are ships.
+    pub(crate) fn reached(&self, roots: impl IntoIterator<Item = EntityId>) -> BTreeSet<EntityId> {
+        let mut reached = BTreeSet::new();
+        let mut pending: Vec<EntityId> = roots.into_iter().collect();
+        while let Some(row) = pending.pop() {
+            if !reached.insert(row) {
+                continue;
+            }
+            if let Some(sources) = self.named.get(&row) {
+                pending.extend(sources.iter().copied());
+            }
+        }
+        reached
+    }
+
+    /// The walk's frame for `id` at depth `depth`: what the shared reader
+    /// records its body was made from. A record that does not read is a
+    /// source this vault cannot name, and the judge is told.
+    fn frame(
+        &self,
+        judge: &mut ExportJudge<'_, '_, '_>,
+        id: EntityId,
+        depth: usize,
+    ) -> Result<Frame> {
+        let sources = judge.recorded_sources(&self.recorded, id)?;
+        let named_ok = match &sources.named {
+            Some(_) => true,
+            None => judge.carries_all(None)?,
+        };
+        let mut groups = vec![sources.named.into_iter().flatten().collect::<Vec<_>>()];
+        groups.extend(
+            sources
+                .uses
+                .iter()
+                .flatten()
+                .map(|rows| rows.iter().copied().collect::<Vec<_>>()),
+        );
+        Ok(Frame {
+            id,
+            has_uses: !sources.uses.is_empty(),
+            unreadable_use: sources.uses.iter().any(Option::is_none),
+            groups,
+            group: 0,
+            at: 0,
+            named_ok,
+            use_ok: true,
+            kept_use: false,
+            low: depth,
+            sources: Vec::new(),
+        })
+    }
+}
+
+impl Frame {
+    /// The next row to judge, closing each finished use on the way.
+    fn next(&mut self) -> Option<EntityId> {
+        loop {
+            let group = self.groups.get(self.group)?;
+            if let Some(row) = group.get(self.at) {
+                return Some(*row);
+            }
+            if self.group > 0 && self.use_ok {
+                self.kept_use = true;
+                self.sources.extend(group.iter().copied());
+            }
+            self.group += 1;
+            self.at = 0;
+            self.use_ok = true;
+        }
+    }
+
+    /// The row `row` the walk judged for this frame went (`carried`) or
+    /// stays home.
+    fn took(&mut self, row: EntityId, carried: bool) {
+        if self.group == 0 {
+            self.named_ok &= carried;
+            if carried {
+                self.sources.push(row);
+            }
+        } else {
+            self.use_ok &= carried;
+        }
+        self.at += 1;
+    }
+
+    /// Whether the body goes: every named source went, and one use went
+    /// whole when it has any. A use whose made_by does not read keeps
+    /// nothing, and is of a source this vault cannot name when no use went.
+    fn carried(&self, judge: &mut ExportJudge<'_, '_, '_>) -> Result<bool> {
+        if self.has_uses && !self.kept_use && self.unreadable_use {
+            judge.carries_all(None)?;
+        }
+        Ok(self.named_ok && (!self.has_uses || self.kept_use))
     }
 }
