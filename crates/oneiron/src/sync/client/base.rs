@@ -114,6 +114,10 @@ pub struct SyncClient {
     /// The followed windows the home refused on this connection
     /// (`FOLLOW_REFUSED`). Cleared at every connect.
     pub(crate) follows_refused: HashSet<WindowKey>,
+    /// The followed windows whose full exchange landed here on this
+    /// connection, their thin read cache rows dropped
+    /// ([`Self::land_followed_window`]). Cleared at every connect.
+    pub(crate) followed_windows_landed: HashSet<WindowKey>,
     /// The windows whose home replacement installed here on this connection
     /// since a per-window re-bootstrap last asked for one (FIX 20202). Cleared
     /// at every connect.
@@ -271,6 +275,7 @@ impl SyncClient {
             promotions_granted: HashSet::new(),
             follow_requests: Mutex::new(HashSet::new()),
             follows_refused: HashSet::new(),
+            followed_windows_landed: HashSet::new(),
             replacements_installed: HashSet::new(),
             window_pads: Mutex::default(),
             document_parts: Mutex::default(),
@@ -611,6 +616,31 @@ impl SyncClient {
     /// connection.
     pub(crate) fn follow_answered(&self, key: &WindowKey) -> bool {
         self.promotions_granted.contains(key) || self.follows_refused.contains(key)
+    }
+
+    /// Once a followed window's full exchange lands here (a home update
+    /// imported, or the home's replacement installed), drops the thin read
+    /// cache rows its items kept from before the follow
+    /// (FOLLOWED-WINDOW-STALE-THIN-CACHE), as a promotion drops them: the
+    /// canonical rows are here now, and a local edit at such an item is no
+    /// longer refused as a thin read. Once per window and connection; a
+    /// window this device promoted dropped them at its promotion.
+    pub(crate) fn land_followed_window(
+        &mut self,
+        key: &WindowKey,
+    ) -> std::result::Result<(), TransportError> {
+        if self.peer_session.is_some()
+            || !self.followed_window_granted(key.as_str())
+            || self.opened_window_promoted(key)?
+            || !self.followed_windows_landed.insert(key.clone())
+        {
+            return Ok(());
+        }
+        self.vault
+            .with_write_txn_grouped(|txn| {
+                super::residence::drop_thin_rows_in(&self.vault, txn, key)
+            })
+            .map_err(|error| TransportError::Storage(error.to_string()))
     }
 
     /// Whether `key` syncs in full on this lane only because `worlds`
