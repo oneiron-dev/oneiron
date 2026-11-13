@@ -414,6 +414,11 @@ impl DisclosureContext {
     /// vector hit or joined text. An epoch summary's words are its sources',
     /// so it is admitted only with each of them, and only while neither it
     /// nor any of them is withdrawn (`compaction::epoch_disclosable_in`).
+    ///
+    /// This reads the store alone, so it does not follow a scope summary's
+    /// words or a copy of them to their sources: it is the pre-filter of a
+    /// bounded channel that holds no vault. A disclosure decision asks
+    /// [`Self::admits_in`].
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -445,6 +450,61 @@ impl DisclosureContext {
             entity_type,
             &row.body,
             |source, source_row| self.admits_row(store, rtxn, source, source_row.entity_type, None),
+        )
+    }
+
+    /// [`Self::admits`], and every record the row's words came from (ILDF2
+    /// P7, `#p7-room-built`). A scope summary, a TURN that copies one, a
+    /// claim whose merge header names one, a `conversation.summary` claim and
+    /// the other carriers `scope_summary::word_sources_in` names hold other
+    /// records' words, so the row is admitted only with each of them, through
+    /// nested copies, each judged by this context's own row test (Tier A, a
+    /// TURN's messages, the clearance, retained copies). Words whose sources
+    /// no longer resolve, or that cycle, are refused. The owner alone is
+    /// admitted everything, as by [`Self::admits`].
+    ///
+    /// Every disclosure decision that holds the vault asks this; a filter
+    /// that holds only the store asks [`Self::admits`] as a pre-filter, and
+    /// the decision after it asks this.
+    pub(crate) fn admits_in(
+        &self,
+        vault: &Vault,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
+        let store = &vault.store;
+        if !self.admits(store, rtxn, id, entity_type, claim_body)? {
+            return Ok(false);
+        }
+        if self.mode == DisclosureMode::OwnerAlone {
+            return Ok(true);
+        }
+        let Some(row) = store.port_entity_record(rtxn, id)? else {
+            return Ok(false);
+        };
+        let raw = row.encode();
+        match crate::scope_summary::word_sources_in(vault, rtxn, id, &raw)? {
+            // Its own words: its row, and a TURN's messages, passed above.
+            crate::scope_summary::WordSources::Own => return Ok(true),
+            crate::scope_summary::WordSources::Unresolved => return Ok(false),
+            crate::scope_summary::WordSources::From(_) => {}
+        }
+        super::disclosable_set::word_closure_admitted(
+            vault,
+            rtxn,
+            *id,
+            &raw,
+            |record, record_raw| {
+                // The row itself passed above, judged with its claim body.
+                if record == *id {
+                    return Ok(true);
+                }
+                let header = EntityMetadataHeader::parse(record_raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?;
+                self.admits_row(store, rtxn, &record, header.entity_type, None)
+            },
         )
     }
 
