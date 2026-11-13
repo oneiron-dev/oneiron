@@ -907,7 +907,9 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       edge_hop: 1, max_neighbors: 20, view: "full", budget: { token_budget: 8192 },
       filter: { include_stale: true } };
     // Both fixture claims are about the owner, an L2 subject of every pack
-    // here, so a pack serves them as l2_base rows, not as results or neighbors.
+    // here. The L2 prefix holds the owner's base-reality claims only
+    // (pipeline/l2_evidence.rs), so the readable claim is an l2_base row and
+    // the hidden dream-world claim is a delta row (a result or neighbor).
     const packShape = (reply: Retrieval04Pack, rows: readonly Retrieval04L2Row[]) => JSON.stringify({
       results: reply.results.map(row => row.id), neighbors: reply.neighbors.map(row => row.id),
       l2_rows: rows.map(row => ({ id: row.id, pred: row.pred, world: row.world,
@@ -920,12 +922,14 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
       expect(ownerPack.status).toBe(200);
       const ownerL2 = retrieval04L2Rows(ownerPack.body);
       try {
-        // Control: the owner's pack reaches the TASK anchor and both claims.
+        // Control: the owner's pack reaches the TASK anchor and both claims:
+        // the readable base claim in the L2 prefix, the hidden-world claim
+        // outside it, as a delta row of the TASK anchor's walk.
         expect(ownerPack.body.disclosure?.mode ?? null).not.toBe("absence_clamp");
         expect(ownerPack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
         expect(ownerL2.map(row => row.val)).toContain(readableText);
-        expect(ownerL2.some(row => row.val === hiddenText)
-          || ownerPack.body.neighbors.some(row => row.id === hidden.id)).toBe(true);
+        expect(ownerL2.map(row => row.val)).not.toContain(hiddenText);
+        expect([...ownerPack.body.results, ...ownerPack.body.neighbors].map(row => row.id)).toContain(hidden.id);
       } catch (error) {
         throw new Error(`RETRIEVAL-04 owner context-pack control: ${errorText(error)}; pack=${packShape(ownerPack.body, ownerL2)}`,
           { cause: error });
@@ -3498,12 +3502,13 @@ suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit quest
 //   world hits are never interleaved unlabeled in one list.
 // - P-RECALL-011: "World sections are labeled and presented base-first
 //   within their budgets." Source: ARCH-0004#world-scope. Proved in the
-//   typed pack (per-item world label, base group first). In the rendered
-//   pack the claims, all about the vault owner, are l2_base rows; proved:
-//   each row names its world (story rows the story world, base rows not it)
-//   and the out-of-scope world is absent. NOT proved there: base-first order,
-//   because l2_base rows sit in claim-id order (FIX-LIST
-//   [RECALL-L2-PREFIX-WORLDS-UNPARTITIONED]). The
+//   typed pack (per-item world label, base group first) and in the rendered
+//   pack: the claims are all about the vault owner, whose L2 prefix holds
+//   the base claims only, and the story rows render after it as delta rows
+//   labeled with the story world; the out-of-scope world is absent. The
+//   story claims are written first, so claim-id order alone would put them
+//   ahead (FIX-LIST [RECALL-L2-PREFIX-WORLDS-UNPARTITIONED], Engine ruling
+//   E2E4-L2-WORLD-PARTITION = C). The
 //   exact non-base budget fraction is not asserted: no typed door read here
 //   lets the owner set or read that fraction. The fixture holds three base
 //   claims beside the three story claims, so the default non-base share
@@ -3697,16 +3702,18 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       ...storyValues.map((value): [string, string] => [value, storyWorld.id_hex]),
       [otherValue, otherWorld.id_hex],
     ]);
+    // Story claims first: their claim ids (clock-ordered) sort before the
+    // base claims', so only the world partition renders the base rows first.
     const claimInputs: FacadeInput<"vault.claims.upsert">[] = [
-      ...[baseValue, ...baseExtraValues].map((value): FacadeInput<"vault.claims.upsert"> => ({
-        predicate: museRecall03Predicate, subject_ref: ownerRef, value,
-        confidence: 1, source: "user_stated", scope: baseScope,
-        occurred_at: museRecall03Occurred,
-      })),
       ...storyValues.map((value): FacadeInput<"vault.claims.upsert"> => ({
         predicate: museRecall03Predicate, subject_ref: ownerRef, value,
         confidence: 1, source: "user_stated",
         scope: { ...baseScope, world_id: storyWorld.id_hex },
+        occurred_at: museRecall03Occurred,
+      })),
+      ...[baseValue, ...baseExtraValues].map((value): FacadeInput<"vault.claims.upsert"> => ({
+        predicate: museRecall03Predicate, subject_ref: ownerRef, value,
+        confidence: 1, source: "user_stated", scope: baseScope,
         occurred_at: museRecall03Occurred,
       })),
       {
@@ -3803,36 +3810,37 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     expect(typeof renderedPack.rendered).toBe("string");
     const rendered = renderedPack.rendered ?? "";
     // P-RECALL-011 in the rendered pack. Every claim here is about the vault
-    // owner, an L2 subject, so the rendered pack serves each one once, as an
-    // l2_base row ahead of the delta (context_pack/l2_base.rs
-    // render_l2_rows_with_handles; serialize/pack_preparation.rs
-    // prepare_entities skips l2_base.evidence_ids). Each row names its world
-    // by the world's short handle (`world`, the id hex where none resolves).
-    // #7304's `world_section` label is for delta rows, and these claims are
-    // none. The rows sit in claim-id order, so base-first is not asserted
-    // here (FIX-LIST [RECALL-L2-PREFIX-WORLDS-UNPARTITIONED]).
+    // owner, an L2 subject. The L2 prefix (the toon pack's first line,
+    // serialize/l2_prefix.rs) is the owner's base-reality profile: it holds
+    // the base claims and no claim of a named world (pipeline/l2_evidence.rs).
+    // The story claims are delta rows, which the pack partitions base-first
+    // and labels with their world (#7304: `world_section`, the story world's
+    // id hex). So each story row renders after the last base row, with the
+    // story world named between them.
     const l2Rows = museRecall03RenderedL2Rows(rendered);
     const l2RowWith = (sentinel: string) => l2Rows.find(
       (row) => (JSON.stringify(row.val) ?? "").includes(sentinel),
     );
     const storyWorldHandles = museRecall03WorldHandles(storyWorld);
-    const otherWorldHandles = museRecall03WorldHandles(otherWorld);
-    const baseRows = [baseSentinel, ...baseExtraSentinels].map(l2RowWith);
-    const storyRows = storySentinels.map(l2RowWith);
-    const renderedLabelled =
-      baseRows.every((row) => row !== undefined && !storyWorldHandles.includes(row.world ?? ""))
-      && storyRows.every((row) => row !== undefined && storyWorldHandles.includes(row.world ?? ""));
-    if (!renderedLabelled) {
-      // World handles are printed as kinds, not text: a handle can carry a
-      // redacted world name.
-      const kinds = storyRows.map((row) => row === undefined ? "missing"
-        : storyWorldHandles.includes(row.world ?? "") ? "story"
-          : row.world === null ? "null" : "other");
-      throw new Error(`MUSE-RECALL-03 the rendered recall pack (format=toon) does not name each owner claim's world in its l2_base rows; rendered_head=${JSON.stringify(rendered.slice(0, 12))} delta_empty=${rendered.endsWith("delta:\n")} l2_rows=${l2Rows.length} base_rows_found=${baseRows.filter(Boolean).length} story_rows_found=${storyRows.filter(Boolean).length} story_row_worlds=${JSON.stringify(kinds)} rendered_chars=${rendered.length}`);
+    const renderedBaseSentinels = [baseSentinel, ...baseExtraSentinels];
+    const basePositions = renderedBaseSentinels.map((sentinel) => rendered.indexOf(sentinel));
+    const storyPositions = storySentinels.map((sentinel) => rendered.indexOf(sentinel));
+    const lastBase = Math.max(...basePositions);
+    const storyLabelled = storyPositions.map((at) => at > lastBase
+      && storyWorldHandles.some((handle) => rendered.slice(lastBase, at).includes(handle)));
+    const l2BaseRows = renderedBaseSentinels.filter((sentinel) => l2RowWith(sentinel) !== undefined).length;
+    const l2StoryRows = storySentinels.filter((sentinel) => l2RowWith(sentinel) !== undefined).length;
+    const l2WorldRows = l2Rows.filter((row) => row.world !== null).length;
+    const renderedPartitioned = l2BaseRows === renderedBaseSentinels.length
+      && l2StoryRows === 0 && l2WorldRows === 0
+      && basePositions.every((at) => at >= 0)
+      && storyLabelled.every(Boolean);
+    if (!renderedPartitioned) {
+      // Positions and counts only, never text: rows carry redacted sentinels.
+      throw new Error(`MUSE-RECALL-03 the rendered recall pack (format=toon) does not render the owner's base claims first, in its L2 prefix, with the story rows labeled after them; rendered_head=${JSON.stringify(rendered.slice(0, 12))} l2_rows=${l2Rows.length} l2_base_rows=${l2BaseRows} l2_story_rows=${l2StoryRows} l2_world_rows=${l2WorldRows} base_positions=${JSON.stringify(basePositions)} story_positions=${JSON.stringify(storyPositions)} story_labelled=${JSON.stringify(storyLabelled)} rendered_chars=${rendered.length}`);
     }
     // The out-of-scope world's claim is in no part of the rendered pack.
     expect(rendered.includes(otherSentinel)).toBe(false);
-    expect(l2Rows.some((row) => otherWorldHandles.includes(row.world ?? ""))).toBe(false);
 
     const otherOnlyInput: FacadeInput<"vault.recall"> = {
       query: tokenOtherWorld, effort: "light", limit: 10,
