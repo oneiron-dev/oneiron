@@ -130,7 +130,7 @@ pub struct InquiryReciprocalGrantMinted {
 
 /// `vault.inquiry.edge.mint`'s input: the company's vault (64 hex) and name,
 /// and the edge's terms. An absent term takes the member default: tier
-/// `unstamped`, mode `ask_when_unsure`, keep `task`, no expiry.
+/// `unstamped`, mode `auto`, keep `task`, no expiry.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InquiryEdgeMintRequest {
@@ -139,7 +139,8 @@ pub struct InquiryEdgeMintRequest {
     /// `unstamped`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier_ceiling: Option<String>,
-    /// `always_ask`, `ask_when_unsure` or `never_ask`.
+    /// `manual` (always ask the member), `auto` (ask when unsure) or
+    /// `full-access` (answer from the scope without asking).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in_mode: Option<String>,
     /// `task` or `copy`.
