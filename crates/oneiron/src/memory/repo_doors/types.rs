@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::memory::codebase_doors::{CodeSnapshotDefinition, CodeSnapshotFile};
-use crate::merge_queue::BatchState;
+use crate::merge_queue::{BatchState, QueueDriveStatus};
 use crate::origin::RepoPortableId;
 use crate::store::repo_proposal_record::RepoProposalStatus;
 
@@ -357,6 +357,14 @@ pub struct RepoQueueEntryView {
     pub declaration: Option<EntityId>,
     #[schemars(with = "String")]
     pub state: BatchState,
+    /// Where the automatic driver stands on it, from the same stored batch
+    /// as `state`: `unenrolled` on a queue no checked init enrolls, else a
+    /// typed hold such as `waiting_symbols` or `held_needs_new_base`, or
+    /// `driving` / `done`. Its last stored status, so it can trail the live
+    /// `blockers` until the driver's next pass. No reason text, conflict or
+    /// other run's proposal is shown.
+    #[schemars(with = "String")]
+    pub drive: QueueDriveStatus,
     pub base_green: String,
     pub expected_head: String,
     pub landed_head: Option<String>,
