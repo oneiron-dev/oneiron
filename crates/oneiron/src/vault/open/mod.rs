@@ -713,6 +713,9 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::store::skill_content_index::backfill_content_hash_index_if_needed(&vault)?;
+        // The companion profile grants by principal and PERSON, for a vault
+        // older than their index (ARCH-0044 H424).
+        vault.backfill_companion_grant_index(false)?;
         // The agents owner-agent Grant mints have ever named, for a vault
         // older than their index (PAIR-GRANT-DESIGN Q2 = A).
         crate::federation::backfill_agent_grant_member_index(&vault, false)?;

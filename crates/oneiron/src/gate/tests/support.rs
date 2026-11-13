@@ -479,6 +479,14 @@ pub(super) fn put_malformed_access_grant_bytes(
     let payload = access_grant_blob(data);
 
     vault.with_write_txn(|wtxn| {
+        // Through the body stage's companion index writer, as a stored row
+        // passes it, so the indexed reads walk and fail closed on it too.
+        crate::access_grant::reindex_companion_grant(
+            &vault.store,
+            wtxn,
+            id,
+            Some((ENTITY_TYPE_ACCESS_GRANT, data)),
+        )?;
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         let type_key = Store::encode_type_key(ENTITY_TYPE_ACCESS_GRANT, id);
         vault.store.type_index.put(wtxn, &type_key, &[])?;

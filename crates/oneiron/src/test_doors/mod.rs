@@ -20,6 +20,7 @@ pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_run_answer;
 pub mod code_view_fork;
+pub mod companion_grant_index;
 pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;
