@@ -298,6 +298,13 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# L9-12's broker rerank leg registers its sentinel key in a test vault and
+# answers from the paid-leg TLS fake provider.
+[[test]]
+name = "broker_rerank"
+path = "tests/broker_rerank.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
 [lints]
 workspace = true
 
