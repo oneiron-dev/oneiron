@@ -151,6 +151,12 @@ pub(in crate::api::mcp_gateway) fn mcp_board_verb_error(
 /// one and page two cannot make page two wrong — and refusing it there simply
 /// destroyed a valid enumeration. Connector, tool, argument, and producer
 /// identity stay bound: the registry checks all four against the retained row.
+///
+/// The retained page is judged again under the caller's CURRENT read, as a
+/// fresh call is (ARCH-0028 #mcp-continuation-open): a row its read admitted
+/// at page one that it may no longer read (a Grant narrowed or revoked, the
+/// row moved out of its ceiling) refuses the continuation, and the caller
+/// starts over from page one under the read it holds now.
 pub(in crate::api::mcp_gateway) async fn mcp_preflight_page(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -202,6 +208,12 @@ pub(in crate::api::mcp_gateway) async fn mcp_preflight_page(
             crate::mcp::McpPageCursorError::SnapshotMismatch,
         ));
     }
+    drop(registry);
+    if !mcp_page_rows_still_read(server, actor, &snapshot.read_rows)? {
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::SnapshotMismatch,
+        ));
+    }
     Ok(McpPageDispatchState {
         continuation: Some(state),
         continuable,
@@ -220,7 +232,6 @@ pub(in crate::api::mcp_gateway) async fn mcp_resolve_page(
     dispatch: &McpPageDispatchState,
     snapshot: &McpPageSnapshot,
 ) -> Result<McpPageBudget, McpGatewayError> {
-    let mut registry = server.mcp_registry.lock().await;
     let snapshot_epoch = dispatch.continuation.as_ref().map_or_else(
         || dispatch.producer_epoch.unwrap_or(0),
         |continuation| continuation.snapshot_epoch,
@@ -238,17 +249,86 @@ pub(in crate::api::mcp_gateway) async fn mcp_resolve_page(
         McpPageBudget::resolve(request, snapshot.source)
     };
     if let Some(position) = page.successor_position() {
+        let mut retained = snapshot.clone();
+        // Page one's cursor keeps the rows its caller reads now, which each
+        // continuation of it is judged again by; a continuation's own
+        // successor keeps the ones it was judged by.
+        if dispatch.continuation.is_none() {
+            retained.read_rows = mcp_page_rows_read_now(server, actor, snapshot)?;
+        }
+        let mut registry = server.mcp_registry.lock().await;
         let cursor = registry.mint_page_cursor_with_snapshot(
             &actor.stream_connection,
             tool,
             argument_digest,
             snapshot_epoch,
             position,
-            Some(snapshot.clone()),
+            Some(retained),
         );
         page.attach_cursor(cursor);
     }
     Ok(page)
+}
+
+/// The rows of a page one's `rows` its caller reads now, sorted and unique,
+/// by the predicate the board door admits a row with (`mcp_scope_admits_row`):
+/// its credential reads the row, inside its registered world and facet
+/// ceiling. A caller with no scoped read, or a page whose rows are unknown
+/// (FIX 5988), keeps none.
+fn mcp_page_rows_read_now(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    snapshot: &McpPageSnapshot,
+) -> Result<Vec<oneiron::EntityId>, McpGatewayError> {
+    let rows = snapshot
+        .rows
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Ok(read) = mcp_scoped_read(&server.vault, actor) else {
+        return Ok(Vec::new());
+    };
+    let mut kept = Vec::with_capacity(rows.len());
+    for row in rows {
+        if mcp_page_row_read(server, actor, &read, &row)? {
+            kept.push(row);
+        }
+    }
+    Ok(kept)
+}
+
+/// Whether the caller's read at this call still admits every row page one's
+/// read admitted. Its scoped read failing now refuses with its own error.
+fn mcp_page_rows_still_read(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    read_rows: &[oneiron::EntityId],
+) -> Result<bool, McpGatewayError> {
+    if read_rows.is_empty() {
+        return Ok(true);
+    }
+    let read = mcp_scoped_read(&server.vault, actor)?;
+    for row in read_rows {
+        if !mcp_page_row_read(server, actor, &read, row)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn mcp_page_row_read(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    read: &oneiron::claim::ScopedRead<'_>,
+    row: &oneiron::EntityId,
+) -> Result<bool, McpGatewayError> {
+    let readable = mcp_credential_reads(&server.vault, actor, row)
+        .map_err(|error| mcp_engine_error("mcp page row admission failed", error))?;
+    Ok(readable && mcp_scope_covers_entity(read, &actor.scope, row)?)
 }
 
 pub(in crate::api::mcp_gateway) fn mcp_page_cursor_error(

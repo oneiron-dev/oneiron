@@ -160,6 +160,7 @@ pub(crate) async fn execute_mcp_setup(
             health,
             keyframe: Some(keyframe.clone()),
             rows: Some(rows),
+            read_rows: Vec::new(),
         };
         staged_brief = brief;
         hooks = Some(board.hooks);
