@@ -70,6 +70,7 @@ impl OfferLadder {
             kind,
             retry_after,
             resets_at,
+            seat: None,
         }
         .into()
     }
