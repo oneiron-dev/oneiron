@@ -153,6 +153,27 @@ pub(crate) fn admit_turn_position_in_txn(
     Ok(())
 }
 
+/// Settles every scope's watermark on `turn`'s temporal key, as a round of
+/// each that read it would (the test door `test_doors::turn_words`).
+#[cfg(oneiron_test_support)]
+pub(super) fn settle_every_scope_on_turn(vault: &Vault, turn: &EntityId) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    let learned_at = vault
+        .store
+        .port_entity_record(&wtxn, turn)?
+        .ok_or(Error::EntityNotFound)?
+        .learned_at;
+    for scope in [
+        DreamerConsolidationScope::Micro,
+        DreamerConsolidationScope::Meso,
+        DreamerConsolidationScope::Macro,
+    ] {
+        write_watermark_position_in_txn(vault, &mut wtxn, scope, learned_at, Some(*turn))?;
+    }
+    wtxn.commit()?;
+    Ok(())
+}
+
 /// Reads the per-scope watermark inside a caller-owned write transaction
 /// (the ONE-1685 session close re-reads it to guard its pre-planned round
 /// against a concurrent planner).

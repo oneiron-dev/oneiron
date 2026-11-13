@@ -140,6 +140,32 @@ pub(crate) fn requeue_turn_in_txn(
     put_carrier_in_txn(store, txn, turn)
 }
 
+/// Whether `turn` holds a re-dirty carrier pending for every scope, and is
+/// live (the test door `test_doors::turn_words`).
+///
+/// # Errors
+///
+/// The reads.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pending_for_every_scope(vault: &Vault, turn: &EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(carrier) = REDIRTY.get(&vault.store, &txn, turn)? else {
+        return Ok(false);
+    };
+    Ok(carrier.consumed == 0 && is_live(&vault.store, &txn, turn)?)
+}
+
+/// Settles every scope's watermark on `turn`'s key, as a round of each that
+/// read it would (the test door `test_doors::turn_words`).
+///
+/// # Errors
+///
+/// The read and the watermark writes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn settle_every_scope_on_turn(vault: &Vault, turn: &EntityId) -> Result<()> {
+    super::watermark::settle_every_scope_on_turn(vault, turn)
+}
+
 /// Parks each TURN of `passed`, the temporal keys a cursor is settling past,
 /// that has no conversation edge.
 pub(super) fn park_edgeless_in_txn(
