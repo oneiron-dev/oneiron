@@ -28,8 +28,6 @@ mod anchor_session_admission;
 mod archive;
 pub(crate) mod authorization;
 mod evaluation_time;
-// FIX [LIBTEST-QUARANTINE-SUBJECT-MODEL-TESTS-HEAD-ADMISSION]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 mod head_admission;
 #[cfg(feature = "sync")]
 mod replicated_anchor;
