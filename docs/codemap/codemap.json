@@ -135012,7 +135012,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 53
+      "crate-vis": 54
      }
     },
     {
@@ -147058,6 +147058,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/delete_authority_served_door.rs",
+     "purpose": "DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -148166,7 +148174,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1850,
-   "test_files": 218
+   "test_files": 219
   },
   "oneiron-skill-attribution": {
    "files": [
