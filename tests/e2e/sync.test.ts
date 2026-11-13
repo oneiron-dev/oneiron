@@ -975,9 +975,9 @@ suite.test(test, "SYNC-07", "A claim from a connected vault lands only under the
  * Row: OF-535. Canon: ARCH-0023b #two-planes, identity #authority-log.
  * Oracle: sync-scenarios / SYNC-08.
  *
- * Main DOES have an optional mesh listener: server feature mesh plus explicit
- * ONEIRON_MESH_BIND, with ONEIRON_MESH_RELAYS absent for direct-only mode.
- * It is not an always-on dependency. token pair --machine and device enrol
+ * Main DOES have an optional mesh listener: the default server build carries
+ * feature mesh, and only an explicit ONEIRON_MESH_BIND starts it
+ * (ONEIRON_MESH_RELAYS absent: direct-only). token pair --machine and device enrol
  * are public CLI doors. vault.mesh.path_receipts({limit?}) is typed HTTP/SDK:
  *   {id,direction:"inbound"|"outbound",outcome:"admitted"|"refused"|"failed",
  *    machine?,endpoint_key?,alpn,opened_at_ms,closed_at_ms?,

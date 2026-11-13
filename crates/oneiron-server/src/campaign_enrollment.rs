@@ -267,6 +267,20 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
             .and_then(|native| native.stalwart().ok());
         move || campaign_stalwart_client(&vault, placement.clone())
     });
+    // ARCH-0059 #copy-review: a governed campaign's body version is reviewed
+    // once, before its first drive; the Gate's copy-review stage reads the
+    // stored verdict. A review that cannot run stores none, and the Gate then
+    // holds the send for the owner's press. The error is not logged: it can
+    // quote the vault.
+    if vault
+        .review_enrollment_copy(attempt, &server.decision_host().campaign_copy_review())
+        .is_err()
+    {
+        tracing::warn!(
+            attempt = ?attempt.id,
+            "campaign copy review did not run; a governed send holds for the owner"
+        );
+    }
     let now_ms = crate::runtime::wall_clock_ms();
     let drive = vault.drive_enrollment_outbound_leg(node, attempt, &mut sender, now_ms);
     Some(match drive {

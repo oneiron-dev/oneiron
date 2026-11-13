@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::backup::{self, BackupPlan, BackupRecord};
+use super::synced_folder::{self, SyncedFolder};
 
 /// The data-location section of `doctor` and `GET /v1/owner/status`.
 #[derive(Debug, Serialize)]
@@ -20,6 +21,11 @@ pub(crate) struct Location {
     pub(crate) last_export: Option<LastExport>,
     /// The write-door secret scan, when the vault could be read.
     pub(crate) secret_scan: Option<oneiron::policy_model::SecretScanMode>,
+    /// The sync service's folder that holds the vault; absent when none
+    /// does. Vaults live in the app folder, never in a synced folder
+    /// (CROSS-ARCH-0019 #vault-20-hot).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) synced_folder: Option<SyncedFolder>,
     /// Set when the vault is held by a running server; ask it instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) note: Option<String>,
@@ -148,6 +154,7 @@ pub(crate) fn locate(
         },
         last_export,
         secret_scan,
+        synced_folder: synced_folder::enclosing(vault_path),
         note: None,
     })
 }

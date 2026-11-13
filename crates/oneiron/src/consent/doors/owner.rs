@@ -171,6 +171,45 @@ impl Vault {
         owner.revalidate_in_txn(self, txn)
     }
 
+    /// [`Self::bind_owner_credential`] for the one owner verb `verb` the
+    /// embedded owner's bound handle calls: it also binds the owner's own
+    /// slip minted to a verb subset that reaches `verb` (`oneiron token
+    /// read`, `token agent`, `token pair --scope`) and cuts nothing else
+    /// ([`own_slip_reaching_verb`]). The proof carries it, so every door that
+    /// revalidates the proof refuses once it is revoked or expires.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the capability is not such a slip, is no longer live, or the
+    /// actor is not an owner of this vault now.
+    pub(crate) fn bind_owner_credential_for_verb(
+        &self,
+        mut owner: AuthenticatedOwner,
+        credential: crate::authority::VerifiedSlip,
+        verb: &str,
+    ) -> Result<AuthenticatedOwner> {
+        own_slip_reaching_verb(&owner, &credential, verb)?;
+        owner.credential = Some(Box::new(credential));
+        self.recheck_owner(&owner)?;
+        Ok(owner)
+    }
+
+    /// [`Self::bind_owner_credential_for_verb`] judged in the caller's
+    /// transaction `txn`, answering the owner's actor: the embedded owner's
+    /// repair of a damaged authority clock judges it against the floor it
+    /// staged there.
+    pub(crate) fn bind_owner_credential_for_verb_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut owner: AuthenticatedOwner,
+        credential: crate::authority::VerifiedSlip,
+        verb: &str,
+    ) -> Result<EntityId> {
+        own_slip_reaching_verb(&owner, &credential, verb)?;
+        owner.credential = Some(Box::new(credential));
+        owner.revalidate_in_txn(self, txn)
+    }
+
     /// Rechecks `owner` against the vault as it stands now: the person is
     /// live and still owns this vault and, for a bound credential, the
     /// capability is live. For an act that keeps no row of its own to
@@ -247,17 +286,67 @@ fn own_full_slip(
     owner: &AuthenticatedOwner,
     credential: &crate::authority::VerifiedSlip,
 ) -> Result<()> {
-    let claims = credential.claims();
-    if !credential.is_full_vault_owner_grade()
-        || claims.holder_ref != owner.actor.to_hex()
-        || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
-        || claims.trusted_contact.is_some()
+    if !credential.is_full_vault_owner_grade() || !names_owner_as_human(owner, credential.claims())
     {
         return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
             "credential is not this owner's own full slip",
         )));
     }
     Ok(())
+}
+
+/// Whether `credential` is `owner`'s own human slip that reaches `verb` and
+/// cuts nothing else: the owner's full slip ([`own_full_slip`]), or one the
+/// owner minted to a verb subset that reaches `verb`
+/// ([`slip_reaches_verb`]). It is live (each binding rechecks that), never
+/// handed to another key, bound to no pact, and on every axis but its verbs
+/// as whole as a full slip: no record, channel, world, facet, band,
+/// audience, sensitivity, comm reach, org or share cut, and reusable. Any
+/// other slip takes no owner door, as that door could not honour its cut.
+fn own_slip_reaching_verb(
+    owner: &AuthenticatedOwner,
+    credential: &crate::authority::VerifiedSlip,
+    verb: &str,
+) -> Result<()> {
+    if credential.is_full_vault_owner_grade() {
+        return own_full_slip(owner, credential);
+    }
+    let mut beside_verbs = credential.claims().clone();
+    beside_verbs.scope.verbs = crate::federation::ScopeAxis::All;
+    if credential.is_transferred()
+        || credential.pact().is_some()
+        || !beside_verbs.is_full_vault_owner_grade()
+        || !names_owner_as_human(owner, &beside_verbs)
+        || !slip_reaches_verb(credential, verb)
+    {
+        return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+            "credential is not this owner's own slip for this verb",
+        )));
+    }
+    Ok(())
+}
+
+/// Whether `claims` name `owner` as their human holder, and no trusted
+/// contact.
+fn names_owner_as_human(owner: &AuthenticatedOwner, claims: &crate::authority::SlipClaims) -> bool {
+    claims.holder_ref == owner.actor.to_hex()
+        && claims.actor_class.as_deref() == Some(CONSENT_ACTOR_CLASS)
+        && claims.trusted_contact.is_none()
+}
+
+/// Whether `credential`'s verbs reach `verb`: by its name, or by the core
+/// scope its verb-table row needs, read as a server reads a slip's verbs
+/// (`read` or `core:read` for a Read row, `write` or `core:write` for a
+/// Write row).
+fn slip_reaches_verb(credential: &crate::authority::VerifiedSlip, verb: &str) -> bool {
+    if credential.allows_verb(verb) {
+        return true;
+    }
+    let Some(row) = crate::verbs::AgentVerb::from_name(verb) else {
+        return false;
+    };
+    let class = if row.writes() { "write" } else { "read" };
+    credential.allows_verb(class) || credential.allows_verb(&format!("core:{class}"))
 }
 
 impl AuthenticatedOwner {
