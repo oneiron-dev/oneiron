@@ -323,3 +323,71 @@ fn a_held_organ_calls_own_landing_consumes_its_wait() {
         "the hold is consumed once; a second landing finds a waiting proposal: {second:?}"
     );
 }
+
+#[test]
+fn a_suffixed_file_lands_only_while_its_call_holds_the_ref() {
+    let fixture = Fixture::new();
+    let artifact = fixture.artifact("chart.png", "image/png");
+    let wait = fixture.hold(artifact);
+    let suffixed = format!("{HELD_REF}/1");
+    let output = oneiron::edit_settle::NativeOutput {
+        run_ref: suffixed.clone(),
+        name: "chart.png".to_owned(),
+        media_type: "image/png".to_owned(),
+        bytes: b"exported chart bytes".to_vec(),
+        report: "{}".to_owned(),
+        made_by: None,
+    };
+    let at = fixture.vault.now_recorded_at();
+    let landed = |fixture: &Fixture| {
+        fixture
+            .vault
+            .pending_proposal(&artifact, &suffixed)
+            .expect("read the landing")
+            .is_some()
+    };
+
+    let other_call = OrganWait {
+        call: b"another call under the same ref".to_vec(),
+        ..wait.clone()
+    };
+    let refusal = fixture
+        .vault
+        .propose_held_organ_output(&other_call, &output, at, &[])
+        .expect_err("a file of another call than the one holding the ref is refused");
+    assert_names_the_hold(&refusal, "suffixed landing of another call");
+    assert!(!landed(&fixture), "the other call's file did not land");
+
+    fixture
+        .vault
+        .fail_organ_wait(
+            &artifact,
+            HELD_REF,
+            "the node ran the call and it failed",
+            fixture.vault.now_recorded_at(),
+        )
+        .expect("record the failure");
+    let refusal = fixture
+        .vault
+        .propose_held_organ_output(&wait, &output, at, &[])
+        .expect_err("a failed call's file is refused under a ref of its own too");
+    assert_names_the_hold(&refusal, "suffixed landing after a failure");
+    assert!(
+        refusal.to_string().contains("ran and failed"),
+        "the refusal says the call failed; got {refusal}"
+    );
+    assert!(!landed(&fixture), "the failed call's file did not land");
+
+    fixture
+        .vault
+        .release_organ_wait_as(&artifact, HELD_REF, &owner_consent(), fixture.owner)
+        .expect("the owner releases the hold");
+    let unheld = fixture
+        .vault
+        .propose_held_organ_output(&wait, &output, at, &[]);
+    assert!(
+        unheld.is_err(),
+        "a call no longer held lands nothing: {unheld:?}"
+    );
+    assert!(!landed(&fixture), "the released call's file did not land");
+}
