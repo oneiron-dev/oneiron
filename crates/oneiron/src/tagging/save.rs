@@ -591,27 +591,39 @@ impl<'v> Linker<'v> {
 
     /// The phonetic rung (ARCH-0024 signal 2), for a name the key misses:
     /// the canonical heads of the live or archived persons whose phonetic
-    /// postings hold one of the name's whole-name codes, each in a world the
-    /// turn is in. A name of one part, and a mention of any other kind, take
-    /// none. Each hit is a candidate as the key's are, never a sure link.
+    /// postings hold the name's whole romaji or kana code, or the Soundex
+    /// code of every one of its parts, each in a world the turn is in. A
+    /// name of one part, and a mention of any other kind, take none. Each
+    /// hit is a candidate as the key's are, never a sure link.
     fn sounds_like(&self, txn: &heed::RoTxn<'_>, kind: u8, mention: &str) -> Result<Vec<EntityId>> {
         if kind != ENTITY_TYPE_PERSON {
             return Ok(Vec::new());
         }
         let codes = crate::batch::phonetic_codes::linking_codes(mention);
-        if codes.is_empty() {
-            return Ok(Vec::new());
+        let store = &self.vault.store;
+        let mut hits: BTreeSet<EntityId> = store
+            .port_retrieval_phonetic_search(txn, &codes.whole)?
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect();
+        // Each part's code is its own posting; a person must hold them all.
+        let mut every_part: Option<BTreeSet<EntityId>> = None;
+        for code in &codes.every_part {
+            let holders: BTreeSet<EntityId> = store
+                .port_retrieval_phonetic_search(txn, std::slice::from_ref(code))?
+                .into_iter()
+                .map(|hit| hit.id)
+                .collect();
+            every_part = Some(match every_part {
+                None => holders,
+                Some(held) => held.intersection(&holders).copied().collect(),
+            });
         }
+        hits.extend(every_part.unwrap_or_default());
         let mut found = BTreeSet::new();
-        for hit in self
-            .vault
-            .store
-            .port_retrieval_phonetic_search(txn, &codes)?
-        {
-            for head in self.vault.resolve_entity_in_txn(txn, &hit.id)? {
-                if linkable_in_txn(&self.vault.store, txn, &head, kind)?
-                    && self.shares_world(txn, &head)?
-                {
+        for hit in hits {
+            for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
+                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
                     found.insert(head);
                 }
             }

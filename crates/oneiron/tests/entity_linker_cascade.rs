@@ -1,11 +1,13 @@
 //! The entity linker's phonetic rung (census item 12; ARCH-0024 signal 2).
 //!
 //! A person's name of two or more parts that the identity key misses is
-//! looked up next over the phonetic postings every PERSON birth writes. One
-//! person who sounds like the name is its candidate. Two or more stay
-//! candidates together: the nightly identity re-check asks which one it is
-//! (IDENTITY_SETTLE), and nothing is merged. A first name alone keeps the
-//! old path, a provisional entity.
+//! looked up next over the phonetic postings every PERSON birth writes: a
+//! person sounds like it who holds its whole romaji or kana code, or the
+//! Soundex code of every one of its parts. One person who sounds like the
+//! name is its candidate. Two or more stay candidates together: the nightly
+//! identity re-check asks which one it is (IDENTITY_SETTLE), and nothing is
+//! merged. A first name alone keeps the old path, a provisional entity, and
+//! so does a name whose parts sound unlike every person's.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test entity_linker_cascade`.
@@ -216,8 +218,42 @@ fn a_first_name_alone_takes_no_phonetic_link() {
 
     let (_, link) = save(&vault, "Owan called.", "Owan");
 
+    assert_mints(&vault, link);
+}
+
+/// "Owen Snow" and Owen Smith share the Soundex code of the whole name,
+/// O525, which stops inside the last name. The last names' own codes, S500
+/// and S530, differ, so Owen Smith is not a candidate and the mention mints
+/// a provisional entity, as on main.
+#[test]
+fn a_last_name_that_sounds_different_takes_no_phonetic_link() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(&dir);
+    person(&vault, "Owen Smith");
+
+    let (_, link) = save(&vault, "Owen Snow called.", "Owen Snow");
+
+    assert_mints(&vault, link);
+}
+
+/// The whole name's Soundex code of "Owen Mori Jones" ends before its last
+/// part: O562, the same as Owen Mori Smith's. The last parts' codes, J520
+/// and S530, differ, so the mention mints, as on main.
+#[test]
+fn a_different_last_part_past_the_whole_name_code_takes_no_phonetic_link() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(&dir);
+    person(&vault, "Owen Mori Smith");
+
+    let (_, link) = save(&vault, "Owen Mori Jones called.", "Owen Mori Jones");
+
+    assert_mints(&vault, link);
+}
+
+/// The mention minted a provisional person: it is no one's candidate.
+fn assert_mints(vault: &Vault, link: MentionLink) {
     let MentionLink::Minted { kind, entity } = link else {
-        panic!("a lone first name mints: {link:?}");
+        panic!("the mention mints: {link:?}");
     };
     assert_eq!(kind, ENTITY_TYPE_PERSON);
     assert!(
