@@ -79402,13 +79402,14 @@
       "PolicyPreflight",
       "PolicyPreflightAct",
       "PolicyPreflightRef",
-      "PolicyPreflightRequest"
+      "PolicyPreflightRequest",
+      "PolicyPreflightVerdict"
      ],
      "path": "src/snapshot_read/policy_preflight.rs",
-     "purpose": "`vault.policy.preflight` (primitive A, slice 6.4e): what the caller's own read lets it do with each of a…",
+     "purpose": "`vault.policy.preflight` (primitive A, slices 6.4e and 6.4e-2): what the caller's own read lets it do with…",
      "surface": {
       "const": 1,
-      "enum": 2,
+      "enum": 3,
       "fn": 2,
       "struct": 2
      }
@@ -103459,6 +103460,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/primitive_a_policy_preflight_derive.rs",
+     "purpose": "Primitive A, slice 6.4e-2 (ENGINE CALL S64E-JUDGE = A; S64-5): `vault.policy.preflight` with the acts…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -106190,7 +106199,7 @@
    "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7482,
-   "test_files": 1178
+   "test_files": 1179
   },
   "oneiron-agent-runtime": {
    "files": [
