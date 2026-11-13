@@ -138,7 +138,7 @@ fn a_claim_erase_preview_keeps_its_fields_and_digest() -> TestResult {
     let fixture = owned_vault()?;
     let at = fixture.vault.now_recorded_at();
     let mut body = ClaimBody::new(
-        "prefers_tea",
+        "profile.note",
         ClaimSubject::Entity(fixture.owner_id),
         rmpv::Value::from("green"),
         1.0,
