@@ -13,6 +13,12 @@ use crate::error::{Error, GateError, Result};
 use crate::identity_topology::ProposalOutcome;
 use crate::vault::Vault;
 
+/// The grant target an Admin's or Delegate's Owner-minted `policy.change`
+/// grant names for the power to demote another actor's graduated ramp scope
+/// through [`Vault::demote_scope_to_propose`]: one target for every scope, at
+/// vault scope, as the other holder doors name theirs (FIX 8177).
+pub const RAMP_DEMOTE_GRANT_TARGET: &str = "consent-graduation:demote";
+
 /// A cold-mail offer needs both an OF-399 streak and live CID-5 reputation.
 /// This filter is on the general offer list as well as the native-mail pack
 /// read path: a poor-reputation identity must not surface a second offer door.
