@@ -4,15 +4,14 @@
 use crate::Vault;
 use crate::connector_key::{
     ConnectorKeyRecord, EffectorBudgetLocation, EffectorBudgetRowId, EffectorBudgetRowSource,
-    budget_exhausted_reason, suspend_connector_key_in_txn,
+    SuspendCause, suspend_connector_key_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 /// Suspends `id`'s key in a write transaction of its own, as an exhausted
 /// `on_exhaust: Suspend` row (the key's row 0) does: the record the writer
-/// wrote, or an error when it wrote nothing. On this base the writer takes
-/// the reason itself and writes whatever the key's state.
+/// wrote, or an error when it wrote nothing.
 ///
 /// # Errors
 ///
@@ -36,9 +35,10 @@ pub fn suspend_on_budget_exhaustion(
         &mut wtxn,
         id,
         &record,
-        budget_exhausted_reason(&location),
+        SuspendCause::BudgetExhausted(&location),
         at,
-    )?;
+    )?
+    .into_suspended()?;
     wtxn.commit()?;
     Ok(suspended)
 }
