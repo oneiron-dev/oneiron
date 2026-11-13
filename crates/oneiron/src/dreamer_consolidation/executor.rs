@@ -119,6 +119,13 @@ pub(super) enum PartitionRun {
         reason: String,
         refusal: crate::store::model_step_submission::StepBudgetRefusal,
     },
+    /// A spent model seat refused a step: the try parks on the seat with
+    /// `reason`, until the seat's available write (SEAT-PARK-MODEL-STEP-PATH).
+    SeatRefused {
+        reason: String,
+        seat: crate::dreamer_runner::ModelSeatId,
+        reset_at_s: Option<u64>,
+    },
     Held {
         candidates: Vec<VerifiedCandidate>,
         retry_at_ms: u64,
@@ -127,9 +134,19 @@ pub(super) enum PartitionRun {
 
 impl PartitionRun {
     /// The run a failed step ends: a spend scope's refusal for good,
-    /// typed, or a refusal the attempt asks again after its retry delay.
+    /// typed; a spent model seat's refusal, parked on the seat; or a
+    /// refusal the attempt asks again after its retry delay.
     pub(super) fn refused_by(error: DurableStepError) -> Self {
         let reason = error.to_string();
+        if let Some((seat, reset_at_s)) =
+            crate::dreamer_runner::dreamer_seat_refusal_of_step(&error)
+        {
+            return Self::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            };
+        }
         match error {
             DurableStepError::BudgetRefused(refusal) => Self::BudgetRefused { reason, refusal },
             _ => Self::Refused { reason },
