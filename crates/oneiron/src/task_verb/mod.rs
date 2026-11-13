@@ -62,6 +62,7 @@ pub(crate) use external_attempt::decode as decode_external_task_attempt;
 mod fanout_check;
 mod fanout_launch;
 mod follow_up;
+mod goal_interview;
 mod highway;
 mod highway_accept;
 mod highway_block;
@@ -127,6 +128,9 @@ mod training_offer_ask;
 mod training_swap_ask;
 mod verb_kind;
 mod watch_task;
+pub(crate) use goal_interview::{
+    mint_goal_interview_task_in_txn, settle_goal_interview_task_in_txn,
+};
 pub(crate) use watch_task::{settle_watch_task_in_txn, tick_due_at_in_txn};
 mod wave_port;
 mod wire_decode;

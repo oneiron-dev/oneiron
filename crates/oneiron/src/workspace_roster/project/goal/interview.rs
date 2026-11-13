@@ -1,7 +1,5 @@
 //! Room-backed completion of a loaded goal-intake skill interview.
 use super::{GoalRecord, invalid};
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-GOAL-INTERVIEW-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestKind};
@@ -217,6 +215,9 @@ impl Vault {
             let id =
                 self.write_project_goal_in_txn(txn, owner, project_id, thread, &record, now)?;
             CONFIRMATIONS.put(&self.store, txn, &turns.confirmation, &id)?;
+            // The committed goal ends the open interview: its TASK settles
+            // with the goal claim, and no later turn of its thread wakes a run.
+            super::intake_run::close_interview_in_txn(self, txn, project_id, id, now)?;
             Ok(id)
         })
     }

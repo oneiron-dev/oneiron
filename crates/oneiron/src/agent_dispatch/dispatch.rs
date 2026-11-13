@@ -429,6 +429,42 @@ impl<'a> AgentDispatcher<'a> {
         self.dispatch_in_txn(wtxn, Some(task_ref), input, spawn)
     }
 
+    /// A ROOT run, admitted as [`Self::dispatch_with_context`] admits one,
+    /// in the caller's write `wtxn`, so its dispatch commits with the rows
+    /// that write lands: a goal-intake interview's runs (OF-501). The depth
+    /// rule, the dispatchable definition and the context resolution are read
+    /// in `wtxn`. It carries no TASK backlink. The caller tells the attempt
+    /// observers after its commit.
+    pub(crate) fn dispatch_root_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+    ) -> Result<AgentDispatchOutcome> {
+        if input.parent_attempt.is_some()
+            || matches!(input.target, AgentDispatchTarget::Workflow(_))
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "an in-write root dispatch launches one agent with no parent",
+            )));
+        }
+        let spawn = AgentSpawnContext {
+            context_spec: spawn.context_spec.map(normalize_context_spec),
+            ..spawn
+        };
+        self.project_depth_limit_in_txn(wtxn, None, spawn.project_ref)?;
+        let target_definition = self.dispatchable_definition_in_txn(wtxn, &input.target)?;
+        self.resolve_dispatch_context_in_txn(
+            wtxn,
+            None,
+            spawn.context_spec.as_ref(),
+            &spawn.context_from,
+            input.run_id.as_deref(),
+            target_definition.scope.to_world_scope(),
+        )?;
+        self.dispatch_in_txn(wtxn, None, input, spawn)
+    }
+
     pub(super) fn dispatch_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
