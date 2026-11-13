@@ -231,8 +231,10 @@ impl Vault {
                 )?;
             }
             "evidence" => {
+                // The provenance retract takes Unix seconds, as the other
+                // inverses here do.
                 for record in &item.rows {
-                    self.retract_edge_provenance_in_txn(txn, record, now_ms, false)?;
+                    self.retract_edge_provenance_in_txn(txn, record, now_ms / 1_000, false)?;
                 }
             }
             "supersede" => {

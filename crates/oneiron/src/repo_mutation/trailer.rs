@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -33,6 +33,32 @@ pub const REPO_PROVENANCE_VALUE_KEYS: [&str; 5] = [
 ];
 pub const REPO_PROVENANCE_DERIVATION_ENVELOPE_KEYS: [&str; 4] =
     ["content_hash", "model_id", "version", "params_hash"];
+
+/// The key that tells an owner's engine-attributed request from the model
+/// form, which has none (NO-DOOR CODE-PROPOSAL-ATTRIBUTION).
+pub(crate) const REPO_PROVENANCE_SOURCE_KIND_KEY: &str = "source_kind";
+/// The `source_kind` of an owner's direct proposal: no model call is
+/// witnessed, so none is named (Engine CODECUSTODY-ATTRIB Q2 = A).
+pub(crate) const REPO_PROVENANCE_OWNER_REQUEST: &str = "owner_request";
+/// The schema version of the `owner_request` form, not a model revision.
+pub(crate) const OWNER_REQUEST_VERSION: &str = "vault.code.owner_request.v1";
+/// The `owner_request` form's keys, its envelope's and its lineage's: each
+/// map holds exactly these.
+const OWNER_REQUEST_KEYS: [&str; 6] = [
+    REPO_PROVENANCE_SOURCE_KIND_KEY,
+    "actor",
+    "session",
+    "request_hash",
+    "derivation_envelope",
+    "diff_lineage_receipt",
+];
+const OWNER_REQUEST_ENVELOPE_KEYS: [&str; 2] = ["content_hash", "version"];
+const OWNER_REQUEST_LINEAGE_KEYS: [&str; 3] = ["repo", "path", "base_commit"];
+/// A native bundle's lineage names its files in place of one path, and
+/// each file holds exactly its path and its new bytes' BLAKE3 (nil for a
+/// removal).
+const OWNER_REQUEST_BUNDLE_LINEAGE_KEYS: [&str; 3] = ["repo", "files", "base_commit"];
+const OWNER_REQUEST_BUNDLE_FILE_KEYS: [&str; 2] = ["path", "content_hash"];
 
 pub(super) use crate::store::repo_provenance_trailer::REPO_PROVENANCE_TRAILER_PREFIX;
 const REPO_PROVENANCE_GIT_AUTHOR_NAME: &str = "Oneiron";
@@ -132,6 +158,12 @@ fn validate_repo_provenance_claim_body(body: &ClaimBody) -> Result<()> {
         &body.value,
         "repo provenance claim value must be a PROV-AGENT map",
     )?;
+    if entries
+        .iter()
+        .any(|(key, _)| key.as_str() == Some(REPO_PROVENANCE_SOURCE_KIND_KEY))
+    {
+        return validate_owner_request_value(body, entries);
+    }
     require_nonblank_msgpack_string(entries, "actor")?;
     require_nonblank_msgpack_string(entries, "model")?;
     require_nonblank_msgpack_string(entries, "prompt_hash")?;
@@ -146,6 +178,127 @@ fn validate_repo_provenance_claim_body(body: &ClaimBody) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// The closed `owner_request` form: exactly its keys, every value in its
+/// grammar, on the sitting it names. A model field is not one of its keys,
+/// so it is refused.
+fn validate_owner_request_value(body: &ClaimBody, entries: &[(Value, Value)]) -> Result<()> {
+    require_closed_keys(entries, &OWNER_REQUEST_KEYS)?;
+    if require_unique_msgpack_key(entries, REPO_PROVENANCE_SOURCE_KIND_KEY)?.as_str()
+        != Some(REPO_PROVENANCE_OWNER_REQUEST)
+    {
+        return Err(invalid_value(
+            "repo provenance source_kind must be owner_request",
+        ));
+    }
+    require_entity_hex(entries, "actor")?;
+    let session = require_entity_hex(entries, "session")?;
+    if body.subject != ClaimSubject::Entity(session) {
+        return Err(invalid_value(
+            "an owner request's provenance claim is on the sitting it names",
+        ));
+    }
+    require_lower_hex(entries, "request_hash", 64)?;
+    let envelope = require_msgpack_map(entries, "derivation_envelope")?;
+    require_closed_keys(envelope, &OWNER_REQUEST_ENVELOPE_KEYS)?;
+    require_lower_hex(envelope, "content_hash", 64)?;
+    if require_unique_msgpack_key(envelope, "version")?.as_str() != Some(OWNER_REQUEST_VERSION) {
+        return Err(invalid_value(
+            "an owner request's derivation_envelope names its schema version",
+        ));
+    }
+    let lineage = require_msgpack_map(entries, "diff_lineage_receipt")?;
+    if lineage.iter().any(|(key, _)| key.as_str() == Some("files")) {
+        require_closed_keys(lineage, &OWNER_REQUEST_BUNDLE_LINEAGE_KEYS)?;
+        require_owner_request_bundle_files(lineage)?;
+    } else {
+        require_closed_keys(lineage, &OWNER_REQUEST_LINEAGE_KEYS)?;
+        require_nonblank_msgpack_string(lineage, "path")?;
+    }
+    require_entity_hex(lineage, "repo")?;
+    require_lower_hex(lineage, "base_commit", 40)?;
+    Ok(())
+}
+
+/// A bundle lineage's `files`: at least one, paths in strictly ascending
+/// byte order (so each once), each with exactly its path and a BLAKE3 of
+/// its new bytes or nil for a removal.
+fn require_owner_request_bundle_files(lineage: &[(Value, Value)]) -> Result<()> {
+    let Value::Array(files) = require_unique_msgpack_key(lineage, "files")? else {
+        return Err(invalid_value(
+            "an owner request's bundle lineage lists its files",
+        ));
+    };
+    if files.is_empty() {
+        return Err(invalid_value(
+            "an owner request's bundle lineage lists its files",
+        ));
+    }
+    let mut previous: Option<&str> = None;
+    for file in files {
+        let file = msgpack_map_entries(file, "an owner request's bundle file is a map")?;
+        require_closed_keys(file, &OWNER_REQUEST_BUNDLE_FILE_KEYS)?;
+        require_nonblank_msgpack_string(file, "path")?;
+        let path = require_unique_msgpack_key(file, "path")?
+            .as_str()
+            .unwrap_or_default();
+        if previous.is_some_and(|previous| previous >= path) {
+            return Err(invalid_value(
+                "an owner request's bundle lists each path once, in byte order",
+            ));
+        }
+        previous = Some(path);
+        if !require_unique_msgpack_key(file, "content_hash")?.is_nil() {
+            require_lower_hex(file, "content_hash", 64)?;
+        }
+    }
+    Ok(())
+}
+
+/// Every key of `entries` is one of `keys`, and there are as many: with the
+/// unique-key reads that follow, exactly `keys`, once each.
+fn require_closed_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
+    if entries.len() != keys.len()
+        || entries
+            .iter()
+            .any(|(key, _)| !key.as_str().is_some_and(|key| keys.contains(&key)))
+    {
+        return Err(invalid_value(
+            "an owner request's provenance holds exactly its own keys",
+        ));
+    }
+    Ok(())
+}
+
+/// `key`'s value: `len` lower-hex characters.
+fn require_lower_hex(entries: &[(Value, Value)], key: &str, len: usize) -> Result<()> {
+    let value = require_unique_msgpack_key(entries, key)?;
+    match value.as_str() {
+        Some(text) if text.len() == len && is_lower_hex(text) => Ok(()),
+        _ => Err(invalid_value(
+            "an owner request's provenance hash is lower-hex of its length",
+        )),
+    }
+}
+
+/// `key`'s value: an entity id as 32 lower-hex characters.
+fn require_entity_hex(entries: &[(Value, Value)], key: &str) -> Result<EntityId> {
+    let value = require_unique_msgpack_key(entries, key)?;
+    value
+        .as_str()
+        .filter(|text| text.len() == 32 && is_lower_hex(text))
+        .and_then(|text| EntityId::from_hex(text).ok())
+        .ok_or_else(|| invalid_value("an owner request's provenance id is 32 lower-hex characters"))
+}
+
+fn is_lower_hex(text: &str) -> bool {
+    text.bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn invalid_value(reason: &'static str) -> Error {
+    Error::Code(CodeError::InvalidRepoMutationRecord(reason))
 }
 
 fn msgpack_map_entries<'a>(

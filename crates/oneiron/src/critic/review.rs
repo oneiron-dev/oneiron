@@ -6,6 +6,12 @@ use crate::llm::decision::DecisionReceipt;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 mod dissent;
+mod doors;
+pub use doors::{
+    CriticCellView, CriticFindingsRequest, CriticFindingsView, CriticOutcomeAnchor,
+    CriticOutcomeRecord, CriticOutcomeSubmit, CriticOutcomeView, CriticStandingOutcomeView,
+    critic_findings, critic_outcome,
+};
 mod outcomes;
 pub use dissent::{
     CriticPrediction, ReviewDissent, preserve_review_dissent, project_all_review_dissent,

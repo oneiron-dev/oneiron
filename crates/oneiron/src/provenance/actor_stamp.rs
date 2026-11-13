@@ -100,11 +100,12 @@ pub(crate) fn actor_stamp_in_txn(
     body.valid_from = Some(at);
     // Observed: a token is this vault's own fact, as a peer binding is.
     body.source = Some(ClaimSource::Observed);
-    // A MACHINE (a folder's importer, the Dreamer) has no substrate facet, so
-    // its token is born in the vault default facet, which the put still
-    // requires to be a live FACET. A PERSON's stays in its own substrate.
+    // Only a PERSON has a substrate facet. Any other actor (a MACHINE such as
+    // a folder's importer or the Dreamer, or an AGENT_DEF) has its token born
+    // in the vault default facet, which the put still requires to be a live
+    // FACET. A PERSON's stays in its own substrate.
     if vault.get_entity_type_in_txn(&*wtxn, &actor.entity_ref())?
-        == Some(crate::registry::ENTITY_TYPE_MACHINE)
+        != Some(crate::registry::ENTITY_TYPE_PERSON)
     {
         body.scope_facet = vault.default_facet_in_txn(&*wtxn)?;
     }

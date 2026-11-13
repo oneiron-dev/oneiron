@@ -271,6 +271,7 @@ fn skill_package_read_mint_lane_grant(
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints the skill package grant");

@@ -340,6 +340,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             deadline: Some(ctx.deadline),
             now_ms: ctx.now_ms,
             spend_scope: None,
+            wake_pass_bound: true,
         };
         let mut run = ArcRun {
             plan,

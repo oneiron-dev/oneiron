@@ -496,7 +496,7 @@ impl Memory<'_> {
             staged,
             GateConsentBundleAction::Approve,
             WriteActor::new(self.actor, self.actor_class),
-            owner_answer.as_ref(),
+            owner_answer,
             now,
         )?;
         Ok(approved.dreamer_run)

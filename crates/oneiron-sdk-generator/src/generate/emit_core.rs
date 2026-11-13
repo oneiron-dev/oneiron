@@ -92,6 +92,16 @@ pub(crate) fn run_catalog(generator: &Generator) -> Result<String, GenerateError
         );
     }
     out += "} }\n";
+    out += "/// The agent power the verb's writer checks before the act (`power` on the row), if any.\n";
+    out += "pub const fn power(self) -> Option<&'static str> { match self {\n";
+    for row in &rows {
+        let power = match row.get("power") {
+            Some(power) => format!("Some(\"{}\")", power.str()),
+            None => "None".to_owned(),
+        };
+        out += &format!("Self::{} => {power},\n", variant_of(&variants, row)?);
+    }
+    out += "} }\n";
     Ok(out + "}\n")
 }
 

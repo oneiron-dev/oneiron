@@ -379,6 +379,7 @@ impl Vault {
             None,
             BTreeSet::new(),
             None,
+            None,
         )?;
         let grant = AuthorizedGrant {
             agent,

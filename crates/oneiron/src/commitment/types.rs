@@ -206,6 +206,11 @@ impl CommitmentStrength {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum CommitmentStatus {
+    /// Named by a signing document that is not yet signed (ARCH-0064 §3):
+    /// the promise is known but not in force. It never wakes, reminds,
+    /// lapses or projects; `esign.completed` opens it, and a decline, void
+    /// or expiry releases it.
+    Inert,
     Open,
     Fulfilled,
     Released,
@@ -218,6 +223,7 @@ impl CommitmentStatus {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Inert => "inert",
             Self::Open => "open",
             Self::Fulfilled => "fulfilled",
             Self::Released => "released",
@@ -230,6 +236,7 @@ impl CommitmentStatus {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "inert" => Some(Self::Inert),
             "open" => Some(Self::Open),
             "fulfilled" => Some(Self::Fulfilled),
             "released" => Some(Self::Released),
@@ -239,13 +246,19 @@ impl CommitmentStatus {
         }
     }
 
+    /// An open promise closes to any terminal status. An inert one only
+    /// comes into force (Open) or is let go (Released): it was never owed,
+    /// so it can be neither kept, lapsed nor replaced.
     #[must_use]
     pub const fn can_transition_to(self, next: Self) -> bool {
-        matches!(self, Self::Open)
-            && matches!(
+        match self {
+            Self::Open => matches!(
                 next,
                 Self::Fulfilled | Self::Released | Self::Lapsed | Self::Superseded
-            )
+            ),
+            Self::Inert => matches!(next, Self::Open | Self::Released),
+            Self::Fulfilled | Self::Released | Self::Lapsed | Self::Superseded => false,
+        }
     }
 }
 
@@ -290,6 +303,9 @@ pub enum CommitmentBirthKind {
     RunTreeNode,
     Brief,
     SurfaceAction,
+    /// Named by a signing document's draft (ARCH-0064 §3); the reference is
+    /// the document id.
+    EsignDocument,
 }
 
 impl CommitmentBirthKind {
@@ -300,6 +316,7 @@ impl CommitmentBirthKind {
             Self::RunTreeNode => "run_tree_node",
             Self::Brief => "brief",
             Self::SurfaceAction => "surface_action",
+            Self::EsignDocument => "esign_document",
         }
     }
 
@@ -310,6 +327,7 @@ impl CommitmentBirthKind {
             "run_tree_node" => Some(Self::RunTreeNode),
             "brief" => Some(Self::Brief),
             "surface_action" => Some(Self::SurfaceAction),
+            "esign_document" => Some(Self::EsignDocument),
             _ => None,
         }
     }

@@ -2,7 +2,6 @@
 use super::*;
 use ed25519_dalek::Signer;
 use oneiron::{
-    authority::HostSlipIssuer,
     consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound},
     registry::ENTITY_TYPE_PERSON,
 };
@@ -31,7 +30,7 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
     let (agent_slip, agent_key) = slip_credentials::credential(&server, &agent_recipe);
     let challenge = b"widen-proposal";
     let signature = agent_key.sign(&agent_slip.binding_transcript(challenge).unwrap());
-    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     let proof = vault
         .verify_capability_slip(
             &issuer.public_key(),
@@ -141,16 +140,16 @@ async fn remote_proposal_cannot_land_widen_but_host_bound_holder_can_once() {
 
     // The encoder itself refuses out-of-model requests; the route accepts
     // every delta that this existing structural model can produce.
+    // oneiron::consent::MAX_ENVELOPE_SELECTORS is gone (FIX 10198, #6224,
+    // 623c4454313); its value stands here (rule D).
+    const REMOVED_SELECTOR_CAP: usize = 256;
     assert!(
-        ActionEnvelope::new(
-            (0..=oneiron::consent::MAX_ENVELOPE_SELECTORS).map(|i| format!("world:{i:03}"))
-        )
-        .is_err()
+        ActionEnvelope::new((0..=REMOVED_SELECTOR_CAP).map(|i| format!("world:{i:03}"))).is_err()
     );
     assert!(ActionEnvelope::new(["x".repeat(oneiron::consent::MAX_CONSENT_REF_LEN + 1)]).is_err());
     // Every structurally valid frozen delta can land, not just deltas below
     // the old 4 KiB decoded route limit. Exercise the selector ceiling too.
-    for count in [9, oneiron::consent::MAX_ENVELOPE_SELECTORS] {
+    for count in [9, REMOVED_SELECTOR_CAP] {
         let selectors = (0..count).map(|index| format!("world:{index:03}:{}", "x".repeat(502)));
         let large = GrantBound::action(
             ActorBound::new(agent.to_hex()).unwrap(),
@@ -200,9 +199,10 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
     use tower::ServiceExt;
 
     let (dir, mut server) = auth_test_server();
-    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&server);
     server.vault().ensure_host_root_slip(&issuer).unwrap();
-    Arc::get_mut(&mut server).unwrap().managed_issuer = Some(issuer);
+    Arc::get_mut(&mut server).unwrap().managed_issuer =
+        Some(crate::server::ManagedIssuer::new(Some(issuer)));
     let vault = server.vault();
     let owner = server.vault().ensure_embedded_owner_actor().unwrap();
     let agent = oneiron::EntityId::now();
@@ -225,7 +225,12 @@ async fn managed_host_account_holder_lands_once_but_host_root_and_other_account_
     let (slip, key) = slip_credentials::credential(&server, &agent_recipe);
     let proof = vault
         .verify_capability_slip(
-            &server.managed_issuer.as_ref().unwrap().public_key(),
+            &server
+                .managed_issuer
+                .as_ref()
+                .and_then(crate::server::ManagedIssuer::issuer)
+                .unwrap()
+                .public_key(),
             &slip,
             b"managed-widen",
             &key.sign(&slip.binding_transcript(b"managed-widen").unwrap())

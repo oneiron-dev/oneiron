@@ -64,6 +64,7 @@ impl WakeExecutor {
                 reason: format!("{facet} failed: {:?}", error.kind()),
                 completed_units: 0,
                 budget_refusal: None,
+                step_bindings: Vec::new(),
             }),
             // Preserve the driver's executor-panic containment and stop it
             // from reusing this executor after a panicking Coach call.

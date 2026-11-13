@@ -5,9 +5,12 @@ use super::*;
 /// grant, class or budget values. Exercise the actual HTTP context assembly.
 #[tokio::test]
 async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
-    use oneiron::context_board::{ClassLimit, ClassVerdict, CommunicationLimits, SelfBriefState};
-    use oneiron::federation::Scope;
+    use oneiron::context_board::{
+        BriefClassSource, BriefClassVerdict, BriefClassVerdicts, BriefDefaultRule, BriefWorkingSet,
+        CommunicationLimits, SelfBriefState,
+    };
     use oneiron::llm::{BudgetExhaustionPolicy, BudgetRead};
+    use oneiron::memory::CanEffectVerdict;
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".into()),
         ..Default::default()
@@ -48,23 +51,38 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
         .vault
         .open_standing_block(&owner, actor, world, "identity", 64)
         .unwrap();
+    // The brief's shapes since 4094ec063a6 (#6647, FIX 17594, Engine ruling
+    // 21:47): no cast, grant revision, scope or message count; a class line
+    // is a dated per-class verdict; a field no host produced is None.
     let mut state = SelfBriefState {
         self_ref: actor,
-        principal: actor,
-        cast: vec![actor],
-        grant_revision: 7,
-        effective_scope: Scope::top(),
+        principal: Some(actor),
+        grants: None,
+        run_ceiling: None,
+        credential_ceiling: None,
+        parent_ceiling: None,
         communication: CommunicationLimits {
-            scope: Scope::default(),
-            recipients: vec![],
-            max_messages: Some(2),
+            reach: None,
+            credential_ceiling: None,
         },
-        classes: vec![ClassLimit {
-            class: "send".into(),
-            verdict: ClassVerdict::WouldAsk,
-        }],
-        budget_lease_id: "lease".into(),
-        budget: BudgetRead {
+        ceilings: None,
+        class_verdicts: Some(BriefClassVerdicts {
+            as_of_secs: 1,
+            policy_frontier: "0".repeat(64),
+            verdicts: vec![BriefClassVerdict {
+                class: "send".into(),
+                source: BriefClassSource::Default {
+                    rule: BriefDefaultRule::DestructiveOutboundOrCritical,
+                },
+                inside: CanEffectVerdict::WouldAsk,
+                reasons: vec![],
+                holds: vec![],
+                outside: None,
+                per_act: vec![],
+            }],
+        }),
+        budget_lease_id: Some("lease".into()),
+        budget: Some(BudgetRead {
             attempt_id: "run".into(),
             limit_units: 100,
             cap_units: 100,
@@ -73,10 +91,14 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
             remaining_units: 70,
             on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
             fired_thresholds: vec![],
-        },
+        }),
         clock_ms: 123,
         skill_index: vec![],
-        working_set: vec![],
+        working_set: BriefWorkingSet {
+            scratchpad: Some(vec![]),
+            pins: Some(vec![]),
+            replay: Some(vec![]),
+        },
     };
     server
         .install_self_brief_session(actor, "brief-session".into(), 1, state.clone())
@@ -103,10 +125,15 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
     let cached = open["self_brief"]["prefix"].as_str().unwrap().to_owned();
     assert!(cached.contains("\"remaining_units\":70"));
     assert!(cached.contains("\"would_ask\""));
-    state.grant_revision = 8;
-    state.budget.remaining_units = 20;
-    state.budget.reserved_units = 15;
-    state.classes[0].verdict = ClassVerdict::Deny;
+    let budget = state.budget.as_mut().expect("budget");
+    budget.remaining_units = 20;
+    budget.reserved_units = 15;
+    state
+        .class_verdicts
+        .as_mut()
+        .expect("class verdicts")
+        .verdicts[0]
+        .inside = CanEffectVerdict::Deny;
     server
         .install_self_brief_session(actor, "brief-session".into(), 1, state.clone())
         .await
@@ -248,7 +275,9 @@ async fn register_agent_connector(
 #[tokio::test]
 async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
     use crate::mcp::McpConnectorScope;
-    use oneiron::context_board::{CommunicationLimits, SelfBriefState};
+    use oneiron::context_board::{
+        BriefCredentialCeiling, BriefWorkingSet, CommunicationLimits, SelfBriefState,
+    };
     use oneiron::federation::{Scope, ScopeAxis, ScopeId};
     use oneiron::llm::{BudgetExhaustionPolicy, BudgetRead};
     let (_dir, server) = auth_test_server();
@@ -275,20 +304,29 @@ async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
             actor,
             "wide-run".into(),
             1,
+            // The run's scope rides the brief's credential ceiling since
+            // 4094ec063a6 (#6647, FIX 17594): the effective scope is gone.
             SelfBriefState {
                 self_ref: actor,
-                principal: actor,
-                cast: vec![actor],
-                grant_revision: 1,
-                effective_scope,
+                principal: Some(actor),
+                grants: None,
+                run_ceiling: None,
+                credential_ceiling: Some(BriefCredentialCeiling {
+                    scope: effective_scope,
+                    records: std::collections::BTreeSet::new(),
+                    channels: std::collections::BTreeSet::new(),
+                    read_scope: None,
+                    connector: None,
+                }),
+                parent_ceiling: None,
                 communication: CommunicationLimits {
-                    scope: Scope::default(),
-                    recipients: vec![],
-                    max_messages: None,
+                    reach: None,
+                    credential_ceiling: None,
                 },
-                classes: vec![],
-                budget_lease_id: "lease".into(),
-                budget: BudgetRead {
+                ceilings: None,
+                class_verdicts: None,
+                budget_lease_id: Some("lease".into()),
+                budget: Some(BudgetRead {
                     attempt_id: "run".into(),
                     limit_units: 10,
                     cap_units: 10,
@@ -297,10 +335,14 @@ async fn mcp_describe_self_refuses_every_narrowed_ceiling() {
                     remaining_units: 10,
                     on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
                     fired_thresholds: vec![],
-                },
+                }),
                 clock_ms: 1,
                 skill_index: vec![],
-                working_set: vec![],
+                working_set: BriefWorkingSet {
+                    scratchpad: Some(vec![]),
+                    pins: Some(vec![]),
+                    replay: Some(vec![]),
+                },
             },
         )
         .await

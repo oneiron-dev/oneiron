@@ -69,7 +69,10 @@ const RUN_OPTIONAL: &[&str] = &[
     "host",
     "run_surface",
     "grant_class",
+    "power",
 ];
+/// The agent powers a run row may name as its requirement.
+const POWERS: &[&str] = &["spawn", "save_agent"];
 const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect", "act_class"];
 /// A scoped-child row's keys, `description` aside.
 const SCOPED_CHILD_KEYS: &[&str] = &[
@@ -338,6 +341,19 @@ fn check_grant_class(row: &Dict) -> Result<(), GenerateError> {
             row,
             "a grant class is one printable ASCII phrase, with no backslash, double quote or `*/`",
         ));
+    }
+    Ok(())
+}
+
+/// A run row's `power` names the agent power its writer checks before the act (`spawn` for the two spawn spellings,
+/// `save_agent` for `vault.agents.put`). Like the grant class it describes the writer's own check; nothing reads it as
+/// a second one.
+fn check_power(row: &Dict) -> Result<(), GenerateError> {
+    let Some(power) = row.get("power") else {
+        return Ok(());
+    };
+    if !power.as_str().is_some_and(|text| POWERS.contains(&text)) {
+        return Err(refuse(row, "a power is `spawn` or `save_agent`"));
     }
     Ok(())
 }
@@ -944,6 +960,7 @@ impl Generator {
         }
         for &id in &self.run_rows {
             check_grant_class(&self.rows[id])?;
+            check_power(&self.rows[id])?;
         }
         for &id in &self.manifest {
             check_outputs_by_input(&self.rows[id])?;
@@ -1188,6 +1205,36 @@ mod tests {
         let got = Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
         assert_eq!(got, keys);
         fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn power_is_spawn_or_save_agent() {
+        const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
+        let refused = "ValueError: zz_run: a power is `spawn` or `save_agent`";
+        let cases: &[(&str, &str)] = &[
+            (r#""power": "spawn""#, ""),
+            (r#""power": "save_agent""#, ""),
+            (r#""grant_class": "parent's slice", "power": "spawn""#, ""),
+            (r#""power": "Spawn""#, refused),
+            (r#""power": "spawn ""#, refused),
+            (r#""power": "launch""#, refused),
+            (r#""power": 1"#, refused),
+            (r#""power": null"#, refused),
+            (r#""power": ["spawn"]"#, refused),
+        ];
+        for (fields, expected) in cases {
+            let root = tree(
+                "power",
+                &[
+                    ("zz_fixture.json", &format!("{{{BASE}}}")),
+                    ("zz_run.json", &format!("{{{RUN}, {fields}}}")),
+                ],
+            );
+            let got =
+                Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
+            assert_eq!(got, *expected, "{fields}");
+            fs::remove_dir_all(&root).expect("cleanup");
+        }
     }
 
     #[test]

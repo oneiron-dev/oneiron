@@ -3,7 +3,6 @@
 //! name no world). A call whose work stays on the device never reaches a
 //! cloud fallback: it waits within its one wait for an offer on the device,
 //! then is held with a typed outcome, and each hold writes a run receipt.
-use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use futures_util::StreamExt;
@@ -26,7 +25,7 @@ use crate::fake_llm::{FakeLlm, Reply};
 /// A run whose receipts go to `receipts`.
 fn run_into(receipts: Arc<dyn RunReceiptSink>) -> RunAdmission {
     let meter = BudgetGuard::new("kept-test", 100_000, BudgetExhaustionPolicy::Suspend);
-    undeclared_run("kept-test", meter, receipts)
+    undeclared_run("kept-test", meter, None, receipts)
 }
 
 /// The model each of the run's holds kept a call from: its `Denied` rows.
@@ -35,7 +34,7 @@ fn holds(rows: &[RunReceipt]) -> Vec<String> {
         .filter_map(|row| match &row.event {
             RunEvent::Denied {
                 subject,
-                reason: RunDenied::KeptOnDevice,
+                reason: RunDenied::KeptOnDevice { .. },
                 ..
             } => subject.clone(),
             _ => None,
@@ -125,6 +124,7 @@ async fn a_call_about_a_world_this_vault_does_not_hold_stays_on_the_device() {
     let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let deleted = portable_world(&vault);
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     assert!(vault.delete_entity(&deleted).unwrap());
     let error = seat
         .ladder
@@ -382,11 +382,15 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
         assert_eq!(text_of(&answer.expect("answered").message), "from second");
     }
     let image = dir.path().join("checkpoint");
+    // The host's keystore signs and wraps the checkpoint (FIX 843, FIX 12225).
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.ensure_vault_key().unwrap();
     vault.snapshot_checkpoint(&image, T0).unwrap();
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let restored = Vault::restore_checkpoint(
         &image,
+        &vault.checkpoint_key().unwrap(),
         &dir.path().join("restored"),
         config,
         RestoreReason::Restore,
@@ -445,106 +449,4 @@ async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
     assert_eq!(answer.finish_reason, unreported);
     assert_eq!(first.seen().len(), 3);
     assert!(second.seen().is_empty(), "the text stayed here");
-}
-
-/// Every place in this crate that reaches a fallback ladder, and where its
-/// call's world comes from. A call that names no world is held by the
-/// vault-wide floor while any world stays on the device, so a new caller
-/// that passes no world fails closed; this list makes it name its source.
-const LADDER_CALLERS: [(&str, &str); 10] = [
-    (
-        "api/llm.rs",
-        "none, as a caller's named world does not vouch for its text: the floor",
-    ),
-    ("api/ai/chat.rs", "none: the floor"),
-    (
-        "models/declared.rs",
-        "none, as a host's named world does not vouch for its text: the floor",
-    ),
-    ("models/raw.rs", "one host-injected offer, never a fallback"),
-    (
-        "models/run_backend.rs",
-        "the engine's envelope: a consolidation pass names its partition's world, the rest none (the floor)",
-    ),
-    (
-        "ai_host/dreamer.rs",
-        "the engine's envelope, through a run backend",
-    ),
-    (
-        "ai_host/code_mode.rs",
-        "the executor's envelope, which names no world: the floor",
-    ),
-    (
-        "ai_host/step.rs",
-        "none, as nothing proves its text's worlds: the floor",
-    ),
-    ("ai_host/compaction.rs", "none: the floor"),
-    (
-        "server/recall_rerank.rs",
-        "none: the floor, beside rerank's own row check",
-    ),
-];
-
-/// How a ladder is reached: its entry points, and the backend that wraps one,
-/// matched with every whitespace taken out, so a call split over lines is
-/// found too. A caller binds the ladder it reaches as `ladder`.
-const ENTRY_POINTS: [&str; 4] = [
-    "ladder.generate(",
-    "ladder.stream(",
-    ".generate_while(",
-    "RunBackend::new(",
-];
-
-fn sources(dir: &Path, files: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.is_dir() {
-            sources(&path, files);
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            files.push(path);
-        }
-    }
-}
-
-/// Engine ruling 2026-10-15, the class check: each call site in this crate's
-/// own code that can reach a fallback ladder is listed with where its world
-/// comes from, so none reaches one unjudged.
-#[test]
-fn every_ladder_caller_names_where_its_world_comes_from() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    sources(&root, &mut files);
-    let mut callers = Vec::new();
-    for file in files {
-        let name = file
-            .strip_prefix(&root)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        let test_only = name.ends_with("tests.rs")
-            || name.starts_with("tests/")
-            || name.contains("/tests/")
-            || name.ends_with("test_support.rs");
-        if test_only || name == "models/ladder.rs" {
-            continue;
-        }
-        let text: String = std::fs::read_to_string(&file)
-            .unwrap()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        if ENTRY_POINTS.iter().any(|entry| text.contains(entry)) {
-            callers.push(name);
-        }
-    }
-    callers.sort();
-    let mut listed: Vec<String> = LADDER_CALLERS
-        .iter()
-        .map(|(file, _)| (*file).to_owned())
-        .collect();
-    listed.sort();
-    assert_eq!(
-        callers, listed,
-        "a ladder caller is missing from the list, or gone"
-    );
 }

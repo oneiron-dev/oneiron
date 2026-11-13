@@ -1,0 +1,17 @@
+{
+  "name": "vault.outbound.undo_send.held",
+  "description": "Lists the sends waiting in their undo-send window that the caller may take back, every one for the owner and a person's own: each TASK, channel and target, and the instant it goes, soonest first.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::outbound::UndoSendHeldSends",
+  "call": "{ let _ = &input; crate::outbound::undo_send_held_embedded(memory)? }",
+  "scope": "Read",
+  "act_class": "read",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

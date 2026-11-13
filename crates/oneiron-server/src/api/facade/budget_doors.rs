@@ -166,37 +166,80 @@ pub(crate) async fn vault_budgets_reservations(
     .await
 }
 
+/// The owner reads every settlement of a served run on its proof; a person or
+/// agent on a verified slip of its own reads the run's settlements stamped
+/// with its own agent id (FIX RUN-SETTLEMENTS-OWN-AGENT-READ), which the
+/// engine reader keeps once it has proved the slip's read
+/// (`budget_doors::own_run_settlements_as_reader`). Spend rows are read by no
+/// read lane, so the row refuses a slip narrowed to records, worlds or facets
+/// (`unrestricted_record_scope`), as `vault.budgets.lease` does.
 pub(crate) async fn vault_budgets_settlements(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    caller: (oneiron::EntityId, oneiron::EdgeActorClass),
+    _invocation: Option<oneiron::runtime_hooks::InvocationId>,
     input: RunSettlementsRequest,
 ) -> Listed<RunSettlementsView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.budgets.settlements",
-        move |server, owner| {
-            owner.revalidate(server.vault())?;
-            let usage = server.vault_usage();
-            let settlements = usage
-                .as_ref()
-                .map(|usage| {
-                    server
-                        .usage_ledger
-                        .run_settlements(usage.owner(), usage.vault_id(), &input.run)
-                        .map_err(|error| MemoryError::bad_request(error.to_string()))
-                })
-                .transpose()?
-                .unwrap_or_default();
-            Ok(RunSettlementsView {
-                run: input.run,
-                metering_enabled: usage.is_some(),
-                settlements,
-            })
-        },
-        |_| Vec::new(),
-    )
-    .await
+    const VERB: &str = "vault.budgets.settlements";
+    match super::run_read_doors::run_reader(server, auth, VERB) {
+        Ok(Some(_)) => {
+            as_owner_naming(
+                server,
+                auth,
+                VERB,
+                move |server, owner| {
+                    owner.revalidate(server.vault())?;
+                    let (metering_enabled, settlements) = ledger_settlements(server, &input.run)?;
+                    Ok(RunSettlementsView {
+                        run: input.run,
+                        metering_enabled,
+                        settlements,
+                    })
+                },
+                |_| Vec::new(),
+            )
+            .await
+        }
+        Ok(None) => {
+            super::host_doors::support::credential_listing(
+                server,
+                auth,
+                caller,
+                VERB,
+                move |server, _, memory| {
+                    let (metering_enabled, rows) = ledger_settlements(server, &input.run)?;
+                    let settlements = budget_doors::own_run_settlements_as_reader(&memory, rows)?;
+                    Ok(RunSettlementsView {
+                        run: input.run,
+                        metering_enabled,
+                        settlements,
+                    })
+                },
+            )
+            .await
+        }
+        Err(refusal) => (Err(refusal), Vec::new()),
+    }
+}
+
+/// Whether this host meters its vault's usage, and the settlements of `run`
+/// its usage ledger keeps: none while it meters nothing.
+fn ledger_settlements(
+    server: &SyncServer,
+    run: &str,
+) -> oneiron::memory::MemoryResult<(bool, Vec<RunRungSettlement>)> {
+    let usage = server.vault_usage();
+    let settlements = usage
+        .as_ref()
+        .map(|usage| {
+            server
+                .usage_ledger
+                .run_settlements(usage.owner(), usage.vault_id(), run)
+                .map_err(|error| MemoryError::bad_request(error.to_string()))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok((usage.is_some(), settlements))
 }
 
 pub(crate) async fn vault_budgets_rsi_configure(

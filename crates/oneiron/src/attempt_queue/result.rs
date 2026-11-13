@@ -5,7 +5,7 @@ use crate::error::Result;
 
 use super::AttemptQueue;
 use super::encoding::decode_record;
-use super::lifecycle::{RunEvent, RunLifecycle, RunRow, RunStep};
+use super::lifecycle::{PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit};
 use super::telemetry::invalid_transition;
 use super::types::{
     AbandonAttempt, AbandonOutcome, AttemptRecord, AttemptState, AttemptTerminalExhaust,
@@ -165,23 +165,18 @@ impl AttemptQueue<'_> {
                 validate_result_ref(input.result_ref.as_str())?;
                 validate_result_rebind(&record, &input.result_ref)?;
                 let _ = RunLifecycle::abandon(&mut record, input.now);
-                record.backoff_until = None;
-                record.last_error = Some(input.reason);
                 record.result_ref = Some(input.result_ref);
-                record.updated_at = input.now;
                 // A settled row owns no advisory dedupe claim: the next
                 // dispatch under the same key must mint a fresh try rather
-                // than be handed this stopped one.
-                self.delete_dedupe_entry_for_record(wtxn, &record)?;
-                let encoded = self.encode_in_txn(wtxn, &mut record)?;
-                self.store
-                    .attempt_records
-                    .put(wtxn, record.id.as_bytes(), &encoded)?;
-                crate::receipt::stamp_attempt_pack_receipt_in_txn(
-                    self.store,
+                // than be handed this stopped one. The commit retires it.
+                self.commit_terminal_in_txn(
                     wtxn,
-                    &record,
-                    &input.lease_owner,
+                    &mut record,
+                    TerminalCommit {
+                        last_error: Some(input.reason),
+                        now: input.now,
+                        receipt_actor: PackReceiptActor::Caller(&input.lease_owner),
+                    },
                 )?;
                 self.notify_settled_in_txn(wtxn, &record)?;
                 // FIX 900: an abandoned child settles its spend lease in the

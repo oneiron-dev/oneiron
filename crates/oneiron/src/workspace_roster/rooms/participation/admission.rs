@@ -419,7 +419,7 @@ pub(in crate::workspace_roster::rooms) fn require_speaker_in_txn(
         require_member(vault, txn, room, actor)?;
         return Ok(());
     }
-    room_in(vault, txn, room)?;
+    room_access_in(vault, txn, room)?;
     let parent = input
         .messages
         .iter()

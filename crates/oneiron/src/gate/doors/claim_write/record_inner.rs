@@ -229,14 +229,30 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // owner, revalidated in this transaction, wrote this claim in person,
         // so it lands Auto with nothing to confirm. The proof rides the
         // write's options from the door that authenticated the owner; the
-        // envelope only has to name the same actor.
-        let owner_write = owner_authored.filter(|write| {
-            envelope.is_some_and(|envelope| {
+        // envelope only has to name the same actor. An owner's approval of a
+        // stored proposal has no envelope here: the approval materialization
+        // gates the Put without its author's (`ClaimMaterialization::
+        // gate_envelope`), and the approving door forwards the proof for that
+        // one Approved Put alone (`ops_put`).
+        let owner_write = owner_authored.filter(|write| match envelope {
+            Some(envelope) => {
                 envelope.actor().entity_ref() == write.actor()
                     && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
-            })
+            }
+            None => body.approval == ClaimApprovalStatus::Approved,
         });
-        let owner_authored = critical_floor_only && owner_write.is_some();
+        // The owner's own approval is the same in-person confirmation: a
+        // human ruling on their own vault lands, whatever the manifest's
+        // criticality class (ARCH-0057 §2; ARCH-0003 §Criticality names this
+        // attestation rule). Without the owner's proof an Approved body keeps
+        // its floor: no writer stamps its own approval past it.
+        let owner_approved = body.approval == ClaimApprovalStatus::Approved
+            && critical_claim_can_land_auto_with_confirm(
+                &input,
+                decision.reason_codes(),
+                &body.predicate,
+            );
+        let owner_authored = (critical_floor_only || owner_approved) && owner_write.is_some();
         // Only a declared critical class attaches a confirmation. A predicate
         // no policy rule names resolves Critical by fallback, and that
         // default sets the legibility and truncation floors; it does not stop
@@ -258,9 +274,28 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 decision.reason_codes(),
                 &body.predicate,
             );
-        let fallback_floor_only = (critical_floor_only || approved_close_floor_only)
-            && !owner_authored
-            && !declared_critical;
+        // A Grant holder's approval of a stored proposal (`vault.claims.settle`
+        // with a grant_ref) lands under the holder's Grant on a predicate no
+        // policy rule names: "A schema-valid claim on an unregistered predicate
+        // lands under the actor's Grant" (ARCH-0003 §Criticality,
+        // HOLDER-APPROVAL-FALLBACK-FLOOR). The holder's envelope gated this
+        // Put, so its actor ceiling and every other leg still decide it; the
+        // lift reads only the verified in-place approval of the stored
+        // proposal, with nothing else changed. A raw Approved stamp has no
+        // such transition and keeps the floor; a declared critical class
+        // still waits for the owner; `comm.*` keeps its floor.
+        let holder_approved_floor_only = envelope.is_some()
+            && !verified_close
+            && approves_stored_proposal_only(store, &*wtxn, id, body, transition)
+            && critical_claim_can_land_auto_with_confirm(
+                &input,
+                decision.reason_codes(),
+                &body.predicate,
+            );
+        let fallback_floor_only =
+            (critical_floor_only || approved_close_floor_only || holder_approved_floor_only)
+                && !owner_authored
+                && !declared_critical;
         if owner_authored {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED]);
