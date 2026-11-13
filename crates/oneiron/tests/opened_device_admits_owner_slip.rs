@@ -263,3 +263,33 @@ fn grant_catchup_serves_only_a_proven_machine_and_lands_only_asked_grants() {
         "nothing landed: the device still refuses the slip"
     );
 }
+
+/// Review round 1 of #7485, at the reviewed head: the admission takes no
+/// answerer, so an endpoint that proved no machine of the vault answers as
+/// the home does. It serves an empty tombstone for the live grant; the
+/// device must take nothing from it.
+#[test]
+fn grant_catchup_takes_no_withdrawal_from_a_home_that_proved_no_machine_of_the_vault() {
+    let home = home();
+    let (device, _dir) = opened_device(&home);
+    let (asked, _, admission) = catch_up(&home, &device);
+    assert_eq!(admission.landed, BTreeSet::from([home.grant]));
+    assert!(
+        admits(&device, &home.slip_id),
+        "precondition: the device admits the owner's slip once the grant row landed"
+    );
+
+    let forged = vec![(home.grant, OwnDeviceGrantState::Withdrawn(Vec::new()))];
+    let admission = admit_own_device_grants(&device, &asked, forged)
+        .expect("the device judges the unproven answer");
+    assert!(
+        admission.withdrawn.is_empty()
+            && admission.landed.is_empty()
+            && admission.refused == BTreeSet::from([home.grant]),
+        "an answer from an endpoint that proved nothing is refused whole: {admission:?}"
+    );
+    assert!(
+        admits(&device, &home.slip_id),
+        "the grant still stands: the owner's slip is admitted"
+    );
+}
