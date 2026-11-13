@@ -89302,7 +89302,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "fn": 6,
       "mod": 1,
       "re-export": 10,
