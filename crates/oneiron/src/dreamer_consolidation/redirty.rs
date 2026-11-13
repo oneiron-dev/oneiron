@@ -237,27 +237,43 @@ impl RewiredTurnEdges {
 }
 
 /// A live TURN whose word binding an edge changed, in the edge's own
-/// transaction. When a round may have read it (a scope's watermark passed its
-/// key, or a carrier keys it) it takes a fresh carrier, pending for every
-/// scope, as a TURN put behind a watermark does
-/// ([`admit_turn_position_in_txn`](super::watermark::admit_turn_position_in_txn));
-/// a TURN no round has passed is read at its new words on its own key. In any
-/// case the sieve and the projector owe it a read and the redirty feed hears
-/// of it ([`crate::dreamer_wake::words_changed_in_txn`]), and the tagger and
-/// the embedder mark it at its new words, as a publication of its text does.
+/// transaction: admitted as a TURN whose words changed
+/// ([`admit_changed_words_in_txn`]), and marked by the tagger and the
+/// embedder at its new words, as a publication of its text marks it.
 fn admit_rewired_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    if REDIRTY.get(&vault.store, txn, turn)?.is_some()
-        || super::watermark::turn_passed_in_txn(&vault.store, txn, turn)?
-    {
-        put_carrier_in_txn(&vault.store, txn, turn)?;
-    }
-    crate::dreamer_wake::words_changed_in_txn(&vault.store, txn, turn)?;
+    admit_changed_words_in_txn(&vault.store, txn, turn)?;
     crate::tagging::mark_on_publication_in_txn(vault, txn, turn, ENTITY_TYPE_TURN)?;
     crate::embed::mark_on_publication_in_txn(vault, txn, turn, ENTITY_TYPE_TURN)
+}
+
+/// A TURN whose words changed with no new temporal key of its own (an edge
+/// rewire, a document edit or revision of its text, a lost source), in the
+/// change's own transaction. When a round may have read it (a scope's
+/// watermark passed it, or a carrier keys it) it takes a fresh carrier,
+/// pending for every scope, as a TURN put behind a watermark does
+/// ([`admit_turn_position_in_txn`](super::watermark::admit_turn_position_in_txn));
+/// a TURN no round has passed is read at its new words on its own key. In
+/// any case the sieve and the projector owe it a read and the redirty feed
+/// hears of it ([`crate::dreamer_wake::words_changed_in_txn`]).
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] when no row exists; the reads and the writes.
+pub(crate) fn admit_changed_words_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    if REDIRTY.get(store, txn, turn)?.is_some()
+        || super::watermark::turn_passed_in_txn(store, txn, turn)?
+    {
+        put_carrier_in_txn(store, txn, turn)?;
+    }
+    crate::dreamer_wake::words_changed_in_txn(store, txn, turn)
 }
 
 fn edge_stored_in_txn(

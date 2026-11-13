@@ -142,15 +142,18 @@ pub(crate) fn demote_in_txn(
 /// The publication hook: a TURN, or a MESSAGE inside one, whose text a
 /// write changed or may have changed (a document write, its restore, an
 /// idle revision, a re-put of the row, a regeneration that clears its stale
-/// mark) has its turn's words changed, committed with the text. Unlike the
-/// tag and vector marks it needs no model configured.
+/// mark) has its turn's words changed, committed with the text. A turn a
+/// consolidation round may already have read is new work for every scope
+/// again (ARCH-0026 #sieve-open: an edit after consolidation;
+/// [`crate::dreamer_consolidation::redirty::admit_changed_words_in_txn`]).
+/// Unlike the tag and vector marks it needs no model configured.
 pub(crate) fn mark_on_publication_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     entity: &crate::EntityId,
 ) -> crate::Result<()> {
     for turn in text_turns_in_txn(store, txn, entity)? {
-        words_changed_in_txn(store, txn, &turn)?;
+        crate::dreamer_consolidation::redirty::admit_changed_words_in_txn(store, txn, &turn)?;
     }
     Ok(())
 }
