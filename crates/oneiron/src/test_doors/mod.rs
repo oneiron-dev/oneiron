@@ -68,6 +68,7 @@ pub mod substrate_reads;
 pub mod turn_programs;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
+pub mod verb_hook_ask;
 pub mod wake_d1_park_release;
 #[cfg(feature = "sync")]
 pub mod world_follow;
