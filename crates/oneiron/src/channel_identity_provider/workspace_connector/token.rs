@@ -1,17 +1,21 @@
 //! The OAuth access token one workspace send presents (FIX 4862; L3-17),
 //! read from the stored grant inside the custody door that released it.
 //!
-//! A grant that carries a refresh token and its OAuth client (what the Google
-//! code exchange stores) is exchanged at Google's token endpoint for a fresh
-//! access token on each send, so the hour an access token lives never runs
-//! out mid-use. A grant without one presents its stored access token, and
-//! bare text is the access token. Nothing here is persisted or logged.
+//! How the grant becomes the token is the connection's
+//! ([`WorkspaceTokenExchange`]). Under Google's, a grant that carries a
+//! refresh token and its OAuth client (what the Google code exchange stores)
+//! is exchanged at Google's token endpoint for a fresh access token on each
+//! send, so the hour an access token lives never runs out mid-use. Every
+//! other grant presents its stored access token, and bare text is the access
+//! token; a grant of another provider never reaches Google's endpoint.
+//! Nothing here is persisted or logged.
 
 use std::time::Duration;
 
 use serde::Deserialize;
 use zeroize::{Zeroize, Zeroizing};
 
+use super::WorkspaceTokenExchange;
 use crate::connector_key::ProviderConnectionChecks;
 use crate::error::{Error, Result};
 
@@ -26,13 +30,16 @@ pub(super) fn refresh_client() -> Result<reqwest::blocking::Client> {
         .map_err(|_| Error::InvalidConfig("workspace refresh client setup failed".to_owned()))
 }
 
-/// The access token the stored grant `value` presents, refreshed when the
-/// grant can be.
+/// The access token the stored grant `value` presents under `exchange`,
+/// refreshed when the exchange and the grant can be.
 pub(super) fn access_token(
     client: &reqwest::blocking::Client,
+    exchange: WorkspaceTokenExchange,
     value: &[u8],
 ) -> Result<Zeroizing<String>> {
-    if let Some(fresh) = ProviderConnectionChecks::refresh_stored_google_grant(client, value)? {
+    if exchange == WorkspaceTokenExchange::GoogleRefresh
+        && let Some(fresh) = ProviderConnectionChecks::refresh_stored_google_grant(client, value)?
+    {
         return Ok(fresh);
     }
     let unusable =

@@ -75,10 +75,11 @@ pub use self::record::{
 };
 pub use self::setup::{
     BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, GOOGLE_TOKEN_CHECK, GoogleAuthorizationCode,
-    GoogleAuthorizationGrant, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK,
-    PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE,
-    PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier, PackSetupOwnerAsk,
-    ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK, TELEGRAM_GET_ME_CHECK,
+    GoogleAuthorizationGrant, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, MICROSOFT365_ME_CHECK,
+    NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR,
+    PACK_SETUP_ALLOW_ASK_QUEUE, PackConnectionCheck, PackConnectionEvidence,
+    PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
+    TELEGRAM_GET_ME_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 

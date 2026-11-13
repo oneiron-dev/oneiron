@@ -12,7 +12,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 8] = [
+const PACKS: [(&str, &str); 9] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -45,11 +45,15 @@ const PACKS: [(&str, &str); 8] = [
         "google",
         include_str!("../../../../../packs/builtin/google/PACK.md"),
     ),
+    (
+        "microsoft365",
+        include_str!("../../../../../packs/builtin/microsoft365/PACK.md"),
+    ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 8] = [
+const SETUP_SKILLS: [(&str, &str); 9] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -81,6 +85,10 @@ const SETUP_SKILLS: [(&str, &str); 8] = [
     (
         "google",
         include_str!("../../../../../packs/builtin/google/skills/setup/SKILL.md"),
+    ),
+    (
+        "microsoft365",
+        include_str!("../../../../../packs/builtin/microsoft365/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";

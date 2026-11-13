@@ -2,7 +2,8 @@
 //! the host seam that sends it through the credential broker.
 //!
 //! The engine builds every request whole: the endpoint, the path with its
-//! query, and the JSON body. The host checks it as the broker will and
+//! query, the JSON body, and any header the API names a call's context by
+//! (Graph's `workbook-session-id`). The host checks it as the broker will and
 //! reaches the broker before the engine reads the grant at the custody door;
 //! the broker adds the access token as `Authorization: Bearer`, sends once
 //! over verified TLS, and strips the token from the reply. The token goes to
@@ -23,11 +24,17 @@ const DOCS_ORIGIN: &str = "https://docs.googleapis.com";
 /// The Slides v1 origin.
 const SLIDES_ORIGIN: &str = "https://slides.googleapis.com";
 
+/// The Microsoft Graph origin.
+const GRAPH_ORIGIN: &str = "https://graph.microsoft.com";
+
 /// The longest path with its query: well inside the broker's frame header.
 const MAX_PATH_BYTES: usize = 16 << 10;
 
 /// The largest request body.
 const MAX_BODY_BYTES: usize = 8 << 20;
+
+/// The longest header value: the broker's own bound.
+const MAX_HEADER_VALUE_BYTES: usize = 1024;
 
 /// The REST endpoint one request calls: one broker shape row each, of the
 /// same name.
@@ -50,6 +57,14 @@ pub enum WorkspaceEndpoint {
     SlidesPresentationGet,
     /// Slides v1: `POST /v1/presentations/{id}:batchUpdate`.
     SlidesBatchUpdate,
+    /// Graph v1.0: `POST /v1.0/me/drive/items/{id}/workbook/createSession`.
+    ExcelCreateSession,
+    /// Graph v1.0: `GET /v1.0/me/drive/items/{id}/workbook/worksheets/{name}/range(address='{a1}')`.
+    ExcelRangeGet,
+    /// Graph v1.0: `PATCH` the same range.
+    ExcelRangeUpdate,
+    /// Graph v1.0: `POST /v1.0/me/drive/items/{id}/workbook/closeSession`.
+    ExcelCloseSession,
 }
 
 impl WorkspaceEndpoint {
@@ -63,6 +78,10 @@ impl WorkspaceEndpoint {
             | Self::SheetsBatchUpdate => SHEETS_ORIGIN,
             Self::DocsDocumentGet | Self::DocsBatchUpdate => DOCS_ORIGIN,
             Self::SlidesPresentationGet | Self::SlidesBatchUpdate => SLIDES_ORIGIN,
+            Self::ExcelCreateSession
+            | Self::ExcelRangeGet
+            | Self::ExcelRangeUpdate
+            | Self::ExcelCloseSession => GRAPH_ORIGIN,
         }
     }
 
@@ -77,22 +96,30 @@ impl WorkspaceEndpoint {
             | Self::SheetsBatchUpdate => "sheets.v4",
             Self::DocsDocumentGet | Self::DocsBatchUpdate => "docs.v1",
             Self::SlidesPresentationGet | Self::SlidesBatchUpdate => "slides.v1",
+            Self::ExcelCreateSession
+            | Self::ExcelRangeGet
+            | Self::ExcelRangeUpdate
+            | Self::ExcelCloseSession => "graph.v1.0",
         }
     }
 
-    /// The HTTP method: `GET` for a read, else the write's method, which
-    /// carries a JSON body.
+    /// The HTTP method: `GET` for a read, else `POST`, or `PATCH` for a
+    /// Graph range write.
     #[must_use]
     pub const fn method(self) -> &'static str {
         match self {
             Self::SheetsSpreadsheetGet
             | Self::SheetsValuesBatchGet
             | Self::DocsDocumentGet
-            | Self::SlidesPresentationGet => "GET",
+            | Self::SlidesPresentationGet
+            | Self::ExcelRangeGet => "GET",
             Self::SheetsValuesBatchUpdate
             | Self::SheetsBatchUpdate
             | Self::DocsBatchUpdate
-            | Self::SlidesBatchUpdate => "POST",
+            | Self::SlidesBatchUpdate
+            | Self::ExcelCreateSession
+            | Self::ExcelCloseSession => "POST",
+            Self::ExcelRangeUpdate => "PATCH",
         }
     }
 
@@ -107,17 +134,23 @@ impl WorkspaceEndpoint {
             Self::DocsBatchUpdate => "docs.documents.batchUpdate",
             Self::SlidesPresentationGet => "slides.presentations.get",
             Self::SlidesBatchUpdate => "slides.presentations.batchUpdate",
+            Self::ExcelCreateSession => "excel.workbook.createSession",
+            Self::ExcelRangeGet => "excel.range.get",
+            Self::ExcelRangeUpdate => "excel.range.update",
+            Self::ExcelCloseSession => "excel.workbook.closeSession",
         }
     }
 }
 
 /// One exact request under its endpoint's origin: the endpoint, the path
-/// with its query, and the JSON body, empty for a read.
+/// with its query, the JSON body, empty for a read, and the headers that
+/// name the call's context, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceWireRequest {
     endpoint: WorkspaceEndpoint,
     path: String,
     body: Vec<u8>,
+    headers: Vec<(&'static str, String)>,
 }
 
 impl WorkspaceWireRequest {
@@ -135,7 +168,25 @@ impl WorkspaceWireRequest {
             endpoint,
             path,
             body,
+            headers: Vec::new(),
         })
+    }
+
+    /// The request with the header `name` (lowercase) set to `value`: 1 to
+    /// [`MAX_HEADER_VALUE_BYTES`] visible ASCII bytes and no space, or
+    /// [`ARGUMENTS_INVALID`].
+    pub(crate) fn with_header(
+        mut self,
+        name: &'static str,
+        value: &str,
+    ) -> Result<Self, &'static str> {
+        let visible = (1..=MAX_HEADER_VALUE_BYTES).contains(&value.len())
+            && value.bytes().all(|byte| byte.is_ascii_graphic());
+        if !visible || self.headers.iter().any(|(set, _)| *set == name) {
+            return Err(ARGUMENTS_INVALID);
+        }
+        self.headers.push((name, value.to_owned()));
+        Ok(self)
     }
 
     /// The endpoint, which names the broker shape row.
@@ -162,8 +213,16 @@ impl WorkspaceWireRequest {
         &self.body
     }
 
-    /// The request's digest, lower hex: its endpoint, path and body, each
-    /// framed by its length. A receipt names the request by it.
+    /// The headers that name the call's context, in the order set; the
+    /// broker adds the credential's own.
+    #[must_use]
+    pub fn headers(&self) -> &[(&'static str, String)] {
+        &self.headers
+    }
+
+    /// The request's digest, lower hex: its endpoint, path and body, then
+    /// each header's name and value, each framed by its length. A receipt
+    /// names the request by it.
     pub(crate) fn digest(&self) -> String {
         let mut hasher = blake3::Hasher::new_derive_key("oneiron.workspace.wire-request.v1");
         let parts: [&[u8]; 3] = [
@@ -171,7 +230,11 @@ impl WorkspaceWireRequest {
             self.path.as_bytes(),
             &self.body,
         ];
-        for part in parts {
+        let headers = self
+            .headers
+            .iter()
+            .flat_map(|(name, value)| [name.as_bytes(), value.as_bytes()]);
+        for part in parts.into_iter().chain(headers) {
             hasher.update(&(part.len() as u64).to_be_bytes());
             hasher.update(part);
         }

@@ -118,6 +118,10 @@ const fn shape(endpoint: WorkspaceEndpoint) -> Shape {
         WorkspaceEndpoint::DocsBatchUpdate => Shape::DocsBatchUpdate,
         WorkspaceEndpoint::SlidesPresentationGet => Shape::SlidesPresentationGet,
         WorkspaceEndpoint::SlidesBatchUpdate => Shape::SlidesBatchUpdate,
+        WorkspaceEndpoint::ExcelCreateSession => Shape::ExcelCreateSession,
+        WorkspaceEndpoint::ExcelRangeGet => Shape::ExcelRangeGet,
+        WorkspaceEndpoint::ExcelRangeUpdate => Shape::ExcelRangeUpdate,
+        WorkspaceEndpoint::ExcelCloseSession => Shape::ExcelCloseSession,
     }
 }
 
@@ -128,12 +132,19 @@ impl WorkspaceBrokerHost for WorkspaceBroker {
         call: &str,
     ) -> Result<Box<dyn WorkspaceBrokerCall>, String> {
         let endpoint = request.endpoint();
-        // A write's body is JSON; a read sends none.
-        let headers = if endpoint.method() == "GET" {
+        // A write's body is JSON; a read sends none. The request's own
+        // headers (a Graph workbook session) follow.
+        let mut headers = if endpoint.method() == "GET" {
             Vec::new()
         } else {
             vec![("content-type".to_owned(), "application/json".to_owned())]
         };
+        headers.extend(
+            request
+                .headers()
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), value.clone())),
+        );
         let header = CallHeader::new(
             call.to_owned(),
             shape(endpoint),
