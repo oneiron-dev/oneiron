@@ -30,6 +30,7 @@ mod send_lookup;
 mod send_reaper;
 mod served_sink;
 mod uncertain_send;
+mod undo_send;
 mod weave_digest_send;
 mod window_door;
 
@@ -114,6 +115,13 @@ pub(crate) use self::reply_job::{
 };
 pub(crate) use self::uncertain_send::{
     UNCERTAIN_SEND_ANSWER_VERB, UNCERTAIN_SEND_NOTIFICATION_PRODUCER,
+};
+pub(crate) use self::undo_send::{
+    UndoSendCandidate, hold_send_for_undo_in_txn, undo_send_first_agent_sends_in_txn,
+};
+pub use self::undo_send::{
+    UndoSendFirstAgentSend, UndoSendHeldSend, UndoSendHeldSends, UndoSendOutcome, UndoSendRequest,
+    UndoSendUndone, undo_send_as, undo_send_embedded, undo_send_held_as, undo_send_held_embedded,
 };
 pub(crate) use self::weave_digest_send::erase_weave_digest_channel_override_actor_in_txn;
 pub use self::weave_digest_send::{WeaveDigestChannelOverride, WeaveDigestChannelSetting};

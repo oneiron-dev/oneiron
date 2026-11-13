@@ -268,6 +268,21 @@ impl SyncServer {
             // Waits over AGENT children whose `until` has passed are answered
             // as `cutoff` ([AGENT-WAIT-DEADLINE]).
             super::agent_wait_settle::settle_agent_waits(Arc::clone(server.vault())).await;
+            // SEAT-PARK-MODEL-STEP-PATH: a lapsed SIWC login whose credential
+            // opens again writes its seat Available, which wakes its parks.
+            let restored = server
+                .ai
+                .model_runtime()
+                .siwc_logins()
+                .restore_lapsed(server.vault())
+                .await;
+            if restored.tried > 0 {
+                tracing::debug!(
+                    tried = restored.tried,
+                    restored = restored.restored,
+                    "lapsed SIWC logins tried"
+                );
+            }
             server.prune_mcp_credentials().await;
             // OF-181: a parked run cancelled, which no entry or call touches
             // again, leaves the host's live runs here.

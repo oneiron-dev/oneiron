@@ -100,6 +100,9 @@ pub(super) fn project_stage_transition_in_txn(
     if mode == PromotionMode::Propose {
         require_current_stage_head(vault, txn, input)?;
     }
+    // Only a PERSON party has a substrate FACET; any other party takes the
+    // vault default facet (a birth gate refusal otherwise, #4389).
+    body.scope_facet = vault.claim_put_facet_keeping_in_txn(txn, &new_id, body.scope_facet)?;
     vault.put_claim_in_txn(txn, &new_id, &body, at(recorded_at), recorded_at)?;
     match mode {
         PromotionMode::Propose => Ok(StageProjectResult::Proposed {
@@ -170,7 +173,7 @@ fn require_current_stage_head(
 /// disagree about stage, evidence, and basis — so it is rejected here for the
 /// same reason CA-01's transition door rejects it. Decoding runs through CA-01's
 /// decoder; this module defines no second stage wire shape.
-pub(super) fn live_stage_head_in(
+pub(crate) fn live_stage_head_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     party_ref: &EntityId,

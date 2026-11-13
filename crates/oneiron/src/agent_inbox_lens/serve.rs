@@ -337,10 +337,10 @@ pub struct InboxRunGroupsRequest {
 }
 
 impl Memory<'_> {
-    /// The owner's one inbox over both group kinds (FIX 3026): the Dreamer
-    /// run groups [`Memory::inbox_run_groups`] pages and the vault shape's
-    /// apply groups, interleaved newest first, one page of complete groups
-    /// and where the next page resumes.
+    /// The owner's one inbox over every group kind (FIX 3026): the Dreamer
+    /// run groups [`Memory::inbox_run_groups`] pages, the vault shape's apply
+    /// groups and the owner's whole-vault restores, interleaved newest first,
+    /// one page of complete groups and where the next page resumes.
     pub fn inbox_groups_page(
         &self,
         owner: &AuthenticatedOwner,
@@ -364,8 +364,10 @@ impl Memory<'_> {
     }
 
     /// The owner's answer to one inbox group, dispatched by its kind: a
-    /// Dreamer group's bundle consent or a shape apply's answer, with
-    /// `slips`, the host's slip issuer, when it has one.
+    /// Dreamer group's bundle consent, a shape apply's answer, with `slips`,
+    /// the host's slip issuer, when it has one, or the owner's answer to the
+    /// claims a whole-vault restore brought back
+    /// (`Memory::resolve_restore_inbox_group`).
     pub fn resolve_inbox_group_of_kind(
         &self,
         owner: &AuthenticatedOwner,
@@ -373,6 +375,11 @@ impl Memory<'_> {
         input: &crate::inbox::InboxGroupResolveRequest,
     ) -> MemoryResult<crate::inbox::InboxGroupResolution> {
         self.inbox_owner(owner)?;
+        if input.kind == crate::inbox::InboxGroupKind::Restore {
+            return Ok(crate::inbox::InboxGroupResolution::Restore {
+                resolution: self.resolve_restore_inbox_group(owner, input)?,
+            });
+        }
         Ok(self.vault().resolve_inbox_group_of_kind(
             owner,
             slips,

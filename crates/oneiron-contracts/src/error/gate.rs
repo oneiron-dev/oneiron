@@ -96,6 +96,9 @@ pub enum GateDenialReason {
     PendingDelegationChainCeiling,
     /// FIX 12542: campaign compliance waits for the owner's clearance.
     PendingCampaignCompliance,
+    /// ARCH-0059 #copy-review: a campaign send's copy failed its review or
+    /// has none yet, and waits for the owner's clearance.
+    PendingCampaignCopyReview,
     /// SPAWN-KNOB: the spawning instance's `spawn` power is off.
     DenyAgentPowerSpawnOff,
     /// SPAWN-KNOB: the authoring instance's `save_agent` power is off.
@@ -135,6 +138,7 @@ impl GateDenialReason {
             Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
             Self::PendingDelegationChainCeiling => "gate.pending.delegation_chain_ceiling",
             Self::PendingCampaignCompliance => "gate.pending.campaign_compliance",
+            Self::PendingCampaignCopyReview => "gate.pending.campaign_copy_review",
             Self::DenyAgentPowerSpawnOff => "gate.deny.agent_power.spawn_off",
             Self::DenyAgentPowerSaveAgentOff => "gate.deny.agent_power.save_agent_off",
             Self::DenyAgentPowerAboveParent => "gate.deny.agent_power.above_parent",
@@ -173,6 +177,7 @@ impl GateDenialReason {
             "gate.deny.unresolved_record_reference" => Some(Self::DenyUnresolvedRecordReference),
             "gate.pending.delegation_chain_ceiling" => Some(Self::PendingDelegationChainCeiling),
             "gate.pending.campaign_compliance" => Some(Self::PendingCampaignCompliance),
+            "gate.pending.campaign_copy_review" => Some(Self::PendingCampaignCopyReview),
             "gate.deny.agent_power.spawn_off" => Some(Self::DenyAgentPowerSpawnOff),
             "gate.deny.agent_power.save_agent_off" => Some(Self::DenyAgentPowerSaveAgentOff),
             "gate.deny.agent_power.above_parent" => Some(Self::DenyAgentPowerAboveParent),
@@ -206,7 +211,8 @@ impl GateDenialReason {
             | Self::PendingChecker
             | Self::PendingCheckerUnavailable
             | Self::PendingDelegationChainCeiling
-            | Self::PendingCampaignCompliance => GateDenialOutcome::Pending,
+            | Self::PendingCampaignCompliance
+            | Self::PendingCampaignCopyReview => GateDenialOutcome::Pending,
         }
     }
 }

@@ -1,11 +1,14 @@
 //! The owner's residence directives to one of their machines, and each
 //! machine's result for one (OF-534). A directive is an owner act through
 //! the host, like any roster-signed owner action: it names one physical
-//! machine and one act (sync all, sync what it opened, open an item, read
-//! its thin index, prune old read caches). Only the machine it names
+//! machine and one act (sync all, sync what it opened, follow the worlds
+//! the owner picked, open an item, read its thin index, prune old read
+//! caches). Only the machine it names
 //! applies it, and that machine signs the result with its own install key,
 //! naming the directive's entry among its parents. Neither carries content:
 //! no item body, index title or window bytes ride the log.
+
+use std::collections::BTreeSet;
 
 use rmpv::Value;
 
@@ -20,6 +23,8 @@ pub const OP_KIND_RESIDENCE_RESULT: &str = "residence_result";
 pub const RESIDENCE_WINDOW_KEY_MAX: usize = 128;
 /// The longest reason a refused result gives, in bytes.
 pub const RESIDENCE_REASON_MAX: usize = 128;
+/// The most worlds one follow act names.
+pub const RESIDENCE_FOLLOW_WORLDS_MAX: usize = 256;
 const DIRECTIVE_KEYS: [&str; 6] = [OP_KEY_KIND, "id", "machine", "owner", "issued_at", "act"];
 const RESULT_KEYS: [&str; 7] = [
     OP_KEY_KIND,
@@ -38,6 +43,10 @@ pub enum ResidenceAct {
     SyncAll,
     /// Sync what the machine opened.
     SyncOpened,
+    /// Follow these worlds: the owner's pick of the projects whose full
+    /// windows the machine syncs (ARCH-0023b #partial-sync). It replaces the
+    /// machine's earlier pick; an empty pick follows none.
+    Follow { worlds: BTreeSet<EntityId> },
     /// Open one item of one window on the machine.
     Open { window: String, item: EntityId },
     /// Read the machine's thin index.
@@ -52,6 +61,7 @@ impl ResidenceAct {
         match self {
             Self::SyncAll => "sync_all",
             Self::SyncOpened => "sync_opened",
+            Self::Follow { .. } => "follow",
             Self::Open { .. } => "open",
             Self::Index => "index",
             Self::Prune { .. } => "prune",
@@ -79,6 +89,11 @@ impl ResidenceDirective {
             && (window.is_empty()
                 || window.len() > RESIDENCE_WINDOW_KEY_MAX
                 || window.contains(char::is_control))
+        {
+            return Err(invalid_authority());
+        }
+        if let ResidenceAct::Follow { worlds } = &self.act
+            && worlds.len() > RESIDENCE_FOLLOW_WORLDS_MAX
         {
             return Err(invalid_authority());
         }
@@ -164,7 +179,8 @@ impl ResidenceResult {
 }
 
 /// Canonical field order: kind, id, machine, owner, issued_at, act, then the
-/// act's own fields (an open's window and item; a prune's before).
+/// act's own fields (an open's window and item; a prune's before; a follow's
+/// worlds, in ascending order).
 pub(super) fn residence_directive_value(directive: &ResidenceDirective) -> Value {
     let mut entries = vec![
         (
@@ -188,6 +204,17 @@ pub(super) fn residence_directive_value(directive: &ResidenceDirective) -> Value
         ResidenceAct::Prune { before } => {
             entries.push((Value::from("before"), Value::from(*before)));
         }
+        ResidenceAct::Follow { worlds } => {
+            entries.push((
+                Value::from("worlds"),
+                Value::Array(
+                    worlds
+                        .iter()
+                        .map(|world| Value::from(world.to_hex()))
+                        .collect(),
+                ),
+            ));
+        }
         ResidenceAct::SyncAll | ResidenceAct::SyncOpened | ResidenceAct::Index => {}
     }
     Value::Map(entries)
@@ -201,6 +228,7 @@ pub(super) fn decode_residence_directive(entries: &[(Value, Value)]) -> Result<A
     match act {
         "open" => keys.extend(["window", "item"]),
         "prune" => keys.push("before"),
+        "follow" => keys.push("worlds"),
         _ => {}
     }
     validate_keys(entries, &keys)?;
@@ -224,6 +252,9 @@ pub(super) fn decode_residence_directive(entries: &[(Value, Value)]) -> Result<A
         "prune" => ResidenceAct::Prune {
             before: number("before")?,
         },
+        "follow" => ResidenceAct::Follow {
+            worlds: decode_followed_worlds(required(entries, "worlds")?)?,
+        },
         _ => return Err(invalid_authority()),
     };
     let directive = ResidenceDirective {
@@ -235,6 +266,22 @@ pub(super) fn decode_residence_directive(entries: &[(Value, Value)]) -> Result<A
     };
     directive.validate()?;
     Ok(AuthorityOp::ResidenceDirective(directive))
+}
+
+/// A follow act's worlds: canonical ids in strictly ascending order, so one
+/// pick has one encoding.
+fn decode_followed_worlds(value: &Value) -> Result<BTreeSet<EntityId>> {
+    let Value::Array(values) = value else {
+        return Err(invalid_authority());
+    };
+    let worlds = values
+        .iter()
+        .map(super::machine_profile::decode_canonical_id)
+        .collect::<Result<Vec<_>>>()?;
+    if !worlds.windows(2).all(|pair| pair[0] < pair[1]) {
+        return Err(invalid_authority());
+    }
+    Ok(worlds.into_iter().collect())
 }
 
 /// Canonical field order: kind, directive, machine, directive_entry,

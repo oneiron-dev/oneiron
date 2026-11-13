@@ -467,6 +467,17 @@ fn admit_surface_event_once(
         .with_write_txn_grouped(|txn| admit_surface_event_once_in_txn(vault, txn, event, None, now))
 }
 
+/// The test doors' admission of an already routed `event`, once, as
+/// [`Vault::enqueue_inbound_surface_event`] admits one it routed.
+#[cfg(oneiron_test_support)]
+pub(crate) fn admit_routed_surface_event(
+    vault: &Vault,
+    event: &SurfaceEvent,
+    now: u64,
+) -> Result<()> {
+    admit_surface_event_once(vault, event, now).map(|_| ())
+}
+
 pub(super) fn admit_surface_event_once_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

@@ -51,6 +51,11 @@ crate::side_table::side_tables! {
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The class one message to a busy resident took (AGM-2 = C): its class, its sender's kind,
+    /// the classifier's read when one was lent, and the ask an unsure interrupt put to its
+    /// sender. Ids only, no text. Key: blake3 (32) of the message's wake key.
+    AGENT_DISPATCH_RESIDENT_MESSAGE_CLASS: VaultMeta b"agent.dispatch.resident_message_class.v1\0" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Dedupe index from a caller-supplied dedupe key to the workflow root attempt id. Key: hash32.
     AGENT_WORKFLOW_DEDUPE: VaultMeta b"agent.workflow.dedupe.v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
