@@ -120,6 +120,10 @@ pub enum NameOnlyReason {
     /// The write door's secret scan refused its text: it is held by name,
     /// never as text (FIX 10244).
     Refused,
+    /// A remote source's file whose text is not read yet: its metadata
+    /// lands first, and a later step reads its text (ARCH-0027
+    /// #mail-drive).
+    Unread,
 }
 
 /// Whether the vault holds a file's text, or its name only.

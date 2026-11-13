@@ -412,11 +412,13 @@ pub use files::{
     FileHandle, FileMeta, FileReadiness, FilesPlacement, FilesWorld, NameOnlyFile, NameOnlyReason,
 };
 mod folder_source;
-pub(crate) use folder_source::erase_folder_source_actor_in_txn;
 pub use folder_source::{
+    DRIVE_WIRE_RATE_LIMITED, DriveCall, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin,
+    DriveQuota, DriveSource, DriveStepBudget, DriveStepReport, DriveSyncState, DriveWire,
     FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
     FolderSourceFile, OriginalBytes,
 };
+pub(crate) use folder_source::{MAX_DRIVE_DOWNLOAD_BYTES, erase_folder_source_actor_in_txn};
 mod import;
 pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,

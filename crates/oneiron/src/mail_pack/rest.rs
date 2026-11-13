@@ -175,6 +175,41 @@ pub(super) fn send_raw_header_block(
     raw_header_block(response).map(RestAnswer::Found)
 }
 
+/// Sends `request`, a read whose answer is a file's own bytes (Drive's
+/// `alt=media` download and its export), and reads them, bounded by `max`,
+/// adding each byte read to `read`. A failure status is read as [`send`]
+/// reads it.
+///
+/// # Errors
+///
+/// The transport's failure, an answer cut short, or one past `max`.
+pub(super) fn send_bytes(
+    request: reqwest::blocking::RequestBuilder,
+    read: &Cell<u64>,
+    max: u64,
+) -> Result<RestAnswer<Vec<u8>>> {
+    let response = request
+        .send()
+        .map_err(|_| refused("mail_wire_transport_failed"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = read_bounded_json(CountedRead::new(response, read));
+        return Ok(RestAnswer::Failed {
+            status: status.as_u16(),
+            code: error_code(body.as_ref()),
+        });
+    }
+    let mut bytes = Vec::new();
+    CountedRead::new(response, read)
+        .take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| cut_short())?;
+    if bytes.len() as u64 > max {
+        return Err(refused("mail_wire_response_too_large"));
+    }
+    Ok(RestAnswer::Found(bytes))
+}
+
 /// The provider's error code a failure answer's body names: Graph's
 /// `error.code`, or Google's first `error.errors[].reason`, as Google's
 /// `error.code` is the HTTP status again.
