@@ -5,7 +5,7 @@ use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
-// FIX [LIBTEST-QUARANTINE-REACTION-TESTS-CLAIMS]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-REACTION-TESTS-CLAIMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
 #[cfg(any())]
 mod claims;
 mod lifecycle;
@@ -60,16 +60,20 @@ pub(super) fn witness(vault: &Vault, room: EntityId, author: EntityId, text: &st
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             occurred_at: 10,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: text.to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
+            assertions: Default::default(),
         })
         .unwrap();
     message

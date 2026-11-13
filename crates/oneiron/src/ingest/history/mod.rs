@@ -26,7 +26,7 @@ mod speakers;
 mod text;
 mod tree;
 
-// FIX [LIBTEST-QUARANTINE-INGEST-HISTORY-TESTS]: the lib test target's type check fails here (4 errors: unstreamed x4); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-INGEST-HISTORY-TESTS]: the lib test target's type check fails here (4 errors: E0063 x4); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -70,7 +70,8 @@ pub(super) fn seed_raw_claim_record(vault: &Vault, id: &EntityId, body: ClaimBod
     let data = crate::claim::encode_claim_body(&body)?;
     let occurred = test_time_range(30, 30);
     let learned_at = 31_u64;
-    let payload = crate::test_util::entity_record(ENTITY_TYPE_CLAIM, occurred, learned_at, &data);
+    let payload =
+        crate::test_util::entity_record(ENTITY_TYPE_CLAIM, occurred, learned_at, 0, &data);
 
     let mut wtxn = vault.store.env.write_txn()?;
     vault

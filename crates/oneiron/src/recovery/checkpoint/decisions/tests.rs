@@ -5,29 +5,15 @@ use crate::{Result, Vault};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS-ARTIFACTS]: the lib test target's type check fails here (5 errors: unstreamed x5); port it, then drop this gate
-#[cfg(any())]
 mod artifacts;
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS-AUDIENCE]: the lib test target's type check fails here (6 errors: unstreamed x6); port it, then drop this gate
-#[cfg(any())]
 mod audience;
 mod campaign;
 mod consent;
 mod counterparty;
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS-NOTIFICATIONS]: the lib test target's type check fails here (1 errors: unstreamed x1); port it, then drop this gate
-#[cfg(any())]
 mod notifications;
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS-READS]: the lib test target's type check fails here (3 errors: unstreamed x3); port it, then drop this gate
-#[cfg(any())]
 mod reads;
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS-SKILLS]: the lib test target's type check fails here (3 errors: unstreamed x3); port it, then drop this gate
-#[cfg(any())]
 mod skills;
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS-TASKS]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
-#[cfg(any())]
 mod tasks;
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS-WORLDS]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
-#[cfg(any())]
 mod worlds;
 
 /// A write to the live vault since the backup.
@@ -259,9 +245,10 @@ fn run(case: fn() -> Result<Case>) -> std::result::Result<&'static str, String> 
         loosening,
         dirs,
     } = case().map_err(|error| format!("setting up: {error}"))?;
-    let restore = |name: &str| {
+    let restore = |name: &str| -> Result<()> {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &vault.checkpoint_key()?,
             &dirs.1.path().join(name),
             vault.config.clone(),
             &vault,
@@ -287,13 +274,16 @@ fn run(case: fn() -> Result<Case>) -> std::result::Result<&'static str, String> 
 /// The decisions whose readers fail outright between `vault` and an
 /// unguarded restore of `image`, for a refusal that names none.
 fn unread(vault: &Vault, image: &std::path::Path, destination: &std::path::Path) -> String {
-    let restored = match Vault::restore_checkpoint(
-        image,
-        destination,
-        vault.config.clone(),
-        super::super::RestoreReason::Restore,
-        1_000,
-    ) {
+    let restored = match vault.checkpoint_key().and_then(|key| {
+        Vault::restore_checkpoint(
+            image,
+            &key,
+            destination,
+            vault.config.clone(),
+            super::super::RestoreReason::Restore,
+            1_000,
+        )
+    }) {
         Ok((restored, _)) => restored,
         Err(error) => return format!(" (an unguarded restore fails too: {error})"),
     };

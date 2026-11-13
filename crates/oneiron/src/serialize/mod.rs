@@ -33,7 +33,7 @@ mod toon_format;
 use oneiron_store::serialize::types;
 mod yaml_format;
 
-// FIX [LIBTEST-QUARANTINE-SERIALIZE-TESTS]: the lib test target's type check fails here (9 errors: unstreamed x9); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-SERIALIZE-TESTS]: the lib test target's type check fails here (9 errors: E0063 x9); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

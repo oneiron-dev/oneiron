@@ -631,7 +631,7 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-WAKE-POLICY-TESTS]: the lib test target's type check fails here (1 errors: unstreamed x1); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-DREAMER-WAKE-POLICY-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 #[path = "policy/tests.rs"]

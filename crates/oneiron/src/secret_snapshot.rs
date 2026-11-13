@@ -286,7 +286,7 @@ pub(crate) fn suggested_secret_name(path: &str) -> String {
     name.trim_end_matches('_').to_owned()
 }
 
-// FIX [LIBTEST-QUARANTINE-SECRET-SNAPSHOT-TESTS]: the lib test target's type check fails here (5 errors: unstreamed x5); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-SECRET-SNAPSHOT-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0063 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

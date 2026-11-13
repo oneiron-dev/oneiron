@@ -100,7 +100,7 @@ pub(crate) use revision::{
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
 pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-REVIEW-TESTS]: the lib test target's type check fails here (6 errors: unstreamed x6); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-REVIEW-TESTS]: the lib test target's type check fails here (6 errors: E0061 x4, E0063 x2); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod review_tests;
@@ -118,14 +118,14 @@ pub(crate) use proof::validate_transition as validate_project_transition;
 pub use read::{ProjectQuarantine, ProjectVerdict};
 pub(crate) use read::{ProjectReader, room_facets_in};
 pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS]: the lib test target's type check fails here (69 errors: unstreamed x69); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{
     normalize_project_body, project_room_dependency, reconcile_project_rooms,
     validate_project_body, validate_room_body,
 };
+// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-SUPPORT-ITEMS]: re-exports create_project_signed_for_test, gated for the lib test target's type check; port it with that item, then drop this gate
+#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tests::create_project_signed_for_test;
 #[cfg(test)]

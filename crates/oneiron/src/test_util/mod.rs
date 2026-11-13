@@ -697,6 +697,8 @@ pub(crate) fn hold_claim_for_critical_confirm(vault: &Vault, claim: EntityId, se
         read_frontier_hash: [seed.wrapping_add(2); 32],
         reason_codes: vec!["gate.pending.critical_confirm_attached".to_owned()],
         dreamer_run_id: None,
+        predicate: None,
+        expires_at: None,
     };
     vault
         .with_write_txn(|txn| vault.store.put_pending_gate_consent_in_txn(txn, &pending))

@@ -314,7 +314,7 @@ fn compact_window(
     key: &crate::sync::types::WindowKey,
     erased: &BTreeSet<EntityId>,
 ) -> Result<CompactOutcome> {
-    compact_window_with(vault, key, erased, &mut WithdrawnSweep::default())
+    compact_window_with(vault, key, erased, &mut WithdrawnSweep::default(), false)
 }
 
 /// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub
@@ -916,8 +916,6 @@ pub(crate) fn compact_window_for_test(
     compact_window(vault, key, erased).map(drop)
 }
 
-// FIX [LIBTEST-QUARANTINE-SWEEP-COMPACT-SCOPED-UPDATE-TESTS]: the lib test target's type check fails here (1 errors: unstreamed x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 mod scoped_update_tests {
     use super::*;

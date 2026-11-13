@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
-// FIX [LIBTEST-QUARANTINE-SELF-HEAL-ADMISSION-TESTS]: the lib test target's type check fails here (6 errors: unstreamed x6); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-SELF-HEAL-ADMISSION-TESTS]: the lib test target's type check fails here (6 errors: E0061 x5, E0063 x1); port it, then drop this gate
 #[cfg(any())]
 #[path = "admission_tests.rs"]
 mod admission_tests;
 #[path = "canonical_tests.rs"]
 mod canonical_tests;
-// FIX [LIBTEST-QUARANTINE-SELF-HEAL-REPAIR-TESTS]: the lib test target's type check fails here (1 errors: unstreamed x1); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-SELF-HEAL-REPAIR-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
 #[cfg(any())]
 #[path = "repair/tests.rs"]
 mod repair_tests;

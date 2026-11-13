@@ -10,7 +10,7 @@ mod retention;
 pub(in crate::store) use retention::RetrievalTelemetryLease;
 mod run_store;
 mod state;
-// FIX [LIBTEST-QUARANTINE-STORE-RETRIEVAL-TELEMETRY-STATE-TESTS]: the lib test target's type check fails here (5 errors: unstreamed x5); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-STORE-RETRIEVAL-TELEMETRY-STATE-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0639 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod state_tests;

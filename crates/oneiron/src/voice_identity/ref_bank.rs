@@ -816,7 +816,7 @@ pub use render_history::{
 };
 use target_verification::VendorClone;
 
-// FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-REF-BANK-TESTS]: the lib test target's type check fails here (10 errors: unstreamed x10); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-REF-BANK-TESTS]: the lib test target's type check fails here (10 errors: E0061 x6, E0533 x4); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 #[path = "ref_bank/tests.rs"]

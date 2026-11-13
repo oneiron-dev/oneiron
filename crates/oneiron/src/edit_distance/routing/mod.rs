@@ -95,7 +95,7 @@ pub use self::write::record_judged_amendment;
 pub(crate) use self::outcomes::{OUTCOME_MERGED, OUTCOME_UNDONE, put_routing_outcome_in_txn};
 pub(crate) use self::write::refold_task_outcomes_in_txn;
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ROUTING-TESTS]: the lib test target's type check fails here (10 errors: unstreamed x10); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ROUTING-TESTS]: the lib test target's type check fails here (10 errors: E0609 x9, E0308 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

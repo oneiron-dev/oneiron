@@ -93,7 +93,7 @@ fn sheet_cells(
     named_sheet_cells(bytes, &bundle.sheet, &|cell| targets.contains(cell))
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-ROUNDTRIP-JUDGMENT-CELLS-TESTS]: the lib test target's type check fails here (10 errors: unstreamed x10); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-EDIT-ROUNDTRIP-JUDGMENT-CELLS-TESTS]: the lib test target's type check fails here (10 errors: E0560 x8, E0277 x2); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests {

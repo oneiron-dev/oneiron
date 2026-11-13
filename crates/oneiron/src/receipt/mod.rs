@@ -43,7 +43,7 @@ mod served_form;
 mod session;
 mod share_doors;
 
-// FIX [LIBTEST-QUARANTINE-RECEIPT-TESTS]: the lib test target's type check fails here (12 errors: unstreamed x12); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-RECEIPT-TESTS]: the lib test target's type check fails here (12 errors: E0063 x7, E0061 x4, E0308 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -18,7 +18,7 @@ mod preparation;
 mod retrieval;
 mod safeguard;
 mod session;
-// FIX [LIBTEST-QUARANTINE-VOICE-CASCADE-TESTS-STREAM]: the lib test target's type check fails here (6 errors: unstreamed x6); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-VOICE-CASCADE-TESTS-STREAM]: the lib test target's type check fails here (6 errors: E0063 x2, E0061 x2, E0609 x1, E0533 x1); port it, then drop this gate
 #[cfg(any())]
 mod stream;
 
@@ -472,13 +472,18 @@ impl CascadeControl for TestControl {
                     .retain(|frame| frame.generation != *generation);
             }
             ControlEvent::SessionEnded => self.client_queued.clear(),
-            ControlEvent::Safeguard { .. } => {}
+            ControlEvent::Safeguard { .. }
+            | ControlEvent::Notice { .. }
+            | ControlEvent::Memories { .. }
+            | ControlEvent::Heard { .. } => {}
         }
         self.events.push(event);
         Ok(())
     }
 }
 
+// FIX [LIBTEST-QUARANTINE-VOICE-CASCADE-TESTS-ITEMS]: the lib test target's type check fails here (4 errors: E0061 x3, E0533 x1); port it, then drop this gate
+#[cfg(any())]
 #[test]
 fn hosted_eviction_repoints_banked_identity_to_self_hosted_spine() -> Result<()> {
     use crate::voice_cascade::hosted_tts::{

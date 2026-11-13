@@ -100,7 +100,7 @@ pub(crate) use tags::{
 #[cfg(test)]
 mod save_tests;
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-TAGGING-TESTS]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-TAGGING-TESTS]: the lib test target's type check fails here (2 errors: E0639 x1, E0609 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

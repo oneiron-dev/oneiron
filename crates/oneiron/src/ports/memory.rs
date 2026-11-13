@@ -1,6 +1,4 @@
 //! In-memory transactional conformance adapter. Commit is explicit; drop rolls back.
-// FIX [LIBTEST-QUARANTINE-PORTS-MEMORY-AUXILIARY]: the lib test target's type check fails here (1 errors: unstreamed x1); port it, then drop this gate
-#[cfg(any())]
 mod auxiliary;
 mod query;
 use super::*;
@@ -465,6 +463,7 @@ impl ClaimStore for Memory {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred,
                     learned_at,
+                    row_version: 0,
                     body: bytes,
                 },
             )?;
@@ -477,6 +476,7 @@ impl ClaimStore for Memory {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred,
                     learned_at,
+                    row_version: 0,
                     body: bytes,
                 },
             )?;

@@ -93,7 +93,7 @@ mod wake_plan;
 mod watermark;
 mod weave_lens;
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (160 errors: E0063 x63, unstreamed x54, E0061 x19, E0308 x13, E0027 x7, E0599 x3, E0277 x1); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (160 errors: E0063 x82, E0308 x28, E0061 x27, E0027 x12, E0277 x4, E0599 x3, E0609 x3, E0716 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

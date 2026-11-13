@@ -73,7 +73,7 @@ pub use self::types::{
 pub(crate) use self::vault::{put_raw_voice_roster_for_test, put_voice_roster_for_test};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-TESTS]: the lib test target's type check fails here (38 errors: unstreamed x38); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-TESTS]: the lib test target's type check fails here (38 errors: E0061 x26, E0308 x5, E0063 x4, E0533 x2, E0599 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

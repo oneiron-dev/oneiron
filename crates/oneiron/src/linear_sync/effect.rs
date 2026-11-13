@@ -596,7 +596,7 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-LINEAR-SYNC-EFFECT-TESTS]: the lib test target's type check fails here (1 errors: unstreamed x1); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-LINEAR-SYNC-EFFECT-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests {

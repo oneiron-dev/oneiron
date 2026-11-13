@@ -154,7 +154,7 @@ pub fn amendments_by_attempt(
     Ok(by_attempt)
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ATTRIBUTION-TESTS]: the lib test target's type check fails here (2 errors: unstreamed x2); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ATTRIBUTION-TESTS]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;

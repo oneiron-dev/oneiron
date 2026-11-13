@@ -769,7 +769,7 @@ pub(crate) fn ask_notice_at_in(
     Ok(Some((due, deadline)))
 }
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-RECORD-TESTS]: the lib test target's type check fails here (13 errors: unstreamed x13); port it, then drop this gate
+// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-RECORD-TESTS]: the lib test target's type check fails here (13 errors: E0061 x6, E0063 x4, E0277 x3); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]
 mod tests;
