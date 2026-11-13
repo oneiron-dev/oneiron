@@ -3,14 +3,18 @@
 use super::PendingEmbeddingPayload;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+};
 
 /// The payload the embedding worker sends for a stored record, or `None` when
 /// the record is not embedded at all.
 ///
-/// [`embeddable_payload`] for every record but a TURN, whose text is not in
-/// its own body: a TURN embeds its messages' text ([`turn_text_in_txn`]).
-/// Every door that queues or leases embedding work asks this.
+/// [`embeddable_payload`] for every record but a TURN and a PERSON, whose
+/// text is not in their own body: a TURN embeds its messages' text
+/// ([`turn_text_in_txn`]), and a PERSON its public `about` line
+/// ([`crate::dreamer_consolidation::public_about_line_in_txn`]). Every door
+/// that queues or leases embedding work asks this.
 pub(crate) fn embeddable_payload_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -21,6 +25,12 @@ pub(crate) fn embeddable_payload_in_txn(
     if entity_type == ENTITY_TYPE_TURN {
         return Ok(turn_text_in_txn(vault, txn, id)?.map(PendingEmbeddingPayload::TurnText));
     }
+    if entity_type == ENTITY_TYPE_PERSON {
+        return Ok(
+            crate::dreamer_consolidation::public_about_line_in_txn(vault, txn, id)?
+                .map(PendingEmbeddingPayload::SummaryText),
+        );
+    }
     // An ASSET embeds its repo copy (FIX 7608 slice 3).
     super::repo_projection::pending_payload_in_txn(vault, txn, id, entity_type, body)
 }
@@ -28,7 +38,8 @@ pub(crate) fn embeddable_payload_in_txn(
 /// [`embeddable_payload_in_txn`] read through `store`: base, or a room's view, whose turns and
 /// messages compose with base. A TURN's text is its shown messages', as `store` holds them.
 /// Beside the payload come the rows it is read from (FIX 7001): the record, and a TURN's
-/// messages whose text it joins.
+/// messages whose text it joins. A PERSON is no text document of a media space: its line
+/// goes to the text index only, through [`embeddable_payload_in_txn`].
 pub(super) fn embeddable_payload_in(
     vault: &crate::Vault,
     store: &impl crate::store::ManifestDbs,
@@ -159,7 +170,10 @@ pub(super) fn is_embeddable_in_txn(
 /// A CLAIM by the rule above, so a claim never gets a vector at idle that the
 /// worker would not give it. Never a MESSAGE or a TURN: a message is not
 /// embedded (ARCH-0004), and a turn's text is its messages', which the worker
-/// embeds once the publication marks the turn again. Any other record as its
+/// embeds once the publication marks the turn again. Never a PERSON: its
+/// vector is of its public `about` line, which the worker embeds once the
+/// publication marks the person again, so one producer writes each person's
+/// vector (ruling PERSON-VECTOR-CHOICES, D2). Any other record as its
 /// text fields joined by newlines, all of them: one field with something in
 /// it — a title beside an empty body — is enough.
 pub(crate) fn indexed_payload(
@@ -170,7 +184,10 @@ pub(crate) fn indexed_payload(
     if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
         return embeddable_payload(entity_type, body);
     }
-    if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
+    if matches!(
+        entity_type,
+        ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN | ENTITY_TYPE_PERSON
+    ) {
         return None;
     }
     // A NOTE embeds its body alone, as it did before its title and tags

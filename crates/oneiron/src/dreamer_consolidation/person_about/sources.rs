@@ -37,6 +37,29 @@ impl Vault {
     }
 }
 
+/// The public band: a line of it is written from public facts only.
+const PUBLIC_BAND: u8 = 0;
+
+/// `person`'s public `about` line as `txn` reads it: the band-0 line a public
+/// reader sees now ([`current_line_in_txn`]), clipped as the board prints it.
+/// `None` for a person with no public line, or one whose line is hidden.
+///
+/// What a PERSON embeds (ruling PERSON-VECTOR-CHOICES, D1): one point read of
+/// the person's `about` row, never a walk of its claims (FIX 8660), and only
+/// band 0. A vector carries no band, so one built from a higher band's line
+/// would rank candidates for a reader below that band (ARCH-0067).
+pub(crate) fn public_about_line_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    person: &EntityId,
+) -> Result<Option<String>> {
+    let Some(row) = PERSON_ABOUT.get(&vault.store, txn, person)? else {
+        return Ok(None);
+    };
+    Ok(current_line_in_txn(vault, txn, &row, PUBLIC_BAND)?
+        .map(|line| line.text.chars().take(ABOUT_MAX_CHARS).collect()))
+}
+
 /// The line of `row` a reader at `ceiling` sees, read in `txn`, a grant-clock
 /// snapshot (`turn_text::snapshot`), so a grant's expiry is judged at a real floor.
 pub(super) fn current_line_in_txn<'a>(

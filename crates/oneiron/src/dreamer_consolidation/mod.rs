@@ -113,7 +113,7 @@ pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
     about_facts_in, about_revision_in, enqueue_person_about_on_wake, erase_person_about_in_txn,
     mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn, person_of_about_input,
-    publish_person_about_in_txn,
+    public_about_line_in_txn, publish_person_about_in_txn,
 };
 pub use provenance::*;
 pub(crate) use provenance::{
