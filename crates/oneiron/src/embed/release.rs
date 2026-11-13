@@ -7,33 +7,18 @@
 //! edges did not read) is never read as "no world". Nothing else is
 //! decided here: the host's egress list and its destination are its own.
 
+use super::refusal::{DEVICE_LOCAL_ROW, REMOTE_EMBEDDER};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::machine_destination::PeerMachine;
 use crate::settings::ReadDestination;
 
-/// The tool an embed refusal names.
-const REMOTE_EMBEDDER: &str = "embedder-remote";
-/// The code of an embed refused for a row a device-local world keeps.
-const DEVICE_LOCAL_ROW: &str = "device_local_row";
-
-/// Whether `error` is the refusal [`Vault::release_embed_rows`] answers: a
-/// request that held a row a device-local world keeps, and was not sent.
-#[must_use]
-pub fn is_device_local_row_refusal(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::UpstreamToolFailure { tool, code }
-            if *tool == REMOTE_EMBEDDER && code == DEVICE_LOCAL_ROW
-    )
-}
-
 impl Vault {
     /// Releases `rows` to an embedder at `destination`: `Ok` only when no
     /// world withheld from that destination keeps one of them
     /// ([`Self::rows_may_leave_for`]), else a refusal
-    /// ([`is_device_local_row_refusal`]). A sender asks right before each
+    /// ([`super::is_device_local_row_refusal`]). A sender asks right before each
     /// request leaves and sends nothing on a refusal: a private world never
     /// falls back to a shared or hosted embedder (DEC-0005
     /// #private-world-vectors).

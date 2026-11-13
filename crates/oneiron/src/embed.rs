@@ -12,9 +12,10 @@ pub(crate) mod home_vectors;
 pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
+mod refusal;
+pub use refusal::is_device_local_row_refusal;
 #[cfg(feature = "sync")]
 mod release;
-pub use release::is_device_local_row_refusal;
 mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
