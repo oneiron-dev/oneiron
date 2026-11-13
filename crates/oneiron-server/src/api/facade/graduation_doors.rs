@@ -18,16 +18,53 @@ async fn as_owner<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&Vault, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
-    let owner = match owner_proof(auth, server, verb) {
-        Ok(owner) => owner,
+    as_proven(server, verb, owner_proof(auth, server, verb), act).await
+}
+
+/// Runs `act` under `proof` on the engine's blocking pool, or answers the
+/// proof's refusal.
+async fn as_proven<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    verb: &'static str,
+    proof: MemoryResult<AuthenticatedOwner>,
+    act: impl FnOnce(&Vault, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
+    let proof = match proof {
+        Ok(proof) => proof,
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = clock_ingress::run_blocking(move || act(server.vault(), &owner))
+    let answer = clock_ingress::run_blocking(move || act(server.vault(), &proof))
         .await
         .unwrap_or_else(|_| Err(internal(verb)));
     // The ramp, policy, answers and grants live in side tables, not entity rows.
     (answer, Vec::new())
+}
+
+/// Who demotes a graduated scope over the host door (census L7-33; RULING
+/// L7-33-HOLDER-ROUTE = A, as `gate_policy_doors::policy_putter` for FIX
+/// 8177): the owner under its proof, as before, or a person on their own
+/// verified slip who holds the ramp demotion policy power
+/// ([`Vault::holds_ramp_demote_power`]). That check is read-only here, so a
+/// powerless person's pre-hooks never fire, and the demotion writer makes it
+/// again in its own transaction. Neither an Admin nor a Delegate label admits
+/// anyone by itself; anyone else keeps the owner refusal it had.
+pub(super) fn ramp_demoter(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<AuthenticatedOwner> {
+    owner_proof(auth, server, verb).or_else(|refusal| {
+        super::shared_act_doors::person(server, auth, verb)
+            .ok()
+            .filter(|person| {
+                server
+                    .vault()
+                    .holds_ramp_demote_power(person)
+                    .unwrap_or(false)
+            })
+            .ok_or(refusal)
+    })
 }
 
 pub(crate) async fn vault_consent_graduation_policy(
@@ -161,11 +198,14 @@ pub(crate) async fn vault_consent_graduation_demote(
     auth: &CoreAuth,
     input: GraduationDemoteRequest,
 ) -> Listed<GraduationChanged> {
-    as_owner(
+    const VERB: &str = "vault.consent.graduation.demote";
+    // The owner's proof or a policy holder's own: the engine door admits
+    // either and checks the power again in its writer.
+    as_proven(
         server,
-        auth,
-        "vault.consent.graduation.demote",
-        move |vault, owner| api::demote(vault, owner, input),
+        VERB,
+        ramp_demoter(server, auth, VERB),
+        move |vault, proof| api::demote(vault, proof, input),
     )
     .await
 }
