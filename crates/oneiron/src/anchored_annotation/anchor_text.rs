@@ -371,10 +371,12 @@ fn span_after_edits(
 /// before and after it, each widened to whole words. Words are diffed as
 /// wholes, so a letter matched inside another word never keeps a span. A
 /// word counts as kept when it is unchanged, or when it is replaced one for
-/// one by a word that keeps more than half of its letters (a typo fix); a
-/// word deleted outright counts neither way. The span survives while its
-/// kept words are at least as many as its replaced ones. `None` when the
-/// span holds no word: its characters decide.
+/// one by a word that keeps more than half of its letters (a typo fix). A
+/// replaced run pairs its old and new words in order; an old word left
+/// without a partner is deleted and a new one inserted, and a deleted or
+/// inserted word counts neither way. The span survives while its kept words
+/// are at least as many as its replaced ones. `None` when the span holds no
+/// word: its characters decide.
 fn words_survive(
     before: &[char],
     after: &[char],
@@ -393,8 +395,8 @@ fn words_survive(
             DiffTag::Equal => kept += was.len(),
             DiffTag::Delete | DiffTag::Insert => {}
             DiffTag::Replace => {
-                for (at, word) in old_words[was].iter().enumerate() {
-                    if at < now.len() && keeps_most_letters(word, new_words[now.start + at]) {
+                for (word, new_word) in old_words[was].iter().zip(&new_words[now]) {
+                    if keeps_most_letters(word, new_word) {
                         kept += 1;
                     } else {
                         replaced += 1;

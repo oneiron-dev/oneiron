@@ -428,8 +428,9 @@ fn docx_deleted_and_rewritten_sentences_stay_visibly_unanchored() {
 }
 
 /// The other side of the line above (OF-368 = A, "on small changes you
-/// should keep the spot"): a typo fix, one word swapped, a partial delete
-/// and an insert inside the selection all keep the anchor.
+/// should keep the spot"): a typo fix, one word swapped, a partial delete,
+/// an insert inside the selection, and two words replaced by one (one
+/// replaced, one deleted) all keep the anchor.
 #[test]
 fn docx_small_edits_inside_a_selection_keep_its_spot() {
     let v1 = docx(&[
@@ -437,12 +438,14 @@ fn docx_small_edits_inside_a_selection_keep_its_spot() {
         &[("the red fox ran home", false)],
         &[("the quick brown fox jumps", false)],
         &[("the fox ran", false)],
+        &[("Keep red blue.", false)],
     ]);
     let v2 = docx(&[
         &[("We receive the goods.", false)],
         &[("the blue fox ran home", false)],
         &[("the fox jumps", false)],
         &[("the quick brown fox ran", false)],
+        &[("Keep gold.", false)],
     ]);
     let cases = [
         (
@@ -468,6 +471,12 @@ fn docx_small_edits_inside_a_selection_keep_its_spot() {
             "the fox",
             docx_at("p_4", 0, 19),
             "the quick brown fox",
+        ),
+        (
+            docx_at("p_5", 0, 14),
+            "Keep red blue.",
+            docx_at("p_5", 0, 10),
+            "Keep gold.",
         ),
     ];
     for (was, was_text, now, now_text) in &cases {
