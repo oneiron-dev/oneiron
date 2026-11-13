@@ -31,8 +31,10 @@
 //! whose stored vector is nearest goes first when its cosine reaches the
 //! evidence floor and leads the next by the `linker.vector.margin` row. The
 //! list keeps every candidate, so the mention stays a question the nightly
-//! re-check asks, and an effect on it still waits. The re-check orders the
-//! ask's candidates again when the turn was embedded after its save. A tie,
+//! re-check asks, and an effect on it still waits. Every fresh link takes
+//! the rung, an antecedent of another kind's too. The re-check orders the
+//! ask's candidates again when the turn was embedded after its save; a new
+//! order of the same candidates leaves a kept-separate ask kept. A tie,
 //! a candidate with no vector, or a winner under the floor keeps the key's
 //! order, as on main. These tests store exact vectors in a four-dimensional
 //! space, as the embed worker would; no step embeds a person yet.
@@ -57,20 +59,21 @@ use oneiron::identity_topology::{
     SurvivorshipPlan,
 };
 use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork, NerSpan,
+    CorefLink, EncoderAttempt, EncoderInput, EncoderOutput, ExtractionEncoder, ExtractionWork,
+    NerSpan,
 };
 use oneiron::memory::{
     ClaimInput, MEMORY_CODE_IDENTITY_UNSETTLED, MessagePersonRequest, WitnessAssertions,
     WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::outbound::MentionProvenance;
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
+use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::tagging::{
     HeldTagsOutcome, MentionLink, TaggedMention, TaggingMarkerConfig, TaggingMode,
     TaggingReconciler,
 };
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::identity_recheck::run_identity_recheck;
+use oneiron::test_doors::identity_recheck::{keep_identity_asks_separate, run_identity_recheck};
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
@@ -1074,13 +1077,11 @@ fn store_vector(vault: &Vault, id: EntityId, vector: [f32; VECTOR_DIMENSIONS]) {
     );
 }
 
-/// The owner says [`OWEN_TEXT`] as one turn with no held tags; the embed
-/// worker stores the turn's vector; then the tagging worker tags it. Returns
-/// the turn and its one mention.
-fn embed_then_tag(owens: &TwoOwens) -> (EntityId, TaggedMention) {
-    owens
-        .vault
-        .memory(owens.owner, EdgeActorClass::Human)
+/// `owner` says `text` as one turn with no held tags, and the embed worker
+/// stores the turn's vector [`TURN_VECTOR`]. Returns the turn.
+fn witness_then_embed(vault: &Vault, owner: EntityId, text: &str) -> EntityId {
+    vault
+        .memory(owner, EdgeActorClass::Human)
         .witness(&WitnessTurn {
             conversation_ref: ROOM.into(),
             turn_ref: Some(TURN.to_owned()),
@@ -1090,7 +1091,7 @@ fn embed_then_tag(owens: &TwoOwens) -> (EntityId, TaggedMention) {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "text".into(),
-                content: OWEN_TEXT.into(),
+                content: text.into(),
                 parts: None,
                 metadata: None,
                 is_visible: true,
@@ -1101,7 +1102,15 @@ fn embed_then_tag(owens: &TwoOwens) -> (EntityId, TaggedMention) {
         })
         .expect("the owner's turn");
     let turn = EntityId::from_hex(TURN).expect("turn id");
-    store_vector(&owens.vault, turn, TURN_VECTOR);
+    store_vector(vault, turn, TURN_VECTOR);
+    turn
+}
+
+/// The owner says [`OWEN_TEXT`] as one turn with no held tags; the embed
+/// worker stores the turn's vector; then the tagging worker tags it. Returns
+/// the turn and its one mention.
+fn embed_then_tag(owens: &TwoOwens) -> (EntityId, TaggedMention) {
+    let turn = witness_then_embed(&owens.vault, owens.owner, OWEN_TEXT);
     TaggingReconciler::new(
         Arc::clone(&owens.vault),
         Arc::new(Owens("fixture/owens@v1".parse().expect("model id"))),
@@ -1226,4 +1235,174 @@ fn a_candidate_with_no_vector_keeps_the_key_order() {
 #[test]
 fn a_winner_under_the_evidence_floor_keeps_the_key_order() {
     assert_key_order(&two_owens(Some(FAR_VECTOR), Some(FAINT_VECTOR)));
+}
+
+/// The re-check asked about both Owens before the turn was embedded, in the
+/// key's order, and a nightly decision kept the names separate. Once the
+/// turn's vector is stored, the re-check orders the same two Owens the
+/// other way. The set is unchanged, so the ask stays kept separate, out of
+/// the due list, in its stored order. #7408's first head compared the
+/// ordered lists and opened the ask afresh, its kept-separate stamp gone.
+#[test]
+fn a_kept_separate_ask_stays_kept_when_the_vector_reorders_its_candidates() {
+    let owens = two_owens(Some(FAR_VECTOR), Some(NEAR_VECTOR));
+    let vault = &owens.vault;
+    let (turn, link) = save_as(vault, owens.owner, OWEN_TEXT, "Owen");
+    assert_eq!(
+        link,
+        owens_in([owens.climber, owens.budget]),
+        "FIXTURE: a turn with no vector yet keeps the key's order"
+    );
+    let asks = run_identity_recheck(vault, now_seconds()).expect("recheck");
+    assert_eq!(
+        asks.len(),
+        1,
+        "FIXTURE: one ask for the one mention: {asks:?}"
+    );
+    let kept_at = now_seconds();
+    assert_eq!(
+        keep_identity_asks_separate(vault, kept_at).expect("keep the ask separate"),
+        1
+    );
+    store_vector(vault, turn, TURN_VECTOR);
+
+    let asks = run_identity_recheck(vault, now_seconds()).expect("recheck");
+
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    assert_eq!(
+        asks[0].kept_separate_at,
+        Some(kept_at),
+        "a new order of the same candidates keeps the ask kept separate"
+    );
+    assert_eq!(asks[0].candidates, vec![owens.climber, owens.budget]);
+}
+
+/// The turn of the role test after an antecedent of another kind.
+const ACME_TEXT: &str = "Acme hired my manager.";
+
+/// A tagger that tags, in every MESSAGE it is given, "Acme" as an `ORG`
+/// and "my manager" as a `PERSON` whose in-turn antecedent is that `ORG`.
+struct ManagerAfterOrg(ModelId);
+
+impl ExtractionEncoder for ManagerAfterOrg {
+    fn model_id(&self) -> &ModelId {
+        &self.0
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::OnDevice
+    }
+
+    fn infer(&self, input: &EncoderInput, _work: ExtractionWork) -> EncoderAttempt {
+        let mut spans = Vec::new();
+        let mut links = Vec::new();
+        for (message, each) in input.messages.iter().enumerate() {
+            let (Some(org), Some(manager)) = (each.text.find("Acme"), each.text.find("my manager"))
+            else {
+                continue;
+            };
+            links.push(CorefLink {
+                span: spans.len() + 1,
+                antecedent: spans.len(),
+                confidence: Some(0.9),
+            });
+            spans.push(NerSpan {
+                message,
+                start: org,
+                end: org + "Acme".len(),
+                label: "ORG".to_owned(),
+                confidence: 0.9,
+            });
+            spans.push(NerSpan {
+                message,
+                start: manager,
+                end: manager + "my manager".len(),
+                label: "PERSON".to_owned(),
+                confidence: 0.9,
+            });
+        }
+        EncoderAttempt {
+            execution: None,
+            panicked: false,
+            result: Ok(EncoderOutput {
+                spans,
+                links,
+                vad: None,
+                context_links: Vec::new(),
+                speaker_links: Vec::new(),
+                mood_parts: Vec::new(),
+                stack_sha16: None,
+            }),
+        }
+    }
+}
+
+/// The owner says "Acme hired my manager.", and the tagger links "my
+/// manager" back to the `ORG` span "Acme". The key misses the role words
+/// and the antecedent is of another kind, so the save links the mention
+/// afresh: the owner's two manager edges name Owen Smith and Mori Yuki.
+/// The turn's vector lies near Mori Yuki's, so the vector rung puts her
+/// first, as on every other fresh link, and both stay candidates. #7408's
+/// first head skipped the rung on this path and kept the key's order.
+#[test]
+fn a_fresh_link_after_an_antecedent_of_another_kind_is_ranked() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut config = tagging_config();
+    config.dimensions = VECTOR_DIMENSIONS;
+    config.embedding_model = Some("fixture/vectors@v1".to_owned());
+    config.tagging = config.tagging.map(|tagging| {
+        tagging.with_labels(BTreeMap::from([
+            ("ORG".to_owned(), ENTITY_TYPE_ORG),
+            ("PERSON".to_owned(), ENTITY_TYPE_PERSON),
+        ]))
+    });
+    let vault = Arc::new(open_member_vault(dir.path(), config, &[]).expect("fixture vault"));
+    let (owner, _proof) = embedded_owner(&vault).expect("the owner");
+    let owen = person(&vault, "Owen Smith");
+    let yuki = person(&vault, "Mori Yuki");
+    assert!(owen < yuki, "FIXTURE: the role rung lists Owen first");
+    declare_predicate_normal(&vault, "relationship.manager");
+    for manager in [owen, yuki] {
+        stated_role_edge(&vault, owner, "manager", manager);
+    }
+    store_vector(&vault, owen, FAR_VECTOR);
+    store_vector(&vault, yuki, NEAR_VECTOR);
+    let turn = witness_then_embed(&vault, owner, ACME_TEXT);
+
+    TaggingReconciler::new(
+        Arc::clone(&vault),
+        Arc::new(ManagerAfterOrg(
+            "fixture/acme@v1".parse().expect("model id"),
+        )),
+    )
+    .expect("reconciler")
+    .drain_once()
+    .expect("one tagging pass");
+
+    let tags = vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("FIXTURE: the turn's tags are saved");
+    let [org, manager] = tags.mentions.as_slice() else {
+        panic!("FIXTURE: two mentions, found {:?}", tags.mentions);
+    };
+    assert_eq!(
+        org.link.kind(),
+        Some(ENTITY_TYPE_ORG),
+        "FIXTURE: the antecedent links as an ORG: {:?}",
+        org.link
+    );
+    assert_eq!(
+        manager.antecedent,
+        Some(0),
+        "FIXTURE: the manager refers back to the ORG"
+    );
+    assert_eq!(
+        manager.link,
+        MentionLink::Candidates {
+            kind: ENTITY_TYPE_PERSON,
+            entities: vec![yuki, owen],
+        },
+        "the nearer manager goes first, and both stay candidates"
+    );
 }
