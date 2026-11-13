@@ -10,6 +10,11 @@
 //! child demotes the child's scope on its own facade, and another agent may
 //! not. Re-graduation stays the owner's tap.
 //!
+//! Every demotion receipt names who demoted in its `demoted_by` field (Engine
+//! RULING NEXT-ROW-8 = A, Fri 13 Nov 19:21 JST; FIX 24090): the owner, the
+//! policy holder, the spawning parent, the scope's own actor, or the person
+//! whose ruling caused it. The receipt's `actor` stays the scope's.
+//!
 //! The shipped grant rows give the `policy.change` verb to no role, so the
 //! owner first lets the Admin role carry it, and a run spawns its child
 //! through the dispatcher, both through the hidden doors in
@@ -25,6 +30,7 @@ use oneiron::consent_graduation::{
     DemotionReason, RAMP_DEMOTE_GRANT_TARGET, RampScope, RampState, is_ramp_demotion_receipt,
 };
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
+use oneiron::identity_topology::ProposalOutcome;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
@@ -154,28 +160,46 @@ fn grant_is_live(vault: &Vault, scope: &RampScope) -> bool {
         .is_some_and(|row| row.is_active())
 }
 
-/// The demotion receipts on the public receipt query, as (actor, grant ref).
-fn demotion_receipts(vault: &Vault) -> Vec<(Option<String>, Option<String>)> {
+/// One demotion receipt on the public receipt query: the scope's actor, the
+/// revoked grant, and who demoted.
+#[derive(Debug, PartialEq, Eq)]
+struct Demotion {
+    actor: Option<String>,
+    grant_ref: Option<String>,
+    demoted_by: Option<String>,
+}
+
+fn demotion_receipts(vault: &Vault) -> Vec<Demotion> {
     vault
         .receipts(ReceiptQuery::default().with_kind(ReceiptKind::Gate))
         .expect("receipts")
         .into_iter()
         .filter(is_ramp_demotion_receipt)
-        .map(|record| {
-            (
-                record.actor.clone(),
-                // The receipt field's wire key (oneiron_store::receipt_row::FIELD_GRANT_REF).
-                record.fields.get("grant_ref").cloned(),
-            )
+        .map(|record| Demotion {
+            actor: record.actor.clone(),
+            // The receipt fields' wire keys (oneiron_store::receipt_row::FIELD_GRANT_REF,
+            // oneiron::store::receipt_row::FIELD_DEMOTED_BY).
+            grant_ref: record.fields.get("grant_ref").cloned(),
+            demoted_by: record.fields.get("demoted_by").cloned(),
         })
         .collect()
 }
 
+/// The receipt one demotion of `scope` by `demoter` writes.
+fn demotion_by(scope: &RampScope, demoter: EntityId) -> Demotion {
+    Demotion {
+        actor: Some(scope.actor.clone()),
+        grant_ref: Some(scope.grant_ref().expect("grant ref")),
+        demoted_by: Some(demoter.to_hex()),
+    }
+}
+
 /// An Admin whose Owner-minted grant names the demotion target demotes an
 /// agent's graduated scope under its own person proof: the standing grant is
-/// revoked, the demotion receipt names the scope and the grant, and the scope
-/// rides the propose lane again. Red on main: the door took the owner's
-/// proof only, so the Admin was refused as a non-owner.
+/// revoked, the demotion receipt names the scope, the grant and the Admin as
+/// its demoter, and the scope rides the propose lane again. Red on main: the
+/// door took the owner's proof only, so the Admin was refused as a non-owner.
+/// Red on #7504's head: the receipt named no demoter.
 #[test]
 fn a_policy_holder_demotes_an_agents_graduated_scope() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -203,15 +227,15 @@ fn a_policy_holder_demotes_an_agents_graduated_scope() {
     );
     assert_eq!(
         demotion_receipts(&vault),
-        vec![(Some(agent), Some(scope.grant_ref().expect("grant ref")))],
-        "one demotion receipt, naming the scope's actor and the revoked grant"
+        vec![demotion_by(&scope, roster.admin)],
+        "one demotion receipt, naming the scope's actor, the revoked grant and the Admin"
     );
 }
 
 /// Neither a Member nor an Admin that carries the policy verb but holds no
 /// grant naming the demotion target holds the power: each is refused, the
 /// grant stays live, and no demotion receipt is written. The owner's own
-/// demotion still lands.
+/// demotion still lands, and its receipt names the owner as the demoter.
 #[test]
 fn a_person_without_the_policy_power_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -245,12 +269,17 @@ fn a_person_without_the_policy_power_is_refused() {
         )
         .expect("the owner demotes, as before");
     assert!(!grant_is_live(&vault, &scope));
-    assert_eq!(demotion_receipts(&vault).len(), 1);
+    assert_eq!(
+        demotion_receipts(&vault),
+        vec![demotion_by(&scope, roster.owner)],
+        "one demotion receipt, naming the owner as the demoter"
+    );
 }
 
 /// The agent whose run spawned a child demotes the child's graduated scope
 /// on its own facade, with no owner proof: the grant is revoked and the
-/// demotion receipt is written. The child is the attenuated fork the
+/// demotion receipt names the parent as the demoter. The child is the
+/// attenuated fork the
 /// dispatcher minted for the parent's run, pinned to it by the engine. Before
 /// that, a sibling agent no pin ties to the child is refused and changes
 /// nothing. Red on main: an actor demoted only its own scope there, so the
@@ -291,10 +320,53 @@ fn a_parent_agent_demotes_its_spawned_childs_graduated_scope() {
     );
     assert_eq!(
         demotion_receipts(&vault),
-        vec![(
-            Some(child.to_hex()),
-            Some(scope.grant_ref().expect("grant ref"))
-        )],
-        "one demotion receipt, naming the child's scope and the revoked grant"
+        vec![demotion_by(&scope, parent)],
+        "one demotion receipt, naming the child's scope, the revoked grant and the parent"
+    );
+}
+
+/// An agent that steps its own graduated scope back is named as its own
+/// demoter.
+#[test]
+fn an_agents_own_demotion_names_the_agent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = doors::define_agent(&vault, "ramp self").expect("an agent");
+    let scope = graduated_scope(&vault, owner, &agent.to_hex());
+
+    vault
+        .memory(agent, EdgeActorClass::Agent)
+        .demote_own_ramp_scope(&scope)
+        .expect("an agent demotes its own scope");
+    assert!(!grant_is_live(&vault, &scope));
+    assert_eq!(
+        demotion_receipts(&vault),
+        vec![demotion_by(&scope, agent)],
+        "one demotion receipt, naming the agent as its own demoter"
+    );
+}
+
+/// The owner's rejecting ruling in a graduated scope demotes it, and the
+/// demotion receipt names the owner who ruled.
+#[test]
+fn an_owners_rejecting_ruling_names_the_owner_as_the_demoter() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = EntityId::now().to_hex();
+    let scope = graduated_scope(&vault, owner, &agent);
+
+    vault
+        .record_proposal_outcome_for_ramp(&proof(&vault, owner), &scope, ProposalOutcome::Rejected)
+        .expect("the owner rules");
+    assert!(
+        !grant_is_live(&vault, &scope),
+        "a rejection in a graduated scope demotes it"
+    );
+    assert_eq!(
+        demotion_receipts(&vault),
+        vec![demotion_by(&scope, owner)],
+        "one demotion receipt, naming the owner whose ruling demoted"
     );
 }
