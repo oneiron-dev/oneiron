@@ -16,15 +16,39 @@ pub fn publish_committed_task(
     task: EntityId,
     admit: impl Fn(&StreamConnectionId) -> bool,
 ) -> Result<()> {
+    let state = stage_committed_task(vault, task)?;
+    route_committed_task(registry, task, state, admit);
+    Ok(())
+}
+
+/// The TASK loop pass's first half: read the committed TASK and stage the
+/// wakes it owes. Serve then awaits each connection's admission outside the
+/// registry lock before [`route_committed_task`], so a staged wake pass can
+/// run between the two.
+pub fn stage_committed_task(
+    vault: &Vault,
+    task: EntityId,
+) -> Result<Option<CommittedTaskBoardState>> {
     let state = CommittedTaskBoardState::read(vault, task)?;
     vault.stage_task_wakes(task, state.as_ref())?;
+    Ok(state)
+}
+
+/// The TASK loop pass's second half: route what changed in `state` to the
+/// connections `admit` accepts, or forget the wakes of a TASK the board no
+/// longer shows.
+pub fn route_committed_task(
+    registry: &mut BoardStreamRegistry,
+    task: EntityId,
+    state: Option<CommittedTaskBoardState>,
+    admit: impl Fn(&StreamConnectionId) -> bool,
+) {
     match state {
         Some(state) => {
             registry.publish_task_state(state, admit);
         }
         None => registry.forget_task_wakes(task),
     }
-    Ok(())
 }
 
 /// The staged TASK wake pass an attach or a first bound reader starts:

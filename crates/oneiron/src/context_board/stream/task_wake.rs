@@ -16,8 +16,12 @@
 //! rows again with [`PendingTaskWake::read_all`], re-reads each TASK, admits
 //! each connection under its own read of the TASK, and hands the live ones to
 //! [`BoardStreamRegistry::publish_task_wakes`]. That offers each wake once per
-//! connection, under the envelope id of the TASK's current committed state; a
-//! live route counts as an offer, so no connection hears one occurrence twice.
+//! connection, under the envelope id of the TASK's current committed state.
+//! An offer records the failed attempt heads it covered, and the live route
+//! and this pass both skip a connection already offered the occurrence they
+//! carry, so no connection hears one occurrence twice, whichever path offered
+//! it first. A later failure of the same TASK adds a head, so it is a new
+//! occurrence to every connection, also to one that heard the earlier one.
 //! As with room wakes, a wake that stays live is offered again after a
 //! restart or a reattach, and the host inbox drops an occurrence it has
 //! already acknowledged.
@@ -306,10 +310,15 @@ impl Vault {
     }
 }
 
-/// The connections each TASK wake was offered to, by TASK, kind and recipient.
+/// One TASK wake's offers are kept under its TASK, kind and recipient, hex.
+type OfferKey = (String, TaskWakeKind, String);
+
+/// The connections each TASK wake was offered to, by TASK, kind and recipient,
+/// each with the failed attempt heads its offers covered
+/// ([`CommittedTaskBoardState::wake_heads`]).
 #[derive(Debug, Default)]
 pub(super) struct PublishedTaskWakes {
-    offered: BTreeMap<(String, TaskWakeKind, String), BTreeSet<StreamConnectionId>>,
+    offered: BTreeMap<OfferKey, BTreeMap<StreamConnectionId, BTreeSet<String>>>,
 }
 
 impl PublishedTaskWakes {
@@ -321,6 +330,35 @@ impl PublishedTaskWakes {
             offered.remove(connection);
             !offered.is_empty()
         });
+    }
+
+    /// Whether `connection` was already offered the occurrence `heads` names:
+    /// an offer of this wake covered every one of those failed attempt heads.
+    /// A failed TASK wakes its owner again for each new failed head, so an
+    /// offer of an earlier failure does not cover a later one. A consult's
+    /// wake names no head: any offer of it while it is owed covers it.
+    fn heard(&self, key: &OfferKey, connection: &StreamConnectionId, heads: &[String]) -> bool {
+        self.offered
+            .get(key)
+            .and_then(|offered| offered.get(connection))
+            .is_some_and(|covered| heads.iter().all(|head| covered.contains(head)))
+    }
+
+    /// Records that each of `connections` was offered the occurrence `heads`
+    /// names.
+    fn record(
+        &mut self,
+        key: OfferKey,
+        connections: impl IntoIterator<Item = StreamConnectionId>,
+        heads: &[String],
+    ) {
+        let offered = self.offered.entry(key).or_default();
+        for connection in connections {
+            offered
+                .entry(connection)
+                .or_default()
+                .extend(heads.iter().cloned());
+        }
     }
 
     /// Keeps only the offers of the wakes `state` still owes.
@@ -339,7 +377,8 @@ impl PublishedTaskWakes {
 
 impl BoardStreamRegistry {
     /// Routes the `kind` wake `state` owes `recipient` to that actor's
-    /// subscribed connections `admit` accepts, and records each as offered.
+    /// subscribed connections `admit` accepts and not offered this occurrence
+    /// yet, by a live route or a staged pass, and records each as offered.
     pub(super) fn route_task_wake(
         &mut self,
         state: &CommittedTaskBoardState,
@@ -348,11 +387,16 @@ impl BoardStreamRegistry {
         admit: impl Fn(&StreamConnectionId) -> bool,
     ) -> RouteObservation {
         let scope = kind.scope();
+        let key = (state.task_ref().to_owned(), kind, recipient.to_owned());
+        let heads = state.wake_heads(kind);
         let fresh: BTreeSet<StreamConnectionId> = self
             .connections
             .iter()
             .filter(|(connection, st)| {
-                st.actor_ref == recipient && st.subscribed.contains(&scope) && admit(connection)
+                st.actor_ref == recipient
+                    && st.subscribed.contains(&scope)
+                    && !self.published_task_wakes.heard(&key, connection, heads)
+                    && admit(connection)
             })
             .map(|(connection, _)| connection.clone())
             .collect();
@@ -370,19 +414,17 @@ impl BoardStreamRegistry {
             TaskWakeKind::Arrived => BoardEvent::ConsultArrived { event, line },
         };
         let routed = self.route_event_where(event, |connection, _| fresh.contains(connection));
-        self.published_task_wakes
-            .offered
-            .entry((state.task_ref().to_owned(), kind, recipient.to_owned()))
-            .or_default()
-            .extend(fresh);
+        self.published_task_wakes.record(key, fresh, heads);
         routed
     }
 
     /// Offers each live staged wake to every subscribed connection of its
-    /// recipient that `admit` accepts and that was not offered that wake yet,
-    /// so a connection that attaches after the wake was routed, or after a
-    /// restart, still hears it. `admit` is the host's read of the wake's TASK
-    /// under the connection's own reader, as for a live route.
+    /// recipient that `admit` accepts and that was not offered that
+    /// occurrence yet, so a connection that attaches after the wake was
+    /// routed, or after a restart, still hears it, and one that heard an
+    /// earlier failure of the TASK hears a later one. `admit` is the host's
+    /// read of the wake's TASK under the connection's own reader, as for a
+    /// live route.
     pub fn publish_task_wakes(
         &mut self,
         pending: Vec<PendingTaskWake>,
@@ -391,18 +433,8 @@ impl BoardStreamRegistry {
         let mut observed = RouteObservation::default();
         for wake in pending {
             let recipient = wake.recipient.to_hex();
-            let offered = self
-                .published_task_wakes
-                .offered
-                .get(&(
-                    wake.state.task_ref().to_owned(),
-                    wake.kind,
-                    recipient.clone(),
-                ))
-                .cloned()
-                .unwrap_or_default();
             let routed = self.route_task_wake(&wake.state, wake.kind, &recipient, |connection| {
-                !offered.contains(connection) && admit(connection, &wake)
+                admit(connection, &wake)
             });
             observed.wake_enqueued += routed.wake_enqueued;
         }
@@ -410,23 +442,24 @@ impl BoardStreamRegistry {
     }
 
     /// The connections that would be offered `wake` if the host admits them:
-    /// its recipient's subscribed connections not offered it yet. The host
-    /// reads the TASK only under these connections' readers.
+    /// its recipient's subscribed connections not offered that occurrence
+    /// yet. The host reads the TASK only under these connections' readers.
     #[must_use]
     pub fn task_wake_candidates(&self, wake: &PendingTaskWake) -> Vec<StreamConnectionId> {
         let recipient = wake.recipient.to_hex();
         let scope = wake.kind.scope();
-        let offered = self.published_task_wakes.offered.get(&(
+        let key = (
             wake.state.task_ref().to_owned(),
             wake.kind,
             recipient.clone(),
-        ));
+        );
+        let heads = wake.state.wake_heads(wake.kind);
         self.connections
             .iter()
             .filter(|(connection, st)| {
                 st.actor_ref == recipient
                     && st.subscribed.contains(&scope)
-                    && !offered.is_some_and(|offered| offered.contains(*connection))
+                    && !self.published_task_wakes.heard(&key, connection, heads)
             })
             .map(|(connection, _)| connection.clone())
             .collect()

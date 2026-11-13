@@ -110,6 +110,18 @@ impl CommittedTaskBoardState {
         &self.owed
     }
 
+    /// The failed attempt heads an offer of the `kind` wake covers. The live
+    /// route counts a failed TASK's occurrences by them: a retry that fails
+    /// again wakes its owner again. A consult wakes its addressee once per
+    /// addressing, which the offer's recipient already names, so its wake
+    /// covers no head.
+    pub(super) fn wake_heads(&self, kind: TaskWakeKind) -> &[String] {
+        match kind {
+            TaskWakeKind::Failed => &self.failed_attempts,
+            TaskWakeKind::Arrived => &[],
+        }
+    }
+
     /// Whether this TASK owes `recipient` the `kind` wake now.
     pub(super) fn owes(&self, kind: TaskWakeKind, recipient: EntityId) -> bool {
         self.owed
