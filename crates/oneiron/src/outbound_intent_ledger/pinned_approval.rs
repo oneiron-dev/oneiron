@@ -5,7 +5,7 @@
 
 use super::types::{AdmittedApproval, IntentId};
 use crate::Vault;
-use crate::gate::ExternalEffectGateInput;
+use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 
 /// FIX 6424 part 2a (CALLS `FIX 6424 kept press write failure`): a spent
 /// press that does not write never fails the admission that spent it. The
@@ -48,15 +48,18 @@ where
 pub(crate) use crate::consent::approval_proof::{PinnedApproval, PinnedApprovalFamily};
 
 /// The original spent press on this exact intent, only while the current
-/// effect still pins its family and digest. An absent, erased or unreadable
-/// record leaves the retry on its existing path; no marker mints a proof.
+/// effect still pins its family and digest, by the family's own spend match
+/// ([`ApprovalTarget::kept_press_retry_proof`], FIX 22398). An absent,
+/// erased or unreadable record leaves the retry on its existing path; no
+/// marker mints a proof.
 pub(crate) fn pinned_retry_approval(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     intent_id: IntentId,
     effect: &ExternalEffectGateInput,
 ) -> Option<AdmittedApproval> {
-    let family = effect
+    // Only an effect whose family keeps a press reads its ledger row.
+    effect
         .provenance
         .approval_target
         .as_ref()?
@@ -67,10 +70,5 @@ pub(crate) fn pinned_retry_approval(
     if super::payload::payload_erased(record.payload()).ok()? {
         return None;
     }
-    let approval = record.pinned_approval?;
-    (approval.family == family
-        && approval.proof.intent_id() == intent_id
-        && crate::gate::external_effect_approval_digest(effect)
-            == Some(approval.proof.effect_digest()))
-    .then_some(approval.proof)
+    ApprovalTarget::kept_press_retry_proof(effect, intent_id, record.pinned_approval?)
 }

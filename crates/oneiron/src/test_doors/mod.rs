@@ -5,6 +5,7 @@
 //! build reaches them. Hidden; never API.
 
 pub mod agent_definition_scans;
+pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
