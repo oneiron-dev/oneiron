@@ -7,7 +7,7 @@ use super::claims::{
 };
 use super::opt_out_slots::{
     consume_clear_gates_in_txn, opt_out_slot_heads_in_txn, pending_clear_request_at,
-    rematerialize_subject_contacts_in_txn,
+    recorded_stop_supersedes_clear, rematerialize_subject_contacts_in_txn,
 };
 use super::parties::{resolve_or_create_party_in_txn, resolve_party, resolve_party_ref_in_txn};
 use super::projection_writes::{
@@ -15,7 +15,7 @@ use super::projection_writes::{
     put_engine_owned_comm_claim_in_txn, require_at_most_one,
 };
 use super::records::{
-    CommEventKind, CommRecord, comm_records_in_txn, put_comm_record_in_txn, validate_channel_class,
+    CommRecord, comm_records_in_txn, put_comm_record_in_txn, validate_channel_class,
 };
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -210,26 +210,22 @@ pub fn approve_pending_opt_out_clear(
         // no receipt) if the opt-out was (re-)asserted at or after the request:
         //   (a) the STOP that established a live head postdates the request
         //       (gate.created_at < head_valid_from), or
-        //   (b) a later projected InboundStop on any of the party's subjects
-        //       re-asserted this channel past the heads, at or after the
-        //       request. The event keeps its source spelling, so it is
-        //       compared normalized, as the projector read it (F06 R3-F3).
-        // This is the approve-time half of the restrictive-wins rule the
-        // projector enforces at :1013.
+        //   (b) a later InboundStop on any of the party's subjects, projected
+        //       or only recorded, re-asserted this channel past the heads, at
+        //       or after the request (FIX 22384).
+        // This is the approve-time half of the restrictive-wins rule
+        // (`stop_supersedes_clear_request`); the projector's gate consume is
+        // the other.
         if let Some(newest_head) = heads.iter().map(|head| head.valid_from).max() {
             let superseded = heads.iter().any(|head| oldest_request < head.valid_from)
                 || records.iter().any(|(_, record)| {
-                    matches!(record, CommRecord::Event {
-                        kind: CommEventKind::InboundStop,
-                        party_ref: event_party,
-                        channel_class: Some(event_channel),
-                        occurred_at,
-                        projected: true,
-                        ..
-                    } if subjects.contains(event_party)
-                        && normalize_channel_class(event_channel) == channel_class
-                        && *occurred_at >= oldest_request
-                        && *occurred_at > newest_head)
+                    recorded_stop_supersedes_clear(
+                        record,
+                        &subjects,
+                        channel_class,
+                        oldest_request,
+                        newest_head,
+                    )
                 });
             if superseded {
                 consume_clear_gates_in_txn(vault, wtxn, &gates)?;

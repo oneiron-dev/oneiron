@@ -1,17 +1,18 @@
 {
   "name": "vault.runs.checkpoint",
-  "description": "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run.",
+  "description": "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with: the owner reads any run, another caller a run it is the actor of.",
   "input": "crate::engine_executor::checkpoint_read::CheckpointReadRequest",
   "output": "Option<crate::engine_executor::checkpoint_read::CheckpointView>",
-  "call": "crate::engine_executor::checkpoint_read::checkpoint_as_owner(memory, &memory.embedded_owner(\"vault.runs.checkpoint\")?, &input)?",
+  "call": "crate::snapshot_read::checkpoint_embedded(memory, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "host_door_caller": true,
   "scope": "Read",
+  "act_class": "read",
   "admission": {
-    "unrestricted_record_scope": true
+    "lane_record_scope": true
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "run_reader"
 }

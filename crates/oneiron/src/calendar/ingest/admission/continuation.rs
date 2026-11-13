@@ -204,6 +204,7 @@ pub fn run_ics_property_continuation(
         source: None,
         verdict_fold: VerdictFold::default(),
         continuations: Some(Vec::new()),
+        owed_booking_moves: 0,
     };
     admission.preflight_event(event)?;
     admission.admit_properties(event_ref, event)?;

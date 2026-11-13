@@ -19,9 +19,11 @@ use std::path::Path;
 
 mod adopt;
 mod config_validation;
+mod engine_seed_identities;
 mod first_non_bootstrap_row;
 mod lease_door;
 use self::config_validation::validate_open_config;
+pub(crate) use self::engine_seed_identities::EngineSeedIdentities;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
 /// profile reads at every profile level.
@@ -651,6 +653,7 @@ impl Vault {
             host_legal_captures: Default::default(),
             live_rows: Default::default(),
             attempt_activity: Default::default(),
+            inquiry_answers: Default::default(),
             task_work: WorkLine::new(None, TASK_WORK_BOUND, TASK_WORK_WAIT),
             linear_rate_line: WorkLine::exclusive(TASK_WORK_WAIT),
             world_keys: Default::default(),
@@ -673,6 +676,7 @@ impl Vault {
             lfs_read_room: Default::default(),
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
+            sandbox_backends: Default::default(),
             result_body_pins,
             verb_hook_state: Default::default(),
             skill_invocations: Default::default(),
@@ -709,6 +713,9 @@ impl Vault {
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::store::skill_content_index::backfill_content_hash_index_if_needed(&vault)?;
+        // The agents owner-agent Grant mints have ever named, for a vault
+        // older than their index (PAIR-GRANT-DESIGN Q2 = A).
+        crate::federation::backfill_agent_grant_member_index(&vault, false)?;
         vault.backfill_widen_contact_verdict_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
         vault.backfill_row_deletion_fences_on_open()?;
@@ -770,6 +777,10 @@ impl Vault {
                 error.to_string(),
             ))
         })?;
+        // THREAD-TASK-EVERY-ROOM P2: every TURN of a vault older than its
+        // room rows gets its row once, room by room, before any reader or
+        // window holds this handle; an archived vault is left as it is.
+        crate::workspace_roster::backfill_room_turns_on_open(&vault)?;
         // Carrier data must still match the local installation head on reopen.
         let _ = vault.pack_byte_map_snapshot()?;
         // The image a restore in this vault's place set aside reads, and

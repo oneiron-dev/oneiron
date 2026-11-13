@@ -60,16 +60,19 @@ pub(crate) use self::edges::{
     filtered_edge_peers_in,
 };
 pub use self::entities::HydratedShortId;
-/// The composed session census bounds itself exactly like [`Vault::entities_by_type`],
-/// and that census has only in-crate test callers today.
-#[cfg(test)]
+/// The composed session census, a snapshot page (`snapshot_read::snapshot`)
+/// and a reader's skill list (`snapshot_read::skill_reader`) bound themselves
+/// exactly like
+/// [`Vault::entities_by_type`].
 pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
 pub(crate) use self::identity::VaultId;
 pub use self::identity::{OpenOptions, VaultStorageId};
-pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
+pub(crate) use self::open::{
+    EngineSeedIdentities, embedded_owner_actor_id, encode_embedded_owner_actor_body,
+};
 pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
@@ -99,6 +102,10 @@ pub struct Vault {
     /// What the runtime witnesses of each leased attempt it runs now (OF-568
     /// L5). In memory only: never persisted, never restored.
     pub(crate) attempt_activity: crate::code_run::activity::AttemptActivityRuntime,
+    /// The answers of task-kept inquiries this vault asked (INQUIRE-1 PR 4),
+    /// each until its task ends or its `valid_until`. In memory only: never
+    /// persisted, never restored.
+    pub(crate) inquiry_answers: crate::inquiry::InquiryAnswerHolder,
     /// Task work's one fair line on this vault, whichever door the work came
     /// in by ([`Vault::admit_task_work`]).
     pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,
@@ -251,11 +258,16 @@ pub struct Vault {
     /// The floor its guests' network work charges: the one its serving host
     /// attached ([`Vault::attach_host_net_floor`]), else the process's
     /// descriptor line (FIX 6299).
-    pub(crate) host_net_floor: std::sync::Arc<crate::code_sandbox::egress::VaultHostFloor>,
+    pub(crate) host_net_floor: std::sync::Arc<crate::host_net_floor::VaultHostFloor>,
     /// The measured disk floor a host lends its guests' proposal spools
     /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
     pub(crate) proposal_spool:
         std::sync::OnceLock<std::sync::Arc<dyn crate::store::proposal_spool::ProposalSpoolFloor>>,
+    /// The isolating backends the binary that built this vault installed
+    /// ([`Vault::install_sandbox_backends`], F1-6); none until it installs
+    /// them, and then every tier that needs isolation is refused.
+    pub(crate) sandbox_backends:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,

@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<Option<crate::calendar::query::passport::CalendarPassportRevision>>",
   "call": "memory.calendar_passport_read(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

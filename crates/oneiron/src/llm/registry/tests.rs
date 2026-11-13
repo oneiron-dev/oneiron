@@ -1,5 +1,9 @@
 use super::super::{LlmCapability, LlmCatalogCost, ModelLocality, score_scraper::*};
 use super::*;
+
+// The first-party model pack's compiled content hash, deleted by b8996bf2aa5 (#1560).
+const MODEL_PACK_HASH: &str = "9bb13193a0b203d2e04c43ca203051aba0c1c54963309c38bd03482eb9dc8d11";
+
 fn row(provider: &str) -> ModelRegistryRow {
     ModelRegistryRow {
         version: 1,
@@ -15,12 +19,16 @@ fn row(provider: &str) -> ModelRegistryRow {
                 output_per_million: "3.50".into(),
                 cache_read_per_million: None,
                 cache_write_per_million: None,
+                currency: None,
             }),
             capabilities: vec![LlmCapability::Streaming],
             metadata: BTreeMap::new(),
         },
         scores: BTreeMap::new(),
         fetched_at: BTreeMap::new(),
+        tokens_per_o200k: None,
+        stale_since: None,
+        source_rows: None,
     }
 }
 fn pack_fixture() -> Result<crate::skill_hub::pack_catalog::PackSource> {
@@ -91,10 +99,7 @@ fn installed_hub_catalog_parity_and_capability_admission() -> Result<()> {
         temporal::TimeRange,
     };
     let source = pack_fixture()?;
-    assert_eq!(
-        source.content_hash().to_hex(),
-        crate::skill_hub::MODEL_PACK_HASH
-    );
+    assert_eq!(source.content_hash().to_hex(), MODEL_PACK_HASH);
     // Install admission resolves the seeded policy manifest.
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
@@ -245,6 +250,7 @@ fn multi_source_refresh_is_atomic_on_parse_and_storage_refusals() -> Result<()> 
                     benchmark: "quality".into(),
                     score: 30.0,
                 }],
+                source_rows: Some(Vec::new()),
             })?;
         }
         let before = vault.model_registry_row(&model)?.unwrap();

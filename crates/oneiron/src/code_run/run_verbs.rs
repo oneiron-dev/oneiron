@@ -231,6 +231,11 @@ pub struct AgentSpawnInput {
     /// envelope, which the host enforces either way.
     #[serde(default)]
     pub balance_free_prompt: bool,
+    /// The powers the child holds (SPAWN-KNOB): an absent power is the
+    /// parent's, `false` switches it off for the child. Asking `true` for a
+    /// power the parent does not hold is refused.
+    #[serde(default)]
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
 }
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
@@ -320,6 +325,7 @@ impl AgentSpawnInput {
                 .transpose()?,
             objectives: self.objectives,
             comm: self.comm,
+            powers: self.powers,
             ..AgentSpawnContext::default()
         };
         let ask = super::SelfSpawnAsk {
@@ -420,6 +426,11 @@ pub struct ReaderSpawnInput {
     pub ask: String,
     /// The spawn's key in the run: the same key spawns the same child.
     pub intent_key: String,
+    /// The powers the child holds (SPAWN-KNOB): an absent power is the
+    /// parent's, `false` switches it off for the child. Asking `true` for a
+    /// power the parent does not hold is refused.
+    #[serde(default)]
+    pub powers: Option<crate::agent_def::ChildPowerRequest>,
 }
 
 /// `summarize(r, {effort?, group?, defer?})`: one model call over a result
@@ -470,13 +481,15 @@ pub struct TaskWaitSetRequest {
     pub step_key: String,
 }
 
-/// `tasks.wait`'s input: one wait over reader children the run spawned, or
-/// one on a world-privacy request the run's actor opened (FIX 4706).
+/// `tasks.wait`'s input: one wait over reader children the run spawned, one
+/// on a world-privacy request the run's actor opened (FIX 4706), or one over
+/// AGENT children the run spawned (slice 6.5b).
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum TaskWaitInput {
     Readers(TaskWaitSetRequest),
     WorldPrivacy(TaskWaitWorldRequest),
+    Agents(TaskWaitAgentsRequest),
 }
 
 /// `tasks.wait({request, step_key})`: a wait on one world-privacy request
@@ -492,13 +505,50 @@ pub struct TaskWaitWorldRequest {
     pub step_key: String,
 }
 
-/// What `tasks.wait` answers: the reduction over reader children, or a
-/// world-privacy request's terminal state (`WorldPrivacyReady`).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// `tasks.wait({agents, all?, n_of?, step_key})`: one wait over AGENT
+/// children the run spawned with `self.agents.spawn` (slice 6.5b), answered
+/// once all of them have ended, or `n_of` of them have completed. It names
+/// no deadline: a child ends by its own run, its limits, a cancel or its
+/// spawner's kill, and each of those answers the wait.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaitAgentsRequest {
+    /// The children's attempt ids, hex, as `self.agents.spawn` answered them.
+    pub agents: Vec<String>,
+    /// Wait for every child to end; the default.
+    pub all: Option<bool>,
+    /// Wait for this many children to complete.
+    #[schemars(range(min = 1, max = "u32::MAX"))]
+    pub n_of: Option<u32>,
+    /// The wait's key in the run: the same key answers as the same wait.
+    pub step_key: String,
+}
+
+impl TaskWaitAgentsRequest {
+    /// The wait call the run's dispatcher takes.
+    pub(crate) fn into_call(self) -> crate::code_run::TaskWaitSetCall {
+        crate::code_run::TaskWaitSetCall {
+            tasks: Vec::new(),
+            all: self.all,
+            n_of: self.n_of,
+            until: None,
+            step_key: self.step_key,
+            request: None,
+            agents: Some(self.agents),
+        }
+    }
+}
+
+/// What `tasks.wait` answers: the reduction over reader children, a
+/// world-privacy request's terminal state (`WorldPrivacyReady`), or the
+/// reduction over AGENT children. The host door's caller reads it back, so
+/// it decodes too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TaskWaitOutput {
     Readers(crate::code_run::TaskWaitSetResult),
     WorldPrivacy(crate::task_verb::TaskAskWait),
+    Agents(crate::agent_dispatch::AgentWaitSetResult),
 }
 
 /// `vault.search`'s output: the hits, best first, and in an off-record room

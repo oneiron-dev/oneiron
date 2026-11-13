@@ -6,6 +6,7 @@
   "call": "memory.esign_signing_act(&input)?",
   "mcp_off_runtime": true,
   "scope": "Write",
+  "act_class": "sign",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

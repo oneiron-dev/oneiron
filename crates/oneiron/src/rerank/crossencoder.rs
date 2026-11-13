@@ -355,7 +355,7 @@ fn validate_response(
     }
     let value = scores
         .into_iter()
-        .map(|score| score.ok_or_else(&failure))
+        .map(|score| score.ok_or_else(failure))
         .collect::<RetrievalResult<Vec<_>>>()?;
     BackendSpend {
         value,

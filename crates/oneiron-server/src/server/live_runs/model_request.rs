@@ -3,6 +3,8 @@
 use std::sync::{Arc, Mutex};
 
 use oneiron::agent_def::ensure_listed;
+use oneiron::agent_dispatch::SpendScopeId;
+use oneiron::attempt_queue::AttemptId;
 use oneiron::authority::VerifiedSlip;
 use oneiron::code_run::live_run::CodeRunLiveRunBinding;
 use oneiron::code_run::{RepoModelGenerateInput, RepoRequestWitness};
@@ -44,6 +46,50 @@ impl Drop for ScopeBooking {
 }
 
 impl HeldLiveRun {
+    /// The definition the run entered with: what its own actor's model
+    /// calls are held to.
+    pub(crate) fn definition(&self) -> &oneiron::agent_def::AgentDefinition {
+        &self.entry.definition
+    }
+
+    /// The scope the run's entries spend under; `None` for an unmetered
+    /// run.
+    pub(crate) fn spend_scope(&self) -> Option<&SpendScopeId> {
+        self.entry.spend_scope.as_ref()
+    }
+
+    /// The try the run's runner holds leased.
+    pub(crate) fn leased_try(&self) -> AttemptId {
+        self.entry.leased.id
+    }
+
+    /// Whether the run's model calls must read a payer, as its steps' do
+    /// (LIVE-RUN-PAYER-REQUIRED): its leased try works in a room, or is a
+    /// step of a member's bound run.
+    pub(crate) fn payer_required(&self, vault: &oneiron::Vault) -> oneiron::Result<bool> {
+        crate::ai_host::payer_funding::leased_requires_payer(vault, &self.entry.leased)
+    }
+
+    /// Whether this exact attachment still stands for `credential`, as a
+    /// check a whole call keeps asking: the entry's lease, the binding, the
+    /// credential's read key, and the credential itself, unexpired and
+    /// unrevoked. A read that fails answers no.
+    pub(crate) fn attachment_watch(
+        &self,
+        server: &SyncServer,
+        credential: VerifiedSlip,
+    ) -> Box<dyn Fn() -> bool + Send + Sync> {
+        let (vault, runs, entry, binding) = (
+            Arc::clone(server.vault()),
+            Arc::clone(&server.live_runs),
+            Arc::clone(&self.entry),
+            self.binding.clone(),
+        );
+        Box::new(move || {
+            attachment_holds(&runs, &vault, &entry, &binding, &credential).unwrap_or(false)
+        })
+    }
+
     /// The last request this exact credential attachment was actually served.
     /// A different issue, credential or leased generation never inherits it.
     pub(crate) fn repo_request(&self) -> Option<RepoRequestWitness> {
@@ -70,7 +116,7 @@ impl HeldLiveRun {
         let (guard, payer, state) = match self.entry.spend_scope.as_ref() {
             Some(scope) => {
                 // A failed scoped line never falls back to the host's line.
-                let meter = ScopeMeter::open(&vault, scope).map_err(|_| {
+                let meter = ScopeMeter::open(&vault, &self.entry.leased, scope).map_err(|_| {
                     MemoryError::bad_request("the attached run's spend line did not open")
                 })?;
                 let state = meter.lease.on(&vault).state();
@@ -169,7 +215,11 @@ fn attachment_holds(
     binding: &CodeRunLiveRunBinding,
     credential: &VerifiedSlip,
 ) -> oneiron::Result<bool> {
+    // An agent's read key is built whether or not its credential still
+    // holds (only an owner-grade key checks that), so the credential's own
+    // liveness is asked here: a revoked or expired one ends the attachment.
     Ok(runs.holds(vault, entry)?
         && lock(&entry.attached).as_ref() == Some(binding)
-        && vault.credential_read_key(credential)?.is_some())
+        && vault.credential_read_key(credential)?.is_some()
+        && vault.capability_slip_is_live(credential)?)
 }

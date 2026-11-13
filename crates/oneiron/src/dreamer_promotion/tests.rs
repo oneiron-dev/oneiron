@@ -160,7 +160,7 @@ fn fixture(vault: &Vault) -> Result<PromotionFixture> {
     rmpv::encode::write_value(
         &mut body,
         &Mp::Map(vec![
-            (Mp::from("txt"), Mp::from("my name is Oleksii")),
+            (Mp::from("txt"), Mp::from("my name is Owen")),
             (Mp::from("spkr"), Mp::from("user")),
         ]),
     )
@@ -216,6 +216,7 @@ fn candidate(
         evidence_meet: ClaimSource::Generated,
         occurred: occurred(9_000),
         learned_at: 9_000,
+        decisions: Vec::new(),
     }
 }
 
@@ -278,10 +279,10 @@ fn promotion_evidence_is_a_turn_or_an_admissible_claim() -> Result<()> {
     let fixture = fixture(&vault)?;
     let session = EntityId::now();
     vault.put_entity(&session, ENTITY_TYPE_SESSION, occurred(1), 1, b"session")?;
-    let by_person = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.subject]);
+    let by_person = candidate(&fixture, "profile.name", "Owen", vec![fixture.subject]);
     let by_session = candidate(&fixture, "profile.city", "Tokyo", vec![session]);
     // The positive control: the same kind of candidate citing its TURN.
-    let by_turn = candidate(&fixture, "profile.nickname", "Olety", vec![fixture.turn]);
+    let by_turn = candidate(&fixture, "profile.nickname", "owen", vec![fixture.turn]);
     let unsupported = [by_person.claim_id, by_session.claim_id];
     let supported = by_turn.claim_id;
 
@@ -302,7 +303,7 @@ fn promotion_evidence_is_a_turn_or_an_admissible_claim() -> Result<()> {
 fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
 
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
@@ -388,7 +389,7 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
 fn an_auto_write_burst_stays_auto_and_leaves_a_typed_check() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let first = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let first = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let second = candidate(&fixture, "profile.tone", "warm", vec![fixture.turn]);
     let ids = vec![first.claim_id, second.claim_id];
     crate::own_rate::set_auto_write_threshold_for_test(Some(1));
@@ -416,7 +417,7 @@ fn an_auto_write_burst_stays_auto_and_leaves_a_typed_check() -> Result<()> {
 fn an_exact_promotion_replay_counts_its_auto_write_once() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     let _ = crate::own_rate::take_counted_auto_writes();
     for pass in ["first pass", "exact replay"] {
@@ -442,7 +443,7 @@ fn promotion_rejects_rather_than_pends_without_an_auto_permit() -> Result<()> {
     // Proposed claim plus a pending consent row for an owner to work off.
     let (_dir, vault) = open_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
 
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
@@ -611,11 +612,15 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
                 author: crate::WitnessAuthor::User,
                 message_type: "dialogue".into(),
                 content: "I drink tea".into(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 9_000,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("a live message");
     let bare = vault
@@ -1001,7 +1006,7 @@ fn generated_evidence_gives_no_boost() -> Result<()> {
     let citing = candidate(
         &fixture,
         "profile.name",
-        "Oleksii",
+        "Owen",
         vec![generated_id, fixture.turn],
     );
     let citing_id = citing.claim_id;
@@ -1040,7 +1045,7 @@ fn landed_verification_blocks_ack() -> Result<()> {
 
     // Drive the verification leg directly: a claim that "landed" but is
     // gone at re-read time is a rejection (caller must fail the attempt).
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
     assert!(vault.get_claim(&claim_id)?.is_some());
@@ -1108,7 +1113,7 @@ fn landed_verification_blocks_ack() -> Result<()> {
 fn replay_path_still_skips_source_trust_gate() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
 
@@ -1375,7 +1380,7 @@ fn the_lineage_guard_is_reached_from_every_claim_write_door() -> Result<()> {
     // 5. Dreamer promotion cannot reach the guard at all: it COMPUTES the
     // source from evidence, so the stamp it writes never outranks the taint
     // it stamps beside it.
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let promoted_id = promoted.claim_id;
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
     let landed = vault.get_claim(&promoted_id)?.expect("landed claim");
@@ -1538,7 +1543,13 @@ fn tool_output_meet_promotion_no_longer_lands_auto_on_an_unsigned_manifest() -> 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-use crate::llm::{AutoCheckCandidate, AutoCheckOutcome, AutoChecker};
+use std::time::Instant;
+
+use crate::llm::decision::{
+    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial, DecisionProvider,
+    DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
+};
+use crate::llm::{AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome};
 
 const CHECKER_REF: &str = "host-checker-v1";
 
@@ -1560,11 +1571,93 @@ impl CountingAutoChecker {
     }
 }
 
-impl AutoChecker for CountingAutoChecker {
-    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
-        let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
-        self.outcome.clone()
+/// The host's decision head on the checker's Big rung: it answers each
+/// consult with its outcome and counts it. The auto check is a typed
+/// decision through the host's ladder since 4c541a578f5 (#1608), which
+/// replaced the `AutoChecker` trait.
+impl DecisionProvider for CountingAutoChecker {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Big,
+            model: "host-checker".into(),
+            version: "1".into(),
+        }
     }
+
+    fn decide(&self, _call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
+        let (allow, probability) = match &self.outcome {
+            AutoCheckOutcome::Allow => (true, 0.99),
+            AutoCheckOutcome::Hold { .. } => (false, 0.99),
+            AutoCheckOutcome::Verdict(verdict) => (
+                verdict.allow,
+                f64::from(verdict.confidence_millionths) / 1_000_000.0,
+            ),
+            AutoCheckOutcome::Unavailable => {
+                return Err(crate::Error::InvalidConfig(
+                    "the host checker cannot answer".into(),
+                ));
+            }
+        };
+        Ok(ProviderDecision {
+            answer: DecisionAnswer::Choice(if allow { "allow" } else { "hold" }.to_owned()),
+            probability: Some(probability),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        })
+    }
+}
+
+/// The host's hold reasons: the outcome's own, when it holds.
+impl AutoCheckNotes for CountingAutoChecker {
+    fn hold_reasons(
+        &self,
+        _candidate: &AutoCheckCandidate<'_>,
+        _due: Instant,
+    ) -> Result<Vec<String>> {
+        Ok(match &self.outcome {
+            AutoCheckOutcome::Hold { reasons } => reasons.clone(),
+            _ => Vec::new(),
+        })
+    }
+}
+
+/// The host's bounded checker over `head`, assembled as a host assembles it
+/// (`oneiron-server` `decision_host`): a decision ladder whose Big rung is
+/// the host's head, its dial at Big.
+fn bounded_over(
+    head: Arc<dyn DecisionProvider>,
+    notes: Arc<dyn AutoCheckNotes>,
+    calibrated: Option<crate::llm::ModelId>,
+) -> BoundedAutoChecker {
+    BoundedAutoChecker::new(AutoCheckDecisions {
+        ladder: HeldLadder {
+            big: Some(head),
+            ..HeldLadder::unstaffed()
+        },
+        principal: EntityId::from_bytes([0x51; 16]).expect("principal id"),
+        dial: DecisionDial {
+            first: DecisionRung::Big,
+            ceiling: DecisionRung::Big,
+            band: DecisionBand::default(),
+        },
+        bands: DecisionBandPolicy::default(),
+        wording: "May this write land without the owner's review?".to_owned(),
+        notes,
+        calibrated,
+    })
+}
+
+/// The bounded checker whose host answers with `host`'s outcome: a
+/// calibrated verdict answers as its verdict binding's model.
+fn bounded(host: Arc<CountingAutoChecker>) -> BoundedAutoChecker {
+    let calibrated = match &host.outcome {
+        AutoCheckOutcome::Verdict(verdict) => Some(verdict.model.clone()),
+        _ => None,
+    };
+    bounded_over(host.clone(), host, calibrated)
 }
 
 /// [`auto_permitting_manifest`] plus the `auto_checker` knob that arms the
@@ -1635,7 +1728,7 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
         let first = candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]);
         let old = first.claim_id;
         let host = CountingAutoChecker::new(AutoCheckOutcome::Allow);
-        let checker = BoundedAutoChecker::new(host.clone());
+        let checker = bounded(host.clone());
         assert_eq!(
             promote_consolidated_claims_with_checker(
                 &vault,
@@ -1668,7 +1761,7 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
         } else {
             AutoCheckOutcome::Allow
         });
-        let closure_checker = BoundedAutoChecker::new(closure_host.clone());
+        let closure_checker = bounded(closure_host.clone());
         let result = vault.grant_deferred_claim_auto_with_checker(
             &new,
             fixture.run.now_ms + 1,
@@ -1744,6 +1837,8 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
                             slot: ModelSlot::Llm,
                             tier: ModelTierRef("test".into()),
                             route_models: std::collections::BTreeMap::new(),
+                            disposition: None,
+                            reads_audio: false,
                         },
                     )
                 })
@@ -1775,7 +1870,7 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
             band: ConfidenceBand::High,
             basis: VerdictBasis::CalibratedModel,
         }));
-        let checker = BoundedAutoChecker::new(allow.clone());
+        let checker = bounded(allow.clone());
         let first = candidate(&fx, "profile.name", "Ada", vec![fx.turn]);
         let old = first.claim_id;
         assert_eq!(
@@ -1810,7 +1905,7 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
         let hold_host = CountingAutoChecker::new(AutoCheckOutcome::Hold {
             reasons: vec!["checker: hedged verdict".to_owned()],
         });
-        let hold = BoundedAutoChecker::new(hold_host.clone());
+        let hold = bounded(hold_host.clone());
         assert!(
             vault
                 .grant_deferred_claim_auto_with_checker(&new, fx.run.now_ms + 1, Some(&hold))
@@ -1874,7 +1969,7 @@ fn a_checked_grant_closes_a_stored_value_too_long_to_preview() -> Result<()> {
     let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
     crate::test_util::put_policy_manifest_bytes(&vault, id, &auto_checker_manifest(CHECKER_REF))?;
     let allow = CountingAutoChecker::new(AutoCheckOutcome::Allow);
-    let checker = BoundedAutoChecker::new(allow.clone());
+    let checker = bounded(allow.clone());
     let mut second = candidate(&fx, "profile.name", "Ada Lovelace", vec![fx.turn]);
     second.supersedes = Some(old);
     let new = second.claim_id;
@@ -1909,13 +2004,13 @@ fn a_checked_grant_closes_a_stored_value_too_long_to_preview() -> Result<()> {
 fn promotion_rejects_a_held_candidate_without_minting_a_review_row() -> Result<()> {
     let (dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     let checker = CountingAutoChecker::new(AutoCheckOutcome::Hold {
         reasons: vec!["checker: hedged verdict".to_owned()],
     });
 
-    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let bounded_checker = bounded(checker.clone());
     let outcome = promote_consolidated_claims_with_checker(
         &vault,
         &fixture.run,
@@ -1968,11 +2063,11 @@ fn promotion_rejects_a_held_candidate_without_minting_a_review_row() -> Result<(
 fn promotion_fails_closed_when_the_checker_cannot_answer() -> Result<()> {
     let (dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let promoted = candidate(&fixture, "profile.name", "Owen", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     let checker = CountingAutoChecker::new(AutoCheckOutcome::Unavailable);
 
-    let bounded_checker = BoundedAutoChecker::new(checker.clone());
+    let bounded_checker = bounded(checker.clone());
     let outcome = promote_consolidated_claims_with_checker(
         &vault,
         &fixture.run,
@@ -2014,8 +2109,26 @@ fn promotion_fails_closed_when_the_checker_cannot_answer() -> Result<()> {
 
 struct PanickingPromotionAutoChecker;
 
-impl AutoChecker for PanickingPromotionAutoChecker {
-    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
+impl DecisionProvider for PanickingPromotionAutoChecker {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Big,
+            model: "host-checker".into(),
+            version: "1".into(),
+        }
+    }
+
+    fn decide(&self, _call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        panic!("host checker panic at the public promotion boundary");
+    }
+}
+
+impl AutoCheckNotes for PanickingPromotionAutoChecker {
+    fn hold_reasons(
+        &self,
+        _candidate: &AutoCheckCandidate<'_>,
+        _due: Instant,
+    ) -> Result<Vec<String>> {
         panic!("host checker panic at the public promotion boundary");
     }
 }
@@ -2026,7 +2139,8 @@ fn promotion_isolates_panicking_checkers_and_records_unavailable() -> Result<()>
     let fixture = fixture(&vault)?;
     let promoted = candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
-    let checker = BoundedAutoChecker::new(Arc::new(PanickingPromotionAutoChecker));
+    let host = Arc::new(PanickingPromotionAutoChecker);
+    let checker = bounded_over(host.clone(), host, None);
 
     let outcome = promote_consolidated_claims_with_checker(
         &vault,
@@ -2056,7 +2170,7 @@ fn checked_promotion_cannot_override_attributed_proposal_hold() -> Result<()> {
     promoted.supersedes = Some(head);
     let claim_id = promoted.claim_id;
     let host = CountingAutoChecker::new(AutoCheckOutcome::Allow);
-    let checker = BoundedAutoChecker::new(host.clone());
+    let checker = bounded(host.clone());
 
     let outcome = promote_consolidated_claims_with_checker(
         &vault,

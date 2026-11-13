@@ -31,11 +31,11 @@ fn models(ladder: &[Rung]) -> Vec<String> {
 
 #[test]
 fn high_level_one_model_fills_every_shorthand_seat() {
-    let config = resolve(r#"default = "cpa:olety7/gpt-6.1-sol""#).unwrap();
+    let config = resolve(r#"default = "cpa:team/gpt-6.1-sol""#).unwrap();
     for role in SHORTHAND_ROLES {
         assert_eq!(
             models(config.ladder(role).unwrap()),
-            ["cpa:olety7/gpt-6.1-sol"]
+            ["cpa:team/gpt-6.1-sol"]
         );
     }
     assert!(config.ladder(ModelRole::LocalReasoner).is_none());
@@ -208,39 +208,49 @@ fn plain_http_is_for_this_machine_or_a_local_model_server() {
     assert!(provider("kind = \"local-openai-compat\"\nbase_url = \"http://example.com\"").is_err());
 }
 
+/// 8f87b36916e (#5719): the engine id keeps ASCII letters, digits, `.` and
+/// `-`, and writes every other byte as `_hh`, so two wire spellings never
+/// share an identity and both rungs resolve.
 #[test]
-fn two_spellings_that_meet_on_one_engine_id_are_refused() {
-    let error = resolve(
+fn two_spellings_keep_distinct_engine_ids() {
+    resolve(
         r#"
 [roles.checker]
 rungs = [{ model = "cpa:org/model" }, { model = "cpa:org.model" }]
 "#,
     )
-    .unwrap_err();
-    assert!(
-        error.to_string().contains("both become engine id"),
-        "{error}"
-    );
+    .unwrap();
+    let engine_id = |value: &str| {
+        ModelRef::parse("model", value)
+            .unwrap()
+            .engine_id("rev")
+            .unwrap()
+    };
+    assert_eq!(engine_id("cpa:org/model").as_str(), "cpa/org_2fmodel@rev");
+    assert_eq!(engine_id("cpa:org.model").as_str(), "cpa/org.model@rev");
 }
 
-/// TSC-WIRE: the type check is off unless asked for, `enforce` is a reserved
-/// name that is not wired, and the backend is one key.
+/// TSC-WIRE: `enforce` is a reserved name that is not wired, and the backend
+/// is one key.
 #[test]
 fn the_code_check_is_off_by_default_and_enforce_is_refused() {
     use oneiron_code_check::{BackendKind, CheckMode};
     let check = |body: &str| resolve(&format!("[code_mode.check]\n{body}"));
+    // Ruled defaults: feedback is on by default (#3903, FIX 8277 CALLS row 1)
+    // and tsrs is the default backend (#3788); "shadow" became "feedback",
+    // with no alias.
     let default = resolve("").unwrap().code_mode.check;
-    assert_eq!(default.mode, CheckMode::Off);
-    assert_eq!(default.backend, BackendKind::TscRs);
-    let shadow = check("mode = \"shadow\"").unwrap().code_mode.check;
-    assert_eq!(shadow.mode, CheckMode::Shadow);
+    assert_eq!(default.mode, CheckMode::Feedback);
+    assert_eq!(default.backend, BackendKind::Tsrs);
+    let feedback = check("mode = \"feedback\"").unwrap().code_mode.check;
+    assert_eq!(feedback.mode, CheckMode::Feedback);
     let error = check("mode = \"enforce\"").unwrap_err();
     assert!(
         error.to_string().contains("code_check_enforce_reserved"),
         "{error}"
     );
     let microsoft =
-        check("mode = \"shadow\"\nbackend = \"microsoft\"\nmicrosoft_tsc = \"/opt/tsc\"")
+        check("mode = \"feedback\"\nbackend = \"microsoft\"\nmicrosoft_tsc = \"/opt/tsc\"")
             .unwrap()
             .code_mode
             .check;

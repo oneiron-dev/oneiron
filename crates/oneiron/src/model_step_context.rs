@@ -3,10 +3,13 @@
 pub use crate::model_step_effect::StepEffectBinding;
 
 use crate::Vault;
+use crate::agent_dispatch::{AgentDispatcher, SpendCapGeneration};
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline};
 use crate::entity_id::EntityId;
+use crate::error::Result;
 use crate::model_step_record::TrapRef;
+use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::write_envelope::WriteActor;
 use oneiron_model::llm::{DreamerFailureDecision, LlmResponse};
 
@@ -24,6 +27,39 @@ pub struct DurableStepContext<'a> {
     /// envelope on finished outcomes. Admitted calls may finish after expiry.
     pub deadline: Option<&'a WakePassDeadline>,
     pub now_ms: u64,
+    /// The spend scope the step spends under, when its host bound one (a run step's or a media
+    /// step's `guard_for_scope` guard, a free-time item's scope under its pass), with the cap
+    /// generation its host read before it built the step's guards.
+    pub spend_scope: Option<StepSpendScope>,
+    /// Whether the step's guard is its wake pass's guard, or a meter lent under it: the host
+    /// rebuilds that guard each pass, so a spent budget parks the step for a later pass with room.
+    /// A step bound to neither a wake pass nor a spend scope has no write that refills its guard:
+    /// a spent budget refuses it `Unbound` (BUDGET-TRAP-UNTYPED-NO-SENDER).
+    pub wake_pass_bound: bool,
+}
+
+/// The spend scope a step's guards were built on, with the cap generation of
+/// its nearest hard scope read before they read their room. A budget park
+/// whose generation moved since resumes in its own write: the top-up that
+/// moved it found no park to wake.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepSpendScope {
+    pub scope: SpendScopeId,
+    /// `None` when no open hard scope bounds `scope`.
+    pub cap_generation: Option<SpendCapGeneration>,
+}
+
+impl StepSpendScope {
+    /// Reads `scope`'s cap generation now. A host calls it before it builds
+    /// the step's guards: a top-up before this read is in their room, and
+    /// one after it moves the generation the park compares.
+    pub fn read_before_guards(vault: &Vault, scope: SpendScopeId) -> Result<Self> {
+        let cap_generation = AgentDispatcher::new(vault).spend_cap_generation(&scope)?;
+        Ok(Self {
+            scope,
+            cap_generation,
+        })
+    }
 }
 
 impl DurableStepContext<'_> {

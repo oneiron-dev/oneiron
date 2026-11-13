@@ -16,7 +16,7 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
 };
 use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
-use crate::{EdgeActorClass, EntityId, Vault, WriteEnvelope, WriteProvenance};
+use crate::{EdgeActorClass, EntityId, Vault, WriteActor, WriteEnvelope, WriteProvenance};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
@@ -244,6 +244,28 @@ fn body_pointer(key: &str) -> String {
     }
 }
 
+/// The source a writer's own append is labelled with: provenance is who
+/// writes (ARCH-0040 #mcp-actor-ceilings). A person (Human) states it; an
+/// agent, a delegated sub-agent, the Dreamer, a connector or a system writer
+/// generates it, and generated text never supersedes what a person stated.
+pub(crate) fn append_source(writer: WriteActor) -> ClaimSource {
+    if writer.actor_class() == EdgeActorClass::Human {
+        ClaimSource::UserStated
+    } else {
+        ClaimSource::Generated
+    }
+}
+
+/// The source an engine-composed append is labelled with, whoever's actor
+/// it lands under: generated. The label follows who composed the words
+/// (ARCH-0040), so text a model composed stays generated even when the
+/// record is a person's, as a scope summary's reply is.
+pub(crate) fn composed_append_source() -> ClaimSource {
+    ClaimSource::Generated
+}
+
+/// The gate check of a record that holds its writer's own words, labelled
+/// [`append_source`]: every public append door's, and a thread reply's.
 pub(super) fn check_append_policy(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -251,9 +273,54 @@ pub(super) fn check_append_policy(
     input: &AppendRecord,
     bytes: &[u8],
 ) -> Result<()> {
+    check_append_policy_labelled(vault, txn, id, input, bytes, append_source(input.actor))
+}
+
+/// The gate check of a record whose words the engine composed under its
+/// writer's actor, labelled [`composed_append_source`]: a scope summary's
+/// reply. Without a generated permit for its writer it pends on source
+/// trust, a person's included.
+pub(super) fn check_composed_append_policy(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    input: &AppendRecord,
+    bytes: &[u8],
+) -> Result<()> {
+    check_append_policy_labelled(vault, txn, id, input, bytes, composed_append_source())
+}
+
+/// The gate check of a Retry's assistant TURN: the transcript gate the
+/// witness gives the reply it answers again
+/// ([`crate::gate::check_witness_turn_ceiling`]). The witness mints the first
+/// reply's TURN with no claim check and checks its MESSAGE as transcript
+/// recording; the Retry's MESSAGE meets that same check in this write, and
+/// its TURN, which holds no words, meets the same verdict. So it takes no
+/// source label and needs no source-trust permit: the regenerated reply
+/// lands wherever the first reply landed (FIX DAG-ENGINE-APPEND-PERSON-PENDS,
+/// the Retry half).
+pub(super) fn check_regenerated_turn_policy(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    _id: &EntityId,
+    input: &AppendRecord,
+    _bytes: &[u8],
+) -> Result<()> {
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    crate::gate::check_witness_turn_ceiling(&vault.store, txn, input.actor, &policy)
+}
+
+fn check_append_policy_labelled(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    input: &AppendRecord,
+    bytes: &[u8],
+    source: ClaimSource,
+) -> Result<()> {
     let envelope = WriteEnvelope::new(
         input.actor,
-        ClaimSource::Generated,
+        source,
         WriteProvenance::new(Value::Map(vec![(
             Value::from("kind"),
             Value::from("conversation_append"),

@@ -836,7 +836,11 @@ fn restore_refuses_to_revive_a_relationship_deleted_since() {
         let body = rmp_serde::to_vec_named(&serde_json::json!({ "participant_ids": [] })).unwrap();
         live.put_entity(&relationship, ENTITY_TYPE_RELATIONSHIP, at, 1, &body)
             .unwrap();
-        crate::federation::bind_member_person(&live, relationship, member, at, 1).unwrap();
+        let owner = live.ensure_embedded_owner_actor().unwrap();
+        let owner = live
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .unwrap();
+        crate::federation::bind_member_person(&live, &owner, relationship, member, at, 1).unwrap();
         let mut fact = ClaimBody::new(
             "event.headcount",
             ClaimSubject::Entity(member),

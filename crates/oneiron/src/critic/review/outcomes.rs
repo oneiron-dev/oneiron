@@ -147,6 +147,7 @@ pub(super) fn record_review_outcome_in_txn(
         id,
         anchor,
         accepted,
+        recheck: source_recheck_in_txn(vault, txn, source)?,
     };
     if !record_outcome_evidence_in_txn(vault, txn, verdict_claim, &artifact, &outcome, at)?
         && replaced
@@ -169,6 +170,40 @@ struct StandingOutcome {
     id: EntityId,
     anchor: crate::learning::Anchor,
     accepted: bool,
+    /// The completed directed recheck a seal recheck outcome rests on.
+    recheck: Option<RecheckFacts>,
+}
+
+/// What a completed directed recheck lends its critique's evidence, as the
+/// seal engine records a directed check's finding: its judge and the time it
+/// checked (ruling LEARN-CRITIC-ANCHOR Q2).
+struct RecheckFacts {
+    judge: String,
+    checked_at: u64,
+}
+
+/// The completed directed recheck `source` names: a seal recheck's; none for
+/// any other source.
+fn source_recheck_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: ReliabilityOutcomeSource,
+) -> Result<Option<RecheckFacts>> {
+    let ReliabilityOutcomeSource::SealRecheck { attempt } = source else {
+        return Ok(None);
+    };
+    Ok(vault
+        .sealed_attempt_receipt_in_txn(txn, attempt)?
+        .and_then(|receipt| {
+            receipt.checks.into_iter().find(|check| {
+                check.request.kind == crate::self_heal::audit::SealCheckKind::ConfessionRecheck
+            })
+        })
+        .and_then(|check| check.outcome)
+        .map(|outcome| RecheckFacts {
+            judge: outcome.judge_revision,
+            checked_at: outcome.checked_at,
+        }))
 }
 
 /// The `review.outcome` key of `artifact`, a critique of the review `verdict`.
@@ -179,7 +214,7 @@ fn outcome_key(verdict: &EntityId, artifact: &str) -> String {
 /// The trusted, surfaceable `review.outcome` of the critique `artifact` of
 /// the review `verdict` in `session`: the one that stands, since a later
 /// outcome supersedes it (FIX 12160).
-fn standing_outcome_in_txn(
+pub(super) fn standing_outcome_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     session: &EntityId,
@@ -241,18 +276,23 @@ fn record_outcome_evidence_in_txn(
         .ok_or(Error::EntityNotFound)?
         .occurred
         .start;
-    crate::learning::record_evidence_in_txn(
-        vault,
-        txn,
-        &artifact.calibration,
-        &LearningEvidence::anchored(
-            receipt,
-            evidence_at,
-            outcome.anchor,
-            Observation::Success(outcome.accepted),
-        ),
-        at,
-    )?;
+    // A recheck's evidence is dated when it checked, as the seal engine dates
+    // its own finding, never when a critique cited it.
+    let evidence_at = outcome
+        .recheck
+        .as_ref()
+        .map_or(evidence_at, |recheck| recheck.checked_at);
+    let mut evidence = LearningEvidence::anchored(
+        receipt,
+        evidence_at,
+        outcome.anchor,
+        Observation::Success(outcome.accepted),
+    );
+    evidence.judge = outcome
+        .recheck
+        .as_ref()
+        .map(|recheck| recheck.judge.clone());
+    crate::learning::record_evidence_in_txn(vault, txn, &artifact.calibration, &evidence, at)?;
     Ok(true)
 }
 
@@ -302,16 +342,50 @@ fn owed_outcome_in_txn(
         id: *id,
         anchor: source.anchor()?,
         accepted,
+        recheck: source_recheck_in_txn(vault, txn, source)?,
     };
     Ok(Some((verdict, artifact, outcome)))
 }
 
 /// The source and acceptance a `review.outcome` value records.
-fn outcome_of(value: &Value) -> Result<(ReliabilityOutcomeSource, bool)> {
+pub(super) fn outcome_of(value: &Value) -> Result<(ReliabilityOutcomeSource, bool)> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value)
         .map_err(|_| invalid_critic_config("review outcome value"))?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid_critic_config("review outcome value"))
+}
+
+/// The critiques a standing `review.outcome` settles from the directed seal
+/// recheck of the sealed try `attempt`: each one's review verdict and critique.
+pub(super) fn standing_recheck_outcomes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Vec<(EntityId, String)>> {
+    let mut settled = Vec::new();
+    for id in crate::claim::claim_ids_for_predicate_in_txn(&vault.store, txn, "review.outcome")? {
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+            continue;
+        };
+        if !crate::claim::claim_surfaceable(&body) || !trusted_claim(vault, txn, &id, &body)? {
+            continue;
+        }
+        let Ok((ReliabilityOutcomeSource::SealRecheck { attempt: judged }, _)) =
+            outcome_of(&body.value)
+        else {
+            continue;
+        };
+        let Some((verdict, artifact)) = candidate_evidence(&body)
+            .and_then(Value::as_str)
+            .and_then(|key| key.split_once(':'))
+        else {
+            continue;
+        };
+        if judged == attempt {
+            settled.push((EntityId::from_hex(verdict)?, artifact.to_owned()));
+        }
+    }
+    Ok(settled)
 }
 
 /// Records the calibration evidence every standing critique outcome still
@@ -451,17 +525,51 @@ const OUTCOME_TRUST: SideTable<EntityId, [u8; 32], Raw> =
 /// Applies the erase's artifact rename map to every review outcome's evidence key and
 /// to the learning rows citing those artifacts (FIX 11368): an outcome key cites its
 /// artifact, and a calibration receipt cites it again in the evidence ledger and heads.
+/// The map also renames finding keys, an artifact's id or a flaw's key over its target:
+/// an outcome's scope and an automatic outcome's evidence hold them.
 pub(crate) fn rewrite_outcome_artifact_ids_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     renamed: &std::collections::BTreeMap<String, String>,
 ) -> Result<()> {
     rewrite_outcome_keys_in_txn(vault, wtxn, renamed)?;
+    rewrite_automatic_outcome_keys_in_txn(vault, wtxn, renamed)?;
     rewrite_learning_receipts_in_txn(vault, wtxn, renamed)?;
     rewrite_learning_head_citations_in_txn(vault, wtxn, renamed)
 }
 
-/// Re-keys the artifact suffix of every `review.outcome` evidence key the map renames.
+/// Re-keys the finding key, its evidence, of every `review.automatic_outcome` the map
+/// renames.
+fn rewrite_automatic_outcome_keys_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    renamed: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let mut ids = Vec::new();
+    vault.for_each_claim_with_predicate_in_txn(wtxn, "review.automatic_outcome", |id, _| {
+        ids.push(id);
+        Ok(())
+    })?;
+    for id in ids {
+        let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
+            continue;
+        };
+        let Some(new) = body
+            .evidence
+            .as_ref()
+            .and_then(Value::as_str)
+            .and_then(|key| renamed.get(key))
+        else {
+            continue;
+        };
+        body.evidence = Some(Value::from(new.as_str()));
+        rewrite_outcome_claim_in_txn(vault, wtxn, &id, &body)?;
+    }
+    Ok(())
+}
+
+/// Re-keys the artifact suffix of every `review.outcome` evidence key, and the finding
+/// key its scope holds, the map renames.
 fn rewrite_outcome_keys_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -476,24 +584,32 @@ fn rewrite_outcome_keys_in_txn(
         let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
             continue;
         };
-        let Some(rmpv::Value::Map(entries)) = body.evidence.as_mut() else {
-            continue;
-        };
         let mut changed = false;
-        for (key, value) in entries.iter_mut() {
-            if key.as_str() != Some("candidate_evidence") {
-                continue;
+        if let Some(rmpv::Value::Map(entries)) = body.evidence.as_mut() {
+            for (key, value) in entries.iter_mut() {
+                if key.as_str() != Some("candidate_evidence") {
+                    continue;
+                }
+                let Some(text) = value.as_str().map(str::to_owned) else {
+                    continue;
+                };
+                let Some((verdict, artifact)) = text.rsplit_once(':') else {
+                    continue;
+                };
+                if let Some(new) = renamed.get(artifact) {
+                    *value = rmpv::Value::from(format!("{verdict}:{new}"));
+                    changed = true;
+                }
             }
-            let Some(text) = value.as_str().map(str::to_owned) else {
-                continue;
-            };
-            let Some((verdict, artifact)) = text.rsplit_once(':') else {
-                continue;
-            };
-            if let Some(new) = renamed.get(artifact) {
-                *value = rmpv::Value::from(format!("{verdict}:{new}"));
-                changed = true;
-            }
+        }
+        if let Some(new) = body
+            .scope
+            .as_ref()
+            .and_then(Value::as_str)
+            .and_then(|key| renamed.get(key))
+        {
+            body.scope = Some(Value::from(new.as_str()));
+            changed = true;
         }
         if !changed {
             continue;

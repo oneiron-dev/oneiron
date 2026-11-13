@@ -87,13 +87,13 @@ impl crate::Vault {
     ) -> Result<String> {
         self.with_write_txn(|wtxn| {
             let row = ConsentGrantRow {
-                grant: StandingConsentGrant::from_bound(bound)?,
-                status: ConsentGrantStatus::Active,
+                grant: super::grant::StandingConsentGrant::from_bound(bound)?,
+                status: super::grant::ConsentGrantStatus::Active,
                 owner_stamp: stamper.stamp(),
                 created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
                 bypass: None,
             };
-            let grant_ref = row.grant_ref();
+            let grant_ref = super::grant::consent_grant_row_grant_ref(&row);
             GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
             Ok(grant_ref)
         })

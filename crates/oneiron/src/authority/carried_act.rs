@@ -22,6 +22,8 @@
 //! naming no such act holds the act back, without effect; one this install
 //! does not hold trusts the carrier.
 
+use std::collections::BTreeSet;
+
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
@@ -62,11 +64,16 @@ impl AgentCarriedAct {
 /// (FIX 4703, [`super::past_grant_standing`]) is omitted from this
 /// Grant-only refused list; every other act keeps its NOW judgment, and any
 /// missing history or read fault keeps the original list.
+/// `preserved_world_acts` answers that past-standing check for the
+/// NOW-refused world acts it is given
+/// ([`super::past_grant_standing::preserved_world_acts`], or a cached copy
+/// of its answer for the same signed log).
 pub(super) fn grant_refused_agent_acts(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     use_past_standing: bool,
+    preserved_world_acts: impl FnOnce(&[AuthorityEntryHash]) -> Result<BTreeSet<AuthorityEntryHash>>,
 ) -> Vec<AuthorityEntryHash> {
     let acts = &fold.agent_carried_acts;
     let now_refused: Vec<AuthorityEntryHash> = acts
@@ -100,7 +107,7 @@ pub(super) fn grant_refused_agent_acts(
     if world_candidates.is_empty() {
         return now_refused;
     }
-    match super::past_grant_standing::preserved_world_acts(store, txn, fold, &world_candidates) {
+    match preserved_world_acts(&world_candidates) {
         Ok(preserved) if !preserved.is_empty() => now_refused
             .into_iter()
             .filter(|hash| !preserved.contains(hash))

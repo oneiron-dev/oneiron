@@ -142,6 +142,7 @@ fn factory(
         HostInferenceBinding::Advertised {
             model,
             locality: oneiron::ModelLocality::OwnServer,
+            keyless: false,
         },
         None,
         Box::new(UnusedSink),

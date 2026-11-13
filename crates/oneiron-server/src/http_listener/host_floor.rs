@@ -16,8 +16,8 @@
 use std::io;
 use std::sync::Arc;
 
-use oneiron::code_sandbox::egress::ProcessDescriptorFloor;
 use oneiron::host_descriptors::{DescriptorPolicy, hold_descriptor_policy};
+use oneiron::host_net_floor::ProcessDescriptorFloor;
 use oneiron_container::{HOST_NET_BYTE_FLOOR, HostNetFloor, HostNetPermit, floor_saturated};
 
 use crate::admission::row_crossing;

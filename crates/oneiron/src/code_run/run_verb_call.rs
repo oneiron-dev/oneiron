@@ -57,6 +57,14 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
             )
         }
         RunVerb::VaultClaimsPut => SelfCall::MemoryPutClaim(claim_put_call(decode(input)?, now)?),
+        RunVerb::VaultAgentsPut => {
+            let args: super::AgentPutInput = decode(input)?;
+            SelfCall::AgentsPut(Box::new(super::parse_agent_put_request(
+                &args.id,
+                args.definition,
+                now,
+            )?))
+        }
         RunVerb::VaultClaimsSupersede => {
             let args: MemorySupersedeInput = decode(input)?;
             SelfCall::MemorySupersedeClaim(args.into_call()?)
@@ -144,6 +152,7 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                 ask: args.ask,
                 intent_key: args.intent_key,
                 bound: None,
+                powers: args.powers,
             }))
         }
         RunVerb::Summarize => {
@@ -183,6 +192,7 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                     until: args.until.map(js_time).transpose()?,
                     step_key: args.step_key,
                     request: None,
+                    agents: None,
                 },
                 // FIX 4706: a wait on one world-privacy request, no children.
                 crate::code_run::TaskWaitInput::WorldPrivacy(args) => {
@@ -193,8 +203,12 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                         until: None,
                         step_key: args.step_key,
                         request: Some(args.request),
+                        agents: None,
                     }
                 }
+                // Slice 6.5b: a wait over AGENT children of the run, no
+                // reader child, request or reader cutoff.
+                crate::code_run::TaskWaitInput::Agents(args) => args.into_call(),
             })
         }
         // ONE-2510: the run's answer to a connector's mid-call questions.
@@ -222,7 +236,8 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
         | RunVerb::SelfCodeProposalResolve
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
-        | RunVerb::SelfCodeExport) => SelfCall::Repo(Box::new(
+        | RunVerb::SelfCodeExport
+        | RunVerb::SelfCodeSymbolsObserve) => SelfCall::Repo(Box::new(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
         )),

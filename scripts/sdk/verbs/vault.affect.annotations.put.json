@@ -5,6 +5,7 @@
   "output": "crate::memory::CommitReceipt",
   "call": "memory.affect_annotation_put(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "proposes": true,
   "refs": [
     "/turn_ref"

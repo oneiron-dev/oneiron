@@ -14,8 +14,11 @@ use crate::{EntityId, Vault};
 use super::authority::TurnProgramAuthority;
 use super::erase::scrub_actor_admission_instruments_in_txn;
 use super::run::{scrub_actor_step_bodies_in_txn, undecodable_actor_steps_in_txn};
-use super::types::{ArmTurnProgram, ProgramRecipePin, TurnProgramArming, TurnProgramRegistration};
-use super::{ARM, WAKE};
+use super::types::{
+    ArmTurnProgram, ProgramRecipePin, ProgramTrigger, TurnProgramArming, TurnProgramDisarm,
+    TurnProgramRegistration,
+};
+use super::{ARM, DISARMED, WAKE};
 
 const CONTRACT_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-contract:v1";
 
@@ -31,7 +34,12 @@ const fn invalid(reason: &'static str) -> Error {
 /// secret goes to custody under the registration and leaves its handle, and
 /// the pin, its revision and every copy and read of it hold only that
 /// admitted text. The definition is pinned here. Arming the same definition
-/// for the same conversation again returns the standing registration.
+/// for the same conversation and trigger again returns the standing
+/// registration.
+///
+/// A trigger other than a turn (untangle slice 6.8c) names no conversation
+/// and seals `authority` into the arming (B-3): each occurrence's wake carries
+/// it, and each admission judges it again, as it judges a turn's.
 pub(crate) fn arm_turn_program_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -40,6 +48,7 @@ pub(crate) fn arm_turn_program_in_txn(
     now: u64,
 ) -> Result<TurnProgramRegistration> {
     let actor = authority.actor();
+    let trigger = input.trigger;
     // A base agent is no one's delegated will: it arms nothing.
     if crate::dreamer_runner::authority::is_base_agent_actor(&actor)?
         || !authority.stands_in_txn(vault, txn)?
@@ -54,6 +63,7 @@ pub(crate) fn arm_turn_program_in_txn(
     {
         return Err(Error::EntityNotFound);
     }
+    super::trigger::validate_trigger_in_txn(vault, txn, actor, &trigger, input.conversation)?;
     // The custody origin of the arguments' secrets: the registration this
     // arming mints, unless it finds the standing one, whose secrets custody
     // already holds and whose handles they keep.
@@ -65,6 +75,7 @@ pub(crate) fn arm_turn_program_in_txn(
         if armed.actor_class == authority.class_byte()
             && armed.conversation == input.conversation
             && armed.revision == revision
+            && armed.trigger == trigger
         {
             return Ok(armed.view(false));
         }
@@ -77,20 +88,40 @@ pub(crate) fn arm_turn_program_in_txn(
         definition,
         revision,
         armed_at: now,
+        trigger,
+        sealed: (!trigger.is_turn()).then(|| authority.clone()),
+        next_due: match trigger {
+            ProgramTrigger::Timer { first_at, .. } => Some(first_at),
+            _ => None,
+        },
     };
     ARM.put(vault, txn, &(actor, arming.registration), &arming)?;
+    super::trigger::index_trigger_in_txn(vault, txn, &arming)?;
     Ok(arming.view(true))
 }
 
 /// Disarms one of `actor`'s programs; `true` when it was armed. A wake its
-/// turns already owed is refused at admission.
+/// turns already owed is refused at admission. A turn program's disarm is
+/// kept, with its time, so the arming another window of the vault still
+/// carries arms it nowhere again (FIX 5266). An arming another trigger wakes
+/// never rides a window, so its disarm leaves no row.
 pub(crate) fn disarm_turn_program_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     registration: EntityId,
 ) -> Result<bool> {
-    ARM.delete(vault, txn, &(actor, registration))
+    let key = (actor, registration);
+    let Some(arming) = ARM.get(vault, &*txn, &key)? else {
+        return Ok(false);
+    };
+    super::trigger::unindex_trigger_in_txn(vault, txn, &arming)?;
+    ARM.delete(vault, txn, &key)?;
+    if arming.trigger.is_turn() {
+        let at = vault.store.clock.now_recorded_at();
+        DISARMED.put(vault, txn, &key, &TurnProgramDisarm { at })?;
+    }
+    Ok(true)
 }
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
@@ -110,7 +141,20 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let scope = actor_scope_in_txn(vault, txn, actor)?;
+    // Each arming that decodes leaves its trigger index with it; one that does
+    // not leaves its index row to the next release, which drops it.
+    let mut armed = Vec::new();
+    for row in ARM.iter_raw_from(vault, &*txn, actor.as_bytes())? {
+        let (_, bytes) = row?;
+        if let Ok(arming) = ARM.decode_value(&bytes) {
+            armed.push(arming);
+        }
+    }
+    for arming in &armed {
+        super::trigger::unindex_trigger_in_txn(vault, txn, arming)?;
+    }
     ARM.delete_from(vault, txn, actor.as_bytes())?;
+    DISARMED.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
         super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;

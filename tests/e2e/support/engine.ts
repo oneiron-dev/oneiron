@@ -6,6 +6,8 @@ import { createHash } from "node:crypto";
 import { Artifacts, BlockedDoor, DeadlineError, LIMITS, ManagedProcess, isolatedEnv, ownResource, redactor, secretHex, tempRoot, withDeadline, recordStart, assertFlowActive } from "./run.ts";
 import { loadBuildManifest, requireAsset } from "./fixtures.ts";
 import type { BuildManifest, Profile } from "./fixtures.ts";
+import { ScriptedProviders } from "./providers.ts";
+import type { SeenFixtureCall } from "./providers.ts";
 import { CliClient, CliError, PublicHttpClient, McpClient, SdkProcessDriver, WsClient, credentialParts } from "./clients.ts";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 
@@ -18,6 +20,32 @@ export interface PairActorOptions {
   /** Must already exist through a public owner/person/agent door. Pairing never creates it. */
   readonly principalRef:string;readonly actorClass:"human"|"agent"|"system";
   readonly scope?:readonly string[];readonly lifetimeSeconds?:number;
+  /** Facet ids (32 lower-hex) the slip reads. `token pair` names no facet, so with this set the link comes from the
+   * owner door the CLI posts to, POST /v1/core/pairing/links. Omitted: every facet, through the CLI as before. */
+  readonly facetRefs?:readonly string[];
+  /** One of facetRefs: the facet the slip's writes are born in. Unnamed, the engine takes the smallest. */
+  readonly writeFacetRef?:string;
+}
+/** ARCH-0028 registration-time tiers, as `token agent --tier` spells them. */
+export type AgentTier="read-only"|"propose-only"|"full-access";
+export interface AgentTokenOptions {
+  /** 1 to 64 letters, digits, `-`, `_` or `.`. One name is one agent principal however often it is minted. */
+  readonly name:string;readonly tier:AgentTier;readonly lifetimeSeconds?:number;
+  /** A host secret for this mint only, for a failed-mint case: the mint process's ONEIRON_AUTH_SECRET (the shipped
+   * CLI refuses it in argv), never the relaunch's. Omitted, the CLI reads the fixture's own secret from its config. */
+  readonly authSecret?:string;
+}
+/** The slip `token agent` minted, held as a paired actor, and what the CLI printed beside it. */
+export interface AgentToken extends PairedActor {
+  readonly slipId:string;readonly ceiling:string;readonly revokedSlipIds:readonly string[];
+}
+/** A mint's outcome as data: tryMintAgentToken reports a nonzero CLI exit instead of throwing it. */
+export type AgentTokenAttempt=
+  |{readonly ok:true;readonly actor:AgentToken}
+  |{readonly ok:false;readonly exitCode:number;readonly error:CliError};
+interface PairingLinkReply {
+  readonly code:string;readonly expires_at:number;
+  readonly pin?:{readonly challenge:readonly number[];readonly digest:readonly number[]};
 }
 export interface EndpointEmbedder {
   readonly endpoint:string;readonly modelKey:string;readonly modelId:string;readonly dimensions:number;
@@ -33,6 +61,8 @@ export interface EngineOptions {
   readonly id?:string;
   /** Host configuration only. Read current public config before supplying TOML. */
   readonly serverConfig?:string;
+  /** Preview-only destination. Any outbound request fails fixture cleanup. */
+  readonly feedbackDestination?:"local-collector";
   readonly initArgs?:readonly string[];
   /** MRL prefix width; serialized at config root before [keystore] so init first-opens with it. Engine owns the 1 <= fd < dimensions check at open. */
   readonly fastDims?:number;
@@ -56,6 +86,25 @@ async function reservePort():Promise<{port:number;release:()=>Promise<void>}> {
   const address=server.address();
   if(!address||typeof address==="string") throw new Error("No assigned loopback port");
   return {port:address.port,release:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()))};
+}
+/** The init options that choose the embedder and the tagger: `none` unless the case names an endpoint. */
+function providerInitArgs(options:EngineOptions):string[] {
+  const embedder=options.embedder;
+  const tagger=options.oneironer;
+  const endpointArgs=embedder?["--embedder","endpoint","--embedder-endpoint",embedder.endpoint,"--embedder-model-key",embedder.modelKey,
+    "--embedder-model-id",embedder.modelId,"--dimensions",String(embedder.dimensions),
+    ...("allowAll" in embedder.egress?["--embedder-egress-allow-all"]:["--embedder-egress-allow",embedder.egress.entityIds.join(",")])]:["--embedder","none"];
+  const taggerArgs=tagger?["--oneironer","endpoint","--oneironer-url",tagger.url,"--oneironer-checkpoint-sha16",tagger.checkpointSha16,
+    "--oneironer-label-count",String(tagger.labelCount),"--oneironer-mode",tagger.mode??"save"]:["--oneironer","none"];
+  return [...endpointArgs,...taggerArgs];
+}
+/** Waits until a server process answers its real health handler (a startup gate answers "starting"). */
+async function awaitHealth(url:string,server:ManagedProcess,artifacts:Artifacts,body:"ok"|"any"):Promise<void> {
+  const publicClient=new PublicHttpClient(url,{timeoutMs:1000,artifacts,label:"health"});
+  await awaitPublic(async()=>{
+    if(!server.running) throw new Error(`Owned server exited: ${server.tail()}`);
+    return publicClient.raw<{status?:string}>("GET","/api/health");
+  },reply=>server.running&&reply.status===200&&(body==="any"||reply.body?.status==="ok"),{timeoutMs:LIMITS.readyMs,label:"owned server HTTP health",readiness:true});
 }
 /** Observes public state; only readiness transport failures are repeatable, never mutations. */
 export async function awaitPublic<T>(read:()=>Promise<T>,ready:(value:T)=>boolean,options:{readonly timeoutMs?:number;readonly label:string;readonly readiness?:boolean}):Promise<T> {
@@ -84,11 +133,15 @@ export class EngineFixture {
   cli:CliClient;
   readonly sdk:SdkProcessDriver;
   readonly peers:EngineFixture[]=[];
+  readonly devicePeers:DevicePeer[]=[];
   readonly url:string;
   pairedActor!:PairedActor;
   client!:PublicHttpClient;
   mcp!:McpClient;
   private server:ManagedProcess|undefined;
+  private feedbackCollector:ScriptedProviders|undefined;
+  /** Every server process this fixture launched, restarts included, for serverOutputHas. */
+  private readonly launches:ManagedProcess[]=[];
   private schema:Schema|undefined;
   private closed=false;
   private disown:()=>void=()=>{};
@@ -128,17 +181,15 @@ export class EngineFixture {
       if(options.serverConfig&&/^\s*(host|port|vault_path|auth_secret|allow_unauthenticated)\s*=/m.test(options.serverConfig))
         throw new TypeError("EngineFixture owns isolation/auth fields; use an explicit unauthenticated case outside the default fixture");
       if(options.serverConfig?.trim()&&!options.serverConfig.trim().startsWith("[")) throw new TypeError("serverConfig is additional public TOML tables, not root keys");
-      const embedder=options.embedder;
-      const tagger=options.oneironer;
-      const endpointArgs=embedder?["--embedder","endpoint","--embedder-endpoint",embedder.endpoint,"--embedder-model-key",embedder.modelKey,
-        "--embedder-model-id",embedder.modelId,"--dimensions",String(embedder.dimensions),
-        ...("allowAll" in embedder.egress?["--embedder-egress-allow-all"]:["--embedder-egress-allow",embedder.egress.entityIds.join(",")])]:["--embedder","none"];
-      const taggerArgs=tagger?["--oneironer","endpoint","--oneironer-url",tagger.url,"--oneironer-checkpoint-sha16",tagger.checkpointSha16,
-        "--oneironer-label-count",String(tagger.labelCount),"--oneironer-mode",tagger.mode??"save"]:["--oneironer","none"];
+      if(options.feedbackDestination==="local-collector") {
+        await stage("feedback-collector");
+        engine.feedbackCollector=await ScriptedProviders.start({id:`${options.id??"engine"}-feedback`,steps:[],origins:["feedback"],artifacts:engine.artifacts});
+      }
+      const feedbackConfig=engine.feedbackCollector?`\n[feedback]\ndestination = "collector"\nendpoint = ${JSON.stringify(`${engine.feedbackCollector.urls.feedback}/feedback`)}\n`:"";
       await stage("write-config");
-      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}`,{mode:0o600});
+      await writeFile(config,`host = "127.0.0.1"\nport = ${reservation.port}\n${options.fastDims===undefined?"":`fast_dims = ${options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}${feedbackConfig}`,{mode:0o600});
       await stage("cli-init");
-      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...endpointArgs,...taggerArgs,...(options.initArgs??[])],undefined,LIMITS.readyMs,true,true);
+      const init=await engine.cli.run(["init",resolve(root,"vault"),"--config",config,...providerInitArgs(options),...(options.initArgs??[])],undefined,LIMITS.readyMs,true,true);
       if(init.exitCode!==0) throw new CliError(init,"vault-init");
       if(options.embedderIdleIntervalMs!==undefined) {
         const written=await readFile(config,"utf8");
@@ -189,6 +240,8 @@ export class EngineFixture {
       await engine.close().catch(()=>{});throw error;
     }
   }
+  /** In-memory collector snapshot; empty when feedbackDestination was not requested. */
+  get feedbackRequests():readonly SeenFixtureCall[] {return this.feedbackCollector?.seenFixtureCalls??[]}
   private actor(principalRef:string,actorClass:PairedActor["actorClass"],paired:{credential:string;pin:unknown}):PairedActor {
     const client=new PublicHttpClient(this.url,{credential:paired.credential,artifacts:this.artifacts,label:`${actorClass}:${principalRef}`});
     const {bearer,seed}=credentialParts(paired.credential);
@@ -198,21 +251,125 @@ export class EngineFixture {
   private async launch():Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.build,"server"),"serve","--config",resolve(this.root,"oneiron.toml")],
       {cwd:this.root,env:this.options.serverLog?{...this.env,RUST_LOG:this.options.serverLog}:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
+    this.launches.push(server);
     this.server=server;
-    const publicClient=new PublicHttpClient(this.url,{timeoutMs:1000,artifacts:this.artifacts,label:"health"});
-    await awaitPublic(async()=>{
-      if(!server.running) throw new Error(`Owned server exited: ${server.tail()}`);
-      return publicClient.raw("GET","/api/health");
-    },reply=>server.running&&reply.status===200,{timeoutMs:LIMITS.readyMs,label:"owned server HTTP health",readiness:true});
+    await awaitHealth(this.url,server,this.artifacts,"any");
+  }
+  /** A second server process of this same logical vault, enrolled as a device of this fixture's
+   * home through the public CLI: an empty peer vault is initialised (no bootstrap), the owner issues
+   * a machine pairing link once the home's authority checkpoint is attested, the stopped peer runs
+   * `device enrol` with the link on stdin, and the peer serves. Its client is the home owner's own
+   * paired credential, admitted on the peer once authority has synced (self.actor answers 200);
+   * the test mints nothing. Readiness means "serving and the owner admitted", not that the first
+   * sync round finished: a case waits on the public read it asserts. `homeOrigin` is the origin the
+   * link names, so the origin the device dials (a SyncLinkProxy url, to fault the link). The
+   * server build must include the `mesh` feature (the shared artifact set does). */
+  async startDevicePeer(options:DevicePeerOptions):Promise<DevicePeer> {
+    if(this.closed||!this.pairedActor) throw new Error("startDevicePeer needs a started, owner-paired fixture");
+    const root=await tempRoot(options.id);
+    const env=isolatedEnv(root,this.build.environment);
+    for(const key of Object.keys(env)) if(key.startsWith("ONEIRON_")) delete env[key];
+    await mkdir(env.TMPDIR!,{recursive:true,mode:0o700});
+    const reservation=await reservePort();
+    let released=false;
+    const peer=new DevicePeer(this,root,env,options,reservation.port);
+    this.devicePeers.push(peer);
+    try {
+      if(options.serverConfig&&/^\s*(host|port|vault_path|auth_secret|allow_unauthenticated)\s*=/m.test(options.serverConfig))
+        throw new TypeError("startDevicePeer owns isolation/auth fields");
+      if(options.serverConfig?.trim()&&!options.serverConfig.trim().startsWith("[")) throw new TypeError("serverConfig is additional public TOML tables, not root keys");
+      await writeFile(peer.config,`host = "127.0.0.1"\nport = ${reservation.port}\n${this.options.fastDims===undefined?"":`fast_dims = ${this.options.fastDims}\n`}\n[keystore]\nbackend = "platform"\ndir = ${JSON.stringify(resolve(root,"keys"))}\n${options.serverConfig??""}`,{mode:0o600});
+      const local=new CliClient(requireAsset(this.build,"cli"),root,env,peer.artifacts);
+      const init=await local.run(["init",peer.vault,"--config",peer.config,...providerInitArgs(this.options)],undefined,LIMITS.readyMs,true,true);
+      if(init.exitCode!==0) throw new CliError(init,"device-peer-init");
+      // A link can join an empty peer only when it carries the pin of an attested checkpoint.
+      await awaitPublic(()=>this.client.request<{head:{current:boolean;shortfall:unknown}|null}>("GET","/v1/owner/checkpoint-policy/roots"),
+        reply=>reply.body.head!==null&&reply.body.head.current===true&&reply.body.head.shortfall===null,
+        {timeoutMs:LIMITS.readyMs,label:"home authority checkpoint attested"});
+      const issued=await this.pairedActor.cli.run(["token","pair","--url",options.homeOrigin??this.url,"--principal-ref",this.pairedActor.principalRef,
+        "--actor-class","human","--machine",options.ownership??"yours"],undefined,LIMITS.requestMs,true);
+      if(issued.exitCode!==0) throw new CliError(issued,"device-pair-link");
+      const link=issued.stdout.trim();redactor.add(link);
+      if(new URL(link).hash.slice(1).split(".").length!==4) throw new Error("Machine pairing link carries no checkpoint pin");
+      const enrolled=await local.run(["device","enrol",peer.vault,"--config",peer.config],`${link}\n`,LIMITS.readyMs,true,true);
+      if(enrolled.exitCode!==0) throw new CliError(enrolled,"device-enrol");
+      peer.enrolment=JSON.parse(enrolled.stdout) as DeviceEnrolment;
+      if(peer.enrolment.checkpoint_pinned!==true) throw new Error("Device enrolment did not adopt the pinned checkpoint");
+      await reservation.release();released=true;
+      await peer.launch();
+      return peer;
+    } catch(error) {
+      if(!released) await reservation.release();
+      await peer.close().catch(()=>{});throw error;
+    }
   }
   async pairActor(options:PairActorOptions):Promise<PairedActor> {
+    const link=options.facetRefs===undefined?await this.cliPairingLink(options):await this.facetPairingLink(options,options.facetRefs);
+    redactor.add(link);
+    return this.actor(options.principalRef,options.actorClass,await this.sdk.pair(link));
+  }
+  private async cliPairingLink(options:PairActorOptions):Promise<string> {
     const result=await this.pairedActor.cli.run(["token","pair","--url",this.url,"--principal-ref",options.principalRef,"--actor-class",options.actorClass,
       ...(options.scope?["--scope",options.scope.join(",")]:[]),...(options.lifetimeSeconds===undefined?[]:["--lifetime-secs",String(options.lifetimeSeconds)])],undefined,LIMITS.requestMs,true);
     if(result.exitCode!==0) throw new CliError(result,"actor-pair");
-    const link=result.stdout.trim();redactor.add(link);
-    return this.actor(options.principalRef,options.actorClass,await this.sdk.pair(link));
+    return result.stdout.trim();
   }
-  /** Only public receipt reads, never a private job drain or an internal commit counter. */
+  /** The body `token pair` posts (commands.rs token_pair), with the facet axis narrowed. Every axis is spelled out:
+   * the engine reads a missing axis as deny. The HTTP record keeps transport metadata only, never the code. */
+  private async facetPairingLink(options:PairActorOptions,facetRefs:readonly string[]):Promise<string> {
+    if(facetRefs.length===0) throw new TypeError("facetRefs names at least one facet; omit it for every facet");
+    for(const ref of facetRefs) if(!/^[0-9a-f]{32}$/.test(ref)) throw new TypeError(`facet ref ${ref} is not a canonical lower-hex id`);
+    if(options.writeFacetRef!==undefined&&!facetRefs.includes(options.writeFacetRef)) throw new TypeError("writeFacetRef must be one of facetRefs");
+    const all={kind:"all"} as const;
+    const reply=await this.pairedActor.client.request<PairingLinkReply>("POST","/v1/core/pairing/links",{
+      scope:{worlds:all,facets:{kind:"some",values:[...facetRefs]},bands:all,audience:all,
+        verbs:options.scope?{kind:"some",values:[...options.scope]}:all,sensitivity:all},
+      lifetime_secs:options.lifetimeSeconds??365*24*60*60,
+      principal:{holder_ref:options.principalRef,actor_class:options.actorClass,
+        ...(options.writeFacetRef===undefined?{}:{write_facet:options.writeFacetRef})},
+    });
+    const {code,pin}=reply.body;
+    const hex=(bytes:readonly number[])=>bytes.map(byte=>byte.toString(16).padStart(2,"0")).join("");
+    const link=`${new URL(this.url).origin}/pair#${code}.${options.principalRef}`;
+    return pin?`${link}.${hex(pin.challenge)}.${hex(pin.digest)}`:link;
+  }
+  /** One agent slip from the shipped `token agent` CLI, which mints on the stopped vault: the server stops, the CLI
+   * writes the slip to a new owner-only file, and the server starts again as restart() does (MCP sessions and the
+   * cached schema go with the old process). The latest mint for a name sets its tier and revokes its earlier slips.
+   * A nonzero CLI exit throws its CliError; tryMintAgentToken returns it instead. */
+  async mintAgentToken(options:AgentTokenOptions):Promise<AgentToken> {
+    const attempt=await this.tryMintAgentToken(options);
+    if(!attempt.ok) throw attempt.error;
+    return attempt.actor;
+  }
+  /** mintAgentToken, with a nonzero CLI exit returned as `{ok:false}`. The server is relaunched with the fixture's
+   * own environment and read by the owner again before either outcome returns. */
+  async tryMintAgentToken(options:AgentTokenOptions):Promise<AgentTokenAttempt> {
+    if(this.closed) throw new Error("Cannot mint on a closed fixture");
+    const file=resolve(this.root,`agent-token-${secretHex(6)}.credential`);
+    if(options.authSecret!==undefined) redactor.add(options.authSecret);
+    const env=options.authSecret===undefined?this.env:{...this.env,ONEIRON_AUTH_SECRET:options.authSecret};
+    const cli=new CliClient(requireAsset(this.build,"cli"),this.root,env,this.artifacts);
+    await this.server?.stop();
+    const minted=await cli.run(["token","agent","--name",options.name,"--tier",options.tier,
+      "--config",resolve(this.root,"oneiron.toml"),"--out",file,
+      ...(options.lifetimeSeconds===undefined?[]:["--lifetime-secs",String(options.lifetimeSeconds)])],undefined,LIMITS.readyMs,true)
+      .finally(()=>this.launch());
+    this.schema=undefined;
+    try {
+      await this.client.call("vault.receipts",{limit:1});
+      if(minted.exitCode!==0) return {ok:false,exitCode:minted.exitCode,error:new CliError(minted)};
+      const credential=(await readFile(file,"utf8")).trim();
+      credentialParts(credential); // checks the paired form and registers credential, bearer and seed with the redactor
+      const printed=JSON.parse(minted.stdout) as {principal_ref:string;actor_class:string;ceiling:string;slip_id:string;revoked_slip_ids:string[]};
+      if(printed.actor_class!=="agent") throw new Error(`token agent minted actor class ${printed.actor_class}`);
+      return {ok:true,actor:{...this.actor(printed.principal_ref,"agent",{credential,pin:null}),
+        slipId:printed.slip_id,ceiling:printed.ceiling,revokedSlipIds:printed.revoked_slip_ids}};
+    } finally {
+      await rm(file,{force:true});
+    }
+  }
+  /** Only public receipt reads, never a private job drain or an internal commit counter: resolves `call:` refs through `vault.receipts.get` and any other ref only as a row of the `vault.receipts` page (gate-ledger receipts); `witness:` and `put:` refs are write markers, not receipt rows, and never resolve here, so read the written entity back through `vault.get` instead. */
   async awaitReceipt(ref:string,timeoutMs:number=LIMITS.requestMs):Promise<unknown> {
     if(ref.startsWith("call:")) return awaitPublic(()=>this.client.call("vault.receipts.get",{receipt_ref:ref}),value=>value!==null,
       {timeoutMs,label:`receipt ${ref}`});
@@ -220,6 +377,16 @@ export class EngineFixture {
       {timeoutMs,label:`receipt ${ref}`}).then(page=>page.receipts.find(row=>row.receipt_ref===ref));
   }
   async websocket(actor:PairedActor=this.pairedActor):Promise<WsClient> {return WsClient.connect(this.url,actor.credential)}
+  /** Negative leak scan over the raw stdout and stderr of every server process this fixture launched,
+   * restarts included. It scans in memory only and never persists or returns output. Only a closed
+   * fixture has read every line its processes wrote, so call it after `close()`. A case asserts
+   * `{found:false,truncated:false}`: `truncated` means a stream outgrew its window, so absence is unproved. */
+  serverOutputHas(values:readonly string[]):{found:boolean;truncated:boolean} {
+    if(!this.closed) throw new Error("serverOutputHas reads complete output only: close the fixture first");
+    const scans=this.launches.map(server=>server.outputHas(values));
+    if(scans.length===0) throw new Error("serverOutputHas found no server launch to scan");
+    return {found:scans.some(scan=>scan.found),truncated:scans.some(scan=>scan.truncated)};
+  }
   /** OpenAPI covers non-facade endpoints; generated facade types are the facade contract. */
   async requireHttpDoor(path:string,method:string):Promise<void> {
     if(!this.schema) this.schema=(await this.client.request<Schema>("GET","/api/openapi.json")).body;
@@ -235,11 +402,74 @@ export class EngineFixture {
   async kill():Promise<void> {await this.server?.stop("SIGKILL")}
   async close(options:{readonly retainVault?:boolean}={}):Promise<void> {
     if(this.closed) return;this.closed=true;this.disown();
-    const results=await Promise.allSettled(this.peers.map(peer=>peer.close(options)));
+    const results=await Promise.allSettled([...this.devicePeers.map(peer=>peer.close()),...this.peers.map(peer=>peer.close(options))]);
     await this.server?.stop();this.mcp?.close();
+    if(this.feedbackCollector) results.push(...await Promise.allSettled([this.feedbackCollector.close()]));
     if(!options.retainVault) await rm(this.root,{recursive:true,force:true});
     else if(process.env.E2E_TEMP_ROOT) await writeFile(resolve(process.env.E2E_TEMP_ROOT,"retain-vaults"),"explicit local retention\n",{mode:0o600});
     const failure=results.find(result=>result.status==="rejected");if(failure?.status==="rejected") throw failure.reason;
+  }
+}
+export interface DevicePeerOptions {
+  readonly id:string;
+  /** The machine's ownership on the pairing link; default "yours". */
+  readonly ownership?:"yours"|"work_school"|"rented";
+  /** The origin the pairing link names, so the origin the device dials for sync; default the home's url. */
+  readonly homeOrigin?:string;
+  /** Additional public TOML tables for the peer's config. */
+  readonly serverConfig?:string;
+  readonly serverLog?:string;
+}
+/** `device enrol`'s stdout: the record it wrote and what it shows for anchoring. */
+export interface DeviceEnrolment {
+  readonly home_machine:string;readonly home_node_id:string;readonly home_url:string;readonly checkpoint_pinned:boolean;
+  readonly re_paired:boolean;readonly record:string;readonly credential_file:string;readonly [field:string]:unknown;
+}
+export class DevicePeer {
+  readonly url:string;
+  readonly artifacts:Artifacts;
+  readonly config:string;
+  readonly vault:string;
+  /** The home owner's paired credential, pointed at the peer. */
+  readonly client:PublicHttpClient;
+  /** The home owner's remote CLI (api calls), pointed at the peer; never the peer's local commands. */
+  readonly cli:CliClient;
+  enrolment!:DeviceEnrolment;
+  private server:ManagedProcess|undefined;
+  private closed=false;
+  constructor(readonly home:EngineFixture,readonly root:string,private readonly env:Readonly<Record<string,string>>,readonly options:DevicePeerOptions,port:number) {
+    this.url=`http://127.0.0.1:${port}`;
+    this.config=resolve(root,"oneiron.toml");this.vault=resolve(root,"vault");
+    this.artifacts=new Artifacts(resolve(process.env.E2E_ARTIFACTS_DIR??resolve(root,"artifacts"),`${options.id}-${secretHex(4)}`));
+    const owner=home.pairedActor;
+    this.client=new PublicHttpClient(this.url,{credential:owner.credential,artifacts:this.artifacts,label:`device-peer:${owner.principalRef}`});
+    const {bearer,seed}=credentialParts(owner.credential);
+    this.cli=new CliClient(requireAsset(home.build,"cli"),root,{...env,ONEIRON_URL:this.url,ONEIRON_TOKEN:bearer,ONEIRON_SECRET:bearer,ONEIRON_BINDING_KEY:seed},this.artifacts);
+  }
+  /** Serves the enrolled peer, then waits until it admits the home owner's credential. */
+  async launch():Promise<void> {
+    const server=await ManagedProcess.start([requireAsset(this.home.build,"server"),"serve","--config",this.config],
+      {cwd:this.root,env:this.options.serverLog?{...this.env,RUST_LOG:this.options.serverLog}:this.env,label:`device-peer-server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
+    this.server=server;
+    await awaitHealth(this.url,server,this.artifacts,"ok");
+    const owner=this.home.pairedActor.principalRef;
+    // 401 until the owner's mint reaches the peer's authority view; any other answer is a failure.
+    await awaitPublic(async()=>{
+      const reply=await this.client.raw<{actor_ref?:string;actor_class?:string}>("POST","/v1/core/facade/self.actor",{},{"x-oneiron-invocation":secretHex(16)});
+      if(reply.status!==200&&reply.status!==401&&reply.status!==503) throw new Error(`device peer self.actor answered ${reply.status}`);
+      return reply;
+    },reply=>reply.status===200&&reply.body.actor_ref===owner&&reply.body.actor_class==="human",
+      {timeoutMs:LIMITS.readyMs,label:"device peer admits the home owner"});
+  }
+  async kill():Promise<void> {await this.server?.stop("SIGKILL")}
+  async restart():Promise<void> {
+    if(this.closed) throw new Error("Cannot restart a closed device peer");
+    await this.server?.stop();await this.launch();
+  }
+  async close():Promise<void> {
+    if(this.closed) return;this.closed=true;
+    await this.server?.stop();
+    await rm(this.root,{recursive:true,force:true});
   }
 }
 export type PublicReceiptInput=FacadeInput<"vault.receipts">;

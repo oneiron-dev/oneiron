@@ -135,10 +135,7 @@ async fn lens_step(
             Err(DurableStepError::Engine(error)) => {
                 return spent_or_deferred(error, ctx, charges).map(LensStep::Exit);
             }
-            Err(other) => LensStep::Exit(charges.park_for(
-                &other.to_string(),
-                crate::dreamer_runner::dreamer_park_cause_of_step(&other),
-            )),
+            Err(other) => LensStep::Exit(charges.end_on_step_error(&other.to_string(), &other)),
         },
     )
 }
@@ -360,6 +357,8 @@ pub async fn run_weave_lens(
         subject: reader.id(),
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
+        spend_scope: None,
+        wake_pass_bound: true,
     };
     let mut charges = StepChargeTally::default();
     let mut reason = String::new();

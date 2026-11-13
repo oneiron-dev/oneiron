@@ -1,0 +1,17 @@
+{
+  "name": "vault.rooms.pins.unpin",
+  "description": "Removes one record from a room's shared pins, whoever pinned it, for a current member or that member's pen agent; the reply is the same whether or not it was pinned.",
+  "input": "crate::workspace_roster::RoomPinRequest",
+  "output": "crate::workspace_roster::RoomUnpinReply",
+  "call": "memory.rooms_pins_unpin(&input)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

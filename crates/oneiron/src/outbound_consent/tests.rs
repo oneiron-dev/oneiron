@@ -1,6 +1,5 @@
 use super::*;
 use crate::config::VaultConfig;
-use crate::outbound_grant::ScopedMcpGrantMintIntent;
 use crate::outbound_intent_ledger::{
     IntentEscalationReason, RecordedOutboundOutcome, intent_ledger_records,
 };
@@ -42,32 +41,72 @@ fn prepared_fixture(
         && key.retained_manifest.is_some()
         && key.status == crate::connector_key::ConnectorKeyStatus::Active
     {
-        return vault
-            .prepare_connector_tool_call(
-                &id,
-                call,
-                tool,
-                &args,
-                tool_call::MutationIntent::default(),
-            )
-            .expect("prepare exact approved connector schema");
+        return ready_tool_call(
+            vault
+                .prepare_connector_tool_call(
+                    &id,
+                    call,
+                    tool,
+                    &args,
+                    tool_call::MutationIntent::default(),
+                )
+                .expect("prepare exact approved connector schema"),
+        );
     }
     tool_call::prepare_tool_call(call, tool, &args, tool_call::MutationIntent::default())
         .expect("prepare fixture")
 }
 
-fn scoped_intent() -> ScopedMcpGrantMintIntent {
-    ScopedMcpGrantMintIntent {
-        principal_ref: "principal:owner".to_owned(),
-        origin_component_id: "consent:scope".to_owned(),
-        origin_action_id: "grant:scoped_tool".to_owned(),
-        origin_receipt_ref: Some("gate:scoped-tool".to_owned()),
+const SCOPED_PRINCIPAL: &str = "principal:owner";
+
+fn scoped_mcp_scope() -> crate::outbound_grant::StandingOutboundGrantScope {
+    crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
         server: "files".to_owned(),
         tool: "read_file".to_owned(),
         data_class_ceiling: DataClass::Personal,
         tool_data_classes: vec![crate::outbound_consent::tool_call::ToolGrantDataClass::Arguments],
         endpoint_allowlist: vec!["https://files.internal.example".to_owned()],
     }
+}
+
+fn mint_scoped_grant(
+    vault: &Vault,
+    grant_id: &EntityId,
+    principal_ref: &str,
+    scope: crate::outbound_grant::StandingOutboundGrantScope,
+) -> crate::error::Result<crate::outbound_grant::StandingOutboundGrant> {
+    let owner = crate::test_util::embedded_owner_proof(vault);
+    mint_scoped_grant_as(vault, &owner, grant_id, principal_ref, scope)
+}
+
+/// Today's owner mint for one scoped grant under the proof under test, so an
+/// authentication test mints with its own proof instead of the embedded one.
+fn mint_scoped_grant_as(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    grant_id: &EntityId,
+    principal_ref: &str,
+    scope: crate::outbound_grant::StandingOutboundGrantScope,
+) -> crate::error::Result<crate::outbound_grant::StandingOutboundGrant> {
+    vault.with_write_txn(|wtxn| {
+        vault.mint_standing_outbound_grant_in_txn(wtxn, owner, *grant_id, principal_ref, scope)
+    })
+}
+
+/// The prepared call a fixture preparation minted. The vault's own driver
+/// takes a `ConsentRequired` candidate the same way; a fixture tool is never
+/// `Denied` (its key carries the default slate).
+fn ready_tool_call(
+    preparation: tool_call::ConnectorToolCallPreparation,
+) -> tool_call::PreparedToolCall {
+    match preparation {
+        tool_call::ConnectorToolCallPreparation::Ready(prepared)
+        | tool_call::ConnectorToolCallPreparation::ConsentRequired {
+            candidate: prepared,
+        } => Some(prepared),
+        tool_call::ConnectorToolCallPreparation::Denied { .. } => None,
+    }
+    .expect("fixture tool is callable")
 }
 
 fn scoped_call() -> ScopedMcpCallContext {
@@ -375,13 +414,15 @@ fn invalid_scoped_grant_strings_never_auto_fire() {
 fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x91);
-    let mut intent = scoped_intent();
-    intent
-        .endpoint_allowlist
-        .push("https://files-backup.internal.example".to_owned());
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &intent, 10)
-        .expect("mint scoped grant");
+    let mut scope = scoped_mcp_scope();
+    if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp {
+        endpoint_allowlist, ..
+    } = &mut scope
+    {
+        endpoint_allowlist.push("https://files-backup.internal.example".to_owned());
+    }
+    let grant =
+        mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scope).expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
     let descriptor = OutboundToolDescriptor {
@@ -555,11 +596,14 @@ fn binding_authenticity_and_endpoint_swap_fail_closed_at_chokepoint() {
 fn authorize_request_reloads_persisted_grant_liveness() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x93);
-    let stale_active_grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
-        .expect("mint scoped grant");
+    let stale_active_grant =
+        mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
+            .expect("mint scoped grant");
     vault
-        .revoke_standing_outbound_grant(&grant_id, 20)
+        .revoke_consent_grant(
+            &crate::test_util::embedded_owner_proof(&vault),
+            &stale_active_grant.grant_ref(),
+        )
         .expect("revoke persisted grant");
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
     let authorization = authority
@@ -593,11 +637,9 @@ fn authorize_request_reloads_persisted_grant_liveness() {
 fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x94);
-    let intent = scoped_intent();
-    let principal_a = intent.principal_ref.clone();
+    let principal_a = SCOPED_PRINCIPAL.to_owned();
     let principal_b = format!("{principal_a}:different");
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &intent, 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, &principal_a, scoped_mcp_scope())
         .expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -689,8 +731,7 @@ fn scoped_mcp_authorization_is_bound_to_the_acting_principal() {
 fn suspended_scoped_mcp_connector_key_blocks_the_public_send_path() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x95);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
     vault
@@ -737,15 +778,20 @@ fn suspended_scoped_mcp_connector_key_blocks_the_public_send_path() {
 fn drifted_scoped_mcp_connector_charter_blocks_the_direct_send_path() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x97);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let pending = vault
         .propose_connector_charter(&key_id, "never write_file", 11)
         .expect("propose charter");
     vault
-        .approve_connector_charter(&key_id, pending.compiled_hash, "owner", 12)
+        .approve_connector_charter(
+            &key_id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            12,
+        )
         .expect("approve charter");
     let mut drifted = vault
         .get_connector_key(&key_id)
@@ -814,8 +860,7 @@ fn drifted_scoped_mcp_connector_charter_blocks_the_direct_send_path() {
 fn pending_resume_and_done_replay_charge_and_complete_once() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x9F);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -897,8 +942,7 @@ fn pending_resume_and_done_replay_charge_and_complete_once() {
 fn pending_and_budget_marker_are_committed_before_transport() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x8F);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -947,8 +991,7 @@ fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
     let grant_id = entity(0x8D);
     let expected_marker = {
         let vault = Vault::open(&vault_path, VaultConfig::device()).expect("open initial vault");
-        let grant = vault
-            .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
             .expect("mint scoped grant");
         let key_id =
             register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
@@ -989,7 +1032,10 @@ fn same_version_reopen_recovers_own_budget_marker_and_outcome_row() {
             rows[0].budget_accounting.budget_class,
             crate::outbound_intent_ledger::BudgetClass::Send
         );
-        assert_eq!(rows[0].budget_accounting.matched_rows, vec![0]);
+        assert_eq!(
+            rows[0].budget_accounting.matched_rows,
+            vec![crate::connector_key::EffectorBudgetRowId::key(0)]
+        );
         assert_eq!(rows[0].budget_accounting.sends_debit, 1);
         rows[0].budget_accounting.clone()
     };
@@ -1056,8 +1102,7 @@ fn paid_pending_at_the_budget_limit_completes_without_a_second_debit() {
     // Seed avoids the reserved system-agent-preset id band [0xA1;16]..=[0xA5;16]
     // (entity materialization rejects those as authority-bearing collisions).
     let grant_id = entity(0x92);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -1132,8 +1177,7 @@ fn paid_pending_at_the_budget_limit_completes_without_a_second_debit() {
 fn recovery_rechecks_suspended_connector_key_and_keeps_intent_pending() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x9B);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -1194,8 +1238,7 @@ fn recovery_rechecks_suspended_connector_key_and_keeps_intent_pending() {
 fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x8E);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -1226,7 +1269,13 @@ fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
         .propose_connector_charter(&key_id, "never read_file", 12)
         .expect("propose never-list");
     vault
-        .approve_connector_charter(&key_id, proposal.compiled_hash, "owner", 13)
+        .approve_connector_charter(
+            &key_id,
+            proposal.text_hash,
+            proposal.compiled_hash,
+            "owner",
+            13,
+        )
         .expect("approve never-list");
 
     let mut transport = RecordingResultSender::default();
@@ -1295,8 +1344,7 @@ fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
 fn revoked_grant_abandons_paid_pending_without_transport() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x9D);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -1324,7 +1372,10 @@ fn revoked_grant_abandons_paid_pending_without_transport() {
     )
     .expect("initial paid Pending");
     vault
-        .revoke_standing_outbound_grant(&grant_id, 12)
+        .revoke_consent_grant(
+            &crate::test_util::embedded_owner_proof(&vault),
+            &grant.grant_ref(),
+        )
         .expect("revoke grant");
 
     let mut transport = RecordingResultSender::default();
@@ -1352,8 +1403,7 @@ fn revoked_grant_abandons_paid_pending_without_transport() {
 fn revoked_connector_abandons_paid_pending_without_transport() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x9C);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -1412,8 +1462,7 @@ fn revoked_connector_abandons_paid_pending_without_transport() {
 fn non_idempotent_pending_abandons_without_resume_attempt() {
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x9E);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
         .expect("mint scoped grant");
     register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
     let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
@@ -1592,7 +1641,13 @@ fn stamp_charter(vault: &Vault, key_id: &EntityId, text: &str) {
         .propose_connector_charter(key_id, text, 12)
         .expect("propose charter");
     vault
-        .approve_connector_charter(key_id, pending.compiled_hash, "owner", 13)
+        .approve_connector_charter(
+            key_id,
+            pending.text_hash,
+            pending.compiled_hash,
+            "owner",
+            13,
+        )
         .expect("approve charter");
 }
 
@@ -1607,8 +1662,7 @@ fn capability_provenance_survives_admission_ledger_and_recovery() {
     let mut grants = Vec::new();
     for (grant_id, key_id) in [(denied_grant, denied_key), (neighbour_grant, neighbour_key)] {
         grants.push(
-            vault
-                .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+            mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope())
                 .expect("mint scoped grant"),
         );
         register_scoped_key(&vault, &key_id, &grant_id, "files");
@@ -1707,10 +1761,12 @@ fn canonical_hyphenated_server_round_trips_through_key_ledger_and_recovery_trans
     let (_tmp, vault) = temp_vault();
     let grant_id = entity(0x75);
     let key_id = entity(0x76);
-    let mut intent = scoped_intent();
-    intent.server = "files-prod".to_owned();
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &intent, 10)
+    let mut scope = scoped_mcp_scope();
+    if let crate::outbound_grant::StandingOutboundGrantScope::ScopedMcp { server, .. } = &mut scope
+    {
+        *server = "files-prod".to_owned();
+    }
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scope)
         .expect("mint canonical hyphenated grant");
     assert_eq!(
         grant.scope.scoped_mcp_grant().expect("scoped grant").server,
@@ -1793,9 +1849,7 @@ mod header_consent;
 fn fresh_unqualified_scoped_key_cannot_send_even_with_live_grant() {
     let (_dir, vault) = temp_vault();
     let grant_id = entity(0xD6);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
-        .unwrap();
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope()).unwrap();
     let key_id = entity(0xD8);
     vault
         .register_connector_key(
@@ -1855,9 +1909,7 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
     }
     let (_dir, vault) = temp_vault();
     let grant_id = entity(0xD9);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
-        .unwrap();
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope()).unwrap();
     let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
     let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
     let delayed = prepared_fixture(
@@ -2077,9 +2129,7 @@ fn failed_revision_revert_stays_closed_for_preparation_admission_and_recovery() 
     }
     let (_dir, vault) = temp_vault();
     let grant_id = entity(0xBC);
-    let grant = vault
-        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
-        .unwrap();
+    let grant = mint_scoped_grant(&vault, &grant_id, SCOPED_PRINCIPAL, scoped_mcp_scope()).unwrap();
     let key_id = register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 100);
     let authority = OutboundBindingAuthority::for_vault(&vault).unwrap();
     let prepared = prepared_fixture(

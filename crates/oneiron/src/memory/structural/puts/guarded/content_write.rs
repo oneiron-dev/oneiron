@@ -24,7 +24,7 @@ impl Memory<'_> {
         content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
         guard: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
         write: StructuralWrite,
-    ) -> MemoryResult<bool> {
+    ) -> MemoryResult<(bool, crate::agent_def::AgentDefinitionWriteReceipts)> {
         let StructuralWrite {
             id,
             type_byte,
@@ -45,7 +45,10 @@ impl Memory<'_> {
             .vault
             .local_hard_delete_marker_exists_in_txn(content.read(), &id)?
         {
-            return Ok(true);
+            return Ok((
+                true,
+                crate::agent_def::AgentDefinitionWriteReceipts::default(),
+            ));
         }
         ensure_structural_create_in_txn(self.vault, content.read(), &id)?;
         guard(content.read())?;
@@ -58,7 +61,12 @@ impl Memory<'_> {
                 .batch_in()
                 .asset_text_birth(&id, occurred, learned_at, &data, &sources)
         };
-        batch = batch.made_by(&id, birth);
+        // An agent's new AGENT_DEF is held to its own slice (ARCH-0053:20).
+        batch = batch.made_by(&id, birth).authored_through(
+            &self.write_actor(),
+            "vault.structural.put",
+            content.lane_actor_key(),
+        );
         for (kind, target, weight) in &resolved_edges {
             batch = batch.edge(&id, *kind, target, *weight);
         }
@@ -69,7 +77,9 @@ impl Memory<'_> {
                 .collect();
             batch = batch.text(&id, &fields);
         }
+        // What the author writer makes of an agent's AGENT_DEF, for the receipt.
+        let written = batch.agent_definition_write_receipts();
         content.apply_batch(batch)?;
-        Ok(false)
+        Ok((false, written))
     }
 }

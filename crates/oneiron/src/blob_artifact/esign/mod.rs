@@ -18,20 +18,30 @@ pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
 pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;
 pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+#[path = "../../test_doors/esign_seal_verify_reasons.rs"]
+pub mod esign_seal_verify_reasons;
 #[cfg(test)]
 mod tests;
+pub(crate) use lane_scope::bounded_by_whole_vault;
 pub use ledger::PROJECT_MEMBERS_ONLY;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use ledger::mark_sent_for_test;
 pub(crate) use ledger::{esign_document_page_in_txn, reject_event_delete, validate_event_claim};
 pub use model::{
-    AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument,
-    EsignEvent, EsignEventRow, EsignField, EsignItem, EsignRecipient, EsignState, FieldGeometry,
-    FieldMeta, FieldValue, RecipientRole, RecipientState, SignatureRow, SigningStatus,
+    AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor,
+    EsignCommitmentTerm, EsignDocument, EsignEvent, EsignEventRow, EsignField, EsignItem,
+    EsignRecipient, EsignState, FieldGeometry, FieldMeta, FieldValue, RecipientRole,
+    RecipientState, SignatureRow, SigningStatus,
 };
 
 mod capability;
 mod ceremony;
+mod commitments;
+pub use commitments::{ESIGN_COMMITMENT_PROVENANCE, esign_document_commitment_id};
+mod claim_dependencies;
+pub(crate) use claim_dependencies::{EsignClaimDependencies, esign_claim_dependencies_in};
 mod delivery_capability;
 pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint, EsignDeliveryWait};
 mod delivery_settlement;

@@ -371,6 +371,9 @@ pub(super) fn collect_receipt_records(
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(channel_identity_lifecycle_receipts(vault, query)?);
+        // HOUSE-BIND = A: each bind and unbind of a house mind's org link,
+        // in its own read txn.
+        records.extend(crate::workspace_roster::house_link_receipts(vault, query)?);
     }
     if query.includes_kind(ReceiptKind::Hook) {
         records.extend(crate::runtime_hooks::hook_receipts(vault, query)?);
@@ -380,6 +383,22 @@ pub(super) fn collect_receipt_records(
     // runs before the shared `rtxn` below.
     if query.includes_kind(ReceiptKind::TaskLifecycle) {
         records.extend(crate::task_verb::task_lifecycle_receipts(vault, query)?);
+    }
+    // Engine call S65-B-R3: each override of an engine hold, kept in the
+    // override's own transaction. Its own kind and store; its own read txn,
+    // so it runs before the shared `rtxn` below.
+    if query.includes_kind(ReceiptKind::RunHoldOverride) {
+        records.extend(crate::attempt_queue::hold_override_receipts(vault, query)?);
+    }
+    // ROLES-CHECKIN P2.2: each transition of a pending check-in, kept in the
+    // transition's own transaction. Its own kind and store; its own read txn.
+    if query.includes_kind(ReceiptKind::CheckIn) {
+        records.extend(crate::check_in::check_in_receipts(vault, query)?);
+    }
+    // INQUIRE-1: each send of an inquiry on the asking vault, kept in the
+    // send's own transaction. Its own kind and store; its own read txn.
+    if query.includes_kind(ReceiptKind::Inquiry) {
+        records.extend(crate::inquiry::inquiry_receipts(vault, query)?);
     }
 
     // The settle projection opens its own read txn, so it runs before the shared
@@ -542,9 +561,10 @@ fn commitment_lifecycle_receipts(
                 crate::commitment::CommitmentStatus::Lapsed => {
                     ("let_go", "commitment.instance.gap_decayed")
                 }
-                // Open is not terminal, and a supersession is a replacement
-                // rather than an outcome of the promise.
-                crate::commitment::CommitmentStatus::Open
+                // Inert and Open are not terminal, and a supersession is a
+                // replacement rather than an outcome of the promise.
+                crate::commitment::CommitmentStatus::Inert
+                | crate::commitment::CommitmentStatus::Open
                 | crate::commitment::CommitmentStatus::Superseded => return Ok(()),
             };
             let mut fields = BTreeMap::new();

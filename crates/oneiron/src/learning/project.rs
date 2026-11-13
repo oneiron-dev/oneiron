@@ -58,7 +58,14 @@ pub(crate) struct StoredEstimateClaim {
     pub(crate) cell: LearningCell,
     pub(crate) estimate: Estimate,
     pub(crate) untested: bool,
+    /// The default reads a claim value written before the field existed
+    /// (#4322): the first encoder wrote five fields, so a head projected
+    /// then reads with no donor tally.
+    #[serde(default)]
     pub(crate) donor_tally: Option<(f64, f64)>,
+    /// The default reads a claim value written before the field existed
+    /// (#4923) with no frozen fold.
+    #[serde(default)]
     pub(crate) frozen: Option<FrozenFold>,
 }
 
@@ -86,15 +93,29 @@ impl StoredEstimateClaim {
         }
     }
 
+    /// The claim value with named fields: every struct is a map keyed by
+    /// field name (FIX LEARNING-CELL-POSITIONAL-DECODE). A positional array
+    /// drops each skipped `None` without a trace, so a cell with no project
+    /// never read back.
     pub(crate) fn to_value(&self) -> Result<rmpv::Value> {
-        rmpv::ext::to_value(self)
+        let bytes = rmp_serde::to_vec_named(self)
+            .map_err(|_| Error::InvariantViolation("learning estimate claim encode"))?;
+        rmpv::decode::read_value(&mut bytes.as_slice())
             .map_err(|_| Error::InvariantViolation("learning estimate claim encode"))
     }
 
+    /// Reads both spellings. A map is the named value [`Self::to_value`]
+    /// writes, read by `rmp_serde`, whose enum spelling it carries. Anything
+    /// else is the positional value written before, read by `rmpv` as before.
     pub(crate) fn from_value(value: &rmpv::Value) -> Result<Self> {
-        rmpv::ext::from_value(value.clone()).map_err(|_| {
-            Error::InvalidClaimBody("a learning claim value is an estimate with its cell")
-        })
+        let invalid =
+            || Error::InvalidClaimBody("a learning claim value is an estimate with its cell");
+        if !matches!(value, rmpv::Value::Map(_)) {
+            return rmpv::ext::from_value(value.clone()).map_err(|_| invalid());
+        }
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, value).map_err(|_| invalid())?;
+        rmp_serde::from_slice(&bytes).map_err(|_| invalid())
     }
 }
 
@@ -404,8 +425,13 @@ pub(crate) fn project_cell_in_txn(
             .map(|r| rmpv::Value::from(r.as_str()))
             .collect(),
     );
+    // Decoded claims compare, not values: a head written positionally before
+    // FIX LEARNING-CELL-POSITIONAL-DECODE says the same as its named twin.
     let unchanged = match heads.as_slice() {
-        [(_, body, _)] => body.value == value && body.evidence.as_ref() == Some(&evidence),
+        [(_, body, _)] => {
+            body.evidence.as_ref() == Some(&evidence)
+                && StoredEstimateClaim::from_value(&body.value).is_ok_and(|head| head == stored)
+        }
         _ => false,
     };
     if !unchanged {
@@ -420,6 +446,10 @@ pub(crate) fn project_cell_in_txn(
         )?;
         body.evidence = Some(evidence);
         body.source = Some(ClaimSource::Observed);
+        // Only a PERSON subject has a substrate FACET; any other subject takes
+        // the vault default facet (a birth gate refusal otherwise, #4389).
+        body.scope_facet =
+            vault.claim_put_facet_keeping_in_txn(wtxn, &claim_id, body.scope_facet)?;
         vault.put_reserved_claim_in_txn(
             wtxn,
             &claim_id,

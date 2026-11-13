@@ -60,15 +60,21 @@ impl DreamerWakeDriver<'_> {
             DreamerAttemptExecution::Failed {
                 reason,
                 completed_units,
+                budget_refusal,
+                step_bindings,
             } => {
-                // Terminal for this try alone: its spend settles, the queue
-                // records why, and the pass goes on (FIX 11090).
-                self.store.settle_budget(SettleDreamerBudget {
-                    budget_id: line.clone(),
-                    child_attempt: attempt_id,
-                    actual_units: completed_units,
-                    now: input.now,
-                })?;
+                // Terminal for this try alone: its spend settles with the
+                // receipts of the steps it paid for, the queue records why,
+                // and the pass goes on (FIX 11090, FIX 6100).
+                self.store.settle_budget_with_step_receipts(
+                    SettleDreamerBudget {
+                        budget_id: line.clone(),
+                        child_attempt: attempt_id,
+                        actual_units: completed_units,
+                        now: input.now,
+                    },
+                    &step_bindings,
+                )?;
                 self.store.fail(FailDreamerAttempt {
                     id: attempt_id,
                     lease_owner: admitted
@@ -79,6 +85,7 @@ impl DreamerWakeDriver<'_> {
                         .unwrap_or_default(),
                     attempt_count: admitted.status.attempt.attempt_count,
                     reason,
+                    budget_refusal,
                     now: input.now,
                 })?;
                 let stage = stage.unwrap_or("failed");
@@ -181,6 +188,31 @@ impl DreamerWakeDriver<'_> {
                     DreamerMilestoneKind::CheckpointReached,
                     input.now,
                 )?;
+                report.parked += 1;
+            }
+            DreamerAttemptExecution::ParkOnSeat {
+                reason,
+                seat,
+                reset_at_s,
+            } => {
+                let settled =
+                    self.settle_metered_charge(line, attempt_id, spend_meter, input.now)?;
+                self.park_on_seat(
+                    admitted,
+                    reason,
+                    crate::EntityId::from_bytes(seat)?,
+                    reset_at_s,
+                    &input.lease_owner,
+                    input.now,
+                )?;
+                self.log_attempt_outcome(
+                    admitted,
+                    stage.unwrap_or("park_on_seat"),
+                    None,
+                    Some(DreamerParkCause::Signal),
+                    settled,
+                    "committed",
+                );
                 report.parked += 1;
             }
             DreamerAttemptExecution::Park { reason, cause } => {

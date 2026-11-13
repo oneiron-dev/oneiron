@@ -374,6 +374,8 @@ impl ConsolidationExecutor<'_> {
                 subject: first.scope_project,
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
+                spend_scope: None,
+                wake_pass_bound: true,
             };
             let (response, binding) = match call_as_step_checked(
                 &step,
@@ -431,10 +433,7 @@ impl ConsolidationExecutor<'_> {
                     return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
                 }
                 Err(error) => {
-                    return Ok(charges.park_for(
-                        &error.to_string(),
-                        crate::dreamer_runner::dreamer_park_cause_of_step(&error),
-                    ));
+                    return Ok(charges.end_on_step_error(&error.to_string(), &error));
                 }
             };
             if ctx.deadline.expired() {
@@ -512,11 +511,7 @@ impl ConsolidationExecutor<'_> {
 
 /// The Dreamer's own scoped read, as a nightly attempt reads its proposals.
 pub(super) fn merge_read(vault: &Vault, actor: WriteActor) -> Result<ClaimRead<'_>> {
-    let key = ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(invalid)?;
+    let key = ScopedReadActorKey::for_engine_actor(actor).ok_or_else(invalid)?;
     vault.store.authorization_now()?;
     Ok(vault.scoped_read(key))
 }
