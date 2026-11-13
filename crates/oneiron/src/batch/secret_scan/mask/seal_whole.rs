@@ -30,10 +30,13 @@
 //! as before. A tracked pass (a replay capsule's request, whose exposure
 //! spans move by the spans the pass replaced) seals nothing.
 //!
-//! Not sealed, so their hit still refuses the write: a file (its bytes stay
-//! the owner's, marked), a phonetic code, a replayed batch, a body its
-//! writer owns (engine-authored or replicated), and a claim whose hit sits
-//! outside its free values.
+//! A file keeps its bytes as written (`seal_file`): the smallest value in it
+//! that reads as the hit alone is marked as one key, or the file is sealed
+//! whole, and no masked reader is served it.
+//!
+//! Not sealed, so their hit still refuses the write: a phonetic code, a
+//! replayed batch, a body or file its writer owns (engine-authored or
+//! replicated), and a claim whose hit sits outside its free values.
 
 use heed::RwTxn;
 use rmpv::Value;
@@ -54,6 +57,8 @@ use crate::secret_record::CustodyWrite;
 use crate::store::Store;
 use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
+
+mod seal_file;
 
 /// The most values one op, or one part of a row, seals; a copy still read
 /// as a hit past them refuses the write. Each seal clears a value that
@@ -88,19 +93,21 @@ pub(super) struct Seal {
 
 /// Reads each op of `planned`, the plan's copy of `read`, again and seals
 /// each one whose copy still reads as a hit: the copy takes a stand-in for
-/// each sealed value, and the seals return in op order. `only_changed`: the
-/// door's first scan read `read` clean and the owner kept no value there, so
-/// only an op the plan changed is read again (FIX 12212). `sealing` is false
-/// for a replayed batch, which keeps the plain door. An op no seal clears
-/// refuses the write with the door's reason, before anything is minted.
+/// each sealed value, and the seals return in op order. A file is marked
+/// in `plan` instead (`seal_file`). `kept` is the plan's kept values, taken
+/// out of it. `only_changed`: the door's first scan read `read` clean and
+/// the owner kept no value there, so only an op the plan changed is read
+/// again (FIX 12212). A plan that mints nothing (a replayed batch) keeps the
+/// plain door. An op no seal clears refuses the write with the door's
+/// reason, before anything is minted.
 pub(super) fn plan_seals(
     store: &Store,
     txn: &RwTxn<'_>,
     kept: &KeptValues,
+    plan: &mut Masker,
     planned: &mut [BatchOp],
     read: &[BatchOp],
     only_changed: bool,
-    sealing: bool,
 ) -> Result<Vec<Seal>> {
     let mut seals = Vec::new();
     for (index, (op, before)) in planned.iter_mut().zip(read).enumerate() {
@@ -110,11 +117,18 @@ pub(super) fn plan_seals(
         let Err(refusal) = scan_screened(store, txn, kept, std::slice::from_ref(&*op)) else {
             continue;
         };
-        if !sealing || !sealable(op) {
+        if !plan.mints {
             return Err(refusal);
         }
         let clean =
             |op: &BatchOp| scan_screened(store, txn, kept, std::slice::from_ref(op)).is_ok();
+        if let Some(written) = written_file(before) {
+            plan.seal_file(kept, op, written, &clean)?;
+            continue;
+        }
+        if !sealable(op) {
+            return Err(refusal);
+        }
         let taken = seal_until_clean(op, refusal, |op| seal_in(op, kept), clean)?;
         seals.extend(taken.into_iter().map(|(member, at, reason)| Seal {
             index,
@@ -200,6 +214,22 @@ fn seal_until_clean<T: ?Sized, S>(
         }
     }
     Err(refusal)
+}
+
+/// The bytes of `op` when it puts a file its writer wrote, which the plan
+/// seals by its mark (`seal_file`); `None` for any other op, and for a file
+/// the engine authored or a peer replicated.
+fn written_file(op: &BatchOp) -> Option<&[u8]> {
+    match op {
+        BatchOp::Put {
+            entity_type,
+            data,
+            allow_maintenance: false,
+            hub_sync_imported: false,
+            ..
+        } if *entity_type == ENTITY_TYPE_ASSET => Some(data),
+        _ => None,
+    }
 }
 
 /// Whether an op's own values can take a seal: the ops the mask writes
