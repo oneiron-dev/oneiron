@@ -1,4 +1,5 @@
-//! The entity linker's phonetic rung (census item 12; ARCH-0024 signal 2).
+//! The entity linker's phonetic and role rungs (census item 12; ARCH-0024
+//! signals 2 and 3).
 //!
 //! A person's name of two or more parts that the identity key misses is
 //! looked up next over the phonetic postings every PERSON birth writes: a
@@ -11,6 +12,18 @@
 //! and an agent about to act on the name asks first. A first name alone
 //! mints with no ask, as on main, and so does a name whose parts sound unlike
 //! every person's.
+//!
+//! A person mention that names someone by their relationship to the
+//! speaker, `my manager`, is looked up through the speaker's role edges: an
+//! Active `relationship.<word>` claim on the speaker valued with the related
+//! person's id. One person an Approved edge names is the mention's link, as
+//! a known role edge hard-links; two or more stay candidates for the nightly
+//! IDENTITY_SETTLE ask and are never merged; one only an Auto edge names is
+//! an unsure match, asked about as a lone sound match is. The `relationship`
+//! root is multi-valued, so a second edge of one word stands beside the
+//! first. A stored id follows a merge to its one surviving head; a deleted
+//! person, no edge for the word, or an edge of someone other than the
+//! speaker, mints as on main.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test entity_linker_cascade`.
@@ -26,20 +39,29 @@ use oneiron::dreamer_runner::maintenance::identity::{
     IdentityActNow, IdentityActNowRequest, IdentityAskReason, IdentityEffect,
 };
 use oneiron::edge::EdgeActorClass;
+use oneiron::identity_topology::{
+    IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+    SurvivorshipPlan,
+};
 use oneiron::memory::extraction::{EncoderOutput, NerSpan};
 use oneiron::memory::{
-    MEMORY_CODE_IDENTITY_UNSETTLED, MessagePersonRequest, WitnessAssertions, WitnessAuthor,
-    WitnessMessage, WitnessTurn,
+    ClaimInput, MEMORY_CODE_IDENTITY_UNSETTLED, MessagePersonRequest, WitnessAssertions,
+    WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::outbound::MentionProvenance;
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::identity_recheck::run_identity_recheck;
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
+    Vault, VaultConfig,
+};
+use serde_json::json;
 
 const CHECKPOINT: &str = "0123456789abcdef";
+const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
 const ROOM: &str = "52525252525252525252525252525252";
 const TURN: &str = "76767676767676767676767676767676";
 
@@ -383,6 +405,456 @@ fn assert_mints(vault: &Vault, link: MentionLink) -> EntityId {
             .is_some()
     );
     entity
+}
+
+/// A vault with the shipped policy whose tagger saves its tags, and its
+/// embedded owner.
+fn open_with_owner(dir: &tempfile::TempDir) -> (Arc<Vault>, EntityId) {
+    let vault =
+        Arc::new(open_member_vault(dir.path(), tagging_config(), &[]).expect("fixture vault"));
+    let (owner, _proof) = embedded_owner(&vault).expect("the owner");
+    (vault, owner)
+}
+
+/// Writes the role edge `relationship.<word>` on `possessor`, valued with
+/// `person`'s id, at `approval`, and checks that it reads back Active at
+/// that approval. The predicate is declared normal first, as an owner's
+/// policy rule would: a predicate no rule names takes the criticality
+/// floor, so its write pends instead of landing.
+fn role_edge(
+    vault: &Vault,
+    possessor: EntityId,
+    word: &str,
+    person: EntityId,
+    approval: ClaimApprovalStatus,
+) -> EntityId {
+    role_edge_valid_from(vault, possessor, word, person, approval, None)
+}
+
+/// A role edge as [`role_edge`] writes it, whose valid time starts at
+/// `valid_from` (Unix seconds).
+fn role_edge_valid_from(
+    vault: &Vault,
+    possessor: EntityId,
+    word: &str,
+    person: EntityId,
+    approval: ClaimApprovalStatus,
+    valid_from: Option<u64>,
+) -> EntityId {
+    let predicate = format!("relationship.{word}");
+    declare_predicate_normal(vault, &predicate);
+    let claim = EntityId::now();
+    let mut body = ClaimBody::new(
+        predicate.as_str(),
+        ClaimSubject::Entity(possessor),
+        rmpv::Value::from(person.to_hex()),
+        1.0,
+        approval,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("role edge body");
+    body.scope_facet = oneiron::claim::substrate_facet_id(possessor).expect("substrate facet");
+    body.valid_from = valid_from;
+    vault
+        .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
+        .expect("role edge put");
+    let stored = vault
+        .get_claim(&claim)
+        .expect("claim read")
+        .expect("the role edge is stored");
+    assert_eq!(stored.predicate, predicate);
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(stored.approval, approval, "the role edge lands as written");
+    claim
+}
+
+/// Declares the exact `predicate` normal in the stored shipped policy.
+fn declare_predicate_normal(vault: &Vault, predicate: &str) {
+    let axes = json!({ "criticality": "normal", "sensitivity": "normal" });
+    for id in vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("policy manifests")
+    {
+        let Some(bytes) = vault.get(&id).expect("policy manifest read") else {
+            continue;
+        };
+        let mut manifest: serde_json::Value =
+            rmp_serde::from_slice(&bytes).expect("policy manifest body");
+        if manifest["pack_id"] != SHIPPED_POLICY_PACK {
+            continue;
+        }
+        let rules = manifest
+            .as_object_mut()
+            .expect("policy manifest map")
+            .entry("rules")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .expect("policy rules list");
+        let index = match rules.iter().position(|rule| rule["prefix"] == predicate) {
+            Some(index) => index,
+            None => {
+                rules.push(json!({ "prefix": predicate }));
+                rules.len() - 1
+            }
+        };
+        rules[index]["axes"] = axes;
+        rules[index]["exact"] = json!(true);
+        oneiron::test_support::put_policy_manifest_bytes(
+            vault,
+            id,
+            &rmp_serde::to_vec_named(&manifest).expect("policy manifest encode"),
+        )
+        .expect("policy manifest put");
+        return;
+    }
+    panic!("the vault holds no shipped policy manifest");
+}
+
+/// The owner's own statement that `person` is their `word`, through the
+/// public claim facade (`Memory::claim_upsert`), as an owner records it;
+/// the facade decides its approval.
+fn stated_role_edge(vault: &Vault, owner: EntityId, word: &str, person: EntityId) -> EntityId {
+    let id = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .claim_upsert(&ClaimInput {
+            id: Some(id.to_hex()),
+            predicate: format!("relationship.{word}"),
+            subject_ref: owner.to_hex(),
+            value: json!(person.to_hex()),
+            confidence: 0.9,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+            confidence_details: None,
+        })
+        .expect("the owner's role edge");
+    id
+}
+
+/// Installs this device's keystore and loads the install's signing keys, as
+/// a host does after each open: a merge's seal and a delete need them.
+fn install_signing(vault: &Vault) {
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .prepare_install_signing()
+        .expect("load this install's signing keys");
+}
+
+/// The owner says "my manager", and an Approved role edge on the owner
+/// names Owen Smith: the mention links to Owen, as a known role edge
+/// hard-links, mints nothing, and the nightly re-check asks nothing. Main
+/// and the phonetic rung alone never read the edge: the mention mints a
+/// provisional person named "my manager".
+#[test]
+fn my_manager_links_through_the_owners_role_edge() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    role_edge(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Approved,
+    );
+    assert!(
+        vault
+            .lookup_identity_key(ENTITY_TYPE_PERSON, "my manager")
+            .expect("key lookup")
+            .is_empty(),
+        "the identity key misses the role"
+    );
+
+    let (_, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    assert_eq!(
+        link,
+        MentionLink::Candidates {
+            kind: ENTITY_TYPE_PERSON,
+            entities: vec![owen],
+        },
+        "the owner's manager edge links the mention to Owen"
+    );
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert!(
+        asks.is_empty(),
+        "a known role edge is a sure link: {asks:?}"
+    );
+    assert_eq!(vault.resolve_entity(&owen).expect("resolve"), vec![owen]);
+}
+
+/// The owner states two managers through the claim facade, Owen Smith and
+/// Mori Yuki. The `relationship` root is multi-valued, so the second edge
+/// stands beside the first instead of superseding it. The mention keeps
+/// both as candidates, the nightly re-check opens one IDENTITY_SETTLE ask
+/// that names both, and both stay their own entity. Main supersedes the
+/// first edge and mints a provisional person.
+#[test]
+fn two_managers_stay_candidates_and_raise_a_settle_ask() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    let yuki = person(&vault, "Mori Yuki");
+    declare_predicate_normal(&vault, "relationship.manager");
+    let edges = [owen, yuki].map(|manager| stated_role_edge(&vault, owner, "manager", manager));
+    for edge in edges {
+        let stored = vault
+            .get_claim(&edge)
+            .expect("claim read")
+            .expect("the role edge is stored");
+        assert_eq!(
+            stored.lifecycle,
+            ClaimLifecycleStatus::Active,
+            "a second manager edge stands beside the first"
+        );
+    }
+    let both = BTreeSet::from([owen, yuki]);
+
+    let (turn, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    let MentionLink::Candidates { kind, entities } = &link else {
+        panic!("two managers are both candidates, not a mint: {link:?}");
+    };
+    assert_eq!(*kind, ENTITY_TYPE_PERSON);
+    assert_eq!(entities.iter().copied().collect::<BTreeSet<_>>(), both);
+
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    let ask = &asks[0];
+    assert_eq!(ask.kind, ENTITY_TYPE_PERSON);
+    assert_eq!(ask.name, "my manager");
+    assert_eq!(ask.turn, turn);
+    assert_eq!(ask.reason, IdentityAskReason::Unsettled);
+    assert_eq!(ask.provisional, None);
+    assert_eq!(
+        ask.candidates.iter().copied().collect::<BTreeSet<_>>(),
+        both
+    );
+
+    assert_eq!(vault.resolve_entity(&owen).expect("resolve"), vec![owen]);
+    assert_eq!(vault.resolve_entity(&yuki).expect("resolve"), vec![yuki]);
+}
+
+/// Owen Smith was merged into Owen R. Smith after the owner's Approved
+/// manager edge named him. The stored id follows the merge to its one
+/// surviving head, so "my manager" links to Owen R. Smith. Main mints a
+/// provisional person.
+#[test]
+fn a_merged_manager_links_to_the_surviving_head() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    install_signing(&vault);
+    let owen = person(&vault, "Owen Smith");
+    let survivor = person(&vault, "Owen R. Smith");
+    role_edge(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Approved,
+    );
+    let merged = vault
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![owen],
+                survivor,
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "one person under two records".to_owned(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(ClaimSource::UserStated),
+            now_seconds(),
+        )
+        .expect("merge");
+    assert!(
+        matches!(merged, IdentityOpOutcome::Applied { .. }),
+        "the merge applies: {merged:?}"
+    );
+    assert_eq!(
+        vault.resolve_entity(&owen).expect("resolve"),
+        vec![survivor]
+    );
+
+    let (_, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    assert_eq!(
+        link,
+        MentionLink::Candidates {
+            kind: ENTITY_TYPE_PERSON,
+            entities: vec![survivor],
+        },
+        "the edge's stored id follows the merge to its surviving head"
+    );
+}
+
+/// The owner's Approved manager edge names Owen Smith, who is deleted. A
+/// deleted person names no one: "my manager" mints with no ask, as on
+/// main.
+#[test]
+fn a_deleted_manager_gives_no_link() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    install_signing(&vault);
+    let owen = person(&vault, "Owen Smith");
+    role_edge(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Approved,
+    );
+    assert!(vault.delete_entity(&owen).expect("delete Owen"));
+
+    let (_, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert!(asks.is_empty(), "no ask follows: {asks:?}");
+}
+
+/// The owner said "my manager" before any edge named Owen Smith, so the
+/// mention minted. Once an Approved manager edge names him, the nightly
+/// re-check asks whether the mention is Owen or someone new. Main never
+/// reads the edge and asks nothing.
+#[test]
+fn a_mention_minted_before_its_role_edge_is_asked_about() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    let (turn, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    role_edge(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Approved,
+    );
+
+    assert_asks_whether_it_is(&vault, (turn, link), "my manager", owen);
+}
+
+/// An Auto manager edge, which no owner approved, is an unsure match
+/// (OF-123): the mention mints its own provisional person, and an agent
+/// about to act on it asks first. A message that names the mention as its
+/// source is refused IDENTITY_UNSETTLED, and `self.identity.settle` opens
+/// the act-now ask, Owen Smith or someone new. On main the mention's own
+/// provisional settles it at once: the guard lets the message through, and
+/// it fails later on the recipient lookup (NOT_FOUND), not
+/// IDENTITY_UNSETTLED. The edge's valid time starts at 1 s: the guard
+/// reads it at the vault's clock, as the save and the recheck do, not at 0.
+#[test]
+fn an_effect_on_an_inferred_role_edge_asks_first() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    role_edge_valid_from(
+        &vault,
+        owner,
+        "manager",
+        owen,
+        ClaimApprovalStatus::Auto,
+        Some(1),
+    );
+
+    let (turn, link) = save_as(&vault, owner, "my manager called.", "my manager");
+    let provisional = assert_mints(&vault, link);
+    let tags = vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("the turn has saved tags");
+    let mention = &tags.mentions[0];
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+
+    let refused = memory
+        .message_person(&MessagePersonRequest {
+            pr: owen.to_hex(),
+            text: "The meeting moved to noon.".to_owned(),
+            mention: Some(MentionProvenance {
+                turn: turn.to_hex(),
+                message: mention.message.to_hex(),
+                start: u64::try_from(mention.start).expect("span start"),
+                end: u64::try_from(mention.end).expect("span end"),
+            }),
+            from_project: None,
+            to_project: None,
+        })
+        .expect_err("a message to an inferred manager waits for its ask");
+    assert_eq!(refused.code, MEMORY_CODE_IDENTITY_UNSETTLED, "{refused:?}");
+
+    let opened = memory
+        .identity_act_now(&IdentityActNowRequest {
+            name: "my manager".to_owned(),
+            conversation: None,
+            effect: IdentityEffect::Send,
+            prompt: "Which manager?".to_owned(),
+            someone_new: "Someone new".to_owned(),
+            provisional: None,
+        })
+        .expect("the act-now ask");
+    assert!(
+        matches!(opened, IdentityActNow::Deciding { .. }),
+        "an inferred role edge opens the act-now ask: {opened:?}"
+    );
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    let ask = &asks[0];
+    assert_eq!(ask.name, "my manager");
+    assert_eq!(
+        ask.reason,
+        IdentityAskReason::ActNow {
+            effect: IdentityEffect::Send
+        }
+    );
+    assert_eq!(ask.provisional, Some(provisional));
+    assert_eq!(
+        ask.candidates.iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([owen, provisional])
+    );
+}
+
+/// The role words are the fixed relationship labels with no synonym: an
+/// Approved `relationship.boss` edge is not read for "my manager", which
+/// mints with no ask, as on main.
+#[test]
+fn a_role_with_no_edge_for_its_word_mints_as_today() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    role_edge(&vault, owner, "boss", owen, ClaimApprovalStatus::Approved);
+
+    let (_, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert!(asks.is_empty(), "no ask follows: {asks:?}");
+}
+
+/// "my" names the speaker: Mori Yuki's manager edge naming Owen Smith is not
+/// read when the owner says "my manager", which mints with no ask, as on
+/// main.
+#[test]
+fn another_persons_role_edge_is_not_the_speakers() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (vault, owner) = open_with_owner(&dir);
+    let owen = person(&vault, "Owen Smith");
+    let yuki = person(&vault, "Mori Yuki");
+    role_edge(&vault, yuki, "manager", owen, ClaimApprovalStatus::Approved);
+
+    let (_, link) = save_as(&vault, owner, "my manager called.", "my manager");
+
+    assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert!(asks.is_empty(), "no ask follows: {asks:?}");
 }
 
 /// The codes a write posts are the ones main posts: the linker's whole-name
