@@ -4,6 +4,9 @@
 //! vectors. This crate holds only the pack format and the LongMemEval-S
 //! converter, and it depends on no engine crate. See [`pack`] for the format
 //! and [`longmemeval`] for the converter.
+//! The [`scorecard`] module grades one retrieval run; [`metrics`] holds its pure functions.
 
 pub mod longmemeval;
+pub mod metrics;
 pub mod pack;
+pub mod scorecard;
