@@ -606,15 +606,9 @@ impl SyncServer {
             Ok(BoundRun::Trapped) => true,
             Err(error) => parks_on_outage(error),
         };
-        let completed_run = match &ran {
-            Ok(BoundRun::Agent(outcome))
-                if matches!(outcome.status, EngineExecutorStatus::Complete) =>
-            {
-                Some(outcome.replay_record.run_id)
-            }
-            _ => None,
-        };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
+        // The settle's terminal write also seals the run's scratchpads
+        // (OF-548).
         if let Err(error) = self.live_runs.settle(run, waits, || {
             settle(
                 vault,
@@ -634,11 +628,6 @@ impl SyncServer {
         AgentDispatcher::new(vault).forget_agent_run_fence(id);
         self.desktop_seats.run_settled(run, waits);
         self.browser_seats.run_settled(run, waits);
-        if let Some(run) = completed_run {
-            if let Err(error) = vault.seal_code_run_scratchpads(run) {
-                tracing::warn!(%error, run = %run.to_hex(), "a completed agent run's scratchpads did not seal");
-            }
-        }
         false
     }
 }

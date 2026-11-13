@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::field_set::{
     FIELD_ATTEMPT_CALLER, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEASE_GENERATION,
-    append_pack_attribution_fields, append_pack_manifest_fields, append_pack_source_rows_fields,
-    append_task_project_field, append_task_type_fields, append_task_type_parent_fields,
-    append_team_receipt_fields,
+    FIELD_SCRATCH_REF, append_pack_attribution_fields, append_pack_manifest_fields,
+    append_pack_source_rows_fields, append_task_project_field, append_task_type_fields,
+    append_task_type_parent_fields, append_team_receipt_fields,
 };
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
@@ -81,7 +81,8 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
 /// cancel, landing cancellation, force-cancel and abandon all call this seam.
 /// An attempt with no manifest, actor binding, attribution context or team-run
 /// stamp mints no row. A row carries the read set the attempt's producers
-/// recorded, when complete (FIX 6934).
+/// recorded, when complete (FIX 6934), and `scratch`, the pads the attempt's
+/// wake wrote and the same write sealed (OF-548).
 ///
 /// Atomic with the state seal: a terminal attempt with a manifest or actor
 /// binding and no receipt (or the reverse) is not a reachable state. The row
@@ -91,6 +92,7 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
     actor: &str,
+    scratch: &[EntityId],
 ) -> Result<()> {
     let receipt_id = attempt_pack_receipt_id(&record.id);
     // OF-540: the team run the dispatch froze. A team attempt's outcome joins
@@ -205,6 +207,15 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
     // on, beside the outcome. Additive, as the lease generation is.
     if let Some(refusal) = &record.budget_refusal {
         super::append_budget_refusal_field(&mut receipt.fields, refusal)?;
+    }
+    // OF-548: the engine records `scratch_ref` on the terminal receipt: the
+    // pads the wake wrote, sealed in this same write. Additive, as the lease
+    // generation is; absent when the wake wrote none.
+    if !scratch.is_empty() {
+        let pads: Vec<String> = scratch.iter().map(EntityId::to_hex).collect();
+        receipt
+            .fields
+            .insert(FIELD_SCRATCH_REF.to_owned(), pads.join(","));
     }
     PACK_RECEIPT.put(store, wtxn, &receipt.receipt_id, &receipt)?;
     Ok(())

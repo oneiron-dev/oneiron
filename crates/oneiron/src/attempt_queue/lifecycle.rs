@@ -1224,7 +1224,8 @@ impl AttemptQueue<'_> {
     /// The one terminal commit (FIX RUN-SETTLE-RECIPE). A terminal door
     /// calls it after its own [`RunLifecycle`] step has settled `record`: it
     /// clears the backoff, writes the outcome's error text and the settle
-    /// instant, encodes and stores the row, stamps its pack receipt, and
+    /// instant, encodes and stores the row, seals every scratchpad its run
+    /// wrote (OF-548), stamps its pack receipt naming those pads, and
     /// retires the dedupe entry the row owns, in that order. The door keeps
     /// its guards, its outcome payload (budget refusal, result, cancellation
     /// receipts), its index work, its successor, and the settle notice and
@@ -1240,8 +1241,8 @@ impl AttemptQueue<'_> {
     ///
     /// # Errors
     ///
-    /// An encode the side-row wall refuses; storage errors. The caller must
-    /// abort the transaction on error.
+    /// An encode the side-row wall refuses; a pad seal that fails; storage
+    /// errors. The caller must abort the transaction on error.
     pub(in crate::attempt_queue) fn commit_terminal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -1255,6 +1256,19 @@ impl AttemptQueue<'_> {
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
+        // OF-548: the wake ends here, so every pad its run wrote seals in
+        // this same write and the receipt names them. A pumped run's code
+        // run is its attempt (one id; a retry is a fresh attempt, so its next
+        // try opens a fresh pad). A store-only handle holds no NOTE seal
+        // door; its rows are engine jobs no agent writes a pad under.
+        let scratch = match self.vault {
+            Some(vault) => crate::context_board::seal_run_pads_in_txn(
+                vault,
+                wtxn,
+                crate::EntityId::from_bytes(*record.id.as_bytes())?,
+            )?,
+            None => Vec::new(),
+        };
         let actor = match commit.receipt_actor {
             PackReceiptActor::Caller(actor) => actor,
             PackReceiptActor::StoredCancellation => record
@@ -1265,7 +1279,9 @@ impl AttemptQueue<'_> {
                     cancellation.actor.as_str()
                 }),
         };
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(self.store, wtxn, record, actor)?;
+        crate::receipt::stamp_attempt_pack_receipt_in_txn(
+            self.store, wtxn, record, actor, &scratch,
+        )?;
         self.delete_dedupe_entry_for_record(wtxn, record)
     }
 }

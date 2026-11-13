@@ -38,6 +38,10 @@ pub const FIELD_LEASE_GENERATION: &str = "lease_generation";
 /// FIX 12306: the calling principal of an agent-dispatch or turn-program
 /// attempt, frozen on its pack receipt as canonical 32-lowercase-hex.
 pub(crate) const FIELD_ATTEMPT_CALLER: &str = "attempt.caller";
+/// OF-548: the scratchpad NOTEs an attempt's wake wrote, sealed in its
+/// terminal write, as comma-joined canonical 32-lowercase-hex ids. Absent
+/// when the wake wrote no pad, and on receipts sealed before the stamp.
+pub const FIELD_SCRATCH_REF: &str = "scratch_ref";
 /// BUDGET-TRAP-UNTYPED-NO-SENDER: the typed refusal a spend scope gave a try
 /// it refused for good, as the refusal's own serde JSON (tag `reason`),
 /// stamped by the engine from the failed row or its runner's settle. Absent on
