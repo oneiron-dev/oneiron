@@ -175,12 +175,34 @@ async fn execute(
         return Ok((response, listed));
     }
 
+    // The caller whose own live calendar grants an availability answer shows
+    // beside its slots (ARCH-0062 #grant-view): an authenticated caller other
+    // than the owner. An anonymous visitor and a stale owner sign-in with no
+    // live member or guest grant have no principal, and get the public view.
+    let viewer = transport
+        .principal
+        .filter(|_| !transport.owner_grade)
+        .map(|principal| principal.entity_ref());
+
     if let Some((response, sources)) = cache {
         public_availability::recheck(server, public_authority.as_ref())?;
-        let listed = listed.zip(sources).map(|(mut rows, sources)| {
+        let mut listed = listed.zip(sources).map(|(mut rows, sources)| {
             rows.extend(sources);
             rows
         });
+        // The cached answer is caller-free; the view is judged now, for this
+        // caller, and never cached.
+        let response = match (&request, viewer) {
+            (BookingOperationRequest::Availability(input), Some(viewer)) => {
+                let (view, reads) =
+                    public_availability::granted_view(server, page_ref, input, viewer, now)?;
+                if let Some(rows) = listed.as_mut() {
+                    rows.extend(reads);
+                }
+                public_availability::with_granted_view(response, view)
+            }
+            _ => response,
+        };
         return Ok((response, listed));
     }
 
@@ -209,6 +231,11 @@ async fn execute(
                     input.visitor_tz = visitor_tz;
                 }
             }
+            let granted = viewer
+                .map(|viewer| {
+                    public_availability::granted_view(server, page_ref, &input, viewer, now)
+                })
+                .transpose()?;
             let (response, sources) = public_availability::solve(
                 server,
                 page_ref,
@@ -220,7 +247,17 @@ async fn execute(
                 rows.extend(sources);
                 rows
             });
-            Ok((response, listed))
+            // `solve` cached the caller-free answer; the view goes on after.
+            match granted {
+                Some((view, reads)) => Ok((
+                    public_availability::with_granted_view(response, view),
+                    listed.map(|mut rows| {
+                        rows.extend(reads);
+                        rows
+                    }),
+                )),
+                None => Ok((response, listed)),
+            }
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
             let (response, sources) =

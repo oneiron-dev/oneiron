@@ -136,7 +136,10 @@ pub(crate) async fn render_public_booking_page(
         &transport,
     )
     .await?;
-    let BookingOperationResponse::Availability { slots, flex_used } = response else {
+    let BookingOperationResponse::Availability {
+        slots, flex_used, ..
+    } = response
+    else {
         return Err(ApiError::internal_server_error(
             "booking availability response invariant",
         ));
@@ -380,6 +383,9 @@ mod client_address_tests;
 #[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;
+#[cfg(test)]
+#[path = "public_grant_view_tests.rs"]
+mod grant_view_tests;
 #[cfg(test)]
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;

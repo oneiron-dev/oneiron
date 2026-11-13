@@ -378,12 +378,27 @@ pub enum BookingBookResult {
     },
 }
 
+/// The busy time one caller's live calendar grants show for one host on a
+/// booking page (ARCH-0062 #grant-view; owner ruling BOOKING-GRANT-VIEW = A,
+/// 2026-10-20). Opaque intervals at the `Busy` rung at most: no title, body,
+/// attendee or source EVENT can be expressed here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GrantedBusyView {
+    /// The calendars the host binds, each named by one of the caller's live
+    /// grants, as lower-case hex entity ids.
+    pub calendar_refs: Vec<String>,
+    /// Half-open `[start_utc, end_utc)` busy blocks, sorted and merged, inside
+    /// the host's working hours over the bookable part of the asked window.
+    pub busy: Vec<crate::booking::BusyBlockRow>,
+}
+
 /// The closed response union.
 ///
-/// Availability projects ranked public slots and the flex flag and nothing
-/// else — no titles, descriptions, attendees, busy sources, or free/busy
-/// internals can be expressed here. Mutations project only action-safe opaque
-/// tokens.
+/// Availability projects ranked public slots and the flex flag. Beside them it
+/// carries `busy` only for a caller whose live calendar grants name every
+/// calendar a host binds ([`GrantedBusyView`]); no titles, descriptions,
+/// attendees, busy sources, or other free/busy internals can be expressed
+/// here. Mutations project only action-safe opaque tokens.
 ///
 /// `Book` carries [`BookingBookResult`] directly, exactly as
 /// [`BookingOperationRequest::Book`] carries [`BookingBookInput`] directly: one
@@ -397,6 +412,11 @@ pub enum BookingOperationResponse {
     Availability {
         slots: Vec<RankedSlot>,
         flex_used: bool,
+        /// The caller's own grant view, one entry per host it covers. Absent
+        /// for an anonymous caller, the owner and a caller with no such grant,
+        /// whose answer reads exactly as before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        busy: Option<Vec<GrantedBusyView>>,
     },
     Book(BookingBookResult),
     Reschedule {
