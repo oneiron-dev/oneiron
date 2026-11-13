@@ -5,21 +5,27 @@
 //! The fixture is the one of `tests/selector_relationship_label.rs`: a member
 //! P holds a live Member federation grant whose Scope admits every record,
 //! and a `core:read` policy grant, but no grant on a relationship R and no
-//! membership in it. P's own read lane reads an open CLAIM and neither of
-//! two CLAIMs keyed to R. The test packs the window and keeps it as the
-//! vault's own, then the owner deletes the open CLAIM and one R CLAIM (a
-//! plain delete, which keeps a shell) and purges the other R CLAIM (a hard
-//! delete). It exports the vault's window through P's selector.
+//! membership in it. P's own read lane reads an open CLAIM and not a CLAIM
+//! keyed to R. The test packs the window and keeps it as the vault's own,
+//! then the owner purges both CLAIMs (a hard delete). It exports the vault's
+//! window through P's selector.
 //!
 //! An open, All-world selector carries the tombstone of a row it does not
 //! keep (`sync/selector/tombstones.rs`), and the label gate of round 2
 //! judges rows only, so it never withholds their tombstones. A tombstone
 //! names the row's id, the delete's reason, its time and its request. The
-//! open CLAIM's tombstone rides P's window; the test asserts no R CLAIM's
-//! tombstone does.
+//! open CLAIM's tombstone rides P's window; the test asserts the R CLAIM's
+//! tombstone does not.
+//!
+//! Both deletes are hard. A plain delete keeps a header-only CLAIM shell and
+//! the shell's window edges, so `withheld_claim_carriers` reads the shell as
+//! a CLAIM whose body does not decode, and the export withholds its
+//! tombstone from every member, an Owner too (FIX-LIST
+//! SELECTOR-SOFT-DELETED-CLAIM-TOMBSTONE-WITHHELD). That path carries no
+//! tombstone, so it cannot leak one.
 //!
 //! A second test gives the same grant the Owner role: a co-Owner reads the
-//! whole vault, so both R tombstones ride its window. It guards the fix
+//! whole vault, so the R tombstone rides its window. It guards the fix
 //! against refusing an Owner.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the leak. The `LEAK:`
@@ -99,20 +105,19 @@ fn persist_window(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
         .expect("FIXTURE: the window version flag is kept");
 }
 
-/// The R CLAIMs one selector export saw deleted, and whether the window
-/// carried each one's tombstone.
+/// The R CLAIM one selector export saw purged, and whether the window
+/// carried its tombstone.
 struct Export {
-    /// Each deleted R CLAIM with how it was deleted, and whether its
-    /// tombstone rode the window.
-    labelled: [(&'static str, bool); 2],
+    /// The purged R CLAIM, and whether its tombstone rode the window.
+    labelled: [(&'static str, bool); 1],
 }
 
-/// Plants the open CLAIM and the two R CLAIMs, gives `member` a live
-/// federation grant of `role` whose Scope admits every record, keeps the
-/// packed window as the vault's own, deletes the three CLAIMs, and exports
-/// the vault's window through the member's selector. With
-/// `check_read_lane`, the fixture first checks that the member's own read
-/// lane reads the open CLAIM and neither R CLAIM.
+/// Plants the open CLAIM and the R CLAIM, gives `member` a live federation
+/// grant of `role` whose Scope admits every record, keeps the packed window
+/// as the vault's own, purges both CLAIMs, and exports the vault's window
+/// through the member's selector. With `check_read_lane`, the fixture first
+/// checks that the member's own read lane reads the open CLAIM and not the
+/// R CLAIM.
 fn export_through(
     role: FederationGrantRole,
     preset: FederationGrantPreset,
@@ -162,7 +167,6 @@ fn export_through(
         .expect("FIXTURE: the member's selector is authorized");
 
     let open_claim = record(&vault, member, None, now);
-    let shell_claim = record(&vault, member, Some(relationship), now);
     let purged_claim = record(&vault, member, Some(relationship), now);
 
     let reads = |id: EntityId| {
@@ -179,15 +183,15 @@ fn export_through(
             "FIXTURE: the member reads the open CLAIM"
         );
         assert!(
-            !reads(shell_claim) && !reads(purged_claim),
-            "FIXTURE: the member reads neither R CLAIM"
+            !reads(purged_claim),
+            "FIXTURE: the member does not read the R CLAIM"
         );
     }
 
     let key = WindowKey::from_timestamp(now);
     let packed = create_window_doc("selector", &key);
     reverse_rematerialize(&vault, &packed, &key).expect("the window pack");
-    for id in [open_claim, shell_claim, purged_claim] {
+    for id in [open_claim, purged_claim] {
         assert!(
             packed.get_map("entities").get(&id.to_hex()).is_some(),
             "FIXTURE: the packed window holds {}",
@@ -196,21 +200,19 @@ fn export_through(
     }
     persist_window(&vault, &packed, &key);
 
-    for (id, reason) in [
-        (open_claim, DeleteReason::UserDelete),
-        (shell_claim, DeleteReason::UserDelete),
-        (purged_claim, DeleteReason::UserHardDelete),
-    ] {
+    // Hard deletes only: a plain delete's CLAIM shell withholds the
+    // tombstone from every member (see the module doc).
+    for id in [open_claim, purged_claim] {
         assert!(
             vault
-                .delete_entity_with_reason(&id, reason)
+                .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)
                 .expect("FIXTURE: the owner's delete")
                 .existed,
-            "FIXTURE: the deleted CLAIM existed"
+            "FIXTURE: the purged CLAIM existed"
         );
     }
     let window = load_window_from_state(&vault, "local", &key).expect("the vault's window");
-    for id in [open_claim, shell_claim, purged_claim] {
+    for id in [open_claim, purged_claim] {
         assert!(
             window.get_map("tombstones").get(&id.to_hex()).is_some(),
             "FIXTURE: the vault's window holds the tombstone of {}",
@@ -226,10 +228,7 @@ fn export_through(
         "FIXTURE: the selector window carries the open CLAIM's tombstone"
     );
     Export {
-        labelled: [
-            ("deleted R CLAIM", carries(shell_claim)),
-            ("purged R CLAIM", carries(purged_claim)),
-        ],
+        labelled: [("purged R CLAIM", carries(purged_claim))],
     }
 }
 
