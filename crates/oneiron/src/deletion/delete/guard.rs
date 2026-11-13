@@ -1,5 +1,6 @@
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::deletion::LegalHoldActorKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::legal_hold::HoldActor;
@@ -108,6 +109,18 @@ impl Vault {
             if reason.active_store_hard_purge_v1() {
                 self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
             }
+            // A live artifact's lone version claim goes with its version, so the holds on the
+            // artifact and its bytes refuse it too.
+            if let Some((artifact, hash)) =
+                crate::blob_artifact::live_version_claim_reference(&self.store, &txn, id)?
+            {
+                let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&hash)?;
+                self.store
+                    .reject_legal_holds_in_txn(&txn, &[artifact, asset], &actor)?;
+            }
+        }
+        if let Some(outcome) = self.delete_lone_version_claim(id, gate.as_ref(), due)? {
+            return Ok(DeleteGuard::Done(outcome));
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
@@ -139,5 +152,59 @@ impl Vault {
             requested_at,
             header,
         })
+    }
+
+    /// A live artifact's lone `blob.version` claim goes with its version (ARCH-0005a
+    /// #erase-refcount-open, ASTRA-R2-002; Engine ruling 13 Nov 17:56). The owner's delete or
+    /// erase runs as that version's release, in one write that re-proves the owner's deletion
+    /// authority; the delete of an agent, a member or anyone else is refused, and the refusal
+    /// names the way out. The in-process door, which carries no gate, is the owner's.
+    ///
+    /// `None` for any other record, and for a claim whose artifact went before the write: the
+    /// ordinary delete runs.
+    fn delete_lone_version_claim(
+        &self,
+        id: &EntityId,
+        gate: Option<&GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
+    ) -> Result<Option<DeleteEntityOutcome>> {
+        {
+            let txn = self.store.env.read_txn()?;
+            if crate::blob_artifact::live_version_claim_reference(&self.store, &txn, id)?.is_none()
+            {
+                return Ok(None);
+            }
+        }
+        if gate.is_some_and(|gate| gate.hold_actor().kind != LegalHoldActorKind::Owner) {
+            return Err(crate::blob_artifact::lone_version_claim_refusal());
+        }
+        let write = crate::secret_custody::CustodyWrite::of(self);
+        let released = self.with_write_txn_grouped(|wtxn| {
+            reverify_deletion_authority_before_publication(gate, wtxn)?;
+            if let Some(due) = due {
+                due.prove_in(self, wtxn, id)?;
+            }
+            let Some((artifact, hash)) =
+                crate::blob_artifact::live_version_claim_reference(&self.store, wtxn, id)?
+            else {
+                return Ok(None);
+            };
+            crate::blob_artifact::release_claimed_version_in_txn(&write, wtxn, id, &artifact, &hash)
+                .map(Some)
+        })?;
+        match released {
+            None => Ok(None),
+            Some(true) => Ok(Some(DeleteEntityOutcome {
+                existed: true,
+                receipt_id: None,
+                sweep_key: None,
+                turn_program_details: Vec::new(),
+                version_release: true,
+            })),
+            // A hold placed after the refusal above was read keeps the version.
+            Some(false) => Err(Error::ConcurrentWrite(
+                "a legal hold keeps the blob version this claim records",
+            )),
+        }
     }
 }
