@@ -632,8 +632,38 @@ impl Vault {
         starter: &AuthenticatedOwner,
         vault_id: u64,
     ) -> Result<PendingAuthorityAct> {
+        self.propose_delete_vault_with_check_in(starter, vault_id, None)
+    }
+    /// [`Self::propose_delete_vault`], judged by check-in (2j; P24-SHAPE Q7
+    /// and Q9 = A): the act records the Owner's decision, and with
+    /// `check_in_ref`, an asker's approved check-in for this vault's delete
+    /// ([`crate::check_in::vault_delete_effect_digest`]), which the Owner
+    /// applies on their own proof: it is spent in the start's writer and the
+    /// act names its requester. The veto window, the Owner executors and
+    /// every other gate of the act stay.
+    ///
+    /// # Errors
+    /// As [`Self::propose_delete_vault`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this vault's delete.
+    pub fn propose_delete_vault_with_check_in(
+        &self,
+        starter: &AuthenticatedOwner,
+        vault_id: u64,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<PendingAuthorityAct> {
         let plan = encode(&DeleteVaultPlan { v: PLAN_VERSION })?;
-        self.start_authority_act(starter, vault_id, SharedActKind::DeleteVault.as_str(), plan)
+        self.start_authority_act_checked(
+            starter,
+            vault_id,
+            SharedActKind::DeleteVault.as_str(),
+            plan,
+            super::pending_act::StartCheckIn {
+                verb: "vault.shared.propose_delete",
+                act: crate::check_in::ActClass::VaultDelete,
+                effect_digest: crate::check_in::vault_delete_effect_digest(vault_id),
+                applies: check_in_ref,
+            },
+        )
     }
     /// Start a `transfer_ownership` act: the starter, a live Owner, hands
     /// ownership to `to`, a live person who is not yet an Owner.

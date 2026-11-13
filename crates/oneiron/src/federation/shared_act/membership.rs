@@ -254,7 +254,7 @@ impl Vault {
     /// `member`'s membership grant row in the vault and its role, delegate
     /// and `engine.controls` grants aside: the grant a person's pending
     /// check-in climbs the ladder from.
-    fn member_grant_in_txn(
+    pub(crate) fn member_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
