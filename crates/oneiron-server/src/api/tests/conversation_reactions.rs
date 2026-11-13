@@ -443,14 +443,22 @@ fn signalled_reactions(pack: &Value) -> Vec<(String, String)> {
 async fn hatch_signal_feed_off_this_device_names_no_kept_reaction() {
     let (_dir, server) = test_server();
     let (_room, alice, bob, message) = room(&server, ConversationBody::default());
-    let path = format!("/v1/core/messages/{}/reactions", message.to_hex());
+    // Bob writes his two reactions through the vault's reaction write (the
+    // one the REST route runs): this root server's route writes only as its
+    // embedded owner (FIX 2222), and the feed under test is the read.
     let mut reactions = Vec::new();
     for glyph in ["👀", "👍"] {
-        let put =
-            json!({"by": bob.to_hex(), "glyph": glyph, "occurred_at": now(), "actor": actor(bob)});
-        let (status, reaction) = route_json(server.clone(), json_request("POST", &path, put)).await;
-        assert_eq!(status, StatusCode::OK, "{reaction}");
-        reactions.push(reaction["id"].as_str().unwrap().to_owned());
+        let change = server
+            .vault
+            .react(oneiron::reaction::ReactionInput {
+                message,
+                by: bob,
+                glyph: glyph.to_owned(),
+                occurred_at: now(),
+                actor: WriteActor::new(bob, EdgeActorClass::Human),
+            })
+            .unwrap();
+        reactions.push(change.id.to_hex());
     }
     let (kept, open) = (reactions[0].clone(), reactions[1].clone());
 
