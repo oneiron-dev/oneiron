@@ -203,7 +203,10 @@ fn a_strangers_receipt_page_names_no_claim_its_preflight_withholds() -> TestResu
         );
     }
 
-    // A person with no grant, bound to its own live credential.
+    // A person with no grant, bound to its own live credential. A credential
+    // reads what its scope reads, whoever holds it: one minted from the host
+    // root's claims alone reads both claims. This one is held by a records
+    // caveat to the stranger's own row, so its lane reads no owner claim.
     let stranger = EntityId::now();
     fixture.vault.put_entity(
         &stranger,
@@ -212,7 +215,7 @@ fn a_strangers_receipt_page_names_no_claim_its_preflight_withholds() -> TestResu
         1,
         b"a person with no grant",
     )?;
-    let proof = credential(&fixture, stranger, BTreeSet::new())?;
+    let proof = credential(&fixture, stranger, BTreeSet::from([stranger.to_hex()]))?;
     let reader = fixture
         .vault
         .memory(stranger, EdgeActorClass::Human)
