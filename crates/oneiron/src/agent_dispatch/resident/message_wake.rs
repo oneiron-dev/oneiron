@@ -98,6 +98,45 @@ fn wake_batch_len(pending: &[PendingMessage]) -> usize {
     taken
 }
 
+/// The count line that folds `digests` into a wake's briefing: how many
+/// wait in the inbox, and the event id of each.
+fn digest_line(digests: &[PendingMessage]) -> String {
+    format!(
+        "digest: {} more messages wait in your INBOX; open them there: {}\n",
+        digests.len(),
+        digests
+            .iter()
+            .map(|message| message.event_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// How many of `digests`, from the oldest, a wake that carries `carried`
+/// folds: at most [`WAKE_CARRY_LIMIT`], and only as many as its count line
+/// names inside the briefing cap after the wake lines, so the briefing
+/// names every digest the wake carries. The rest ride a later wake. A wake
+/// that carries no message folds its first digest whatever its length, as
+/// that digest's own wake.
+fn digest_fold_len(carried: &[PendingMessage], digests: &[PendingMessage]) -> usize {
+    let lines = carried
+        .iter()
+        .fold(MESSAGE_WAKE_BRIEFING_HEADER.len(), |used, message| {
+            used.saturating_add(wake_line(message).len())
+        });
+    let mut folded = digests.len().min(WAKE_CARRY_LIMIT);
+    while folded > 0
+        && lines.saturating_add(digest_line(&digests[..folded]).len()) > CONTEXT_SPEC_MAX_TEXT_BYTES
+    {
+        folded -= 1;
+    }
+    if carried.is_empty() {
+        folded.max(digests.len().min(1))
+    } else {
+        folded
+    }
+}
+
 impl AgentDispatcher<'_> {
     /// Dispatches resident `spec`'s pending inbox messages under its wake
     /// mode and hold. Each message is taken once: `view` holds every key its
@@ -140,7 +179,7 @@ impl AgentDispatcher<'_> {
                 return Ok(());
             }
             if pass.outcomes.len() < limit.min(64) {
-                let (folded, _) = digests.split_at(digests.len().min(WAKE_CARRY_LIMIT));
+                let (folded, _) = digests.split_at(digest_fold_len(&[], digests));
                 self.dispatch_message_wake(spec, &[], folded, now, pass)?;
             }
             return Ok(());
@@ -158,7 +197,7 @@ impl AgentDispatcher<'_> {
             }
             let (carried, after) = rest.split_at(wake_batch_len(rest));
             rest = after;
-            let (folded, later) = digests.split_at(digests.len().min(WAKE_CARRY_LIMIT));
+            let (folded, later) = digests.split_at(digest_fold_len(carried, digests));
             digests = later;
             self.dispatch_message_wake(spec, carried, folded, now, pass)?;
         }
@@ -348,10 +387,11 @@ impl AgentDispatcher<'_> {
     /// The briefing of a wake that carries `messages` and folds `digests`.
     /// A wake line per message comes first, so every id survives the cap,
     /// then one count line for the digests, which name only their events
-    /// and wait in the inbox until opened, then each message's words. All
-    /// of it is labelled foreign data. A message whose body does not read
-    /// is carried by its line alone. A lone message's briefing is its line
-    /// and then its words.
+    /// and wait in the inbox until opened, then each message's words.
+    /// [`wake_batch_len`] and [`digest_fold_len`] keep the wake lines and
+    /// the count line inside the cap. All of it is labelled foreign data. A
+    /// message whose body does not read is carried by its line alone. A
+    /// lone message's briefing is its line and then its words.
     fn message_wake_briefing(
         &self,
         messages: &[PendingMessage],
@@ -362,15 +402,7 @@ impl AgentDispatcher<'_> {
             briefing.push_str(&wake_line(message));
         }
         if !digests.is_empty() {
-            briefing.push_str(&format!(
-                "digest: {} more messages wait in your INBOX; open them there: {}\n",
-                digests.len(),
-                digests
-                    .iter()
-                    .map(|message| message.event_id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+            briefing.push_str(&digest_line(digests));
         }
         for message in messages {
             let text = match message.payload_ref.as_deref() {
