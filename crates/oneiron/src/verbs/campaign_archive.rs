@@ -146,43 +146,7 @@ pub fn research_archive_judge(
     input: CampaignArchiveJudge,
     host: &dyn ArchiveJudgeHost,
 ) -> MemoryResult<CampaignArchiveJudged> {
-    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
-    let vault = memory.vault();
-    let brief = {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        controller_in_txn(memory, &txn, Some(attempt(input.root)?))?;
-        let (pin, output_text, rubric) = judge::premises_in_txn(vault, &txn, &input)?;
-        if lane
-            .entities_readable_in_txn(&txn, &[input.output.entity, pin.task()])?
-            .contains(&false)
-        {
-            return Err(crate::Error::EntityNotFound.into());
-        }
-        let task = memory
-            .get_entity_in_txn(&lane, &txn, pin.task())?
-            .value
-            .and_then(|view| view.body)
-            .ok_or(crate::Error::EntityNotFound)?;
-        ArchiveJudgeBrief {
-            pin,
-            task,
-            output_text,
-            rubric,
-        }
-    };
-    // Outside any writer: the ladder and the embedder.
-    let (basis, score) = judge::judgment(&brief, &input, host)?.map_err(|reason| {
-        MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            format!("vault.research.archive.judge recorded nothing: {reason}"),
-            &["Ask again once the decision ladder can answer; no placement or score was kept."],
-        )
-    })?;
-    let principal = memory.actor();
-    vault.try_with_write_txn_grouped(|txn| {
-        controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
-        Ok(judge::mint_in_txn(
-            vault, txn, input, basis, score, principal,
-        )?)
-    })
+    // RED PIN (never merged): no gate, no question, no record.
+    let _ = host;
+    crate::task_verb::sdk::host_only(memory, "vault.research.archive.judge", &input)
 }
