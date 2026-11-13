@@ -247,12 +247,15 @@ fn rows(outcome: &serde_json::Value, key: &str, field: &str) -> TestResult<Vec<(
         .collect()
 }
 
-/// A `connector.outbound.schedule` of one email send to `target`, as a
-/// guest asks it.
+/// A `connector.outbound.schedule` of one send to `target` on
+/// `email_resend`, as a guest asks it. The channel has a `send` verb and no
+/// built-in pack names it: a seeded vault refuses a channel a built-in pack
+/// names (`email`) until that pack is installed Active and its connection
+/// checked (OF-519), which no test can ready (tests/outbound_undo_send.rs).
 fn send_to(target: &str) -> serde_json::Value {
     json!({
         "verb": "send",
-        "channel": "email",
+        "channel": "email_resend",
         "target": target,
         "idempotency_key": format!("run-changes-effects:{target}"),
         "trigger": "agent_immediate",
