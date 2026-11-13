@@ -209,13 +209,15 @@ suite.todo(test, "LEARNING-04", "waits on typed confession, directed-recheck and
 // LEARNING-05 — Niche archive and coverage floor should work. OF-545.
 // The archive doors exist: vault.research.archive.install/record/best/get/coverage/
 // repropose, and research.promotion_basis checks a CampaignArchivePin against the
-// installed archive. Waiting: the canon producers of what install and record take.
-// A Coach archive-axes job proposes the axes from the goal and sample outputs, a
-// typed judgment places each output, and a quality score rates it, each with its
-// own receipt (ARCH-0053 #output-archive; ARCH-0079:303 "the archive axes ... still
-// have no Coach job"). Today install and record copy caller-supplied receipt ids
-// unchecked, so a case could only invent them. The goal's coverage floor comes from
-// the witnessed goal interview (vault.projects.goal.intake.complete); a candidate
+// installed archive. The canon producers of what install and record take exist too:
+// vault.research.archive.propose_axes (a Coach archive-axes job and its proposal
+// receipt) and vault.research.archive.judge (a typed placement judgment and a
+// quality score on the pinned judge rubric), and install and record check each
+// receipt (ARCH-0053 #output-archive). Waiting: FIX 24827. The archive reads the
+// project's authenticated goal, and no public client can complete the witnessed
+// goal interview (vault.projects.goal.intake.complete): the intake attempt_ref has
+// no public source, and the leader's question and draft turns cannot land. The
+// goal's coverage floor comes from that interview; a candidate
 // that loses a required cell gets a basis with call "reject", not a refusal. Bunching
 // (re-proposal) is a strict majority of recorded outputs in one cell: 3 of 5 here.
 // Use two descriptor axes, pinned to one campaign. Insert uneven fixture scores
@@ -233,7 +235,7 @@ type Learning05 = {
 };
 type Learning05Current = PublicCall<"vault.research.promotion_basis">;
 // Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
-suite.todo(test, "LEARNING-05", "waits on the canon producers: a Coach archive-axes job with its proposal receipt, a typed placement judgment and an archive quality score; install and record take those receipts from the caller unchecked");
+suite.todo(test, "LEARNING-05", "waits on FIX 24827: no public client can complete the witnessed goal interview (vault.projects.goal.intake.complete) whose authenticated goal the archive reads; the archive producers propose_axes and judge exist");
 
 // LEARNING-06 — Eval authoring keeps independent held-out families should work.
 // OF-578. G01 is RESOLVED: wait for typed HTTP+SDK authoring/ledger calls, not
