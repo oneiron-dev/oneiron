@@ -265,7 +265,9 @@ impl Vault {
     /// this vault's node and its MACRO home, or nothing opens. Each cycle
     /// opens in its own commit, with its root spend scope and its items. A
     /// boundary that cannot open is passed and logged, never retried in a
-    /// loop. Returns how many opened.
+    /// loop. A boundary the scan found under a schedule moved before its
+    /// writer ran opens nothing; the schedule in force opens at its own.
+    /// Returns how many opened.
     ///
     /// On a new home, a home move's carried state adopted before this pass
     /// (FIX 5661, `handoff`) is what it reads: the carried clock is the due
@@ -371,6 +373,13 @@ fn open_cycle_in_txn(
         return Ok(Opened::Passed);
     };
     if boundary <= due_floor(CLOCK.get(&vault.store, txn, &agent)?, &policy) {
+        return Ok(Opened::Passed);
+    }
+    // The scan read the policy in its own read. A holder's move since keeps
+    // the set's time (FABLE-6918-2), so the floor alone does not catch a
+    // boundary of the schedule it replaced: only the schedule in force
+    // opens a cycle, at its own boundary (FABLE-6918-1).
+    if boundary_at_or_before(&policy.schedule, now)? != Some(boundary) {
         return Ok(Opened::Passed);
     }
     // The cycle before ends at this boundary: it admits no new item, and
