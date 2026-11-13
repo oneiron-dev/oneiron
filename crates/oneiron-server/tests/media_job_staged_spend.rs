@@ -10,6 +10,10 @@
 //!   booked once by the start drain, and a restarted runtime's poll answers
 //!   the job's written end, so it takes no job up whose fresh permit would
 //!   charge that end a second time.
+//! - A job whose end row and held end the vault both refused is held with
+//!   its end, and each poll writes that end again (FIX 2963). Two such polls
+//!   at once stage the end's part once (S7299 review round 3 P1): the second
+//!   finds it staged.
 //!
 //! Reaches the job's ledger and its runtime through
 //! `oneiron_server::test_doors::media_job_spend`:
@@ -207,5 +211,44 @@ async fn a_scoped_job_dead_after_its_end_commit_books_the_end_once_and_its_resta
         SUBMIT_UNITS + END_UNITS,
         "the dead job's end is booked once after its restart"
     );
+    Ok(())
+}
+
+#[test]
+fn two_polls_at_once_of_a_scoped_job_whose_end_writes_were_refused_book_its_end_once() -> TestResult
+{
+    let (_dir, vault) = open_vault()?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = open_root(&dispatcher, "owen-media-refused-end-root")?;
+
+    let job = ScopedMediaJob::open(Arc::clone(&vault), &root)?;
+    job.settle(SUBMIT_UNITS)?;
+    let ticket = job.keep_submitted()?;
+    job.settle(END_UNITS)?;
+    let end = job_end();
+    job.end_refused(&ticket, &end);
+    assert_eq!(
+        dispatcher.staged_lease_spend(&root)?,
+        0,
+        "an end whose writes were refused stages nothing"
+    );
+    assert_eq!(spent(&dispatcher, &root)?, SUBMIT_UNITS);
+
+    // Each poll's end waits after its snapshot of the scope's part until the
+    // other's took one too, or 5 s pass.
+    for polled in job.poll_twice_at_once(&ticket)? {
+        assert_eq!(
+            polled.as_ref().ok(),
+            Some(&end),
+            "each poll answers the job's end: {polled:?}"
+        );
+    }
+    dispatcher.drain_all_lease_spend()?;
+    assert_eq!(
+        spent(&dispatcher, &root)?,
+        SUBMIT_UNITS + END_UNITS,
+        "the end is booked once, not once per poll"
+    );
+    assert_eq!(dispatcher.staged_lease_spend(&root)?, 0);
     Ok(())
 }
