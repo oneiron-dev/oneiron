@@ -827,6 +827,28 @@ pub(crate) fn delete_text_media_vectors_in_txn(
     Ok(())
 }
 
+/// Removes `id`'s text row from `space` alone, with its device mark and any refusal of it there;
+/// its image and audio rows stay. Whether it held a text row there.
+#[cfg(feature = "sync")]
+pub(super) fn delete_text_media_vector_in_space_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space: &EmbeddingSpace,
+    id: &EntityId,
+) -> Result<bool> {
+    let key = (space.key(), *id);
+    if !MEDIA_VECTOR
+        .get(store, txn, &key)?
+        .is_some_and(|row| row.kind == InputKind::Text)
+    {
+        return Ok(false);
+    }
+    MEDIA_VECTOR.delete(store, txn, &key)?;
+    drop_media_device_in_txn(store, txn, &key)?;
+    MEDIA_REFUSED.delete(store, txn, &key)?;
+    Ok(true)
+}
+
 /// Removes `id`'s media vectors from every declared space; the delete door calls it beside the
 /// text vector row.
 pub(crate) fn delete_media_vectors_in_txn(

@@ -611,9 +611,19 @@ impl PendingEmbeddingReconciler {
     }
 
     fn lease_due_jobs(&self, now_ms: u64) -> Result<LeaseBatch> {
+        // A world's order that names its own text space, or stops naming one,
+        // moves the vectors of the rows it carries before any job is read
+        // (DEC-0005 #private-world-vectors): the rows it queues again lease
+        // in this pass. An order edit that arrives by sync passes no door, so
+        // the pass sweeps on a change of the map rather than a door hook.
+        let sweep = world_space::sweep_world_text_spaces(&self.vault)?;
         let queue = crate::sync::SyncQueue::new(std::sync::Arc::clone(&self.vault))?;
         let jobs = queue.drain_embed_jobs()?;
-        let mut batch = LeaseBatch::default();
+        let mut batch = LeaseBatch {
+            world_space_index_drops: sweep.index_drops,
+            world_space_vector_drops: sweep.space_drops,
+            ..LeaseBatch::default()
+        };
         if jobs.is_empty() {
             return Ok(batch);
         }

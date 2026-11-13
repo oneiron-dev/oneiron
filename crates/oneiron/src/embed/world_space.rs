@@ -25,6 +25,11 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 
+#[cfg(feature = "sync")]
+mod sweep;
+#[cfg(feature = "sync")]
+pub(crate) use sweep::sweep_world_text_spaces;
+
 /// The place of a space whose model runs in-process on the device that embeds: the last
 /// `@`-part of its `model@revision@where` id.
 pub const DEVICE_PLACE: &str = "device";

@@ -13,6 +13,8 @@ pub(crate) use document_mutation::{
 mod document_version;
 pub(crate) use document_version::common_document_retains_in_txn;
 mod idle;
+#[cfg(feature = "sync")]
+pub(crate) use idle::drop_index_vector_in_txn;
 pub(crate) use idle::drop_vector_state;
 mod pending_index;
 mod phonetic;

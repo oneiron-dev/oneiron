@@ -40,6 +40,10 @@ crate::side_table::side_tables! {
     /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
     EMBEDDING_SPACE: VaultMeta b"embedding/space/" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Each world's own text space, as the text pass last moved this device's vectors to match
+    /// (DEC-0005 #private-world-vectors); a pass that reads another map sweeps. Key: ().
+    EMBEDDING_WORLD_TEXT_SPACES_SWEPT: SyncState b"embedding_world_text_spaces_swept:v1" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The safe index copy of a text a model derived from a marked repo blob, or of a probe query
     /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
     /// secret value. Key: u8 (owner kind) + id16.

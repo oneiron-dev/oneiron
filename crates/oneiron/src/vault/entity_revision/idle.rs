@@ -550,6 +550,28 @@ pub(crate) fn drop_vector_state(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
+    drop_index_vector_in_txn(vault, txn, id)?;
+    crate::embed::delete_text_media_vectors_in_txn(&vault.store, txn, id)?;
+    vault.store.clear_pending_embedding(txn, id)?;
+    #[cfg(feature = "sync")]
+    {
+        vault
+            .store
+            .sync_hooks
+            .delete_embed_job_in_txn(&vault.store, txn, id)?;
+        crate::embed::clear_pending_embedding_lease_if_any(vault, txn, id)?;
+    }
+    Ok(())
+}
+
+/// Drops `id`'s vector in the vault's text index and its graph node, with the
+/// marks of where and on what it was filled; its media rows and its pending
+/// marker, job and lease stay. Whether it held a vector.
+pub(crate) fn drop_index_vector_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
     let had_node = vault
         .store
         .hnsw_neighbors
@@ -562,15 +584,5 @@ pub(crate) fn drop_vector_state(
     }
     crate::embed::clear_embedding_locality_in_txn(&vault.store, txn, id)?;
     crate::embed::record_embedding_device_in_txn(&vault.store, txn, id, None)?;
-    crate::embed::delete_text_media_vectors_in_txn(&vault.store, txn, id)?;
-    vault.store.clear_pending_embedding(txn, id)?;
-    #[cfg(feature = "sync")]
-    {
-        vault
-            .store
-            .sync_hooks
-            .delete_embed_job_in_txn(&vault.store, txn, id)?;
-        crate::embed::clear_pending_embedding_lease_if_any(vault, txn, id)?;
-    }
-    Ok(())
+    Ok(had_vector)
 }
