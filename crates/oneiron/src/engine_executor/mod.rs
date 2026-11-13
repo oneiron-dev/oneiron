@@ -79,6 +79,7 @@ pub use self::types::{
     StoreReceiptTree, guest_response_with_budget,
 };
 
+pub(crate) use self::host::executor_declarations_block;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::host::executor_system_prompt;
 #[cfg(oneiron_test_support)]
