@@ -1,7 +1,9 @@
 //! The receive-pack intent's recorder: the one write that journals an
 //! admitted push while pre-receive still blocks every ref effect. A push
 //! admitted with its keys marked (FIX 7608) writes those marks in the same
-//! transaction, so marks and intent commit together or not at all.
+//! transaction, so marks and intent commit together or not at all. The
+//! owner's leave for each rewrite of the protected ref the door let pass
+//! (L8-51) is spent there too, last, so one leave lands one move.
 
 use std::path::Path;
 
@@ -19,6 +21,7 @@ use super::{
     push_admission, receive_pack_repo_identity_hex,
 };
 use crate::Vault;
+use crate::consent::EffectDigest;
 use crate::error::Result;
 use crate::origin::git_ref_change::GitPushRefChange;
 use crate::origin::residence::OriginAuthorityStamp;
@@ -32,6 +35,7 @@ impl Vault {
         stamp: &DoorAdmissionStamp,
         door: &DoorWindowReport,
         changes: Option<&[GitPushRefChange]>,
+        approved: &[EffectDigest],
     ) -> Result<()> {
         let RepoRef::LocalFolder { path, .. } = repo else {
             return Err(receive_pack_provenance_refused("intent is not local"));
@@ -121,7 +125,7 @@ impl Vault {
         #[cfg(test)]
         count_journal_bytes(INTENTS.encode_value(&intent));
         let marks = admitted_marks(door, stamp)?;
-        self.with_write_txn_grouped(|wtxn| {
+        let withdrawn = self.with_write_txn_grouped(|wtxn| {
             if INTENTS.contains(&self.store, wtxn, &key)? {
                 return Err(receive_pack_provenance_refused("intent already exists"));
             }
@@ -143,8 +147,17 @@ impl Vault {
                 Some(_) => ReceivePackScanSummary::Marked { mark_count },
                 None => ReceivePackScanSummary::Clean,
             };
+            // Last, after every other check: the owner's leave for each
+            // rewrite of the protected ref, spent with the intent or not at
+            // all, and the question it answered withdrawn.
+            let withdrawn =
+                self.spend_protected_ref_leaves_in_txn(wtxn, stamp.principal_ref(), approved)?;
             INTENTS.put(&self.store, wtxn, &key, &intent)?;
-            Ok(())
-        })
+            Ok(withdrawn)
+        })?;
+        for seq in withdrawn {
+            self.signal_decision_answer(seq);
+        }
+        Ok(())
     }
 }

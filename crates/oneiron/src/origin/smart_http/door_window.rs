@@ -18,9 +18,11 @@ use super::paths::{
     DOOR_BLOB_TOO_LARGE, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
     ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
+use super::protected_ref_confirm::{ProtectedRef, ProtectedRefDecision};
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
+use crate::consent::EffectDigest;
 use crate::credential_door::CredentialDoorService;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName};
@@ -121,7 +123,7 @@ pub(super) struct DoorWindowContext<'a> {
     /// owner, whose hook then names every branch move that does not
     /// fast-forward (L8-51). `None` for the owner's push, and for a
     /// repository whose HEAD names no branch.
-    pub(super) protected_ref: Option<&'a str>,
+    pub(super) protected_ref: Option<&'a ProtectedRef>,
 }
 
 pub(super) struct DoorWindowRequest {
@@ -181,20 +183,26 @@ pub(super) fn serve_door_window(
     // that cannot be parsed and an extraction that cannot be read whole are
     // both unscanned bytes, so they become a published refusal rather than an
     // empty scan — and rather than an unanswered hook left blocking.
-    let mut report = match scan_window(vault, repo, &request_path, hooks, context) {
-        Ok(window) => DoorWindowReport {
-            verdict: window.verdict,
-            ref_updates: window.request.ref_updates,
-            lfs_pointers: window.lfs_pointers,
-            ref_lfs_pointers: window.ref_lfs_pointers,
-            quarantine_path: window.request.quarantine_path,
-        },
-        Err(refused) => DoorWindowReport {
-            verdict: DoorWindowVerdict::Rejected {
-                reasons: vec![refused.reason().to_owned()],
+    let (mut report, approved) = match scan_window(vault, repo, &request_path, hooks, context) {
+        Ok(window) => (
+            DoorWindowReport {
+                verdict: window.verdict,
+                ref_updates: window.request.ref_updates,
+                lfs_pointers: window.lfs_pointers,
+                ref_lfs_pointers: window.ref_lfs_pointers,
+                quarantine_path: window.request.quarantine_path,
             },
-            ..DoorWindowReport::not_invoked()
-        },
+            window.approved,
+        ),
+        Err(refused) => (
+            DoorWindowReport {
+                verdict: DoorWindowVerdict::Rejected {
+                    reasons: vec![refused.reason().to_owned()],
+                },
+                ..DoorWindowReport::not_invoked()
+            },
+            Vec::new(),
+        ),
     };
     if report.admitted() {
         // The hook is still blocked. Commit the complete operation BEFORE
@@ -202,13 +210,21 @@ pub(super) fn serve_door_window(
         // taken on this door thread; the serving thread holds that coordinator.
         // A checkout push's ref moves and changed paths go to the writer,
         // which rechecks the push's authority (G1-PUSH) and names a refusal.
+        // The owner's leave for each rewrite of the protected ref is spent
+        // there too (L8-51).
         let recorded = context
             .admission
             .ok_or_else(|| receive_pack_provenance_refused("intent has no admission"))
             .and_then(|stamp| {
                 let changes =
                     super::push_paths::checkout_changes(hooks, stamp, &report.ref_updates)?;
-                vault.record_receive_pack_intent(repo, stamp, &report, changes.as_deref())
+                vault.record_receive_pack_intent(
+                    repo,
+                    stamp,
+                    &report,
+                    changes.as_deref(),
+                    &approved,
+                )
             });
         if let Err(error) = recorded {
             report.verdict = DoorWindowVerdict::Rejected {
@@ -257,6 +273,9 @@ struct WindowScan {
     lfs_pointers: Vec<LfsPushedPointer>,
     ref_lfs_pointers: Vec<Vec<usize>>,
     verdict: DoorWindowVerdict,
+    /// The owner's leaves the intent's writer spends, one per rewrite of the
+    /// protected ref the door let pass (L8-51).
+    approved: Vec<EffectDigest>,
 }
 
 /// Reads what the hook left behind and decides on it: the ref list, the blob
@@ -285,9 +304,19 @@ fn scan_window(
     // push whose names the landing could not journal is refused whole and
     // goes unscanned; nothing about a legal batch changes.
     let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
-    // The protected ref decides here too, for the same reason: refused now,
-    // the deletion or rewrite never happens and nothing it carried lands.
-    protected_ref_rewrite_reasons(&mut unlandable, &request, context.protected_ref);
+    // The protected ref is read here too, for the same reason: refused now,
+    // the deletion or rewrite never happens and nothing it carried lands. Its
+    // refusal is laid on the scan's verdict below, so the owner is asked only
+    // about a push nothing else refuses (L8-51).
+    let protected = match context.protected_ref {
+        Some(protected) => ProtectedRefDecision::read(
+            vault,
+            protected,
+            &request,
+            context.admission.map(DoorAdmissionStamp::principal_ref),
+        )?,
+        None => ProtectedRefDecision::default(),
+    };
     let door = CredentialDoorService::new(Arc::clone(vault));
     let marks = ReceiveSecretMarksBuilder::new(
         vault,
@@ -362,11 +391,13 @@ fn scan_window(
             reasons: vec!["publication requires the landed scan".to_owned()],
         },
     };
+    let (verdict, approved) = protected.apply(vault, verdict);
     Ok(WindowScan {
         request,
         lfs_pointers,
         ref_lfs_pointers,
         verdict,
+        approved,
     })
 }
 
@@ -654,54 +685,6 @@ pub(super) fn unlandable_ref_reasons(updates: &[RefUpdate]) -> RetainedReasons {
         reasons.push_with(|| format!("{}: {why}", printable_ref_name(&update.name)));
     }
     reasons
-}
-
-/// The typed reason a push by anyone but the vault's owner meets when it
-/// deletes the repository's protected ref, or moves it to a commit that does
-/// not descend from the ref's tip.
-pub(super) const PROTECTED_REF_REWRITE: &str = "protected_ref_rewrite";
-
-/// Refuses, into `reasons`, a deletion or a rewrite of `protected_ref`
-/// (L8-51).
-///
-/// Force-push or deletion of a protected ref, and history rewrite, are the
-/// repo surface's catastrophe class (ARCH-0068 RC4; DEC-0006 names them
-/// one-way): they ask the owner, while every other branch, the lease working
-/// set, passes. Only the owner moves the protected ref that way, so the
-/// window is handed a `protected_ref` only for anyone else's push. A
-/// creation of the ref and a fast-forward of it pass; so does every move of
-/// any other ref.
-fn protected_ref_rewrite_reasons(
-    reasons: &mut RetainedReasons,
-    request: &DoorWindowRequest,
-    protected_ref: Option<&str>,
-) {
-    let Some(protected_ref) = protected_ref else {
-        return;
-    };
-    for update in request
-        .ref_updates
-        .iter()
-        .filter(|update| update.name == protected_ref)
-    {
-        let why = if update.old_oid.is_some() && update.new_oid.is_none() {
-            "only the vault's owner may delete this repository's default branch"
-        } else if request
-            .rewritten_refs
-            .iter()
-            .any(|name| name == protected_ref)
-        {
-            "only the vault's owner may rewrite this repository's default branch"
-        } else {
-            continue;
-        };
-        reasons.push_with(|| {
-            format!(
-                "{}: {PROTECTED_REF_REWRITE}: {why}",
-                printable_ref_name(&update.name)
-            )
-        });
-    }
 }
 
 /// The offending name as it may appear in a refusal the client will read.
