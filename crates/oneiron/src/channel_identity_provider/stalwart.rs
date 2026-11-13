@@ -513,3 +513,20 @@ fn refused(status: reqwest::StatusCode) -> Error {
         invalid("Stalwart HTTP request was refused")
     }
 }
+
+#[cfg(oneiron_test_support)]
+impl StalwartClient {
+    /// A client that never reached its Stalwart session, for the doors that
+    /// write only to the vault (`test_doors::claim_facet_birth`).
+    pub(crate) fn unconnected(config: StalwartConfig) -> Self {
+        let api_url = config.session_url.clone();
+        Self {
+            config,
+            http: Client::new(),
+            authorization: HeaderValue::from_static("unconnected"),
+            api_url,
+            download_url: String::new(),
+            webhook_verifier: None,
+        }
+    }
+}

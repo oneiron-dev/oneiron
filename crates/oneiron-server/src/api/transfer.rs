@@ -413,8 +413,9 @@ impl Transfers {
     /// The line an upload's worker takes its install room on, once its body
     /// is spooled. Reads and installs take their room on different halves,
     /// so an upload holding its transfer permit while it waits never waits
-    /// on a read that waits for a transfer permit.
-    pub(super) fn lfs_installs(&self) -> Arc<ByteLine> {
+    /// on a read that waits for a transfer permit. Crate-wide for the test
+    /// door that holds it (`test_doors::lfs_install_line`).
+    pub(crate) fn lfs_installs(&self) -> Arc<ByteLine> {
         Arc::clone(&self.lfs_installs)
     }
 

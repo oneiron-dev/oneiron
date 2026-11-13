@@ -606,6 +606,8 @@ fn active_campaign(vault: &Vault) -> EntityId {
             schema_version: CAMPAIGN_SCHEMA_VERSION,
             name: "saved query oracle campaign".to_owned(),
             reply_snooze_policy: None,
+            voice_guide_ref: None,
+            copy_review: None,
         },
         1,
     )

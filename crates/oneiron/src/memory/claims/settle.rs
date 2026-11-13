@@ -31,7 +31,8 @@ use crate::consent::bundle_projection::GateConsentBundleAction;
 mod authority;
 use authority::ClaimSettler;
 mod conflict_head;
-use conflict_head::{ConflictHead, conflict_head_in_txn};
+use conflict_head::{ConflictHead, ConflictHeadIndex, conflict_head_in_txn};
+mod restored_member;
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";
@@ -246,8 +247,11 @@ struct ReviewedProposal {
     /// rejection needs its tray row.
     machine: bool,
     /// The actors that opened it: its authenticated author and the actor its
-    /// envelope names.
+    /// envelope names, unless the owner's whole-vault restore brought it back.
     openers: Vec<EntityId>,
+    /// Whether it is an active claim whose own author's retract waits for
+    /// the holder's consent (ARCH-0040 `mcp:5`).
+    parked_retract: bool,
 }
 
 impl ReviewedProposal {
@@ -265,6 +269,8 @@ impl ReviewedProposal {
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         let pending = vault.store.pending_gate_consent_in_txn(txn, id)?;
+        let parked_retract = body.lifecycle == ClaimLifecycleStatus::Active
+            && vault.claim_retract_is_parked_in_txn(txn, id)?;
         let machine = crate::authority::machine_claim_needs_history(&vault.store, txn, &body)?;
         let frontier =
             crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
@@ -316,8 +322,16 @@ impl ReviewedProposal {
         {
             openers.push(author.entity_ref());
         }
+        // The owner's whole-vault restore opened a claim it brought back, not
+        // the owner its envelope names (D5, RULING 00:08 13 Nov).
         if let Some(actor) = claim_envelope_actor(&body)
             && !openers.contains(&actor)
+            && !crate::batch::export::owner_restore_opened_claim_in_txn(
+                &vault.store,
+                txn,
+                &body,
+                actor,
+            )?
         {
             openers.push(actor);
         }
@@ -329,6 +343,7 @@ impl ReviewedProposal {
             prior,
             machine,
             openers,
+            parked_retract,
         })
     }
 
@@ -336,8 +351,10 @@ impl ReviewedProposal {
         crate::entity_id::bytes_to_hex_lower(&self.digest)
     }
 
+    /// An active proposal, or an active claim whose retract is parked for
+    /// the holder.
     fn is_open(&self) -> bool {
-        self.body.approval == ClaimApprovalStatus::Proposed
+        (self.body.approval == ClaimApprovalStatus::Proposed || self.parked_retract)
             && self.body.lifecycle == ClaimLifecycleStatus::Active
     }
 
@@ -727,16 +744,16 @@ impl Memory<'_> {
                 self.vault
                     .store
                     .append_gate_decision_in_txn(wtxn, &record)?;
-                Ok((settled, record))
+                Ok((settled, record, reviewed.parked_retract))
             });
-        let (settled, record) = written?;
+        let (settled, record, parked_retract) = written?;
         for decision in &settled.recorded {
             decision.record_metrics(&self.vault.store.diagnostics.gate);
         }
         // An approved curator finding applies now, after the approval
         // committed, not at the next nightly pass (FIX 6078); one that cannot
         // waits for that pass, and the settlement stands either way.
-        if action == GateConsentBundleAction::Approve {
+        if action == GateConsentBundleAction::Approve && !parked_retract {
             crate::dreamer_runner::maintenance::apply_curator_after_consent(self.vault, [id], now);
         }
         // Consent is committed before the consolidator opens its own writer;
@@ -753,9 +770,12 @@ impl Memory<'_> {
             };
         self.produced_from([id]);
         let claim_ref = id.to_hex();
-        let revert = (verdict == ClaimSettlementVerdict::Landed).then(|| ClaimSettlementRevert {
-            verb: CLAIM_SETTLEMENT_REVERT_VERB.to_owned(),
-            claim_ref: claim_ref.clone(),
+        // A retraction is final: an approved parked retract has no revert.
+        let revert = (verdict == ClaimSettlementVerdict::Landed && !parked_retract).then(|| {
+            ClaimSettlementRevert {
+                verb: CLAIM_SETTLEMENT_REVERT_VERB.to_owned(),
+                claim_ref: claim_ref.clone(),
+            }
         });
         Ok(ClaimSettlement {
             receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
@@ -773,6 +793,12 @@ impl Memory<'_> {
             },
             reason,
             summary: match (verdict, authority.is_grant()) {
+                (ClaimSettlementVerdict::Landed, _) if parked_retract => {
+                    "The parked retract was approved; the claim is retracted.".to_owned()
+                }
+                (ClaimSettlementVerdict::Rejected, _) if parked_retract => {
+                    "The parked retract was declined; the claim stands as it was.".to_owned()
+                }
                 (ClaimSettlementVerdict::Landed, true) => {
                     "The granted holder approved the reviewed claim; it now reads as approved.".to_owned()
                 }

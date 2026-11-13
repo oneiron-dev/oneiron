@@ -25,6 +25,10 @@ pub(crate) enum CommitmentInstanceState {
     /// The head is an active claim and its promise is open: the instance may
     /// act.
     Open(CommitmentRecord),
+    /// The head is an active claim and its promise is inert: a signing
+    /// document names it and is not yet signed. It does not act until the
+    /// document completes and opens it.
+    Inert(CommitmentRecord),
     /// The head's promise carries a terminal status.
     Closed(CommitmentRecord),
     /// The head's claim was closed while its promise was open (a generic
@@ -46,12 +50,15 @@ impl Vault {
         let Some(record) = decode_commitment_claim(&body)? else {
             return Ok(CommitmentInstanceState::Missing);
         };
-        Ok(if record.status != CommitmentStatus::Open {
-            CommitmentInstanceState::Closed(record)
-        } else if body.lifecycle == ClaimLifecycleStatus::Active {
-            CommitmentInstanceState::Open(record)
-        } else {
-            CommitmentInstanceState::Withdrawn
+        let active = body.lifecycle == ClaimLifecycleStatus::Active;
+        Ok(match record.status {
+            CommitmentStatus::Open if active => CommitmentInstanceState::Open(record),
+            CommitmentStatus::Inert if active => CommitmentInstanceState::Inert(record),
+            CommitmentStatus::Open | CommitmentStatus::Inert => CommitmentInstanceState::Withdrawn,
+            CommitmentStatus::Fulfilled
+            | CommitmentStatus::Released
+            | CommitmentStatus::Lapsed
+            | CommitmentStatus::Superseded => CommitmentInstanceState::Closed(record),
         })
     }
 

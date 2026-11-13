@@ -347,6 +347,40 @@ pub fn spend_lease_embedded(
     }
 }
 
+/// `vault.budgets.settlements` for a person or agent on a verified slip of
+/// its own: of one served run's settlements `rows`, as the host's usage
+/// ledger read them, those whose stamp names the caller as the agent the call
+/// served (`RunRungSettlement::agent`: the engine's stamp on an `engine`
+/// record, the poster's on a `posted` one). An unbound call names no agent,
+/// and no call names a person, so a person reads none. The owner reads every
+/// row on its own proof.
+///
+/// The caller's read authority is proved after the ledger read the rows, so
+/// a credential revoked or expired before that proof reads nothing
+/// (`Memory::prove_read_authority_in_txn`).
+///
+/// # Errors
+///
+/// A caller whose bound credential grants it no read or no longer holds
+/// (`FORBIDDEN`); storage errors.
+pub fn own_run_settlements_as_reader(
+    memory: &Memory<'_>,
+    rows: Vec<RunRungSettlement>,
+) -> MemoryResult<Vec<RunRungSettlement>> {
+    let txn = memory
+        .vault()
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)?;
+    memory.prove_read_authority_in_txn(&txn)?;
+    let caller = memory.actor().to_hex();
+    Ok(rows
+        .into_iter()
+        .filter(|row| row.agent.as_deref() == Some(caller.as_str()))
+        .collect())
+}
+
 /// Whether `scope`, or a scope above it in its tree, is the spend scope of an
 /// attempt the caller is the actor of, as `txn` reads it. A launch root names
 /// no attempt.

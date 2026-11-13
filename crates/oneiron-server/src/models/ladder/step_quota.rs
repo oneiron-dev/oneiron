@@ -52,13 +52,14 @@ impl OfferLadder {
     /// Why the attempt's offer is parked: a spent window with its reset, or
     /// spent credit, which only the owner brings back, each after the owner
     /// is asked; else the walk's own end, a rate limit with when the offer
-    /// is back or an outage.
+    /// is back or an outage. A login-backed offer's spent window names its
+    /// seat, so a Dreamer step parks on that seat (SEAT-PARK-MODEL-STEP-PATH).
     fn parked_refusal(&self, call: Call<'_>, walk: Walk) -> LlmError {
         let spent = walk
             .parked(self.rungs.len())
-            .and_then(|parked| parked.first().map(|(_, rest)| *rest))
-            .and_then(|rest| Some((rest, rest.spent?)));
-        let Some(((rest, kind), now)) = spent.zip(self.rests.now()) else {
+            .and_then(|parked| parked.first().copied())
+            .and_then(|(index, rest)| Some((index, rest, rest.spent?)));
+        let Some(((index, rest, kind), now)) = spent.zip(self.rests.now()) else {
             return self.unanswered(call, walk);
         };
         self.ask_parked(&walk, call.needs, call.run.principal());
@@ -66,10 +67,18 @@ impl OfferLadder {
             ResetSource::Parked => (None, Vec::new()),
             _ => (Some(rest.until.saturating_sub(now)), vec![rest.until]),
         };
+        let seat = match kind {
+            SpentKind::Window => self
+                .rungs
+                .get(index)
+                .and_then(|rung| rung.offer.backend.model_seat()),
+            SpentKind::Credit => None,
+        };
         RetryableLlmError::QuotaSpent {
             kind,
             retry_after,
             resets_at,
+            seat,
         }
         .into()
     }

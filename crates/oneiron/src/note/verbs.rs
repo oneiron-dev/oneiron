@@ -44,6 +44,21 @@ impl Vault {
         actor: WriteActor,
         birth: crate::federation::record_scope::BirthPosition,
     ) -> MemoryResult<EntityId> {
+        self.create_note_born_then(kind, markdown, actor, birth, |_, _| Ok(()))
+            .map(|(id, ())| id)
+    }
+
+    /// [`Self::create_note_born`], with `then` run in the writer that births
+    /// the NOTE, once its document is stored, so a row that must commit with
+    /// the NOTE (a plan-doc's review row) lands in that same commit.
+    pub(crate) fn create_note_born_then<T>(
+        &self,
+        kind: &str,
+        markdown: &str,
+        actor: WriteActor,
+        birth: crate::federation::record_scope::BirthPosition,
+        then: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<T>,
+    ) -> MemoryResult<(EntityId, T)> {
         let kind = self.note_kind(kind)?;
         let id = self.store.clock.entity_id()?;
         let at = self.store.clock.now_recorded_at();
@@ -84,7 +99,7 @@ impl Vault {
                 content.update_note(id, |txn, _lane| {
                     let doc = super::document_store::load(self, txn, id)?;
                     super::document_store::persist_authoritative(self, txn, &doc)?;
-                    Ok(id)
+                    Ok((id, then(txn, id)?))
                 })
             })
     }
@@ -373,7 +388,10 @@ impl Vault {
                 )?;
                 let source = crate::claim::ClaimSource::Inferred;
                 body.source = Some(source);
-                body.scope_facet = origin_facet;
+                // An imported record's origin facet need not be a FACET row
+                // here; such a suggestion takes the vault default facet.
+                body.scope_facet =
+                    self.claim_put_facet_keeping_in_txn(txn, &suggestion, origin_facet)?;
                 self.put_claim_in_txn(
                     txn,
                     &suggestion,

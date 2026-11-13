@@ -353,8 +353,19 @@ fn org_slips_are_closed_identified_and_never_owner_grade() {
         });
         assert_unauthorized(fixture.auth(&slip));
     }
+    // b6c58845325 (#4972): a member grant may carry org:* verbs without an
+    // organization; it is accepted, and holds no organization power.
     let missing_org = fixture.mint(|claims| claims.scope.verbs = verbs(&["org:add-member"]));
-    assert_unauthorized(fixture.auth(&missing_org));
+    let member = fixture.auth(&missing_org).unwrap();
+    assert_eq!(member.org_ref(), None);
+    assert!(
+        member
+            .require(CoreScope::OrgAdmin(OrgAdminPower::AddMember))
+            .is_err()
+    );
+    assert!(member.require(CoreScope::Read).is_err());
+    assert!(member.require(CoreScope::Write).is_err());
+    assert!(!member.is_owner_grade());
     let missing_admin = fixture.mint(|claims| {
         claims.scope.verbs = verbs(&["org:add-member"]);
         claims.org_ref = Some(org);

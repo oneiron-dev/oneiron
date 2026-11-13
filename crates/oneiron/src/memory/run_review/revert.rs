@@ -216,35 +216,9 @@ fn compensate(
             };
             if body.lifecycle != ClaimLifecycleStatus::Active
                 || fingerprint(&snapshot::binding(memory, txn, &row.member)?.0) != *expected
+                || has_live_dependent(vault, txn, &id)?
             {
                 return Ok(None);
-            }
-            // A live later claim that cites or derives from this change is
-            // left standing with its input. Do not retract that input under it.
-            for kind in [
-                crate::edge::EdgeKind::DerivedFrom,
-                crate::edge::EdgeKind::Supersedes,
-                crate::edge::EdgeKind::Supports,
-            ] {
-                for peer in vault.port_edge_peers(txn, &id, EdgeDirection::In, kind)? {
-                    let peer = peer?;
-                    let Some(record) = vault.store.port_entity_record(txn, &peer)? else {
-                        continue;
-                    };
-                    let state = vault.store.port_deletion_state(txn, &peer)?;
-                    if state.deleted || state.archived {
-                        continue;
-                    }
-                    if record.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-                        return Ok(None);
-                    }
-                    if vault.get_claim_in_txn(txn, &peer)?.is_some_and(|body| {
-                        body.lifecycle == ClaimLifecycleStatus::Active
-                            && body.approval != ClaimApprovalStatus::Rejected
-                    }) {
-                        return Ok(None);
-                    }
-                }
             }
             let reverted = crate::dreamer_consolidation::revert_authored_change_in_txn(
                 vault,
@@ -261,6 +235,23 @@ fn compensate(
                 .chain(reverted.left_alone)
                 .collect();
             Ok(Some((id.to_hex(), unrestored)))
+        }
+        Some(RunInverse::Restored {
+            fingerprint: expected,
+        }) => {
+            let id = EntityId::from_hex(row.member.change())?;
+            let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+                return Ok(None);
+            };
+            if body.lifecycle != ClaimLifecycleStatus::Active
+                || fingerprint(&super::restore_group::restored_binding(vault, txn, &id)?)
+                    != *expected
+                || has_live_dependent(vault, txn, &id)?
+            {
+                return Ok(None);
+            }
+            vault.retract_claim_in_txn_as(txn, &id, now / 1_000, Some(actor))?;
+            Ok(Some((id.to_hex(), Vec::new())))
         }
         Some(RunInverse::Note(undo)) => crate::note::revert_run_note_in_txn(memory, txn, undo)
             .map(|receipt| receipt.map(|receipt| (receipt, Vec::new()))),
@@ -293,4 +284,40 @@ fn compensate(
         }
         Some(RunInverse::AuthorErased) | None => Ok(None),
     }
+}
+
+/// Whether a live later claim cites, derives from or supersedes the change
+/// `id`, or any live row of another type links to it so: the change is then
+/// left standing with its input, never retracted under it.
+fn has_live_dependent(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> MemoryResult<bool> {
+    for kind in [
+        crate::edge::EdgeKind::DerivedFrom,
+        crate::edge::EdgeKind::Supersedes,
+        crate::edge::EdgeKind::Supports,
+    ] {
+        for peer in vault.port_edge_peers(txn, id, EdgeDirection::In, kind)? {
+            let peer = peer?;
+            let Some(record) = vault.store.port_entity_record(txn, &peer)? else {
+                continue;
+            };
+            let state = vault.store.port_deletion_state(txn, &peer)?;
+            if state.deleted || state.archived {
+                continue;
+            }
+            if record.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                return Ok(true);
+            }
+            if vault.get_claim_in_txn(txn, &peer)?.is_some_and(|body| {
+                body.lifecycle == ClaimLifecycleStatus::Active
+                    && body.approval != ClaimApprovalStatus::Rejected
+            }) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }

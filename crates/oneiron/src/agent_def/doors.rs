@@ -170,7 +170,7 @@ fn scope_within(request: &AgentScope, holder: &AgentScope) -> bool {
 
 /// Whether every grant `request` names is one `holder` holds: its scope, its
 /// skills, its connectors and its code-mode MCPs.
-fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
+pub(super) fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
     scope_within(&request.scope, &holder.scope)
         && request
             .skills
@@ -659,6 +659,9 @@ impl Vault {
 
     /// Creates an inert custom definition as the authenticated owner. An
     /// occupied id is never an implicit edit, including another entity kind.
+    /// The write stamps the owner as the definition's creator
+    /// (OWNER-MADE-AGENT-DEF-UNPLACED), so the owner's edit over a claim of
+    /// this agent lands as the owner's ruling.
     pub fn create_agent_definition_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -668,13 +671,14 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let creator = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             if self.store.port_entity_record(txn, id)?.is_some() {
                 return Err(Error::ConcurrentWrite(
                     "agent definition id is already occupied",
                 ));
             }
-            self.put_agent_definition_in_txn(txn, id, def, occurred, learned_at)
+            self.put_agent_definition_in_txn(txn, id, def, occurred, learned_at)?;
+            super::creating_owner::record_creating_owner_in_txn(&self.store, txn, id, &creator)
         })
     }
 

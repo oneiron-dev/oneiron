@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::memory::codebase_doors::{CodeSnapshotDefinition, CodeSnapshotFile};
-use crate::merge_queue::BatchState;
+use crate::merge_queue::{BatchState, QueueDriveStatus};
 use crate::origin::RepoPortableId;
 use crate::store::repo_proposal_record::RepoProposalStatus;
 
@@ -346,6 +346,18 @@ pub struct RepoMergeQueueObserveOutput {
     pub entries: Vec<RepoQueueEntryView>,
 }
 
+/// The green reconciliation successor that carried a run's superseded
+/// queue entry, as the run reads it (QUEUE Q1 = A).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoQueueSuccessor {
+    /// The successor batch id, 64 lower-hex characters: the run's lane
+    /// reads the successor's own completion receipt.
+    Batch(String),
+    /// Another batch, which the run's lane does not read; no id is shown.
+    AnotherBatch,
+}
+
 /// One of the run's own queue entries: a batch of its exact proposals.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RepoQueueEntryView {
@@ -357,6 +369,19 @@ pub struct RepoQueueEntryView {
     pub declaration: Option<EntityId>,
     #[schemars(with = "String")]
     pub state: BatchState,
+    /// Where the automatic driver stands on it, from the same stored batch
+    /// as `state`: `unenrolled` on a queue no checked init enrolls, else a
+    /// typed hold such as `waiting_symbols` or `held_needs_new_base`, or
+    /// `driving` / `done` / `superseded`. Its last stored status, so it can
+    /// trail the live `blockers` until the driver's next pass. No reason
+    /// text, conflict or other run's proposal is shown.
+    #[schemars(with = "String")]
+    pub drive: QueueDriveStatus,
+    /// Once `state` is `Superseded`: what carried its change, never landed
+    /// itself (QUEUE Q1 = A). The green successor batch only when the run's
+    /// lane reads that successor's own completion receipt, else
+    /// `another_batch`.
+    pub superseded_by: Option<RepoQueueSuccessor>,
     pub base_green: String,
     pub expected_head: String,
     pub landed_head: Option<String>,
@@ -368,7 +393,8 @@ pub struct RepoQueueEntryView {
     /// and the queue sequence are not it.
     pub admission_receipt: Option<EntityId>,
     /// Its `repo.queue_completion` receipt once terminal: green advanced,
-    /// rolled back, quarantined or cancelled. A landed head is not one.
+    /// rolled back, quarantined, cancelled or superseded. A landed head is
+    /// not one.
     pub completion_receipt: Option<EntityId>,
     /// The `repo.proposal_admission` receipt of each of its proposals the
     /// run's lane reads, in batch order, as its queue admission bound them.
