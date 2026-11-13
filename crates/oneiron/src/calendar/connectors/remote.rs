@@ -172,13 +172,17 @@ pub trait CalendarRemoteTransport {
         Ok(None)
     }
 
-    /// `cursor`, the next cursor of a pull one of whose omissions stays owed
-    /// (a write of it in flight, or its row moved since the listing): one
-    /// from which the next pull lists the calendar whole again, so the
-    /// omission is read again and never dropped (fix list row 19192). The
-    /// default, for a provider that reports no omissions, is `cursor` itself.
-    fn cursor_owing_full_listing(&self, cursor: &str) -> String {
-        cursor.to_owned()
+    /// `cursor`, the next cursor of a pull that left a change owed (an
+    /// omission with a write of it in flight or its row moved since the
+    /// listing, or a booking move a pending emergency delivery held back):
+    /// one from which the next pull lists the calendar whole again, so the
+    /// owed change is read again and never dropped (fix list row 19192,
+    /// FIX 22385). The default is `None`, no cursor: the next pull starts
+    /// from nothing, which lists the calendar whole for every transport. A
+    /// transport that frames more than a sync token in its cursor keeps that
+    /// framing and drops only the token.
+    fn cursor_owing_full_listing(&self, _cursor: &str) -> Option<String> {
+        None
     }
 
     /// Conditionally stores one VEVENT resource.

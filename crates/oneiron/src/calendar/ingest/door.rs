@@ -60,6 +60,13 @@ pub struct CalendarIcsImportReceipt {
     pub source_version: u64,
     pub events: Vec<CalendarImportedEvent>,
     pub screen_verdict: String,
+    /// Booking moves this upload held back because an emergency delivery for
+    /// that booking is still pending (FIX 22385): the booking's EVENT and
+    /// passport stay as they were, and every other item of the upload
+    /// landed. Uploading the feed again once the delivery completes moves
+    /// them.
+    #[serde(default)]
+    pub owed_booking_moves: u32,
 }
 
 /// Calendar errors keep their importer diagnostic; refusal never causes a
@@ -313,5 +320,6 @@ fn apply_upload(
         source_version: version,
         events,
         screen_verdict: admission.verdict_fold.token().to_owned(),
+        owed_booking_moves: admission.owed_booking_moves,
     })
 }
