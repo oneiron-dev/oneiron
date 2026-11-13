@@ -92170,6 +92170,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/claim_value_redaction.rs",
+     "purpose": "Door to the local claim-value redaction core (gate census G2)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/coach.rs",
      "purpose": "The owner's proof, the Coach and a project goal, for integration tests (untangle 6.6: the Coach's…",
      "surface": {
@@ -92465,7 +92475,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 58,
+      "mod": 59,
       "re-export": 1
      }
     },
@@ -102016,6 +102026,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/gate_pins_authority_custody_grants.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 6 (Engine NOTE 13 Nov 02:19): green pins for eight authority, custody and grant…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/gate_pins_authority_rechecks.rs",
      "purpose": "OPUS-T0-F gate pins, PR 1 (Engine task 12 Nov 19:38): green pins for ten write gates of OPUS-GATECENSUS's…",
      "surface": {}
@@ -102026,6 +102044,14 @@
      "notable": [],
      "path": "tests/gate_pins_claim_producers.rs",
      "purpose": "OPUS-T0-F gate pins, PR 2 (Engine task 12 Nov 19:38): green pins for eleven write gates of OPUS-GATECENSUS's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_pins_claim_record_producers.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 7 (Engine NOTE 13 Nov 02:19): green pins for claim and record producer gates of…",
      "surface": {}
     },
     {
@@ -105566,7 +105592,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 61,
+     "files": 62,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105743,8 +105769,8 @@
    },
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7462,
-   "test_files": 1155
+   "source_files": 7463,
+   "test_files": 1157
   },
   "oneiron-agent-runtime": {
    "files": [
