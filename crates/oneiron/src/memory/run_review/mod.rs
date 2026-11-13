@@ -60,23 +60,38 @@ pub enum RunReviewChange {
 }
 
 impl RunReviewChange {
-    fn change(&self) -> &str {
+    /// The change's ref, which names it in a review, a settlement and a
+    /// revert selection: the row the change wrote (its claim, provenance
+    /// claim, fork, topology event or effect receipt). A deletion wrote no
+    /// row of its own, so its ref is its kind and the entity it removed,
+    /// `delete:<entity>` or `erase:<entity>`: a run that wrote a claim and
+    /// then deleted it, or deleted and then erased one entity, keeps each
+    /// change apart.
+    fn change(&self) -> String {
         match self {
-            Self::Claim { claim_ref } => claim_ref,
-            Self::Edge { provenance_ref } => provenance_ref,
-            Self::Note { fork_ref, .. } => fork_ref,
-            Self::Topology { event_ref } => event_ref,
-            Self::ExternalEffect { receipt_ref } => receipt_ref,
-            Self::Delete { entity_ref } | Self::Erase { entity_ref } => entity_ref,
+            Self::Claim { claim_ref } => claim_ref.clone(),
+            Self::Edge { provenance_ref } => provenance_ref.clone(),
+            Self::Note { fork_ref, .. } => fork_ref.clone(),
+            Self::Topology { event_ref } => event_ref.clone(),
+            Self::ExternalEffect { receipt_ref } => receipt_ref.clone(),
+            Self::Delete { entity_ref } => format!("delete:{entity_ref}"),
+            Self::Erase { entity_ref } => format!("erase:{entity_ref}"),
         }
     }
 
     fn rows(&self) -> MemoryResult<Vec<EntityId>> {
-        match self {
-            Self::ExternalEffect { .. } => Ok(Vec::new()),
-            Self::Note { note_ref, .. } => Ok(vec![EntityId::from_hex(note_ref)?]),
-            _ => Ok(vec![EntityId::from_hex(self.change())?]),
-        }
+        let row = match self {
+            Self::ExternalEffect { .. } => return Ok(Vec::new()),
+            Self::Claim { claim_ref: row }
+            | Self::Edge {
+                provenance_ref: row,
+            }
+            | Self::Note { note_ref: row, .. }
+            | Self::Topology { event_ref: row }
+            | Self::Delete { entity_ref: row }
+            | Self::Erase { entity_ref: row } => row,
+        };
+        Ok(vec![EntityId::from_hex(row)?])
     }
 }
 
