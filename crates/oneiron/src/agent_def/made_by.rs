@@ -43,6 +43,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::run_tree::takes_boundary_pause;
 use crate::skill_hub::pack_catalog::{HookAuthor, PackHookBinding};
 use crate::store::EngineScan;
 use crate::store::scan_count::ScanCount;
@@ -225,18 +226,6 @@ pub(super) fn branch_hex(id: AttemptId) -> String {
 /// The attempt a branch id names ([`branch_hex`]'s inverse).
 pub(super) fn branch_id(branch: &str) -> Result<AttemptId> {
     AttemptId::from_bytes(EntityId::from_hex(branch)?.as_bytes())
-}
-
-/// Whether a tree pause pauses `record` at its next step boundary: a
-/// running agent run of a run, whose executor takes the branch's Pause
-/// signal once its step's checkpoint commits (`engine_executor::run_signals`),
-/// and no pause is pending on it already. A landing branch takes no more
-/// steps, a branch of no run takes no signal, and a send runs no step.
-pub(super) fn takes_boundary_pause(record: &AttemptRecord) -> bool {
-    record.state == AttemptState::Leased
-        && record.run_id.is_some()
-        && record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
-        && !crate::run_tree::pause_pending(record)
 }
 
 /// How many entries of `made` the tree pause would pause now; `boundary`

@@ -923,3 +923,45 @@ fn resume_tree_withdraws_a_boundary_pause_the_run_never_took() -> TestResult {
     assert_eq!(state(&f, running)?, AttemptState::Leased);
     Ok(())
 }
+
+/// The engine RULING PAUSE-BOUNDARY-SCOPE = B: `vault.runs.pause` on a
+/// running branch posts the same boundary pause instead of refusing. A
+/// repeat before the boundary posts nothing more. The run stops after the
+/// step it was running, and `vault.runs.resume` queues it again.
+#[test]
+fn runs_pause_pauses_a_running_branch_at_its_next_step_boundary() -> TestResult {
+    let f = fixture()?;
+    let running = spawn_child(&f, "blast-running")?;
+    let leased = claim(&f.vault, running)?;
+
+    let pausing = as_owner(&f, "vault.runs.pause", json!({"branch": hex(running)}))?;
+    assert_eq!(
+        pausing["effect"],
+        json!("pausing_at_next_step"),
+        "{pausing}"
+    );
+    assert_eq!(pausing["branch"]["state"], json!("Leased"), "{pausing}");
+    let again = as_owner(&f, "vault.runs.pause", json!({"branch": hex(running)}))?;
+    assert_eq!(again["effect"], json!("pausing_at_next_step"), "{again}");
+    assert_eq!(
+        branch_signals(&f, running)?.len(),
+        1,
+        "a repeat posts no second pause"
+    );
+
+    let backend = CountingBackend::new();
+    let outcome = run_child(&f, &leased, &backend, 3)?;
+    assert_eq!(
+        status(&outcome),
+        "Paused { next_step_seq: 1 }",
+        "the step that was running commits, then the run stops"
+    );
+    assert_eq!(state(&f, running)?, AttemptState::Paused);
+    let paused = as_owner(&f, "vault.runs.pause", json!({"branch": hex(running)}))?;
+    assert_eq!(paused["effect"], json!("already_paused"), "{paused}");
+
+    let resumed = as_owner(&f, "vault.runs.resume", json!({"branch": hex(running)}))?;
+    assert_eq!(resumed["effect"], json!("resumed"), "{resumed}");
+    assert_eq!(state(&f, running)?, AttemptState::Queued);
+    Ok(())
+}

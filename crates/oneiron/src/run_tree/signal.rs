@@ -46,6 +46,18 @@ pub(crate) fn pause_pending(record: &crate::attempt_queue::AttemptRecord) -> boo
     })
 }
 
+/// Whether a person's pause reaches `record` at its next step boundary: a
+/// running agent run of a run, whose executor takes the branch's Pause
+/// signal once its step's checkpoint commits (`engine_executor::run_signals`),
+/// and no pause is pending on it already. A landing branch takes no more
+/// steps, a branch of no run takes no signal, and a send runs no step.
+pub(crate) fn takes_boundary_pause(record: &crate::attempt_queue::AttemptRecord) -> bool {
+    record.state == AttemptState::Leased
+        && record.run_id.is_some()
+        && record.kind == crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+        && !pause_pending(record)
+}
+
 impl RunTreeAdapter<'_> {
     /// Subscribe before taking a handle snapshot; on lag, read a fresh snapshot.
     /// An answer commits before this invalidation fires. Foreign hosts without
