@@ -5,7 +5,9 @@
 //! transaction that reserves the member's slot, and associated with her
 //! work facet later, at the companion step. Both writers run the same
 //! check in their own transaction, so no binding stands for a companion
-//! her member never brought.
+//! her member never brought. The reserve also keeps a member's companion
+//! from running an org she belongs to, unless she is the sole owner
+//! (COMPANION-LEADER, #companion-split).
 
 use super::*;
 use crate::error::GateError;
@@ -55,6 +57,59 @@ pub(super) fn reserve_member_in_txn(
     }
     COMPANION_PRINCIPAL.put(&vault.store, txn, &companion, &intent.person_ref)?;
     MEMBER_INTENT.put(&vault.store, txn, &key, digest)?;
+    require_companion_split_in_txn(vault, txn, intent)
+}
+
+/// The refusal [`require_companion_split_in_txn`] returns.
+const COMPANION_SPLIT_REFUSAL: &str = "one agent is not both a person's companion and the companion of an org she belongs to; only a sole owner binds them both";
+
+/// COMPANION-LEADER (the owner, 11 Nov; ONEIRON-ARCH-0063 #companion-split):
+/// "One agent never serves as both a person's companion and their company's
+/// companion by default, because their loyalties can diverge. A sole owner
+/// may bind them on purpose."
+///
+/// A person's companion is the PERSON [`COMPANION_PRINCIPAL`] names her for.
+/// Her company's companion is the house of a workspace she belongs to, known
+/// by its own model PERSON anchor. The check reads after this reserve's own
+/// two rows, so it judges the roster as it would stand: the house of the
+/// workspace she joins, and the house of each stored workspace she is
+/// already in. Those two rows are written only here and a preset never
+/// changes its house, so no other write can make a split stand. The vault's
+/// one live owner joining is the sole owner's own act, on purpose, and
+/// passes.
+fn require_companion_split_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent: &MemberOnboardingIntent,
+) -> Result<()> {
+    let member = intent.person_ref;
+    let mut houses = vec![intent.workspace.house_actor_ref];
+    for (workspace_ref, row) in PRESET.scan(&vault.store, txn)? {
+        let key = MemberIntentKey {
+            workspace_ref,
+            person_ref: member,
+        };
+        if MEMBER_INTENT.get(&vault.store, txn, &key)?.is_some() {
+            houses.push(row.preset.house_actor_ref);
+        }
+    }
+    let now = vault.store.clock.now_recorded_at();
+    for house in houses {
+        let Some(anchor) =
+            crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &house, now)?
+        else {
+            continue;
+        };
+        if anchor.subject_kind != crate::write_envelope::subject_record::SubjectKind::Person
+            || COMPANION_PRINCIPAL.get(&vault.store, txn, &anchor.subject_ref)? != Some(member)
+        {
+            continue;
+        }
+        if crate::policy_model::owners_in_txn(vault, txn)?.as_slice() == [member] {
+            return Ok(());
+        }
+        return Err(invalid(COMPANION_SPLIT_REFUSAL));
+    }
     Ok(())
 }
 
