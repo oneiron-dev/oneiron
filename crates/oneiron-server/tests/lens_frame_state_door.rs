@@ -13,6 +13,15 @@
 //!
 //! Red on main (main with this file and the door): the path routes DELETE
 //! only, so every GET answers 405.
+//!
+//! A run's live re-render of the same subscription carries the replaced
+//! card's `$state` key by key (Engine ruling 14 Nov 05:40, item 2), and an
+//! event on the replaced card finds it closed. No lens a run renders today
+//! declares `$state`, so the test holds a walk-planner card through the
+//! door `replace_run_card`, as the run's re-render holds it, and reads the
+//! held state back through `held_state`. Red on the base (#7709's head with
+//! these tests and a door that holds the card without carrying): every
+//! re-render starts from its own initial state.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! lens_frame_state_door`.
@@ -28,10 +37,16 @@ use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer, SlipCaveat, holder_proof};
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::lens::GeneratedUiStateSnapshot;
+use oneiron::lens::{
+    CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
+    GeneratedUiCard, GeneratedUiRender, GeneratedUiStateSnapshot, LensAtom, LensAtomId, LensNode,
+    LensRenderId, LensText, SegmentedControl, SelfUiAction, SelfUiActionId, SelfUiBindableProperty,
+    SelfUiBinding, SelfUiControl, SelfUiControlId, SelfUiOption, SelfUiOptionValue, SelfUiStateKey,
+    SelfUiStateValue,
+};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_server::test_doors::lens_frames::move_held_state;
+use oneiron_server::test_doors::lens_frames::{held_state, move_held_state, replace_run_card};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -350,5 +365,179 @@ fn a_card_the_server_does_not_hold_is_refused() {
         assert_eq!(closed["closed"], true, "{closed}");
         let (status, body) = fx.card_state(&owner, &card).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "a closed card: {body}");
+    });
+}
+
+fn text(value: &str) -> LensText {
+    LensText::new(value).expect("lens text")
+}
+
+fn walk_state(pace: &str, note: &str) -> GeneratedUiStateSnapshot {
+    [
+        (
+            SelfUiStateKey::new("pace").expect("state key"),
+            SelfUiStateValue::Token(SelfUiOptionValue::new(pace).expect("option value")),
+        ),
+        (
+            SelfUiStateKey::new("note").expect("state key"),
+            SelfUiStateValue::Text(text(note)),
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn pace_action() -> SelfUiAction {
+    SelfUiAction {
+        command: SelfUiActionId::new("pace.set").expect("action id"),
+        args: Vec::new(),
+    }
+}
+
+/// The walk-planner card `card_id`: a segmented control offering `paces`,
+/// its selection bound to the `pace` key, and a `note`; it starts at the
+/// first pace with no note.
+fn planner(card_id: &str, paces: &[&str]) -> GeneratedUiRender {
+    let mut pace = LensNode::with_fallback_text(
+        LensAtomId::new("pace").expect("atom id"),
+        LensAtom::SelfUi(SelfUiControl::Segmented(SegmentedControl {
+            id: SelfUiControlId::new("pace").expect("control id"),
+            label: text("Pace"),
+            options: paces
+                .iter()
+                .map(|value| SelfUiOption {
+                    value: SelfUiOptionValue::new(*value).expect("option value"),
+                    label: text(value),
+                })
+                .collect(),
+            selected: None,
+            action: pace_action(),
+        })),
+        text("Pace"),
+    );
+    pace.state_bindings = vec![SelfUiBinding {
+        state_key: SelfUiStateKey::new("pace").expect("state key"),
+        property: SelfUiBindableProperty::Selected,
+    }];
+    let mut root = LensNode::with_fallback_text(
+        LensAtomId::new("root").expect("atom id"),
+        LensAtom::Sheet(CollectionAtom {
+            title: text("Walk"),
+            rows: Vec::new(),
+        }),
+        text("Walk"),
+    );
+    root.children = vec![pace];
+    GeneratedUiCard::interactive(
+        LensRenderId::new(card_id).expect("card id"),
+        GeneratedLens::new(root).expect("generated lens"),
+        vec![GeneratedUiActionDeclaration {
+            element_id: LensAtomId::new("pace").expect("atom id"),
+            action_id: SelfUiActionId::new("pace.set").expect("action id"),
+            tier: GeneratedUiActionTier::Local,
+            action: pace_action(),
+        }],
+        walk_state(paces[0], "none yet"),
+    )
+    .expect("a planner card")
+    .render()
+    .expect("render")
+}
+
+#[test]
+fn a_live_re_render_carries_the_replaced_cards_state() {
+    on_engine_stack(|| async {
+        let fx = served();
+        let run = EntityId::now();
+        let first = replace_run_card(
+            &fx.server,
+            run,
+            "walk",
+            planner("walk-1", &["easy", "brisk"]),
+        )
+        .await
+        .expect("the first card");
+        assert_eq!(first.state, walk_state("easy", "none yet"));
+        let picked = walk_state("brisk", "after lunch");
+        assert!(
+            move_held_state(&fx.server, "walk-1", picked.clone()).await,
+            "the server holds the first card"
+        );
+
+        let second = replace_run_card(
+            &fx.server,
+            run,
+            "walk",
+            planner("walk-2", &["easy", "brisk"]),
+        )
+        .await
+        .expect("the re-render");
+        assert_eq!(
+            second.state, picked,
+            "the re-render answers the state the person left"
+        );
+        assert_eq!(held_state(&fx.server, "walk-2").await, Some(picked));
+        assert_eq!(
+            held_state(&fx.server, "walk-1").await,
+            None,
+            "the replaced card is closed: an event on it answers re-render"
+        );
+
+        // A re-render whose control no longer offers the picked pace keeps
+        // its own pace, and still carries the note.
+        let third = replace_run_card(
+            &fx.server,
+            run,
+            "walk",
+            planner("walk-3", &["easy", "steady"]),
+        )
+        .await
+        .expect("the second re-render");
+        let kept = walk_state("easy", "after lunch");
+        assert_eq!(third.state, kept);
+        assert_eq!(held_state(&fx.server, "walk-3").await, Some(kept));
+    });
+}
+
+#[test]
+fn another_runs_or_subscriptions_card_carries_nothing() {
+    on_engine_stack(|| async {
+        let fx = served();
+        let run = EntityId::now();
+        replace_run_card(
+            &fx.server,
+            run,
+            "walk",
+            planner("walk-1", &["easy", "brisk"]),
+        )
+        .await
+        .expect("the first card");
+        let picked = walk_state("brisk", "after lunch");
+        assert!(move_held_state(&fx.server, "walk-1", picked.clone()).await);
+
+        let other_run = replace_run_card(
+            &fx.server,
+            EntityId::now(),
+            "walk",
+            planner("walk-other-run", &["easy", "brisk"]),
+        )
+        .await
+        .expect("another run's card");
+        assert_eq!(other_run.state, walk_state("easy", "none yet"));
+
+        let other_subscription = replace_run_card(
+            &fx.server,
+            run,
+            "swim",
+            planner("swim-1", &["easy", "brisk"]),
+        )
+        .await
+        .expect("another subscription's card");
+        assert_eq!(other_subscription.state, walk_state("easy", "none yet"));
+        assert_eq!(
+            held_state(&fx.server, "walk-1").await,
+            Some(picked),
+            "neither replaces the first card"
+        );
     });
 }
