@@ -910,7 +910,7 @@ impl HostedImports {
             id,
             u64::try_from(conversations.len())?,
             messages,
-            &archive_skips,
+            &archive_skips[..0],
         )?;
         let owner = crate::owner::local_owner(vault)?;
         let mut cursor = job.cursor;
