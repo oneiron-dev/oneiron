@@ -232,16 +232,17 @@ fn read_rows(path: &Path) -> anyhow::Result<Vec<AccountKey>> {
         .map_err(|error| anyhow::anyhow!("the accounts file {}: {error}", path.display()))
 }
 
-/// Why `text` is not an accounts file, by line, without the line itself: a
-/// key written where its digest belongs must not reach a log.
+/// Why `text` is not an accounts file, by line only: a key written where its
+/// digest belongs must not reach a log, and the parser's own message can
+/// quote the value it refused ("invalid type: integer `...`").
 fn toml_refusal(text: &str, error: &toml::de::Error) -> anyhow::Error {
     let line = error.span().map_or(0, |span| {
         text.get(..span.start)
             .map_or(0, |before| before.matches('\n').count() + 1)
     });
     anyhow::anyhow!(
-        "line {line}: not [[account]] rows of id, key_sha256 and daily_input_tokens: {}",
-        error.message()
+        "line {line}: not [[account]] rows of id (text), key_sha256 (64 hex digits in quotes) \
+         and daily_input_tokens (a whole number)"
     )
 }
 
