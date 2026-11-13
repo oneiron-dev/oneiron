@@ -52,8 +52,6 @@ mod host_node;
 mod host_re_root;
 mod machine_fold;
 mod machine_identity;
-// FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-MACHINE-WRITE]: the lib test target's type check fails here (13 errors: E0061 x12, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod machine_write;
 mod owner_anchor;
 // FIX [LIBTEST-QUARANTINE-AUTHORITY-TESTS-PINNED-ROOT]: the lib test target's type check fails here (6 errors: E0061 x5, E0063 x1); port it, then drop this gate

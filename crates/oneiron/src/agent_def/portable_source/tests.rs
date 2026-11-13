@@ -68,12 +68,13 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
     let (_dir, target) = open();
     target
         .batch()
-        .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, &carrier)
+        .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, None, &carrier)
         .put_replicated(
             &parent,
             ENTITY_TYPE_AGENT_DEF,
             at,
             10,
+            None,
             &encode_agent_definition(&edited)?,
         )
         .put_replicated(
@@ -81,6 +82,7 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
             ENTITY_TYPE_AGENT_DEF,
             at,
             10,
+            None,
             &encode_agent_definition(&child_def)?,
         )
         .commit()?;
@@ -102,7 +104,7 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
     assert!(
         target
             .batch()
-            .put_replicated(&EntityId::now(), ENTITY_TYPE_ASSET, at, 10, &carrier)
+            .put_replicated(&EntityId::now(), ENTITY_TYPE_ASSET, at, 10, None, &carrier)
             .commit()
             .is_err()
     );
@@ -111,7 +113,7 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
     assert!(
         target
             .batch()
-            .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, &carrier)
+            .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, None, &carrier)
             .commit()
             .is_err()
     );
@@ -120,8 +122,8 @@ fn captured_fork_source_replays_after_parent_edits_and_stays_untrusted() -> Resu
             .put_entity(&asset, ENTITY_TYPE_ASSET, at, 10, b"unrelated")
             .is_err()
     );
-    let archive = target.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-    let document = target.read_whole_vault_json(archive.bytes())?;
+    let archive = target.export_whole_vault(true)?;
+    let document = target.read_whole_vault_archive(archive.bytes())?;
     assert!(
         !document
             .evidence_ledger
@@ -194,7 +196,7 @@ fn agent_source_erasure_covers_pending_replay_and_retired_targets() -> Result<()
             if carrier_first {
                 vault
                     .batch()
-                    .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, &body)
+                    .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, None, &body)
                     .commit()?;
             }
             vault.apply_replayed_tombstone(&child, &tombstone(reason))?;
@@ -202,7 +204,7 @@ fn agent_source_erasure_covers_pending_replay_and_retired_targets() -> Result<()
             assert!(
                 vault
                     .batch()
-                    .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, &body)
+                    .put_replicated(&asset, ENTITY_TYPE_ASSET, at, 10, None, &body)
                     .commit()
                     .is_err()
             );
@@ -289,12 +291,54 @@ fn agent_historical_source_erases_without_widening_from_a_forged_key() -> Result
     Ok(())
 }
 
+/// Copies a whole-vault archive member by member, with one
+/// `bundle_omissions` row dropped from its manifest: the rows still declare
+/// the omission, so the archive no longer validates.
+fn archive_without_bundle_omission(
+    bytes: &[u8],
+    entity_id: &str,
+    reason: crate::batch::export::BundleOmissionReason,
+) -> Result<Vec<u8>> {
+    use std::io::{Read as _, Write as _};
+    let invalid = |what: &str| Error::InvalidConfig(format!("tampered fixture archive: {what}"));
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|_| invalid("unreadable"))?;
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::FileOptions::default();
+    for index in 0..archive.len() {
+        let mut member = archive.by_index(index).map_err(|_| invalid("unreadable"))?;
+        let name = member.name().to_owned();
+        if name.ends_with('/') {
+            continue;
+        }
+        let mut content = Vec::new();
+        member
+            .read_to_end(&mut content)
+            .map_err(|_| invalid("unreadable"))?;
+        if name == crate::batch::export::VAULT_ARCHIVE_MANIFEST_PATH {
+            let mut manifest: crate::batch::export::WholeVaultDocumentManifest =
+                serde_json::from_slice(&content).map_err(|_| invalid("manifest"))?;
+            manifest
+                .bundle_omissions
+                .retain(|row| !(row.entity_id == entity_id && row.reason == reason));
+            content = serde_json::to_vec(&manifest).map_err(|_| invalid("manifest"))?;
+        }
+        out.start_file(name.as_str(), options)
+            .map_err(|_| invalid("unwritable"))?;
+        out.write_all(&content).map_err(|_| invalid("unwritable"))?;
+    }
+    Ok(out
+        .finish()
+        .map_err(|_| invalid("unwritable"))?
+        .into_inner())
+}
+
 #[test]
 fn hash_only_agent_archive_requires_missing_source_omission() -> Result<()> {
     let (_source_dir, source, child, asset, _) = captured_root()?;
     source.batch().delete(&asset).commit()?;
-    let archive = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
-    let mut document = source.read_whole_vault_json(archive.bytes())?;
+    let archive = source.export_whole_vault(true)?;
+    let document = source.read_whole_vault_archive(archive.bytes())?;
     let reason = crate::batch::export::BundleOmissionReason::AgentBirthSourceUnavailable;
     assert!(
         document
@@ -310,19 +354,15 @@ fn hash_only_agent_archive_requires_missing_source_omission() -> Result<()> {
             .any(|pack| pack.entity_id == child.to_hex() && pack.fork_hash.is_some())
     );
     let (_accepted_dir, accepted) = open();
-    accepted.import_whole_vault_json(archive.bytes())?;
+    accepted.import_whole_vault_archive(archive.bytes())?;
     assert_eq!(
         accepted.get_entity_type(&child)?,
         Some(ENTITY_TYPE_AGENT_DEF)
     );
     assert!(accepted.get_entity_type(&asset)?.is_none());
-    document
-        .manifest
-        .bundle_omissions
-        .retain(|row| !(row.entity_id == child.to_hex() && row.reason == reason));
-    let malformed = serde_json::to_vec(&document).expect("archive JSON");
+    let malformed = archive_without_bundle_omission(archive.bytes(), &child.to_hex(), reason)?;
     let (_refused_dir, refused) = open();
-    assert!(refused.import_whole_vault_json(&malformed).is_err());
+    assert!(refused.import_whole_vault_archive(&malformed).is_err());
     assert!(refused.get_entity_type(&child)?.is_none());
     Ok(())
 }
@@ -381,6 +421,7 @@ fn erased_knowledge_removes_copied_birth_bytes_without_erasing_the_agent() -> Re
                     ENTITY_TYPE_ASSET,
                     crate::TimeRange { start: 10, end: 10 },
                     10,
+                    None,
                     &bytes
                 )
                 .commit()
@@ -410,6 +451,7 @@ fn source_input_tombstones_win_in_both_replay_orders() -> Result<()> {
                     ENTITY_TYPE_ASSET,
                     crate::TimeRange { start: 10, end: 10 },
                     10,
+                    None,
                     &bytes,
                 )
                 .commit()?;
@@ -427,6 +469,7 @@ fn source_input_tombstones_win_in_both_replay_orders() -> Result<()> {
                     ENTITY_TYPE_ASSET,
                     crate::TimeRange { start: 10, end: 10 },
                     10,
+                    None,
                     &bytes
                 )
                 .commit()
