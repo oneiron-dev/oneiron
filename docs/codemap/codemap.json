@@ -1153,7 +1153,7 @@
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
       "crate-vis": 15,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -1526,16 +1526,42 @@
      "notable": [
       "ResidentAgentSpec",
       "ResidentGoalRecord",
+      "ResidentInboxDispatch",
       "ResidentWakeMode"
      ],
      "path": "src/agent_dispatch/resident.rs",
      "purpose": "Persistent resident bindings",
      "surface": {
+      "const": 2,
       "crate-vis": 4,
       "enum": 1,
       "fn": 9,
-      "re-export": 1,
-      "struct": 2
+      "re-export": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ResidentMessageClassifier"
+     ],
+     "path": "src/agent_dispatch/resident/message_class.rs",
+     "purpose": "The class of a message to a busy resident (AGM-2 = C; ARCH-0079 #message-classes; agent-mind-design-v1…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/resident/message_wake.rs",
+     "purpose": "A settled resident's inbox message wakes, held (AGM-4 = C): a sleeping resident wakes on any message its…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -1906,7 +1932,7 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 4,
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 3,
       "fn": 14,
       "re-export": 7,
@@ -13588,7 +13614,7 @@
      "path": "src/campaign/enrollment/approval.rs",
      "purpose": "FIX 6424 part 2a (Engine 10-20 21:0x rulings 6 and 7): the owner's approve-once ask on one campaign…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -13602,6 +13628,39 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignArmOutcome"
+     ],
+     "path": "src/campaign/enrollment/copy_arms.rs",
+     "purpose": "Campaign copy A/B arms (ARCH-0059 #copy-review): a program step may carry an arm label, each member's send…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CampaignCopyReviewDecisions",
+      "CampaignCopyReviewWording",
+      "CopyReviewOutcome",
+      "CopyReviewVerdict"
+     ],
+     "path": "src/campaign/enrollment/copy_review.rs",
+     "purpose": "Campaign copy review (ARCH-0059 #copy-review): the campaign's reviewer checks each body version a step sends…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -13670,8 +13729,8 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 10
+      "crate-vis": 7,
+      "re-export": 12
      }
     },
     {
@@ -13695,7 +13754,7 @@
      "path": "src/campaign/enrollment/program.rs",
      "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 9,
       "fn": 7,
       "re-export": 8
@@ -13921,7 +13980,7 @@
      "path": "src/campaign/stage/mod.rs",
      "purpose": "CA-04 stage-ladder machinery: the mechanism, never the content",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 7
      }
     },
@@ -14010,9 +14069,9 @@
      "path": "src/campaign/surface/campaign.rs",
      "purpose": "Campaign record types, lifecycle operations, and vault storage",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -18807,7 +18866,7 @@
      "path": "src/code_run/dispatcher/binding.rs",
      "purpose": "Host construction, binding and captured identity for a dispatcher",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 12
      }
     },
@@ -32605,6 +32664,30 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/attempt_binding/invocation.rs",
+     "purpose": "A bound client's verb calls: the strength facet's two operations, each through its row's one verb-hook…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerAttemptBinding"
+     ],
+     "path": "src/dreamer_runner/attempt_binding/mod.rs",
+     "purpose": "The native Dreamer attempt binding (untangle 6.9c, RULING S69C-DESIGN item 5): the in-process credential a…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -34843,7 +34926,7 @@
      "surface": {
       "crate-vis": 18,
       "mod": 6,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -39334,6 +39417,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/run_signals.rs",
+     "purpose": "The steers and messages that reach a running run between its steps (AGM-2 = C; ARCH-0079 #message-classes…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -39404,7 +39497,7 @@
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
       "const": 2,
-      "crate-vis": 64
+      "crate-vis": 66
      }
     },
     {
@@ -43612,7 +43705,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/effect/evaluate.rs",
@@ -53117,6 +53210,7 @@
       "CampaignDefinition",
       "CampaignLifecycle",
       "CampaignRecord",
+      "CopyReviewMode",
       "CreateCampaignRequest",
       "UpdateCampaignRequest"
      ],
@@ -53124,8 +53218,8 @@
      "purpose": "Versioned cohort records, lifecycle values and owner-bound request shapes",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "fn": 2,
+      "enum": 2,
+      "fn": 5,
       "struct": 4
      }
     },
@@ -58933,7 +59027,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -70933,7 +71027,7 @@
      "path": "src/run_tree/signal.rs",
      "purpose": "Durable, branch-addressed Signal inbox",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "re-export": 1
      }
@@ -79385,7 +79479,7 @@
      "path": "src/snapshot_read/strength_observations.rs",
      "purpose": "Bounded pages of the Dreamer's strength observations, with the effective strength policy and scoring config…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 1,
       "struct": 4
@@ -84271,7 +84365,7 @@
      "path": "src/surface_event/handoff.rs",
      "purpose": "Durable admission txn, attempt payload codec, dispatch handoff, and status reads",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 11,
       "re-export": 1,
@@ -84323,7 +84417,7 @@
      "path": "src/surface_event/mod.rs",
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 6
      }
     },
@@ -92385,6 +92479,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ObservedStrengthClaim"
+     ],
+     "path": "src/test_doors/dreamer_attempt_binding.rs",
+     "purpose": "An admitted strength attempt over one observed Dreamer claim, for the bound job client's tests (untangle…",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ClosedModelRun"
      ],
      "path": "src/test_doors/dreamer_stage_line.rs",
@@ -92557,7 +92665,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 62,
+      "mod": 64,
       "re-export": 1
      }
     },
@@ -92626,6 +92734,16 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/resident_wake_hold.rs",
+     "purpose": "Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold), `tests/agent_message_classes.rs` and…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -101338,6 +101456,22 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/agent_message_classes.rs",
+     "purpose": "Messages to a busy resident (AGM-2 = C; ARCH-0079 #message-classes, agent-mind-design-v1 §1.3): a resident…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_message_classifier.rs",
+     "purpose": "The message classifier (AGM-2 = C; ARCH-0079 #message-classes, agent-mind-design-v1 §1.3): a message that…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/agent_pair_default_grant.rs",
      "purpose": "Pairing a named agent mints its default read Grant, and revoking an agent's last Grant narrows its read…",
      "surface": {}
@@ -101364,6 +101498,14 @@
      "notable": [],
      "path": "tests/agent_room_offer.rs",
      "purpose": "A custom agent asks to join a room by an offer card (ARCH-0006a, OF-530 = A)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_wake_hold.rs",
+     "purpose": "The wake hold of a sleeping resident (AGM-4 = C; agent-mind-design-v1 §1.6 #inbox-wake, ARCH-0067…",
      "surface": {}
     },
     {
@@ -101484,6 +101626,14 @@
      "notable": [],
      "path": "tests/build_cache.rs",
      "purpose": "Public cache boundary: real vaults and BLOB_ARTIFACT versions only",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/campaign_copy_review.rs",
+     "purpose": "Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13)",
      "surface": {}
     },
     {
@@ -102176,6 +102326,14 @@
      "notable": [],
      "path": "tests/gate_pins_claim_record_producers.rs",
      "purpose": "OPUS-T0-F gate pins, PR 7 (Engine NOTE 13 Nov 02:19): green pins for claim and record producer gates of…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/gate_pins_code_merge_queue_weave.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 8 (Engine NOTE 13 Nov 02:19): green pins for seven owner gates of…",
      "surface": {}
     },
     {
@@ -104293,7 +104451,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 98,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104412,7 +104570,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -104804,7 +104962,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 223,
+     "files": 225,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104860,7 +105018,7 @@
      "purpose": "Embedding pipeline root: attach, decide, and reconcile under one budget dial"
     },
     "engine_executor": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105756,7 +105914,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 65,
+     "files": 67,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105931,10 +106089,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 266,
+   "over_bar": 267,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7470,
-   "test_files": 1166
+   "source_files": 7479,
+   "test_files": 1171
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -113581,7 +113739,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 103,
+      "const": 104,
       "crate-vis": 1
      }
     },
@@ -123978,7 +124136,7 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 23,
+      "fn": 24,
       "mod": 1,
       "re-export": 6,
       "struct": 3
@@ -124139,6 +124297,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_attempt_binding.rs",
+     "purpose": "A strength attempt's job client (untangle 6.9c PR 3, RULING S69C-DESIGN item 5)…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -124262,7 +124428,7 @@
    "over_bar": 0,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
    "source_files": 25,
-   "test_files": 8
+   "test_files": 9
   },
   "oneiron-retrieval": {
    "files": [
@@ -138359,7 +138525,7 @@
      "path": "src/decision_host/doors.rs",
      "purpose": "Decision host doors: the ladder, dials and the hooks built on them",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 14
      }
     },
@@ -152746,7 +152912,7 @@
      "path": "src/model_decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 54,
+      "const": 56,
       "fn": 1,
       "struct": 1
      }
