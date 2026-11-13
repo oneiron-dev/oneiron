@@ -187,6 +187,7 @@ pub fn serve_bounded_for_recipient(
         seam,
         authority,
         idle: bounds.idle,
+        command_section: bounds.command_section,
         scan: bounds.scan,
         spill_floor: bounds.spill_floor,
         wait_for_repository: false,
