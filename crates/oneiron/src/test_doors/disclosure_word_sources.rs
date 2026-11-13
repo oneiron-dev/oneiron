@@ -1,8 +1,10 @@
 //! Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the
 //! general disclosure clamp, as a context pack for a non-owner audience asks
-//! it of one stored record, under a contact's clearance or the owner alone.
+//! it of one stored record, under a contact's clearance or the owner alone,
+//! and of a claim served at another revision than its live row.
 
 use crate::Vault;
+use crate::claim::ClaimBody;
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyFirstTouch};
 use crate::disclosure::{DisclosureContext, DisclosureScope};
 use crate::entity_id::EntityId;
@@ -52,12 +54,29 @@ pub fn clamp_admits_with_contact(
     counterparty: &str,
     record: &EntityId,
 ) -> Result<bool> {
-    let audience = InterlocutorSet::with_session_owner(vec![Interlocutor::known_contact(
-        contact,
-        counterparty,
-        CounterpartyFirstTouch::UserIntroduction,
-    )]);
-    clamp_admits(vault, audience, record)
+    clamp_admits(vault, contact_audience(contact, counterparty), record, None)
+}
+
+/// Whether the general clamp of an assembly the owner holds with `contact`
+/// (named `counterparty`) present admits the claim `record` served as
+/// `body`, a revision other than its live row, as a pinned hydration or a
+/// history ledger serves one.
+///
+/// # Errors
+/// A record the vault does not hold, or a read error.
+pub fn clamp_admits_claim_revision_with_contact(
+    vault: &Vault,
+    contact: EntityId,
+    counterparty: &str,
+    record: &EntityId,
+    body: &ClaimBody,
+) -> Result<bool> {
+    clamp_admits(
+        vault,
+        contact_audience(contact, counterparty),
+        record,
+        Some(body),
+    )
 }
 
 /// Whether the general clamp of the owner alone admits the stored `record`.
@@ -69,15 +88,30 @@ pub fn clamp_admits_owner_alone(vault: &Vault, record: &EntityId) -> Result<bool
         vault,
         InterlocutorSet::with_session_owner(Vec::new()),
         record,
+        None,
     )
 }
 
-fn clamp_admits(vault: &Vault, audience: InterlocutorSet, record: &EntityId) -> Result<bool> {
+/// The owner with `contact` (named `counterparty`) present.
+fn contact_audience(contact: EntityId, counterparty: &str) -> InterlocutorSet {
+    InterlocutorSet::with_session_owner(vec![Interlocutor::known_contact(
+        contact,
+        counterparty,
+        CounterpartyFirstTouch::UserIntroduction,
+    )])
+}
+
+fn clamp_admits(
+    vault: &Vault,
+    audience: InterlocutorSet,
+    record: &EntityId,
+    claim_body: Option<&ClaimBody>,
+) -> Result<bool> {
     let ctx = DisclosureContext::resolve(vault, audience)?;
     let rtxn = vault.store.env.read_txn()?;
     let row = vault
         .store
         .port_entity_record(&rtxn, record)?
         .ok_or(Error::EntityNotFound)?;
-    ctx.admits_in(vault, &rtxn, record, row.entity_type, None)
+    ctx.admits_in(vault, &rtxn, record, row.entity_type, claim_body)
 }
