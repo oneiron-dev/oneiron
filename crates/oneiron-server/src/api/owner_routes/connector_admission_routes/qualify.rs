@@ -68,6 +68,7 @@ pub(crate) fn qualify_connector(
         })
         .map_err(engine)??;
     }
+    baseline_route_issuer(vault, owner, &name, &catalog, &endpoint);
     let record = vault
         .get_connector_key(&catalog.key)?
         .ok_or_else(|| OwnerError::NotFound("connector key", catalog.key.to_hex()))?;
@@ -139,12 +140,38 @@ fn attest_connector(
         vault.attest_connector_key(owner, &catalog.key, &revision, now)
     }
     .map_err(engine)?;
+    baseline_route_issuer(vault, owner, &name, &catalog, &endpoint);
     // The attested listing may change no manifest: nothing is left to approve.
     if record.pending_manifest.is_none() && record.retained_manifest.is_some() {
         return Ok(KeyView::new(catalog.key, record)?);
     }
     let approved = approve(vault, owner, catalog.key)?;
     Ok(KeyView::new(catalog.key, approved)?)
+}
+
+/// Records, inside the owner's admission act, the issuer the connector's
+/// route answers for, from its protected-resource metadata (Engine ruling
+/// L5-11-BASELINE = C): the baseline a later refusal's metadata is compared
+/// with. Both owner admissions record it, `/qualify` (the default) and
+/// `/attest`. A failed read or write leaves the admission as it is; the
+/// connector then has no baseline, as before.
+fn baseline_route_issuer(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    name: &str,
+    catalog: &Catalog,
+    endpoint: &str,
+) {
+    if let Err(error) = crate::connector_call_host::issuer_watch::baseline_at_admission(
+        vault,
+        owner,
+        name,
+        &catalog.key,
+        endpoint,
+        catalog.record.secret_ref.as_deref(),
+    ) {
+        tracing::warn!(%error, "connector issuer baseline not recorded");
+    }
 }
 
 /// The connector's tools, listed again at `revision` and resolved, when
