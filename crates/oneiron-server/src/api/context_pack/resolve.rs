@@ -488,8 +488,9 @@ pub(crate) async fn execute_context_pack(
 /// what that member's key reads, never more. Any other caller, and a stretch
 /// the reader cannot bind now (gone, closing, closed, a room they are not in,
 /// or, for anyone but the owner, a stretch entered alone), reads base alone,
-/// as a pack did before.
-fn context_pack_room<'v>(
+/// as a pack did before. MCP's `memory.context_pack` binds by this same rule
+/// (`mcp_gateway::memory_response`).
+pub(crate) fn context_pack_room<'v>(
     server: &'v SyncServer,
     auth: &CoreAuth,
 ) -> Result<Option<oneiron::off_record::RoomPackSession<'v>>, ApiError> {
