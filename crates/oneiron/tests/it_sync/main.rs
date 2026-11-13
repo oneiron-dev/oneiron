@@ -14,6 +14,7 @@ mod sync_harness;
 
 mod agent_definition_peer_reenable;
 mod ask_option_link_replication;
+mod device_world_follow;
 mod rung0_cold_start_conformance;
 mod sync_blob_artifact_delete;
 mod sync_bridge;
