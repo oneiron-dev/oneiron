@@ -24,6 +24,7 @@ use crate::llm::decision::Reversibility;
 use crate::llm::decision::questions::OutcomeBinding;
 use crate::llm::decision::questions::QuestionCriteria;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::note::PlanDocState;
 
 use super::ask_types::{TaskAskDefault, TaskAskTarget};
 use super::consts::TASK_BRIEF_SCHEMA;
@@ -486,12 +487,17 @@ pub fn brief_digest(brief: &QueueTaskBrief) -> [u8; 32] {
 }
 
 /// The digest a pin carries: of the named row exactly as this vault stores it
-/// now. `None` when the row is absent.
+/// now, or, for a plan-doc, its revision, the hash of its text (plan mode),
+/// so a run from a plan carries the revision the owner approved. `None` when
+/// the row is absent.
 pub(super) fn pin_digest_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> MemoryResult<Option<[u8; 32]>> {
+    if let Some((revision, _)) = crate::note::plan_doc_pin_in_txn(vault, txn, target)? {
+        return Ok(Some(revision));
+    }
     let Some(raw) = vault.get_raw_in(txn, &target)? else {
         return Ok(None);
     };
@@ -697,6 +703,62 @@ impl QueueTaskBrief {
 }
 
 impl Memory<'_> {
+    /// Refuses `brief` when it pins a plan-doc the owner has not approved at
+    /// the pinned revision (plan mode; Engine ruling Fri 13 Nov 03:05): an
+    /// agent's run starts from a plan only once the owner approved the text
+    /// it pins. The vault owner's own brief is never refused.
+    pub(super) fn require_approved_plan_pins_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        brief: &QueueTaskBrief,
+    ) -> MemoryResult<()> {
+        let vault = self.vault();
+        if crate::memory::actor_is_vault_owner_in_txn(vault, txn, self.actor(), self.actor_class())?
+        {
+            return Ok(());
+        }
+        for pin in &brief.context.read_first {
+            match crate::note::plan_doc_pin_in_txn(vault, txn, pin.target)? {
+                None => {}
+                Some((revision, PlanDocState::Approved)) if revision == pin.digest => {}
+                Some(_) => {
+                    return Err(super::highway::invalid_state(
+                        "gate.plan_not_approved: the brief pins a plan-doc the owner has not approved at the pinned revision",
+                        "Ask the owner to approve the plan (vault.plans.approve), then pin the revision approved.",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::require_approved_plan_pins_in`] in the writer that settles a
+    /// parked post or brief revision: a yes that is not the owner's (an
+    /// agent's take, another approver's approval) lands nothing from a plan
+    /// the owner has not approved at the pinned revision, though it was
+    /// approved when the proposal parked. The owner's approval, or a door
+    /// that records no approver (the owner's tray), is the owner's act and is
+    /// never refused.
+    pub(super) fn require_settled_plan_pins_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        brief: &QueueTaskBrief,
+        approver: Option<crate::WriteActor>,
+    ) -> MemoryResult<()> {
+        let Some(approver) = approver else {
+            return Ok(());
+        };
+        if crate::memory::actor_is_vault_owner_in_txn(
+            self.vault(),
+            txn,
+            approver.entity_ref(),
+            approver.actor_class(),
+        )? {
+            return Ok(());
+        }
+        self.require_approved_plan_pins_in(txn, brief)
+    }
+
     /// Pins one read-first handle for a brief: the row's digest as this vault
     /// holds it now. A composer pins what it read; settlement refuses a pin
     /// whose row has moved since.
