@@ -553,13 +553,9 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
     // A same-model migration takes the false branch and must not dirty LMDB bytes.
     // Snapshot is taken after reopen: Vault::open itself may seed system agents /
     // rebuild indexes on 7f1050ee (ONE-1869), so only the begin_* call must be byte-noop.
-    let mut reopened = Vault::open_unseeded_for_test(
-        temp_dir.path(),
-        VaultConfig {
-            embedding_model: Some("test/new@v2".to_owned()),
-            ..cfg.clone()
-        },
-    )?;
+    let mut reopened_cfg = cfg.clone();
+    reopened_cfg.embedding_model = Some("test/new@v2".to_owned());
+    let mut reopened = Vault::open_unseeded_for_test(temp_dir.path(), reopened_cfg)?;
     let data_path = temp_dir.path().join("data.mdb");
     let bytes_before_noop = std::fs::read(&data_path)?;
     reopened.begin_embedding_migration("test/new@v2")?;
@@ -569,16 +565,9 @@ fn embedding_migration_proves_atomic_space_replacement_contract() -> Result<()> 
         Vault::open_unseeded_for_test(temp_dir.path(), cfg),
         Err(Error::Store(StoreError::EmbeddingModelChanged { .. }))
     ));
-    assert!(
-        Vault::open_unseeded_for_test(
-            temp_dir.path(),
-            VaultConfig {
-                embedding_model: Some("test/new@v2".to_owned()),
-                ..test_config()
-            }
-        )
-        .is_ok()
-    );
+    let mut fresh_cfg = test_config();
+    fresh_cfg.embedding_model = Some("test/new@v2".to_owned());
+    assert!(Vault::open_unseeded_for_test(temp_dir.path(), fresh_cfg).is_ok());
 
     // A malformed entity makes re-marking fail after model/graph/version writes
     // were staged; the transaction must leave every committed byte unchanged.
@@ -692,6 +681,7 @@ fn embedding_migration_requeues_epoch_summaries() -> Result<()> {
         crate::compaction::encode_epoch_summary_body(&crate::compaction::EpochSummaryBody {
             v: crate::compaction::EPOCH_SUMMARY_BODY_VERSION,
             session: seeded_entity_id(0x5E55).to_hex(),
+            conversation: None,
             epoch: 1,
             turn_start: 1,
             turn_end: 3,

@@ -89,6 +89,7 @@ mod tests {
                 ENTITY_TYPE_CLAIM,
                 crate::temporal::TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &crate::claim::encode_claim_body(body)?,
             )
             .text(&id, &[("body", "authorityneedle")])
@@ -740,6 +741,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 corpus_scope: &crate::corpus::CorpusScope::All,
                 device_local: None,
                 deadline: None,
+                disclosure: None,
             };
             let mut metadata = EntityMetadataCache::default();
             // Bounded scans must use local decisions and resolved authority,

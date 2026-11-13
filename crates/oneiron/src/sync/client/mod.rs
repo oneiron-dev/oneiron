@@ -100,8 +100,6 @@ pub use self::types::{
     SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential,
 };
 
-// FIX [LIBTEST-QUARANTINE-SYNC-CLIENT-TESTS]: the lib test target's type check fails here (9 errors: E0061 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

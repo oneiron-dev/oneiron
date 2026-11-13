@@ -28,6 +28,7 @@ fn put_grant(vault: &Vault, id: EntityId, grant: &FederationGrant) {
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(grant).unwrap(),
         )
         .commit()
@@ -45,8 +46,16 @@ fn selector_replay_is_durable_and_bound_to_current_principal_grant_and_payload()
     let peer = test_peer(&vault);
     let key = WindowKey::new("2026-01");
     let payload = request(&peer);
-    let (decision, _) =
-        admit_work_at(&vault, &peer, &key, WorkKind::Selector, &payload, (100, 10)).unwrap();
+    let (decision, _) = admit_work_at(
+        &vault,
+        &peer,
+        &key,
+        WorkKind::Selector,
+        &payload,
+        (100, 10, &[]),
+        None,
+    )
+    .unwrap();
     let FederationBurstDecision::Defer { request_id, .. } = decision else {
         panic!("expected defer")
     };

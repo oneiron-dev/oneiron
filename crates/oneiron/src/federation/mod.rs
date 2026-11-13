@@ -240,8 +240,6 @@ mod shared_creation_tests;
 #[cfg(any())]
 #[cfg(test)]
 mod steward_tests;
-// FIX [LIBTEST-QUARANTINE-FEDERATION-TESTS]: the lib test target's type check fails here (10 errors: E0061 x7, E0559 x2, E0004 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

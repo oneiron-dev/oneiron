@@ -73,8 +73,6 @@ pub(crate) mod claims;
 #[cfg(any())]
 pub(crate) mod deletion;
 pub(crate) mod edge_prov_lifecycle;
-// FIX [LIBTEST-QUARANTINE-TESTS-EMBEDDING]: the lib test target's type check fails here (3 errors: E0639 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 pub(crate) mod embedding;
 pub(crate) mod entity_edge_kinds;
 pub(crate) mod graph_topology;

@@ -61,8 +61,6 @@ mod tests;
 #[cfg(test)]
 mod decay_tests;
 
-// FIX [LIBTEST-QUARANTINE-PIPELINE-AUTHORITY-TESTS]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod authority_tests;
 

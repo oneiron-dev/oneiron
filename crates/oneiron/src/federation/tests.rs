@@ -440,7 +440,9 @@ fn delegate_is_a_one_to_one_role_preset_pair() {
                     FederationGrantRole::Member | FederationGrantRole::Viewer
                 ),
                 FederationGrantPreset::ReadOnly => matches!(role, FederationGrantRole::Viewer),
-                FederationGrantPreset::Delegate | FederationGrantPreset::Guest => {
+                FederationGrantPreset::Steward
+                | FederationGrantPreset::Delegate
+                | FederationGrantPreset::Guest => {
                     unreachable!("non-delegate presets only")
                 }
             };
@@ -1423,8 +1425,6 @@ fn auth_genesis(seed: u8) -> AuthorityLogEntry {
             device: auth_device(auth_pub(&signing), ROLE_OWNER | ROLE_ADMIN),
             genesis_nonce: [seed.wrapping_add(10); 32],
             recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            tier_floor: AuthorityTier::Software,
-            pending_widen_delay_secs: 86_400,
         },
         &signing,
         None,
@@ -1551,6 +1551,7 @@ fn local_pact_fixture(seed: u8, grant_seed: u8, peer: &PeerVaultFixture) -> Loca
     let nonce = [seed.wrapping_add(22); 16];
     let scope = peer_scope();
     let digest = federation_scope_digest(
+        &[0x68; 32],
         &nonce,
         &encode_federation_pact_scope(&scope).expect("canonical scope"),
     );
@@ -1607,6 +1608,7 @@ fn local_pact_fixture(seed: u8, grant_seed: u8, peer: &PeerVaultFixture) -> Loca
 /// Rescope-REPACT at epoch 2, dual-signed by `gesture_signer`.
 fn repact_entry(fixture: &LocalPactFixture, gesture_signer: &SigningKey) -> AuthorityLogEntry {
     let digest = federation_scope_digest(
+        &[0x68; 32],
         &fixture.nonce,
         &encode_federation_pact_scope(&fixture.scope).expect("canonical scope"),
     );
@@ -2545,6 +2547,7 @@ fn stale_fixture(seed: u8, peer_seed: u8) -> StaleFixture {
 impl StaleFixture {
     fn scope_digest(&self, nonce: &[u8; 16]) -> [u8; 32] {
         federation_scope_digest(
+            &[0x68; 32],
             nonce,
             &encode_federation_pact_scope(&peer_scope()).expect("canonical scope"),
         )
@@ -2813,12 +2816,12 @@ fn a_terminal_pact_stamps_its_worlds_through_batch_and_replay() -> Result<()> {
             TerminalRoad::ReplicatedApply => vault.with_write_txn_grouped(|wtxn| {
                 vault
                     .batch_in()
-                    .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, at, 3, &body)
+                    .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, at, 3, None, &body)
                     .apply(wtxn)
             })?,
             TerminalRoad::ReplicatedCommit => vault
                 .batch_in()
-                .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, at, 3, &body)
+                .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, at, 3, None, &body)
                 .commit()?,
         }
         assert!(
@@ -2934,7 +2937,7 @@ fn a_late_parent_that_brings_a_terminal_entry_into_force_stamps_its_worlds() -> 
         let range = TimeRange { start: at, end: at };
         vault
             .batch_in()
-            .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, range, at, &body)
+            .put_replicated(&id, ENTITY_TYPE_AUTHORITY_LOG, range, at, None, &body)
             .commit()?;
         Ok(id)
     };
@@ -3361,10 +3364,12 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
         1,
     )?;
     let backups = crate::test_support::restore_tempdir();
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
         let error = Vault::restore_checkpoint_keeping_authority(
             image,
+            &key,
             &destination,
             VaultConfig::device(),
             &vault,
