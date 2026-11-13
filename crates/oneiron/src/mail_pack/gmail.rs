@@ -23,7 +23,7 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 
 use base64::Engine as _;
-use reqwest::header::{AUTHORIZATION, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use serde_json::Value;
 
 use super::credential::WireReads;
@@ -113,6 +113,35 @@ impl<'v> HttpGmailMailWire<'v> {
                     .header(AUTHORIZATION, auth),
                 &self.read_bytes,
             ),
+        })?
+        .unless_rate_limited()?
+        .found_or_gone("gmail_mail")
+    }
+
+    /// One POST of `body` (none: an empty body, whose length Google still
+    /// needs) with the source's credential, read at its door; `None` for
+    /// Gmail's "not found".
+    fn post(
+        &self,
+        source: &MailSyncSource,
+        url: &str,
+        body: Option<&Value>,
+    ) -> Result<Option<Value>> {
+        let body = match body {
+            Some(body) => Some(
+                serde_json::to_vec(body).map_err(|_| refused("gmail_mail_request_unwritable"))?,
+            ),
+            None => None,
+        };
+        self.with_verified_bearer(source, |auth, _| {
+            let request = self.client.post(url).header(AUTHORIZATION, auth);
+            let request = match &body {
+                Some(body) => request
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(body.clone()),
+                None => request.body(Vec::new()),
+            };
+            rest::send_counted(request, &self.read_bytes)
         })?
         .unless_rate_limited()?
         .found_or_gone("gmail_mail")
@@ -460,6 +489,20 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         }
     }
 
+    fn watch(&self, source: &MailSyncSource, topic: &str) -> Result<u64> {
+        let request = serde_json::json!({ "topicName": topic });
+        let answer = self
+            .post(source, &format!("{GMAIL_USER_URL}/watch"), Some(&request))?
+            .ok_or_else(|| refused("gmail_mail_watch_not_found"))?;
+        watch_expires_at(&answer)
+    }
+
+    fn stop_watch(&self, source: &MailSyncSource) -> Result<()> {
+        // Gmail's "not found" leaves no channel open either.
+        self.post(source, &format!("{GMAIL_USER_URL}/stop"), None)?;
+        Ok(())
+    }
+
     fn quota(&self) -> Option<MailQuota> {
         Some(GMAIL_MAIL_QUOTA)
     }
@@ -516,6 +559,18 @@ fn part_by_id<'a>(part: &'a Value, part_id: &str, depth: usize) -> Option<&'a Va
 }
 
 /// Whether the Gmail wire reads `provider`'s mailboxes.
+/// When the channel a `users.watch` answer opened closes, Unix seconds:
+/// Gmail's `expiration` is in milliseconds, written as a string.
+fn watch_expires_at(answer: &Value) -> Result<u64> {
+    let expiration = answer.get("expiration");
+    expiration
+        .and_then(Value::as_str)
+        .and_then(|millis| millis.parse::<u64>().ok())
+        .or_else(|| expiration.and_then(Value::as_u64))
+        .map(|millis| millis / 1_000)
+        .ok_or_else(|| refused("gmail_mail_watch_unreadable"))
+}
+
 pub(super) const fn reads_google_mail(provider: MailProvider) -> bool {
     matches!(
         provider,

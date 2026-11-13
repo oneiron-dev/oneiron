@@ -182,6 +182,10 @@ pub enum MailHistoryRead {
     Expired,
 }
 
+/// What a wire whose provider has no push channel answers to
+/// [`MailProviderWire::watch`].
+pub const MAIL_PUSH_NOT_SERVED: &str = "mail_push_not_served";
+
 /// A host's mail wire for one provider. Each call is one provider read, run
 /// outside any vault transaction.
 pub trait MailProviderWire {
@@ -292,6 +296,20 @@ pub trait MailProviderWire {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>>;
+
+    /// Opens, or renews, the mailbox's push channel to the Pub/Sub topic
+    /// `topic` (Gmail `users.watch`), answering when the provider closes it
+    /// unless it is renewed, Unix seconds. Refused by default: a provider
+    /// with no push is read by the host's periodic pass alone.
+    fn watch(&self, _source: &MailSyncSource, _topic: &str) -> Result<u64> {
+        Err(super::rest::refused(MAIL_PUSH_NOT_SERVED))
+    }
+
+    /// Closes the mailbox's push channel (Gmail `users.stop`). Nothing to
+    /// close by default.
+    fn stop_watch(&self, _source: &MailSyncSource) -> Result<()> {
+        Ok(())
+    }
 
     /// The provider's per-user limits and each call's cost, which one step
     /// of the importer spends within. `None` by default: a wire that

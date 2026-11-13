@@ -129,6 +129,10 @@ pub(super) fn send_counted(
         .send()
         .map_err(|_| refused("mail_wire_transport_failed"))?;
     let status = response.status();
+    // A 204 answers no body (Gmail's `users.stop`).
+    if status == reqwest::StatusCode::NO_CONTENT {
+        return Ok(RestAnswer::Found(Value::Null));
+    }
     let body = read_bounded_json(CountedRead::new(response, read));
     if status.is_success() {
         return body

@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::push::MailWatchState;
 use super::quota::MailQuotaWindow;
 use super::source::MailCopySetting;
 use super::wire::MailAttachmentRef;
@@ -90,6 +91,9 @@ pub(super) struct MailSyncState {
     /// rests ([`super::quota`]).
     #[serde(default)]
     pub(super) quota: MailQuotaWindow,
+    /// The mailbox's push channel, while one is open ([`super::push`]).
+    #[serde(default)]
+    pub(super) watch: Option<MailWatchState>,
 }
 
 /// How long a provider's answer for a mailbox's own addresses stands before

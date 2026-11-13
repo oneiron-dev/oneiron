@@ -66,6 +66,7 @@ mod mime;
 #[doc(hidden)]
 pub mod pack;
 mod provider_delete;
+mod push;
 mod quota;
 mod reply;
 mod reply_ask;
@@ -122,6 +123,7 @@ pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CON
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
+pub use push::MailWatchAct;
 pub use quota::{GMAIL_MAIL_QUOTA, MAIL_WIRE_RATE_LIMITED, MailCall, MailCallCosts, MailQuota};
 pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
@@ -139,7 +141,7 @@ pub use source::{
 pub(crate) use state::erase_occurrence_rows_in_txn;
 pub use state::{MailPresence, MailStage, MailSyncStatusView};
 pub use wire::{
-    MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,
-    MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef, MailProviderWire,
-    MailSyncSource,
+    MAIL_PUSH_NOT_SERVED, MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders,
+    MailHistoryChange, MailHistoryPage, MailHistoryRead, MailIdPage, MailListQuery, MailMessageRef,
+    MailProviderWire, MailSyncSource,
 };
