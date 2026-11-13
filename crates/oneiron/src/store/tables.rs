@@ -849,6 +849,21 @@ crate::side_table::side_tables! {
         // Restore class: Learned retrieval state, content as the active blend weights it goes with
         // (FIX 22408).
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Owner pins over the read-shape picks (`store::ReadShapePins`), one per model. Key: ().
+    READ_SHAPE_PINS: VaultMeta b"retr_read_shape_pins:v1:" Named
+        // Restore class: The owner's pins go with the learned posterior they override, as
+        // RETRIEVAL_POLICY_PINS do.
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// Account-local read-shape posterior (`store::ReadShapePosterior`), one arm per model and
+    /// shape, rebuilt by the Coach at sleep beside RETRIEVAL_POLICY_POSTERIOR. Key: ().
+    READ_SHAPE_POSTERIOR: VaultMeta b"retr_read_shape_posterior:v1:" Named
+        // Restore class: Learned retrieval state, content as RETRIEVAL_POLICY_POSTERIOR.
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// The read-shape pick one attempt's run woke under (`store::ReadShapeStamp`), written
+    /// once. Key: id16 (attempt).
+    READ_SHAPE_STAMP: VaultMeta b"retr_read_shape_stamp:v1:" Named
+        // Restore class: An attempt's own stamp, content as DREAMER_RESIDENT_ATTEMPT.
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Retrieval run telemetry record. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice), for the same reason as

@@ -368,6 +368,11 @@ mod pending_embedding;
 mod pending_gate_consent;
 mod ppr_community;
 mod ppr_community_indexed;
+pub mod read_shape_policy;
+pub use read_shape_policy::{
+    ReadShape, ReadShapeArm, ReadShapePick, ReadShapePin, ReadShapePins, ReadShapePosterior,
+    ReadShapeStamp, ReadShapeTier,
+};
 pub(crate) mod reader_fold_receipt;
 pub(crate) use oneiron_store::refinement_carrier;
 #[cfg(feature = "sync")]

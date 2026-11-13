@@ -110,6 +110,8 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::blob_artifact::esign::ESIGN_ASK_CLIMB_HOURS,
     crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS,
     crate::self_heal::DETECTOR_CENTROID_MIN_SIMILARITY,
+    crate::store::read_shape_policy::READ_SHAPE_TOKEN_COST,
+    crate::store::read_shape_policy::READ_SHAPE_EXPLORE_SHARE,
 ];
 
 /// The catalog row named `key`, if the engine knows it.
