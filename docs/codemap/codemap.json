@@ -148086,6 +148086,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_empty_beside_l2_base.rs",
+     "purpose": "A context pack its rows left empty says so, with the owner's L2 base beside it or not (FIX 22309, E2E…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -149292,7 +149300,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1862,
-   "test_files": 232
+   "test_files": 233
   },
   "oneiron-skill-attribution": {
    "files": [
