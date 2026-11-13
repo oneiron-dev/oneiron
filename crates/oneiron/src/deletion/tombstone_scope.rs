@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::claim::RelationshipRead;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, Named, SideTable};
@@ -28,6 +29,13 @@ use super::tombstone::decode_tombstone_value;
 pub(crate) struct DeletedRecordScope {
     pub(crate) scope: Scope,
     pub(crate) request: Option<[u8; 16]>,
+    /// The relationship read the record's labels gave it: its kind, the
+    /// relationships it was scoped to, whether it was private, and its record
+    /// position (OPUS-LEAKS, SELECTOR-TOMBSTONE-LABEL). A selector's member
+    /// takes the tombstone only where this read admits it. A capture written
+    /// before the field existed has none, and its tombstone travels as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) relationship_read: Option<RelationshipRead>,
 }
 
 /// One deleted record's captured scope. Key: hex32 (entity id).
@@ -109,6 +117,20 @@ pub(crate) fn deleted_scope_in(
         .map(|row| row.scope))
 }
 
+/// The relationship read `id` held when delete `request` took it. Only a row
+/// bound to that request answers, and only one captured with the read.
+pub(crate) fn deleted_relationship_read_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    request: &[u8; 16],
+) -> Result<Option<RelationshipRead>> {
+    Ok(TOMBSTONE_SCOPE
+        .get(store, txn, &HexId(*id))?
+        .filter(|row| row.request.as_ref() == Some(request))
+        .and_then(|row| row.relationship_read))
+}
+
 /// A live row's scope is written. With no live row (none, or a deleted
 /// shell), a held row is rebound to `request` whenever `request` is some and
 /// differs from the row's; nothing else changes.
@@ -122,14 +144,16 @@ fn capture_in_txn(
     let held = TOMBSTONE_SCOPE.get(store, txn, &key)?;
     let live = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .filter(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
-    let scope = match live {
-        Some(raw) => crate::federation::record_scope::scope_for_blob(store, txn, *id, &raw)?,
+    let captured = match live {
+        Some(raw) => crate::federation::record_scope::scope_for_blob(store, txn, *id, &raw)?
+            .map(|scope| (scope, live_relationship_read(store, txn, id, &raw))),
         None => None,
     };
-    let row = match (scope, held) {
-        (Some(scope), held) => DeletedRecordScope {
+    let row = match (captured, held) {
+        (Some((scope, relationship_read)), held) => DeletedRecordScope {
             scope,
             request: request.copied().or(held.and_then(|row| row.request)),
+            relationship_read: Some(relationship_read),
         },
         (None, Some(held)) => {
             if request.is_none() || request == held.request.as_ref() {
@@ -138,11 +162,26 @@ fn capture_in_txn(
             DeletedRecordScope {
                 scope: held.scope,
                 request: request.copied(),
+                relationship_read: held.relationship_read,
             }
         }
         (None, None) => return Ok(()),
     };
     TOMBSTONE_SCOPE.put(store, txn, &key, &row)
+}
+
+/// The live row `raw`'s relationship read, as a selector judges its member's
+/// rows ([`crate::claim::relationship_label_read`]). A read that fails (a
+/// CLAIM body that does not decode, a failed store read) is read by no
+/// member, and the capture still lands.
+fn live_relationship_read(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> RelationshipRead {
+    crate::claim::relationship_label_read(store, txn, id, raw)
+        .unwrap_or(RelationshipRead::Decided(false))
 }
 
 fn warn_uncaptured(id: &EntityId, error: &Error) {
