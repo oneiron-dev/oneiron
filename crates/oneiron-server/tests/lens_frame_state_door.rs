@@ -1,9 +1,10 @@
 //! GENUI-STATE-PERSIST at the served door: a card's `$state` lasts for the
 //! card's life on the server that holds it, so a reload does not reset it.
-//! `GET /v1/core/lens-frames/{card_id}` answers the held card's current
-//! `$state`, as its events left it, to the credential that rendered the
-//! card; another credential, and a card the server does not hold, get the
-//! re-render refusal.
+//! `GET /v1/core/lens-frames/{card_id}` hands the held card back to the
+//! credential that rendered it, its render carrying the current `$state` its
+//! events left, after every row it binds is proved again on that read.
+//! Another credential, and a card the server does not hold, get the
+//! re-render refusal; a card whose row moved since the render is refused.
 //!
 //! The card is the owner's default lens, rendered through
 //! `vault.lenses.default`, which holds its frame. That card carries no local
@@ -253,7 +254,12 @@ fn the_renderer_reads_the_state_its_cards_events_left() {
         let (status, body) = fx.card_state(&owner, &card).await;
         assert_eq!(status, StatusCode::OK, "an untouched card: {body}");
         assert_eq!(body["cardId"], json!(card), "{body}");
-        assert_eq!(body["$state"], json!({}), "the render's own state: {body}");
+        assert_eq!(body["render"]["cardId"], json!(card), "{body}");
+        assert_eq!(
+            body["render"]["$state"],
+            json!({}),
+            "the render's own state: {body}"
+        );
 
         assert!(
             move_held_state(&fx.server, &card, picked()).await,
@@ -262,13 +268,44 @@ fn the_renderer_reads_the_state_its_cards_events_left() {
         let (status, body) = fx.card_state(&owner, &card).await;
         assert_eq!(status, StatusCode::OK, "a moved card: {body}");
         assert_eq!(
-            body["$state"],
+            body["render"]["$state"],
             serde_json::to_value(picked()).expect("state JSON"),
             "a reload draws the state the card's events left: {body}"
         );
+    });
+}
+
+#[test]
+fn a_card_whose_row_moved_since_its_render_is_refused() {
+    on_engine_stack(|| async {
+        let fx = served();
+        let owner = fx.owner_credential();
+        let card = fx.render(&owner).await;
+        let (status, body) = fx.card_state(&owner, &card).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let bound = body["render"]["nodes"].as_array().is_some_and(|nodes| {
+            nodes.iter().any(|node| {
+                node["bindings"]
+                    .as_array()
+                    .is_some_and(|bindings| !bindings.is_empty())
+            })
+        });
+        assert!(bound, "the card binds the person's row: {body}");
+
+        // The row changes after the render: the card's backing ref is stale.
+        fx.vault
+            .put_entity(
+                &fx.other,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                2,
+                b"human, renamed",
+            )
+            .expect("the person's row moves");
+        let (status, body) = fx.card_state(&owner, &card).await;
         assert!(
-            body.get("render").is_none() && body.get("nodes").is_none(),
-            "the answer is the state alone: {body}"
+            status.is_client_error(),
+            "a row that moved since the render refuses: {status} {body}"
         );
     });
 }
