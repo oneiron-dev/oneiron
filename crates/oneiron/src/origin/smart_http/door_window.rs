@@ -116,11 +116,21 @@ pub(super) struct DoorWindowContext<'a> {
     pub(super) scan: ScanBounds,
     /// The host's disk floor, which a marked push's spool keeps too.
     pub(super) spill_floor: Option<&'a Arc<dyn SpillFloor>>,
+    /// The ref this push may neither delete nor rewrite: the branch the
+    /// repository's HEAD names, set only for a push by anyone but the vault's
+    /// owner, whose hook then names every branch move that does not
+    /// fast-forward (L8-51). `None` for the owner's push, and for a
+    /// repository whose HEAD names no branch.
+    pub(super) protected_ref: Option<&'a str>,
 }
 
 pub(super) struct DoorWindowRequest {
     pub(super) quarantine_path: Option<PathBuf>,
     pub(super) ref_updates: Vec<RefUpdate>,
+    /// The refs whose move the hook found does not descend from the ref's
+    /// current tip. The hook names them only for a push by anyone but the
+    /// vault's owner.
+    pub(super) rewritten_refs: Vec<String>,
 }
 
 /// Services one door window: waits for the vetted hook, scans the quarantined
@@ -275,6 +285,9 @@ fn scan_window(
     // push whose names the landing could not journal is refused whole and
     // goes unscanned; nothing about a legal batch changes.
     let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
+    // The protected ref decides here too, for the same reason: refused now,
+    // the deletion or rewrite never happens and nothing it carried lands.
+    protected_ref_rewrite_reasons(&mut unlandable, &request, context.protected_ref);
     let door = CredentialDoorService::new(Arc::clone(vault));
     let marks = ReceiveSecretMarksBuilder::new(
         vault,
@@ -643,6 +656,54 @@ pub(super) fn unlandable_ref_reasons(updates: &[RefUpdate]) -> RetainedReasons {
     reasons
 }
 
+/// The typed reason a push by anyone but the vault's owner meets when it
+/// deletes the repository's protected ref, or moves it to a commit that does
+/// not descend from the ref's tip.
+pub(super) const PROTECTED_REF_REWRITE: &str = "protected_ref_rewrite";
+
+/// Refuses, into `reasons`, a deletion or a rewrite of `protected_ref`
+/// (L8-51).
+///
+/// Force-push or deletion of a protected ref, and history rewrite, are the
+/// repo surface's catastrophe class (ARCH-0068 RC4; DEC-0006 names them
+/// one-way): they ask the owner, while every other branch, the lease working
+/// set, passes. Only the owner moves the protected ref that way, so the
+/// window is handed a `protected_ref` only for anyone else's push. A
+/// creation of the ref and a fast-forward of it pass; so does every move of
+/// any other ref.
+fn protected_ref_rewrite_reasons(
+    reasons: &mut RetainedReasons,
+    request: &DoorWindowRequest,
+    protected_ref: Option<&str>,
+) {
+    let Some(protected_ref) = protected_ref else {
+        return;
+    };
+    for update in request
+        .ref_updates
+        .iter()
+        .filter(|update| update.name == protected_ref)
+    {
+        let why = if update.old_oid.is_some() && update.new_oid.is_none() {
+            "only the vault's owner may delete this repository's default branch"
+        } else if request
+            .rewritten_refs
+            .iter()
+            .any(|name| name == protected_ref)
+        {
+            "only the vault's owner may rewrite this repository's default branch"
+        } else {
+            continue;
+        };
+        reasons.push_with(|| {
+            format!(
+                "{}: {PROTECTED_REF_REWRITE}: {why}",
+                printable_ref_name(&update.name)
+            )
+        });
+    }
+}
+
 /// The offending name as it may appear in a refusal the client will read.
 ///
 /// A refusal names the ref and nothing else — no pushed byte and no value ever
@@ -671,6 +732,7 @@ pub(super) fn parse_door_request(bytes: &[u8]) -> Result<DoorWindowRequest> {
         .map_err(|_| serve_failed("door request must be UTF-8".to_owned()))?;
     let mut quarantine_path = None;
     let mut ref_updates = Vec::new();
+    let mut rewritten_refs = Vec::new();
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("quarantine ") {
             if !rest.is_empty() {
@@ -678,11 +740,14 @@ pub(super) fn parse_door_request(bytes: &[u8]) -> Result<DoorWindowRequest> {
             }
         } else if let Some(rest) = line.strip_prefix("ref ") {
             ref_updates.push(parse_ref_update(rest)?);
+        } else if let Some(rest) = line.strip_prefix("rewrite ") {
+            rewritten_refs.push(rest.to_owned());
         }
     }
     Ok(DoorWindowRequest {
         quarantine_path,
         ref_updates,
+        rewritten_refs,
     })
 }
 
