@@ -3,10 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::llm::ModelId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
-    ReadShape, RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
+    RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
     RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
     RetrievalPolicyCandidate, RetrievalPolicyEvaluation, RetrievalPolicyPin,
     RetrievalPolicyVerdict, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
@@ -375,9 +374,9 @@ pub struct RetrievalPolicyPinRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadShapePinRequest {
-    pub model: ModelId,
+    pub model: crate::llm::ModelId,
     #[serde(default)]
-    pub shape: Option<ReadShape>,
+    pub shape: Option<crate::store::ReadShape>,
 }
 
 /// One model-manifest route the owner's manifest currently pins.
@@ -392,8 +391,8 @@ pub struct RetrievalRoutingPin {
 /// while the shape has no labelled attempt).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReadShapeModelRow {
-    pub model: ModelId,
-    pub pinned: Option<ReadShape>,
+    pub model: crate::llm::ModelId,
+    pub pinned: Option<crate::store::ReadShape>,
     pub verbs_pulls: u32,
     pub mount_pulls: u32,
     pub verbs_mean: Option<f64>,
@@ -412,11 +411,11 @@ pub struct RetrievalPolicyView {
     pub posterior_tuned_at: u64,
     pub posterior_labeled_runs: usize,
     pub posterior_observations: usize,
-    pub routing_manifest_digest: Option<String>,
-    pub routing: Vec<RetrievalRoutingPin>,
     pub read_shapes_tuned_at: u64,
     pub read_shapes_labeled_attempts: usize,
     pub read_shapes: Vec<ReadShapeModelRow>,
+    pub routing_manifest_digest: Option<String>,
+    pub routing: Vec<RetrievalRoutingPin>,
 }
 
 /// Whether a declared update was served or left as an offer.
@@ -479,11 +478,11 @@ fn policy_view(memory: &Memory<'_>) -> MemoryResult<RetrievalPolicyView> {
         posterior_tuned_at: posterior.tuned_at,
         posterior_labeled_runs: posterior.labeled_runs,
         posterior_observations: posterior.observation_count(),
-        routing_manifest_digest,
-        routing,
         read_shapes_tuned_at: read_shape_posterior.tuned_at,
         read_shapes_labeled_attempts: read_shape_posterior.labeled_attempts,
         read_shapes: read_shape_rows(&read_shape_posterior, &read_shape_pins),
+        routing_manifest_digest,
+        routing,
     })
 }
 
@@ -493,7 +492,7 @@ fn read_shape_rows(
     posterior: &crate::store::ReadShapePosterior,
     pins: &crate::store::ReadShapePins,
 ) -> Vec<ReadShapeModelRow> {
-    let mut models: Vec<&ModelId> = posterior
+    let mut models: Vec<&crate::llm::ModelId> = posterior
         .arms()
         .iter()
         .map(|arm| &arm.model)
@@ -504,13 +503,16 @@ fn read_shape_rows(
     models
         .into_iter()
         .map(|model| {
-            let arm_of = |shape: ReadShape| {
+            let arm_of = |shape: crate::store::ReadShape| {
                 posterior
                     .arms()
                     .iter()
                     .find(|arm| arm.model == *model && arm.shape == shape)
             };
-            let (verbs, mount) = (arm_of(ReadShape::Verbs), arm_of(ReadShape::Mount));
+            let (verbs, mount) = (
+                arm_of(crate::store::ReadShape::Verbs),
+                arm_of(crate::store::ReadShape::Mount),
+            );
             ReadShapeModelRow {
                 model: model.clone(),
                 pinned: pins.shape_for(model),
