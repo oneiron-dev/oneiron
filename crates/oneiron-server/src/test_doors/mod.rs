@@ -6,6 +6,7 @@
 
 pub mod big_rung;
 pub mod coach_round;
+pub mod lfs_install_line;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
