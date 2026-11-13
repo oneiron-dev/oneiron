@@ -169,6 +169,7 @@ mod output;
 pub(super) mod owner_binding;
 mod pack_preview_doors;
 mod persona_doors;
+mod plan_doc_doors;
 mod plugin_section_doors;
 mod policy_doors;
 mod proactivity_digest_doors;
