@@ -19,6 +19,12 @@
 //! the vault owner's ask queue ([`DecisionAsks`]): durable, answered at
 //! `/v1/owner/decisions`.
 //!
+//! The head, precision and escalation rungs are the `decision_head`,
+//! `decision_band` and `decision_escalation` roles of the vault's model
+//! manifest ([`ManifestBoundRung`]). A manifest that binds one of them to a
+//! model other than its rung's holds that rung: it abstains, unspent, and the
+//! ladder steps on. A role the manifest leaves unbound keeps its rung.
+//!
 //! Every model rung blocks on the server's runtime: run a ladder call on a
 //! blocking thread.
 use std::sync::Arc;
@@ -37,9 +43,10 @@ use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionLadder, DecisionPack, DecisionProvider, DecisionQuestion,
     DecisionReadGate, DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, HostRuleProvider,
-    ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
-    RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
+    ManifestBoundRung, ModelDecisionProvider, PersonThreshold, ProviderCapability,
+    ProviderDecision, ProviderPin, RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
 };
+use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
     CallOutcome, HostAccount, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer,
     RunReceiptSink,
@@ -378,7 +385,10 @@ impl DecisionHost {
             door.connector().locality == ModelLocality::ThirdParty,
             vault,
         ) {
-            Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
+            Ok(read) => {
+                self.ladder.escalation =
+                    role_bound(vault, ModelRole::DecisionEscalation, Arc::new(read));
+            }
             Err(error) => {
                 tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
@@ -477,7 +487,9 @@ impl DecisionHost {
             self.broker.as_ref(),
             vault,
         ) {
-            Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
+            Ok(rung) => {
+                self.ladder.system_one = role_bound(vault, ModelRole::DecisionHead, Arc::new(rung));
+            }
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
         }
         self
@@ -510,7 +522,9 @@ impl DecisionHost {
             self.broker.as_ref(),
             vault,
         ) {
-            Ok(rung) => self.ladder.precision = Some(Arc::new(rung)),
+            Ok(rung) => {
+                self.ladder.precision = role_bound(vault, ModelRole::DecisionBand, Arc::new(rung));
+            }
             Err(error) => tracing::warn!(%error, "the precision seat cannot fill its rung"),
         }
         self
@@ -597,10 +611,7 @@ impl DecisionHost {
     /// routed to that role's seat. Every other slot is empty and no person
     /// is asked: run it with [`MODEL_DIAL`]. Fails when `[models.decisions.big]`
     /// fills no Big rung, or no rung serves the role's seat.
-    pub fn ladder_for_role(
-        &self,
-        role: oneiron::llm::manifest::ModelRole,
-    ) -> anyhow::Result<HeldLadder> {
+    pub fn ladder_for_role(&self, role: ModelRole) -> anyhow::Result<HeldLadder> {
         let big = self
             .big_model
             .as_ref()
@@ -695,6 +706,22 @@ impl DecisionHost {
     #[must_use]
     pub fn booking_parse(&self) -> Option<&BookingParseSettings> {
         self.booking_parse.as_ref()
+    }
+}
+
+/// `rung` held to the vault manifest's binding for `role`, the decision role
+/// it fills ([`ManifestBoundRung`]).
+fn role_bound(
+    vault: &Arc<Vault>,
+    role: ModelRole,
+    rung: Arc<dyn DecisionProvider>,
+) -> Option<Arc<dyn DecisionProvider>> {
+    match ManifestBoundRung::new(Arc::clone(vault), role, rung) {
+        Ok(bound) => Some(Arc::new(bound)),
+        Err(error) => {
+            tracing::warn!(%error, ?role, "the decision role's rung cannot be held to the vault's manifest");
+            None
+        }
     }
 }
 
