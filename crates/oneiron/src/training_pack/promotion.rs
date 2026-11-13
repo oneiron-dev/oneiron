@@ -16,8 +16,15 @@ use crate::skill_optimize::{EvalExposure, EvalExposureKind, EvalSeat};
 use super::custody::verify_pin;
 use super::{
     HeldOutResult, PinnedCheckpoint, ROLES, RUNS, RoleSwapReceipt, SWAPS, SourcePin, SplitSide,
-    SwapChoice, TrainingOwner, TrainingRun, TrainingState, hash_json, invalid, run_in_txn,
+    SwapChoice, TrainingOwner, TrainingRun, TrainingRunCaller, TrainingState, admit_caller_in_txn,
+    hash_json, invalid, run_in_txn,
 };
+
+/// How long one evaluation holds a returned run's held-out serving before
+/// another may take the run over, in seconds of the vault clock: the claim
+/// of an evaluator whose host stopped mid-way lapses, so no run is stranded
+/// unscored.
+pub const TRAINING_EVALUATION_CLAIM_SECS: u64 = 3_600;
 
 #[derive(Debug)]
 pub struct TrainingEvalInput {
@@ -291,7 +298,36 @@ fn validate_eval(run: &TrainingRun, eval: &HeldOutResult) -> Result<()> {
 impl Vault {
     /// The evaluator, not the trainer, gets these bytes after a counted OF-578
     /// serving. The run keeps the exposure so a result cannot name another one.
+    /// A run another evaluation holds is refused, as one scored already is
+    /// ([`Self::claim_training_evaluation`]).
     pub fn open_training_held_out(&self, id: &EntityId) -> Result<TrainingEvalInput> {
+        self.claim_training_evaluation(id, None)?.ok_or_else(|| {
+            invalid("held-out scoring requires an unscored returned checkpoint no other evaluation holds")
+        })
+    }
+
+    /// The one evaluation of a returned, unscored run, whoever asks (the
+    /// Coach or an execute): one writer checks that the run still waits for
+    /// its evaluation and that no other evaluation holds it, counts the
+    /// cohort's serving and attaches that exposure to the run, so two
+    /// evaluators never both count a serving or replace each other's
+    /// exposure. `None` when the run was scored or moved on, or another
+    /// evaluation holds it: that caller reads the run again instead. An
+    /// evaluator that fails releases its claim
+    /// ([`Self::release_training_evaluation`]); the claim of one whose host
+    /// stopped lapses after [`TRAINING_EVALUATION_CLAIM_SECS`]. For an
+    /// execute's `caller`, the writer admits the caller again in its own
+    /// snapshot.
+    ///
+    /// # Errors
+    ///
+    /// A missing or unreturned run; a held-out row the sealed cohort does not
+    /// hold; a caller the writer does not admit; storage errors.
+    pub fn claim_training_evaluation(
+        &self,
+        id: &EntityId,
+        caller: Option<&TrainingRunCaller>,
+    ) -> Result<Option<TrainingEvalInput>> {
         let run = self
             .training_run(id)?
             .ok_or_else(|| invalid("training run not found"))?;
@@ -299,41 +335,39 @@ impl Vault {
             .result
             .as_ref()
             .ok_or_else(|| invalid("training checkpoint has not returned"))?;
-        if run.evaluation.is_some() || run.state != TrainingState::Returned {
-            return Err(invalid(
-                "held-out scoring requires an unscored returned checkpoint",
-            ));
-        }
         let candidate = blake3::Hash::from(result.exported_checkpoint.content_hash()?)
             .to_hex()
             .to_string();
-        let release = self.open_eval_cohort(
-            &run.corpus.cohort.id,
-            EvalExposureKind::Candidate,
-            &run.admission_ref(),
-            Some(&candidate),
-            self.store.clock.now_recorded_at(),
-        )?;
-        let receipts: BTreeSet<_> = release
-            .cases
-            .iter()
-            .flat_map(|case| case.receipts.iter().map(String::as_str))
-            .collect();
-        if run
-            .corpus
-            .rows
-            .iter()
-            .any(|row| row.side == SplitSide::HeldOut && !receipts.contains(row.receipt.as_str()))
-        {
-            return Err(invalid(
-                "training held-out rows must be cases in the sealed cohort",
-            ));
-        }
         let held_out_jsonl = self.read_training_artifact(&run.corpus.held_out)?;
-        self.with_write_txn_grouped(|txn| {
+        let at = self.store.clock.now_recorded_at();
+        let release = self.with_write_txn_grouped(|txn| {
+            admit_caller_in_txn(self, txn, caller)?;
             let mut current = run_in_txn(self, txn, id)?;
-            if current.state != TrainingState::Returned || current.evaluation.is_some() {
-                return Err(invalid("training run was scored while opening its cohort"));
+            let held = current.eval_exposure.as_ref().is_some_and(|exposure| {
+                at < exposure.at.saturating_add(TRAINING_EVALUATION_CLAIM_SECS)
+            });
+            if current.state != TrainingState::Returned || current.evaluation.is_some() || held {
+                return Ok(None);
+            }
+            let release = self.open_eval_cohort_in_txn(
+                txn,
+                &current.corpus.cohort.id,
+                EvalExposureKind::Candidate,
+                &current.admission_ref(),
+                Some(&candidate),
+                at,
+            )?;
+            let receipts: BTreeSet<_> = release
+                .cases
+                .iter()
+                .flat_map(|case| case.receipts.iter().map(String::as_str))
+                .collect();
+            if current.corpus.rows.iter().any(|row| {
+                row.side == SplitSide::HeldOut && !receipts.contains(row.receipt.as_str())
+            }) {
+                return Err(invalid(
+                    "training held-out rows must be cases in the sealed cohort",
+                ));
             }
             current.eval_exposure = Some(release.exposure.clone());
             // The evaluator scores the released cases and labels (FIX 5760),
@@ -343,13 +377,40 @@ impl Vault {
                 release.source_rows(),
             ]);
             current.source_rows = crate::skill_optimize::live_source_rows_in(self, txn, sources)?;
-            RUNS.put(&self.store, txn, id, &current)
+            RUNS.put(&self.store, txn, id, &current)?;
+            Ok(Some(release))
         })?;
-        Ok(TrainingEvalInput {
+        Ok(release.map(|release| TrainingEvalInput {
             exposure: release.exposure,
             checkpoint: result.exported_checkpoint.clone(),
             harness: run.plan.harness,
             held_out_jsonl,
+        }))
+    }
+
+    /// Ends the evaluation claim `exposure` holds on a returned run whose
+    /// evaluator failed, so a later step evaluates the run again under a new
+    /// counted serving. A run scored, moved on or claimed by another
+    /// evaluation since stays as it is. The released serving stays counted
+    /// on its cohort.
+    ///
+    /// # Errors
+    ///
+    /// A missing run; storage errors.
+    pub fn release_training_evaluation(&self, id: &EntityId, exposure: &EntityId) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let mut run = run_in_txn(self, txn, id)?;
+            if run.state != TrainingState::Returned
+                || run.evaluation.is_some()
+                || !run
+                    .eval_exposure
+                    .as_ref()
+                    .is_some_and(|held| held.id == *exposure)
+            {
+                return Ok(());
+            }
+            run.eval_exposure = None;
+            RUNS.put(&self.store, txn, id, &run)
         })
     }
 

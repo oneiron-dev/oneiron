@@ -38,7 +38,7 @@ const TRAINED: &str = "trained";
 /// `export_reservoir` writes them, one JSON object a line.
 pub(super) const RESERVOIR_PAIR_FORMAT: &str = "oneiron.reservoir-pair/1";
 /// How far a receipt's stated largest logit difference may sit from the one
-/// its own logits give.
+/// its own logits give. The engine keeps the one the logits give.
 const DIFFERENCE_SLACK: f64 = 1e-9;
 
 /// What a role job dispatches: the run's role and output model, the recipe
@@ -291,10 +291,13 @@ struct RoleProbeWire {
 }
 
 impl RoleProbeWire {
-    /// Whether the probe's argmaxes and largest difference are the ones its
-    /// own finite logits give: the engine's export check counts flips and
-    /// differences from these fields, never from the worker's summary alone.
-    fn consistent(&self) -> bool {
+    /// The probe's largest logit difference, computed from its own finite
+    /// logits, when its argmaxes are the ones those logits give and its
+    /// stated difference sits within [`DIFFERENCE_SLACK`] of it. The engine's
+    /// export check judges this computed difference against the owner's
+    /// tolerance, never the worker's summary, and a difference the logits
+    /// overflow to is none.
+    fn checked_difference(&self) -> Option<f64> {
         let finite = self
             .training_logits
             .iter()
@@ -307,7 +310,7 @@ impl RoleProbeWire {
             || !self.max_logit_difference.is_finite()
             || self.max_logit_difference < 0.0
         {
-            return false;
+            return None;
         }
         let difference = self
             .training_logits
@@ -315,10 +318,12 @@ impl RoleProbeWire {
             .zip(&self.export_logits)
             .map(|(training, export)| (training - export).abs())
             .fold(0.0_f64, f64::max);
-        argmax(&self.training_logits) == Some(self.training_argmax)
+        (difference.is_finite()
+            && argmax(&self.training_logits) == Some(self.training_argmax)
             && argmax(&self.export_logits) == Some(self.export_argmax)
             && (self.max_logit_difference - difference).abs()
-                <= DIFFERENCE_SLACK * difference.max(1.0)
+                <= DIFFERENCE_SLACK * difference.max(1.0))
+        .then_some(difference)
     }
 }
 
@@ -405,22 +410,20 @@ pub(super) fn decode_output(
     if receipt.service_units.unit != TRAINING_SERVICE_UNIT {
         return Err(not_this_job("service unit"));
     }
-    if !receipt.probes.iter().all(RoleProbeWire::consistent) {
-        return Err(invalid(
-            "the role trainer's probe summary disagrees with its finite logits",
-        ));
-    }
     let probes = receipt
         .probes
         .into_iter()
         .map(|probe| {
+            let max_logit_difference = probe.checked_difference().ok_or_else(|| {
+                invalid("the role trainer's probe summary disagrees with its finite logits")
+            })?;
             Ok(ProbeMeasurement {
                 input_blake3: hash_from_hex("probe input_blake3", &probe.input_blake3)?,
                 tokens_blake3: None,
                 probe_id: probe.probe_id,
                 training_argmax: probe.training_argmax,
                 export_argmax: probe.export_argmax,
-                max_logit_difference: probe.max_logit_difference,
+                max_logit_difference,
             })
         })
         .collect::<oneiron::Result<Vec<_>>>()?;
