@@ -13,6 +13,7 @@ pub mod live_run_payer;
 pub mod live_run_step;
 pub mod mcp_surface;
 pub mod media_job_spend;
+pub mod merge_queue_checker_pass;
 pub mod native_board;
 pub mod replay_admission;
 pub mod resident_pump;
