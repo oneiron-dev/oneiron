@@ -122,6 +122,11 @@ fn export_through(
     let member = EntityId::now();
     let vault = open_member_vault(dir.path(), VaultConfig::device(), &[member.to_hex()])
         .expect("fixture vault");
+    // Every delete signs as this install first, so the vault needs the
+    // keystore a host installs after each open.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
     // Every row is learned now, so all of them sit in one window.
     let now = vault.now_recorded_at();
     let relationship = EntityId::now();
