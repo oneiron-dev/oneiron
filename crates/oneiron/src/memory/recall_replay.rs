@@ -202,7 +202,7 @@ fn items_digest(items: &[MemoryItem]) -> MemoryResult<[u8; 32]> {
 fn pins_of(items: &[MemoryItem]) -> MemoryResult<Vec<RecallReplayPin>> {
     items
         .iter()
-        .map(|item| {
+        .map(|item| -> MemoryResult<RecallReplayPin> {
             Ok(RecallReplayPin {
                 entity: record_id(item.record.as_ref())?,
                 revision: item.source_revision_ref.clone(),
