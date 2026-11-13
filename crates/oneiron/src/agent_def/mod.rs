@@ -148,9 +148,11 @@ pub(crate) use portable_source::{
 
 mod birth_custody;
 mod birth_dependencies;
+mod creating_owner;
 pub(crate) mod tables;
 pub(crate) use birth_custody::{remove_birth_custody_in_txn, stage_birth_custody_put};
 pub(crate) use birth_dependencies::retire_birth_sources_for_entity_in_txn;
+pub(crate) use creating_owner::created_by_owner_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use portable_source::{birth_source_holder, birth_source_matches_id};
 

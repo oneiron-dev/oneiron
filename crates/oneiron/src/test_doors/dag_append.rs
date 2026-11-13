@@ -13,7 +13,7 @@ pub fn append_source(writer: WriteActor) -> ClaimSource {
 }
 
 /// The label a record whose words the engine composed carries, whoever's
-/// actor it lands under: a scope summary's reply and a Retry's turn.
+/// actor it lands under: a scope summary's reply.
 #[must_use]
 pub fn composed_append_source() -> ClaimSource {
     crate::conversation_dag::composed_append_source()

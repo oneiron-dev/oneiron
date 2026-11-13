@@ -84,7 +84,9 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
     use oneiron::{FatalLlmError, RetryableLlmError};
     let (status, code) = match &error {
         LlmError::BudgetDenied(_) => (StatusCode::PAYMENT_REQUIRED, "budget_denied"),
-        LlmError::Fatal(FatalLlmError::Auth) => (StatusCode::UNAUTHORIZED, "auth"),
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => {
+            (StatusCode::UNAUTHORIZED, "auth")
+        }
         // The model's answer failed a read check: an upstream fault, never a p = 0.
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => (StatusCode::BAD_GATEWAY, "label_read"),
         LlmError::Fatal(_) => (StatusCode::BAD_REQUEST, "invalid_request"),

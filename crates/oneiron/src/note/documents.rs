@@ -378,6 +378,23 @@ pub(crate) fn head_in(
         None => (note, 0),
     })
 }
+/// The live version of `note` as `store` holds it: the version a read of its
+/// live document answers with (`NoteReadView::version`).
+/// The Gate's campaign copy-review stage compares it with the version a
+/// stored review was judged at (ARCH-0059 #copy-review); it reads no text.
+/// A NOTE with no stored head document is refused.
+pub(crate) fn live_version_in_store_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> Result<NoteVersion> {
+    let doc = super::storage::load_stored(store, txn, note)?;
+    Ok(NoteVersion {
+        note,
+        head: head_in(store, txn, note)?.0,
+        frontier: doc.state_frontiers().encode(),
+    })
+}
 pub(crate) fn set_head(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,

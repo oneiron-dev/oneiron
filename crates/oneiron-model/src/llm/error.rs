@@ -115,6 +115,12 @@ pub enum RetryableLlmError {
         /// When the window resets, as Unix seconds; none for credit.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         resets_at: Vec<u64>,
+        /// The login-backed model seat whose window this is
+        /// (SEAT-PARK-MODEL-STEP-PATH): set only by a backend that calls on
+        /// a login, never for an API key. A Dreamer step it refuses parks on
+        /// that seat's wait.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seat: Option<oneiron_contracts::EntityId>,
     },
     /// No offer the call may use on this device answered, and the next one
     /// would have taken its work off the device while its world stays here
@@ -317,6 +323,14 @@ pub enum FatalLlmError {
     ContextWindowExceeded { message: String },
     #[error("authentication failed")]
     Auth,
+    /// A login-backed model seat's login has lapsed
+    /// (SEAT-PARK-MODEL-STEP-PATH): its credential is missing, signed out
+    /// or expired, or its vendor refused it. Every rule reads it as
+    /// [`Self::Auth`], except that no deterministic fallback stands in for
+    /// it: a Dreamer step it refuses parks on `seat`'s wait, which the
+    /// seat's restored login wakes.
+    #[error("model seat signed out")]
+    SeatSignedOut { seat: oneiron_contracts::EntityId },
     #[error("content filtered")]
     ContentFiltered,
     #[error("empty response")]

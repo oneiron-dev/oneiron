@@ -5,10 +5,17 @@
 //! `--all-features` build reaches them. Hidden; never API.
 
 pub mod big_rung;
+pub mod build_server;
 pub mod coach_round;
+pub mod lfs_install_line;
 pub mod live_lease;
 pub mod live_run_payer;
+pub mod live_run_step;
+pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod native_board;
+pub mod replay_admission;
 pub mod resident_pump;
+pub mod siwc_seat;
 pub mod solved_runs;
+pub mod workflow_park;

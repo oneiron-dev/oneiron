@@ -183,18 +183,37 @@ pub(super) fn decode_hot_source(
             )
             .map_err(|_| corrupt())?,
     );
-    let mut decompressor =
-        zstd::bulk::Decompressor::with_dictionary(SYNTHETIC_DICTIONARY).map_err(|_| corrupt())?;
-    let plain = zeroize::Zeroizing::new(
-        decompressor
-            .decompress(&compressed, MAX_PLAINTEXT)
-            .map_err(|_| corrupt())?,
-    );
+    let plain = decompress_opened(&compressed)?;
     let record = decode_gate_decision(&plain)?;
     if record.claim_id != Some(claim_id) || record.decision_id != decision_id {
         return Err(corrupt());
     }
     Ok((record, plain))
+}
+
+/// The plaintext of one opened row, in a buffer sized to the frame's declared
+/// content size, which every frame [`seal`] writes carries (a single-pass
+/// compress of a known length). The buffer is wiped whole on drop, spare
+/// capacity included: sized to [`MAX_PLAINTEXT`] instead, each row read would
+/// wipe 16 MiB, and a `vault.receipts` page of a few hundred rows took
+/// seconds (FIX RECEIPTS-PAGE-READ-COST-GROWS). A frame that declares no size
+/// keeps the cap; one that declares more than the cap is corrupt.
+fn decompress_opened(compressed: &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>> {
+    let capacity = match zstd::zstd_safe::get_frame_content_size(compressed) {
+        Ok(Some(size)) => usize::try_from(size)
+            .ok()
+            .filter(|size| *size <= MAX_PLAINTEXT)
+            .ok_or_else(corrupt)?,
+        Ok(None) => MAX_PLAINTEXT,
+        Err(_) => return Err(corrupt()),
+    };
+    let mut decompressor =
+        zstd::bulk::Decompressor::with_dictionary(SYNTHETIC_DICTIONARY).map_err(|_| corrupt())?;
+    let mut plain = zeroize::Zeroizing::new(Vec::<u8>::with_capacity(capacity));
+    decompressor
+        .decompress_to_buffer(compressed, &mut *plain)
+        .map_err(|_| corrupt())?;
+    Ok(plain)
 }
 
 /// Exact opened bytes of a claim-free policy row (FIX 7806): its header
@@ -224,13 +243,7 @@ pub(super) fn decode_policy_source(
             )
             .map_err(|_| corrupt())?,
     );
-    let mut decompressor =
-        zstd::bulk::Decompressor::with_dictionary(SYNTHETIC_DICTIONARY).map_err(|_| corrupt())?;
-    let plain = zeroize::Zeroizing::new(
-        decompressor
-            .decompress(&compressed, MAX_PLAINTEXT)
-            .map_err(|_| corrupt())?,
-    );
+    let plain = decompress_opened(&compressed)?;
     let record = decode_gate_decision(&plain)?;
     if record.claim_id.is_some() || record.decision_id != decision_id {
         return Err(corrupt());

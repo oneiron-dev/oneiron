@@ -1,9 +1,16 @@
 //! Configured SIWC Responses calls through the normal model/run admission.
+//!
+//! The offer's login is one model seat (SEAT-PARK-MODEL-STEP-PATH): a lapsed
+//! login and a spent usage window name that seat on the refusal, so a Dreamer
+//! step the offer refuses parks on the seat's wait.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use futures_util::{StreamExt, stream::BoxStream};
+use oneiron::dreamer_runner::ModelSeatId;
+use oneiron::llm::SpentKind;
 use oneiron::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, LlmCallMetadata,
     LlmEndpointFlavor, SingleRouteBackend, WorkCancel,
@@ -29,9 +36,44 @@ use crate::runtime::seat_login::siwc::CredentialSource;
 
 const PATH: &str = "/v1/responses";
 
+/// The model seat of the SIWC offer whose credential file is
+/// `credential_file`: the file's absolute path, as its credential source
+/// reads it, digested under the SIWC offer seat domain.
+///
+/// # Errors
+/// The path has no absolute form, or the digest helper refuses.
+pub(crate) fn siwc_offer_seat(credential_file: &Path) -> anyhow::Result<ModelSeatId> {
+    oneiron::dispatch_byoa::siwc_offer_seat_id(&std::path::absolute(credential_file)?)
+        .map_err(|error| anyhow::anyhow!("SIWC offer seat: {error}"))
+}
+
+/// A refusal an SIWC offer's call met, naming the offer's `seat`: a failed
+/// login (the vendor's 401 or 403) is the seat's lapsed login, and a spent
+/// usage window is the seat's window. Every other refusal is unchanged.
+pub(crate) fn seat_refusal(seat: ModelSeatId, error: LlmError) -> LlmError {
+    match error {
+        LlmError::Fatal(FatalLlmError::Auth) => FatalLlmError::SeatSignedOut { seat }.into(),
+        LlmError::Retryable(RetryableLlmError::QuotaSpent {
+            kind: SpentKind::Window,
+            retry_after,
+            resets_at,
+            seat: None,
+        }) => RetryableLlmError::QuotaSpent {
+            kind: SpentKind::Window,
+            retry_after,
+            resets_at,
+            seat: Some(seat),
+        }
+        .into(),
+        other => other,
+    }
+}
+
 pub(super) struct SiwcResponses {
     http: ProviderHttp,
     credentials: Arc<CredentialSource>,
+    /// The login's model seat, which its lapsed login and spent window name.
+    seat: ModelSeatId,
     config: OpenAiCompatConfig,
     catalog: BTreeMap<ModelId, LlmCatalogEntry>,
     cap: OutputCap,
@@ -65,6 +107,7 @@ impl SiwcResponses {
                 &selection.credential_file,
                 provider.timeout_secs,
             )?),
+            seat: siwc_offer_seat(&selection.credential_file)?,
             config: OpenAiCompatConfig::from_catalog(catalog.clone()),
             catalog: catalog
                 .into_iter()
@@ -117,7 +160,7 @@ impl SiwcResponses {
         let active = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(RetryableLlmError::DeviceAdmissionStopped.into()),
-            result = opening => result.map_err(|_| FatalLlmError::Auth)?,
+            result = opening => result.map_err(|_| FatalLlmError::SeatSignedOut { seat: self.seat })?,
         };
         let release = || {
             lease.check_dispatch_release()?;
@@ -126,7 +169,7 @@ impl SiwcResponses {
             }
             self.credentials
                 .release(&active)
-                .map_err(|_| LlmError::from(FatalLlmError::Auth))
+                .map_err(|_| LlmError::from(FatalLlmError::SeatSignedOut { seat: self.seat }))
         };
         let publisher = InferencePublisher::begin(lease);
         let sending = self.http.post_sse_released(
@@ -165,12 +208,15 @@ impl SiwcResponses {
             .work_context()
             .map(|work| work.cancel)
             .unwrap_or_default();
-        let provider = self.open(prepared, model.clone(), lease, &cancel).await?;
+        let provider = self
+            .open(prepared, model.clone(), lease, &cancel)
+            .await
+            .map_err(|error| seat_refusal(self.seat, error))?;
         let decoding = OpenAiResponsesLlmStream::new(provider).into_response();
         let mut response = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(RetryableLlmError::DeviceAdmissionStopped.into()),
-            result = decoding => result?,
+            result = decoding => result.map_err(|error| seat_refusal(self.seat, error))?,
         };
         response.usage.bind_inference_model(&model);
         Ok(response)
@@ -213,13 +259,16 @@ impl SiwcResponses {
                 },
             )))
         };
+        let seat = self.seat;
         LlmStream::new(
-            futures_util::stream::once(opening).flat_map(|result| match result {
-                Ok(stream) => stream.left_stream(),
-                Err(error) => {
-                    futures_util::stream::once(std::future::ready(Err(error))).right_stream()
-                }
-            }),
+            futures_util::stream::once(opening)
+                .flat_map(|result| match result {
+                    Ok(stream) => stream.left_stream(),
+                    Err(error) => {
+                        futures_util::stream::once(std::future::ready(Err(error))).right_stream()
+                    }
+                })
+                .map(move |event| event.map_err(|error| seat_refusal(seat, error))),
         )
     }
 }
@@ -290,6 +339,10 @@ impl SingleRouteBackend for SiwcResponses {
         digest: &str,
     ) -> LlmStreamResult<'a> {
         Ok(self.decoded(self.bound(&request, true, digest)?, request.model, lease))
+    }
+
+    fn model_seat(&self) -> Option<ModelSeatId> {
+        Some(self.seat)
     }
 }
 
