@@ -11,6 +11,12 @@
 //! the caller's locality. It is process-local; a card it does not hold,
 //! after a restart too, is rendered again.
 //!
+//! State (GENUI-STATE-PERSIST): a card's `$state` lasts for the card's life
+//! here. Each accepted local event moves the one held state, and the
+//! credential that rendered the card reads it back
+//! ([`LensFrameStore::rendered_card`]), so a reload, and every view of the
+//! card in the same app, draws the state its events left.
+//!
 //! Authorship (FIX 3267, Engine ruling 10-19): the credential that clicks a
 //! card authors that card's action. The card id locates the held manifest
 //! for any caller, and never lends its renderer's authority: each event is
@@ -319,6 +325,23 @@ impl LensFrameStore {
         self.lock()
             .cards
             .get(card)
+            .map(|entry| Arc::clone(&entry.card))
+    }
+
+    /// The card `card` when `auth`'s caller rendered it here: the custody
+    /// that reads a card's current `$state` back (GENUI-STATE-PERSIST), as it
+    /// closes the card. `None` when it is not held or another credential
+    /// rendered it.
+    pub(crate) fn rendered_card(
+        &self,
+        auth: &CoreAuth,
+        card: &LensRenderId,
+    ) -> Option<Arc<HeldCard>> {
+        let custody = Custody::of(auth);
+        self.lock()
+            .cards
+            .get(card)
+            .filter(|entry| entry.custody == custody)
             .map(|entry| Arc::clone(&entry.card))
     }
 

@@ -25,6 +25,11 @@
 //! a system job rendered answers `409`. Closing a card stays with the
 //! credential that rendered it, and retiring it with its run.
 //!
+//! `GET /v1/core/lens-frames/{card_id}` answers the card's current `$state`
+//! to the credential that rendered it (GENUI-STATE-PERSIST), so a reload
+//! draws the state the card's events left, not the render's initial values.
+//! A model round trip carries the card's `$state` at the press to the agent.
+//!
 //! `selectedContext` (FIX 3268) names selections the clicker made on this
 //! card (`vault.lenses.select`'s `selectionRef`s), each a host-held
 //! [`oneiron::lens::LensReadHandle`]. On a model round trip each is proved
@@ -82,7 +87,10 @@ use crate::server::SyncServer;
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/v1/core/lens-frames/{card_id}/events", post(event))
-        .route("/v1/core/lens-frames/{card_id}", delete(close))
+        .route(
+            "/v1/core/lens-frames/{card_id}",
+            delete(close).get(card_state),
+        )
 }
 
 /// `vault.lenses.default` on this server: the default lens read under the
@@ -418,6 +426,34 @@ fn tool_bound(
         key
     };
     Ok((bound, key))
+}
+
+/// `GET /v1/core/lens-frames/{card_id}` (GENUI-STATE-PERSIST): the current
+/// `$state` of a held card, for the credential that rendered it, as its
+/// events left it: `{"cardId", "$state"}`. A reload, and every view of the
+/// card in the same app (the talk, the pane beside the room, a pinned view),
+/// draws this one state instead of the render's initial values. It answers
+/// the state alone and never the render again: the render's rows were read
+/// under the read its render call made, and handing them out again would
+/// skip the read each use is checked under. A card this credential did not
+/// render, or one this server no longer holds, answers the re-render
+/// refusal.
+async fn card_state(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(card_id): Path<String>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    let held = LensRenderId::new(card_id)
+        .ok()
+        .and_then(|card| server.lens_frames.rendered_card(&auth, &card))
+        .ok_or_else(rerender)?;
+    // An event in flight holds the lock from its validation to its effect,
+    // so this reads the state before it or after it, never between.
+    let state = held.state.lock().await.clone();
+    Ok(Json(
+        serde_json::json!({ "cardId": &held.render.card_id, "$state": &state }),
+    ))
 }
 
 /// Closes a held card for the credential that rendered it; a card it did

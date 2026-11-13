@@ -52,6 +52,10 @@ pub struct GeneratedUiAgentCallback {
     /// Read reach the acting principal selected, carried as context only. Populate it
     /// through [`LensRenderFrame::with_selected_context`](crate::lens::LensRenderFrame::with_selected_context), which re-proves every handle.
     pub selected_context: Vec<LensReadHandle>,
+    /// The card's `$state` when its action was pressed (GENUI-STATE-PERSIST): a pick
+    /// in a composed card is card state only, and it reaches the agent with the card's
+    /// action. A round trip carries no patch, so this is the state the event found.
+    pub state: GeneratedUiStateSnapshot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
