@@ -3,6 +3,7 @@
   "input": "crate::code_run::SkillCallInput",
   "output": "serde_json::Value",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "run",
   "effect": "SkillsCall",
   "host": {

@@ -402,8 +402,8 @@ pub fn require_join_for_branch_in_txn(
 /// [`require_join_for_branch_in_txn`] for an actor a room door already
 /// verified. Its subject is the one OF-529 resolves from stored facts, never
 /// from a label or its class: a PERSON is a person, an AGENT_DEF with a live
-/// PERSON subject anchor is that person's pen, and any other AGENT_DEF is an
-/// agent.
+/// PERSON subject anchor other than its own model PERSON is that person's
+/// pen, and any other AGENT_DEF is an agent.
 pub fn require_actor_join_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -422,7 +422,8 @@ fn not_joined(reason: &'static str) -> Error {
 }
 
 /// The PERSON an actor speaks for: itself when it is a PERSON, else the
-/// PERSON its stored subject anchor names. `None` for anything else.
+/// PERSON whose pen it is ([`agent_person_in_txn`]). `None` for anything
+/// else.
 pub(crate) fn person_of_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -436,9 +437,42 @@ pub(crate) fn person_of_actor_in_txn(
     }
 }
 
-/// The PERSON an AGENT_DEF's stored subject anchor names; `None` for an
-/// unanchored agent or one anchored to an ORG, which is the vault's own.
+/// The PERSON an actor is (ARCH-0067): itself when it is a PERSON, else the
+/// PERSON its stored subject anchor names, an agent's own model PERSON
+/// included. `None` for anything else. Where the answer is whose a thing is
+/// or who the actor is among people, not whom it speaks for in a room.
+pub(crate) fn subject_person_of_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    at: u64,
+) -> Result<Option<EntityId>> {
+    match vault.get_entity_type_in_txn(txn, &actor)? {
+        Some(ENTITY_TYPE_PERSON) => Ok(Some(actor)),
+        Some(ENTITY_TYPE_AGENT_DEF) => anchored_person_in_txn(vault, txn, actor, at),
+        _ => Ok(None),
+    }
+}
+
+/// The PERSON whose pen an AGENT_DEF is: the PERSON its stored subject
+/// anchor names, unless that is the agent's own model PERSON
+/// ([`crate::context_board::agent_person_id`]). An agent anchored to its own
+/// person is no one's pen: it stays an agent in rooms, and asks to join one
+/// by an offer card (ARCH-0006a). `None` for that agent, an unanchored one,
+/// or one anchored to an ORG, which is the vault's own.
 pub(super) fn agent_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    at: u64,
+) -> Result<Option<EntityId>> {
+    let own = crate::context_board::agent_person_id(agent)?;
+    Ok(anchored_person_in_txn(vault, txn, agent, at)?.filter(|person| *person != own))
+}
+
+/// The PERSON an AGENT_DEF's stored subject anchor names, its own model
+/// PERSON included; `None` for an unanchored agent or one anchored to an ORG.
+fn anchored_person_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
@@ -542,7 +576,7 @@ fn standing_of_in_txn(
             ) {
                 return Ok(Standing::Unknown);
             }
-            if let Some((org, own)) = house_org_in_txn(vault, txn, agent, at)? {
+            if let Some((org, own)) = house_org_in_txn(vault, txn, agent)? {
                 return Ok(Standing::House { org, own });
             }
             match agent_person_in_txn(vault, txn, agent, at)? {
@@ -571,37 +605,20 @@ fn standing_of_in_txn(
 }
 
 /// The ORG `agent` stands for when it is a workspace house mind: a stored
-/// roster preset names it as the house pen and its subject anchor names that
-/// preset's ORG. `own` when the preset's workspace is this shared vault.
+/// roster preset names it as the house pen and a live grant seats it in that
+/// preset's shared vault (HOUSE-BIND = A). `own` when the preset's workspace
+/// is this shared vault. The agent's own subject anchor plays no part: a
+/// house keeps its model PERSON.
 fn house_org_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
-    at: u64,
 ) -> Result<Option<(EntityId, bool)>> {
-    let presets: Vec<_> = super::records::PRESET
-        .scan(&vault.store, txn)?
-        .into_iter()
-        .map(|(_, row)| row.preset)
-        .collect();
-    if !presets.iter().any(|preset| preset.house_actor_ref == agent) {
-        return Ok(None);
-    }
-    let Some(anchor) = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, &agent, at)?
-        .filter(|anchor| {
-            anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Org
-        })
-    else {
-        return Ok(None);
-    };
     let here = vault
         .shared_vault_creation_in_txn(txn)?
         .map(|creation| creation.vault_id);
     let mut found = None;
-    for preset in presets {
-        if preset.house_actor_ref != agent || preset.org_ref != anchor.subject_ref {
-            continue;
-        }
+    for (preset, _) in super::house_link::house_links_in_txn(vault, txn, agent)? {
         let own = here == Some(preset.workspace_vault_id);
         if own || found.is_none() {
             found = Some((preset.org_ref, own));

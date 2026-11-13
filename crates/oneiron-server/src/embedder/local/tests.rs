@@ -339,11 +339,14 @@ fn an_early_transform_is_read_only_from_complete_verified_metadata() {
         "a module config is missing"
     );
     copy_metadata("pplx", &dir, &METADATA[2..]);
+    // 9cebb996b87 (#4098, FIX 10755): a configured full commit binds its
+    // transform too, so the signature names the revision.
     assert_eq!(
-        super::transform_on_disk(&config).as_deref(),
-        Some(
-            "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024"
-        )
+        super::transform_on_disk(&config),
+        Some(format!(
+            "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024;revision={}",
+            crate::config::embedder::DEFAULT_LOCAL_REVISION
+        ))
     );
     // Damaged from mean to CLS at the same size: it still parses and fits,
     // and its digest is what refuses it.
@@ -392,7 +395,11 @@ fn an_early_transform_is_read_only_from_complete_verified_metadata() {
     let operator = tempfile::tempdir().expect("model dir");
     copy_metadata("pplx", operator.path(), &METADATA);
     config.local.model_dir = Some(operator.path().to_path_buf());
-    assert!(super::transform_on_disk(&config).is_some());
+    // An operator's directory leaves the transform unbound (FIX 10755).
+    assert!(
+        super::transform_on_disk(&config)
+            .is_some_and(|transform| !transform.contains(";revision="))
+    );
 }
 
 /// A shipped default whose commit has no prompt file carries no prompt. A
@@ -427,7 +434,12 @@ fn a_stray_prompt_file_in_a_pinned_cache_is_never_read() {
     );
     let spec = spec::LocalModelSpec::read(&dir, &config).expect("reads");
     assert_eq!(spec.prompts, prompts::Prompts::default());
-    assert_eq!(spec.transform(), pinned);
+    // The early door binds the configured commit onto the spec's transform
+    // (9cebb996b87, FIX 10755).
+    assert_eq!(
+        format!("{};revision={}", spec.transform(), config.local.revision),
+        pinned
+    );
 }
 
 // ─── the artifact source, stubbed on loopback ────────────────────────────
@@ -611,8 +623,10 @@ fn a_bulk_forward_gets_its_layer_under_steady_query_traffic() {
             let _turn = turns.take(Priority::Bulk);
             bulk_ran.store(true, Ordering::SeqCst);
         });
+        // Waiters hold the tickets between head and next (#5458).
         wait_for("the bulk forward to wait", || {
-            turns.state().bulk_waiting == 1
+            let state = turns.state();
+            state.bulk_next.wrapping_sub(state.bulk_head) == 1
         });
         let mut queries = 0;
         while !bulk_ran.load(Ordering::SeqCst) {
@@ -622,7 +636,8 @@ fn a_bulk_forward_gets_its_layer_under_steady_query_traffic() {
             );
             let next = scope.spawn(|| turns.take(Priority::Query));
             wait_for("the next query to wait", || {
-                turns.state().queries_waiting == 1
+                let state = turns.state();
+                state.query_next.wrapping_sub(state.query_head) == 1
             });
             drop(running);
             running = next.join().expect("query thread");
@@ -765,7 +780,8 @@ mod with_model {
     fn the_committed_subset_matches_the_reference_runtime() {
         let embedder = LocalEmbedder::load(&harrier_config(EmbedderDevice::Auto), &manager())
             .expect("model loads");
-        let measured = embedder
+        // The vectors; the per-item encoder input counts are not compared.
+        let (measured, _) = embedder
             .embed_documents(&reference_chunks())
             .expect("embedded");
         let (worst, mean) = agreement(&measured, &reference_vectors(), 0.99);
@@ -784,7 +800,7 @@ mod with_model {
         for (dtype, floor) in [(DType::F32, 0.999), (DType::BF16, 0.99)] {
             let embedder = LocalEmbedder::load_at(&config, &manager(), dtype, Q8Kernel::Tiled)
                 .expect("model loads");
-            let measured = embedder
+            let (measured, _) = embedder
                 .embed_documents(&pplx_parity_texts())
                 .expect("embedded");
             let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), floor);
@@ -798,7 +814,7 @@ mod with_model {
     fn pplx_q8_0_matches_sentence_transformers() {
         let embedder = LocalEmbedder::load(&pplx_config(EmbedderDevice::Auto), &manager())
             .expect("model loads");
-        let measured = embedder
+        let (measured, _) = embedder
             .embed_documents(&pplx_parity_texts())
             .expect("embedded");
         let (worst, mean) = agreement(&measured, &pplx_reference_vectors(), 0.99);
@@ -861,13 +877,15 @@ mod with_model {
             }
         }
         assert_eq!(differing_states, 0, "inputs whose hidden states moved");
-        let ours = packed.embed_documents(&texts).expect("embedded");
+        // The vectors; the per-item encoder input counts are not compared.
+        let (ours, _) = packed.embed_documents(&texts).expect("embedded");
         let theirs: Vec<Vec<f32>> = texts
             .iter()
             .map(|text| {
                 reference
                     .embed_documents(std::slice::from_ref(text))
                     .expect("embedded")
+                    .0
                     .remove(0)
             })
             .collect();
@@ -937,7 +955,7 @@ mod with_model {
         let load_ms = load_started.elapsed().as_millis();
 
         let embed_started = std::time::Instant::now();
-        let documents = embedder
+        let (documents, _) = embedder
             .embed_documents(&texts)
             .expect("documents embedded");
         let embed_secs = embed_started.elapsed().as_secs_f64();

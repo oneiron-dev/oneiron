@@ -3,11 +3,10 @@ use super::distillation::ClosedFormPredicate;
 use super::tiered::{DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedTier};
 use super::*;
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBandPolicy, DecisionLadder, DecisionProvider, DecisionQuestion,
+    DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
     DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision, ProviderPin,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
 
 struct Grade(bool);
@@ -19,12 +18,7 @@ impl DecisionProvider for Grade {
             version: "1".into(),
         }
     }
-    fn decide(
-        &self,
-        _: &DecisionQuestion,
-        _: &[EntityId],
-        _: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
+    fn decide(&self, _: &DecisionCall<'_>) -> Result<ProviderDecision> {
         Ok(noul(self.0))
     }
 }
@@ -34,16 +28,12 @@ impl DecisionProvider for LabeledGrade {
     fn pin(&self) -> ProviderPin {
         Grade(true).pin()
     }
-    fn decide(
-        &self,
-        question: &DecisionQuestion,
-        evidence: &[EntityId],
-        _: &RetrievalDeadline,
-    ) -> Result<ProviderDecision> {
-        let reviewed = question
+    fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
+        let reviewed = call
+            .question
             .text
             .ends_with("2 positive and 1 negative reviewed findings.");
-        Ok(noul(reviewed && evidence.len() == 4))
+        Ok(noul(reviewed && call.evidence.len() == 4))
     }
 }
 fn noul(yes: bool) -> ProviderDecision {
@@ -51,6 +41,9 @@ fn noul(yes: bool) -> ProviderDecision {
         answer: DecisionAnswer::Noul(yes),
         probability: Some(if yes { 0.9 } else { 0.1 }),
         paired: None,
+        person: None,
+        served: None,
+        cost_per_thousand: None,
     }
 }
 struct NoPerson;
@@ -59,6 +52,10 @@ impl HumanDecisionQueue for NoPerson {
         Err(Error::InvalidConfig("no person here".into()))
     }
 }
+/// The host's state for every detector call: an empty JSON object. The engine adds each
+/// run's `target` and any wording past the question's text room to it.
+static DETECTOR_STATE: std::sync::LazyLock<serde_json::Value> =
+    std::sync::LazyLock::new(|| serde_json::json!({}));
 fn decisions(local: &'static dyn DecisionProvider) -> DetectorDecisions<'static> {
     DetectorDecisions {
         ladder: DecisionLadder {
@@ -73,10 +70,16 @@ fn decisions(local: &'static dyn DecisionProvider) -> DetectorDecisions<'static>
                 model: "test-queue".into(),
                 version: "1".into(),
             },
+            ask_to: None,
+            paired: None,
+            person: None,
+            presence: None,
+            correlation: None,
         },
         principal: EntityId::from_bytes([7; 16]).unwrap(),
         dial: DETECTOR_DIAL,
         bands: DecisionBandPolicy::default(),
+        state: &DETECTOR_STATE,
         budget: std::time::Duration::from_secs(3600),
     }
 }
@@ -209,7 +212,7 @@ fn reviewed_recurrence_mints_t2_and_closed_form_t1() -> Result<()> {
     let mut config = crate::VaultConfig::device();
     config.embedding_model = Some("test/tiered@v1".into());
     config.dimensions = 4;
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let v = Vault::open_owned(dir.path(), config)?;
     let o = owner(&v);
     let p = policy(2);
@@ -420,7 +423,7 @@ fn failure_signals_accept_session_judge_window_and_revoke_changed_sources() -> R
     let mut config = crate::VaultConfig::device();
     config.embedding_model = Some("test/tiered@v1".into());
     config.dimensions = 4;
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let vault = Vault::open_owned(dir.path(), config)?;
     let mut a = run(&vault, 20, true);
     let mut b = run(&vault, 21, true);
@@ -496,7 +499,7 @@ fn failure_signals_accept_centroid_window_only_while_snapshot_is_pinned() -> Res
     let mut config = crate::VaultConfig::device();
     config.embedding_model = Some("test/tiered@v1".into());
     config.dimensions = 4;
-    config.failure_signals.export_opt_in = true;
+    config.failure_signals.export_opt_in = Some(true);
     let v = Vault::open_owned(dir.path(), config)?;
     let center = EntityId::now();
     let candidate = EntityId::now();

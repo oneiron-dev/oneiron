@@ -38,6 +38,8 @@ pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_origin, carrier_text_placeable, carrier_texts_hit_in_txn,
     mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_spanning_json, mask_unplaced_json,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::retained_repo::read::{
     RepoKnownCheck, project_marked_retained_repo_blob, retained_repo_known_places,
@@ -464,6 +466,14 @@ pub(crate) fn release_credential_field(name: &str, nil: bool, text: Option<&str>
     credential_field(name, nil, text, Door::Release)
 }
 
+/// The write door's credential-name rule alone. On write, its mask lifts the
+/// value of a map member under such a name into custody, whatever the value
+/// is, so a name an asker chose (an ask option id, an outcome name) is refused
+/// before its ask is kept (FIX-LIST ASK-OPTION-KEY-CREDENTIAL-NAME-MASKED).
+pub(crate) fn credential_field_name(name: &str) -> bool {
+    shapes::sensitive_key(name)
+}
+
 /// A credential name holding anything but nil or a placeholder.
 fn credential_field(name: &str, nil: bool, text: Option<&str>, door: Door) -> bool {
     shapes::sensitive_key(name)
@@ -554,13 +564,29 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     // Every member is read, a repeated JSON key and every map key included,
     // and a framed carrier's body as a body too.
     for body in std::iter::once(data).chain(framed_payload(data)) {
-        if read_members(body)?
-            .is_some_and(|mut value| sanitize_messagepack(&mut value, false, Door::Write))
-        {
+        let Some(mut value) = read_members(body)? else {
+            continue;
+        };
+        if sanitize_messagepack(&mut value, false, Door::Write) {
             return Err(secret_scan_error("gate.secret_scan.sensitive_env"));
+        }
+        // A secret spread over parts the walk keeps apart (a phrase one word
+        // per nested item) reads whole, as the release doors read it
+        // (`whole_read`; LABEL-04).
+        if let Some(reason) = whole_hit(&value) {
+            return Err(secret_scan_error(reason));
         }
     }
     Ok(secrets_nulled)
+}
+
+/// The write door's text rules over every text a decoded body carries, one
+/// per line, at any depth (`whole_read::messagepack_leaves`).
+fn whole_hit(value: &rmpv::Value) -> Option<&'static str> {
+    // The joined text is wiped on drop (FIX 12047).
+    let mut text = Zeroizing::new(String::new());
+    whole_read::messagepack_leaves(value, &mut text);
+    detect(&text, Door::Write)
 }
 
 fn secret_scan_error(reason: &'static str) -> Error {

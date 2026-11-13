@@ -111,8 +111,9 @@ pub(crate) use persistence::conflict_close_candidate;
 pub(crate) use persistence::on_axes_of;
 pub use person_about::{PERSON_ABOUT_INSTRUCTION, PersonAboutExecutor};
 pub(crate) use person_about::{
-    enqueue_person_about_on_wake, erase_person_about_in_txn, mark_person_about_dropped_in_txn,
-    mark_person_about_moved_in_txn, person_of_about_input,
+    about_facts_in, about_revision_in, enqueue_person_about_on_wake, erase_person_about_in_txn,
+    mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn, person_of_about_input,
+    publish_person_about_in_txn,
 };
 pub use provenance::*;
 pub(crate) use provenance::{
@@ -229,3 +230,36 @@ use std::collections::BTreeSet;
 
 pub(crate) mod tables;
 mod value_projection;
+
+/// The side doors' TURN read (gap scan, owner intent, retrieval shadow), for
+/// the integration regression doors (`test_doors::untangle_regressions`,
+/// X01). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_door_turn_text_for_test(
+    vault: &crate::Vault,
+    turn: &crate::EntityId,
+) -> crate::Result<TurnText> {
+    turn_text::read_turn_text(vault, turn)
+}
+
+/// The writer's re-check of a side door's TURN record, read as the Dreamer in
+/// a fresh snapshot, for the integration regression doors (X01). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn side_door_recheck_for_test(
+    record: &TurnText,
+    vault: &crate::Vault,
+    turn: &crate::EntityId,
+) -> crate::Result<()> {
+    let read = turn_text::dreamer_read(vault)?;
+    let txn = turn_text::snapshot(vault)?;
+    record.check_live_in(&read, &txn, turn)
+}
+
+/// Encodes the candidates retained on a conflict marker.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retained_alternatives_entry_for_test(
+    members: &[&evidence::VerifiedCandidate],
+    attempt: crate::attempt_queue::AttemptId,
+) -> crate::Result<(rmpv::Value, rmpv::Value)> {
+    retained_conflict::alternatives_entry(members, attempt)
+}

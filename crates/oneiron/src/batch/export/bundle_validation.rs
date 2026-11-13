@@ -8,7 +8,7 @@ use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST,
     ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SKILL_HUB,
 };
-use crate::serialize::ExportBody;
+use crate::serialize::{ExportBody, ExportSecrets};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
@@ -17,8 +17,10 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     /// The bundles' checks against the import's row index (FIX 3678): each
     /// skill and agent bundle is read and checked alone, each agent's facets
     /// are recomputed from its own native rows, and the manifest's omission
-    /// lists are compared as the rows declare them, in their order.
-    pub(super) fn validate_bundles(&mut self) -> Result<()> {
+    /// lists are compared as the rows declare them, in their order. Skill
+    /// source trees validate under the archive's `secrets`; agent bundles
+    /// and facets stay Nulled.
+    pub(super) fn validate_bundles(&mut self, secrets: ExportSecrets) -> Result<()> {
         let mut skills = self.spool.rows(ArchiveRecordKind::Skill);
         while let Some((loc, _)) = skills.next(&self.spool)? {
             let bundle: ExportSkillBundle = self.hydrated(loc)?;
@@ -28,7 +30,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 ));
             }
             if let Some(tree) = &bundle.source_tree {
-                tree.validate_in(&self.files)?;
+                tree.validate_in_with(&self.files, secrets)?;
                 if let Some(hash) = &tree.content_hash {
                     let body = crate::write_envelope::skill_record::decode_skill_record(
                         &bundle.entity.body.to_bytes()?,
@@ -38,7 +40,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                     }
                     crate::store::skill_package::package_from_source(
                         &body,
-                        tree.import_files_in(&self.files)?,
+                        tree.import_files_in_with(&self.files, secrets)?,
                         bundle
                             .source_format
                             .ok_or_else(|| invalid("skill source format missing"))?,
@@ -397,6 +399,7 @@ pub(super) fn entity_omission(row: &ExportEntity) -> Result<Option<EntityOmissio
                 crate::write_envelope::subject_record::imported_subject_body(&body).is_ok()
                     || crate::actor_claims::imported_actor_body(&body).is_ok()
                     || crate::skill_reliability::imported_reliability_body(&body).is_ok()
+                    || crate::claim::archived_default_facet(&body).is_ok()
             })
     {
         Some(ImportRefusalReason::OwningClaimAdapterRequired)
@@ -593,7 +596,15 @@ impl OmissionLedger {
 }
 
 /// This is a closed list of archive-only families, not a reserved-claim import
-/// bypass. Other reserved claims still fail their ordinary import door.
+/// bypass: a reserved claim is archive-only where [`reserved_claim_import`]
+/// names its reason, and is never stored. A reserved family that list does
+/// not cover still fails its ordinary import door. A claim of any other
+/// predicate whose evidence carries a MACHINE signature is archive-only too
+/// (`MachineSignedClaimNotRestored`): the signature binds the source vault's
+/// id, this vault holds neither that MACHINE nor its omitted history, and
+/// dropping the proof would pass a signed write off as an unsigned one, as
+/// the guest-claim rule (FIX 3497) holds. Only the owner's restore brings it
+/// back, as the owner's restore of it, its MACHINE author and proof inert.
 pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionReason> {
     match row.entity_type {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR => Some(ImportOmissionReason::SkillAnchorRecomputed),
@@ -620,43 +631,122 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
         }
         ENTITY_TYPE_CLAIM => {
             // Decode a reserved claim only for classification; NEVER store it.
-            let predicate = match &row.body {
+            let field = |name: &str| match &row.body {
                 ExportBody::MessagePack(crate::serialize::ExportValue::Map(entries)) => {
-                    entries.iter().find_map(|(k, v)| match (k, v) {
-                        (
-                            crate::serialize::ExportValue::String(k),
-                            crate::serialize::ExportValue::String(v),
-                        ) if k == "pred" => Some(v.as_str()),
+                    entries.iter().find_map(|(k, v)| match k {
+                        crate::serialize::ExportValue::String(k) if k == name => Some(v),
                         _ => None,
                     })
                 }
                 _ => None,
             };
-            if matches!(
-                predicate,
-                Some(
-                    crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE
-                        | crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT
-                )
-            ) {
-                Some(ImportOmissionReason::ForeignSkillSignalNotRestored)
-            } else if matches!(
-                predicate,
-                // A stamp token resolves its own vault's stamps (FIX 10930):
-                // a binding no other vault holds, as a peer binding is.
-                Some("actor.peer_binding" | "actor.confidence_prior" | "actor.stamp_token")
-            ) {
-                Some(ImportOmissionReason::LocalActorConfigurationNotRestored)
-            } else if predicate
-                .is_some_and(crate::write_envelope::learning_predicate::is_learning_predicate)
-            {
-                Some(ImportOmissionReason::LearningCellsRebuiltFromReceipts)
-            } else {
-                None
+            let predicate = field("pred").and_then(|value| match value {
+                crate::serialize::ExportValue::String(value) => Some(value.as_str()),
+                _ => None,
+            });
+            match predicate.and_then(reserved_claim_import) {
+                Some(ReservedClaimImport::ArchiveOnly(reason)) => Some(reason),
+                Some(ReservedClaimImport::Restore(_)) => None,
+                None if field("evid").is_some_and(carries_machine_signature) => {
+                    Some(ImportOmissionReason::MachineSignedClaimNotRestored)
+                }
+                None => None,
             }
         }
         _ => None,
     }
+}
+
+/// Whether an archived claim's evidence names a MACHINE signature, whatever
+/// the archive kept of its bytes (an archive without secrets nulls raw
+/// binary).
+fn carries_machine_signature(evidence: &crate::serialize::ExportValue) -> bool {
+    matches!(evidence, crate::serialize::ExportValue::Map(entries)
+        if entries.iter().any(|(key, _)| matches!(key,
+            crate::serialize::ExportValue::String(key)
+                if key == crate::authority::MACHINE_SIGNATURE_KEY)))
+}
+
+/// The door the whole-vault import restores a reserved claim through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReservedClaimRestore {
+    /// `edge.provenance`: the provenance pass (`provenance_import`).
+    EdgeProvenance,
+    /// `person.substrate` and `actor.subject_ref`: the subject-model restore.
+    SubjectModel,
+    /// `actor.lesson`, `actor.failure_mode`, `actor.scope_note` and
+    /// `actor.skill_fit`: the actor-projection restore.
+    ActorProjection,
+    /// `vault.default_facet`: the owner's setter, in the owner's restore into
+    /// a fresh vault only; otherwise the import keeps it as archive data
+    /// (`TargetDefaultFacetKept`).
+    OwnerDefaultFacet,
+}
+
+/// What the whole-vault import does with a claim of a reserved predicate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReservedClaimImport {
+    Restore(ReservedClaimRestore),
+    /// The manifest declares the row an import omission with this reason.
+    ArchiveOnly(ImportOmissionReason),
+}
+
+/// The import's one decision for each reserved predicate family
+/// (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS): the door that restores it, or the
+/// reason [`archive_only_reason`] declares it archive-only with. A family
+/// with neither returns `None`, as a predicate outside every reserved family
+/// does; the generic claim door then refuses it, and the whole import fails.
+/// A test names every reserved family and fails on such a `None`.
+pub(crate) fn reserved_claim_import(predicate: &str) -> Option<ReservedClaimImport> {
+    use ImportOmissionReason as Omit;
+    use ReservedClaimImport::{ArchiveOnly, Restore};
+    if !crate::write_envelope::claim_predicate::is_reserved_predicate(predicate) {
+        return None;
+    }
+    if predicate == crate::write_envelope::provenance::PREDICATE_EDGE_PROVENANCE {
+        return Some(Restore(ReservedClaimRestore::EdgeProvenance));
+    }
+    if crate::write_envelope::subject_record::is_subject_model_predicate(predicate) {
+        return Some(Restore(ReservedClaimRestore::SubjectModel));
+    }
+    if crate::write_envelope::actor_predicate::is_actor_claim_predicate(predicate) {
+        return Some(Restore(ReservedClaimRestore::ActorProjection));
+    }
+    if predicate == crate::claim::PREDICATE_VAULT_DEFAULT_FACET {
+        return Some(Restore(ReservedClaimRestore::OwnerDefaultFacet));
+    }
+    let reason = match predicate {
+        crate::store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE
+        | crate::store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT => {
+            Omit::ForeignSkillSignalNotRestored
+        }
+        // A stamp token resolves its own vault's stamps (FIX 10930): a
+        // binding no other vault holds, as a peer binding is.
+        "actor.peer_binding" | "actor.confidence_prior" | "actor.stamp_token" => {
+            Omit::LocalActorConfigurationNotRestored
+        }
+        // The hub rows the proposal names are omitted with this reason too.
+        crate::skill_hub::PREDICATE_SKILL_HUB_UPDATE_PROPOSAL => Omit::HubConfigurationNotRestored,
+        // The next floor check derives it again from the rebuilt cells.
+        crate::skill_reliability::PREDICATE_SKILL_QUARANTINE_PROPOSAL => {
+            Omit::LocalProjectionNotRestored
+        }
+        _ => match predicate.split('.').next() {
+            Some(crate::write_envelope::claim_predicate::LEARNING_NAMESPACE) => {
+                Omit::LearningCellsRebuiltFromReceipts
+            }
+            // Board history and the engine-signed machine carriers: the
+            // target's own turns and pairings write their own.
+            Some("world_access" | "activated" | "machine") => Omit::LocalHistoryNotRestored,
+            Some("repo") => Omit::RepoClaimsNotRestored,
+            Some("actor") => Omit::LocalActorConfigurationNotRestored,
+            // Signature events, section fit receipts and the engine's other
+            // skill and edge records.
+            Some("esign" | "skill" | "edge") => Omit::EngineAttestationNotRestored,
+            _ => return None,
+        },
+    };
+    Some(ArchiveOnly(reason))
 }
 
 fn invalid(reason: &str) -> Error {

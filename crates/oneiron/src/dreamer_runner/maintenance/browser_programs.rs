@@ -462,7 +462,8 @@ impl Pass<'_> {
 }
 
 /// Whether `evidence` is a run of the failed program or of its successor:
-/// neither is a changed trace.
+/// neither is a changed trace. A TASK run and an unfiled draft's run (FIX
+/// 10508) ran no filed program, so neither is.
 fn own_run(evidence: &SolvedRunEvidence, failed: &ProgramFailureRef) -> bool {
     matches!(
         evidence.source,

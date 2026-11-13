@@ -5,6 +5,7 @@
   "output": "crate::memory::code_view_doors::CodeCacheOutcome",
   "call": "memory.code_view_build_as(&memory.embedded_owner(\"vault.code.views.build\")?, input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

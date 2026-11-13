@@ -84,14 +84,14 @@ const AGENTS: Agent[] = [
     schedule: 'on ask',
     scheduleTip: 'wakes on your ask, an inbound message, or a click on send',
     voice:
-      'Writes in Yurii’s register. Short and warm, no exclamation marks. Japanese when the contact writes Japanese.',
+      'Writes in Yuki’s register. Short and warm, no exclamation marks. Japanese when the contact writes Japanese.',
     last: '14:09',
     lastTip: 'the last run settled at 14:09',
     verbs: [
-      { v: 'read', tip: 'clients, base · standing · never the internal world', by: 'o', byTip: 'granted by oleksii', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'propose', tip: 'claims from what she sends and hears · they wait for you', by: 'o', byTip: 'granted by oleksii', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'draft', tip: 'any world she can read · drafts land in the inbox', by: 'o', byTip: 'granted by oleksii', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'send', tip: 'LINE, email · one click per send · 20 a month', by: 'y', byTip: 'granted by yurii', when: '08-07', whenTip: 'granted 2026-08-07 · expires 2026-10-07 · 20 sends a month' },
+      { v: 'read', tip: 'clients, base · standing · never the internal world', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'propose', tip: 'claims from what she sends and hears · they wait for you', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'draft', tip: 'any world she can read · drafts land in the inbox', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'send', tip: 'LINE, email · one click per send · 20 a month', by: 'y', byTip: 'granted by yuki', when: '08-07', whenTip: 'granted 2026-08-07 · expires 2026-10-07 · 20 sends a month' },
     ],
     tail: [
       { when: '14:02', what: 'Drafted the quote reply for Mika Tanaka. It waits on you.', door: { label: 'open', tip: 'the draft, in the inbox', to: '/app/inbox' } },
@@ -120,8 +120,8 @@ const AGENTS: Agent[] = [
     last: '14:09',
     lastTip: 'the last run settled at 14:09',
     verbs: [
-      { v: 'read', tip: 'clients, base, the open web · standing', by: 'o', byTip: 'granted by oleksii', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
-      { v: 'propose', tip: 'claims only · every one carries its source and its floor', by: 'o', byTip: 'granted by oleksii', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'read', tip: 'clients, base, the open web · standing', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
+      { v: 'propose', tip: 'claims only · every one carries its source and its floor', by: 'o', byTip: 'granted by owen', when: '08-02', whenTip: 'granted 2026-08-02 · standing' },
     ],
     tail: [
       { when: '12:48', what: 'Read the Kansai freight filings for anything on Hokuei.', door: { label: 'receipt', tip: 'run rx_9033 · four writes, none waited', href: '#' } },
@@ -150,9 +150,9 @@ const AGENTS: Agent[] = [
     last: '03:12',
     lastTip: 'run rx_7b12 · finished 03:12 · 42 writes · every write receipted',
     verbs: [
-      { v: 'read', tip: 'every world, including internal · standing', by: 'o', byTip: 'granted by oleksii', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
-      { v: 'consolidate', tip: 'the nightly pass · claims in, receipts out', by: 'o', byTip: 'granted by oleksii', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
-      { v: 'answer', tip: 'Slack, email · answers cite the vault', by: 'o', byTip: 'granted by oleksii', when: '07-28', whenTip: 'granted 2026-07-28 · Slack, email' },
+      { v: 'read', tip: 'every world, including internal · standing', by: 'o', byTip: 'granted by owen', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
+      { v: 'consolidate', tip: 'the nightly pass · claims in, receipts out', by: 'o', byTip: 'granted by owen', when: '07-19', whenTip: 'granted 2026-07-19 · at mint · standing' },
+      { v: 'answer', tip: 'Slack, email · answers cite the vault', by: 'o', byTip: 'granted by owen', when: '07-28', whenTip: 'granted 2026-07-28 · Slack, email' },
     ],
     tail: [
       { when: '14:05', what: 'Answered #ops on the pilot timeline and cited the scope note.', door: { label: 'receipt', tip: 'slack · #ops · the answer and its citation', to: '/app/threads' } },
@@ -164,7 +164,7 @@ const AGENTS: Agent[] = [
 
 /* the live runs (the agent line points here) */
 const RUNS: Array<{ agent: RunKey; doing: string; tip: string; since: string; world: string; elapsed: string; tokens: string; cost: string; needs?: string; helpers: Array<{ what: string; state: string; needs?: boolean }> }> = [
-  { agent: 'eiri', doing: 'Drafting the COO intro, in Yurii’s register', tip: 'run rx_9b20 · started 13:55 · it will queue, not send', since: '13:55', world: 'hokuei', elapsed: '12m', tokens: '3.1k', cost: '¥4', needs: 'reaching the COO', helpers: [{ what: 'read the site and the org chart', state: 'done 13:58' }, { what: 'drafting, in Yurii’s register', state: '12m' }, { what: 'reaching the COO', state: 'needs you', needs: true }] },
+  { agent: 'eiri', doing: 'Drafting the COO intro, in Yuki’s register', tip: 'run rx_9b20 · started 13:55 · it will queue, not send', since: '13:55', world: 'hokuei', elapsed: '12m', tokens: '3.1k', cost: '¥4', needs: 'reaching the COO', helpers: [{ what: 'read the site and the org chart', state: 'done 13:58' }, { what: 'drafting, in Yuki’s register', state: '12m' }, { what: 'reaching the COO', state: 'needs you', needs: true }] },
   { agent: 'tory', doing: 'Checking the supplier rumor against the filings', tip: 'run rx_9b07 · started 13:26 · read-only scope', since: '13:26', world: 'hokuei', elapsed: '41m', tokens: '18k', cost: '¥21', helpers: [{ what: 'two filings open', state: '41m' }, { what: 'grading the source', state: '6m' }] },
 ]
 
@@ -194,7 +194,7 @@ const CHANNELS: Array<{ id: ChanId; label: string; tip: string; Glyph: () => Rea
   { id: 'slack', label: 'Slack', tip: 'Slack · the workspace connected in settings', Glyph: ChanSlack },
   { id: 'line', label: 'LINE', tip: 'LINE · the official account connected in settings', Glyph: ChanLine },
   { id: 'mail', label: 'email', tip: 'email · the house mailbox', Glyph: ChanMail },
-  { id: 'linkedin', label: 'LinkedIn', tip: 'LinkedIn · Yurii’s account, reads only', Glyph: ChanLinkedin },
+  { id: 'linkedin', label: 'LinkedIn', tip: 'LinkedIn · Yuki’s account, reads only', Glyph: ChanLinkedin },
 ]
 const SCHEDULES: Array<{ id: Schedule; tip: string }> = [
   { id: 'continuous', tip: 'wakes on its own watch, every few hours' },
@@ -283,7 +283,7 @@ const THREADS: Record<AgentKey | 'house', Msg[]> = {
     { id: 'e3', who: 'o', at: '13:12', text: 'Draft a reply to Mika about the quote. Short. Japanese.' },
     { id: 'e4', who: 'eiri', at: '13:14', text: 'Drafting. It waits for your click before anything leaves.' },
     { id: 'e5', who: 'eiri', at: '14:02', text: 'The reply is ready.', card: { kind: 'door', title: 'Reply to Mika Tanaka: the quote for Tuesday', line: 'a draft · LINE · waits in your inbox', doors: [{ label: 'open', tip: 'the draft, in the inbox · edit it there, send from there', to: '/app/inbox' }] } },
-    { id: 'e6', who: 'eiri', at: '14:06', card: { kind: 'gate', id: 'g-eiri-linkedin', title: 'Reach the Hokuei COO through Yurii’s account?', why: 'A new audience for the LinkedIn grant, so I ask before I reach. Every send stays a human click.', remembers: 'allow + grant remembers: LinkedIn · Hokuei people · through Yurii’s account' } },
+    { id: 'e6', who: 'eiri', at: '14:06', card: { kind: 'gate', id: 'g-eiri-linkedin', title: 'Reach the Hokuei COO through Yuki’s account?', why: 'A new audience for the LinkedIn grant, so I ask before I reach. Every send stays a human click.', remembers: 'allow + grant remembers: LinkedIn · Hokuei people · through Yuki’s account' } },
   ],
   tory: [
     { id: 't1', who: 'tory', at: '08:30', text: 'Graded the supplier rumor at 0.41. One source, second-hand.', card: { kind: 'door', title: 'Hokuei may be consolidating suppliers this fiscal year', line: 'proposed · 0.61 after the email · contradicts the May claim', doors: [{ label: 'the claim', tip: 'the claim, its confidence and its lone source', to: '/app/vault' }] } },
@@ -309,7 +309,7 @@ const THREADS: Record<AgentKey | 'house', Msg[]> = {
       { id: 'h4r1', who: 'o', at: '12:50', text: 'Any freight terms that bite us?' },
       { id: 'h4r2', who: 'tory', at: '12:52', text: 'Two. A 30-day settlement clause and a fuel surcharge cap. Both are on the claims.', replyTo: { id: 'h4r1', span: 'bite us' } },
     ] },
-    { id: 'h5', who: 'eiri', at: '13:55', text: 'Starting the COO intro in Yurii’s register. It will queue, not send.' },
+    { id: 'h5', who: 'eiri', at: '13:55', text: 'Starting the COO intro in Yuki’s register. It will queue, not send.' },
     { id: 'h6', who: 'eiri', at: '14:02', text: 'The Mika reply is ready.', card: { kind: 'door', title: 'Reply to Mika Tanaka: the quote for Tuesday', line: 'a draft · LINE · waits in your inbox', doors: [{ label: 'open', tip: 'the draft, in the inbox', to: '/app/inbox' }] } },
     { id: 'h7', who: 'antevon', at: '14:07', text: 'Today was mostly Eiri. Nothing left the building without you. Tory’s supplier rumor still rests on one source, so it stays a proposal.' },
   ],
@@ -846,7 +846,7 @@ function Agents() {
     } else if (step === 'grants') {
       patch(c.id, 'scopes', (x) => ({
         ...x,
-        grants: prop.verbs.map((v) => ({ v, tip: VERB_TIPS[v] ?? v, by: 'o' as const, byTip: 'granted by oleksii · confirmed in the room', when: day, whenTip: `granted ${day} · in the room · under your seal` })),
+        grants: prop.verbs.map((v) => ({ v, tip: VERB_TIPS[v] ?? v, by: 'o' as const, byTip: 'granted by owen · confirmed in the room', when: day, whenTip: `granted ${day} · in the room · under your seal` })),
       }))
     } else {
       patch(c.id, 'schedule', (x) => ({ ...x, schedule: prop.schedule, cap: x.cap ?? '¥300' }))

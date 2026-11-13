@@ -27,7 +27,7 @@ pub(super) fn start_run_guest(
         error: BrowserError::Unavailable(e),
     };
     let backend = select_backend_for_session(
-        &oneiron_agent_runtime::code_sandbox::SANDBOX_BACKENDS,
+        &*vault.runtime().sandbox_backends(),
         SandboxGuestTier::Untrusted,
         runtime.to_path_buf(),
         image,
@@ -464,14 +464,12 @@ impl RunGuests {
         }
     }
 
-    /// The same, billing `payer`, the attached live run's (FIX 8902), for a
-    /// call whose door bound no line: its Fill writer bills that payer.
+    /// The same, billing the payer of `run`, the attached live run (FIX
+    /// 8902), for a call whose door bound no line: its Fill writer reads that
+    /// payer at each call (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK).
     #[must_use]
-    pub(crate) fn with_payer(
-        mut self,
-        payer: Option<oneiron::llm::run_admission::PayerPerson>,
-    ) -> Self {
-        self.payer = payer;
+    pub(crate) fn with_payer(mut self, run: crate::ai_host::payer_funding::LiveRunPayer) -> Self {
+        self.payer = Some(run);
         self
     }
 
@@ -603,7 +601,7 @@ impl RunGuests {
             (Some(run), _) if desktop => {
                 // A desktop Fill's writer, as a browser's (FIX 8899).
                 let fields =
-                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
+                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.as_ref());
                 let input = call.input.clone();
                 run.call(call.verb, input, decider, writer, secrets, fields)
             }
@@ -635,7 +633,7 @@ impl RunGuests {
                 let sites = Arc::new(RunSiteSkills::new(server, run_id, lease));
                 let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets, sites);
                 let fields =
-                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
+                    RunFieldWriter::new(server, runtime, &decider.asker, self.payer.as_ref());
                 let input = call.input.clone();
                 let capture = BrowserCapture {
                     vault: &server.vault,

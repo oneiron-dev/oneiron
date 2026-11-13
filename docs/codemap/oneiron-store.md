@@ -55,7 +55,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/home_room_project.rs` | src | s | 1 fn | — | The project a home-room body names, read by an importer to order a room after its project |
 | `src/batch/export/secret_supplement_record.rs` | src | s | 2 struct · 1 enum | HolderExportNeed, OpenedSecretSupplement, SecretSupplementImport | Snapshot needs and opened secret-supplement import values |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 fn | — | Final-state leader-chat TURN candidates, independent of batch op order |
-| `src/batch/phonetic_codes.rs` | src | m | 2 fn | — | Deterministic name codes for the first phonetic rung (OF-101) |
+| `src/batch/phonetic_codes.rs` | src | m | 1 struct · 3 fn | LinkingCodes | Deterministic name codes for the first phonetic rung (OF-101) |
 | `src/batch/put_apply/mod.rs` | src | s | 2 struct · 1 enum · 1 fn | AppliedPut, BatchEntityPut, EffectiveEntity | Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers |
 | `src/batch/row_put.rs` | src | s | 1 enum | RowPut | What a put is to the row it writes, as the record-scope stamp reads it |
 | `src/batch/secret_scan.rs` | src | s | 7 mod | — | Store-layer modules of core `batch::secret_scan`; core re-exports each one at its old path |
@@ -151,7 +151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/compaction/gate.rs` | src | s | 3 struct · 3 enum · 8 fn | CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal, CompactionSuppression | The deterministic pre-swap gate (agent-runtime-v1 §d7) |
 | `src/compaction/host_request.rs` | src | s | 1 struct | HostCompactResult | Host compaction request and result records |
 | `src/config.rs` | src | m | 3 struct · 7 fn · 5 mod · 2 re-export | Bm25RankProfile, HnswConfig, VaultConfig | Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +… |
-| `src/config/bm25.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | Bm25Config, Bm25Formula, Bm25RecencyConfig, FieldConfig, FieldLengthPolicy | Rank-profile config: field/channel params, formula, recency, defaults |
+| `src/config/bm25.rs` | src | s | 3 struct · 3 enum · 11 fn · 2 const | Bm25Config, Bm25Formula, Bm25RecencyConfig, FieldConfig, FieldLengthPolicy, NoteTextField | Rank-profile config: field/channel params, formula, recency, defaults |
 | `src/config/community_graph/codec.rs` | src | s | 1 struct · 9 fn | CommunitySnapshot | Snapshot and membership encode/decode with strict guards |
 | `src/config/community_graph/detection.rs` | src | m | 1 struct · 9 fn | Graph | Graph projection and Leiden/CPM partition detection |
 | `src/config/community_graph/mod.rs` | src | s | 4 mod · 6 re-export | — | Pure community graph projection, snapshot codecs and configuration |
@@ -170,12 +170,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract_oracle/graph.rs` | src | s | 2 struct · 3 fn | AffectedTests, WorkspaceGraph | Workspace dependency closure from resolved `cargo metadata --format-version 1` JSON |
 | `src/contract_oracle/mod.rs` | src | s | 3 fn · 2 mod · 2 re-export | — | Persisted, deterministic Rust API, schema and command-output contracts |
 | `src/contract_oracle/types.rs` | src | s | 5 struct · 1 enum · 1 fn | CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict | Contract input, snapshot and persisted verdict types |
-| `src/conversation_body.rs` | src | s | 5 struct · 2 enum · 7 fn · 4 const | ConversationBody, ConversationKind, ProjectRoom, RoomOriginCard, RoomRole, ThreadBinding, ThreadJoinRequestsRequest | Conversation body vocabulary and strict body codecs |
+| `src/conversation_body.rs` | src | s | 6 struct · 3 enum · 10 fn · 5 const | ConversationBody, ConversationKind, ProjectRoom, RoomOriginCard, RoomPin, RoomPinPolicy, RoomRole, ThreadBinding +1 | Conversation body vocabulary and strict body codecs |
 | `src/conversation_record.rs` | src | s | 7 struct · 4 enum · 3 fn · 1 const | AddressMode, AppendFailure, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan +3 | Door inputs and snapshot results |
 | `src/conversation_residency.rs` | src | s | 2 fn · 1 const | — | The exact refusal of a turn whose witnessed message is not resident |
 | `src/conversation_span.rs` | src | s | 1 enum | ConversationSpanRead | Result vocabulary for a fingerprint-pinned conversation span read |
 | `src/conversation_summary.rs` | src | s | 1 fn | — | Coverage references encoded in stored conversation summaries |
-| `src/core_write/batch.rs` | src | s | 4 struct · 1 enum | CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | The `vault.batch` row's input and receipt types (OF-181) |
+| `src/core_write/batch.rs` | src | s | 5 struct · 2 enum · 1 fn | AgentDefinitionWriteDisposition, AgentDefinitionWriteReceipt, CoreBatchCommit, CoreBatchEntityInput, CoreBatchEntityReceipt, CoreBatchWriteInput, CoreBatchWriteReceipt | The `vault.batch` row's input and receipt types (OF-181) |
 | `src/core_write/conversations.rs` | src | s | 3 struct · 1 fn | ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt | The `vault.conversations.create` and `vault.conversations.turns.create` rows' input and receipt types (OF-181) |
 | `src/core_write/dag.rs` | src | s | 3 struct · 1 enum · 1 fn | CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt | The `vault.conversations.records.append` row's input and receipt types (OF-181) and the append door's input… |
 | `src/core_write/mod.rs` | src | s | 1 mod · 4 re-export | — | Core entity writes as typed rows (OF-181): the rows' inputs and receipts, and the shape every write stages… |
@@ -318,7 +318,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/merge_queue/tested_types.rs` | src | s | 6 struct · 5 enum · 3 fn | CodePushProjectionSourceLink, CodePushSourceLink, QueueAppliedSource, QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueRevisionIntent, QueueRevisionLink +3 | The tested-revision seal's records, links and holds (FIX 6868, G2 PR3) |
 | `src/merge_queue/types.rs` | src | s | 8 struct · 3 enum · 7 fn | BatchState, CheckReport, EffectIntent, LandingPermit, MergeFile, MergeFileExpected, MergeProposal, MergeQueuePointers +3 | Persisted queue records and sealed landing/check boundaries |
 | `src/model_decision/answer_actor.rs` | src | s | 1 enum · 4 fn | AnswerActor | An answer actor identity, including its erased state |
-| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 52 const | QuestionFamily | The engine's registered typed-question families, in one place |
+| `src/model_decision/catalogue.rs` | src | m | 1 struct · 1 fn · 54 const | QuestionFamily | The engine's registered typed-question families, in one place |
 | `src/model_decision/codec.rs` | src | s | 7 fn · 3 mod | — | Canonical entity references for typed-decision wire records |
 | `src/model_decision/mod.rs` | src | s | 3 mod · 9 re-export | — | Model-independent typed decision vocabulary and pure policy values |
 | `src/model_decision/policy.rs` | src | s | 7 struct · 2 enum · 11 fn · 1 re-export | BandMode, DecisionBandEnforceRequest, DecisionBandLearnRequest, DecisionBandPolicy, DecisionBandReadRequest, LearnedBand, PersonThreshold, Reversibility +1 | Question- and reversibility-scoped escalation bands; learning starts in shadow |
@@ -335,7 +335,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/model_score_diff.rs` | src | s | 1 struct | ModelScoreDiff | One benchmark-score change of a model (`LLM_SCORE_DIFFS` rows) |
 | `src/model_step_record.rs` | src | s | 4 struct · 4 enum · 8 fn · 9 const | CallerSettledStep, DreamerTrapKind, DreamerTrapState, ModelStepCheckpoint, SettledStepRequest, SettledStepView, StepProgression, TrapRef | Durable model-step claim vocabulary and progression values |
 | `src/model_step_response_carriage.rs` | src | s | 1 fn · 1 const | — | How a checkpoint carries a terminal `dreamer.step` claim whose response rests inline in its `entities` row… |
-| `src/model_step_submission.rs` | src | s | 1 struct · 2 enum | ModelStepFailure, ModelStepFailureClass, ModelStepResult | A public model-step submission row (`MODEL_STEP_SUBMISSION`, FIX 9929) and the public step types it keeps… |
+| `src/model_step_submission.rs` | src | s | 1 struct · 3 enum | ModelStepFailure, ModelStepFailureClass, ModelStepResult, StepBudgetRefusal | A public model-step submission row (`MODEL_STEP_SUBMISSION`, FIX 9929) and the public step types it keeps… |
 | `src/model_stream_row.rs` | src | s | 1 struct | StreamRow | The durable row of one shared model stream (`MODEL_STREAM`): its owner, stable key, frozen request and… |
 | `src/note_kind.rs` | src | s | 1 struct · 3 enum · 3 fn · 4 const | ContextDefault, ExtractionDefault, NoteKindDescriptor, RetentionDefault | Shipped NOTE kind defaults and syntactic kind-name rules |
 | `src/open_gates.rs` | src | s | 2 mod | — | Store-layer modules of core `store::open_gates`; core re-exports each one at its old path |
@@ -382,10 +382,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_outcome.rs` | src | s | 1 enum · 1 fn | OutboundDispatchOutcome | Stable outcome vocabulary for outbound dispatch observations |
 | `src/outbound_trigger.rs` | src | s | 1 struct · 1 enum · 8 fn | OutboundIntentSource, OutboundIntentTrigger | Source tags and trigger envelopes for outbound intent records |
 | `src/overlay_bookkeeping.rs` | src | s | 3 const | — | Vault-meta row prefixes a session overlay stages as a write's bookkeeping rather than as content it stages |
-| `src/overlay_db/accessors.rs` | src | m | 2 struct · 31 fn · 2 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
+| `src/overlay_db/accessors.rs` | src | m | 2 struct · 33 fn · 3 crate-vis | OverlayDb, OverlayStrDb | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
 | `src/overlay_db/iters.rs` | src | s | 7 enum · 1 fn | OverlayDupValues, OverlayIter, OverlayPrefix, OverlayRange, OverlayRevRange, OverlayStrIter, OverlayStrPrefix | Public base-vs-merged iterator enums returned by the accessors (iter/rev/range/prefix/dup/str) |
 | `src/overlay_db/merge.rs` | src | m | 4 struct · 11 crate-vis | MergedPrefixRows, MergedRows, PrefetchedMergedRows, StrMergedRows | Base/overlay merge engine: MergedRows state machine, prefix/prefetch/str adapters, ordering and… |
 | `src/overlay_db/mod.rs` | src | s | 3 mod · 1 re-export | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
+| `src/overlay_db/tests.rs` | test | s | — | — | — |
 | `src/own_rate_record.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const | OwnRate, OwnRateCheck, OwnRateKind | Own-rate advisory thresholds and first-crossing check records |
 | `src/pack_hook_actor_class.rs` | src | s | 1 enum | HookActorClass | The actor classes a pack hook's selector may name |
 | `src/pad_object_membership.rs` | src | s | 1 enum | PadObjectMembership | Generation membership policy named by a pad-object install |
@@ -416,7 +417,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reaction_predicate.rs` | src | s | 1 const | — | Reaction outcome predicate stored by event-outcome projections |
 | `src/reader_fold_receipt.rs` | src | s | 2 struct | ReceiptPartial, SummaryMemo | Stored reader-fold receipts and their occurrence vocabulary |
 | `src/receipt_identity.rs` | src | s | 1 fn · 2 const | — | The identity marker carried after receipt attribution is erased |
-| `src/receipt_row.rs` | src | m | 1 enum · 6 fn · 83 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
+| `src/receipt_row.rs` | src | s | 1 enum · 6 fn · 38 const | ReceiptKind | Receipt row fields, query values, and deterministic ordering |
 | `src/receive_scan.rs` | src | s | 2 struct · 1 enum · 2 fn · 1 const | PushedBlob, ReceiveBlobKind, ReceiveScanHit | Pushed-blob scan inputs, value-free hits, and the receive-pack effector name |
 | `src/record_links/blocks.rs` | src | m | 1 struct · 1 enum · 2 fn | Blocks, Line | The block structure [`super::parse_record_links`] reads a text's lines through (CommonMark, as far as… |
 | `src/record_links/mod.rs` | src | m | 2 struct · 2 fn · 4 const · 1 mod | ProseLink, ProseLinks | Pure parsing of record links in Markdown text |
@@ -474,10 +475,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_lease/types.rs` | src | s | 1 struct · 1 re-export | SecretTaintRef | Lease/registration/receipt row types, VaultInstant clock, key prefixes |
 | `src/secret_manifest.rs` | src | m | 2 struct · 3 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `src/secret_name_index.rs` | src | s | 1 struct | NameEntry | The live secret name index: each live custody record's name, the record it resolves to and the name's… |
-| `src/secret_record/codec.rs` | src | s | 1 enum · 6 fn · 4 const | BodyValue | MessagePack body codec for custody records, bands, floors, and bindings |
-| `src/secret_record/mod.rs` | src | s | 3 struct · 1 trait · 7 fn · 9 const · 4 mod · 18 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
-| `src/secret_record/types.rs` | src | s | 2 struct · 1 enum · 5 fn · 5 const · 2 re-export | SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus | Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata |
-| `src/secret_record/write_records.rs` | src | s | 5 struct · 4 enum · 6 fn · 1 const | ArchiveSameId, CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled, FoundNote, RepoFileKeys, RepoFileOriginal +1 | Custody write context, stored-value forms, and value-free change and found-key records |
+| `src/secret_record/codec.rs` | src | s | 5 fn · 4 const | — | MessagePack body codec for custody records, bands, floors, and bindings |
+| `src/secret_record/mod.rs` | src | s | 3 struct · 1 trait · 7 fn · 9 const · 4 mod · 16 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyFloorSource, TierBand | Secret custody floor and binding vocabulary used by the store layer |
+| `src/secret_record/types.rs` | src | s | 1 struct · 1 enum · 2 fn · 5 const · 2 re-export | SecretCustodyMetadata, SecretCustodyStatus | Custody domain types: classes, tiers, bands, floors, bindings, status and metadata |
+| `src/secret_record/write_records.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | ArchiveSameId, CustodyKeptHere, CustodyPlan, FoundKeyAction, FoundKeySettled, FoundNote, RepoFileKeys, RepoFileOriginal +1 | Custody write context, stored-value forms, and value-free change and found-key records |
 | `src/secret_rotation.rs` | src | s | 8 fn · 1 const | — | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
 | `src/serialize.rs` | src | s | 26 mod | — | Store-layer modules of core `serialize`; core re-exports each one at its old path |
 | `src/serialize/access_grant_fields.rs` | src | s | 4 const | — | Access-grant body fields used by context-pack serialization |
@@ -547,6 +548,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/source_audience_obligation.rs` | src | s | 1 enum · 3 fn · 1 const | SourceAudienceObligation | The source-audience obligation (fix list row 16256): one engine-owned key in a bound row's own MessagePack… |
 | `src/store_clock.rs` | src | m | 2 struct · 2 trait · 20 fn · 1 const · 1 mod | Clock, IdGen, LeaseRenewal, StoreClock | Per-store clock and id source |
 | `src/store_clock/lease_journal.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | LeaseJournal | The authorization clock's lease journal (FIX 12023 W0, review #4484 P1-B; L02 11-04 13:53 = A) |
+| `src/store_clock/tests.rs` | test | s | — | — | The store clock's reads, observed through what a caller gets back |
 | `src/structural_kind_registry.rs` | src | s | 1 mod | — | Store-layer modules of core `store::structural_kind_registry`; core re-exports each one at its old path |
 | `src/structural_kind_registry/registry.rs` | src | s | 2 fn · 1 const | — | Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules |
 | `src/task_body_checks.rs` | src | s | 4 fn | — | Lenient raw TASK terminal and deadline checks used at storage admission |
@@ -595,8 +597,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/claim_body/relationship_scope.rs` | src | s | 1 struct · 11 fn · 1 type | RelationshipSet | CLAIM relationship scope sets (ARCH-0022): the relationship key holds everything (`all`), a set of… |
 | `src/write_envelope/claim_body/scope.rs` | src | s | 1 fn · 1 crate-vis | — | The engine-RECOGNIZED entries inside a claim's otherwise opaque `scope` map, and their fail-closed… |
 | `src/write_envelope/claim_body/scope_stamp.rs` | src | s | 5 fn · 1 const · 1 re-export | — | Stable CLAIM scope identifiers and their MessagePack representation |
-| `src/write_envelope/claim_body/source_trust.rs` | src | s | 1 struct · 4 enum · 6 fn · 5 const · 1 crate-vis | ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung, ClaimSuccession, MapValue | CLAIM scope-map values used by write envelopes and stored-body codecs |
-| `src/write_envelope/claim_predicate.rs` | src | s | 3 struct · 5 enum · 7 fn · 32 const | ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind, ExpressionPreferenceOrigin, ExpressionPreferenceSet, ExpressionPreferenceValue, ExpressionPreferenceWriteResult, ExpressionRegister | Predicate grammar and the engine-owned predicate vocabulary used by stored claims |
+| `src/write_envelope/claim_body/source_trust.rs` | src | s | 1 struct · 5 enum · 8 fn · 5 const · 1 crate-vis | ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung, ClaimSuccession, DecayRefusal, MapValue | CLAIM scope-map values used by write envelopes and stored-body codecs |
+| `src/write_envelope/claim_predicate.rs` | src | s | 3 struct · 5 enum · 7 fn · 34 const | ExpressionKeigo, ExpressionPreferenceChange, ExpressionPreferenceKind, ExpressionPreferenceOrigin, ExpressionPreferenceSet, ExpressionPreferenceValue, ExpressionPreferenceWriteResult, ExpressionRegister | Predicate grammar and the engine-owned predicate vocabulary used by stored claims |
 | `src/write_envelope/claim_vad.rs` | src | s | 3 struct · 4 fn · 1 const | ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence | Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types |
 | `src/write_envelope/cohort_claims/codec.rs` | src | m | 16 fn · 27 const | — | MessagePack codecs, write-door validator, and map/key/token toolkit |
 | `src/write_envelope/cohort_claims/ladder.rs` | src | m | 7 struct · 3 enum · 6 fn · 1 const | ExternalStageEvidenceHook, NoShowRecoveryRule, PromotionMode, ReplyCode, ReplyDisposition, ReplyRouteRule, StageDefinition, StageEvidence +2 | Pure stage-ladder schema types, validation, and ladder-query helpers |
@@ -605,7 +607,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/cohort_claims/suppression.rs` | src | s | 2 struct · 1 enum | SuppressionCause, SuppressionInput, SuppressionReceipt | Restrictive contact-suppression inputs, causes and receipts |
 | `src/write_envelope/cohort_claims/types.rs` | src | m | 10 struct · 5 enum · 11 fn · 9 const | BounceKind, CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, ClaimClassDescriptorRow, CommBounceValue, CommDoNotContactValue +7 | CRM-pack claim predicates, value types, token enums, and descriptor table |
 | `src/write_envelope/commitment_actor.rs` | src | s | 1 fn | — | Deterministic identity used by commitment projection writes |
-| `src/write_envelope/commitment_transition.rs` | src | s | 2 fn · 1 const | — | Commitment successor identity rules |
+| `src/write_envelope/commitment_transition.rs` | src | s | 2 fn | — | Commitment successor identity rules |
 | `src/write_envelope/communication.rs` | src | s | 1 struct · 4 enum · 5 fn · 1 type · 25 const | ClaimClassDescriptorRow, CommClearOptOutOutcome, CommError, SendOverrideMatch, SendOverrideScope | Communication predicate, error, send-override and descriptor-row vocabulary |
 | `src/write_envelope/communication_record.rs` | src | m | 2 enum · 18 fn · 2 const · 1 re-export | CommEventKind, CommRecord | Communication event, gate and receipt wire values and their strict MessagePack codec |
 | `src/write_envelope/communication_record/source_position.rs` | src | s | 1 struct · 2 crate-vis | ScopedTouchSource | Frozen source data for an explicitly born, scoped touch; not write authority |

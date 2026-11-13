@@ -8,8 +8,8 @@ use napi_derive::napi;
 use oneiron::memory::RecallEffort;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
-    ConsolidationAttemptInput, HabitCheckinInput, NeighborOpts, OutboundDraftInput,
+    CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, ConsolidationAttemptInput,
+    HabitCheckinInput, NeighborOpts, OutboundDraftInput,
 };
 
 use super::boundary::{
@@ -36,9 +36,10 @@ use super::dtos::{
 };
 use super::input_error::caller_input_error;
 use super::numeric::claim_input_to_engine;
+use oneiron::calendar::query::{CalendarFreebusyPageRequest, CalendarSearchPageRequest};
 use oneiron::task_verb::sdk::{
-    AppendBlobVersionRequest, CalendarFreebusyRequest, CommitRequest, NeighborsRequest,
-    OutboundScheduleRequest, QueryBm25Request, ReadBlobVersionRequest,
+    AppendBlobVersionRequest, CommitRequest, NeighborsRequest, OutboundScheduleRequest,
+    QueryBm25Request, ReadBlobVersionRequest,
 };
 use oneiron::task_verb::verb_hook_boundary::{typed_row, typed_row_validated};
 
@@ -558,7 +559,8 @@ impl ActorScopedVault {
         &self,
         request: NapiCalendarSearchRequest,
     ) -> napi::Result<NapiCalendarEvents> {
-        let engine_request = CalendarSearchRequest {
+        // One page, as the generated facade path reads it (FIX 16176).
+        let engine_request = CalendarSearchPageRequest {
             calendars: calendar_selectors_to_engine(request.calendars),
             range: calendar_range_to_engine(request.range)
                 .map_err(caller_input_error)?
@@ -568,44 +570,62 @@ impl ActorScopedVault {
                 }),
             text: request.text,
             limit: request.limit,
+            deadline_ms: request.deadline_ms.map(u64::from),
+            resume_from: ts_opt_to_engine(request.resume_from, "resume_from")
+                .map_err(caller_input_error)?,
             filter: None,
         };
         let memory = self.facade()?;
-        let events = typed_row(
+        let page = typed_row(
             &memory,
             &oneiron::verbs::VERB_TABLE,
             "vault.calendar.search",
             engine_request,
-            |input| memory.calendar_search(&input),
+            |input| memory.calendar_search_page(&input),
         )
         .map_err(facade_error)?;
         Ok(NapiCalendarEvents {
-            value: events
+            value: page
                 .value
+                .events
                 .into_iter()
                 .map(calendar_event_from_engine)
                 .collect::<BoundaryResult<Vec<_>>>()
                 .map_err(boundary_error)?,
-            narrowing: read_receipt_from_engine(events.receipt).map_err(boundary_error)?,
+            complete: page.value.complete,
+            resume_from: page
+                .value
+                .resume_from
+                .map(|from| ts_from_engine(from, "resume_from"))
+                .transpose()
+                .map_err(boundary_error)?,
+            narrowing: read_receipt_from_engine(page.receipt).map_err(boundary_error)?,
         })
     }
 
-    /// Projects busy-only occupancy over an inclusive UTC window.
+    /// Projects busy-only occupancy over an inclusive UTC window, one page
+    /// at a time: `deadlineMs` bounds this call's read, and `resumeFrom` an
+    /// earlier page answered goes on from there (FIX 16176).
     #[napi]
     pub fn calendar_freebusy(
         &self,
         calendars: Option<Vec<NapiCalendarSel>>,
         range: NapiCalendarRange,
+        deadline_ms: Option<u32>,
+        resume_from: Option<i64>,
     ) -> napi::Result<NapiCalendarFreebusy> {
         let engine_range = calendar_range_to_engine(Some(range))
             .map_err(caller_input_error)?
             .ok_or_else(|| caller_input_error("range is required".to_owned()))?;
-        let request = CalendarFreebusyRequest {
+        let request = CalendarFreebusyPageRequest {
             calendars: calendar_selectors_to_engine(calendars),
             range: CalendarRangeDto {
                 start: engine_range.start,
                 end: engine_range.end,
             },
+            deadline_ms: deadline_ms.map(u64::from),
+            resume_from: ts_opt_to_engine(resume_from, "resume_from")
+                .map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
         let busy = typed_row(
@@ -613,12 +633,21 @@ impl ActorScopedVault {
             &oneiron::verbs::VERB_TABLE,
             "vault.calendar.freebusy",
             request,
-            |input| memory.calendar_freebusy(&input.calendars, input.range.to_time_range()),
+            |input| memory.calendar_freebusy_page(&input),
         )
         .map_err(facade_error)?;
+        let resume_from = busy
+            .value
+            .resume_from
+            .map(|from| ts_from_engine(from, "resume_from"))
+            .transpose()
+            .map_err(boundary_error)?;
         Ok(NapiCalendarFreebusy {
+            complete: busy.value.complete,
+            resume_from,
             value: busy
                 .value
+                .intervals
                 .into_iter()
                 .map(|interval| {
                     Ok(NapiCalendarFreebusyInterval {

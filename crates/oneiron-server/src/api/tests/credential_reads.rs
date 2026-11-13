@@ -26,18 +26,10 @@ struct Room {
 
 fn room() -> Room {
     let (_dir, server) = interlocutor_test_server();
-    let owner = seeded_test_entity_id(0x2401_0001);
+    // The consent door takes only the vault's live owner, on a personal vault
+    // its embedded owner, as the signer of a project's birth.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let agent = seeded_test_entity_id(0x2401_0002);
-    server
-        .vault
-        .put_entity(
-            &owner,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"room owner",
-        )
-        .expect("onboard person");
     bind_room_owner(&server, owner);
     let definition = oneiron::agent_def::AgentDefinition::new(
         "oneiron.agent.credkey",
@@ -78,36 +70,11 @@ fn room() -> Room {
     let project = seeded_test_entity_id(0x2401_0003);
     let mut roster =
         oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
-    create_owned_project(&server, owner, project, &roster);
     roster.roster.push(agent.to_hex());
+    // The member joins at the owner-signed birth: its v3 proof signs the
+    // roster, and the birth derives the home room from it.
+    create_owned_project(&server, owner, project, &roster);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
-    let exact_room = oneiron::workspace_roster::ProjectRoom {
-        schema_version: 1,
-        kind: "channel".into(),
-        project_id: project.to_hex(),
-        member_ids: roster.roster.clone(),
-        claims_scope_ref: roster.claims_scope_ref.clone(),
-        origin: None,
-    };
-    server
-        .vault
-        .batch()
-        .put(
-            &project,
-            server.vault.project_type_byte().unwrap(),
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&roster).unwrap(),
-        )
-        .put(
-            &room,
-            oneiron::registry::ENTITY_TYPE_CONVERSATION,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            &rmp_serde::to_vec_named(&exact_room).unwrap(),
-        )
-        .commit()
-        .expect("onboard exact project and room in one batch");
     let space = seeded_test_entity_id(0x2401_0004);
     let (spaced, unscoped) = (oneiron::EntityId::now(), oneiron::EntityId::now());
     for (message, content, metadata, at) in [
@@ -128,8 +95,12 @@ fn room() -> Room {
                     metadata,
                     is_visible: true,
                     order: 0,
+                    parts: None,
+                    quote: None,
                 }],
                 occurred_at: at,
+                assertions: Default::default(),
+                thread_audience: None,
             })
             .expect("speak");
     }
@@ -175,6 +146,7 @@ impl Room {
                     created_at: 1,
                     revoked_at: None,
                     expires_at: None,
+                    companion_bounds: None,
                 },
             )
             .expect("grant the message's space");
@@ -383,10 +355,10 @@ async fn an_agent_class_credential_on_the_owners_person_is_not_the_owners() {
         );
         let messages = oneiron::task_verb::sdk::invoke(
             &memory,
-            "rooms.messages",
+            "vault.rooms.messages",
             json!({ "room_ref": room.room.to_hex() }),
         )
-        .expect("rooms.messages")
+        .expect("vault.rooms.messages")
         .to_string();
         assert_eq!(
             (
@@ -445,7 +417,7 @@ async fn an_owner_credential_handed_to_another_key_reads_no_relationship_words()
 #[tokio::test]
 async fn a_host_slip_handed_to_another_key_reads_no_relationship_words() {
     let room = room();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&room.server);
     let mut slip = room.server.vault.ensure_host_root_slip(&issuer).unwrap();
     let holder = ed25519_dalek::SigningKey::from_bytes(&[0x51; 32]);
     issuer
@@ -582,7 +554,7 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
     )
     .unwrap();
     claim.world = Some(world);
-    claim.rel = Some(space);
+    claim.rel = oneiron::write_envelope::claim_body::relationship_scope_of(Some(space));
     server
         .vault
         .put_claim(
@@ -612,6 +584,7 @@ async fn an_agents_standing_block_quotes_relationship_claims_only_on_a_live_gran
                 created_at: 1,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .expect("grant the claim's relationship");
@@ -795,8 +768,12 @@ fn room_turn(
             metadata: Some(metadata),
             is_visible: true,
             order: 0,
+            parts: None,
+            quote: None,
         }],
         occurred_at: at,
+        assertions: Default::default(),
+        thread_audience: None,
     }
 }
 

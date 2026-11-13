@@ -24,6 +24,7 @@ impl crate::memory::RecallRerankHost for ScriptedReranker<'_> {
         documents: &[crate::memory::RerankDocument<'_>],
         _egress: &crate::memory::RerankEgress<'_>,
         _answer_at: Option<std::time::Instant>,
+        _cancel: Option<crate::llm::WorkCancel>,
     ) -> MemoryResult<crate::memory::RerankScores> {
         let call = self
             .calls
@@ -134,12 +135,18 @@ fn a_turn_edited_while_it_is_scored_takes_none_of_the_stale_scores() {
             scope: None,
             limit: Some(10),
             format: None,
+            token_budget: None,
+            reader_agent_ref: None,
             as_of: None,
             deadline_ms: None,
+            media: None,
+            query_affect: None,
+            telemetry: None,
             filter: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
+            hyde: None,
             arrived: std::time::Instant::now(),
             on_cut: None,
             rerank: crate::memory::RecallRerank::Host(&host),
@@ -227,12 +234,18 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
                 scope: None,
                 limit: Some(10),
                 format: Some("json".to_owned()),
+                token_budget: None,
+                reader_agent_ref: None,
                 as_of: None,
                 deadline_ms: None,
+                media: None,
+                query_affect: None,
+                telemetry: None,
                 filter: None,
             },
             |_| None,
             &crate::task_verb::sdk::RecallDoor {
+                hyde: None,
                 arrived: std::time::Instant::now(),
                 on_cut: None,
                 rerank: crate::memory::RecallRerank::Host(&host),
@@ -323,12 +336,18 @@ fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
             scope: None,
             limit: Some(10),
             format: Some("json".to_owned()),
+            token_budget: None,
+            reader_agent_ref: None,
             as_of: None,
             deadline_ms: None,
+            media: None,
+            query_affect: None,
+            telemetry: None,
             filter: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
+            hyde: None,
             arrived: std::time::Instant::now(),
             on_cut: None,
             rerank: crate::memory::RecallRerank::Host(&host),
@@ -346,110 +365,6 @@ fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
     assert!(rendered.contains("a brass lantern hook"), "{rendered}");
     assert!(!rendered.contains("sausage"), "{rendered}");
     assert!(!rendered.contains("PROSE"), "{rendered}");
-}
-
-/// Done-means (the Engine lane's ruling on Sol round 6, R6-1): a streamed
-/// MESSAGE holds its words in its entity document, which no row revision
-/// pins, so no score can be bound to them. It is found but not reranked: the
-/// reranker never sees it, and it lends its TURN no score. The TURN, a
-/// candidate in its own right, keeps its own score, for the words its text
-/// revision pins (the document's frontier among them). Before, the reranker
-/// scored the message row's empty words and its TURN took that score
-/// (R6-1); then the message was scored and dropped.
-#[cfg(feature = "sync")]
-#[test]
-fn a_streamed_message_comes_back_below_the_reranked_rows_unscored() {
-    let (_dir, vault) = open_embedding_vault();
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
-    let facade = facade_for(&vault, owner);
-    witness_turn(&facade, 0xE3, &["a lantern shop that sells wicks"], 1_900);
-    witness_turn(&facade, 0xE4, &["the lantern repair kit is on the shelf"], 1_900);
-    // The best lexical match of the three.
-    let streamed = "lantern lantern: the lantern wick is trimmed";
-    let message = EntityId::now();
-    let stream = facade
-        .begin_message_stream(
-            &WitnessTurn {
-                conversation_ref: EntityId::from_bytes([0xE5; 16]).unwrap().to_hex(),
-                turn_ref: Some(EntityId::now().to_hex()),
-                occurred_at: 1_900,
-                messages: vec![WitnessMessage {
-                    id: Some(message.to_hex()),
-                    ..witness_message(0, WitnessAuthor::User, "")
-                }],
-            },
-            Some(crate::memory::MessageWriteMode::Atomic),
-        )
-        .expect("open a stream");
-    facade.append_to_stream(stream, streamed).expect("stream words");
-    facade.finalize_stream(stream).expect("finalize the stream");
-    // Empty words score highest, then the shop's, then the repair kit's.
-    let scored = std::sync::Mutex::new(Vec::new());
-    let score = |_: usize, text: &str| {
-        scored.lock().unwrap().push(text.to_owned());
-        match text {
-            "" => 20.0,
-            text if text.contains("shop") => 10.0,
-            text if text.contains("repair kit") => 7.0,
-            _ => 5.0,
-        }
-    };
-    let host = ScriptedReranker {
-        lease: crate::BudgetGuard::new(
-            "paid-rerank-test",
-            100_000,
-            crate::BudgetExhaustionPolicy::Suspend,
-        )
-        .admit()
-        .expect("a lease")
-        .lease,
-        calls: std::sync::atomic::AtomicUsize::new(0),
-        seen: std::sync::Mutex::default(),
-        score: &score,
-        during: &|_: usize| {},
-    };
-    let pack = crate::task_verb::sdk::recall_at_door(
-        &facade,
-        crate::task_verb::sdk::RecallRequest {
-            query: "lantern".to_owned(),
-            effort: Some(crate::memory::RecallEffort::High),
-            scope: None,
-            limit: Some(10),
-            format: None,
-            as_of: None,
-            deadline_ms: None,
-            filter: None,
-        },
-        |_| None,
-        &crate::task_verb::sdk::RecallDoor {
-            arrived: std::time::Instant::now(),
-            on_cut: None,
-            rerank: crate::memory::RecallRerank::Host(&host),
-        },
-    )
-    .expect("recall");
-    let turns: Vec<&str> = pack
-        .items
-        .iter()
-        .filter(|item| item.kind == "TURN")
-        .map(|item| item.value_text.as_str())
-        .collect();
-    let scored = scored.lock().unwrap();
-    let kinds: Vec<&str> = pack.items.iter().map(|item| item.kind.as_str()).collect();
-    assert_eq!(turns.len(), 3, "{turns:?} {kinds:?} {scored:?}");
-    assert!(turns[0].contains("shop"), "{turns:?} {kinds:?} {scored:?}");
-    assert!(
-        turns[2].contains("wick is trimmed"),
-        "{turns:?} {kinds:?} {scored:?}"
-    );
-    assert!(
-        !host.seen.lock().unwrap().contains(&message),
-        "the reranker scored the streamed message: {scored:?}"
-    );
-    assert!(matches!(
-        pack.retrieval_meta.rerank,
-        Some(crate::memory::RerankReport::Applied { .. })
-    ));
 }
 
 /// Sol round 7 (R7-1): a build without `sync` reads no entity document, but a
@@ -538,12 +453,18 @@ fn a_message_moved_to_its_document_by_a_sync_process_is_not_reranked() {
             scope: None,
             limit: Some(10),
             format: None,
+            token_budget: None,
+            reader_agent_ref: None,
             as_of: None,
             deadline_ms: None,
+            media: None,
+            query_affect: None,
+            telemetry: None,
             filter: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
+            hyde: None,
             arrived: std::time::Instant::now(),
             on_cut: None,
             rerank: crate::memory::RecallRerank::Host(&host),

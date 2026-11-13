@@ -90,6 +90,9 @@ impl Vault {
             ClaimLifecycleStatus::Active,
         )?;
         body.source = Some(write.source);
+        // Only a PERSON subject has a substrate FACET; any other subject takes
+        // the vault default facet (a birth gate refusal otherwise, #4389).
+        body.scope_facet = self.claim_put_facet_keeping_in_txn(wtxn, &claim, body.scope_facet)?;
         self.put_reserved_claim_in_txn(
             wtxn,
             &claim,
@@ -124,25 +127,61 @@ impl Vault {
         claim: &EntityId,
         approval: ClaimApprovalStatus,
     ) -> Result<()> {
-        let (mut body, occurred, learned_at) = {
-            let raw = self
-                .store
-                .port_entity_record(wtxn, claim)?
-                .map(|row| row.encode())
-                .ok_or(Error::EntityNotFound)?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            (
-                crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?,
-                TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-            )
-        };
+        let (mut body, occurred, learned_at) = self.stored_distinct_claim_in_txn(wtxn, claim)?;
         body.approval = approval;
         self.put_reserved_claim_in_txn(wtxn, claim, &body, occurred, learned_at)
+    }
+
+    /// Narrows the `entity.distinct_from` claim `claim` to the audience of
+    /// the words it was derived from (OPUS-LEAKS): the relationships whose
+    /// members read it, when `relationships` names some, and private when
+    /// `private`. Rewritten in place, in the write that minted it, as an
+    /// approval ruling is, so no reader ever meets it wider.
+    pub(crate) fn narrow_distinct_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim: &EntityId,
+        relationships: crate::write_envelope::claim_body::RelationshipScope,
+        private: bool,
+    ) -> Result<()> {
+        if relationships.is_none() && !private {
+            return Ok(());
+        }
+        let (mut body, occurred, learned_at) = self.stored_distinct_claim_in_txn(wtxn, claim)?;
+        if relationships.is_some() {
+            body.rel = relationships;
+        }
+        if private {
+            body.scope = Some(rmpv::Value::Map(vec![(
+                rmpv::Value::from("private"),
+                rmpv::Value::Boolean(true),
+            )]));
+        }
+        self.put_reserved_claim_in_txn(wtxn, claim, &body, occurred, learned_at)
+    }
+
+    /// A stored `entity.distinct_from` claim's body, occurred window and
+    /// `learned_at`, read back off its stored header.
+    fn stored_distinct_claim_in_txn(
+        &self,
+        wtxn: &heed::RoTxn<'_>,
+        claim: &EntityId,
+    ) -> Result<(ClaimBody, TimeRange, u64)> {
+        let raw = self
+            .store
+            .port_entity_record(wtxn, claim)?
+            .map(|row| row.encode())
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        Ok((
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?,
+            TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+        ))
     }
 
     /// Parked `Proposed` merge events still awaiting a ruling whose

@@ -72,8 +72,15 @@ pub use authoring::{
     apply_eval_authoring_plan, eval_authoring_inventory, eval_authoring_inventory_sourced,
     setup_eval_cohorts,
 };
+pub use authoring::{
+    EVAL_AUTHORING_EXECUTE_VERB, EvalAuthoringAdmission, EvalAuthoringCaller,
+    EvalAuthoringExecuteAnswer, EvalAuthoringExecuteRequest, EvalAuthoringExecution,
+    EvalAuthoringOutcome, EvalAuthoringSkillRun, admit_eval_authoring_execution,
+    eval_authoring_execute_admits, eval_authoring_execution,
+};
 pub use cohort::{
-    CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease,
+    CohortRetirement, EvalCohort, EvalCohortRetirementAuthor, EvalExposure, EvalExposureCounts,
+    EvalExposureKind, EvalRelease,
 };
 pub use cut_audit::{
     AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft,
@@ -85,6 +92,7 @@ pub use measurement::{
     JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
     ScoreDirection, eval_seat_canary,
 };
+pub(crate) use measurement::{PairedScores, estimate_paired};
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairWorld,

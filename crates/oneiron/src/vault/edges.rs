@@ -121,8 +121,8 @@ impl Vault {
     /// Stores a directed edge and its reverse index entry.
     ///
     /// `FacetOf` edges pass the commit-time type table (ONE-1645): the source
-    /// must be an existing CLAIM, TURN, or EVENT and the target an existing
-    /// FACET, or the commit fails closed with [`RegistryError::InvalidFacetOfEdge`](crate::error::RegistryError::InvalidFacetOfEdge)
+    /// must be an existing CLAIM, TURN, EVENT, NOTE, ASSET, ASSET_TEXT or TASK
+    /// and the target an existing FACET, or the commit fails closed with [`RegistryError::InvalidFacetOfEdge`](crate::error::RegistryError::InvalidFacetOfEdge)
     /// and writes nothing. Every other edge kind is unaffected.
     ///
     /// A stamp from ANY admitted source type can move a disclosure decision.

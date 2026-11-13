@@ -18,19 +18,19 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consolidation::{consolidate_unbound_turn, open_dreamer_vault};
 
 const READER: &str = "reader";
-const WORDS: &str = "call me Oleksii";
+const WORDS: &str = "call me Owen";
 
 /// The model's reply: one new person, named in T1, and its name, with no
 /// relationship.
 fn reply() -> String {
     serde_json::json!({
-        "persons": [{"id": "new:P1", "name": "Oleksii", "evidence_turn_refs": ["T1"]}],
+        "persons": [{"id": "new:P1", "name": "Owen", "evidence_turn_refs": ["T1"]}],
         "candidates": [{
             "subject": "new:P1",
             "predicate": "profile.name",
-            "value": "Oleksii",
+            "value": "Owen",
             "confidence": 0.8,
-            "evidence_refs": [{"source": "T1", "quote": "Oleksii"}],
+            "evidence_refs": [{"source": "T1", "quote": "Owen"}],
         }],
     })
     .to_string()

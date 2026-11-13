@@ -2,7 +2,7 @@
 
 use super::{Bridge, StreamTarget, failure};
 use crate::code_run::{
-    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfSpeechCall,
+    ResultFacet, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfDurableWait, SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
@@ -45,12 +45,6 @@ struct Store {
     sources: Vec<String>,
     #[serde(default)]
     receipt: Option<crate::engine_executor::StoreReceiptInput>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AgentPut {
-    id: String,
-    definition: Value,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -252,6 +246,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
                 return Ok(json!({ "error": refusal }).to_string());
             }
             let call = self_call(name, input, state.determinism.frozen_unix_ms / 1000)?;
+            let park = ParkReply::of(&call);
             // A callable skill runs a step of its own while this one waits on
             // the reply (OF-353), on a fresh sibling of this runtime: never
             // on this step's store. That step runs under a child of this
@@ -266,7 +261,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             } else {
                 admitted(cancel, || state.host.dispatch_self(call))?
             };
-            guest_reply(state.host, cancel, &answered, state.message_bytes)
+            guest_reply(state.host, cancel, &answered, park, state.message_bytes)
         }
     }
 }
@@ -433,13 +428,13 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 input: args.input,
             })
         }
+        // The linked import and `self.verbs.call` decode the row the same way.
         "vault.agents.put" => {
-            let args: AgentPut = parse(input)?;
-            SelfCall::AgentsPut(Box::new(crate::code_run::parse_agent_put_request(
-                &args.id,
-                args.definition,
+            return crate::code_run::run_verb_call(
+                RunVerb::VaultAgentsPut,
+                parse::<Value>(input)?,
                 now,
-            )?))
+            );
         }
         "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
@@ -460,7 +455,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
 #[cfg(test)]
 fn response(response: SelfDispatchResponse) -> Result<String> {
     Ok(response
-        .guest_json(reply_body(&response.outcome)?)
+        .guest_json(reply_body(&response.outcome, ParkReply::WaitId)?)
         .to_string())
 }
 
@@ -547,8 +542,45 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR,
 ];
 
+/// How a reply carries the wait the run parks on, which a call that parks
+/// the run, and every call past a park, answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParkReply {
+    /// The row's own output, `TaskAskWait::Park`, under `output` as every
+    /// row's output is, so the guest's call resolves with it: the `wait`
+    /// row's output (`scripts/sdk/verbs/wait.json`), and the same JSON as
+    /// `tasks.wait`'s untagged `TaskWaitOutput::WorldPrivacy`.
+    RowOutput,
+    /// The bare wait id, the typed `ask` import's `WaitOutput` (typed.rs
+    /// `ask`). A verb-table row whose output holds no park finds no `output`
+    /// here, so its call rejects with `missing_host_response_field`.
+    WaitId,
+}
+
+impl ParkReply {
+    /// A call whose row output holds a park answers it as that output
+    /// (`SelfCall::answers_park_as_output`); every other call answers the
+    /// bare wait id.
+    fn of(call: &SelfCall) -> Self {
+        if call.answers_park_as_output() {
+            Self::RowOutput
+        } else {
+            Self::WaitId
+        }
+    }
+
+    fn body(self, wait: &SelfDurableWait) -> Value {
+        match self {
+            Self::RowOutput => {
+                json!({ "output": crate::task_verb::TaskAskWait::Park(wait.clone()) })
+            }
+            Self::WaitId => json!({"waitId":wait.wait_id.to_hex()}),
+        }
+    }
+}
+
 /// One dispatched call's reply body, before its budget envelope.
-fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
+fn reply_body(outcome: &SelfDispatchOutcome, park: ParkReply) -> Result<Value> {
     Ok(match outcome {
         // A row's answer is its output, framed as every verb's is: the type
         // its row names (`output` in `scripts/sdk/verbs/`).
@@ -564,7 +596,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         }),
         SelfDispatchOutcome::MemorySearch(value) => search::reply(value),
         // Any call that parks, and every call past a park, answers the wait.
-        SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
+        SelfDispatchOutcome::DurableWait(value) => park.body(value),
         SelfDispatchOutcome::TaskRefusal(value) => json!({
             "output": crate::code_run::TaskRefuseOutput {
                 task: value.task_ref,
@@ -594,15 +626,19 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 json!({"failed": true})
             }
         }
-        SelfDispatchOutcome::AgentDefinitionPut(value) => {
-            json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
-        }
+        // The row's output, as `self.verbs.call` reads every row's reply.
+        SelfDispatchOutcome::AgentDefinitionPut(value) => json!({
+            "output": crate::code_run::AgentPutOutput {
+                id: value.id.to_hex(),
+                disposition: value.disposition.as_str().to_owned(),
+            }
+        }),
         SelfDispatchOutcome::AgentSpawn(value) => {
             json!({ "output": crate::code_run::AgentSpawnOutput::from(value.clone()) })
         }
         // The bare `ask` and `wait` answer their rows' outputs, as their host
         // doors do. A wait that would stay pending parks instead, so it
-        // answers `waitId`, never `Pending`.
+        // answers its park (`ParkReply::RowOutput`), never `Pending`.
         SelfDispatchOutcome::TaskAsk(receipt) => json!({ "output": receipt }),
         SelfDispatchOutcome::TaskAskStatus(value) => {
             use crate::task_verb::{TaskAskStatus, TaskAskWait};

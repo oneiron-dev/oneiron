@@ -40,7 +40,7 @@ separate, and changes nothing else.
 
 | Fact | Value |
 | --- | --- |
-| Upstream source root | `/home/lexi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/heed-0.20.5` |
+| Upstream source root | `<host-home>/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/heed-0.20.5` |
 | crates.io checksum (unpatched lock entry) | `7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb` |
 | Upstream `src/env.rs` SHA-256 | `cfca096b00d446431092c897f9939ff79834d9a8984208e21d8274b7d6a5d343` |
 | Upstream VCS commit (`.cargo_vcs_info.json`) | `947c3aa814b9a5eab764a95f84242fe1756cf61a`, `path_in_vcs = "heed"` |
@@ -78,6 +78,8 @@ package is resolved by the Oneiron root lockfile.)
   added or removed.
 - `src/env.rs` — the open seam described below. Nothing else in the file, and
   no other source file, is touched.
+- `src/txn.rs`, `src/database.rs`, `src/env.rs`, `src/mdb/lmdb_ffi.rs` — the
+  PAGE-FULL trace accessors, see that section below.
 
 **Added by this vendor:**
 
@@ -232,6 +234,26 @@ above). Add 20 to an upstream line after 6487 to find it in the vendored copy.
 
 **Re-vendoring:** re-extract the crates.io archive with the checksum above.
 Re-copy the files listed, then re-apply the `mdb.c` and `Cargo.toml` hunks.
+
+## PAGE-FULL trace: three read-only accessors
+
+FIX row TRAP-REGISTER-WAIT-PAGE-FULL: writes on several engine paths fail now
+and then with `MDB_PAGE_FULL`, and the cause is not established. The engine's
+canonical accessors (`oneiron-store` `overlay_db/accessors.rs`) trace such a
+failure; the trace needs three facts heed 0.20.5 does not expose. Each is a
+read, opens no transaction, and runs only after a write has already failed:
+
+- `src/txn.rs`: `RoTxn::environment`, the `Env` the transaction holds alive
+  (for `Env::info`: the map size and the last page number).
+- `src/database.rs`: `Database::raw_flags`, the persisted flags of one
+  database from `mdb_dbi_flags`; `src/mdb/lmdb_ffi.rs` re-exports that
+  function.
+- `src/env.rs`: `Env::page_size`, `ms_psize` from `mdb_env_stat`. LMDB marks a
+  transaction failed on `MDB_PAGE_FULL`, so `Database::stat` on it answers
+  `MDB_BAD_TXN`; the page size then comes from the environment.
+
+Each addition is marked `ONEIRON FORK (PAGE-FULL trace)`. Re-vendoring
+re-applies them with the files listed above.
 
 ## Re-packaging for the Python sdist (ONE-1441)
 

@@ -152,13 +152,60 @@ struct StoreFixture {
     store: IdempotencyStore,
 }
 
-fn test_store(clock: Arc<dyn IdempotencyClock>) -> StoreFixture {
+fn test_store() -> StoreFixture {
+    test_store_on(oneiron::VaultConfig::device())
+}
+
+fn test_store_on(config: oneiron::VaultConfig) -> StoreFixture {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     StoreFixture {
         _dir: dir,
-        store: IdempotencyStore::with_clock(vault, clock),
+        store: IdempotencyStore::new(vault),
     }
+}
+
+/// A keyed response is replayed for a day by the clock the vault reads, then
+/// the same key runs the handler again. On a server whose `[runtime] clock`
+/// is manual, the day passes when its time is moved, not when the host's
+/// clock gets there.
+#[tokio::test]
+async fn a_keyed_response_expires_a_day_later_on_the_vaults_clock() {
+    const START: u64 = 1_800_000_000;
+    let clock = oneiron::store::ports::ManualClock::new(START);
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let store = test_store_on(config);
+    let counter = Arc::new(AtomicUsize::new(0));
+    let (addr, handle) = spawn_counted_app_with_config(
+        store.store.clone(),
+        counter.clone(),
+        SyncServerConfig {
+            allow_unauthenticated: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let first = http_post(addr, r#"{"value":1}"#, "day-key", None).await;
+    assert_eq!(status(&first), 200);
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    clock.set(START + IDEMPOTENCY_TTL.as_secs() - 1);
+    let within = http_post(addr, r#"{"value":1}"#, "day-key", None).await;
+    assert_eq!(body(&within), body(&first), "replayed within the day");
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+    clock.set(START + IDEMPOTENCY_TTL.as_secs());
+    let after = http_post(addr, r#"{"value":1}"#, "day-key", None).await;
+    assert_eq!(status(&after), 200);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "a day on, the key runs again"
+    );
+
+    handle.abort();
 }
 
 /// A failed response is never cached, so the same key and body retried after
@@ -166,7 +213,7 @@ fn test_store(clock: Arc<dyn IdempotencyClock>) -> StoreFixture {
 /// fresh verdict — not the day-old rejection replayed back at it.
 #[tokio::test]
 async fn failed_response_is_not_replayed_after_the_condition_clears() {
-    let store = test_store(Arc::new(SystemClock));
+    let store = test_store();
     let counter = Arc::new(AtomicUsize::new(0));
     let (addr, handle) = spawn_app_with_config(
         store.store.clone(),
@@ -201,7 +248,7 @@ async fn failed_response_is_not_replayed_after_the_condition_clears() {
 /// a client-chosen header.
 #[tokio::test]
 async fn same_key_and_body_are_isolated_by_principal() {
-    let store = test_store(Arc::new(SystemClock));
+    let store = test_store();
     let counter = Arc::new(AtomicUsize::new(0));
     let (addr, handle) = spawn_counted_app_with_config(
         store.store.clone(),
@@ -213,7 +260,7 @@ async fn same_key_and_body_are_isolated_by_principal() {
     )
     .await;
 
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         store.store.vault.clone(),
         SyncServerConfig {
             auth_secret: Some("secret".into()),
@@ -294,7 +341,7 @@ async fn same_key_and_body_are_isolated_by_principal() {
 /// cannot drive an idempotent mutation on a route with no CoreAuth plane.
 #[tokio::test]
 async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
-    let store = test_store(Arc::new(SystemClock));
+    let store = test_store();
     let counter = Arc::new(AtomicUsize::new(0));
     let (addr, handle) = spawn_counted_app_with_config(
         store.store.clone(),
@@ -306,7 +353,7 @@ async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
     )
     .await;
 
-    let server = SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         store.store.vault.clone(),
         SyncServerConfig {
             auth_secret: Some("secret".into()),
@@ -347,7 +394,7 @@ async fn non_core_route_rejects_scoped_token_and_accepts_owner_grade() {
 
 #[tokio::test]
 async fn malformed_idempotency_key_does_not_preempt_auth_failure() {
-    let store = test_store(Arc::new(SystemClock));
+    let store = test_store();
     let counter = Arc::new(AtomicUsize::new(0));
     let (addr, handle) = spawn_counted_app_with_config(
         store.store.clone(),

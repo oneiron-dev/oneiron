@@ -68,14 +68,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
 | `src/federation/git_push.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 const | FederationGrantKind, GitPushBounds, GitPushRepo | The `git_push` Grant capability (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21): raw git… |
-| `src/federation/mod.rs` | src | s | 9 mod · 7 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
+| `src/federation/mod.rs` | src | s | 10 mod · 8 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
 | `src/federation/pact_scope.rs` | src | m | 4 struct · 17 fn · 1 const · 1 re-export | Ceiling, FederationDirectionScope, FederationPactScope, Position | Pact direction scope: the worlds, facets and bands axes as `ScopeAxis` lattices, and their one canonical codec |
-| `src/federation/repo_scope.rs` | src | m | 2 struct · 2 enum · 11 fn · 4 const | RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget | Repo access bounds on an owner's agent Grant, and the pure admission of a repo target under them (FIX 6867… |
+| `src/federation/repo_scope.rs` | src | m | 2 struct · 2 enum · 12 fn · 4 const | RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget | Repo access bounds on an owner's agent Grant, and the pure admission of a repo target under them (FIX 6867… |
 | `src/federation/scope.rs` | src | m | 2 struct · 3 enum · 1 trait · 13 fn · 1 const | Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling | One Scope: six-axis audience lattice with explicit bottom on every wire axis |
 | `src/federation/scope_codec.rs` | src | s | 5 fn | — | Canonical MessagePack bridge for six-axis Scope positions and grant presets |
 | `src/federation/selector_kind.rs` | src | s | 1 enum · 6 fn | SelectorRange | Replication vocabulary keyed on declared classification and family, never byte ranges |
 | `src/federation/verb_classes.rs` | src | s | 3 fn · 1 const | — | The verb classes an owner's agent Grant names beside its exact verbs (FIX 8735, Engine 18:26 = A), in the… |
 | `src/federation/wallet_ref.rs` | src | s | 2 fn · 1 const | — | The host wallet an owner's agent Grant names (FIX 7766, Engine 19:59 = A), in the one codec the Grant body… |
+| `src/federation/working_view_bounds.rs` | src | s | 1 struct · 2 fn · 1 const | WorkingViewEditBounds | The owner working view an agent Grant edits (row 6 WORKING-VIEW-EDIT, ruling CODECUSTODY-VIEW-BUILD Q1 = A)… |
 | `src/lib.rs` | src | s | 9 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
 | `src/share_travel.rs` | src | s | 1 struct · 2 enum · 6 fn · 1 type | BornWithField, TravelChoice, TravelKind | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |
 | `tests/widened_seams.rs` | test | m | — | — | Direct calls into the authority-log checks `oneiron-authority` made `pub` so `oneiron`'s fold and checkpoint… |

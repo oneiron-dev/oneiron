@@ -600,14 +600,15 @@ impl ResolvedLiveRun {
     /// The browser door this registered run's public calls share.
     pub(crate) fn browser_guests(&self, server: &super::SyncServer) -> Arc<crate::api::RunGuests> {
         Arc::clone(self.entry.browser.get_or_init(|| {
-            // The run's own payer bills its Fill writer (FIX 8902).
-            let payer = crate::ai_host::payer_funding::scope_funding(
-                server.vault(),
-                self.entry.spend_scope.as_ref(),
-                false,
+            // The run's own payer bills its Fill writer (FIX 8902). The door
+            // lives as long as the lease, so it keeps the run, not a payer:
+            // each writer call reads the payer as the run's model doors do,
+            // and refuses a payer fault (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK).
+            let run = crate::ai_host::payer_funding::LiveRunPayer::new(
+                self.entry.leased.clone(),
+                self.entry.spend_scope.clone(),
             );
-            let guests = crate::api::RunGuests::browser(server, self.entry.run);
-            Arc::new(guests.with_payer(payer.ok().flatten()))
+            Arc::new(crate::api::RunGuests::browser(server, self.entry.run).with_payer(run))
         }))
     }
 

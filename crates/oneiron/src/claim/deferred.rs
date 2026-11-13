@@ -7,7 +7,14 @@ use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
+mod retract;
+pub(crate) use retract::OwnClaimRetract;
+
 const CONTRADICTION_PENDING: &str = "gate.pending.contradiction_closure";
+/// The reason an agent's retract of its own claim waits for the holder
+/// (ARCH-0040 `mcp:5`: a destructive retract defers its closure until
+/// approval).
+const RETRACT_PENDING: &str = "gate.pending.retract_closure";
 /// The reason code of the allow decision an owner's direct correction of
 /// their own claim records (FIX 22041): the replacement landed at once and
 /// closed the prior head in the same write, so no closure proposal opened
@@ -16,16 +23,29 @@ const GATE_REASON_SUPERSEDE_OWNER_CORRECTION: &str = "gate.supersede.owner_corre
 
 #[derive(Serialize, Deserialize)]
 pub(super) enum DeferredAction {
-    Supersede { old: [u8; 16], old_hash: [u8; 32] },
+    Supersede {
+        old: [u8; 16],
+        old_hash: [u8; 32],
+    },
     Decay(f32),
     Weaken(f32),
     Stale,
+    /// The claim's own author retracts it once the holder consents
+    /// (`retract`). Rows are named msgpack, so rows parked before this
+    /// variant still decode.
+    Retract,
 }
 impl DeferredAction {
     /// A decay or the stale mark only restricts the claim it rewrites, so it
     /// settles on a held machine history; every other action waits for it.
     fn demotes_in_place(&self) -> bool {
         matches!(self, Self::Decay(_) | Self::Stale)
+    }
+
+    /// Whether the action only restricts its claim, so it reads a held
+    /// history whole: an in-place demotion, or a retraction.
+    fn only_restricts(&self) -> bool {
+        self.demotes_in_place() || matches!(self, Self::Retract)
     }
 }
 #[derive(Serialize, Deserialize)]
@@ -412,7 +432,8 @@ impl Vault {
             // The demotion door's own test (`apply_claim_demotion`).
             _ => policy.criticality_for_predicate(&body.predicate) == PolicyCriticality::Critical,
         };
-        let same = critical == proposal.critical && pending.reason_codes == [reason(critical)];
+        let same = critical == proposal.critical
+            && pending.reason_codes == [reason(&proposal.action, critical)];
         let parked_by = self.store.gate_decision_in_txn(txn, pending.decision_id)?;
         let parker = Parker {
             actor_class: parked_by
@@ -468,7 +489,7 @@ impl Vault {
         let Some(proposal) = load(self, txn, id)? else {
             return Ok(None);
         };
-        let body = if proposal.action.demotes_in_place() {
+        let body = if proposal.action.only_restricts() {
             self.claim_for_restriction_in_txn(txn, id)?
         } else {
             self.get_claim_in_txn(txn, id)?
@@ -542,6 +563,19 @@ impl Vault {
                 )?;
                 decision
             }
+            DeferredAction::Retract => {
+                // The holder's consent, bound above, is the retract's
+                // authority: it closes as `closer`, and the door that
+                // settles it owns the tray row.
+                self.retract_claim_in_txn_with(
+                    txn,
+                    id,
+                    now,
+                    closer,
+                    super::lifecycle::RetractRun::ParkedConsent,
+                )?;
+                None
+            }
             action => {
                 let action = match action {
                     DeferredAction::Decay(weight) => super::ClaimDemotionAction::Decay {
@@ -551,7 +585,7 @@ impl Vault {
                         new_confidence: confidence,
                     },
                     DeferredAction::Stale => super::ClaimDemotionAction::MarkStale,
-                    DeferredAction::Supersede { .. } => unreachable!(),
+                    DeferredAction::Supersede { .. } | DeferredAction::Retract => unreachable!(),
                 };
                 self.apply_claim_demotion_in_txn(txn, id, action, now)?;
                 None
@@ -610,9 +644,12 @@ struct Parker {
     created_at: u64,
 }
 
-fn reason(critical: bool) -> &'static str {
+/// The reason a parked action's pending decision and tray row carry.
+fn reason(action: &DeferredAction, critical: bool) -> &'static str {
     if critical {
         "gate.pending.critical_confirm_attached"
+    } else if matches!(action, DeferredAction::Retract) {
+        RETRACT_PENDING
     } else {
         CONTRADICTION_PENDING
     }
@@ -636,7 +673,7 @@ fn park(
     if proposal.critical {
         diff_handle = critical_diff(&diff_handle, &encoded);
     }
-    let reason = reason(proposal.critical);
+    let reason = reason(&proposal.action, proposal.critical);
     let record = GateDecisionRecord {
         version: 0,
         decision_id: GateDecisionId::now(),

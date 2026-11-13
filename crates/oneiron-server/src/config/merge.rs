@@ -129,12 +129,22 @@ pub(crate) fn layer_serve_config(
         .or_else(|| env.config_path.clone())
         .or(default_config_path);
     let explicit_config = args.config.is_some() || env.config_path.is_some();
+    // A config path whose existence cannot be checked (a parent this process
+    // may not search) is not taken as absent, even the default one: its file
+    // may set what the defaults do not, such as a manual `[runtime] clock`.
     let file_values = match config_path {
-        Some(path) if path.exists() => load_file_config(&path)?,
-        Some(path) if explicit_config => {
-            anyhow::bail!("config file {} does not exist", path.display());
-        }
-        _ => PartialServeConfig::default(),
+        Some(path) => match path.try_exists() {
+            Ok(true) => load_file_config(&path)?,
+            Ok(false) if explicit_config => {
+                anyhow::bail!("config file {} does not exist", path.display());
+            }
+            Ok(false) => PartialServeConfig::default(),
+            Err(error) => {
+                let path = path.display();
+                anyhow::bail!("config file {path} cannot be checked: {error}");
+            }
+        },
+        None => PartialServeConfig::default(),
     };
     // The owner's settings file (`--settings-file`, FIX 5016), in the config
     // file's schema as a managed vault reads it: one more vault file layer,
@@ -310,6 +320,7 @@ struct FileServeConfig {
     kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    house_role: Option<String>,
     artifact_domains: Option<Vec<String>>,
     artifact_vault_name: Option<String>,
     trusted_proxies: Option<Vec<String>>,
@@ -384,6 +395,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             kit_bundle_public_urls: value.kit_bundle_public_urls,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
+            house_role: value.house_role,
             artifact_domains: value.artifact_domains,
             artifact_vault_name: value.artifact_vault_name,
             trusted_proxies: value.trusted_proxies,
@@ -464,6 +476,7 @@ struct PartialServeConfig {
     kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    house_role: Option<String>,
     artifact_domains: Option<Vec<String>>,
     artifact_vault_name: Option<String>,
     trusted_proxies: Option<Vec<String>>,
@@ -568,6 +581,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("kit_bundle_public_urls", &self.kit_bundle_public_urls)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("house_role", &self.house_role)
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
             .field("trusted_proxies", &self.trusted_proxies)
@@ -672,6 +686,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             kit_bundle_public_urls: value.kit_bundle_public_urls.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
+            // `house_role` is a config-file key alone.
+            house_role: None,
             artifact_domains: value.artifact_domains.clone(),
             artifact_vault_name: value.artifact_vault_name.clone(),
             trusted_proxies: value.trusted_proxies.clone(),

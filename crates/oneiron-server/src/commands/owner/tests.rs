@@ -75,6 +75,7 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
     {
         let vault =
             oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let plan = BackupPlan::new(&vault_path, backups.clone(), 3);
         backup::take(&vault, &plan).unwrap();
     }
@@ -207,6 +208,8 @@ fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
             repo: None,
             git_ref: "refs/heads/main".to_owned(),
             serve: serve.clone(),
+            holder: None,
+            recipients: Vec::new(),
         },
         &value,
     )
@@ -225,11 +228,15 @@ fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
         SecretRotateArgs {
             name: "cli-token".to_owned(),
             serve,
+            holder: None,
+            recipients: Vec::new(),
         },
         &read_secret_value(&b"cli synthetic rotated"[..]).unwrap(),
     )
     .unwrap();
-    assert_eq!((rotated.from_generation, rotated.to_generation), (0, 1));
+    // This install wrote the rotation, so the reply carries its receipt.
+    let receipt = rotated.receipt.as_ref().expect("the rotation's receipt");
+    assert_eq!((receipt.from_generation, receipt.to_generation), (0, 1));
     assert!(
         !serde_json::to_string(&rotated)
             .unwrap()

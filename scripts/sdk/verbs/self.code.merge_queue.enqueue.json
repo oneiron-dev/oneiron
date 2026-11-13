@@ -3,6 +3,7 @@
   "input": "crate::memory::repo_doors::RepoMergeQueueEnqueueInput",
   "output": "crate::memory::repo_doors::RepoMergeQueueEnqueueOutput",
   "scope": "Write",
+  "act_class": "unstated",
   "context": "run",
   "effect": "RepoMergeQueueEnqueue"
 }

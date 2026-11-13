@@ -4,6 +4,7 @@
   "input": "crate::memory::consolidation::ConsolidationPromoteRequest",
   "output": "crate::memory::consolidation::ConsolidationPromotion",
   "scope": "Write",
+  "act_class": "reversible_work",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.consolidation.promote\", &input)?",
   "host_door": true,
   "host_door_lists": true,

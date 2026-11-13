@@ -6,12 +6,14 @@
 use super::*;
 
 /// One run whose guest searches, then states a claim, catching each refusal.
+/// A guest reaches a verb at its SDK path (`vault.search`, `vault.claims.put`);
+/// a shared verb under `self.memory` is refused as a wrong root (#1564).
 fn search_then_claim(claim: oneiron::EntityId, subject: oneiron::EntityId) -> String {
     format!(
         "const seen = []; \
-         try {{ await self.memory.search({{query: 'heron lantern'}}); seen.push('searched'); }} \
+         try {{ await vault.search({{query: 'heron lantern'}}); seen.push('searched'); }} \
          catch (error) {{ seen.push('search refused'); }} \
-         try {{ await self.memory.put_claim({{id: '{}', predicate: 'profile.favorite_drink', \
+         try {{ await vault.claims.put({{id: '{}', predicate: 'profile.favorite_drink', \
          subject: '{}', value: 'tea'}}); seen.push('claimed'); }} \
          catch (error) {{ seen.push('claim refused'); }} \
          finish(seen.join(', '));",
@@ -38,11 +40,6 @@ fn row_outcome(body: &Value, effect: &str) -> Value {
         .find(|step| step["effect"] == effect)
         .unwrap_or_else(|| panic!("no {effect} call: {body}"))["outcome"]
         .clone()
-}
-
-/// A run row the door refused, as the step log records it.
-fn row_refusal(effect: &str, code: &str) -> Value {
-    json!({"kind": "denied", "effect": effect, "outcome": code, "reason_codes": []})
 }
 
 /// Review repro (burn engine-prs-03): a connector bound only to `execute_code`
@@ -75,13 +72,20 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
-    for effect in ["self.memory.search", "self.memory.put_claim"] {
-        assert_eq!(
-            row_outcome(&body, effect),
-            row_refusal(effect, "mcp_verb_not_bound"),
-            "{body}"
-        );
-    }
+    // 04edd1261e6 (#1365): a verb call is recorded as `self.verbs.call`, in
+    // the guest's order: the search, then the claim. The run's end comes
+    // first in the message: a failure line is cut.
+    let structured = &body["result"]["structuredContent"];
+    assert_eq!(
+        verb_call_outcomes(&body),
+        [
+            verb_refusal("mcp_verb_not_bound"),
+            verb_refusal("mcp_verb_not_bound")
+        ],
+        "result {} steps_run {} | {body}",
+        structured["result"],
+        structured["steps_run"]
+    );
     assert!(mode.vault.get_claim(&claim).unwrap().is_none(), "{body}");
 
     let named = seeded_test_entity_id(0x0024_65b4);
@@ -89,7 +93,7 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
         &mode.server,
         "quickjs-rows-named",
         named,
-        &["execute_code", "search", "put_claim"],
+        &["execute_code", "vault.search", "vault.claims.put"],
     )
     .await;
     let (_, body) = route_json(
@@ -98,11 +102,10 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
-    assert_eq!(
-        row_outcome(&body, "self.memory.search")["kind"],
-        "memory_search",
-        "{body}"
-    );
+    let outcomes = verb_call_outcomes(&body);
+    assert_eq!(outcomes.len(), 2, "{body}");
+    assert_eq!(outcomes[0]["kind"], "agent_verb", "{body}");
+    assert_eq!(outcomes[1]["kind"], "agent_verb", "{body}");
     assert!(mode.vault.get_claim(&claim).unwrap().is_some(), "{body}");
 }
 
@@ -182,7 +185,7 @@ async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"secret").unwrap();
+    let issuer = crate::test_credentials::host_issuer(&mode.server);
     let revoked = mode
         .vault
         .revoke_held_capability_slips(&issuer, &actor.to_hex(), [0; 32])
@@ -229,7 +232,13 @@ async fn witness_on_turn(
     );
     let (_, body) = route_json(
         server.clone(),
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "witness",
+            "vault.witness",
+            args,
+        ),
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");

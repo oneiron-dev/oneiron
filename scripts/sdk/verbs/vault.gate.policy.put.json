@@ -5,6 +5,7 @@
   "output": "crate::policy_manifest_doors::PolicyManifestReceipt",
   "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

@@ -1,0 +1,16 @@
+{
+  "name": "vault.members.ask",
+  "description": "A Steward suggests adding, removing or moving one member of a shared vault; it writes one ask for the vault's Owners and Admins and changes no membership.",
+  "input": "crate::task_verb::sdk::SharedMemberAskRequest",
+  "output": "crate::federation::SharedMemberAsk",
+  "call": "crate::task_verb::sdk::ask_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.ask\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "shared_person"
+}

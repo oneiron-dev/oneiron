@@ -18,7 +18,7 @@ use std::path::Path;
 /// The journal's name inside the run directory.
 pub(super) const JOURNAL: &str = "results.jsonl";
 /// The journal's schema; `deck_gate.py` reads no other.
-pub(super) const JOURNAL_SCHEMA: &str = "oneiron.deck-gate-journal/1";
+pub(super) const JOURNAL_SCHEMA: &str = "oneiron.deck-gate-journal/2";
 
 /// The journal's first line: what the run is pinned to.
 #[derive(Debug, Serialize, Deserialize)]

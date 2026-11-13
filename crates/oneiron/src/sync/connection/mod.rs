@@ -50,6 +50,7 @@ mod home_handoff;
 mod home_search;
 mod node_batch;
 mod note_reads;
+mod outbox;
 mod peer_session;
 mod residence_mode;
 mod server_close;
@@ -57,6 +58,11 @@ mod session;
 mod shared_leave;
 mod steady;
 mod topology;
+
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+#[path = "../../test_doors/sync_outbox.rs"]
+pub mod sync_outbox;
 
 use std::sync::Arc;
 
@@ -124,6 +130,10 @@ pub struct SyncConnection {
     /// Held so this device's query doors reach the home while the
     /// connection lives (OF-534); a federation lane lends none.
     _home_search: Option<Arc<HomeSearch>>,
+    /// The home's answers to this process's queue sends, as the last
+    /// acknowledgment clear left them (FIX 3966): what the owner's outbox
+    /// read shows beside each row still owed.
+    home_receipts: std::sync::Mutex<outbox::HomeReceipts>,
 }
 
 /// How long a confirmed leave waits for the run loop to stop and queue what
@@ -193,6 +203,7 @@ impl SyncConnection {
             leave_unqueued_receipt: std::sync::OnceLock::new(),
             batch_admission: None,
             _home_search: home_search,
+            home_receipts: std::sync::Mutex::default(),
         })
     }
 

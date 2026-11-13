@@ -117,6 +117,7 @@ pub(crate) use self::put_apply::{
 pub use self::short_id::short_id_content_hash;
 pub(crate) use self::short_id::{
     delete_short_id_rows_for_id, encode_short_id_forward_key, parse_short_id_value,
+    refresh_short_id_hash_in_txn,
 };
 pub(crate) use self::types::{
     ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
@@ -135,6 +136,8 @@ use self::child_of_overlay::*;
 use self::claim_candidate_apply::*;
 use self::deindex::*;
 use self::edge_apply::*;
+#[cfg(test)]
+pub(crate) use self::lexical_query_hints::lexical_query_hint_claim_ids_for_target;
 use self::lexical_query_hints::*;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;

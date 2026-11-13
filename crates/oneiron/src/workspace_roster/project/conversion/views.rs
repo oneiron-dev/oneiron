@@ -6,8 +6,9 @@ use super::*;
 
 impl Vault {
     /// Bind an existing typed TASK to its room thread before conversion, as
-    /// `actor`'s act. The binding is stored on the room turn, not inferred
-    /// from task prose. A private thread (FIX 2951) is bound only from its
+    /// `actor`'s act, in any room (THREAD-TASK-EVERY-ROOM). The binding is
+    /// stored on the room turn, not inferred from task prose. `actor` reads
+    /// the thread now; a private thread (FIX 2951) is bound only from its
     /// audience (FIX 3125); to anyone else it is an unknown thread.
     pub fn bind_room_thread_task(
         &self,
@@ -17,50 +18,77 @@ impl Vault {
         task: EntityId,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            // A binding with no policy row asks at the shipped threshold.
-            let policy: crate::gate::ProjectConversionPolicy =
-                crate::gate::resolve_policy_manifest(&self.store, txn)?
-                    .project_conversion_policy()
-                    .unwrap_or_default();
-            let mut row = room_thread_in(self, txn, room, thread)?;
-            rooms::require_thread_audience_in(self, txn, room, thread, actor)?;
-            // Its census counts the turns `actor` reads alone (FIX 5654).
-            let all = rooms::thread_turns_in(self, txn, room, thread)?;
-            let (turns, _) = readable_turns_in(self, txn, all, actor)?;
-            let source = rooms::room_in(self, txn, room)?;
-            let members = source.member_ids.into_iter().collect();
-            crate::task_verb::room_thread_task_roster_in(self, txn, task, &members)?;
-            if self.get_entity_type_in_txn(txn, &task)? != Some(ENTITY_TYPE_TASK)
-                || !crate::task_verb::thread_task_is_open_in(self, txn, task)?
-                || row.converted_project.is_some()
-                || thread_project_in(self, txn, room, thread, self.project_type_byte()?)?.is_some()
-            {
-                return Err(invalid());
-            }
-            // A thread binds however many tasks (rule 5). Once the bound set
-            // passes the policy's task threshold, its census raises the
-            // owner's question for the thread and the bind goes on.
-            let mut census = crate::scan_check::ScanCount::start_at(
-                crate::scan_check::EngineScan::ThreadTaskCensus,
-                thread.as_bytes(),
-                policy.max_tasks,
-            );
-            census.rows(turns.iter().map(|turn| turn.task_ids.len()).sum());
-            census.rows(usize::from(!row.task_ids.contains(&task.to_hex())));
-            census.finish(self);
-            if !row.task_ids.contains(&task.to_hex()) {
-                row.task_ids.push(task.to_hex());
-                rooms::TURNS.put(&self.store, txn, &thread, &row)?;
-                rooms::index_task_bindings(&self.store, txn, &row)?;
-            }
-            // OF-529: an agent holding the task joins the thread now when a
-            // Ready receipt stands there, else at its first passing claim.
-            rooms::record_bound_task_in_txn(self, txn, room, &row, task)
+            self.bind_room_thread_task_in_txn(txn, actor, room, thread, task)
         })?;
         // The changed turn reaches the room's live window after commit.
         #[cfg(feature = "sync")]
         self.refresh_room_turn_in_live_window(&thread);
         Ok(())
+    }
+
+    /// [`Self::bind_room_thread_task`]'s checks and writes in the caller's
+    /// write transaction, so a TASK minted in the same transaction binds with
+    /// it (`tasks.create.from_message`). `thread` is the thread's root. The
+    /// caller refreshes the turn's live window after commit.
+    pub(crate) fn bind_room_thread_task_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        room: EntityId,
+        thread: EntityId,
+        task: EntityId,
+    ) -> Result<()> {
+        // A binding with no policy row asks at the shipped threshold.
+        let policy: crate::gate::ProjectConversionPolicy =
+            crate::gate::resolve_policy_manifest(&self.store, txn)?
+                .project_conversion_policy()
+                .unwrap_or_default();
+        let mut row = room_thread_in(self, txn, room, thread)?;
+        // The binder reads the thread now, in any room: a private thread's
+        // audience first (FIX 3125), then a seat, a Ready join or the room's
+        // host (THREAD-TASK-EVERY-ROOM).
+        let access = rooms::require_thread_reader(self, txn, room, thread, actor)?;
+        // Its census counts the turns `actor` reads alone (FIX 5654).
+        let all = rooms::thread_turns_in(self, txn, room, thread)?;
+        let (turns, _) = readable_turns_in(self, txn, all, actor)?;
+        let members = access.member_ids.into_iter().collect();
+        // A home room keeps its project's roster rule. In any other room the
+        // TASK's owner sits on the room's roster and an assignee off it
+        // stands in this thread now, on a live Ready join.
+        if access.home.is_some() {
+            crate::task_verb::room_thread_task_roster_in(self, txn, task, &members)?;
+        } else {
+            let read: &heed::RoTxn<'_> = txn;
+            crate::task_verb::room_thread_task_standing_in(self, read, task, &members, |holder| {
+                rooms::stands_in_thread_in(self, read, room, thread, holder)
+            })?;
+        }
+        if self.get_entity_type_in_txn(txn, &task)? != Some(ENTITY_TYPE_TASK)
+            || !crate::task_verb::thread_task_is_open_in(self, txn, task)?
+            || row.converted_project.is_some()
+            || thread_project_in(self, txn, room, thread, self.project_type_byte()?)?.is_some()
+        {
+            return Err(invalid());
+        }
+        // A thread binds however many tasks (rule 5). Once the bound set
+        // passes the policy's task threshold, its census raises the
+        // owner's question for the thread and the bind goes on.
+        let mut census = crate::scan_check::ScanCount::start_at(
+            crate::scan_check::EngineScan::ThreadTaskCensus,
+            thread.as_bytes(),
+            policy.max_tasks,
+        );
+        census.rows(turns.iter().map(|turn| turn.task_ids.len()).sum());
+        census.rows(usize::from(!row.task_ids.contains(&task.to_hex())));
+        census.finish(self);
+        if !row.task_ids.contains(&task.to_hex()) {
+            row.task_ids.push(task.to_hex());
+            rooms::TURNS.put(&self.store, txn, &thread, &row)?;
+            rooms::index_task_bindings(&self.store, txn, &row)?;
+        }
+        // OF-529: an agent holding the task joins the thread now when a
+        // Ready receipt stands there, else at its first passing claim.
+        rooms::record_bound_task_in_txn(self, txn, room, &row, task)
     }
 
     /// Thread lens: resolve what this thread became from replicated PROJECT

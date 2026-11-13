@@ -5,6 +5,7 @@
   "output": "crate::inbox::NotificationPage",
   "call": "memory.inbox_list(input.after.as_deref(), input.limit.unwrap_or(crate::inbox::INBOX_PAGE_DEFAULT))?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

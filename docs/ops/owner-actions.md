@@ -463,7 +463,8 @@ The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per reco
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
 (`Vault::import_whole_vault_archive`, or `oneiron import archive vault.zip` with `serve` stopped).
-Credentials inside records are nulled by the serializer. Result bodies go through the release
+The Owner's whole-vault export keeps credentials, those in skill source files and in JSON bodies
+included; scoped and contact exports null them. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
 `epoch_floor.jsonl` has a row `{session, conversation, epoch, turn_end}` for each epoch lineage
@@ -481,6 +482,16 @@ a re-import lists those as `missing_secrets` to re-enter. A caller off this devi
 only for portable records (device-bound ones go as handles); suspended records always go as
 handles; an export-first removal's archive, like any export to a contact or share, carries no
 custody record.
+
+`oneiron import archive vault.zip` (with `serve` stopped) uses the owner door whenever this
+vault's bound owner authenticates, and the actorless door otherwise. An archive without expression
+preferences needs no owner. Only an archive with expression preferences needs the owner through
+this CLI; its refusal says that the owner could not authenticate and how to bind the owner.
+Every owner restore records an owner-act receipt whose `owner_restore_receipt` is `gate:<id>`
+(content kind `owner_archive_restore`) naming the archive by its full-manifest digest. Expression
+preferences carry a permit for that restore only. No policy changes, and no later write gains
+the permit. The actorless path has no owner restore receipt and still refuses expression
+preferences; the actor engine door still needs its existing local Imported-source Auto grant.
 
 `oneiron export --format okf --out vault-okf.zip` is "Export to OKF": the vault as an Open
 Knowledge Format v0.1 bundle (Google's markdown-plus-YAML-frontmatter format) for importing into
@@ -1845,7 +1856,8 @@ left out and counted under `family_outside_split`. The run pins a split receipt 
 receipt, and the trainer echoes both. Nothing runs yet. `POST
 /v1/owner/coach/training-runs/authorize` with `{"run", "spec"}` is your yes on the spec you saw,
 and the host's Coach queues the run. The same door authorizes any prepared run, including an
-offer's run. A returned head binds no role and is not served yet.
+offer's run. A returned head binds no role. It serves only once you bind it to a typed
+question (next section).
 
 The draft's `plan.starting_checkpoint` must be a checkpoint that is already in custody. To keep
 one of any size, send `PUT /v1/owner/coach/training-checkpoints`. The body is the checkpoint's
@@ -1858,6 +1870,39 @@ vault's disk as it arrives. Its length is never refused, but the server stops at
 free-space reserve (`limits.disk_reserve_bytes`). The server keeps every file or none. It
 refuses a body that ends early or runs past its files, and a file whose hash differs from its
 `blake3`. The answer is the pinned checkpoint, which you put in the draft as it is.
+
+## Bind a trained head to a typed question
+
+A scored head answers one standing typed question once you bind it. `POST
+/v1/owner/coach/training-runs/question-head/bind` with `{"run", "question", "question_version",
+"choice"}` names the run and the typed question (its 32-hex id and version). `{"kind":
+"evaluated"}` binds only when the run's checks pass and its paired held-out trial against the
+question's current answerer won: quality not worse within the measured noise, and cost and
+latency both lower. The trial's numbers go in the binding. Until a trial is measured, an
+evaluated bind is refused. `{"kind": "explicit_override", "reason"}` binds with your reason
+instead.
+
+`POST /v1/owner/coach/training-runs/question-head/trial` with `{"run", "question",
+"question_version"}` measures that trial on the run's sealed held-out rows. It counts as one
+more serving of the sealed cohort. The head reads each row once, and the question's current
+answerer reads it twice: the server's decision ladder at the question's own dial, never past
+the model rungs, so no ask reaches you. Each read scores `1 - (P(yes) - label)^2`. The trial
+reports the head-minus-answerer interval over source families (at least 10), the answerer's
+disagreement with its own second read as the noise, the mean cost per thousand calls (the head
+bills nothing) and the mean time per read. The head wins when the interval's low end is not
+below minus the noise and its cost and time are both lower. A missing read, fewer than 10
+families or an answerer with no known cost leaves the trial unknown, and an unknown trial never
+wins. The answer is the recorded trial; the run view shows it as `question_trial`. A head bound to the question before goes back to scored, and the binding names its run.
+
+A bound head answers its question on the server's Local rung, from the next call on, for calls
+whose state carries the head's input (`target` and a `context` list). It loads once from
+custody, and each file's hash is checked again as it is read. A head that cannot load or read
+gives no answer, and the call goes on to the next rung, as it did before. Every other question
+keeps its path. `POST /v1/owner/coach/training-runs/question-head/unbind` with `{"question",
+"question_version"}` gives the question back its model call. The run view shows the binding
+(`question_head`), the trial (`question_trial`), `can_bind_question_head` and `serving`:
+`serving` while the head is bound and the server's decision ladder is staffed, otherwise
+`unavailable` with the reason.
 
 ## Answer the decision ladder's asks
 

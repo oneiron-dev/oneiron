@@ -49,11 +49,20 @@ use super::{ActorScrub, RefPath, RestoreClass, SideDb, SidePayload, SideTableDec
 /// Declares side tables: each row becomes a `pub(crate) static` [`SideTableDecl`] in the module
 /// that invokes it. Only the crate's build script lists them, in [`CATALOGUE`], so a row lives in
 /// its owner module's `tables.rs` (or in a file included here) and nowhere else.
+///
+/// Both rules hold at compile time, whether or not the build script reran: an invocation in any
+/// other module fails [`row_module_allowed`], and each row names its `side_table::NAME`
+/// re-export, which exists only for a row the build script has read.
 macro_rules! side_tables {
     ($($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $([accepts: $accepts:path])?
         [restore: $($restore:tt)+] [family: $($family:tt)+] [tier: $tier:ident $(, $key_tier:ident for $key:literal)*]
         $(=> $scrub:path)?;)+) => {
+        const _: () = assert!(
+            $crate::side_table::row_module_allowed(module_path!()),
+            "side_tables! rows live in a module's tables.rs or in side_table/decls: the build script reads only those files"
+        );
         $(
+            const _: &$crate::side_table::SideTableDecl = &$crate::side_table::$name;
             $(#[$doc])*
             pub(crate) static $name: $crate::side_table::SideTableDecl = $crate::side_table::SideTableDecl {
                 name: stringify!($name),
@@ -73,6 +82,27 @@ macro_rules! side_tables {
     };
 }
 pub(crate) use side_tables;
+
+/// Whether `side_tables!` may expand in the module at `path` (its `module_path!()`): a module's
+/// `tables`, or `side_table::decls`, which includes the shared decl files.
+pub(crate) const fn row_module_allowed(path: &str) -> bool {
+    ends_with(path.as_bytes(), b"::tables") || ends_with(path.as_bytes(), b"::side_table::decls")
+}
+
+const fn ends_with(text: &[u8], tail: &[u8]) -> bool {
+    if text.len() < tail.len() {
+        return false;
+    }
+    let start = text.len() - tail.len();
+    let mut at = 0;
+    while at < tail.len() {
+        if text[start + at] != tail[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
 
 /// An entry's restore class, from its `[restore: ..]`.
 macro_rules! side_restore {
@@ -361,7 +391,6 @@ const fn catalogue_rank(db: SideDb) -> u8 {
 /// rows a declared door already wrote, so either direction is a read over
 /// declared territory; only the exact-key doors ([`declared_for`]) and the
 /// write doors need the one-directional check.
-#[cfg(feature = "sync")]
 pub(crate) fn declared_overlaps(db: SideDb, prefix: &[u8]) -> bool {
     declared().any(|decl| {
         decl.db == db && (prefix.starts_with(decl.prefix) || decl.prefix.starts_with(prefix))

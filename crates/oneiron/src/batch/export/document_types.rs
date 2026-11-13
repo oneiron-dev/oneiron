@@ -60,15 +60,18 @@ pub struct ExportSourceVault {
 }
 
 impl WholeVaultDocumentManifest {
-    /// Validate the versioned manifest of a whole-vault archive.
+    /// Validate the versioned manifest of a whole-vault archive. A keeping
+    /// archive (`secrets_nulled` false) is valid only with secrets included
+    /// in the archive format and with both storage nulling claims false;
+    /// every other archive keeps the historical nulling claims.
     pub fn validate(&self) -> Result<()> {
         if self.source_boundaries != [ExportSourceBoundary::BuiltinAdapterCodeNotStored]
             || self.manifest_version != WHOLE_VAULT_DOCUMENT_VERSION
             || self.format != VAULT_ARCHIVE_FORMAT
             || self.serializer != ExportSerializerManifest::current()
-            || !self.secrets_nulled
-            || !self.storage.redacted()
-            || !self.storage.structurally_secret_nulled()
+            || self.storage.redacted() != self.secrets_nulled
+            || self.storage.structurally_secret_nulled() != self.secrets_nulled
+            || (!self.secrets_nulled && !self.secrets_included)
             || self.source_vault.vault_id.as_deref()
                 != self
                     .storage
@@ -405,12 +408,22 @@ pub struct ExportDerivationEnvelope {
 #[derive(Debug, Clone)]
 pub struct WholeVaultImportReceipt {
     pub authority: VaultImportReceipt,
+    /// Durable `gate:<32 hex>` owner-act receipt naming this archive's full document-manifest
+    /// digest. Present only for the owner-authenticated restore entry, not a reusable grant.
+    pub owner_restore_receipt_ref: Option<String>,
     pub inserted_entities: usize,
     pub unchanged_entities: usize,
+    /// Engine seed rows an owner restore into a fresh vault replaced with the archive's owner-edited row.
+    pub replaced_seed_entities: usize,
     /// New inert source ASSETs; these never count as native terminal receipts.
     pub archived_receipt_sources: usize,
     /// Archived rows intentionally not restored as local authority or verdicts.
     pub omitted_entities: usize,
+    /// The archived rows among `omitted_entities` that this vault's state kept
+    /// out, beyond the manifest's `import_omissions`: an archived
+    /// `vault.default_facet` outside the owner's restore into a fresh vault
+    /// (`TargetDefaultFacetKept`).
+    pub destination_omissions: Vec<ExportImportOmission>,
     /// Domain-owned identities (currently MODEL name/version) rebound locally.
     pub remapped_entities: std::collections::BTreeMap<String, String>,
     /// Run results whose bodies came back, and those whose bodies the export

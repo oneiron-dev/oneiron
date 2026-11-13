@@ -45,18 +45,25 @@ impl BatchBuilder<'_> {
     /// judged against its original in the writer before any op stages; one
     /// it does not read refuses as missing. Each CLAIM's typed record refs
     /// must resolve under `reader` once the batch's own rows are staged; one
-    /// that does not is the claim gate's hard deny, receipted once.
-    pub(crate) fn commit_read_by(self, reader: &ScopedRead<'_>) -> Result<()> {
-        self.commit_inner(None, Some(reader), |_| Ok(()), |_| Ok(()), None)
+    /// that does not is the claim gate's hard deny, receipted once. `guard`
+    /// runs first in the same writer snapshot (a generic batch's carry check).
+    pub(crate) fn commit_read_by(
+        self,
+        reader: &ScopedRead<'_>,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner(None, Some(reader), guard, |_| Ok(()), None)
     }
 
     /// [`Self::commit`] for a writer below owner grade. A put that turns an
     /// agent definition back on, moves its approval up, makes it active again
     /// or brings a deleted one back on is the owner's
     /// ([`Vault::update_agent_definition_as`](crate::Vault::update_agent_definition_as)),
-    /// so it is refused, judged in the transaction the batch writes in. Every
-    /// other put commits as it does through [`Self::commit`], turning a
-    /// definition off included.
+    /// so it is refused, judged in the transaction the batch writes in. So is
+    /// a put that changes or drops the source audience a stored identity row
+    /// names (a confirmed provisional entity's; review of #7006): widening an
+    /// exposure is the owner's act. Every other put commits as it does
+    /// through [`Self::commit`], turning a definition off included.
     ///
     /// # Errors
     ///
@@ -97,16 +104,20 @@ impl BatchBuilder<'_> {
     /// over the same put ids in that same writer snapshot; its CLAIMs
     /// commit as an unbound writer's do. An unbound lane commits as the
     /// grade's plain terminal does. `commit` selects the grade, as the
-    /// batch door's does.
+    /// batch door's does. `guard` runs before any op stages in the same
+    /// writer snapshot (the door's carry check).
     pub fn commit_in_core_lane(
         self,
         lane: &CoreWriteLane<'_>,
         commit: CoreBatchCommit,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         match (lane, commit) {
-            (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => self.commit_read_by(reader),
+            (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => {
+                self.commit_read_by(reader, guard)
+            }
             (CoreWriteLane::Read(reader), CoreBatchCommit::BelowOwner) => {
-                self.commit_below_owner_read_by(reader, |_| Ok(()))
+                self.commit_below_owner_read_by(reader, guard)
             }
             (CoreWriteLane::Target(_), commit) => {
                 let ids: Vec<crate::entity_id::EntityId> = self
@@ -119,7 +130,7 @@ impl BatchBuilder<'_> {
                     .collect();
                 let guard = |txn: &heed::RoTxn<'_>| -> Result<()> {
                     if lane.admits_puts_in(txn, &ids)? {
-                        return Ok(());
+                        return guard(txn);
                     }
                     // As missing: the row's kind, body and scope stay unsaid.
                     Err(Error::EntityNotFound)
@@ -129,8 +140,12 @@ impl BatchBuilder<'_> {
                     CoreBatchCommit::BelowOwner => self.commit_below_owner_with_guard(guard),
                 }
             }
-            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => self.commit(),
-            (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => self.commit_below_owner(),
+            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => {
+                self.commit_with_target_guard(guard)
+            }
+            (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => {
+                self.commit_below_owner_with_guard(guard)
+            }
         }
     }
 
@@ -155,6 +170,19 @@ impl BatchBuilder<'_> {
                 _ => None,
             })
             .collect();
+        let identity_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Put {
+                    id,
+                    entity_type,
+                    data,
+                    ..
+                } if crate::tagging::label_kind_admitted(*entity_type) => Some((*id, data.clone())),
+                _ => None,
+            })
+            .collect();
         let guard = move |txn: &heed::RoTxn<'_>| -> Result<()> {
             guard(txn)?;
             for (id, body) in &agent_puts {
@@ -169,6 +197,24 @@ impl BatchBuilder<'_> {
                             "only the vault owner turns an agent definition back on or changes its models",
                         ),
                     ));
+                }
+            }
+            for (id, body) in &identity_puts {
+                // A row the bound reader does not read is refused as missing
+                // by the read admission after this guard: this refusal must
+                // not tell it apart first.
+                if let Some(reader) = reader
+                    && !crate::batch::put_target_admitted_in(reader, txn, id)?
+                {
+                    continue;
+                }
+                if crate::claim::identity_put_moves_source_audience_in_txn(
+                    &vault.store,
+                    txn,
+                    id,
+                    body,
+                )? {
+                    return Err(crate::claim::owner_only_audience_change());
                 }
             }
             Ok(())
@@ -295,6 +341,7 @@ impl BatchBuilder<'_> {
         let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
         let prepared_person_substrate = self.prepared_person_substrate.take();
         let prepared_agent_birth = self.prepared_agent_birth.take();
+        let agent_authoring = self.agent_authoring.take();
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -340,6 +387,16 @@ impl BatchBuilder<'_> {
                 Ok(Some(None)) => return Rows::Discard(Err(Error::EntityNotFound.into())),
                 Err(err) => return Rows::Discard(Err(err.into())),
             };
+            // An agent's batch: each definition it puts is the one its author
+            // writer gives it (ARCH-0053:20), before anything stages. It runs
+            // after the reader's admission, which judges each put against the
+            // stored row it names: a put the writer makes a proposed change
+            // moves to the proposal's own id.
+            if let Err(err) =
+                vault.bound_agent_authored_puts_in_txn(&*wtxn, agent_authoring.as_ref(), &mut ops)
+            {
+                return Rows::Discard(Err(err.into()));
+            }
             // Trusted routing keeps its existing path. A bound input stays
             // through its original caller policy/source preflight first.
             let routed = if reader.is_none() {
@@ -361,6 +418,7 @@ impl BatchBuilder<'_> {
                 checker,
                 origin,
                 &caller_envelopes,
+                None,
                 &births,
                 reader.is_some() && !gated.is_empty(),
             ) {
