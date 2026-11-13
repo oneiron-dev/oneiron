@@ -3,14 +3,14 @@ use crate::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
 
 /// There is no default destination. External explicitly approves this run's egress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ComputeChoice {
     OwnerMachines,
     External,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrainingState {
     Prepared,
