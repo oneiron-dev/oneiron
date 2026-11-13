@@ -32,6 +32,7 @@
 //! back later turns, and the parked TURN keeps its own scope: it is planned
 //! under its own conversation once it has one.
 use crate::Vault;
+use crate::batch::BatchOp;
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -39,11 +40,11 @@ use crate::error::{Error, Result};
 use crate::ports::{
     EdgeDirection, EdgeStoreRead, EntityStoreRead, EntityTime, PortRows, TombstoneStoreRead,
 };
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter::Peekable;
 
 /// Latest re-dirty carrier of one TURN. Key: id16 (TURN id).
@@ -138,6 +139,196 @@ pub(crate) fn requeue_turn_in_txn(
         return Ok(());
     }
     put_carrier_in_txn(store, txn, turn)
+}
+
+/// Whether an edge of `kind` binds a TURN's words: a MESSAGE's `PartOf` to its
+/// TURN, its `BelongsTo` to the conversation and its `AuthoredBy` to its
+/// speaker, and the TURN's `ChildOf` to the conversation. The Dreamer's read of
+/// a witnessed turn checks each of them (`turn_text::collect_with`).
+pub(crate) const fn binds_turn_words(kind: EdgeKind) -> bool {
+    matches!(
+        kind,
+        EdgeKind::PartOf | EdgeKind::BelongsTo | EdgeKind::AuthoredBy | EdgeKind::ChildOf
+    )
+}
+
+/// One batch's writes and removals of edges that bind a TURN's words
+/// ([`binds_turn_words`]), each with whether it was stored before the batch
+/// applied, and the rows the batch puts.
+///
+/// An edge rewire or a speaker rebinding changes what a TURN says with no
+/// write to the TURN or to its MESSAGEs' text, so no publication door tells
+/// the turn's listeners (ARCH-0026 #sieve-open). Read before the batch and
+/// settled after it, in its transaction, each TURN whose binding an edge
+/// changed is re-dirtied and marked as a publication of its text marks it.
+pub(crate) struct RewiredTurnEdges {
+    edges: Vec<(EntityId, EdgeKind, EntityId, bool)>,
+    put: BTreeSet<EntityId>,
+}
+
+impl RewiredTurnEdges {
+    /// Reads, in `txn` before the batch `ops` applies, whether each edge it
+    /// writes or removes of a kind that binds a TURN's words is stored. An
+    /// edge out of a row `ops` also puts is left out: the door that puts the
+    /// row tells its turns' listeners itself (a witness, an import, a
+    /// re-put's publication mark).
+    ///
+    /// # Errors
+    ///
+    /// The edge reads.
+    pub(crate) fn before(vault: &Vault, txn: &heed::RoTxn<'_>, ops: &[BatchOp]) -> Result<Self> {
+        let candidates: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Edge { src, kind, tgt, .. }
+                | BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. }
+                | BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
+                | BatchOp::DeleteEdge { src, kind, tgt } => Some((*src, *kind, *tgt)),
+                _ => None,
+            })
+            .filter(|(_, kind, _)| binds_turn_words(*kind))
+            .collect();
+        if candidates.is_empty() {
+            return Ok(Self {
+                edges: Vec::new(),
+                put: BTreeSet::new(),
+            });
+        }
+        let put: BTreeSet<EntityId> = ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::Put { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let mut edges = Vec::with_capacity(candidates.len());
+        for (src, kind, tgt) in candidates {
+            if !put.contains(&src) {
+                let stored = edge_stored_in_txn(&vault.store, txn, &src, kind, &tgt)?;
+                edges.push((src, kind, tgt, stored));
+            }
+        }
+        Ok(Self { edges, put })
+    }
+
+    /// Admits, in the batch's transaction after it applied, each live TURN
+    /// whose word binding one of the edges changed (the edge was stored
+    /// before and is gone, or was not and is now) as a TURN whose words
+    /// changed ([`admit_rewired_turn_in_txn`]). A TURN the batch put is new
+    /// work on its own key already.
+    ///
+    /// # Errors
+    ///
+    /// The reads, the carrier write and the marks.
+    pub(crate) fn redirty_in_txn(self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        let mut turns = BTreeSet::new();
+        for (src, kind, tgt, stored) in self.edges {
+            if edge_stored_in_txn(&vault.store, txn, &src, kind, &tgt)? != stored {
+                turns.extend(turns_bound_by_in_txn(&vault.store, txn, &src, kind, &tgt)?);
+            }
+        }
+        for turn in turns.difference(&self.put) {
+            if is_live(&vault.store, txn, turn)? {
+                admit_rewired_turn_in_txn(vault, txn, turn)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A live TURN whose word binding an edge changed, in the edge's own
+/// transaction. When a round may have read it (a scope's watermark passed its
+/// key, or a carrier keys it) it takes a fresh carrier, pending for every
+/// scope, as a TURN put behind a watermark does
+/// ([`admit_turn_position_in_txn`](super::watermark::admit_turn_position_in_txn));
+/// a TURN no round has passed is read at its new words on its own key. In any
+/// case the sieve and the projector owe it a read and the redirty feed hears
+/// of it ([`crate::dreamer_wake::words_changed_in_txn`]), and the tagger and
+/// the embedder mark it at its new words, as a publication of its text does.
+fn admit_rewired_turn_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    if REDIRTY.get(&vault.store, txn, turn)?.is_some()
+        || super::watermark::turn_passed_in_txn(&vault.store, txn, turn)?
+    {
+        put_carrier_in_txn(&vault.store, txn, turn)?;
+    }
+    crate::dreamer_wake::words_changed_in_txn(&vault.store, txn, turn)?;
+    crate::tagging::mark_on_publication_in_txn(vault, txn, turn, ENTITY_TYPE_TURN)?;
+    crate::embed::mark_on_publication_in_txn(vault, txn, turn, ENTITY_TYPE_TURN)
+}
+
+fn edge_stored_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+) -> Result<bool> {
+    store.port_edge_present(txn, src, EdgeDirection::Out, kind, tgt)
+}
+
+/// The TURNs whose words the edge `src -kind-> tgt` binds, read as the graph
+/// stands: for an edge out of a MESSAGE, the TURN its `PartOf` names and every
+/// TURN the MESSAGE is part of (its binding is checked in each); for a TURN's
+/// `ChildOf`, that TURN.
+fn turns_bound_by_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let entity_type = |id: &EntityId| -> Result<Option<u8>> {
+        Ok(store
+            .port_entity_record(txn, id)?
+            .map(|row| row.entity_type))
+    };
+    let mut turns = Vec::new();
+    match entity_type(src)? {
+        Some(ENTITY_TYPE_MESSAGE) => {
+            if kind == EdgeKind::PartOf && entity_type(tgt)? == Some(ENTITY_TYPE_TURN) {
+                turns.push(*tgt);
+            }
+            for peer in store.port_edge_peers(txn, src, EdgeDirection::Out, EdgeKind::PartOf)? {
+                let peer = peer?;
+                if entity_type(&peer)? == Some(ENTITY_TYPE_TURN) {
+                    turns.push(peer);
+                }
+            }
+        }
+        Some(ENTITY_TYPE_TURN) if kind == EdgeKind::ChildOf => turns.push(*src),
+        _ => {}
+    }
+    Ok(turns)
+}
+
+/// Whether `turn` holds a re-dirty carrier pending for every scope, and is
+/// live (the test door `test_doors::turn_words`).
+///
+/// # Errors
+///
+/// The reads.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pending_for_every_scope(vault: &Vault, turn: &EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(carrier) = REDIRTY.get(&vault.store, &txn, turn)? else {
+        return Ok(false);
+    };
+    Ok(carrier.consumed == 0 && is_live(&vault.store, &txn, turn)?)
+}
+
+/// Settles every scope's watermark on `turn`'s key, as a round of each that
+/// read it would (the test door `test_doors::turn_words`).
+///
+/// # Errors
+///
+/// The read and the watermark writes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn settle_every_scope_on_turn(vault: &Vault, turn: &EntityId) -> Result<()> {
+    super::watermark::settle_every_scope_on_turn(vault, turn)
 }
 
 /// Parks each TURN of `passed`, the temporal keys a cursor is settling past,
