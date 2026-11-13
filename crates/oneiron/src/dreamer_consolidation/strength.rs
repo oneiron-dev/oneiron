@@ -166,6 +166,47 @@ pub(crate) fn strength_policy_pin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -
     Ok(hash.finalize().to_hex().to_string())
 }
 
+/// Lands one archived DREAMER_CONSOLIDATION_STRENGTH_POLICY row live: a validated policy
+/// installs through the archive seam, anything else is held back.
+fn land_archived_strength_policy_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
+}
+
+/// Lands archived DREAMER_CONSOLIDATION_STRENGTH_POLICY rows live, one outcome per input row in
+/// input order.
+pub(crate) fn land_archived_dreamer_consolidation_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    rows: &[crate::batch::export::ArchiveRetainedSideRow],
+) -> crate::Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_strength_policy_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
+}
+
 /// The claim id and its stored observations, or no pin when no row stands.
 pub(crate) fn observation_pin_in_txn(
     vault: &Vault,
@@ -526,45 +567,4 @@ fn read_key(actor: WriteActor) -> Result<ScopedReadActorKey> {
     ScopedReadActorKey::for_engine_actor(actor).ok_or(Error::InvalidClaimBody(
         "invalid consolidation strength reader",
     ))
-}
-
-/// Lands one archived DREAMER_CONSOLIDATION_STRENGTH_POLICY row live: a validated policy
-/// installs through the archive seam, anything else is held back.
-fn land_archived_strength_policy_row_in_txn(
-    vault: &crate::Vault,
-    txn: &mut heed::RwTxn<'_>,
-    permit: &crate::batch::export::OwnerArchiveRestorePermit,
-    row: &crate::batch::export::ArchiveRetainedSideRow,
-) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
-    use crate::batch::export::RetainedSideHeldBackReason;
-    use crate::batch::export::archive_side_install::{
-        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
-    };
-    let (key, value) = match decode_archived_row(&POLICY, row) {
-        Ok(decoded) => decoded,
-        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
-    };
-    if value.validate().is_err() {
-        return Ok(ArchivedSideRowOutcome::HeldBack(
-            RetainedSideHeldBackReason::InvalidValue,
-        ));
-    }
-    install_archived_row(&POLICY, vault, txn, permit, &key, row)
-}
-
-/// Lands archived DREAMER_CONSOLIDATION_STRENGTH_POLICY rows live, one outcome per input row in
-/// input order.
-pub(crate) fn land_archived_dreamer_consolidation_rows_in_txn(
-    vault: &crate::Vault,
-    txn: &mut heed::RwTxn<'_>,
-    permit: &crate::batch::export::OwnerArchiveRestorePermit,
-    rows: &[crate::batch::export::ArchiveRetainedSideRow],
-) -> crate::Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
-    let mut outcomes = Vec::with_capacity(rows.len());
-    for row in rows {
-        outcomes.push(land_archived_strength_policy_row_in_txn(
-            vault, txn, permit, row,
-        )?);
-    }
-    Ok(outcomes)
 }
