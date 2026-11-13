@@ -253,9 +253,10 @@ pub(crate) fn execute(
 ) -> Result<DreamerAttemptExecution> {
     let facet = attempt.status.payload.attempt_type.as_str();
     match facet {
-        CONSOLIDATION_STRENGTH_FACET => {
-            strength::run(ctx.vault, attempt, ctx.now_ms)?;
-        }
+        // The strength archive runs in the host's job adapter (untangle 6.9c,
+        // RULING S69C-DESIGN item 8): the wake driver hands it to the host's
+        // executor, so here it can only wait for one.
+        CONSOLIDATION_STRENGTH_FACET => return Ok(strength::unlent()),
         CURATOR_FACET => {
             curator::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
