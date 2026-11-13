@@ -10,6 +10,10 @@
 //! the summary, and so did any contact once one of its sources was marked
 //! Tier A. The owner alone is admitted everything, as before.
 //!
+//! A claim served at another revision than its live row (a pinned hydration,
+//! a history ledger) carries that revision's words, so the clamp follows the
+//! served body's sources, not the live row's (Sol review of #7513).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test disclosure_summary_word_sources`.
 #![cfg(oneiron_test_support)]
@@ -21,10 +25,15 @@ use oneiron::core_write::{ConversationCreateInput, DagRecordAppendInput};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_SUMMARY;
 use oneiron::test_doors::disclosure_word_sources::{
-    clamp_admits_owner_alone, clamp_admits_with_contact, mark_tier_a, seed_cleared_contact,
+    clamp_admits_claim_revision_with_contact, clamp_admits_owner_alone, clamp_admits_with_contact,
+    mark_tier_a, seed_cleared_contact,
 };
 use oneiron::test_doors::scope_summary::mint_scope_summary;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EntityId,
+    TimeRange, Vault, VaultConfig,
+};
+use rmpv::Value;
 use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -37,6 +46,7 @@ const COUNTERPARTY: &str = "owen@example.com";
 /// its directory goes.
 struct Fixture {
     vault: Vault,
+    owner: EntityId,
     trunk: [EntityId; 2],
     summary: EntityId,
     _dir: tempfile::TempDir,
@@ -88,6 +98,7 @@ fn open() -> TestResult<Fixture> {
     )?;
     Ok(Fixture {
         vault,
+        owner,
         trunk,
         summary,
         _dir: dir,
@@ -120,6 +131,32 @@ fn cleared_contact(vault: &Vault, clearance: Scope) -> TestResult<EntityId> {
     let contact = EntityId::now();
     seed_cleared_contact(vault, contact, COUNTERPARTY, clearance)?;
     Ok(contact)
+}
+
+/// A `conversation.summary` claim about `owner` whose words came from
+/// `covered`, the shape a summariser writes.
+fn conversation_summary(owner: EntityId, text: &str, covered: EntityId) -> TestResult<ClaimBody> {
+    Ok(ClaimBody::new(
+        "conversation.summary",
+        ClaimSubject::Entity(owner),
+        Value::Map(vec![
+            ("text".into(), text.into()),
+            (
+                "covers".into(),
+                Value::Array(vec![Value::Binary(covered.as_bytes().to_vec())]),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?)
+}
+
+/// Puts `body` as the claim `id` now, by the vault's clock.
+fn put_claim_now(vault: &Vault, id: &EntityId, body: &ClaimBody) -> TestResult {
+    let at = vault.now_recorded_at();
+    vault.put_claim(id, body, TimeRange { start: at, end: at }, at)?;
+    Ok(())
 }
 
 /// A clearance whose kind band takes SUMMARY rows and nothing else: the
@@ -182,5 +219,35 @@ fn the_owner_alone_is_admitted_a_summary_and_its_sources_whatever_they_hold() ->
             "the owner reads every record"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_claim_revision_served_is_judged_on_the_sources_of_its_own_words() -> TestResult {
+    let fixture = open()?;
+    let vault = &fixture.vault;
+    let [plan, step] = fixture.trunk;
+    let claim = EntityId::now();
+    let served = conversation_summary(fixture.owner, "The plan.", plan)?;
+    put_claim_now(vault, &claim, &served)?;
+    put_claim_now(
+        vault,
+        &claim,
+        &conversation_summary(fixture.owner, "The first step.", step)?,
+    )?;
+    let contact = cleared_contact(vault, Scope::top())?;
+    assert!(
+        clamp_admits_claim_revision_with_contact(vault, contact, COUNTERPARTY, &claim, &served)?,
+        "a contact cleared for every source reads the earlier revision"
+    );
+    mark_tier_a(vault, &plan)?;
+    assert!(
+        clamp_admits_with_contact(vault, contact, COUNTERPARTY, &claim)?,
+        "the live revision's words come from the step alone"
+    );
+    assert!(
+        !clamp_admits_claim_revision_with_contact(vault, contact, COUNTERPARTY, &claim, &served)?,
+        "the earlier revision carries the Tier-A plan's words"
+    );
     Ok(())
 }
