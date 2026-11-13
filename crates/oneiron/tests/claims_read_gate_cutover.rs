@@ -40,6 +40,12 @@ const PENDING_OPT_OUT: &str = "gate.pending.counterparty_opt_out";
 const ENFORCEMENT_HOLD_REASON: &str = "counterparty_enforcement_hold";
 const OVERRIDE_REASON: &str = "comm_send_override_standing";
 
+/// A second counterparty, held by a STOP as well as by the stamped class.
+const SECOND_COUNTERPARTY: &str = "yuki@example.com";
+const POLICY_SEED: u8 = 0x66;
+const SECOND_CONTACT_SEED: u8 = 0x67;
+const SECOND_HEAD_SEED: u8 = 0x68;
+
 const ACTOR_SEED: u8 = 0x61;
 const OWNER_SEED: u8 = 0x62;
 const CONTACT_SEED: u8 = 0x63;
@@ -133,7 +139,11 @@ fn put_hold_class(vault: &Vault, enforcement: bool) {
 /// One live [`HOLD_CLASS`] head on the counterparty's PERSON, naming
 /// `channel_class`.
 fn put_hold_head(vault: &Vault, channel_class: &str) {
-    let person = oneiron::comm::resolve_or_create_comm_party(vault, COUNTERPARTY).unwrap();
+    put_hold_head_for(vault, COUNTERPARTY, HEAD_SEED, channel_class);
+}
+
+fn put_hold_head_for(vault: &Vault, counterparty: &str, seed: u8, channel_class: &str) {
+    let person = oneiron::comm::resolve_or_create_comm_party(vault, counterparty).unwrap();
     let claim = ClaimBody::new(
         HOLD_CLASS,
         ClaimSubject::Entity(person),
@@ -147,12 +157,7 @@ fn put_hold_head(vault: &Vault, channel_class: &str) {
     )
     .unwrap();
     vault
-        .put_claim(
-            &test_id(HEAD_SEED),
-            &claim,
-            TimeRange { start: 3, end: 3 },
-            3,
-        )
+        .put_claim(&test_id(seed), &claim, TimeRange { start: 3, end: 3 }, 3)
         .expect("the class's head lands");
 }
 
@@ -175,9 +180,23 @@ fn dispatch(
     channel: &str,
     intent_ref: &str,
 ) -> OutboundDispatchResult {
+    let (result, calls) = dispatch_to(vault, actor, COUNTERPARTY, channel, intent_ref);
+    assert_eq!(calls, 0, "no send reaches the transport on this vault");
+    result
+}
+
+/// One direct-pipeline send to `counterparty`, and how many sends reached
+/// the transport.
+fn dispatch_to(
+    vault: &Vault,
+    actor: EntityId,
+    counterparty: &str,
+    channel: &str,
+    intent_ref: &str,
+) -> (OutboundDispatchResult, usize) {
     let mut sink = RecordingSink::default();
     let intent = OutboundIntent::from_trigger(
-        OutboundIntentDraft::new(actor.to_hex(), VERB, channel, COUNTERPARTY)
+        OutboundIntentDraft::new(actor.to_hex(), VERB, channel, counterparty)
             .content_ref("content:cutover"),
         OutboundIntentTrigger::agent_immediate("session:cutover"),
     );
@@ -190,10 +209,9 @@ fn dispatch(
         1_000,
         OutboundDeliveryWindowDecision::DeliverNow,
     )
-    .counterparty_ref(COUNTERPARTY);
+    .counterparty_ref(counterparty);
     let result = vault.dispatch_outbound_intent(request, &mut sink).unwrap();
-    assert_eq!(sink.calls, 0, "no send reaches the transport on this vault");
-    result
+    (result, sink.calls)
 }
 
 /// Whether the opt-out hold fired.
@@ -405,4 +423,94 @@ fn a_revoked_contact_still_holds() {
         "{:?}",
         result.receipt.policy_trace
     );
+}
+
+/// A policy manifest that grants `actor` the send on email and sets
+/// [`HOLD_CLASS`]'s posture to allow_with_receipt, as an owner's
+/// deployment-local row does. The vault-wide `comm_opt_out_posture` keeps its
+/// shipped default, escalate.
+fn class_posture_manifest(actor: EntityId) -> Vec<u8> {
+    let actor_ref = actor.to_hex();
+    let manifest = serde_json::json!({
+        "schema_version": "1.2",
+        "pack_id": "class-posture-fixture",
+        "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {"criticality": "normal", "sensitivity": "normal"},
+        "rules": [],
+        "actor_ceilings": [
+            {"actor_class": "agent", "actor_ref": actor_ref, "ceiling": "auto"}
+        ],
+        "scoped_grants": [{
+            "actor_ref": actor_ref,
+            "effector": format!("external:{VERB}"),
+            "scope": oneiron::test_support::effect_preset(),
+            "selectors": {"channel": EMAIL},
+        }],
+        "policy_values": [{
+            "row_ref": "class-posture.acme-legal-hold",
+            "key": format!("claim_class_posture:{HOLD_CLASS}"),
+            "value": "allow_with_receipt",
+            "scope": {"level": "vault"},
+        }],
+    });
+    rmp_serde::to_vec_named(&manifest).unwrap()
+}
+
+#[test]
+fn a_class_posture_row_allows_with_receipt_for_its_class_only() {
+    let (_dir, vault, actor) = cutover_vault();
+    put_hold_class(&vault, true);
+    // The first counterparty is held by the stamped class alone.
+    put_hold_head_for(&vault, COUNTERPARTY, HEAD_SEED, EMAIL);
+    // The second is held by the stamped class and by a STOP.
+    put_hold_head_for(&vault, SECOND_COUNTERPARTY, SECOND_HEAD_SEED, EMAIL);
+    let second = CounterpartyContactRecord::user_introduction(
+        test_id(IDENTITY_SEED),
+        SECOND_COUNTERPARTY,
+        1,
+    )
+    .unwrap();
+    vault
+        .create_counterparty_contact(&test_id(SECOND_CONTACT_SEED), &second)
+        .unwrap();
+    vault
+        .opt_out_counterparty_contact(
+            &test_id(SECOND_CONTACT_SEED),
+            CounterpartyOptOutReason::Unsubscribe,
+            2,
+        )
+        .unwrap();
+    oneiron::test_support::put_policy_manifest_bytes(
+        &vault,
+        test_id(POLICY_SEED),
+        &class_posture_manifest(actor),
+    )
+    .unwrap();
+
+    let (allowed, _) = dispatch_to(&vault, actor, COUNTERPARTY, EMAIL, "intent:class-allowed");
+    assert!(
+        traces(&allowed, ENFORCEMENT_HOLD_REASON),
+        "the class still holds the send, on the receipt: {:?}",
+        allowed.receipt.policy_trace
+    );
+    assert!(
+        !held(&allowed),
+        "the class's own posture row allows it with the receipt: {:?}",
+        allowed.gate_reason_codes
+    );
+
+    let (escalated, calls) = dispatch_to(
+        &vault,
+        actor,
+        SECOND_COUNTERPARTY,
+        EMAIL,
+        "intent:stop-escalates",
+    );
+    assert_eq!(
+        escalated.gate_reason_codes,
+        vec![PENDING_OPT_OUT.to_owned()],
+        "the STOP's class has no row, so the vault's escalate holds the send"
+    );
+    assert_eq!(calls, 0);
 }
