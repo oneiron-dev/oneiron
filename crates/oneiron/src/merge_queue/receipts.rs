@@ -47,6 +47,7 @@ const fn completion_outcome(state: BatchState) -> Option<&'static str> {
         BatchState::RolledBack => Some("rolled_back"),
         BatchState::Quarantined => Some("quarantined"),
         BatchState::Cancelled => Some("cancelled"),
+        BatchState::Superseded => Some("superseded"),
         BatchState::Queued
         | BatchState::Staged
         | BatchState::Ready
@@ -281,6 +282,12 @@ impl MergeQueue<'_> {
             ),
             ("mutations", Value::Array(mutations)),
         ];
+        if batch.state == BatchState::Superseded {
+            fields.push((
+                "superseded_by",
+                self.superseding_batch_in_txn(txn, store, batch)?,
+            ));
+        }
         if let Some(quarantine) = &batch.quarantine {
             fields.push((
                 "quarantine",
@@ -302,6 +309,50 @@ impl MergeQueue<'_> {
         }
         let body = receipt_body(QUEUE_COMPLETION_PREDICATE, admission, fields)?;
         put_receipt_once_in_txn(self.vault, txn, id, &body, self.vault.now_recorded_at())
+    }
+
+    /// What a Superseded `batch`'s completion names (QUEUE Q1 = A): the
+    /// green reconciliation successor its overlap link resolved to, and
+    /// that successor's own `green_advanced` completion receipt. A trusted
+    /// low-level successor has no receipt, so only its batch is named.
+    ///
+    /// # Errors
+    /// A link that names no green successor, or a successor completion
+    /// with another outcome.
+    fn superseding_batch_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        store: &str,
+        batch: &MergeBatch,
+    ) -> Result<Value> {
+        let successor = batch
+            .drive
+            .as_ref()
+            .and_then(|drive| drive.overlap.as_ref())
+            .filter(|link| link.superseded)
+            .and_then(|link| link.resolution_batch.as_deref())
+            .ok_or(Error::InvariantViolation(
+                "a superseded queue entry names no green successor",
+            ))?;
+        let completion = receipt_id(QUEUE_COMPLETION_DOMAIN, store, successor)?;
+        let receipt = match stored_receipt_in_txn(self.vault, txn, &completion)? {
+            Some(body) => {
+                check_queue_receipt(&body, QUEUE_COMPLETION_PREDICATE, store, successor)?;
+                if receipt_field(&body.value, "outcome").and_then(Value::as_str)
+                    != Some("green_advanced")
+                {
+                    return Err(Error::ConcurrentWrite(
+                        "a superseding queue entry completed with another outcome",
+                    ));
+                }
+                Value::from(completion.to_hex())
+            }
+            None => Value::Nil,
+        };
+        Ok(Value::Map(vec![
+            ("batch".into(), Value::from(successor)),
+            ("completion".into(), receipt),
+        ]))
     }
 
     /// `batch`'s receipts, each read and checked (FIX 4338): its admission
@@ -362,8 +413,8 @@ fn admitted_proposals(body: &ClaimBody, batch: &MergeBatch) -> Result<Vec<Entity
 /// The retained queue failure of `proposal` in the queue of object store
 /// `store`, read in `txn` (FIX 4364): a receipted terminal batch that
 /// quarantined it in its failing group, or rolled it back. `None` while a
-/// batch holding it is live or reached green; a survivor of a quarantine
-/// and a cancelled entry are no failure of it.
+/// batch holding it is live or reached green; a survivor of a quarantine,
+/// a cancelled entry and a superseded one are no failure of it.
 ///
 /// # Errors
 /// A stored receipt that binds another batch, or a store failure.
@@ -392,7 +443,9 @@ pub(crate) fn proposal_queue_failure_in_txn(
                     .map(|listed| listed.id.clone())
                     .collect(),
             ),
-            (BatchState::Quarantined | BatchState::Cancelled, _) => continue,
+            (BatchState::Quarantined | BatchState::Cancelled | BatchState::Superseded, _) => {
+                continue;
+            }
             _ => return Ok(None),
         };
         let completion = receipt_id(QUEUE_COMPLETION_DOMAIN, store, &batch.id)?;

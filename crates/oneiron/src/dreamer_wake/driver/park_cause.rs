@@ -111,9 +111,10 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::DeviceAdmissionStopped => false,
         },
         LlmError::Fatal(fatal) => match fatal {
-            FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {
-                true
-            }
+            FatalLlmError::Auth
+            | FatalLlmError::SeatSignedOut { .. }
+            | FatalLlmError::Unsupported(_)
+            | FatalLlmError::ResponseErased => true,
             FatalLlmError::InvalidRequest
             | FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContextWindowExceeded { .. }

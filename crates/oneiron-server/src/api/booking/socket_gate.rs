@@ -14,8 +14,10 @@ use serde_json::Value;
 use crate::mcp::{McpEndpointTool, McpSurfaceMode};
 
 /// The MCP handshake methods `/mcp` serves a stale owner sign-in's booking
-/// caller (FIX 5934).
-const BOOKING_SOCKET_HANDSHAKE: [&str; 4] = [
+/// caller (FIX 5934), and the static `server/discover` catalog it serves
+/// every caller.
+const BOOKING_SOCKET_HANDSHAKE: [&str; 5] = [
+    "server/discover",
     "initialize",
     "notifications/initialized",
     "tools/list",
