@@ -54,7 +54,7 @@ fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
 }
 
 fn scan_off(vault: &Vault) -> Result<AuthenticatedOwner> {
-    let owner_id = vault.ensure_embedded_owner_actor()?;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner =
         vault.authenticate_owner(owner_id, "owen@example.com", true, GateDecisionId::now())?;
     vault.set_secret_scan_mode(&owner, SecretScanMode::Off, LEARNED_AT)?;
