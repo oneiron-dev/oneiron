@@ -328,7 +328,10 @@ fn mcp_page_rows_read_now(
 /// after the rows are judged, so no authority commit before the judgement
 /// goes unseen.
 fn mcp_authority_unchanged_since(server: &SyncServer, produced_at: Option<u64>) -> bool {
-    produced_at.is_some() && server.vault.authority_generation().ok() == produced_at
+    // RED PROOF ONLY: the authority generation is not consulted (#7383's
+    // round-1 head): the mint keeps the rows filtered after the producer ran.
+    let _ = (server, produced_at);
+    true
 }
 
 /// Whether the caller's read at this call still admits every row page one's
