@@ -283,7 +283,9 @@ pub fn skill_edit_goal(vault: &Vault, skill: &EntityId) -> Result<SkillEditGoal>
 }
 
 /// The effective goal under a live owner proof, never the Coach's read grant.
-pub(crate) fn skill_edit_goal_as_owner(
+/// # Errors
+/// As [`skill_edit_goal`], and a proof that no longer holds the vault.
+pub fn skill_edit_goal_as_owner(
     vault: &Vault,
     owner: &crate::consent::AuthenticatedOwner,
     skill: &EntityId,
@@ -325,17 +327,21 @@ fn skill_edit_goal_sourced_as_in_txn(
 ) -> Result<(SkillEditGoal, Option<BTreeSet<EntityId>>)> {
     let (definition, source_rows) =
         goal_definition_sourced_in_txn(vault, txn, skill, Some(reader))?;
-    Ok((
-        SkillEditGoal {
-            goal_id: definition.goal_id,
-            revision: definition.revision,
-            axes: definition.axes,
-            project: definition
-                .project
-                .map(|join| (join.project, join.goal_claim)),
-        },
-        source_rows,
-    ))
+    Ok((edit_goal_of(&definition), source_rows))
+}
+
+/// The effective goal a definition the gate resolved names, for a host
+/// scorer (`HeldOutReplayCase::goal`).
+pub(super) fn edit_goal_of(definition: &GoalDefinition) -> SkillEditGoal {
+    SkillEditGoal {
+        goal_id: definition.goal_id,
+        revision: definition.revision.clone(),
+        axes: definition.axes.clone(),
+        project: definition
+            .project
+            .as_ref()
+            .map(|join| (join.project, join.goal_claim)),
+    }
 }
 
 /// The authenticated human sets the goal axes used by the optimizer for this

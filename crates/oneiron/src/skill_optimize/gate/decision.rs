@@ -265,12 +265,16 @@ fn rule_on_proposal(
         Prepared::Score(inputs) => *inputs,
     };
 
+    // The goal this ruling stands under, read as the acting reader, for a
+    // host scorer to declare and word its axes from (review round 1 of #7553).
+    let edit_goal = super::goal_axis::edit_goal_of(&inputs.goal_definition);
     let current_case = HeldOutReplayCase {
         skill: inputs.target,
         skill_id: &inputs.target_record.skill_id,
         version: &inputs.target_record.version,
         instructions: &inputs.target_instructions,
         held_out_receipts: &inputs.held_out,
+        goal: Some(&edit_goal),
     };
     let proposed_case = HeldOutReplayCase {
         skill: inputs.target,
@@ -278,6 +282,7 @@ fn rule_on_proposal(
         version: &inputs.proposal.version,
         instructions: &inputs.proposal_instructions,
         held_out_receipts: &inputs.held_out,
+        goal: Some(&edit_goal),
     };
     // A project goal's measured axes come from its bound live report, read
     // before any judgment so a missing one retries without spending them.

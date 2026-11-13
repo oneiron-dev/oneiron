@@ -246,6 +246,7 @@ fn replay_case<'a>(
         version: &record.version,
         instructions: &record.desc,
         held_out_receipts: receipts,
+        goal: None,
     }
 }
 

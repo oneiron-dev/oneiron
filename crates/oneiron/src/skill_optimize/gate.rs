@@ -156,7 +156,6 @@ mod tradeoff_capacity;
 mod verdict;
 
 pub(crate) use decision::score_gate_skill_edit_as_owner;
-pub(crate) use goal_axis::skill_edit_goal_as_owner;
 pub(crate) use live::measure_skill_edit_goal_axes_as_owner;
 pub(crate) use preflight::preflight_skill_edit_offline_floors_as_owner;
 
@@ -175,7 +174,7 @@ pub use decision::{
 };
 pub use goal_axis::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, SkillEditGoal, set_skill_edit_goal_axes,
-    skill_edit_goal,
+    skill_edit_goal, skill_edit_goal_as_owner,
 };
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,

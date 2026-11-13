@@ -185,12 +185,16 @@ fn preflight_with_owner(
         &held_out,
         scorer,
     )?;
+    // The goal the preflight reads under, for a host scorer (review round 1
+    // of #7553).
+    let edit_goal = super::goal_axis::edit_goal_of(&definition);
     let before = HeldOutReplayCase {
         skill: target,
         skill_id: &current.skill_id,
         version: &current.version,
         instructions: &current_instructions,
         held_out_receipts: &held_out,
+        goal: Some(&edit_goal),
     };
     let after = HeldOutReplayCase {
         skill: target,
@@ -198,6 +202,7 @@ fn preflight_with_owner(
         version: &staged.version,
         instructions: &staged_instructions,
         held_out_receipts: &held_out,
+        goal: Some(&edit_goal),
     };
     let honesty = super::measurement::measure_honesty(scorer, &before, &after)?;
     let floor = |name: &str| {
