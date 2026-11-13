@@ -137,14 +137,24 @@ pub(super) fn binding(
             };
             Ok((bytes, verdict))
         }
+        // A fork decided before the review reads its verdict from the
+        // receipt that decided it, never a refusal of the whole review.
         RunReviewChange::Note { note_ref, fork_ref } => {
-            let (_, bytes) = crate::note::run_note_review_in_txn(
+            use crate::note::{NoteForkState, NoteVerdict};
+            let (bytes, state) = crate::note::run_note_review_in_txn(
                 vault,
                 txn,
                 EntityId::from_hex(note_ref)?,
                 EntityId::from_hex(fork_ref)?,
             )?;
-            Ok((bytes, RunChangeVerdict::Waiting))
+            let verdict = match state {
+                NoteForkState::Waiting => RunChangeVerdict::Waiting,
+                NoteForkState::Absent | NoteForkState::Decided(Some(NoteVerdict::Reject)) => {
+                    RunChangeVerdict::Rejected
+                }
+                NoteForkState::Decided(_) => RunChangeVerdict::Landed,
+            };
+            Ok((bytes, verdict))
         }
         RunReviewChange::Topology { event_ref } => {
             let id = EntityId::from_hex(event_ref)?;

@@ -16,12 +16,16 @@ impl Memory<'_> {
                 .create_note_born(kind, markdown, self.write_actor(), self.birth_position)?;
         self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }
+    /// Edits a NOTE as this surface's actor. Under a host origin the edit
+    /// writes as that origin, and a fork its code run opens joins the run's
+    /// change journal.
     pub fn edit_note(&self, note_ref: &str, edit: &NoteEdit) -> MemoryResult<NoteEditOutcome> {
         let id = self.resolve_ref(note_ref)?;
         let actor = self.write_actor();
         let result = self.with_actor_content_write_txn_as(actor, |content| {
             content.update_note(id, |txn, lane| {
-                self.vault.edit_note_in_txn(txn, id, edit, actor, lane)
+                self.vault
+                    .edit_note_in_txn(txn, id, edit, actor, lane, self.host_origin.as_ref())
             })
         })?;
         #[cfg(feature = "sync")]

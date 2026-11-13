@@ -23,6 +23,7 @@ impl Memory<'_> {
     )> {
         let (actor, review) = self.admit_run_settlement_in_txn(txn, owner, input, run)?;
         let answer = RunAnswer {
+            run,
             owner,
             actor,
             approve,

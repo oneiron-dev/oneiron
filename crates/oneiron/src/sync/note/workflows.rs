@@ -86,10 +86,12 @@ impl BundleCarrier {
 
 /// `fork` in the proposal-only shape every ordinary carrier holds (FIX
 /// 8879): no historical merge basis, so no parent text. Explicit history
-/// widening is a separate export.
+/// widening is a separate export. Nor the code run that opened it: a run's
+/// change journal is this install's own.
 fn proposal_only(fork: NoteFork) -> NoteFork {
     NoteFork {
         recovery_merge: None,
+        run: None,
         ..fork
     }
 }

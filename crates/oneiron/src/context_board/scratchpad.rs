@@ -593,6 +593,7 @@ impl Memory<'_> {
                         actor,
                         lane,
                         NoteEditLanding::SessionPad { session },
+                        None,
                     )?;
                     if matches!(outcome, NoteProgramEditOutcome::Edited { .. }) {
                         run_lifecycle::observe_append_in_txn(self, txn, session, pad)?;

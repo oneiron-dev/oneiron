@@ -47,6 +47,12 @@ pub struct NoteFork {
     #[serde(with = "crate::entity_id::serde_hex::optional")]
     pub proposal: Option<EntityId>,
     pub decided: bool,
+    /// The code run whose write opened this fork (ARCH-0040 #revert-run),
+    /// from its host's binding, never from its guest; `None` for a fork no
+    /// run opened. Its landing keeps that run's undo in the run's change
+    /// journal, whoever lands it (ruling RUNCHANGES-NOTE-UNDO = A).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum NoteVerdict {
@@ -224,6 +230,12 @@ pub(crate) fn erase_receipt_actor_in_txn(
     Ok(())
 }
 
+/// Stores `fork` of `parent` as a pending fork `actor` opened. A fork `run`
+/// opened joins that run's change journal in this same write.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a fork is stored with its parent, opener, kind, stored value and run"
+)]
 pub(super) fn remember_fork(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -232,6 +244,7 @@ pub(super) fn remember_fork(
     actor: EntityId,
     rewrite: bool,
     stored: super::documents::StoredProposal,
+    run: Option<&str>,
 ) -> Result<()> {
     let recovery_merge = match stored {
         super::documents::StoredProposal::Value(text) if !rewrite => Some((parent.text(), text)),
@@ -247,8 +260,19 @@ pub(super) fn remember_fork(
         rewrite,
         proposal: None,
         decided: false,
+        run: run.map(str::to_owned),
     };
-    NOTE_FORK.put(&vault.store, txn, &fork.head, &record)
+    NOTE_FORK.put(&vault.store, txn, &fork.head, &record)?;
+    if let Some(run) = run {
+        crate::memory::run_review::record_run_note_in_txn(
+            &vault.store,
+            txn,
+            run,
+            parent.note,
+            fork.head,
+        )?;
+    }
+    Ok(())
 }
 
 /// Resolve a native pending fork's exact value basis before its history is cut.
@@ -546,8 +570,8 @@ impl Vault {
                         && grant_allows(self, txn, fork.note, actor)?
                         && !super::lifecycle::note_sealed_in_txn(&self.store, txn, fork.note)?
                     {
-                        if let Some(receipt) =
-                            land(self, txn, &mut fork, NoteVerdict::Merge, actor)?
+                        if let Some((receipt, _)) =
+                            land(self, txn, &mut fork, NoteVerdict::Merge, actor, false)?
                         {
                             bundle.landed.push(receipt);
                         } else {
@@ -597,7 +621,7 @@ impl Vault {
                     if verdict != NoteVerdict::Reject {
                         super::lifecycle::refuse_sealed_note_in_txn(&self.store, txn, fork.note)?;
                     }
-                    if let Some(receipt) = land(self, txn, fork, verdict, actor)? {
+                    if let Some((receipt, _)) = land(self, txn, fork, verdict, actor, false)? {
                         bundle.landed.push(receipt);
                     }
                 }
@@ -635,15 +659,18 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
-        self.fork_note_at_version(note, None, edit, actor)
+        self.fork_note_at_version(note, None, edit, actor, None)
     }
 
+    /// [`Self::fork_note`] at `base`; a fork `run` opened joins that run's
+    /// change journal in the fork's own write.
     pub(crate) fn fork_note_at_version(
         &self,
         note: EntityId,
         base: Option<&super::NoteVersion>,
         edit: &NoteProgramEdit,
         actor: WriteActor,
+        run: Option<&str>,
     ) -> MemoryResult<EntityId> {
         let fork = self
             .memory(actor.entity_ref(), actor.actor_class())
@@ -686,6 +713,7 @@ impl Vault {
                         actor.entity_ref(),
                         rewrite,
                         stored,
+                        run,
                     )?;
                     Ok(fork.head)
                 })
@@ -696,19 +724,27 @@ impl Vault {
         Ok(fork)
     }
 }
+/// Decides `fork` under `verdict`: its receipt, and for a landing that moved
+/// the NOTE's text the undo that restores the revision from before it. The
+/// undo is taken when `answer_undo`, or when the fork names the run that
+/// opened it: then this write keeps it on that run's journal row, whoever
+/// lands the fork (ruling RUNCHANGES-NOTE-UNDO = A). `None` when the gate
+/// held the landing.
 pub(super) fn land(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     fork: &mut NoteFork,
     verdict: NoteVerdict,
     actor: WriteActor,
-) -> Result<Option<NoteLandingReceipt>> {
+    answer_undo: bool,
+) -> Result<Option<(NoteLandingReceipt, Option<super::RunNoteUndo>)>> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     if fork.decided {
         return Err(invalid("fork already decided"));
     }
     super::verbs::note_core(vault, txn, fork.note)?;
     let current = live_doc(vault, txn, fork.note)?;
+    let undo_kept = verdict != NoteVerdict::Reject && (answer_undo || fork.run.is_some());
     let proposed = load_head(vault, txn, fork.note, fork.fork)?;
     let text = match verdict {
         NoteVerdict::Merge => {
@@ -761,6 +797,16 @@ pub(super) fn land(
     // the NOTE's text plane. The previous head's document is never deleted.
     let head = if verdict == NoteVerdict::Switch {
         vault.authorize_shared_note_write_in_txn(txn, fork.note, &actor)?;
+        if undo_kept {
+            // The undo loads the head it switched from, so that head's
+            // document is kept as a stored proposal.
+            NOTE_PROPOSAL_DOC.put(
+                &vault.store,
+                txn,
+                &HexPair(HexId(fork.note), HexId(current.head)),
+                &super::documents::snapshot(&current.doc)?,
+            )?;
+        }
         if SYNC_DS_E.contains(&vault.store, txn, &HexId(fork.note))? {
             return Err(invalid(
                 "replica NOTE head moves require authenticated authority",
@@ -805,7 +851,27 @@ pub(super) fn land(
         at: mutation_recorded_at,
     };
     NOTE_RECEIPT.put(&vault.store, txn, &receipt.id, &receipt)?;
-    Ok(Some(receipt))
+    let undo = if undo_kept {
+        let undo = super::RunNoteUndo {
+            note: fork.note.to_hex(),
+            before_head: current.head.to_hex(),
+            before: current.version(),
+            after: live_doc(vault, txn, fork.note)?.version(),
+        };
+        if let Some(run) = &fork.run {
+            crate::memory::run_review::record_run_note_landing_in_txn(
+                &vault.store,
+                txn,
+                run,
+                fork.fork,
+                &undo,
+            )?;
+        }
+        Some(undo)
+    } else {
+        None
+    };
+    Ok(Some((receipt, undo)))
 }
 
 /// A recovery merge carries the exact pre-recovery CRDT result. Subsequent,

@@ -1,37 +1,108 @@
 //! Transaction-composable review and compensation over the existing NOTE door.
 
-use super::documents::{NOTE_PROPOSAL_DOC, live_doc, load_head};
-use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, land};
-use super::side_keys::HexPair;
-use super::{NoteFork, NoteVerdict, NoteVersion};
+use super::documents::{live_doc, load_head};
+use super::proposals::{NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_RECEIPT, land};
+use super::{NoteFork, NoteLandingReceipt, NoteVerdict, NoteVersion};
 use crate::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::side_table::HexId;
 use serde::{Deserialize, Serialize};
 
+/// What restores a NOTE to the revision before a fork landed on it: the head
+/// it stood on and its version there, and the version the landing left.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RunNoteUndo {
     pub note: String,
-    before_head: String,
-    before: NoteVersion,
-    after: NoteVersion,
+    pub(super) before_head: String,
+    pub(super) before: NoteVersion,
+    pub(super) after: NoteVersion,
 }
 
+/// Where a NOTE fork stands, for a run review and a run journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoteForkState {
+    /// No fork has that ref on that NOTE: an erase of its opener took a
+    /// pending fork, or none was opened.
+    Absent,
+    /// Pending: no one decided it.
+    Waiting,
+    /// Decided, under the verdict its landing receipt names; `None` when
+    /// that receipt is gone.
+    Decided(Option<NoteVerdict>),
+}
+
+/// `fork` of `note`'s record, when it has one.
+fn fork_record_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    fork: EntityId,
+) -> MemoryResult<Option<NoteFork>> {
+    Ok(NOTE_FORK
+        .get(&vault.store, txn, &fork)?
+        .filter(|record| record.note == note))
+}
+
+/// The receipt that decided `fork`, read by fork as the version tree reads it.
+fn landing_receipt_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    fork: EntityId,
+) -> MemoryResult<Option<NoteLandingReceipt>> {
+    Ok(NOTE_RECEIPT
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, receipt)| receipt)
+        .find(|receipt| receipt.fork == fork))
+}
+
+/// Where `fork` of `note` stands now, for a run journal's NOTE row.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn note_fork_state_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    fork: EntityId,
+) -> MemoryResult<NoteForkState> {
+    Ok(match fork_record_in_txn(vault, txn, note, fork)? {
+        None => NoteForkState::Absent,
+        Some(record) if !record.decided => NoteForkState::Waiting,
+        Some(_) => NoteForkState::Decided(
+            landing_receipt_in_txn(vault, txn, fork)?.map(|receipt| receipt.verdict),
+        ),
+    })
+}
+
+/// The bytes a run review binds for `fork` of `note`, and where the fork
+/// stands. A pending fork binds its record, the live version and its own; a
+/// decided fork binds its record, the live version and the receipt that
+/// decided it, so a review reads its verdict and does not refuse it.
+///
+/// # Errors
+/// `not_found` when no fork has that ref on that NOTE; a store failure.
 pub(crate) fn run_note_review_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     note: EntityId,
     fork: EntityId,
-) -> MemoryResult<(NoteFork, Vec<u8>)> {
-    let record = NOTE_FORK
-        .get(&vault.store, txn, &fork)?
-        .filter(|record| record.note == note && !record.decided)
-        .ok_or_else(|| MemoryError::not_found("no pending NOTE fork has that ref"))?;
-    let live = live_doc(vault, txn, note)?;
-    let proposed = load_head(vault, txn, note, fork)?;
-    let binding = serde_json::to_vec(&(&record, live.version(), proposed.version()))
-        .map_err(|_| MemoryError::bad_request("NOTE review cannot be encoded"))?;
-    Ok((record, binding))
+) -> MemoryResult<(Vec<u8>, NoteForkState)> {
+    let record = fork_record_in_txn(vault, txn, note, fork)?
+        .ok_or_else(|| MemoryError::not_found("no NOTE fork has that ref"))?;
+    let live = live_doc(vault, txn, note)?.version();
+    let (binding, state) = if record.decided {
+        let receipt = landing_receipt_in_txn(vault, txn, fork)?;
+        let state = NoteForkState::Decided(receipt.as_ref().map(|receipt| receipt.verdict));
+        (serde_json::to_vec(&(&record, live, receipt)), state)
+    } else {
+        let proposed = load_head(vault, txn, note, fork)?.version();
+        (
+            serde_json::to_vec(&(&record, live, proposed)),
+            NoteForkState::Waiting,
+        )
+    };
+    let binding = binding.map_err(|_| MemoryError::bad_request("NOTE review cannot be encoded"))?;
+    Ok((binding, state))
 }
 
 pub(crate) fn settle_run_note_in_txn(
@@ -40,9 +111,11 @@ pub(crate) fn settle_run_note_in_txn(
     note: EntityId,
     fork: EntityId,
     approve: bool,
-) -> MemoryResult<Option<(String, RunNoteUndo)>> {
+) -> MemoryResult<Option<(String, Option<RunNoteUndo>)>> {
     let vault = memory.vault();
-    let (mut record, _) = run_note_review_in_txn(vault, txn, note, fork)?;
+    let mut record = fork_record_in_txn(vault, txn, note, fork)?
+        .filter(|record| !record.decided)
+        .ok_or_else(|| MemoryError::not_found("no pending NOTE fork has that ref"))?;
     let actor = memory.write_actor();
     if record.actor.is(actor.entity_ref()) {
         return Err(MemoryError::bad_request(
@@ -54,17 +127,6 @@ pub(crate) fn settle_run_note_in_txn(
             "no grant to settle this NOTE fork",
         ));
     }
-    let before = live_doc(vault, txn, note)?;
-    let before_head = before.head().to_hex();
-    if approve && record.rewrite {
-        NOTE_PROPOSAL_DOC.put(
-            &vault.store,
-            txn,
-            &HexPair(HexId(note), HexId(before.head())),
-            &super::documents::snapshot(&before.doc)?,
-        )?;
-    }
-    let before = before.version();
     let verdict = if !approve {
         NoteVerdict::Reject
     } else if record.rewrite {
@@ -75,7 +137,8 @@ pub(crate) fn settle_run_note_in_txn(
     if approve {
         super::lifecycle::refuse_sealed_note_in_txn(&vault.store, txn, note)?;
     }
-    let Some(receipt) = land(vault, txn, &mut record, verdict, actor)? else {
+    // The landing takes the undo: a switch keeps the head it left.
+    let Some((receipt, undo)) = land(vault, txn, &mut record, verdict, actor, true)? else {
         return Ok(None);
     };
     if let Some(proposal) = record.proposal {
@@ -86,16 +149,7 @@ pub(crate) fn settle_run_note_in_txn(
         bundle.landed.push(receipt.clone());
         NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &proposal, &bundle)?;
     }
-    let after = live_doc(vault, txn, note)?.version();
-    Ok(Some((
-        receipt.id.to_hex(),
-        RunNoteUndo {
-            note: note.to_hex(),
-            before_head,
-            before,
-            after,
-        },
-    )))
+    Ok(Some((receipt.id.to_hex(), undo)))
 }
 
 /// Currency and the inverse's content gate are checked in the same writer.

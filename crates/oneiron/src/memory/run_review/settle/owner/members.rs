@@ -4,6 +4,8 @@ use super::*;
 
 /// The owner's answer every member of the reviewed run settles under.
 pub(super) struct RunAnswer<'a> {
+    /// The reviewed run.
+    pub(super) run: &'a str,
     pub(super) owner: &'a AuthenticatedOwner,
     pub(super) actor: WriteActor,
     pub(super) approve: bool,
@@ -50,13 +52,7 @@ impl Memory<'_> {
                 )?;
             }
             RunReviewChange::Note { note_ref, fork_ref } => {
-                self.settle_note_member_in_txn(
-                    txn,
-                    answer.approve,
-                    note_ref,
-                    fork_ref,
-                    &mut outcome,
-                )?;
+                self.settle_note_member_in_txn(txn, answer, note_ref, fork_ref, &mut outcome)?;
             }
             RunReviewChange::Topology { event_ref } => {
                 self.settle_topology_member_in_txn(txn, answer, event_ref, &mut outcome)?;
@@ -126,14 +122,31 @@ impl Memory<'_> {
         Ok(())
     }
 
+    /// A pending fork is decided by the answer. A fork decided before this
+    /// settlement keeps the verdict its review read; one that landed takes
+    /// the undo its landing kept on the run's journal (ruling
+    /// RUNCHANGES-NOTE-UNDO = A), else it has none.
     fn settle_note_member_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        approve: bool,
+        answer: &RunAnswer<'_>,
         note_ref: &str,
         fork_ref: &str,
         outcome: &mut SettledMember,
     ) -> MemoryResult<()> {
+        if outcome.verdict != RunChangeVerdict::Waiting {
+            if outcome.verdict == RunChangeVerdict::Landed {
+                outcome.inverse = crate::memory::run_review::changes::journal_note_undo_in_txn(
+                    &self.vault().store,
+                    txn,
+                    answer.run,
+                    fork_ref,
+                )?
+                .map(RunInverse::Note);
+            }
+            return Ok(());
+        }
+        let approve = answer.approve;
         let landed = crate::note::settle_run_note_in_txn(
             self,
             txn,
@@ -149,7 +162,7 @@ impl Memory<'_> {
                 RunChangeVerdict::Rejected
             };
             if approve {
-                outcome.inverse = Some(RunInverse::Note(undo));
+                outcome.inverse = undo.map(RunInverse::Note);
             }
         }
         Ok(())

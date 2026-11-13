@@ -424,7 +424,7 @@ impl Vault {
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn, lane| {
-                    self.edit_note_landing_in_txn(txn, note, edit, actor, lane, landing)
+                    self.edit_note_landing_in_txn(txn, note, edit, actor, lane, landing, None)
                 })
             })?;
         #[cfg(feature = "sync")]
@@ -434,6 +434,7 @@ impl Vault {
 
     /// The native edit inside an actor-content writer's `update_note` gate,
     /// so supporting effects commit or roll back with the same NOTE edit.
+    /// `host` is the origin a host bound the caller's surface to, if any.
     pub(crate) fn edit_note_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -441,12 +442,28 @@ impl Vault {
         edit: &NoteProgramEdit,
         actor: WriteActor,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
+        host: Option<&crate::memory::HostWriteOrigin>,
     ) -> MemoryResult<NoteProgramEditOutcome> {
-        self.edit_note_landing_in_txn(txn, note, edit, actor, lane, super::NoteEditLanding::Grant)
+        self.edit_note_landing_in_txn(
+            txn,
+            note,
+            edit,
+            actor,
+            lane,
+            super::NoteEditLanding::Grant,
+            host,
+        )
     }
 
     /// [`Self::edit_note_in_txn`], landing through `landing`: an edit that
-    /// does not land opens a fork.
+    /// does not land opens a fork. Under a `host` origin the edit writes as
+    /// that origin, as the caller's surface does: a held edit's proposal
+    /// claim carries its envelope, and a fork the origin's code run opened
+    /// joins that run's change journal (ARCH-0040 #revert-run).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "an edit lands through its lane, its landing rule and its caller's host origin"
+    )]
     pub(crate) fn edit_note_landing_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -455,7 +472,14 @@ impl Vault {
         actor: WriteActor,
         lane: crate::core_write::CoreWriteLaneRef<'_>,
         landing: super::NoteEditLanding<'_>,
+        host: Option<&crate::memory::HostWriteOrigin>,
     ) -> MemoryResult<NoteProgramEditOutcome> {
+        let writer = match host {
+            Some(origin) => self
+                .memory(actor.entity_ref(), actor.actor_class())
+                .with_host_origin(origin.clone()),
+            None => self.memory(actor.entity_ref(), actor.actor_class()),
+        };
         // A sealed NOTE's edit opens a fork and leaves the seal intact.
         let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
         // A NOTE whose document still holds only its birth reads as the
@@ -485,9 +509,7 @@ impl Vault {
                 request_id: self.store.clock.entity_id()?,
                 change: super::NoteChange::Edit { base, edits },
             };
-            let receipt = self
-                .memory(actor.entity_ref(), actor.actor_class())
-                .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
+            let receipt = writer.apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
             return Ok(match receipt.outcome {
                 super::NoteScalarEditOutcome::Applied(_) => {
                     NoteProgramEditOutcome::Edited { head: doc.head }
@@ -523,6 +545,7 @@ impl Vault {
             actor.entity_ref(),
             rewrite,
             stored,
+            writer.host_run_ref().as_deref(),
         )?;
         Ok(if authorized {
             NoteProgramEditOutcome::RewriteFork { fork: fork.head }

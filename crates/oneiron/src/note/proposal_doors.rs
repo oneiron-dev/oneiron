@@ -191,11 +191,13 @@ impl Memory<'_> {
             return Err(withheld());
         }
         let note = crate::memory::resolve_entity_ref(self.vault(), &input.note_ref)?;
+        // A fork a code run opens joins that run's change journal.
         let fork = self.vault().fork_note_at_version(
             note,
             Some(&input.base),
             &input.edit,
             self.write_actor(),
+            self.host_run_ref().as_deref(),
         )?;
         self.read_note_fork(&NoteForkReadRequest {
             note_ref: input.note_ref.clone(),

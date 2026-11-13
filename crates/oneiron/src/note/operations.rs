@@ -665,18 +665,24 @@ fn propose_claim(
         claim_value,
         1.0,
     );
-    let source = if memory.actor_class() == EdgeActorClass::Human {
-        ClaimSource::UserStated
-    } else {
-        ClaimSource::Generated
-    };
     let actor = memory.write_actor();
-    let envelope = WriteEnvelope::new(
-        actor,
-        source,
-        WriteProvenance::new(rmpv::Value::from("note.propose_claim"))?,
-        ClaimApprovalStatus::Proposed,
-    );
+    // A surface its host bound to an origin writes the proposal under that
+    // origin's envelope, so a code run's held edit carries its run and joins
+    // the run's change journal (ARCH-0040 #revert-run).
+    let envelope = match memory.host_envelope(ClaimApprovalStatus::Proposed)? {
+        Some(envelope) => envelope,
+        None => WriteEnvelope::new(
+            actor,
+            if memory.actor_class() == EdgeActorClass::Human {
+                ClaimSource::UserStated
+            } else {
+                ClaimSource::Generated
+            },
+            WriteProvenance::new(rmpv::Value::from("note.propose_claim"))?,
+            ClaimApprovalStatus::Proposed,
+        ),
+    };
+    let source = envelope.source();
     let now = memory.vault().now_recorded_at();
     // The proposal is made from the NOTE at the version its edit names.
     let base: &[u8] = match &op.change {

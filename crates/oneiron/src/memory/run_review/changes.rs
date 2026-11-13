@@ -6,10 +6,12 @@
 //! `Memory::run_changes_as_owner` is its call surface;
 //! `record_run_claim_in_txn` is its claim writer,
 //! `record_run_topology_in_txn` its identity-topology writer,
-//! `record_run_deletion_in_txn` its delete and erase writer and
-//! `record_run_effect_in_txn` its external-effect writer. A run nobody
-//! settled is reverted from this journal (`journal_members_in_txn`), and each
-//! change's compensation is kept on its first row.
+//! `record_run_deletion_in_txn` its delete and erase writer,
+//! `record_run_effect_in_txn` its external-effect writer and
+//! `record_run_note_in_txn` its NOTE fork writer, whose landing keeps its
+//! undo through `record_run_note_landing_in_txn`. A run nobody settled is
+//! reverted from this journal (`journal_members_in_txn`), and each change's
+//! compensation is kept on its first row.
 
 use super::*;
 use crate::claim::ClaimApprovalStatus;
@@ -33,7 +35,9 @@ pub struct RunChanges {
 /// One journal row: the run, spelled whole beside its hashed key, and the
 /// change. A change's first row keeps the owner's compensation receipt once a
 /// revert took it back, and the later changes that compensation left
-/// standing; rows written before the first revert hold neither.
+/// standing; rows written before the first revert hold neither. A NOTE
+/// fork's first row keeps the undo its landing took, whoever landed it
+/// (ruling RUNCHANGES-NOTE-UNDO = A); a fork not landed has none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RunChangeRow {
     run: String,
@@ -42,6 +46,8 @@ struct RunChangeRow {
     compensation: Option<String>,
     #[serde(default)]
     unrestored: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note_undo: Option<crate::note::RunNoteUndo>,
 }
 
 /// A journal row's key: the run's hashed head and the change's write order.
@@ -192,12 +198,105 @@ pub(crate) fn record_run_effect_in_txn(
     )
 }
 
+/// Records that `run` opened `fork` of `note`, in the fork's own write. The
+/// fork lands later, or never; its landing keeps the undo on this row.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_note_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    note: EntityId,
+    fork: EntityId,
+) -> crate::Result<()> {
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::Note {
+            note_ref: note.to_hex(),
+            fork_ref: fork.to_hex(),
+        },
+    )
+}
+
+/// Keeps `undo`, which restores the revision `run`'s fork `fork` landed
+/// over, on that fork's first journal row, in the landing's own write,
+/// whoever landed it (ruling RUNCHANGES-NOTE-UNDO = A). A run whose journal
+/// does not list the fork lists it now, with its undo.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_note_landing_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    fork: EntityId,
+    undo: &crate::note::RunNoteUndo,
+) -> crate::Result<()> {
+    let run = run.strip_prefix("run:").unwrap_or(run);
+    let fork_ref = fork.to_hex();
+    let listed = CHANGES
+        .iter_from(store, &*txn, &run_hash(run))?
+        .find_map(|row| match row {
+            Ok((key, row)) if row.run == run && row.change.change() == fork_ref => {
+                Some(Ok((key, row)))
+            }
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .transpose()?;
+    match listed {
+        Some((key, mut row)) => {
+            row.note_undo = Some(undo.clone());
+            CHANGES.put(store, txn, &key, &row)
+        }
+        None => append_row_in_txn(
+            store,
+            txn,
+            run,
+            RunReviewChange::Note {
+                note_ref: undo.note.clone(),
+                fork_ref,
+            },
+            Some(undo.clone()),
+        ),
+    }
+}
+
+/// The undo the landing of `run`'s fork `fork_ref` kept on the run's
+/// journal, for a settlement of a fork that landed before it.
+pub(super) fn journal_note_undo_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    run: &str,
+    fork_ref: &str,
+) -> MemoryResult<Option<crate::note::RunNoteUndo>> {
+    Ok(first_rows_in_txn(store, txn, run)?
+        .into_iter()
+        .find(|(_, row)| row.change.change() == fork_ref)
+        .and_then(|(_, row)| row.note_undo))
+}
+
 /// Appends `change` after the run's last recorded change.
 fn record_change_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     run: &str,
     change: RunReviewChange,
+) -> crate::Result<()> {
+    append_row_in_txn(store, txn, run, change, None)
+}
+
+/// Appends `change`, with a NOTE landing's `note_undo`, after the run's last
+/// recorded change.
+fn append_row_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    change: RunReviewChange,
+    note_undo: Option<crate::note::RunNoteUndo>,
 ) -> crate::Result<()> {
     let run = run.strip_prefix("run:").unwrap_or(run);
     let head = run_hash(run);
@@ -217,6 +316,7 @@ fn record_change_in_txn(
             change,
             compensation: None,
             unrestored: Vec::new(),
+            note_undo,
         },
     )
 }
@@ -293,7 +393,10 @@ fn journal_member_in_txn(
                 .map_or(RunChangeVerdict::Landed, |(_, verdict)| verdict),
             None,
         ),
-        _ => {
+        RunReviewChange::Note { note_ref, fork_ref } => {
+            note_member_in_txn(memory.vault(), txn, &row, note_ref, fork_ref)?
+        }
+        RunReviewChange::Edge { .. } => {
             return Err(MemoryError::bad_request(
                 "the run journal holds a change kind it does not record",
             ));
@@ -344,6 +447,42 @@ fn claim_member_in_txn(
     })
 }
 
+/// A journal NOTE fork's verdict and undo (ruling RUNCHANGES-NOTE-UNDO =
+/// A): a fork that landed, whoever landed it, takes the undo its landing
+/// kept on this row, which restores the revision from before it; a pending
+/// fork waits, and a rejected fork, or one an erase of its opener took,
+/// never landed. A landed fork whose row kept no undo has none, so the
+/// revert reports it as dependent.
+fn note_member_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &RunChangeRow,
+    note_ref: &str,
+    fork_ref: &str,
+) -> MemoryResult<(RunChangeVerdict, Option<RunInverse>)> {
+    use crate::note::{NoteForkState, NoteVerdict};
+    if let Some(undo) = &row.note_undo {
+        return Ok((
+            RunChangeVerdict::Landed,
+            Some(RunInverse::Note(undo.clone())),
+        ));
+    }
+    Ok(
+        match crate::note::note_fork_state_in_txn(
+            vault,
+            txn,
+            EntityId::from_hex(note_ref)?,
+            EntityId::from_hex(fork_ref)?,
+        )? {
+            NoteForkState::Waiting => (RunChangeVerdict::Waiting, None),
+            NoteForkState::Absent | NoteForkState::Decided(Some(NoteVerdict::Reject)) => {
+                (RunChangeVerdict::Rejected, None)
+            }
+            NoteForkState::Decided(_) => (RunChangeVerdict::Landed, None),
+        },
+    )
+}
+
 /// A journal topology event's verdict and undo, from the effective ledger
 /// as a settle reads them (FIX 9966): an applied event landed and is its own
 /// undo; a proposal waits until a ruling retires it, and once approved its
@@ -381,7 +520,11 @@ pub(super) fn undo_journal_member_in_txn(
     let row = CHANGES
         .get(store, &*txn, key)?
         .ok_or_else(|| MemoryError::bad_request("change left the run"))?;
-    let (run, fresh) = (row.run.clone(), row.compensation.is_none());
+    let (run, fresh, note_undo) = (
+        row.run.clone(),
+        row.compensation.is_none(),
+        row.note_undo.clone(),
+    );
     let mut member = journal_member_in_txn(memory, &*txn, row)?;
     let undone = super::revert::undo_member_in_txn(memory, txn, owner, actor, &mut member)?;
     if fresh && undone.is_ok() {
@@ -394,6 +537,7 @@ pub(super) fn undo_journal_member_in_txn(
                 change: member.member,
                 compensation: member.compensation,
                 unrestored: member.unrestored,
+                note_undo,
             },
         )?;
     }
