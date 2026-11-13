@@ -13,7 +13,10 @@
 //! The recovery preset (`/vault-key/recovery-preset`) is the owner's choice
 //! of which ways restore the vault: `standard`, or `nobody_but_me`, where the
 //! printed sheet alone restores it. Entering `nobody_but_me` answers the
-//! sheet's code once; the vault keeps only its wrap.
+//! sheet's code once; the vault keeps only its wrap. Its switch,
+//! `nobody_but_me_any_two`, is turned on with the data-key kit its pieces
+//! come from, which this route does not issue: `oneiron recovery-kit
+//! issue-vault-key --any-two-pieces` does, and here the engine refuses it.
 
 use std::fmt;
 use std::sync::Arc;
@@ -160,7 +163,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/vault-key/recovery-preset",
-                summary: "The owner's recovery preset: standard, or nobody_but_me, where the printed sheet alone restores the vault.",
+                summary: "The owner's recovery preset: standard; nobody_but_me, where the printed sheet alone restores the vault; or nobody_but_me_any_two, where two data-key kit pieces do.",
                 row: None,
                 shape: None,
             },
@@ -566,7 +569,8 @@ async fn recovery_preset(
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RecoveryPresetRequest {
-    /// `standard` or `nobody_but_me`.
+    /// `standard` or `nobody_but_me`; `nobody_but_me_any_two` is refused
+    /// here, as it is turned on with its kit.
     preset: RecoveryPreset,
 }
 
@@ -583,7 +587,9 @@ async fn set_recovery_preset(
     let request = payload.read(&server).await?;
     let set = blocking(move || -> OwnerResult<RecoveryPresetSet> {
         let vault: &oneiron::Vault = match request.preset {
-            RecoveryPreset::NobodyButMe => held(server.vault())?,
+            RecoveryPreset::NobodyButMe | RecoveryPreset::NobodyButMeAnyTwo => {
+                held(server.vault())?
+            }
             RecoveryPreset::Standard => server.vault().as_ref(),
         };
         let change = vault.set_recovery_preset_as(&owner, request.preset)?;

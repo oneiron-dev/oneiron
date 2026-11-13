@@ -621,10 +621,21 @@ fn read_sealed(path: &Path) -> anyhow::Result<Vec<u8>> {
 /// escrow wrap. A kit that does not open the wrap opens nothing. A data-key
 /// kit's pieces rebuild the vault data key itself (FIX 5614).
 pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
+    let passkey = match (&args.kit_passkey_prf_file, &args.credential) {
+        (Some(file), Some(credential)) => {
+            let prf = secret32(
+                &super::vault_key::read_secret_file(file, "the passkey's PRF output")?,
+                "a PRF output",
+            )?;
+            Some((credential.clone(), prf))
+        }
+        _ => None,
+    };
     kit_unlock_with(
         args.vault_id.as_deref(),
         &args.pieces,
         args.secret.secret_file.as_deref(),
+        passkey,
     )
 }
 
@@ -632,12 +643,15 @@ pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
 /// one read from a mirror. A world kit rebuilds from the given pieces and
 /// opens the `world-kit` escrow wrap; no kept piece joins (FIX 11973).
 /// A data-key kit's pieces go to the engine whole to rebuild the data key,
-/// checked against its commitment with no wrap (FIX 5614). Existing vaults
-/// use [`kit_unlock_existing`] instead.
+/// checked against its commitment with no wrap (FIX 5614), and with the
+/// synced `passkey`, the piece the backup carries under it joins them, so it
+/// counts as one of the two (census L10-18). Existing vaults use
+/// [`kit_unlock_existing`] instead.
 pub(super) fn kit_unlock_with(
     vault_id: Option<&str>,
     files: &[PathBuf],
     secret_file: Option<&Path>,
+    passkey: Option<(String, Zeroizing<[u8; 32]>)>,
 ) -> anyhow::Result<HostUnlock> {
     let vault_id = vault_id.ok_or_else(|| {
         anyhow::anyhow!("--unlock kit names the vault the kit is bound to: --vault-id")
@@ -649,8 +663,8 @@ pub(super) fn kit_unlock_with(
     );
     // A fresh restore rebuilds from the pieces given alone (FIX 11973).
     // Existing plain and sealed vaults use kit_unlock_existing so this
-    // install's exact kept piece can join.
-    let (pieces, passphrase) = read_kit(files, secret_file, false)?;
+    // install's exact kept piece can join. A passkey's piece counts as one.
+    let (pieces, passphrase) = read_kit(files, secret_file, passkey.is_some())?;
     if pieces
         .first()
         .is_some_and(|piece| piece.kind() == KitSecretKind::VaultKey)
@@ -659,8 +673,13 @@ pub(super) fn kit_unlock_with(
             vault_id: *vault_id,
             pieces,
             passphrase,
+            passkey,
         });
     }
+    anyhow::ensure!(
+        passkey.is_none(),
+        "a passkey is a piece of the data-key kit only, never of the world kit"
+    );
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let secret = restore_kit(
         *vault_id,
@@ -707,6 +726,7 @@ pub(super) fn kit_unlock_existing(
             vault_id: *vault_id,
             pieces,
             passphrase,
+            passkey: None,
         });
     }
     Ok(HostUnlock::WorldKit {

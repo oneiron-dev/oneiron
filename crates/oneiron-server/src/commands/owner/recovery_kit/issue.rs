@@ -10,18 +10,22 @@ use oneiron::recovery::{
     CodeKeeping, KitCoverage, KitIssue, KitMachine, KitPassphrase, KitPiece, KitSecretKind,
     PassphraseCost, PieceHome,
 };
-use oneiron::world_keys::{IssuedVaultKeyKit, IssuedWorldKit, StoredCost, VaultKeyStatus};
+use oneiron::world_keys::{
+    IssuedVaultKeyKit, IssuedWorldKit, KitPasskey, StoredCost, VaultKeyStatus,
+};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::super::vault_key::{KeyNeed, UnlockRequest, open_with_unlock_for_secret};
+use super::super::vault_key::{
+    KeyNeed, UnlockRequest, open_with_unlock_for_secret, read_secret_file,
+};
 use super::{INSTEAD, emit, read_passphrase};
 use crate::cli::RecoveryKitIssueArgs;
 use crate::commands::credential_file;
 use crate::config::resolve_serve_config;
 use crate::owner::host_owner;
 use crate::owner::recovery_kit::kit_id;
-use crate::owner::vault_key::hex;
+use crate::owner::vault_key::{RecoveryPresetSet, hex, secret32};
 
 /// One stored piece's file.
 #[derive(Serialize)]
@@ -44,6 +48,11 @@ struct Issued {
 }
 
 pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.passkey_credential.is_none() && !args.any_two_pieces,
+        "a passkey is a piece of the data-key kit only, and \"any 2 pieces\" turns on with one: \
+         recovery-kit issue-vault-key"
+    );
     let unlock = UnlockRequest::of(&args.unlock);
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_with_unlock_for_secret(
@@ -106,6 +115,9 @@ struct IssuedVaultKey {
     /// Whether the kit's public facts went into the kit inventory (`recovery-kit
     /// status`). Its pieces open the key either way.
     listed: bool,
+    /// With `--any-two-pieces`: what turning the switch on did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery_preset: Option<RecoveryPresetSet>,
 }
 
 /// `recovery-kit issue-vault-key` (FIX 4532): a kit of the vault data key on
@@ -133,21 +145,41 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
     if vault.vault_key_status()? == VaultKeyStatus::NoKey {
         anyhow::bail!("the vault has no data key yet: there is nothing to put in a kit")
     }
+    let prf = args
+        .passkey_prf_file
+        .as_deref()
+        .map(|file| {
+            secret32(
+                &read_secret_file(file, "the passkey's PRF output")?,
+                "a PRF output",
+            )
+        })
+        .transpose()?;
+    let passkey = match (args.passkey_credential.as_deref(), prf.as_ref()) {
+        (Some(credential), Some(prf)) => Some(KitPasskey { credential, prf }),
+        _ => None,
+    };
+    let issue = KitIssue {
+        vault_id: vault.vault_key_vault_id(),
+        homes,
+        passphrase: passphrase.as_ref(),
+        cost: PassphraseCost::DEFAULT,
+        only_machine: false,
+    };
+    let (kit, recovery_preset) = if args.any_two_pieces {
+        let switched = vault.set_recovery_preset_any_two_as(&owner, &issue, passkey)?;
+        let (set, _) = RecoveryPresetSet::of(&vault.vault_key_vault_id(), switched.change);
+        (switched.kit, Some(set))
+    } else {
+        let kit = vault.issue_vault_key_recovery_kit_with_passkey_as(&owner, &issue, passkey)?;
+        (kit, None)
+    };
     let IssuedVaultKeyKit {
         vault_id,
         manifest,
         pieces,
         listed,
-    } = vault.issue_vault_key_recovery_kit_as(
-        &owner,
-        &KitIssue {
-            vault_id: vault.vault_key_vault_id(),
-            homes,
-            passphrase: passphrase.as_ref(),
-            cost: PassphraseCost::DEFAULT,
-            only_machine: false,
-        },
-    )?;
+    } = kit;
     let files = write_pieces(&args.out, &pieces)?;
     emit(&IssuedVaultKey {
         vault_id: hex(&vault_id),
@@ -161,6 +193,7 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         coverage: manifest.coverage,
         pieces: files,
         listed,
+        recovery_preset,
     })
 }
 
@@ -243,6 +276,7 @@ fn parse_home(text: &str) -> anyhow::Result<PieceHome> {
             "file-here" => PieceHome::RecoveryCode(CodeKeeping::FileOn(KitMachine::ThisMachine)),
             "trusted-person" => PieceHome::TrustedPerson,
             "security-key" => PieceHome::SecurityKey,
+            "passkey" => PieceHome::Passkey,
             "passphrase" => PieceHome::Passphrase,
             "this-machine" => PieceHome::ThisMachine,
             _ => anyhow::bail!("--home {text} is not a kit home"),

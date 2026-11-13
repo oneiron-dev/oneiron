@@ -2097,6 +2097,35 @@ On a new host, the sheet restores the vault:
 oneiron restore BACKUP --unlock sheet --secret-file /Volumes/KEY/sheet.txt --trust signer.json
 ```
 
+#### The switch "any 2 pieces"
+
+Under "Nobody but me", one switch requires any two pieces: the passkey, the sheet, a trusted person
+or an old device. It turns on with the data-key kit those pieces come from, three homes as any kit
+has, issued in the same write:
+
+```sh
+oneiron recovery-kit issue-vault-key --any-two-pieces --out /Volumes/KEY/kit \
+  --home paper --home passkey --home trusted-person \
+  --passkey-credential phone --passkey-prf-file prf.bin
+```
+
+The `paper` piece's code is the new sheet; `trusted-person` and `other-machine:<id>` (an old device)
+are a piece each. A `passkey` home hands out no file: its piece is sealed under the passkey's PRF
+output, at the PRF input `vault-key status` prints for that name, into the vault key's
+`kit_point:<kit>:<name>` wrap, so a new device with the synced passkey has it. The same home works
+in any kit issued with `issue-vault-key`, and never in a world kit: a passkey restores the vault
+key only. The write also removes the sheet's wrap, the password and every passkey wrap, and retires
+every escrow recipient but the world kit's. From then on one piece opens nothing and two do, or one
+and the kit passphrase; no password, passkey or escrow wrap may be added. On a new host:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id HEX --piece /Volumes/KEY/kit/piece-1.txt \
+  --credential phone --kit-passkey-prf-file prf.bin --trust signer.json
+```
+
+`vault-key recovery-preset --set nobody-but-me` turns the switch off: it prints a fresh sheet, and
+the kit stays usable. The old sheet opens nothing written after either change.
+
 A sheet, passkey or capsule handed out before the change still opens the backups written before it:
 the data key does not rotate. The preset governs what the vault carries from then on.
 

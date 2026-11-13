@@ -28,14 +28,23 @@
 //! for each install a carried device wrap names join the pieces given (FIX
 //! 11976), and so does the piece of the install the vault id alone names as
 //! keeping one, with no device wrap carried for it (FIX 12054).
+//!
+//! A `Passkey` home's piece is handed to no one: it is sealed under the
+//! owner's passkey into a `kit_point` wrap in the issuing write, and an
+//! unlock that names the passkey joins it to the pieces given (census L10-18,
+//! [`kit_passkey`](super::kit_passkey)).
 
 use std::path::Path;
 use std::sync::Arc;
 
 use oneiron_keystore::DeviceKeystore;
 
-use super::super::page_seal::read_mirror_carried;
-use super::{CarriedVaultKey, STATE, VaultDataKey, VaultKeyUnlock, VaultKeyWrapKind};
+use super::super::page_seal::{WrapTransition, read_mirror_carried};
+use super::kit_passkey::{kit_point_kind, passkey_pieces, seal_kit_point};
+use super::{
+    CarriedVaultKey, KitPasskey, STATE, StoredWrap, VaultDataKey, VaultKeyUnlock, VaultKeyWrapInfo,
+    VaultKeyWrapKind, WRAPS, check_name,
+};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -51,7 +60,7 @@ use crate::{
     },
     store::recovery_kit::{
         KitError, KitId, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair,
-        KitSecretKind, RestoredKitSecret,
+        KitSecretKind, PieceHome, RestoredKitSecret,
     },
 };
 
@@ -63,8 +72,9 @@ pub struct IssuedVaultKeyKit {
     /// ([`Vault::vault_key_vault_id`]): a restore names it.
     pub vault_id: [u8; 32],
     pub manifest: KitManifest,
-    /// The pieces to hand out, in x order. A passphrase home has none, and a
-    /// `ThisMachine` home's piece is in this install's key slots (FIX 2063).
+    /// The pieces to hand out, in x order. A passphrase home has none, a
+    /// `ThisMachine` home's piece is in this install's key slots (FIX 2063),
+    /// and a `Passkey` home's is in the vault key's `kit_point` wrap.
     pub pieces: Vec<KitPiece>,
     /// Whether the kit's public facts went into the kit inventory. The
     /// pieces open the key either way; a vault that took no write keeps no
@@ -72,13 +82,44 @@ pub struct IssuedVaultKeyKit {
     pub listed: bool,
 }
 
+/// A data-key kit drawn and not yet handed over: its public facts, the
+/// pieces for the owner to place (a `ThisMachine` home's still among them),
+/// and a `Passkey` home's piece sealed as the `kit_point` wrap the issuing
+/// write stores, its kind and envelope. Nothing of it is written yet.
+pub(super) struct DrawnVaultKeyKit {
+    vault_id: [u8; 32],
+    pub(super) commitment: [u8; 32],
+    pub(super) manifest: KitManifest,
+    pieces: Vec<KitPiece>,
+    pub(super) point: Option<(VaultKeyWrapKind, Vec<u8>)>,
+    store: Option<KitPieceStore>,
+}
+
+impl DrawnVaultKeyKit {
+    /// Issue's last step, once its write went through: a `ThisMachine`
+    /// home's piece to this install's key slots, replacing the piece an
+    /// earlier data-key kit kept there (FIX 2063), and the other pieces
+    /// handed over.
+    pub(super) fn hand_over(self, listed: bool) -> Result<IssuedVaultKeyKit> {
+        let pair = KitPiecePair::Current(KitSecretKind::VaultKey);
+        let pieces = keep_this_machine_piece(self.store.as_ref(), pair, self.pieces)?;
+        Ok(IssuedVaultKeyKit {
+            vault_id: self.vault_id,
+            manifest: self.manifest,
+            pieces,
+            listed,
+        })
+    }
+}
+
 /// The vault data key the data-key kit's pieces in `unlock` rebuild for the
 /// vault `vault_id`, checked against the commitment `carried` names. The id
 /// the owner names the kit by must be `vault_id`: another vault's is refused
 /// before any passphrase work. With the keystore `unlock` names, this
 /// machine's own piece of the kit joins the pieces given (FIX 11976), as
-/// [`Vault::restore_kit_here`] joins it on an open vault. Every kit refusal
-/// names its fixed reason, never piece bytes.
+/// [`Vault::restore_kit_here`] joins it on an open vault; with the passkey it
+/// names, the piece a carried `kit_point` wrap seals under it joins them too.
+/// Every kit refusal names its fixed reason, never piece bytes.
 pub(super) fn open_kit(
     vault_id: &[u8; 32],
     carried: &CarriedVaultKey,
@@ -88,6 +129,7 @@ pub(super) fn open_kit(
         vault_id: named,
         pieces,
         passphrase,
+        passkey,
         keystore,
     } = unlock
     else {
@@ -96,7 +138,18 @@ pub(super) fn open_kit(
     if named != vault_id {
         return Err(refused("the kit names another vault"));
     }
-    let given: Vec<&KitPiece> = pieces.iter().collect();
+    let mut given: Vec<&KitPiece> = pieces.iter().collect();
+    let sealed = match passkey {
+        Some(passkey) => passkey_pieces(
+            vault_id,
+            carried.commitment(),
+            &carried.0.wraps,
+            *passkey,
+            &given,
+        )?,
+        None => Vec::new(),
+    };
+    given.extend(&sealed);
     let (kept, unreadable) = match keystore {
         Some(keystore) => kept_pieces(keystore, vault_id, carried, KitSecretKind::VaultKey, None),
         None => (Vec::new(), false),
@@ -366,10 +419,94 @@ impl Vault {
         owner: &AuthenticatedOwner,
         issue: &KitIssue<'_>,
     ) -> Result<IssuedVaultKeyKit> {
+        self.issue_vault_key_recovery_kit_with_passkey_as(owner, issue, None)
+    }
+
+    /// [`Self::issue_vault_key_recovery_kit_as`], with the owner's synced
+    /// passkey keeping one piece (census L10-18): a `Passkey` home's piece is
+    /// sealed under `passkey`'s PRF output into a `kit_point` wrap, stored in
+    /// the write that lists the kit, and handed to no one. That write must go
+    /// through, or nothing is issued. A kit holds at most one passkey piece,
+    /// and only with its passkey. Under every recovery preset: the wrap opens
+    /// a piece, never the key.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::issue_vault_key_recovery_kit_as`]; a `Passkey` home
+    /// with no passkey, a passkey with no such home, or two passkey homes;
+    /// and the listing's own refusal.
+    pub fn issue_vault_key_recovery_kit_with_passkey_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        issue: &KitIssue<'_>,
+        passkey: Option<KitPasskey<'_>>,
+    ) -> Result<IssuedVaultKeyKit> {
+        let mut drawn = self.draw_vault_key_kit(owner, issue, passkey)?;
+        if let Some(point) = drawn.point.take() {
+            let transition = self.begin_wrap_transition()?;
+            self.with_write_txn(|txn| {
+                self.list_vault_key_kit_in_txn(txn, owner, &drawn.manifest)?;
+                self.put_kit_point_in_txn(txn, &transition, &drawn.commitment, point)
+            })?;
+            transition.finish()?;
+            return drawn.hand_over(true);
+        }
+        let pair = KitPiecePair::Current(KitSecretKind::VaultKey);
+        let pieces = keep_this_machine_piece(drawn.store.as_ref(), pair, drawn.pieces)?;
+        // The pieces never depend on the row: a write refused here (a vault
+        // that takes none, a proof gone since the snapshot) is said, and the
+        // kit is handed over all the same.
+        let listed = match self
+            .with_write_txn(|txn| self.list_vault_key_kit_in_txn(txn, owner, &drawn.manifest))
+        {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "the data-key kit was issued and not listed in the kit inventory"
+                );
+                false
+            }
+        };
+        Ok(IssuedVaultKeyKit {
+            vault_id: drawn.vault_id,
+            manifest: drawn.manifest,
+            pieces,
+            listed,
+        })
+    }
+
+    /// Draws a data-key kit of the held key over `issue`'s homes, as
+    /// [`Self::issue_vault_key_recovery_kit_as`] reads them: the owner proof,
+    /// the key's commitment and the machine roster in one snapshot. A
+    /// `Passkey` home's piece is sealed under `passkey` as its `kit_point`
+    /// wrap's envelope, and taken out of the pieces. Nothing is written or
+    /// kept yet.
+    pub(super) fn draw_vault_key_kit(
+        &self,
+        owner: &AuthenticatedOwner,
+        issue: &KitIssue<'_>,
+        passkey: Option<KitPasskey<'_>>,
+    ) -> Result<DrawnVaultKeyKit> {
+        let passkey_homes = issue
+            .homes
+            .iter()
+            .filter(|home| **home == PieceHome::Passkey)
+            .count();
+        match (passkey_homes, passkey) {
+            (0, None) | (1, Some(_)) => {}
+            (0, Some(_)) => return Err(refused("the kit has no passkey home for this passkey")),
+            (1, None) => return Err(refused("a passkey home needs the passkey's PRF output")),
+            _ => return Err(refused("a kit holds at most one passkey piece")),
+        }
+        if let Some(passkey) = passkey {
+            check_name(passkey.credential)?;
+        }
         let key = self
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
         let vault_id = self.vault_key_vault_id();
+        let commitment = key.commitment(&vault_id);
         let store = self.this_machine_piece_store(&issue.homes)?;
         let (only_machine, me) = {
             let txn = self.store.env.read_txn()?;
@@ -377,7 +514,7 @@ impl Vault {
             let state = STATE
                 .get(&self.store, &txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
-            if key.commitment(&vault_id) != state.commitment {
+            if commitment != state.commitment {
                 return Err(refused(
                     "the held key is not the one this vault's commitment names",
                 ));
@@ -407,29 +544,60 @@ impl Vault {
         )
         .map_err(kit_refused)?;
         let manifest = kit.manifest().clone();
-        let pair = KitPiecePair::Current(KitSecretKind::VaultKey);
-        let pieces = keep_this_machine_piece(store.as_ref(), pair, kit.into_pieces())?;
-        // The pieces never depend on the row: a write refused here (a vault
-        // that takes none, a proof gone since the snapshot) is said, and the
-        // kit is handed over all the same.
-        let listed = match self
-            .with_write_txn(|txn| self.list_vault_key_kit_in_txn(txn, owner, &manifest))
-        {
-            Ok(()) => true,
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    "the data-key kit was issued and not listed in the kit inventory"
-                );
-                false
+        let mut pieces = kit.into_pieces();
+        let point = match passkey {
+            Some(passkey) => {
+                let at = pieces
+                    .iter()
+                    .position(|piece| piece.home() == Some(&PieceHome::Passkey))
+                    .ok_or_else(|| refused("the kit drew no passkey piece"))?;
+                let piece = pieces.remove(at);
+                let kind = kit_point_kind(manifest.kit_id, passkey.credential);
+                let envelope = seal_kit_point(&vault_id, &commitment, &kind, passkey, &piece)?;
+                Some((kind, envelope))
             }
+            None => None,
         };
-        Ok(IssuedVaultKeyKit {
+        Ok(DrawnVaultKeyKit {
             vault_id,
+            commitment,
             manifest,
             pieces,
-            listed,
+            point,
+            store,
         })
+    }
+
+    /// Stores a passkey piece's `kit_point` wrap, its kind and envelope
+    /// `point`, in the caller's write, replacing one of its id: under any
+    /// recovery preset, as it opens a piece and never the key. The key it
+    /// was sealed beside, by `commitment`, must still be the vault's. A
+    /// sealed vault's mirror is staged first ([`WrapTransition`]).
+    pub(super) fn put_kit_point_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        transition: &WrapTransition<'_>,
+        commitment: &[u8; 32],
+        point: (VaultKeyWrapKind, Vec<u8>),
+    ) -> Result<()> {
+        let state = STATE
+            .get(&self.store, txn, &())?
+            .ok_or_else(|| refused("the vault has no data key"))?;
+        if state.commitment != *commitment {
+            return Err(refused("this handle holds another vault key"));
+        }
+        let (kind, envelope) = point;
+        let stored = StoredWrap {
+            info: VaultKeyWrapInfo {
+                id: kind.id(),
+                kind,
+                created_at: self.instant_in_txn(txn)?.secs(),
+            },
+            envelope,
+        };
+        transition.stage(|| self.staged_wraps_in_txn(txn, Some(&stored)))?;
+        WRAPS.put(&self.store, txn, &stored.info.id, &stored)?;
+        Ok(())
     }
 
     /// Unlocks the vault data key with the data-key kit's pieces: two, or one
@@ -451,20 +619,64 @@ impl Vault {
         pieces: &[KitPiece],
         passphrase: Option<&KitPassphrase>,
     ) -> Result<()> {
-        let commitment = {
+        self.unlock_vault_key_with_kit_pieces(vault_id, pieces, passphrase, None)
+    }
+
+    /// [`Self::unlock_vault_key_with_kit`], with the owner's synced passkey
+    /// as one piece (census L10-18): the piece the vault's `kit_point` wrap
+    /// of its name seals joins `pieces`, of the kit they name, or with none,
+    /// of the newest such wrap. The passkey alone never opens the key: a
+    /// second piece or the kit passphrase must join it.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::unlock_vault_key_with_kit`], and a passkey that
+    /// opens no kit piece wrap of this vault.
+    pub fn unlock_vault_key_with_kit_and_passkey(
+        &self,
+        vault_id: &[u8; 32],
+        pieces: &[KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        passkey: KitPasskey<'_>,
+    ) -> Result<()> {
+        self.unlock_vault_key_with_kit_pieces(vault_id, pieces, passphrase, Some(passkey))
+    }
+
+    fn unlock_vault_key_with_kit_pieces(
+        &self,
+        vault_id: &[u8; 32],
+        pieces: &[KitPiece],
+        passphrase: Option<&KitPassphrase>,
+        passkey: Option<KitPasskey<'_>>,
+    ) -> Result<()> {
+        let (commitment, wraps) = {
             let txn = self.store.env.read_txn()?;
-            STATE
+            let commitment = STATE
                 .get(&self.store, &txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?
-                .commitment
+                .commitment;
+            let wraps: Vec<StoredWrap> = match passkey {
+                Some(_) => WRAPS
+                    .scan(&self.store, &txn)?
+                    .into_iter()
+                    .map(|(_, stored)| stored)
+                    .collect(),
+                None => Vec::new(),
+            };
+            (commitment, wraps)
         };
         let own = self.vault_key_vault_id();
         if *vault_id != own {
             return Err(refused("the kit names another vault"));
         }
-        let pieces: Vec<&KitPiece> = pieces.iter().collect();
+        let mut given: Vec<&KitPiece> = pieces.iter().collect();
+        let sealed = match passkey {
+            Some(passkey) => passkey_pieces(&own, &commitment, &wraps, passkey, &given)?,
+            None => Vec::new(),
+        };
+        given.extend(&sealed);
         let secret = self
-            .restore_kit_here(own, KitSecretKind::VaultKey, &pieces, passphrase)
+            .restore_kit_here(own, KitSecretKind::VaultKey, &given, passphrase)
             .map_err(kit_refused)?;
         let key = committed_key(&own, &commitment, secret)?;
         self.hold_vault_key(key);

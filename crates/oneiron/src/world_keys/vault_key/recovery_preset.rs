@@ -13,14 +13,26 @@
 //! its own install. The data-key kit and the world kit need two pieces, so
 //! they stay too.
 //!
+//! The switch "any 2 pieces" (`NobodyButMeAnyTwo`; L10-18 PIECES = A,
+//! FLIP = A, OLD-DEVICE = A): "one switch requires any 2 pieces: the
+//! passkey, the sheet, a trusted person or an old device". Turning it on
+//! issues a data-key kit over the owner's three homes in the same write and
+//! removes the sheet's wrap too, so no single secret opens the key: two of
+//! the kit's pieces do (the paper piece is the new sheet, a passkey's piece
+//! rides in a `kit_point` wrap, an old device keeps an `OtherMachine` piece),
+//! or one and the kit passphrase. Turning it off prints a fresh sheet; the
+//! kit stays usable.
+//!
 //! The wraps the key carries are what a fresh device can open, so the preset
 //! needs no field in a sealed artifact's key header: the carried wrap set
 //! enforces it. A sheet, piece or capsule handed out before a change still
 //! opens the artifacts sealed before it, as the data key does not rotate.
 //! The preset governs what the vault carries from then on.
 
+use super::kit::IssuedVaultKeyKit;
 use super::*;
 use crate::config::VaultDataKeyCustody;
+use crate::store::recovery_kit::KitIssue;
 use crate::world_keys::{WORLD_KIT_ESCROW, derive_guarded, os_fill};
 
 const SHEET_KEK_CONTEXT: &str = "oneiron/vault-key-sheet/v1";
@@ -38,6 +50,12 @@ const PRESET_PASSKEY: &str = "recovery preset \"Nobody but me\" refuses a passke
 const PRESET_ESCROW: &str =
     "recovery preset \"Nobody but me\" refuses an escrow wrap: nobody but the owner holds a piece";
 const PRESET_CAPSULE: &str = "recovery preset \"Nobody but me\" refuses a presented escrow capsule: nobody but the owner holds a piece";
+const ANY_TWO_PASSWORD: &str = "recovery preset \"Nobody but me\" with \"any 2 pieces\" refuses a vault password: two kit pieces restore the vault";
+const ANY_TWO_PASSKEY: &str = "recovery preset \"Nobody but me\" with \"any 2 pieces\" refuses a passkey wrap: the passkey is one kit piece";
+const ANY_TWO_NEEDS_KIT: &str =
+    "turning on \"any 2 pieces\" issues the kit its pieces come from: name the kit's three homes";
+const KIT_POINT_ADDED: &str =
+    "a passkey's kit piece wrap is written by issuing its kit, not added as a wrap";
 const PRESET_DELIVERED: &str = "recovery preset \"Nobody but me\" refuses a delivered data key: nobody but the owner holds the key";
 const PRESET_CUSTODY: &str = "recovery preset \"Nobody but me\" needs an owner-held data key, not a \
      host-managed or supervisor-delivered one";
@@ -55,6 +73,18 @@ pub enum RecoveryPreset {
     /// "Nobody but me": the printed sheet alone restores the vault. No
     /// password, passkey or escrow wrap, and nobody else holds a piece.
     NobodyButMe,
+    /// "Nobody but me" with its switch "any 2 pieces": two of the data-key
+    /// kit's pieces restore the vault, and no single secret does. No sheet,
+    /// password, passkey or escrow wrap.
+    NobodyButMeAnyTwo,
+}
+
+impl RecoveryPreset {
+    /// Whether nobody but the owner holds a piece: "Nobody but me", with
+    /// its switch on or off.
+    pub fn is_nobody_but_me(self) -> bool {
+        self != Self::Standard
+    }
 }
 
 /// Who writes an escrow wrap, typed by the writing path and never read from
@@ -74,8 +104,10 @@ pub(super) fn admit_wrap(
     kind: &VaultKeyWrapKind,
     origin: EscrowOrigin,
 ) -> Result<()> {
+    let any_two = preset == RecoveryPreset::NobodyButMeAnyTwo;
     match (kind, origin) {
         (VaultKeyWrapKind::Sheet, _) => Err(refused(SHEET_ADDED)),
+        (VaultKeyWrapKind::KitPoint { .. }, _) => Err(refused(KIT_POINT_ADDED)),
         (VaultKeyWrapKind::Escrow { label }, EscrowOrigin::Recipient)
             if label == WORLD_KIT_ESCROW =>
         {
@@ -84,7 +116,9 @@ pub(super) fn admit_wrap(
         _ if preset == RecoveryPreset::Standard => Ok(()),
         (VaultKeyWrapKind::Device { .. }, _)
         | (VaultKeyWrapKind::Escrow { .. }, EscrowOrigin::WorldKit) => Ok(()),
+        (VaultKeyWrapKind::Password, _) if any_two => Err(refused(ANY_TWO_PASSWORD)),
         (VaultKeyWrapKind::Password, _) => Err(refused(PRESET_PASSWORD)),
+        (VaultKeyWrapKind::Passkey { .. }, _) if any_two => Err(refused(ANY_TWO_PASSKEY)),
         (VaultKeyWrapKind::Passkey { .. }, _) => Err(refused(PRESET_PASSKEY)),
         (VaultKeyWrapKind::Escrow { .. }, EscrowOrigin::Recipient) => Err(refused(PRESET_ESCROW)),
     }
@@ -92,18 +126,18 @@ pub(super) fn admit_wrap(
 
 /// Refuses a presented escrow capsule under "Nobody but me".
 pub(super) fn admit_presented_capsule(preset: RecoveryPreset) -> Result<()> {
-    match preset {
-        RecoveryPreset::Standard => Ok(()),
-        RecoveryPreset::NobodyButMe => Err(refused(PRESET_CAPSULE)),
+    if preset.is_nobody_but_me() {
+        return Err(refused(PRESET_CAPSULE));
     }
+    Ok(())
 }
 
 /// Refuses a delivered data key under "Nobody but me".
 pub(super) fn admit_delivered_key(preset: RecoveryPreset) -> Result<()> {
-    match preset {
-        RecoveryPreset::Standard => Ok(()),
-        RecoveryPreset::NobodyButMe => Err(refused(PRESET_DELIVERED)),
+    if preset.is_nobody_but_me() {
+        return Err(refused(PRESET_DELIVERED));
     }
+    Ok(())
 }
 
 /// The printed recovery sheet's secret: 32 random bytes. It is typed back as
@@ -214,14 +248,22 @@ pub struct RecoveryPresetChange {
     pub previous: RecoveryPreset,
     /// The preset in force now.
     pub preset: RecoveryPreset,
-    /// The printed sheet, when the change entered "Nobody but me". Shown
-    /// once; the vault keeps only its wrap.
+    /// The printed sheet, when the change entered "Nobody but me" with its
+    /// switch off. Shown once; the vault keeps only its wrap.
     pub sheet: Option<RecoverySheet>,
     /// The wraps the change removed: the password, each passkey's and each
-    /// escrow wrap but the world kit's.
+    /// escrow wrap but the world kit's, and with "any 2 pieces" the sheet's.
     pub removed: Vec<VaultKeyWrapInfo>,
     /// The receipt of each escrow recipient the change retired.
     pub retired: Vec<EscrowRetirement>,
+}
+
+/// What turning on "any 2 pieces" did: the preset's change, and the kit its
+/// pieces come from, handed over once.
+#[derive(Debug)]
+pub struct RecoveryPresetAnyTwoChange {
+    pub change: RecoveryPresetChange,
+    pub kit: IssuedVaultKeyKit,
 }
 
 impl Vault {
@@ -240,9 +282,12 @@ impl Vault {
     /// the host's to recover, which the preset rules out. In one write it
     /// issues the printed sheet, removes the password and passkey wraps, and
     /// retires every escrow recipient but the world kit's, each with its
-    /// receipt; the answer carries the sheet, once. Leaving it changes no
-    /// wrap; any other wrap is added through the ordinary doors after. The
-    /// preset already in force changes nothing.
+    /// receipt; the answer carries the sheet, once. Coming from "any 2
+    /// pieces", the kit stays usable beside the fresh sheet (FLIP = A).
+    /// Leaving it changes no wrap; any other wrap is added through the
+    /// ordinary doors after. The preset already in force changes nothing.
+    /// "Any 2 pieces" is turned on with its kit:
+    /// [`Self::set_recovery_preset_any_two_as`].
     pub fn set_recovery_preset_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -250,6 +295,7 @@ impl Vault {
     ) -> Result<RecoveryPresetChange> {
         let issue = match preset {
             RecoveryPreset::Standard => None,
+            RecoveryPreset::NobodyButMeAnyTwo => return Err(refused(ANY_TWO_NEEDS_KIT)),
             RecoveryPreset::NobodyButMe => {
                 if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
                     return Err(refused(PRESET_CUSTODY));
@@ -290,8 +336,12 @@ impl Vault {
                 if state.commitment != *commitment {
                     return Err(refused("this handle holds another vault key"));
                 }
-                (change.removed, change.retired) =
-                    self.enter_nobody_but_me_in_txn(txn, &transition, envelope.clone())?;
+                (change.removed, change.retired) = self.enter_nobody_but_me_in_txn(
+                    txn,
+                    &transition,
+                    preset,
+                    Some((VaultKeyWrapKind::Sheet, envelope.clone())),
+                )?;
             }
             state.recovery = preset;
             STATE.put(&self.store, txn, &(), &state)?;
@@ -304,40 +354,103 @@ impl Vault {
         Ok(change)
     }
 
+    /// Turns on "Nobody but me" with its switch "any 2 pieces", rechecked in
+    /// the transaction that stores it. Needs the held key and an owner-held
+    /// key custody, as entering "Nobody but me" does. In one write it lists
+    /// the data-key kit drawn over `issue`'s homes and stores its passkey
+    /// piece's `kit_point` wrap (a `Passkey` home, with `passkey`), removes
+    /// the sheet, password and passkey wraps, and retires every escrow
+    /// recipient but the world kit's, each with its receipt. The kit's
+    /// pieces are then handed over, once, and a `ThisMachine` home's is kept
+    /// here (FIX 2063). From then on two of them restore the vault, or one
+    /// and the kit passphrase; an old device's piece is one of the two
+    /// (OLD-DEVICE = A). The old sheet opens nothing sealed after the change
+    /// (FLIP = A); what was sealed before still opens with what opened it
+    /// then. With the switch already on, the new kit is issued and no other
+    /// wrap changes.
+    ///
+    /// # Errors
+    ///
+    /// A host-managed or supervisor-delivered key; a key this handle does
+    /// not hold; an owner proof that no longer holds; and every refusal of
+    /// [`Self::issue_vault_key_recovery_kit_with_passkey_as`].
+    pub fn set_recovery_preset_any_two_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        issue: &KitIssue<'_>,
+        passkey: Option<KitPasskey<'_>>,
+    ) -> Result<RecoveryPresetAnyTwoChange> {
+        if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
+            return Err(refused(PRESET_CUSTODY));
+        }
+        let mut drawn = self.draw_vault_key_kit(owner, issue, passkey)?;
+        let point = drawn.point.take();
+        let preset = RecoveryPreset::NobodyButMeAnyTwo;
+        let transition = self.begin_wrap_transition()?;
+        let change = self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let mut state = STATE
+                .get(&self.store, txn, &())?
+                .ok_or_else(|| refused("the vault has no data key"))?;
+            if state.commitment != drawn.commitment {
+                return Err(refused("this handle holds another vault key"));
+            }
+            self.list_vault_key_kit_in_txn(txn, owner, &drawn.manifest)?;
+            let (removed, retired) =
+                self.enter_nobody_but_me_in_txn(txn, &transition, preset, point)?;
+            let change = RecoveryPresetChange {
+                previous: state.recovery,
+                preset,
+                sheet: None,
+                removed,
+                retired,
+            };
+            state.recovery = preset;
+            STATE.put(&self.store, txn, &(), &state)?;
+            Ok(change)
+        })?;
+        transition.finish()?;
+        let kit = drawn.hand_over(true)?;
+        Ok(RecoveryPresetAnyTwoChange { change, kit })
+    }
+
     /// Unlocks the vault data key with the printed recovery sheet.
     pub fn unlock_vault_key_with_sheet(&self, sheet: &RecoverySheet) -> Result<()> {
         let kek = sheet.kek(self.vault_id().as_bytes());
         self.unlock_vault_key_with(&VaultKeyWrapKind::Sheet.id(), &UnlockSecret::Kek(kek))
     }
 
-    /// Entering "Nobody but me", in the preset's write: the sheet wrap
-    /// sealed as `envelope` added (replacing an earlier sheet), the password
-    /// and passkey wraps removed, and every escrow wrap but the world kit's
+    /// Entering `preset`, one of "Nobody but me", in the preset's write: the
+    /// wrap `adding` (its kind and sealed envelope) added, replacing one of
+    /// its id; the password and passkey wraps removed, and with "any 2
+    /// pieces" the sheet's; and every escrow wrap but the world kit's
     /// removed with its label retired (an earlier receipt for the label
-    /// stands). A sealed vault's mirror is staged first with every wrap and
-    /// the sheet's. The removed wraps and the receipts.
+    /// stands). A device wrap, the world kit's escrow and each kit piece's
+    /// wrap stay. A sealed vault's mirror is staged first with every wrap
+    /// and the one added. The removed wraps and the receipts.
     fn enter_nobody_but_me_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         transition: &WrapTransition<'_>,
-        envelope: Vec<u8>,
+        preset: RecoveryPreset,
+        adding: Option<(VaultKeyWrapKind, Vec<u8>)>,
     ) -> Result<(Vec<VaultKeyWrapInfo>, Vec<EscrowRetirement>)> {
         let now = self.instant_in_txn(txn)?.secs();
-        let kind = VaultKeyWrapKind::Sheet;
-        let sheet = StoredWrap {
+        let adding = adding.map(|(kind, envelope)| StoredWrap {
             info: VaultKeyWrapInfo {
                 id: kind.id(),
                 kind,
                 created_at: now,
             },
             envelope,
-        };
-        transition.stage(|| self.staged_wraps_in_txn(txn, Some(&sheet)))?;
+        });
+        transition.stage(|| self.staged_wraps_in_txn(txn, adding.as_ref()))?;
         let mut removed = Vec::new();
         let mut retired = Vec::new();
         for (id, stored) in WRAPS.scan(&self.store, txn)? {
             let retiring = match &stored.info.kind {
                 VaultKeyWrapKind::Password | VaultKeyWrapKind::Passkey { .. } => None,
+                VaultKeyWrapKind::Sheet if preset == RecoveryPreset::NobodyButMeAnyTwo => None,
                 VaultKeyWrapKind::Escrow { label } if label != WORLD_KIT_ESCROW => {
                     Some(label.clone())
                 }
@@ -363,7 +476,9 @@ impl Vault {
             }
             removed.push(stored.info);
         }
-        WRAPS.put(&self.store, txn, &sheet.info.id, &sheet)?;
+        if let Some(adding) = &adding {
+            WRAPS.put(&self.store, txn, &adding.info.id, adding)?;
+        }
         Ok((removed, retired))
     }
 }

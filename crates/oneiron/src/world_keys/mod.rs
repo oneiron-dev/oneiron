@@ -158,10 +158,10 @@ pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::{IssuedVaultKeyKit, sealed_keeps_kit_piece};
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
-    EscrowAddWarning, EscrowAdded, EscrowRetirement, NewVaultKeyWrap, RecoveryPreset,
-    RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
-    VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,
-    passkey_prf_input, reseal_escrow_capsule,
+    EscrowAddWarning, EscrowAdded, EscrowRetirement, KitPasskey, NewVaultKeyWrap, RecoveryPreset,
+    RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule,
+    VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind,
+    escrow_recipient, passkey_prf_input, reseal_escrow_capsule,
 };
 pub(crate) use self::wrap::{open_world_key, seal_world_key};
 pub use crate::error::KitRecord;

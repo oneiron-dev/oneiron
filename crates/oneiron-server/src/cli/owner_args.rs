@@ -195,6 +195,14 @@ pub struct RestoreArgs {
     #[arg(long, value_name = "HEX")]
     pub vault_id: Option<String>,
 
+    /// With `--unlock kit` and `--credential`: an owner-only file holding
+    /// the synced passkey's PRF output (32 raw bytes, 64 hex digits or
+    /// base64url), at the PRF input `--inspect` prints for its `kit_point`
+    /// wrap. The data-key kit's piece the backup carries under that passkey
+    /// joins the pieces given, so one piece and the passkey restore.
+    #[arg(long, value_name = "FILE", requires = "credential")]
+    pub kit_passkey_prf_file: Option<PathBuf>,
+
     /// Trust exactly the checkpoint signers in this file, in place of this
     /// install's: `oneiron vault-key signer` prints one on a host that holds
     /// the vault. A backup's own head is never trusted.
@@ -324,6 +332,10 @@ pub enum RecoveryPresetArg {
     /// it issues the sheet and removes every password, passkey and escrow
     /// wrap but the world kit's.
     NobodyButMe,
+    /// "Nobody but me" with "any 2 pieces": two of the data-key kit's pieces
+    /// restore the vault. Turned on with its kit by `oneiron recovery-kit
+    /// issue-vault-key --any-two-pieces`.
+    NobodyButMeAnyTwo,
 }
 
 #[derive(Args, Clone, Debug)]
