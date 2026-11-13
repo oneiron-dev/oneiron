@@ -18,9 +18,10 @@
 //!
 //! The owner's agent is paired as MUSE-LOOP-08 pairs it: an ordinary PERSON that
 //! redeems a pairing link the owner issued for it as class `agent`, so its slip
-//! names the owner as the member who approved it. Each case: an author proposes
-//! `profile.name` (a predicate the shipped manifest declares normal) about one
-//! PERSON, the owner approves it, and a second writer upserts the same slot.
+//! names the owner as the member who approved it. Each case: an author holding
+//! the owner's read and propose Grant proposes `profile.name` (a predicate the
+//! shipped manifest declares normal) about one PERSON, the owner approves it,
+//! and a second writer upserts the same slot.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test owner_supersedes_own_agent_claim`.
 #![cfg(oneiron_test_support)]
@@ -280,6 +281,13 @@ impl Fixture {
     /// `author`'s proposal on the slot, approved by the owner: a landed claim
     /// `author` wrote, as MUSE-LOOP-08's beta is after the owner's settle.
     fn landed_claim_of(&self, author: EntityId, class: EdgeActorClass, value: &str) -> EntityId {
+        // A writer names only records it can read (OF-063): with no read
+        // Grant its proposal is denied gate.deny.unresolved_record_reference
+        // on the subject. The owner grants the author read and propose, as
+        // MUSE-LOOP-08's pairing does; a repeated grant changes nothing.
+        self.vault
+            .grant_foreign_principal(&self.owner_proof, &author.to_hex())
+            .expect("the owner grants the author read and propose");
         let receipt = self
             .vault
             .memory(author, class)
@@ -512,9 +520,6 @@ fn the_owners_upsert_over_a_members_agents_claim_is_still_refused() {
 fn the_owners_upsert_over_an_unpaired_agents_claim_is_still_refused() {
     let f = Fixture::rooted();
     let stranger = person(&f.vault, b"owner supersede unpaired agent");
-    f.vault
-        .grant_foreign_principal(&f.owner_proof, &stranger.to_hex())
-        .expect("the owner grants the unpaired agent read and propose");
     let value = "Owen, as an unpaired agent heard it";
     let prior = f.landed_claim_of(stranger, EdgeActorClass::Agent, value);
 
