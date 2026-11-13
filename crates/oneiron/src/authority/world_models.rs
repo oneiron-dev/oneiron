@@ -9,6 +9,7 @@
 use super::{AuthorityFold, EffectiveModelOrder, ModelOrder};
 use crate::Vault;
 use crate::embed::EmbeddingSpace;
+use crate::embed::world_space::WorldTextSpaces;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -109,6 +110,20 @@ impl AuthorityFold {
         }
         routes
     }
+
+    /// Each world whose own model order names routes, with the routes a call
+    /// on that world alone may take ([`Self::world_model_routes`]). A world
+    /// that inherits is not listed.
+    #[must_use]
+    pub fn ordered_world_model_routes(&self) -> Vec<(EntityId, Vec<String>)> {
+        self.worlds
+            .keys()
+            .filter_map(|world| match self.world_model_routes([*world]) {
+                WorldModelRoutes::Inherit => None,
+                WorldModelRoutes::Ordered(routes) => Some((*world, routes)),
+            })
+            .collect()
+    }
 }
 
 impl Vault {
@@ -152,7 +167,9 @@ impl Vault {
     ///
     /// Storage errors, or an authority log that does not fold.
     pub fn world_text_space(&self, world: EntityId) -> Result<Option<EmbeddingSpace>> {
-        let _ = world;
-        Ok(None)
+        let rtxn = self.store.env.read_txn()?;
+        Ok(WorldTextSpaces::read_in(self, &rtxn)?
+            .of_world(&world)
+            .cloned())
     }
 }
