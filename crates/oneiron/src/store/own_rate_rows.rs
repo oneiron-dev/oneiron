@@ -117,6 +117,10 @@ fn keep_in_order(store: &Store, txn: &mut heed::RwTxn<'_>, check: &OwnRateCheck)
     for key in &expired {
         CHECK_ORDER.delete(store, txn, key)?;
     }
+    // Another process's writer may have committed a higher id floor since
+    // this store last read it: observe that floor before allocating, so the
+    // order key passes every committed one.
+    crate::ports::persist_id_floor_in_txn(store, txn)?;
     let id = store.clock.entity_id()?;
     // The order row is no entity write, so nothing else persists its id.
     crate::ports::persist_id_floor_in_txn(store, txn)?;
