@@ -292,6 +292,12 @@ name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
 required-features = ["oneiron/test-support"]
 
+# DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
+[[test]]
+name = "delete_authority_served_door"
+path = "tests/delete_authority_served_door.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 
