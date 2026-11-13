@@ -1,10 +1,11 @@
 //! Doors for `tests/reply_attachments.rs` (fix list row 17645): seed a Google
-//! mailbox with one received message, its sending identity and an artifact
-//! with two versions, then draft a reply that names one exact version and
-//! read back what the draft froze. Thin wrappers over production APIs only.
-//! The draft reads the answered message's addresses as its thread stored
-//! them, since a test cannot reach Gmail. Compiled only under
-//! `--cfg oneiron_test_support` (`test_doors`); hidden, never API.
+//! mailbox (with its sending identity) or a Microsoft 365 mailbox with one
+//! received message and an artifact with two versions, then draft a reply
+//! that names one exact version and read back what the draft froze. Thin
+//! wrappers over production APIs only. The draft reads the answered
+//! message's addresses as its thread stored them, since a test cannot reach
+//! Gmail. Compiled only under `--cfg oneiron_test_support` (`test_doors`);
+//! hidden, never API.
 
 use base64::Engine as _;
 
@@ -216,23 +217,14 @@ impl MailProviderWire for ReceivedMailWire {
     }
 }
 
-/// Seeds a Google mailbox the embedded owner connects with a sending
-/// identity (its delegated grant holds `gmail.readonly` and `gmail.send`,
-/// with the matching custody evidence), one message from [`SENDER`]
-/// imported into it, and [`SENDER`] as the owner's contact on that identity,
-/// cleared to see everything below Tier A: a file reaches a recipient only
-/// when the recipient's clearance admits it, and an unknown party is cleared
-/// for public records alone.
-///
-/// # Errors
-///
-/// The vault's, or a seeded step the vault refuses.
-#[doc(hidden)]
-pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    crate::mail_pack::install_mail_calendar_pack_embedded(&memory)
-        .map_err(|error| memory_invalid("mail pack install", error))?;
+/// Stores the mailbox's credential under [`CUSTODY_REF`], bound to
+/// `effector` with `scopes`.
+fn register_mail_credential(
+    vault: &Vault,
+    effector: &str,
+    scopes: Vec<String>,
+    now_sec: u64,
+) -> Result<()> {
     vault.register_secret(crate::secret_custody::SecretCustodyRecord {
         schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
         name: CUSTODY_REF.to_owned(),
@@ -245,43 +237,40 @@ pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
         rotated_at: None,
         rotation_generation: 0,
         bindings: vec![crate::secret_custody::SecretBinding {
-            effector: "connector:gmail".to_owned(),
+            effector: effector.to_owned(),
             tier_ceiling: crate::secret_custody::CustodyTier::T0Doored,
-            scopes: delegated_custody_scopes_for_grant(
-                "email",
-                MAILBOX,
-                &[DelegatedGrantScope::MailRead, DelegatedGrantScope::MailSend],
-            ),
+            scopes,
         }],
         manifest_ref: String::new(),
         declared_paths: Vec::new(),
         policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
     })?;
-    let adapter = GmailDelegatedAdapter::new(
-        GmailDelegatedAdapterConfig::new(MAILBOX, CUSTODY_REF)?
-            .with_google_oauth_scopes_allowing_send(&[
-                GMAIL_READONLY_OAUTH_SCOPE,
-                GMAIL_SEND_OAUTH_SCOPE,
-            ])?,
-    );
-    let identity = EntityId::now();
-    adapter.provision_delegated_identity(vault, identity, owner, now_sec)?;
-    vault.step_channel_identity(
-        &identity,
-        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
-        now_sec,
-    )?;
-    vault.step_channel_identity(&identity, ChannelIdentityStep::Fulfill, now_sec)?;
+    Ok(())
+}
+
+/// Connects the owner's `provider` mailbox (sending through `identity`,
+/// when it names one), imports the one received message into it, makes
+/// [`SENDER`] the owner's contact on `contact_identity`, cleared to see
+/// everything below Tier A, and returns the thread.
+fn connect_and_import(
+    vault: &Vault,
+    owner: EntityId,
+    provider: MailProvider,
+    identity: Option<EntityId>,
+    contact_identity: EntityId,
+    now_sec: u64,
+) -> Result<SeededThread> {
+    let memory = vault.memory(owner, EdgeActorClass::Human);
     let receipt = memory
         .mail_sources_connect(&MailSourceConnectRequest {
-            provider: MailProvider::Google,
+            provider,
             kind: MailSourceKind::PersonalMailbox,
             address: MAILBOX.to_owned(),
             provider_account: MAILBOX.to_owned(),
             custody_ref: CUSTODY_REF.to_owned(),
             members: Vec::new(),
             for_person: None,
-            channel_identity_ref: Some(identity.to_hex()),
+            channel_identity_ref: identity.map(|identity| identity.to_hex()),
             copy: None,
             on_provider_delete: None,
             calendar_details: None,
@@ -301,7 +290,7 @@ pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
     let contact = EntityId::now();
     vault.create_counterparty_contact(
         &contact,
-        &CounterpartyContactRecord::user_introduction(identity, SENDER, now_sec)?,
+        &CounterpartyContactRecord::user_introduction(contact_identity, SENDER, now_sec)?,
     )?;
     let clearance = DisclosureScope::new(Scope::top(), "reply attachments test", now_sec)?;
     vault.with_write_txn_grouped(|txn| {
@@ -318,6 +307,92 @@ pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
         owner,
         thread_ref: item.thread_ref.clone(),
     })
+}
+
+/// Seeds a Google mailbox the embedded owner connects with a sending
+/// identity (its delegated grant holds `gmail.readonly` and `gmail.send`,
+/// with the matching custody evidence), one message from [`SENDER`]
+/// imported into it, and [`SENDER`] as the owner's contact on that identity,
+/// cleared to see everything below Tier A: a file reaches a recipient only
+/// when the recipient's clearance admits it, and an unknown party is cleared
+/// for public records alone.
+///
+/// # Errors
+///
+/// The vault's, or a seeded step the vault refuses.
+#[doc(hidden)]
+pub fn seed_gmail_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    crate::mail_pack::install_mail_calendar_pack_embedded(
+        &vault.memory(owner, EdgeActorClass::Human),
+    )
+    .map_err(|error| memory_invalid("mail pack install", error))?;
+    register_mail_credential(
+        vault,
+        "connector:gmail",
+        delegated_custody_scopes_for_grant(
+            "email",
+            MAILBOX,
+            &[DelegatedGrantScope::MailRead, DelegatedGrantScope::MailSend],
+        ),
+        now_sec,
+    )?;
+    let adapter = GmailDelegatedAdapter::new(
+        GmailDelegatedAdapterConfig::new(MAILBOX, CUSTODY_REF)?
+            .with_google_oauth_scopes_allowing_send(&[
+                GMAIL_READONLY_OAUTH_SCOPE,
+                GMAIL_SEND_OAUTH_SCOPE,
+            ])?,
+    );
+    let identity = EntityId::now();
+    adapter.provision_delegated_identity(vault, identity, owner, now_sec)?;
+    vault.step_channel_identity(
+        &identity,
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        now_sec,
+    )?;
+    vault.step_channel_identity(&identity, ChannelIdentityStep::Fulfill, now_sec)?;
+    connect_and_import(
+        vault,
+        owner,
+        MailProvider::Google,
+        Some(identity),
+        identity,
+        now_sec,
+    )
+}
+
+/// Seeds a Microsoft 365 mailbox the embedded owner connects (its
+/// credential stored for the owner, read and sent on Graph), one message
+/// from [`SENDER`] imported into it, and [`SENDER`] as the owner's contact,
+/// cleared to see everything below Tier A. A Microsoft 365 reply names no
+/// sending identity, so the contact sits on an identity no row holds, which
+/// the send lookup matches on every channel.
+///
+/// # Errors
+///
+/// The vault's, or a seeded step the vault refuses.
+#[doc(hidden)]
+pub fn seed_microsoft_thread(vault: &Vault, now_sec: u64) -> Result<SeededThread> {
+    let owner = vault.ensure_embedded_owner_actor()?;
+    crate::mail_pack::install_mail_calendar_pack_embedded(
+        &vault.memory(owner, EdgeActorClass::Human),
+    )
+    .map_err(|error| memory_invalid("mail pack install", error))?;
+    register_mail_credential(
+        vault,
+        crate::mail_pack::MICROSOFT365_CONNECTOR_EFFECTOR,
+        Vec::new(),
+        now_sec,
+    )?;
+    connect_and_import(
+        vault,
+        owner,
+        MailProvider::Microsoft365,
+        None,
+        EntityId::now(),
+        now_sec,
+    )
 }
 
 /// Creates one artifact as `actor`, a text file whose versions hold
