@@ -184,7 +184,5 @@ pub(crate) use visibility::Admitted;
 #[cfg(any())]
 #[cfg(test)]
 mod slip_tests;
-// FIX [LIBTEST-QUARANTINE-CLAIM-SCOPED-READ-TESTS]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

@@ -331,6 +331,7 @@ fn scratchpad_is_persisted_actor_scoped_board_state_under_live_registration() {
             crate::registry::ENTITY_TYPE_CLAIM,
             at,
             1,
+            None,
             &crate::claim::encode_claim_body(&install_body).expect("claim bytes"),
         )
         .commit()
@@ -404,6 +405,7 @@ fn scratchpad_is_persisted_actor_scoped_board_state_under_live_registration() {
             crate::registry::ENTITY_TYPE_CLAIM,
             at,
             2,
+            None,
             &crate::claim::encode_claim_body(&install_body).expect("claim bytes"),
         )
         .commit()

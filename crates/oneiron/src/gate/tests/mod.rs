@@ -65,8 +65,6 @@ mod effect_policy;
 mod evaluator_core;
 mod external_effect_grants;
 mod gate_door;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-ISOLATION-PERSONA]: the lib test target's type check fails here (2 errors: E0599 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod isolation_persona;
 // FIX [LIBTEST-QUARANTINE-GATE-TESTS-MANIFEST-AUTHENTICITY]: the lib test target's type check fails here (9 errors: E0061 x9); port it, then drop this gate
 #[cfg(any())]

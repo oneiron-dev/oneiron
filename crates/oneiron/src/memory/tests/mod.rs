@@ -19,8 +19,6 @@ mod delete_tombstone;
 mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SAME-BYTES-ERASE]: the lib test target's type check fails here (6 errors: E0599 x3, E0063 x2, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod same_bytes_erase;
 mod seeded_upgrade;
 mod self_grant;

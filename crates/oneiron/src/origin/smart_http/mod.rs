@@ -163,8 +163,6 @@ mod door_serve_tests;
 mod epoch_tests;
 #[cfg(test)]
 mod exchange_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-HISTORY-SCAN-TESTS]: the lib test target's type check fails here (3 errors: E0061 x1, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod history_scan_tests;
 // FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-INTENT-RECOVERY-TESTS]: the lib test target's type check fails here (6 errors: E0308 x3, E0061 x2, E0063 x1); port it, then drop this gate
