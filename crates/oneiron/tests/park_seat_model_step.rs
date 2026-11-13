@@ -12,9 +12,14 @@
 //! 2. A seat's lapsed login parks the try on that seat with no reset. Time alone wakes nothing,
 //!    and the seat's available write (the login restored) resumes it.
 //! 3. An API key's spent window names no seat. Its try still parks as a Retry with no wait.
+//! 4. A lapsed login whose refusal arrives once the call has run the pass past its deadline still
+//!    parks the try on that seat (review round 1 of #7340): a checkpoint would let a later pass
+//!    ask the seat again before its available write.
 //!
 //! Red on the head with `dreamer_seat_refusal_of_step` answering `None`: every refusal parks as
-//! before (Retry, or the private Other park), so each seat-wait assert fails. Doors:
+//! before (Retry, or the private Other park), so each seat-wait assert fails. Case 4 is red on
+//! 41c70865b7b, where the partition's finish checkpoints an expired pass before it reads the
+//! seat refusal. Doors:
 //! `oneiron::test_doors::seat_park_model_step`, built only under `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
@@ -70,24 +75,52 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
     panic!("the wake pass is pending on something other than an attempt-boundary yield");
 }
 
-/// A frozen pass deadline, as the WAKE-D1 fixture builds one.
-fn frozen_deadline() -> WakePassDeadline {
+/// The pass ceiling of the frozen deadline, as the WAKE-D1 fixture sets it.
+const PASS_CEILING_MS: u64 = 180_000;
+
+/// When the pass's deadline passes, relative to the extraction call.
+#[derive(Clone, Copy)]
+enum PassClock {
+    /// The deadline never passes during the pass.
+    Open,
+    /// The call runs the pass's clock to its ceiling before it answers.
+    ExpiresInCall,
+}
+
+/// A frozen pass deadline, as the WAKE-D1 fixture builds one, and its elapsed clock.
+fn frozen_deadline() -> (WakePassDeadline, Arc<AtomicU64>) {
     let elapsed = Arc::new(AtomicU64::new(0));
-    WakePassDeadline::with_clock(180_000, Arc::new(move || elapsed.load(Ordering::SeqCst)))
+    let clock = Arc::clone(&elapsed);
+    let deadline = WakePassDeadline::with_clock(
+        PASS_CEILING_MS,
+        Arc::new(move || clock.load(Ordering::SeqCst)),
+    );
+    (deadline, elapsed)
 }
 
 /// A backend that answers every call with `refusal` and counts the calls.
 struct RefusingBackend {
     refusal: LlmError,
     calls: AtomicUsize,
+    /// The pass's elapsed clock, run to the ceiling by each call before it answers.
+    expire: Option<Arc<AtomicU64>>,
 }
 
 impl RefusingBackend {
-    fn new(refusal: LlmError) -> Self {
+    fn new(refusal: LlmError, expire: Option<Arc<AtomicU64>>) -> Self {
         Self {
             refusal,
             calls: AtomicUsize::new(0),
+            expire,
         }
+    }
+
+    fn call(&self) -> LlmError {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(elapsed) = &self.expire {
+            elapsed.store(PASS_CEILING_MS, Ordering::SeqCst);
+        }
+        self.refusal.clone()
     }
 
     fn calls(&self) -> usize {
@@ -101,14 +134,12 @@ impl LlmBackend for RefusingBackend {
         _request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        let refusal = self.refusal.clone();
+        let refusal = self.call();
         Box::pin(async move { Err(refusal) })
     }
 
     fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Err(self.refusal.clone())
+        Err(self.call())
     }
 }
 
@@ -133,9 +164,13 @@ struct ParkedPass {
 }
 
 /// Opens a fixture vault on a manual store clock at `PASS_T`, witnesses one TURN, enqueues its
-/// Micro partition try and runs one wake pass whose extraction call `refusal` answers. Asserts the
-/// pass parked exactly that try and completed nothing.
-fn park_one_partition_try(refusal: LlmError) -> Result<ParkedPass, Box<dyn std::error::Error>> {
+/// Micro partition try and runs one wake pass whose extraction call `refusal` answers, its
+/// deadline passing as `pass_clock` says. Asserts the pass parked exactly that try and completed
+/// nothing.
+fn park_one_partition_try(
+    refusal: LlmError,
+    pass_clock: PassClock,
+) -> Result<ParkedPass, Box<dyn std::error::Error>> {
     let clock = oneiron_store::ports::manual_clock::ManualClock::new(PASS_T);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
@@ -150,12 +185,17 @@ fn park_one_partition_try(refusal: LlmError) -> Result<ParkedPass, Box<dyn std::
     assert_eq!(enqueued.len(), 1, "one TURN enqueues one partition try");
     let attempt = enqueued[0];
 
-    let backend = RefusingBackend::new(refusal);
+    let (deadline, elapsed) = frozen_deadline();
+    let expire = match pass_clock {
+        PassClock::Open => None,
+        PassClock::ExpiresInCall => Some(elapsed),
+    };
+    let backend = RefusingBackend::new(refusal, expire);
     let guard =
         BudgetGuard::with_reserve_units(WAKE_LINE, 10_000, 100, BudgetExhaustionPolicy::Suspend);
     let mut executor = doors::PartitionPassExecutor::new(&vault, &backend, &guard, RUN_ID);
     let node_id = release_doors::load_or_mint_client_id(&vault)?;
-    let mut driver = DreamerWakeDriver::new(&vault, WAKE_LINE, frozen_deadline());
+    let mut driver = DreamerWakeDriver::new(&vault, WAKE_LINE, deadline);
     let report = block_on_ready(driver.run_wake_pass(
         RunWakePass {
             trigger: WakeTrigger::Compaction,
@@ -210,7 +250,7 @@ fn assert_reservation_settled(vault: &Vault, case: &str) -> TestResult {
 #[test]
 fn a_seats_spent_window_parks_the_step_on_the_seat_until_its_reset() -> TestResult {
     let seat = ModelSeatId::from_bytes(SEAT_BYTES)?;
-    let pass = park_one_partition_try(spent_window(Some(seat)))?;
+    let pass = park_one_partition_try(spent_window(Some(seat)), PassClock::Open)?;
     let store = DreamerRunnerStore::new(&pass.vault);
     let park = store
         .parked_attempt(pass.attempt)?
@@ -310,7 +350,10 @@ fn a_seats_spent_window_parks_the_step_on_the_seat_until_its_reset() -> TestResu
 #[test]
 fn a_seats_lapsed_login_parks_the_step_on_the_seat_until_the_login_is_back() -> TestResult {
     let seat = ModelSeatId::from_bytes(SEAT_BYTES)?;
-    let pass = park_one_partition_try(FatalLlmError::SeatSignedOut { seat }.into())?;
+    let pass = park_one_partition_try(
+        FatalLlmError::SeatSignedOut { seat }.into(),
+        PassClock::Open,
+    )?;
     let store = DreamerRunnerStore::new(&pass.vault);
     let park = store
         .parked_attempt(pass.attempt)?
@@ -389,7 +432,7 @@ fn a_seats_lapsed_login_parks_the_step_on_the_seat_until_the_login_is_back() -> 
 /// Case 3: an API key's spent window names no seat, and its try still parks as a Retry.
 #[test]
 fn an_api_keys_spent_window_still_parks_the_step_as_a_retry() -> TestResult {
-    let pass = park_one_partition_try(spent_window(None))?;
+    let pass = park_one_partition_try(spent_window(None), PassClock::Open)?;
     let store = DreamerRunnerStore::new(&pass.vault);
     let park = store
         .parked_attempt(pass.attempt)?
@@ -411,5 +454,57 @@ fn an_api_keys_spent_window_still_parks_the_step_as_a_retry() -> TestResult {
         None,
         "no seat reset is due for an API key"
     );
+    Ok(())
+}
+
+/// Case 4: a lapsed login whose refusal comes after the call ran the pass past its deadline still
+/// parks the try on its seat, not as a checkpoint a later pass resumes blind.
+#[test]
+fn a_seats_lapsed_login_after_the_deadline_still_parks_the_step_on_the_seat() -> TestResult {
+    let seat = ModelSeatId::from_bytes(SEAT_BYTES)?;
+    let pass = park_one_partition_try(
+        FatalLlmError::SeatSignedOut { seat }.into(),
+        PassClock::ExpiresInCall,
+    )?;
+    let store = DreamerRunnerStore::new(&pass.vault);
+    let park = store
+        .parked_attempt(pass.attempt)?
+        .expect("the late refusal's park");
+    let lease_generation = store
+        .status(pass.attempt)?
+        .expect("the try's row")
+        .attempt
+        .attempt_count;
+    assert_eq!(
+        park.wait,
+        Some(DreamerParkedWait {
+            wait: DreamerParkWait::Seat {
+                seat,
+                generation: 1,
+                reset_at_s: None,
+            },
+            lease_generation,
+        }),
+        "a refusal past the deadline parks on the seat at generation 1, not as a checkpoint"
+    );
+    assert_eq!(
+        park.cause,
+        DreamerParkCause::Signal,
+        "the late refusal's park waits on a signal"
+    );
+    assert!(
+        !park.resumable_by(ParkResumer::LaterPass),
+        "a later pass does not resume the late refusal's park"
+    );
+    assert_reservation_settled(&pass.vault, "late lapsed login")?;
+    let resumed =
+        pass.vault
+            .record_model_seat_available(seat, 1, ModelSeatAvailableSource::LoginRestored)?;
+    assert_eq!(
+        resumed,
+        vec![pass.attempt],
+        "the restored login wakes the try parked past the deadline"
+    );
+    assert_eq!(pass.calls, 1, "the late refusal is asked once");
     Ok(())
 }

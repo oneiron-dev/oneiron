@@ -333,21 +333,25 @@ impl ConsolidationExecutor<'_> {
         if trapped {
             return Ok(PartitionRun::Trapped);
         }
+        // A spent seat waits for its login or its reset, even once the pass
+        // is out of time or stopped: a checkpoint would let a later pass ask
+        // the seat again before its available write. A spend scope's refusal
+        // for good still comes first (SEAT-PARK-MODEL-STEP-PATH).
+        if budget_refused.is_none()
+            && let Some((reason, seat, reset_at_s)) = seat_refused
+        {
+            return Ok(PartitionRun::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            });
+        }
         if checkpoint || ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
         }
         // A refusal for good ends the try, before a reply a retry may fix.
         if let Some((reason, refusal)) = budget_refused {
             return Ok(PartitionRun::BudgetRefused { reason, refusal });
-        }
-        // A spent seat waits for its login or its reset, before a reply a
-        // retry may fix (SEAT-PARK-MODEL-STEP-PATH).
-        if let Some((reason, seat, reset_at_s)) = seat_refused {
-            return Ok(PartitionRun::SeatRefused {
-                reason,
-                seat,
-                reset_at_s,
-            });
         }
         if let Some(reason) = refused {
             return Ok(PartitionRun::Refused { reason });
