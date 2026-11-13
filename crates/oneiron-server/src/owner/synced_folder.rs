@@ -49,13 +49,25 @@ impl SyncedFolder {
 
 /// The nearest synced folder that holds `vault_path`, the vault directory
 /// included. It is read on the canonical path, so a symlink into a synced
-/// folder counts; a path that does not exist yet is read as written.
+/// folder counts, also for a vault directory not created yet.
 pub(crate) fn enclosing(vault_path: &Path) -> Option<SyncedFolder> {
-    let path = vault_path
-        .canonicalize()
-        .or_else(|_| std::path::absolute(vault_path))
-        .unwrap_or_else(|_| vault_path.to_path_buf());
-    path.ancestors().find_map(synced_root)
+    canonical(vault_path).ancestors().find_map(synced_root)
+}
+
+/// `path` with its nearest existing ancestor made canonical and the rest
+/// kept as written: a first `serve` checks a vault it has yet to create.
+fn canonical(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    for ancestor in absolute.ancestors() {
+        let Ok(resolved) = ancestor.canonicalize() else {
+            continue;
+        };
+        return match absolute.strip_prefix(ancestor) {
+            Ok(rest) if !rest.as_os_str().is_empty() => resolved.join(rest),
+            _ => resolved,
+        };
+    }
+    absolute
 }
 
 /// `dir` as a sync service's root, if it is one.
