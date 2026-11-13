@@ -162,6 +162,13 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
             "embedder serve on a non-loopback address needs --api-key-env or --accounts-file: anyone who can reach it could spend this host's model"
         );
     }
+    // SIGHUP re-reads the accounts file from here on, before the model's
+    // load, so a re-read sent while it loads never ends the process.
+    let accounts = listen.accounts.map(Arc::new);
+    #[cfg(unix)]
+    if let Some(accounts) = &accounts {
+        accounts.reload_on_hangup()?;
+    }
     let embedder: Arc<dyn ServedModel> =
         tokio::task::spawn_blocking(move || LocalEmbedder::load(&config, &ModelManager::default()))
             .await??;
@@ -170,15 +177,12 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         addr = %listener.local_addr()?,
         model_id = embedder.model_id(),
         dimensions = embedder.dimensions(),
-        auth = listen.key.is_some(),
-        accounts = ?listen.accounts.as_ref().map(AccountKeys::count),
+        auth = listen.key.is_some() || accounts.is_some(),
+        accounts = ?accounts.as_deref().map(AccountKeys::count),
         "embedder endpoint serving /v1/embeddings"
     );
     let mut served = Served::new(embedder, listen.aliases, listen.key, &listen.limits)?;
-    if let Some(accounts) = listen.accounts {
-        let accounts = Arc::new(accounts);
-        #[cfg(unix)]
-        accounts.reload_on_hangup()?;
+    if let Some(accounts) = accounts {
         served = served.with_accounts(accounts);
     }
     let served = Arc::new(served);

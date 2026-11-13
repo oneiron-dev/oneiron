@@ -32,6 +32,7 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use base64::Engine as _;
 use serde::Serialize;
+use tracing::Instrument;
 
 use super::accounts::Caller;
 use super::budget::{Fixed, answer_bytes, encoding_bytes};
@@ -158,16 +159,23 @@ async fn embed_request_batches(
             Some(turn) => turn.map_err(|_| BatchFailure::Embedding)?,
         }
     };
-    let embedder = Arc::clone(&served.embedder);
+    let counted = Arc::clone(served);
     let task = Arc::clone(work);
     let embedded = tokio::task::spawn_blocking(move || {
         let _turn = turn;
-        embedder.embed_raw(
+        let embedded = counted.embedder.embed_raw(
             &task.texts[batch_range(&task, start)],
             task.side,
             task.instruction.as_deref(),
             task.priority,
-        )
+        );
+        // The model has done the work, so it counts toward the account's day
+        // here, where it ends, even when the client has hung up and the
+        // request's future is gone (review P1, #7422).
+        if let Ok(done) = &embedded {
+            counted.count_input_tokens(&task.caller, done.tokens);
+        }
+        embedded
     })
     .await;
     let embedded = match embedded {
@@ -187,9 +195,6 @@ async fn embed_request_batches(
     if embedded.rows.len() != range.len() || embedded.tokens_per_item.len() != range.len() {
         return Err(BatchFailure::Embedding);
     }
-    // The model has done the work, so it counts toward the account's day
-    // whatever becomes of the answer.
-    served.count_input_tokens(&work.caller, embedded.tokens);
     let mut rows = Fixed(Vec::with_capacity(encoding_bytes(range.len(), dimensions)));
     for (offset, (row, input_tokens)) in embedded
         .rows
@@ -426,7 +431,8 @@ fn pieces_body(
             return;
         };
         send(&tail).await;
-    });
+    }
+    .instrument(tracing::Span::current()));
     axum::body::Body::from_stream(futures_util::stream::unfold(
         receiver,
         |mut receiver| async move {

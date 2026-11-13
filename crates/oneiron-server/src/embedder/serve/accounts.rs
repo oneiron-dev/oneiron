@@ -75,8 +75,9 @@ struct AccountDay {
     /// Days since the Unix epoch, in UTC.
     day: u64,
     input_tokens: u64,
-    /// Whether the account's crossing has asked on this day.
-    asked: bool,
+    /// The quota the account's crossing asked under on this day, if it has:
+    /// a quota changed since asks again when it is crossed.
+    asked_at: Option<u64>,
 }
 
 /// An account's first crossing of its soft quota in a UTC day.
@@ -122,10 +123,13 @@ impl AccountKeys {
     pub(crate) fn reload(&self) -> anyhow::Result<usize> {
         let rows = read_rows(&self.path)?;
         let count = rows.len();
+        // Days past go; today's use stays, an account revoked and listed
+        // again today included, so it neither starts again nor asks twice.
+        let today = oneiron_vault_contract::now_ts() / DAY_SECS;
         self.days
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .retain(|id, _| rows.iter().any(|row| row.id == *id));
+            .retain(|_, used| used.day >= today);
         self.rows.store(Arc::new(rows));
         Ok(count)
     }
@@ -136,8 +140,11 @@ impl AccountKeys {
     }
 
     /// The account whose key is `presented`, if any. Every row is compared,
-    /// in constant time, whichever matches.
+    /// in constant time, whichever matches. No key is no account's.
     pub(crate) fn account_for(&self, presented: &[u8]) -> Option<Arc<str>> {
+        if presented.is_empty() {
+            return None;
+        }
         let digest: [u8; 32] = Sha256::digest(presented).into();
         self.rows.load().iter().fold(None, |found, row| {
             if bool::from(row.key_sha256.ct_eq(&digest)) {
@@ -150,8 +157,8 @@ impl AccountKeys {
 
     /// Counts `tokens` of model input to account `id` at `now` (Unix
     /// seconds), on that UTC day. The account's first crossing of its
-    /// `daily_input_tokens` in the day is returned, once; the work is served
-    /// either way.
+    /// `daily_input_tokens` in the day is returned, once for each quota the
+    /// row sets that day; the work is served either way.
     pub(crate) fn count_input_tokens(
         &self,
         id: &Arc<str>,
@@ -169,21 +176,21 @@ impl AccountKeys {
         let used = days.entry(Arc::clone(id)).or_insert(AccountDay {
             day: today,
             input_tokens: 0,
-            asked: false,
+            asked_at: None,
         });
         if used.day != today {
             *used = AccountDay {
                 day: today,
                 input_tokens: 0,
-                asked: false,
+                asked_at: None,
             };
         }
         used.input_tokens = used.input_tokens.saturating_add(tokens);
         let bound = bound?;
-        if used.asked || used.input_tokens <= bound {
+        if used.asked_at == Some(bound) || used.input_tokens <= bound {
             return None;
         }
-        used.asked = true;
+        used.asked_at = Some(bound);
         Some(QuotaCrossing {
             bound,
             observed: used.input_tokens,
@@ -225,12 +232,25 @@ fn read_rows(path: &Path) -> anyhow::Result<Vec<AccountKey>> {
         .map_err(|error| anyhow::anyhow!("the accounts file {}: {error}", path.display()))
 }
 
+/// Why `text` is not an accounts file, by line, without the line itself: a
+/// key written where its digest belongs must not reach a log.
+fn toml_refusal(text: &str, error: &toml::de::Error) -> anyhow::Error {
+    let line = error.span().map_or(0, |span| {
+        text.get(..span.start)
+            .map_or(0, |before| before.matches('\n').count() + 1)
+    });
+    anyhow::anyhow!(
+        "line {line}: not [[account]] rows of id, key_sha256 and daily_input_tokens: {}",
+        error.message()
+    )
+}
+
 /// The rows of an accounts file's text: each id non-empty and named once,
-/// each digest 64 hex digits and given to one account only, and each soft
-/// quota, if set, at least one token.
+/// each digest 64 hex digits, not an empty key's, and given to one account
+/// only, and each soft quota, if set, at least one token.
 fn parse_rows(text: &str) -> anyhow::Result<Vec<AccountKey>> {
-    let file: AccountsFile = toml::from_str(text)
-        .map_err(|error| anyhow::anyhow!("not [[account]] rows of id and key_sha256: {error}"))?;
+    let file: AccountsFile = toml::from_str(text).map_err(|error| toml_refusal(text, &error))?;
+    let empty_key: [u8; 32] = Sha256::digest(b"").into();
     let mut rows: Vec<AccountKey> = Vec::with_capacity(file.accounts.len());
     for row in file.accounts {
         let id = row.id.trim();
@@ -240,6 +260,11 @@ fn parse_rows(text: &str) -> anyhow::Result<Vec<AccountKey>> {
         let key_sha256 = digest_from_hex(&row.key_sha256).ok_or_else(|| {
             anyhow::anyhow!("account {id}: key_sha256 is not a SHA-256 digest in 64 hex digits")
         })?;
+        if key_sha256 == empty_key {
+            anyhow::bail!(
+                "account {id}: key_sha256 is the digest of an empty key, which any request without a key would match"
+            );
+        }
         if rows.iter().any(|seen| &*seen.id == id) {
             anyhow::bail!("account {id} is named twice");
         }

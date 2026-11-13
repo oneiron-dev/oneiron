@@ -166,6 +166,10 @@ fn accounts_file_rows_that_cannot_name_one_key_each_do_not_load() {
             ),
         ),
         (
+            "the digest of an empty key, which a request without a key would match",
+            accounts_text(&[("acct-owen", "")]),
+        ),
+        (
             "a key in place of its digest",
             format!("[[account]]\nid = \"acct-owen\"\nkey_sha256 = \"{OWEN_KEY}\"\n"),
         ),
@@ -289,6 +293,166 @@ fn accounts_daily_input_tokens_start_again_each_utc_day() {
     );
     std::fs::write(&path, account_row("acct-owen", OWEN_KEY, Some(0))).expect("written");
     assert!(accounts.reload().is_err(), "a quota of 0 tokens");
+}
+
+#[test]
+fn accounts_use_today_survives_a_reload_and_a_changed_quota_asks_again() {
+    // One UTC day holds every count below, as it holds the re-reads'.
+    let into_day = oneiron_vault_contract::now_ts() % 86_400;
+    if into_day > 86_400 - 30 {
+        std::thread::sleep(Duration::from_secs(86_401 - into_day));
+    }
+    let now = oneiron_vault_contract::now_ts();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("accounts.toml");
+    std::fs::write(&path, account_row("acct-owen", OWEN_KEY, Some(3))).expect("written");
+    let accounts = AccountKeys::load(&path).expect("loads");
+    let owen: Arc<str> = Arc::from("acct-owen");
+    assert_eq!(
+        accounts.count_input_tokens(&owen, 4, now),
+        Some(QuotaCrossing {
+            bound: 3,
+            observed: 4
+        })
+    );
+
+    write_accounts(&path, &[("acct-yuki", YUKI_KEY)]);
+    assert_eq!(accounts.reload().expect("re-read"), 1);
+    std::fs::write(&path, account_row("acct-owen", OWEN_KEY, Some(3))).expect("written");
+    assert_eq!(accounts.reload().expect("re-read"), 1);
+    assert_eq!(
+        accounts.count_input_tokens(&owen, 1, now),
+        None,
+        "revoked and listed again today: the day's use stays, and it does not ask twice"
+    );
+
+    std::fs::write(&path, account_row("acct-owen", OWEN_KEY, Some(10))).expect("written");
+    assert_eq!(accounts.reload().expect("re-read"), 1);
+    assert_eq!(accounts.count_input_tokens(&owen, 5, now), None, "10 of 10");
+    assert_eq!(
+        accounts.count_input_tokens(&owen, 1, now),
+        Some(QuotaCrossing {
+            bound: 10,
+            observed: 11
+        }),
+        "a raised quota asks again when it is crossed"
+    );
+}
+
+/// A model that holds each call until the test lets it go, and says when
+/// one has started.
+struct Gated {
+    inner: Arc<dyn ServedModel>,
+    started: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl ServedModel for Gated {
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn dimensions(&self) -> usize {
+        self.inner.dimensions()
+    }
+
+    fn transform(&self) -> &str {
+        self.inner.transform()
+    }
+
+    fn profile(&self) -> &RunProfile {
+        self.inner.profile()
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        self.inner.provenance()
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        side: Side,
+        instruction: Option<&str>,
+        priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        let _ = self.started.try_send(());
+        let _ = self
+            .release
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .recv_timeout(Duration::from_secs(30));
+        self.inner.embed_raw(texts, side, instruction, priority)
+    }
+}
+
+/// Review P1 (#7422): the count ran in the request's future after the
+/// model's task, so a client that hung up while the model worked dropped
+/// the future and its tokens were never counted, though the model did the
+/// work.
+#[test]
+fn accounts_count_the_models_work_after_its_client_hung_up() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("accounts.toml");
+    std::fs::write(&path, account_row("acct-owen", OWEN_KEY, Some(1))).expect("written");
+    let (started, started_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let model = Arc::new(Gated {
+        inner: synthetic(),
+        started,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    let accounts = Arc::new(AccountKeys::load(&path).expect("loads"));
+    let served = Arc::new(
+        Served::new(
+            model,
+            Vec::new(),
+            None,
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served")
+        .with_accounts(accounts),
+    );
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let body = serde_json::json!({ "model": SYNTHETIC_MODEL, "input": ["one", "two"] }).to_string();
+    let mut client = post_head(addr, Some(OWEN_KEY), body.len());
+    client.write_all(body.as_bytes()).expect("body sent");
+    started_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the model took the request");
+    drop(client);
+    // The server sees the hang-up and drops the request's future while the
+    // model still works.
+    std::thread::sleep(Duration::from_millis(300));
+    release.send(()).expect("the model let go");
+    let asked = (0..500).any(|_| {
+        std::thread::sleep(Duration::from_millis(10));
+        account_day_question(&served).is_some()
+    });
+    assert!(
+        asked,
+        "the model's 2 tokens count toward the account's day of 1 after its client hung up"
+    );
+}
+
+#[tokio::test]
+async fn accounts_file_or_key_is_needed_off_loopback() {
+    let refused = run(
+        EmbedderConfig {
+            provider: EmbedderProvider::Local,
+            ..EmbedderConfig::default()
+        },
+        Listen {
+            addr: "0.0.0.0:0".parse().expect("an address"),
+            key: None,
+            accounts: None,
+            aliases: Vec::new(),
+            limits: crate::config::LimitsConfig::default(),
+        },
+    )
+    .await
+    .expect_err("refused before any model loads");
+    assert!(refused.to_string().contains("--accounts-file"), "{refused}");
 }
 
 /// Rule five at the account day row: `callers` requests from one account
