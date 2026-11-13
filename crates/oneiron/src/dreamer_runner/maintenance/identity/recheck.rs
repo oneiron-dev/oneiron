@@ -59,7 +59,9 @@ pub(super) fn context_terms(text: &str, start: usize, end: usize, name: &str) ->
 /// sounds like them (the Linker's phonetic rung), or names a person by the
 /// speaker's role edge (its role rung), in a world the turn is in, as the
 /// Linker filters them. A real person the name only sounds like, or one only
-/// an Auto role edge names, is never a sure link (OF-123).
+/// an Auto role edge names, is never a sure link (OF-123). Two or more
+/// candidates come back in the vector rung's order when the turn's stored
+/// vector puts one first ([`crate::tagging::ranked_for_turn_in_txn`]).
 fn uncertain_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -78,9 +80,13 @@ fn uncertain_in_txn(
         return Ok(None);
     }
     if entities.len() >= 2 {
+        // The vector rung once more: a turn the embed worker reached after
+        // its save has its candidates ordered here. The set stays whole.
+        let candidates = crate::tagging::ranked_for_turn_in_txn(vault, txn, &turn, &entities)?
+            .unwrap_or(entities);
         return Ok(Some(Uncertain {
             kind,
-            candidates: entities,
+            candidates,
             provisional: None,
         }));
     }

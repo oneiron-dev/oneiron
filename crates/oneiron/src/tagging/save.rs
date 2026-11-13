@@ -14,8 +14,11 @@
 //! speaker's role edges (ARCH-0024 signal 3, [`super::role`]) unless the key
 //! finds a real person: one person an Approved edge names is its link, two
 //! or more are candidates, and one only an Auto edge names is left to the
-//! provisional entity, which the re-check asks about. A miss of every rung
-//! mints a provisional entity under the source turn's facet. A span whose
+//! provisional entity, which the re-check asks about. Two or more candidates
+//! of any rung are ordered by the turn's stored vector when one leads on
+//! margin (ARCH-0024 signal 4, [`super::vector`]): it goes first, and every
+//! candidate stays. A miss of every rung mints a provisional entity under
+//! the source turn's facet. A span whose
 //! label the table leaves out is never looked up: a pronoun, which a tagger
 //! labels as a reference and not as a name, takes its antecedent's link, so a pronoun
 //! that happens to spell someone's name is never linked to them. A
@@ -33,6 +36,7 @@
 //! otherwise stays an unresolved decision. Either keeps only entities a
 //! world of the turn holds.
 
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
@@ -46,6 +50,7 @@ use super::tags::{
     DerivationEnvelope, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags,
     readable_in_txn, replace_in_txn, tag_set_in_txn,
 };
+use super::vector;
 use crate::attempt_queue::AttemptQueue;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
@@ -248,7 +253,7 @@ pub(super) fn save_with_hint_read_in_txn(
             (None, None) => MentionLink::Tag,
             (None, Some(kind)) => {
                 let link = linker.link(txn, kind, text, &messages[span.message], hint_read)?;
-                linker.hinted(
+                let link = linker.hinted(
                     txn,
                     link,
                     text,
@@ -256,7 +261,8 @@ pub(super) fn save_with_hint_read_in_txn(
                     span.start,
                     span.end,
                     hint_read,
-                )?
+                )?;
+                linker.ranked(txn, link, hint_read)?
             }
             // A pronoun, or a label the table does not map, takes its
             // antecedent's link.
@@ -290,7 +296,7 @@ pub(super) fn save_with_hint_read_in_txn(
                         kind,
                         entities: hits,
                     };
-                    linker.hinted(
+                    let link = linker.hinted(
                         txn,
                         link,
                         text,
@@ -298,7 +304,8 @@ pub(super) fn save_with_hint_read_in_txn(
                         span.start,
                         span.end,
                         hint_read,
-                    )?
+                    )?;
+                    linker.ranked(txn, link, hint_read)?
                 }
             }
         };
@@ -535,6 +542,9 @@ struct Linker<'v> {
     facet: Option<EntityId>,
     now: u64,
     minted: usize,
+    /// The turn's stored vector, read once per save when the vector rung
+    /// first needs it; `None` inside when the turn has none.
+    turn_vector: OnceCell<Option<Vec<f32>>>,
 }
 
 impl<'v> Linker<'v> {
@@ -557,6 +567,7 @@ impl<'v> Linker<'v> {
             facet,
             now,
             minted: 0,
+            turn_vector: OnceCell::new(),
         })
     }
 
@@ -624,6 +635,56 @@ impl<'v> Linker<'v> {
             Some(entity) => MentionLink::Candidates {
                 kind: *kind,
                 entities: vec![entity],
+            },
+            None => link,
+        })
+    }
+
+    /// `link` ordered by the vector rung ([`vector::ranked_in_txn`]): a
+    /// person mention's two or more candidates with the one nearest the
+    /// turn's stored vector first, when it leads on margin; `link` itself
+    /// otherwise. The set is unchanged, so the mention stays uncertain. A
+    /// caller's save ranks only candidates its read admits, and none with
+    /// no read: the order is drawn from their vectors.
+    fn ranked(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        link: MentionLink,
+        hint_read: HintRead<'_, '_>,
+    ) -> Result<MentionLink> {
+        let MentionLink::Candidates { kind, entities } = &link else {
+            return Ok(link);
+        };
+        if *kind != ENTITY_TYPE_PERSON
+            || entities.len() < 2
+            || self.vault.config.embedding_model.is_none()
+        {
+            return Ok(link);
+        }
+        match hint_read {
+            HintRead::Internal => {}
+            HintRead::Caller(None) => return Ok(link),
+            HintRead::Caller(Some(read)) => {
+                let policy = read.live_policy_manifest_in(txn)?;
+                for id in entities {
+                    if !read.is_ref_readable_with_policy_in(txn, &policy, id)? {
+                        return Ok(link);
+                    }
+                }
+            }
+        }
+        if self.turn_vector.get().is_none() {
+            let read = vector::turn_vector_in_txn(self.vault, txn, &self.turn)?;
+            let _ = self.turn_vector.set(read);
+        }
+        let Some(query) = self.turn_vector.get().and_then(Option::as_deref) else {
+            return Ok(link);
+        };
+        let ranked = vector::ranked_in_txn(self.vault, txn, query, entities)?;
+        Ok(match ranked {
+            Some(ranked) => MentionLink::Candidates {
+                kind: *kind,
+                entities: ranked,
             },
             None => link,
         })
