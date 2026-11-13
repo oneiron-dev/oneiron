@@ -686,11 +686,11 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
         &mut state,
     )
     .unwrap();
-    let client = WindowManager::new(
+    let client = Arc::new(WindowManager::new(
         client_vault.clone(),
         Arc::new(oneiron::sync::bridge::Materializer::new()),
         "client",
-    );
+    ));
     let remote = client.documents().open(id).unwrap();
     let client_owner = oneiron::WriteActor::new(
         client_vault.ensure_embedded_owner_actor().unwrap(),
