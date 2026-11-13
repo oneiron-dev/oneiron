@@ -28,11 +28,23 @@
 //!   model call. No window reads the last 30 days; exactly 90 days up to now
 //!   is let in; a window with no seat's call in it ends `missing` /
 //!   `metered_seat`.
+//! * `a_stock_option_is_priced_on_projected_prompt_and_answer_counts`: an
+//!   OpenAI-family incumbent (counted with o200k itself) and a stock option
+//!   on a provider whose `/tokenize` counts JSON finer than prose, neither
+//!   measured yet. The run measures both on the prompt-shaped and the
+//!   answer-shaped calibration passage and stores the two ratios of each;
+//!   the option's month is the incumbent's prompt tokens scaled by the two
+//!   prompt-shaped ratios plus its answer tokens scaled by the two
+//!   answer-shaped ones, at the option's list price, and the offer says its
+//!   counts are projected.
 //!
 //! Reads JSON only (no engine type of the new verb), so on a main without the
 //! verb every test fails on its first status assertion (404 NOT_FOUND). On a
-//! head whose run takes no window, the last two fail on their first window:
-//! the request does not decode.
+//! head whose run takes no window, the window tests fail on their first
+//! window: the request does not decode. On a head that measures one passage,
+//! the projected-counts test fails at its first ratio read: the stored rows
+//! carry no answer-shaped ratio. The registry rows are decoded from JSON, so
+//! the file builds on both.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -48,9 +60,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::{
-    Router,
+    Json, Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
+    routing::post,
 };
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
@@ -101,6 +114,9 @@ const OFFER_PURPOSE: &str = "other:coach_training_offer";
 const STUDIED_ROLE: &str = "checker";
 /// The stock option the fixture prices beside the incumbent.
 const CANDIDATE_MODEL: &str = "fixture/candidate-small@r1";
+/// A stock option on the `counted` provider, whose `/tokenize` the
+/// fixture's token counter answers ([`start_token_counter`]).
+const COUNTED_MODEL: &str = "counted/candidate-counted@r1";
 const DAY_SECS: u64 = 86_400;
 /// The shipped offer skill, which the fixture's hub serves.
 const OFFER_SKILL: &str = include_str!("../../../skills/training-offer/SKILL.md");
@@ -123,12 +139,45 @@ fn at(now: u64) -> TimeRange {
     }
 }
 
-fn models_text(base_url: &str) -> String {
-    format!(
+/// The models config: every seat on the fake model at `base_url`, and, with
+/// `counter_url`, a `counted` provider no seat runs on, whose count endpoint
+/// is the fixture's token counter.
+fn models_text(base_url: &str, counter_url: Option<&str>) -> String {
+    let mut text = format!(
         "default = \"local:test-model\"\nextraction_egress = true\n\
          [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
          [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
-    )
+    );
+    if let Some(counter_url) = counter_url {
+        text.push_str(&format!(
+            "[providers.counted]\nkind = \"local-openai-compat\"\nbase_url = \"{counter_url}\"\n"
+        ));
+    }
+    text
+}
+
+/// A llama.cpp-style `/tokenize` endpoint on an ephemeral loopback port,
+/// returning its base URL. It counts one token for every four bytes of the
+/// text and two more for each double quote: a tokenizer that splits JSON
+/// finer than prose, so it counts the prompt-shaped and the answer-shaped
+/// calibration passages at different ratios.
+async fn start_token_counter() -> String {
+    let app = Router::new().route(
+        "/tokenize",
+        post(|Json(body): Json<Value>| async move {
+            let text = body["content"].as_str().unwrap_or_default();
+            let quotes = text.bytes().filter(|byte| *byte == b'"').count();
+            Json(json!({"tokens": vec![0; text.len().div_ceil(4) + 2 * quotes]}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind the token counter");
+    let address = listener.local_addr().expect("the token counter's address");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{address}")
 }
 
 /// A host that judges the caller to hold every permission the skill asks.
@@ -224,25 +273,40 @@ fn registry_row(model: &str, price: &str, licence: Option<&str>) -> ModelRegistr
     if let Some(licence) = licence {
         metadata.insert("licence".to_owned(), json!(licence));
     }
-    ModelRegistryRow {
-        version: 1,
-        wire: ModelWireFormat::OpenaiCompat,
-        catalog: LlmCatalogEntry {
-            model: model.clone(),
-            display_name: model.as_str().to_owned(),
-            locality: ModelLocality::OwnServer,
-            context_window_tokens: 8192,
-            max_output_tokens: None,
-            cost: Some(priced.price.clone()),
-            capabilities: Vec::new(),
-            metadata,
-        },
-        scores: BTreeMap::new(),
-        fetched_at: BTreeMap::new(),
-        tokens_per_o200k: Some(1.0),
-        stale_since: None,
-        source_rows: None,
-    }
+    let catalog = LlmCatalogEntry {
+        model: model.clone(),
+        display_name: model.as_str().to_owned(),
+        locality: ModelLocality::OwnServer,
+        context_window_tokens: 8192,
+        max_output_tokens: None,
+        cost: Some(priced.price.clone()),
+        capabilities: Vec::new(),
+        metadata,
+    };
+    // Decoded, not spelled out: the file builds on a row with and without
+    // the answer-shaped ratio. The ratio of 1 skips measurement on a host
+    // that measures one passage; one that measures two counts the row again.
+    serde_json::from_value(json!({
+        "version": 1,
+        "wire": ModelWireFormat::OpenaiCompat,
+        "catalog": catalog,
+        "tokens_per_o200k": 1.0,
+    }))
+    .expect("a registry row")
+}
+
+/// `model`'s stored (prompt-shaped, answer-shaped) tokens per o200k token,
+/// read off the row's JSON.
+fn stored_ratios(vault: &Vault, model: &str) -> (Option<f64>, Option<f64>) {
+    let row = vault
+        .model_registry_row(&ModelId::new(model).expect("model id"))
+        .expect("read the registry row")
+        .unwrap_or_else(|| panic!("{model}'s registry row"));
+    let row = serde_json::to_value(&row).expect("registry row JSON");
+    (
+        row["tokens_per_o200k"].as_f64(),
+        row["answer_tokens_per_o200k"].as_f64(),
+    )
 }
 
 /// One paired agent credential.
@@ -273,6 +337,17 @@ impl Fixture {
     /// calls and a priced incumbent and stock option. The offer skill is not
     /// installed: [`Self::install_offer_skill`] imports it.
     async fn new(reply: Reply) -> Self {
+        Self::open(reply, None).await
+    }
+
+    /// [`Self::new`] with a `counted` provider whose `/tokenize` the
+    /// fixture's token counter answers.
+    async fn with_token_counter(reply: Reply) -> Self {
+        let counter = start_token_counter().await;
+        Self::open(reply, Some(&counter)).await
+    }
+
+    async fn open(reply: Reply, counter_url: Option<&str>) -> Self {
         let model = FakeLlm::start(vec![], Some(reply)).await;
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
@@ -302,8 +377,8 @@ impl Fixture {
         let owner = vault
             .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
             .expect("authenticated owner");
-        let models =
-            ModelsConfig::from_toml(&models_text(&model.base_url), None).expect("models config");
+        let models = ModelsConfig::from_toml(&models_text(&model.base_url, counter_url), None)
+            .expect("models config");
         let (server, host) = AiHost::attach(server, Some(&models)).await;
         let app = build_app(Arc::new(server));
         let fixture = Self {
@@ -966,6 +1041,99 @@ fn a_run_names_only_a_dated_window_of_at_most_90_days_that_has_passed() {
             "no seat's call is dated in it: {answer}"
         );
         assert_eq!(fixture.offer_calls(), 0, "no model call");
+        fixture.finish().await;
+    });
+}
+
+#[test]
+fn a_stock_option_is_priced_on_projected_prompt_and_answer_counts() {
+    run_on_engine_stack("offer-run-projected-counts", || async {
+        let fixture = Fixture::with_token_counter(raise_first_option()).await;
+        fixture.install_offer_skill();
+        let seat = fixture.studied_seat_model().await;
+        // Neither row is measured yet. The incumbent is of the OpenAI family,
+        // which counts with o200k itself; the stock option is on the
+        // `counted` provider, whose `/tokenize` the fixture's counter answers.
+        // At 0.1 USD a million tokens it is the cheapest option, so it is
+        // `option-1`, the one the Coach raises.
+        let mut incumbent = registry_row(&seat, "2", None);
+        incumbent
+            .catalog
+            .metadata
+            .insert("family".to_owned(), json!("openai"));
+        incumbent.tokens_per_o200k = None;
+        fixture
+            .vault
+            .put_model_registry_row(&incumbent)
+            .expect("the unmeasured incumbent's registry row");
+        let mut counted = registry_row(COUNTED_MODEL, "0.1", Some("apache-2.0"));
+        counted.tokens_per_o200k = None;
+        fixture
+            .vault
+            .put_model_registry_row(&counted)
+            .expect("the unmeasured stock option's registry row");
+
+        let (status, answer) = fixture.as_owner(VERB, json!({})).await;
+        assert_eq!(status, StatusCode::OK, "owner run: {answer}");
+        assert_eq!(answer["end"]["end"], "drafted", "{answer}");
+
+        // The run measured both rows on both calibration passages.
+        let (incumbent_prompt, incumbent_answer) = stored_ratios(&fixture.vault, &seat);
+        let incumbent_prompt =
+            incumbent_prompt.expect("the incumbent's prompt-shaped ratio is measured");
+        let incumbent_answer =
+            incumbent_answer.expect("the incumbent's answer-shaped ratio is measured");
+        assert_eq!(
+            (incumbent_prompt, incumbent_answer),
+            (1.0, 1.0),
+            "an OpenAI-family model counts with o200k itself"
+        );
+        let (counted_prompt, counted_answer) = stored_ratios(&fixture.vault, COUNTED_MODEL);
+        let counted_prompt =
+            counted_prompt.expect("the stock option's prompt-shaped ratio is measured");
+        let counted_answer =
+            counted_answer.expect("the stock option's answer-shaped ratio is measured");
+        assert!(
+            (counted_prompt - counted_answer).abs() > 1e-6,
+            "the counter counts the two passages at different ratios: \
+             {counted_prompt} and {counted_answer}"
+        );
+
+        // The seat's last 30 days: two calls of 40_000 prompt and 8_000
+        // answer tokens. Each side is scaled by its own ratio, at 0.1 USD a
+        // million tokens, over a 30-day window: one month.
+        let projected = (80_000.0 * counted_prompt / incumbent_prompt
+            + 16_000.0 * counted_answer / incumbent_answer)
+            * 0.1
+            / 1e6;
+        let attempt = answer["attempt"].as_str().expect("attempt id");
+        let result = fixture.result_of(attempt).await;
+        let offers = result["offers"].as_array().expect("offers");
+        assert_eq!(offers.len(), 1, "{result}");
+        let offer = &offers[0];
+        assert_eq!(
+            offer["candidate"]["stock"]["model"]["model"], COUNTED_MODEL,
+            "the Coach raised the cheapest option, the counted one: {result}"
+        );
+        let monthly = offer["cost"]["monthly_after"]
+            .as_f64()
+            .expect("the stock option's month is priced");
+        assert!(
+            (monthly - projected).abs() < 1e-8,
+            "the month is the prompt and answer tokens each scaled by its own ratio: \
+             {monthly} against {projected}: {result}"
+        );
+        let risk = offer["evidence"]["risk"]
+            .as_str()
+            .expect("the offer's risk");
+        assert!(
+            risk.contains("counts are projected"),
+            "the offer says its counts are projected: {risk}"
+        );
+        assert!(
+            !risk.contains("estimate"),
+            "a measured option is no estimate: {risk}"
+        );
         fixture.finish().await;
     });
 }

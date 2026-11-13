@@ -87,10 +87,11 @@ const DAY_BUDGET_UNITS: u64 = 1 << 20;
 /// What the offer says of its prices, beside the Coach's risk.
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
     token counts, cached prompt tokens at each model's quoted cache rates, or at its input price \
-    where it quotes none; the candidate's counts are the incumbent's scaled by how many tokens \
-    each model's tokenizer counts in one fixed passage. Only list prices quoted in USD are \
-    priced: a model whose price names another currency, or none, shows no figure. A free model, \
-    every rate zero, shows 0 in any currency.";
+    where it quotes none. The candidate's counts are projected, not measured: the incumbent's \
+    prompt tokens scaled by how many tokens each model's tokenizer counts in one fixed \
+    prompt-shaped passage, and its answer tokens by the same in one fixed answer-shaped passage. \
+    Only list prices quoted in USD are priced: a model whose price names another currency, or \
+    none, shows no figure. A free model, every rate zero, shows 0 in any currency.";
 /// The note instead when the candidate's price is an estimate: a tokenizer
 /// of the two was never measured.
 const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced at list \
@@ -366,7 +367,8 @@ struct Choice {
     pin: OfferModelPin,
     monthly: Option<f64>,
     /// `monthly` is on the incumbent's own counts: a tokenizer of the two
-    /// was not measured.
+    /// was not measured on both calibration passages. Else it is on
+    /// projected counts.
     estimate: bool,
     destination: ComputeDestination,
     evidence_refs: Vec<String>,

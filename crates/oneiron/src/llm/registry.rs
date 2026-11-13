@@ -57,10 +57,20 @@ pub struct ModelRegistryRow {
     #[serde(default)]
     pub fetched_at: BTreeMap<String, u64>,
     /// Tokens this model's tokenizer counts per o200k token of the same
-    /// text, measured by the host on one fixed passage (OF-577); `None`
-    /// until measured. A refresh that changes the catalog entry clears it.
+    /// text, measured by the host on a fixed prompt-shaped passage (OF-577);
+    /// `None` until measured. A row an earlier host measured holds the ratio
+    /// of one fixed prose passage here and no
+    /// [`Self::answer_tokens_per_o200k`]; the host measures it again. A
+    /// refresh that changes the catalog entry clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_per_o200k: Option<f64>,
+    /// The same ratio on a fixed answer-shaped passage, measured and stored
+    /// together with [`Self::tokens_per_o200k`] (ARCH-0053:341): a training
+    /// offer scales a seat's output tokens by it and its prompt tokens by
+    /// the other. `None` until measured; a refresh that changes the catalog
+    /// entry clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_tokens_per_o200k: Option<f64>,
     /// When the model's provider retired it (FIX 4472): a pack refresh that
     /// no longer ships it, or the host's own mark. The row is kept, never
     /// deleted, so the agent lists and receipts that name it still read it;
@@ -131,9 +141,10 @@ impl ModelRegistryRow {
             || entry.display_name.trim().is_empty()
             || entry.context_window_tokens == 0
             || entry.max_output_tokens == Some(0)
-            || self
-                .tokens_per_o200k
-                .is_some_and(|ratio| !(ratio.is_finite() && ratio > 0.0))
+            || [self.tokens_per_o200k, self.answer_tokens_per_o200k]
+                .into_iter()
+                .flatten()
+                .any(|ratio| !(ratio.is_finite() && ratio > 0.0))
         {
             return Err(invalid("invalid model registry row"));
         }
@@ -239,17 +250,24 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
-    /// Stores `ratio`, the host's measured [`ModelRegistryRow::tokens_per_o200k`],
-    /// on `measured`'s stored row while that row still holds the catalog entry
-    /// it was measured on. `Ok(false)` when there is no such row: none is
+    /// Stores `prompt` and `answer`, the host's measured
+    /// [`ModelRegistryRow::tokens_per_o200k`] and
+    /// [`ModelRegistryRow::answer_tokens_per_o200k`], together on
+    /// `measured`'s stored row while that row still holds the catalog entry
+    /// they were measured on. `Ok(false)` when there is no such row: none is
     /// stored, or a refresh changed it since. The row keeps its source rows
-    /// (FIX 5760): the ratio is measured from that same entry and a fixed
-    /// passage, and reads no other row.
+    /// (FIX 5760): the ratios are measured from that same entry and two
+    /// fixed passages, and read no other row.
     ///
     /// # Errors
     ///
     /// A ratio that is not finite and positive, or storage errors.
-    pub fn set_model_token_ratio(&self, measured: &ModelRegistryRow, ratio: f64) -> Result<bool> {
+    pub fn set_model_token_ratios(
+        &self,
+        measured: &ModelRegistryRow,
+        prompt: f64,
+        answer: f64,
+    ) -> Result<bool> {
         let key = measured.catalog.model.as_str().to_owned();
         let mut txn = self.store.env.write_txn()?;
         let Some(mut row) = REGISTRY_ROW.get(&self.store, &txn, &key)? else {
@@ -258,7 +276,8 @@ impl Vault {
         if row.catalog != measured.catalog {
             return Ok(false);
         }
-        row.tokens_per_o200k = Some(ratio);
+        row.tokens_per_o200k = Some(prompt);
+        row.answer_tokens_per_o200k = Some(answer);
         row.validate()?;
         REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
         txn.commit()?;
@@ -425,13 +444,14 @@ impl Vault {
                         old.wire == existing.wire && old.catalog == existing.catalog
                     }) =>
                 {
-                    // A changed entry may name another tokenizer: its ratio
-                    // is measured again.
-                    let tokens_per_o200k = if row.catalog == existing.catalog {
-                        existing.tokens_per_o200k
-                    } else {
-                        row.tokens_per_o200k
-                    };
+                    // A changed entry may name another tokenizer: its two
+                    // ratios are measured again.
+                    let (tokens_per_o200k, answer_tokens_per_o200k) =
+                        if row.catalog == existing.catalog {
+                            (existing.tokens_per_o200k, existing.answer_tokens_per_o200k)
+                        } else {
+                            (row.tokens_per_o200k, row.answer_tokens_per_o200k)
+                        };
                     // The new entry is the seed's, the kept scores their
                     // snapshots' (FIX 5760).
                     let source_rows = union_source_rows([
@@ -443,6 +463,7 @@ impl Vault {
                         wire: row.wire,
                         catalog: row.catalog,
                         tokens_per_o200k,
+                        answer_tokens_per_o200k,
                         stale_since: marked,
                         source_rows,
                         ..existing
