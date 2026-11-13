@@ -99,6 +99,14 @@ pub(super) struct StoredDemotion {
     pub(super) reason: String,
     /// The grant this demotion revoked, when the scope held one.
     pub(super) grant_ref: Option<String>,
+    /// Who demoted, as an entity id in lower hex: the owner's or a policy
+    /// holder's person, the agent whose run spawned the scope's actor, the
+    /// actor itself, or the person whose ruling caused the demotion. `None` on
+    /// a row written before the field existed, and on an identity-topology
+    /// ruling that bound no deciding actor. Old rows decode: the key is
+    /// absent from their map.
+    #[serde(default)]
+    pub(super) demoted_by: Option<String>,
     /// The identity-topology causality clock at write time — see [`FoldKey`].
     pub(super) after_seq: u64,
     pub(super) at: u64,

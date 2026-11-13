@@ -439,7 +439,7 @@ impl Vault {
     ) -> Result<ConnectorScopeOutcomeRecorded> {
         let at = self.store.clock.now_recorded_at();
         let (signal, scope) = self.with_write_txn_grouped(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let ruler = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let mut signal = SCOPE_SIGNALS
                 .get(&self.store, txn, &signal_id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -460,6 +460,7 @@ impl Vault {
                 &scope,
                 outcome.proposal(),
                 at,
+                ruler,
             )?;
             signal.ruling = Some(ConnectorScopeRuling {
                 outcome,
