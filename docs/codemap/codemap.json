@@ -16360,13 +16360,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 1
      }
     },
@@ -18934,7 +18934,7 @@
      "path": "src/code_run/dispatcher/envelope.rs",
      "purpose": "Write-envelope construction, gate bodies and the write-gate checks every memory verb clears",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -39423,7 +39423,7 @@
      "path": "src/engine_executor/run_signals.rs",
      "purpose": "The steers and messages that reach a running run between its steps (AGM-2 = C; ARCH-0079 #message-classes…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 11
      }
     },
     {
@@ -39497,7 +39497,7 @@
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
       "const": 2,
-      "crate-vis": 66
+      "crate-vis": 68
      }
     },
     {
@@ -56490,6 +56490,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunChanges",
+      "RunChangesRequest"
+     ],
+     "path": "src/memory/run_review/changes.rs",
+     "purpose": "A run's own change journal (ARCH-0040 #revert-run, REV-2): each change a run writes is recorded under that…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -56515,9 +56530,10 @@
      "path": "src/memory/run_review/mod.rs",
      "purpose": "Typed cross-kind review settlements and run compensation (ARCH-0040)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 7,
       "fn": 2,
+      "re-export": 1,
       "struct": 11
      }
     },
@@ -56542,12 +56558,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/run_review/revert.rs",
      "purpose": "Owner revert of a run's reviewed changes, with their compensation",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -72601,7 +72618,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/scope_summary/word_sources.rs",
@@ -85121,7 +85138,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SyncClient"
@@ -85129,7 +85146,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 28,
       "fn": 17,
       "struct": 1
      }
@@ -85529,7 +85546,7 @@
      "path": "src/sync/client/residence/index.rs",
      "purpose": "Paged, revision-bound current-window metadata enrolment",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3,
       "struct": 1
      }
@@ -85901,7 +85918,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "crate-vis": 1,
-      "fn": 18,
+      "fn": 19,
       "mod": 1,
       "re-export": 4,
       "struct": 3
@@ -87919,10 +87936,10 @@
       "DeviceSyncPreference"
      ],
      "path": "src/sync/residence/policy.rs",
-     "purpose": "This machine's residence choice: sync every window it may read, or sync what it opened",
+     "purpose": "This machine's residence choice: sync every window it may read, or sync what it opened, and the worlds the…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 6,
+      "crate-vis": 3,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -92665,7 +92682,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 64,
+      "mod": 66,
       "re-export": 1
      }
     },
@@ -92769,6 +92786,16 @@
       "const": 1,
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/run_changes.rs",
+     "purpose": "Doors for `tests/run_changes_journal_cost.rs` (the stored size of a run's change journal rows…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -92974,6 +93001,16 @@
      "purpose": "Doors for `tests/wake_d1_park_release.rs` (#6877, WAKE-D1): the wake pass's local node id, the owner notice…",
      "surface": {
       "fn": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/world_follow.rs",
+     "purpose": "The thin index's window choice and a negotiation's follow set on a device lane, for the integration tests of…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -96865,14 +96902,17 @@
       "ResidencePruned",
       "ResidenceQueued",
       "ResidenceResultStatusName",
-      "ResidenceResultView"
+      "ResidenceResultView",
+      "ResidenceWorldsAnswer",
+      "ResidenceWorldsPicked",
+      "ResidenceWorldsRequest"
      ],
      "path": "src/verbs/residence.rs",
      "purpose": "The owner's residence controls (OF-534, FIX 531): a machine's residence mode, opening one item there, its…",
      "surface": {
-      "enum": 7,
+      "enum": 8,
       "fn": 5,
-      "struct": 14
+      "struct": 16
      }
     },
     {
@@ -101453,6 +101493,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_interrupt_cut.rs",
+     "purpose": "An interrupt cuts a busy resident's model request in flight (AGM-2 = C; ARCH-0079 #message-classes, \"An…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -102951,6 +102999,24 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/device_world_follow.rs",
+     "purpose": "A device follows its worlds by itself (census L7-42; ARCH-0023b #partial-sync; Engine ruling WORLDSET-1, Fri…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/device_world_follow_live.rs",
+     "purpose": "A device's live socket follows the owner's pick as it changes (Engine ruling WORLDSET-1, Fri 13 Nov 03:02…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102975,7 +103041,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_bridge.rs",
@@ -103678,6 +103744,22 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/run_changes_journal_cost.rs",
+     "purpose": "The write cost of a run's change journal (L8-48, ARCH-0040 #revert-run): each claim a run writes adds one…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_changes_list.rs",
+     "purpose": "L8-48 (ARCH-0040 #revert-run, REV-2): the engine lists a run's changes by itself",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/run_hold/fixture.rs",
      "purpose": "The RUN-HOLD tests' shared fixture (`run_hold_override.rs`, `run_hold_doors.rs`): a vault, the queue calls…",
      "surface": {
@@ -103746,6 +103828,14 @@
      "notable": [],
      "path": "tests/run_lifecycle_single_writer.rs",
      "purpose": "Single-writer guard for the run lifecycle (untangle slices E1, E2 and E3)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_revert_unsettled.rs",
+     "purpose": "ARCH-0040 #revert-run (REV-2), ruling RUNCHANGES-REVERT-UNSETTLED = A (13 Nov): the owner takes back a run…",
      "surface": {}
     },
     {
@@ -103858,6 +103948,14 @@
      "notable": [],
      "path": "tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs",
      "purpose": "(b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/selector_relationship_label.rs",
+     "purpose": "A federation selector window carries no relationship row its member does not read (OPUS-LEAKS round 2…",
      "surface": {}
     },
     {
@@ -104029,7 +104127,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/stewardship_source_label.rs",
@@ -105347,7 +105445,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 404,
+     "files": 405,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105914,7 +106012,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 67,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106089,10 +106187,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 267,
+   "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7479,
-   "test_files": 1171
+   "source_files": 7482,
+   "test_files": 1178
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -107138,7 +107236,7 @@
      "path": "src/authority/residence.rs",
      "purpose": "The owner's residence directives to one of their machines, and each machine's result for one (OF-534)",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 5,
       "enum": 2,
       "fn": 5,
@@ -131160,9 +131258,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/residence_doors.rs",
-     "purpose": "The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`…",
+     "purpose": "The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.worlds`, `.open`…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -131220,9 +131318,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/run_review_doors.rs",
-     "purpose": "The owner's cross-kind review and run compensation, on the caller's own credential handle",
+     "purpose": "The owner's read of a run's changes, cross-kind review and run compensation, on the caller's own credential…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -137212,7 +137310,7 @@
      "path": "src/config/device_sync.rs",
      "purpose": "`[device_sync]`: the home this machine keeps its vault in sync with",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "struct": 1
      }
     },
