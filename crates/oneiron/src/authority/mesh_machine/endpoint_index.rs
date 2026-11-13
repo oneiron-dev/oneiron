@@ -62,7 +62,7 @@ pub(crate) fn reindex_mesh_machine_endpoint(
     replacement: Option<(u8, &[u8])>,
 ) -> Result<()> {
     let prior = store.entities().get(txn, id.as_bytes())?.and_then(|raw| {
-        let header = EntityMetadataHeader::parse(raw)?;
+        let header = EntityMetadataHeader::parse(&raw)?;
         indexed_endpoint_key(header.entity_type, raw.get(ENTITY_METADATA_HEADER_LEN..)?)
     });
     let next = replacement.and_then(|(kind, body)| indexed_endpoint_key(kind, body));
