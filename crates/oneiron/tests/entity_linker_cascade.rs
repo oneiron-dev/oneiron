@@ -219,11 +219,13 @@ fn a_kana_spelling_is_asked_about_the_romaji_name() {
 }
 
 /// An agent about to act on a lone sound match asks first (OF-123). With
-/// only John Smith in the vault, "Jon Smyth" mints. A message to John Smith
-/// that names that mention as its source is refused IDENTITY_UNSETTLED, and
+/// only John Smith in the vault, "Jon Smyth" mints. A message that names
+/// that mention as its source is refused IDENTITY_UNSETTLED, and
 /// `self.identity.settle` opens the act-now ask, John Smith or someone new.
-/// On main the mention's own provisional settles it at once, so the message
-/// is not refused.
+/// The guard runs before the recipient lookup, so the request's `pr` is
+/// John's id, not a roster handle. On main the mention's own provisional
+/// settles it at once: the guard lets the message through, and it fails
+/// later on that lookup (NOT_FOUND), not IDENTITY_UNSETTLED.
 #[test]
 fn an_effect_on_a_lone_sound_match_asks_first() {
     let dir = tempfile::tempdir().expect("dir");
