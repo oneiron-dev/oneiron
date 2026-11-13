@@ -68,6 +68,7 @@ pub(crate) use super::engine_control_doors::*;
 pub(crate) use super::oauth_authorization_doors::*;
 // The owner's answer to a send that may have gone out (FIX 4747) too.
 pub(crate) use super::uncertain_send_doors::*;
+pub(crate) use super::undo_send_doors::*;
 // The owner's answer to a call a moved agent run replays (FIX 4747) too.
 pub(crate) use super::agent_run_effect_doors::*;
 // The owner's git_push Grant doors (FIX 6867, G1-PUSH) too.
