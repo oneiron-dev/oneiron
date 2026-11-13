@@ -27,8 +27,6 @@ mod types;
 mod worktree;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-REPO-MUTATION-TESTS]: the lib test target's type check fails here (20 errors: E0609 x10, E0308 x8, E0061 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

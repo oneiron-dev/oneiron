@@ -29,10 +29,10 @@ fn next_file(vault: &Vault, repo: &TempDir, previous: &RepoProposal) -> RepoProp
                     message: "Review next file".into(),
                 },
             )
-            .with_actor_id(previous.actor)
+            .with_actor_id(previous.actor.id().unwrap())
             .with_session_id(previous.session)
             .with_provenance_claim_id(previous.provenance_claim),
-            previous.catalog.clone(),
+            previous.review.catalog().unwrap().clone(),
         )
         .unwrap()
 }
@@ -59,7 +59,8 @@ fn revision(
             now,
         )
         .unwrap();
-    let mut metadata = CodeCommitMetadata::new(proposal.actor, "Reviewed engine commit");
+    let mut metadata =
+        CodeCommitMetadata::new(proposal.actor.id().unwrap(), "Reviewed engine commit");
     for (document, mode) in modes {
         metadata = metadata.with_file_mode(*document, *mode);
     }
@@ -226,9 +227,15 @@ fn promotion_preserves_reviewed_executable_modes_and_inherits_only_promoted_mode
     let tree =
         crate::origin::tree::read_tree_files(&git, &handle, &exported.record.new_oid).unwrap();
     assert_eq!(tree["README.md"].mode, 0o100755);
-    assert_eq!(tree["README.md"].content, first.content);
+    assert_eq!(
+        tree["README.md"].content,
+        first.ordinary_file().unwrap().1.to_vec()
+    );
     assert_eq!(tree["next.txt"].mode, 0o100644);
-    assert_eq!(tree["next.txt"].content, next.content);
+    assert_eq!(
+        tree["next.txt"].content,
+        next.ordinary_file().unwrap().1.to_vec()
+    );
     // Omitting metadata cannot silently clear a reviewed executable bit either.
     let downgrade = revision(&vault, &next, Some(child), &files, &[]);
     assert!(matches!(
@@ -313,6 +320,9 @@ fn export_refuses_another_repository_before_objects_but_accepts_canonical_aliase
         Some(receipt.record.new_oid.clone())
     );
     let tree = crate::origin::tree::read_tree_files(&git, &root, &receipt.record.new_oid).unwrap();
-    assert_eq!(tree["README.md"].content, proposal.content);
+    assert_eq!(
+        tree["README.md"].content,
+        proposal.ordinary_file().unwrap().1.to_vec()
+    );
     assert_eq!(tree["README.md"].mode, 0o100644);
 }

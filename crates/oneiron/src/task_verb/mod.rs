@@ -445,8 +445,6 @@ pub mod verb_hook_boundary;
 
 #[cfg(test)]
 mod ask_outcome_tests;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-TESTS]: the lib test target's type check fails here (23 errors: E0277 x9, E0063 x6, E0061 x5, E0507 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod ask_tests;
 pub(crate) mod tables;
