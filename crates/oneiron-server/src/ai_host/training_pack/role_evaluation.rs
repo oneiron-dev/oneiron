@@ -4,7 +4,10 @@
 //! on the role score wire `oneiron.training-pack.role-score/1`
 //! (`scripts/training_pack/README.md`). It runs as `<python> -I <scorer>
 //! --request <score dir>/request.json --output <score dir>/output`, with no
-//! shell and the trainers' environment (`trainer::worker_command`).
+//! shell and the trainers' environment (`trainer::worker_command`). It reads
+//! the held-out rows, then for a probability seat the training rows, on its
+//! stdin: each split is exactly the `bytes` its request entry states, in that
+//! order, and no split is ever written to a file.
 //!
 //! The scorer writes one log-likelihood margin per pair, log P(chosen) -
 //! log P(rejected) under the returned checkpoint: for every held-out pair,
@@ -19,13 +22,19 @@
 //!
 //! The score directory is `<jobs_root>/<run>-<spec>.score-<exposure>`,
 //! beside the trainer's job directory and never inside it. It holds the
-//! exported checkpoint's files, the held-out rows and, for a probability
-//! seat, the training rows only while the scorer runs. The host removes them
-//! when it ends, whatever the outcome, and keeps the request, the output and
-//! the scorer's error stream. Two run-bound verifier logs go into custody:
-//! the host's measurement log and the scorer's receipt as written.
+//! request, the exported checkpoint's files, the scorer's output and its
+//! error stream only while the scorer runs: the host reads the receipt, then
+//! removes the directory whole before it checks anything, whatever the
+//! outcome, and refuses the score when it cannot. A scored receipt has
+//! exactly the wire's fields, and each of its strings must equal the host's
+//! own value, so a kept receipt holds no text the host did not state. A
+//! refusal names the scorer's exit status and the receipt's size, never its
+//! text. Two run-bound verifier logs go into custody: the host's measurement
+//! log and the scorer's receipt as written.
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::{ChildStdin, ExitStatus, Stdio};
 
 use oneiron::ModelId;
 use oneiron::Vault;
@@ -41,7 +50,7 @@ use super::question_evaluation::calibration;
 use super::role_trainer::flat_name;
 use super::role_wire::{BaseFileWire, RESERVOIR_PAIR_FORMAT, recipe_of};
 use super::trainer::{private_dir, utf8, worker_command, write_new};
-use super::wire::{RequestWire, StatusWire, blake3_hex, invalid, sha256_hex};
+use super::wire::{StatusWire, blake3_hex, invalid, sha256_hex};
 use crate::config::models::RoleTrainerSettings;
 
 const JOB_FORMAT: &str = "oneiron.training-pack.role-score/1";
@@ -53,11 +62,9 @@ const ROLE: &str = "role";
 const SCORED: &str = "scored";
 const REQUEST_FILE: &str = "request.json";
 const CHECKPOINT_DIR: &str = "checkpoint";
-const HELD_OUT_FILE: &str = "held-out.jsonl";
-const TRAINING_FILE: &str = "training.jsonl";
 const OUTPUT_DIR: &str = "output";
 const RECEIPT_FILE: &str = "receipt.json";
-/// What the scorer wrote to its error stream, kept in its score directory.
+/// The scorer's error stream, in its score directory while it runs.
 const STDERR_FILE: &str = "scorer.stderr";
 /// The verifier logs' names in custody.
 const LOG_NAME: &str = "role-held-out.json";
@@ -178,38 +185,53 @@ struct ScoreCheckpointWire<'a> {
     load_set_blake3: String,
 }
 
-/// One staged split file: where it sits, its hashes, size and row count.
+/// One split as the scorer reads it from its stdin: its hashes, its size,
+/// which frames it, and its row count.
 #[derive(Serialize)]
 struct PairsWire {
     format: &'static str,
-    path: String,
     sha256: String,
     blake3: String,
     bytes: u64,
     rows: u64,
 }
 
+/// A scored receipt: exactly these fields, at every level, so a kept receipt
+/// holds no field the host does not check.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScoreReceiptWire {
+    format: String,
+    status: String,
     run: String,
     spec_blake3: String,
     exposure: String,
-    request: RequestWire,
+    request: RequestReadWire,
     checkpoint: CheckpointReadWire,
     held_out: MarginsWire,
     #[serde(default)]
     training: Option<MarginsWire>,
 }
 
+/// The SHA-256 and size of the request bytes the scorer read.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequestReadWire {
+    sha256: String,
+    bytes: u64,
+}
+
 /// The checkpoint the scorer loaded: the load set it was handed and each
 /// file's SHA-256 as it read the bytes.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CheckpointReadWire {
     load_set_blake3: String,
     files: Vec<FileReadWire>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileReadWire {
     name: String,
     sha256: String,
@@ -218,12 +240,14 @@ struct FileReadWire {
 /// One split's margins, in the split's row order, with the SHA-256 of the
 /// split bytes the scorer read.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MarginsWire {
     sha256: String,
     margins: Vec<MarginWire>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MarginWire {
     row_sha256: String,
     margin: f64,
@@ -269,38 +293,98 @@ fn both_orders(margins: &[f64]) -> Vec<([f64; 2], bool)> {
         .collect()
 }
 
-/// The scorer's staged inputs, removed when scoring ends whatever the
-/// outcome; the request, output and error stream stay.
-struct StagedInputs {
-    dir: PathBuf,
+/// The score directory, transient as a whole: `remove` takes it away, and
+/// refuses the score when it cannot, before the host checks any receipt;
+/// Drop removes it on every other way out.
+struct ScoreDir {
+    path: PathBuf,
+    removed: bool,
 }
 
-impl Drop for StagedInputs {
+impl ScoreDir {
+    fn remove(mut self) -> oneiron::Result<()> {
+        let removed = std::fs::remove_dir_all(&self.path);
+        self.removed = removed.is_ok();
+        removed.map_err(|error| {
+            invalid(format!(
+                "the role score directory could not be removed ({:?}); nothing is scored",
+                error.kind()
+            ))
+        })
+    }
+}
+
+impl Drop for ScoreDir {
     fn drop(&mut self) {
-        let removed = [
-            std::fs::remove_dir_all(self.dir.join(CHECKPOINT_DIR)),
-            std::fs::remove_file(self.dir.join(HELD_OUT_FILE)),
-            std::fs::remove_file(self.dir.join(TRAINING_FILE)),
-        ];
-        for error in removed.into_iter().filter_map(Result::err) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!(kind = ?error.kind(), "a role scorer's staged input stayed");
-            }
+        if self.removed {
+            return;
+        }
+        if let Err(error) = std::fs::remove_dir_all(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(kind = ?error.kind(), "a role score directory stayed");
         }
     }
 }
 
-/// Stages one split file under the score directory.
-fn stage_pairs(path: &Path, bytes: &[u8], rows: usize) -> oneiron::Result<PairsWire> {
-    write_new(path, bytes)?;
-    Ok(PairsWire {
+/// One split's request entry; its bytes go on the scorer's stdin.
+fn pairs_wire(bytes: &[u8], rows: usize) -> PairsWire {
+    PairsWire {
         format: RESERVOIR_PAIR_FORMAT,
-        path: utf8(path)?,
         sha256: sha256_hex(bytes),
         blake3: blake3_hex(blake3::hash(bytes).as_bytes()),
         bytes: bytes.len() as u64,
         rows: rows as u64,
-    })
+    }
+}
+
+/// Writes each split to the scorer's stdin in order, then closes it.
+/// `Ok(false)` when the scorer closed its end before it read them all.
+fn feed_splits(stdin: Option<ChildStdin>, splits: &[&[u8]]) -> std::io::Result<bool> {
+    let mut stdin =
+        stdin.ok_or_else(|| std::io::Error::other("the scorer's stdin is not piped"))?;
+    for split in splits {
+        match stdin.write_all(split) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => return Ok(false),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(true)
+}
+
+/// Runs the scorer on the request staged in `score`, feeds it `splits` and
+/// waits. Returns its exit status, whether it read every split, and its
+/// receipt bytes if it wrote one; the score directory is gone when this
+/// returns `Ok`.
+fn run_scorer(
+    trainer: &RoleTrainerSettings,
+    scorer: &Path,
+    score: ScoreDir,
+    splits: &[&[u8]],
+) -> oneiron::Result<(ExitStatus, bool, Option<Vec<u8>>)> {
+    let dir = score.path.as_path();
+    let mut command = worker_command(
+        &trainer.python,
+        scorer,
+        &dir.join(REQUEST_FILE),
+        &dir.join(OUTPUT_DIR),
+        &dir.join(STDERR_FILE),
+    )?;
+    // stdout is null and stderr a file, so a scorer that does not read its
+    // stdin yet blocks on no pipe of ours.
+    let mut child = command.stdin(Stdio::piped()).spawn()?;
+    let fed = feed_splits(child.stdin.take(), splits);
+    let exit = child.wait()?;
+    let fed = fed?;
+    let receipt_path = dir.join(OUTPUT_DIR).join(RECEIPT_FILE);
+    let receipt = if receipt_path.is_file() {
+        Some(std::fs::read(&receipt_path)?)
+    } else {
+        None
+    };
+    score.remove()?;
+    Ok((exit, fed, receipt))
 }
 
 /// The exported checkpoint's files, each staged under its own name in a
@@ -390,18 +474,15 @@ pub(super) fn evaluate(
     ));
     private_dir(&trainer.jobs_root, true)?;
     private_dir(&dir, false)?;
-    let staged = StagedInputs { dir: dir.clone() };
+    let score = ScoreDir {
+        path: dir.clone(),
+        removed: false,
+    };
     let checkpoint_dir = dir.join(CHECKPOINT_DIR);
     let checkpoint_files = stage_checkpoint(vault, &input.checkpoint.files, &checkpoint_dir)?;
-    let held_out = stage_pairs(
-        &dir.join(HELD_OUT_FILE),
-        &input.held_out_jsonl,
-        held_out_rows.len(),
-    )?;
+    let held_out = pairs_wire(&input.held_out_jsonl, held_out_rows.len());
     let training = match (&training_jsonl, &training_rows) {
-        (Some(bytes), Some(rows)) => {
-            Some(stage_pairs(&dir.join(TRAINING_FILE), bytes, rows.len())?)
-        }
+        (Some(bytes), Some(rows)) => Some(pairs_wire(bytes, rows.len())),
         _ => None,
     };
     let job = ScoreJob {
@@ -430,22 +511,19 @@ pub(super) fn evaluate(
     let body =
         serde_json::to_vec(&job).map_err(|_| invalid("the role score job did not encode"))?;
     write_new(&dir.join(REQUEST_FILE), &body)?;
-    let status = worker_command(
-        &trainer.python,
-        scorer,
-        &dir.join(REQUEST_FILE),
-        &dir.join(OUTPUT_DIR),
-        &dir.join(STDERR_FILE),
-    )?
-    .status()?;
-    drop(staged);
-    let receipt_path = dir.join(OUTPUT_DIR).join(RECEIPT_FILE);
-    if !receipt_path.is_file() {
+    let mut splits = vec![input.held_out_jsonl.as_slice()];
+    splits.extend(training_jsonl.as_deref());
+    let (exit, fed, receipt) = run_scorer(trainer, scorer, score, &splits)?;
+    if !fed {
         return Err(invalid(format!(
-            "the role scorer ended ({status}) with no receipt; its score directory stays"
+            "the role scorer ended ({exit}) before it read every split; nothing is scored"
         )));
     }
-    let receipt = std::fs::read(&receipt_path)?;
+    let Some(receipt) = receipt else {
+        return Err(invalid(format!(
+            "the role scorer ended ({exit}) with no receipt"
+        )));
+    };
 
     let status: StatusWire = serde_json::from_slice(&receipt)
         .map_err(|_| invalid("the role scorer's receipt has no format or status"))?;
@@ -453,16 +531,22 @@ pub(super) fn evaluate(
         return Err(not_this_score("format"));
     }
     if status.status != SCORED {
+        // The scorer's own words stay out of the host's error and logs.
         return Err(invalid(format!(
-            "the role scorer ended {}: {}",
-            status.status,
-            status.reason.as_deref().unwrap_or("no reason given")
+            "the role scorer ended ({exit}) with a receipt of {} bytes that scores nothing",
+            receipt.len()
         )));
     }
-    let read: ScoreReceiptWire = serde_json::from_slice(&receipt)
-        .map_err(|_| invalid("the role scorer's receipt is partial or not finite"))?;
-    if read.run != job.run || read.spec_blake3 != job.spec_blake3 || read.exposure != job.exposure {
-        return Err(not_this_score("run, spec or exposure"));
+    let read: ScoreReceiptWire = serde_json::from_slice(&receipt).map_err(|_| {
+        invalid("the role scorer's receipt is partial, not finite or has a field the wire does not")
+    })?;
+    if read.format != RECEIPT_FORMAT
+        || read.status != SCORED
+        || read.run != job.run
+        || read.spec_blake3 != job.spec_blake3
+        || read.exposure != job.exposure
+    {
+        return Err(not_this_score("format, status, run, spec or exposure"));
     }
     if read.request.sha256 != sha256_hex(&body) || read.request.bytes != body.len() as u64 {
         return Err(not_this_score("request"));

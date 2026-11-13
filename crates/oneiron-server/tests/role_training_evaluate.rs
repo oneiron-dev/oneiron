@@ -6,13 +6,20 @@
 //!   exported checkpoint and the staged splits and writes one margin per
 //!   pair, and the host computes preference accuracy, mean margin and, for
 //!   the Decision seat, calibration from those margins, keeps its log and
-//!   the scorer's receipt in custody, and removes the staged inputs;
+//!   the scorer's receipt in custody, and removes the score directory whole;
 //! - a scorer receipt that leaves a held-out pair without a margin scores
-//!   nothing, and the run stays returned and unscored.
+//!   nothing, and the run stays returned and unscored;
+//! - a scorer that copies the held-out rows into its error stream, an output
+//!   file and an extra receipt field scores nothing, and no copy stays;
+//! - no held-out row ever sits in a file under the trainers' jobs root while
+//!   the scorer runs: it reads the splits on its stdin.
 //!
 //! Reads JSON and the vault's own run record, so on a head without the role
 //! evaluator every case fails at its first execute, whose run holds with
-//! `training.no_evaluator`.
+//! `training.no_evaluator`. On a head whose evaluator stages the splits as
+//! files and keeps its score directory (#7529 before its review fix), the
+//! first two cases fail at their score-directory assertion, the copy case
+//! answers 200 scored, and the probe case's scorer finds `held-out.jsonl`.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -90,7 +97,7 @@ fn score_dirs(fixture: &Fixture, run: &str, spec: &str) -> Vec<std::path::PathBu
         .map(|entry| entry.expect("jobs root entry").path())
         .filter(|path| {
             path.file_name()
-                .and_then(|name| name.to_str())
+                .and_then(std::ffi::OsStr::to_str)
                 .is_some_and(|name| name.starts_with(&prefix))
         })
         .collect()
@@ -163,8 +170,11 @@ fn owner_execute_scores_a_returned_role_run_through_its_trainers_scorer() {
         assert_eq!(status, StatusCode::OK, "owner execute: {read}");
         assert_eq!(read["state"], "scored", "{read}\n{}", score_evidence(&dirs));
         assert_eq!(read["progress"], json!({"status": "done"}), "{read}");
-        assert_eq!(dirs.len(), 1, "one score directory: {dirs:?}");
-        let dir = &dirs[0];
+        assert!(
+            dirs.is_empty(),
+            "the score directory is removed whole: {}",
+            score_evidence(&dirs)
+        );
 
         let record = stored(&fixture, &run);
         let held_out = fixture
@@ -242,10 +252,6 @@ fn owner_execute_scores_a_returned_role_run_through_its_trainers_scorer() {
             .vault
             .read_training_artifact(&evaluation.verifier_logs[1])
             .expect("read the scorer's receipt");
-        assert_eq!(
-            std::fs::read(dir.join("output/receipt.json")).expect("the receipt on disk"),
-            receipt_bytes
-        );
 
         // The scorer read the exported checkpoint and both splits.
         let receipt: Value = serde_json::from_slice(&receipt_bytes).expect("receipt JSON");
@@ -283,31 +289,21 @@ fn owner_execute_scores_a_returned_role_run_through_its_trainers_scorer() {
             "{receipt}"
         );
 
-        // The staged inputs are gone; the request, output and stderr stay.
-        for name in ["held-out.jsonl", "training.jsonl", "checkpoint"] {
-            assert!(
-                !dir.join(name).exists(),
-                "{name} stayed in {}",
-                dir.display()
-            );
-        }
-        for name in ["request.json", "output/receipt.json", "scorer.stderr"] {
-            assert!(
-                dir.join(name).is_file(),
-                "{name} is kept in {}",
-                dir.display()
-            );
-        }
-        assert_not_held(dir, held_out_line);
-        assert_not_held(dir, training_line);
+        // No held-out row stays in any file under the trainers' jobs root.
+        assert_not_held(&role_jobs_root(fixture.dir.path()), held_out_line);
 
-        // A second execute finds the run scored: nothing runs again.
+        // A second execute finds the run scored: nothing runs again, so the
+        // stored evaluation keeps its one exposure.
         let (status, again) = fixture
             .as_owner(EXECUTE_VERB, json!({"run": run, "wait_ms": 0}))
             .await;
         assert_eq!(status, StatusCode::OK, "{again}");
         assert_eq!(again["state"], "scored", "{again}");
-        assert_eq!(score_dirs(&fixture, &run, &spec).len(), 1);
+        assert_eq!(
+            stored(&fixture, &run).evaluation.map(|kept| kept.exposure),
+            Some(evaluation.exposure)
+        );
+        assert!(score_dirs(&fixture, &run, &spec).is_empty());
         fixture.finish().await;
     });
 }
@@ -339,17 +335,87 @@ fn a_scorer_receipt_without_a_margin_for_each_held_out_pair_scores_nothing() {
         assert_eq!(record.state, TrainingState::Returned);
         assert!(record.evaluation.is_none(), "nothing scored the run");
 
-        // The scorer ran once and its staged inputs are gone all the same.
-        assert_eq!(dirs.len(), 1, "one score directory: {dirs:?}");
-        let receipt: Value = serde_json::from_slice(
-            &std::fs::read(dirs[0].join("output/receipt.json")).expect("the receipt on disk"),
-        )
-        .expect("receipt JSON");
-        assert_eq!(receipt["status"], "scored", "{receipt}");
-        assert_eq!(receipt["held_out"]["margins"], json!([]), "{receipt}");
-        for name in ["held-out.jsonl", "training.jsonl", "checkpoint"] {
-            assert!(!dirs[0].join(name).exists(), "{name} stayed");
-        }
+        // The score directory is gone all the same, with the refused receipt.
+        assert!(
+            dirs.is_empty(),
+            "the score directory is removed whole: {}",
+            score_evidence(&dirs)
+        );
+        let held_out = fixture
+            .vault
+            .read_training_artifact(&record.corpus.held_out)
+            .expect("read the held-out split");
+        assert_not_held(&role_jobs_root(fixture.dir.path()), only_line(&held_out));
+        fixture.finish().await;
+    });
+}
+
+#[test]
+fn a_scorer_that_copies_held_out_rows_into_its_output_leaves_no_copy_and_scores_nothing() {
+    run_on_engine_stack("role-evaluate-copied-rows", || async {
+        let fixture = Fixture::new().await;
+        let mut seeded = seed_role_run(&fixture.vault);
+        seeded.draft["plan"]["settings"]["fixture_scorer_fault"] = json!("copy_held_out_rows");
+        let (run, spec) = prepare_and_authorize(&fixture, &seeded.draft).await;
+
+        let (status, body) = fixture
+            .as_owner(EXECUTE_VERB, json!({"run": run, "wait_ms": WAIT_MS}))
+            .await;
+        let dirs = score_dirs(&fixture, &run, &spec);
+        // The receipt carries a field the wire does not name: refused.
+        assert!(
+            status.is_server_error(),
+            "{status}: {body}\n{}",
+            score_evidence(&dirs)
+        );
+        let record = stored(&fixture, &run);
+        assert_eq!(record.state, TrainingState::Returned);
+        assert!(record.evaluation.is_none(), "nothing scored the run");
+
+        // Its error stream, its extra output file and its receipt went with
+        // the score directory: no copy of a held-out row stays.
+        assert!(
+            dirs.is_empty(),
+            "the score directory is removed whole: {}",
+            score_evidence(&dirs)
+        );
+        let held_out = fixture
+            .vault
+            .read_training_artifact(&record.corpus.held_out)
+            .expect("read the held-out split");
+        assert_not_held(&role_jobs_root(fixture.dir.path()), only_line(&held_out));
+        fixture.finish().await;
+    });
+}
+
+#[test]
+fn a_held_out_row_never_sits_in_a_file_under_the_trainer_jobs_root() {
+    run_on_engine_stack("role-evaluate-jobs-root-probe", || async {
+        let fixture = Fixture::new().await;
+        let mut seeded = seed_role_run(&fixture.vault);
+        // While it runs, the scorer searches every file under the jobs root
+        // for a held-out row, and refuses if one holds it.
+        seeded.draft["plan"]["settings"]["fixture_scorer_fault"] = json!("probe_jobs_root");
+        let (run, spec) = prepare_and_authorize(&fixture, &seeded.draft).await;
+
+        let (status, read) = fixture
+            .as_owner(EXECUTE_VERB, json!({"run": run, "wait_ms": WAIT_MS}))
+            .await;
+        let dirs = score_dirs(&fixture, &run, &spec);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the scorer found a held-out row in a file: {read}\n{}",
+            score_evidence(&dirs)
+        );
+        assert_eq!(read["state"], "scored", "{read}");
+        assert!(dirs.is_empty(), "{}", score_evidence(&dirs));
+        let record = stored(&fixture, &run);
+        let held_out = fixture
+            .vault
+            .read_training_artifact(&record.corpus.held_out)
+            .expect("read the held-out split");
+        assert_not_held(&role_jobs_root(fixture.dir.path()), only_line(&held_out));
         fixture.finish().await;
     });
 }

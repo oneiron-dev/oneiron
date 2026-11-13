@@ -213,7 +213,10 @@ parity.
 A returned role run is scored by the scorer its role trainer connector names (`scorer`,
 an absolute path; RULING TRAIN-ROLE-EVALUATOR = A). It is a separate process from the
 trainer, run by the same `python` the same way: `<python> -I <scorer> --request
-<score>/request.json --output <score>/output`, stderr kept as `<score>/scorer.stderr`. A
+<score>/request.json --output <score>/output`, stderr written to `<score>/scorer.stderr`.
+It reads the held-out split, then (when staged) the training split, on its stdin: each is
+exactly the `bytes` its request entry states, in that order, and no split is ever written
+to a file. A scorer that closes its stdin before it has read both scores nothing. A
 connector with no `scorer` leaves its returned runs holding with `training.no_evaluator`.
 No production scorer ships yet (FIX TRAIN-ROLE-GPU-WORKER); the served tests run the tiny
 pinned stdlib scorer `crates/oneiron-server/tests/support/role_trainer_scorer.py`, which
@@ -221,22 +224,27 @@ loads no model.
 
 `<score>` is `<jobs_root>/<run hex>-<spec blake3 hex>.score-<exposure hex>`, made 0700
 after the held-out door opens the run's exposure; it is never the trainer's job directory.
-It holds `checkpoint/<name>` for each exported checkpoint file (a flat bundle),
-`held-out.jsonl` and, for a probability seat (Decision, ExtractionTagger, Router) only,
-`training.jsonl`. The host removes those three when the scorer ends, whatever the
-outcome, and keeps `request.json`, `output/` and `scorer.stderr`.
+It holds `request.json`, `checkpoint/<name>` for each exported checkpoint file (a flat
+bundle), the scorer's `output/` and `scorer.stderr`, and lives only while the scorer runs.
+When the scorer ends, the host reads `output/receipt.json` and then removes `<score>`
+whole before it checks anything, whatever the outcome; when it cannot remove it, nothing
+is scored. The training split is sent for a probability seat (Decision,
+ExtractionTagger, Router) only.
 
 Request (`request.json`): `format`, `run`, `spec_blake3`, `exposure`, `target` (`kind =
 role`, `role`, `seat`, `output_model`), `recipe`, `checkpoint` (`model`, `dir`, `files[]`
 of `name`, `kind`, `source`, `sha256`, `blake3`, `bytes`, and `load_set_blake3`, the
 exported checkpoint's `PinnedCheckpoint::content_hash`), `held_out` and `training` (each
-`format = oneiron.reservoir-pair/1`, `path`, `sha256`, `blake3`, `bytes`, `rows`;
+`format = oneiron.reservoir-pair/1`, `sha256`, `blake3`, `bytes`, `rows`;
 `training` is null for a seat that reports no calibration), and the plan's `settings` and
 `harness`.
 
 Receipt (`output/receipt.json`, format `oneiron.training-pack.role-score-receipt/1`):
 `status` `scored` is the one complete status; any other status (with `reason`) scores
-nothing. A scored receipt echoes `run`, `spec_blake3`, `exposure`, `request` (`sha256`,
+nothing, and the host's error names the scorer's exit status and the receipt's size, never
+its text. A scored receipt has exactly the fields below at every level (a field the wire
+does not name scores nothing), and each of its strings must equal the host's own value. It
+echoes `run`, `spec_blake3`, `exposure`, `request` (`sha256`,
 `bytes`) and `checkpoint` (`load_set_blake3`, and `files[]` of `name` and the `sha256` of
 the bytes it read, in the request's order), and gives `held_out` and, when staged,
 `training`: each the `sha256` of the split it read and `margins[]`, one per row in row
@@ -244,7 +252,7 @@ order, of `row_sha256` (the SHA-256 of that row's line) and `margin`, the finite
 log-likelihood margin log P(chosen) - log P(rejected) under the returned checkpoint.
 
 The host refuses a receipt that is not this score's, a missing, extra, reordered or
-nonfinite margin, or training margins for a seat that staged none. It computes every
+nonfinite margin, or training margins for a seat that was sent none. It computes every
 measurement from the margins: `preference_accuracy` (a positive margin ranks the chosen
 side first; zero is a miss), `correct`, `incorrect`, `ties` and `mean_margin`; for a
 probability seat, a temperature fitted on the training margins only, then

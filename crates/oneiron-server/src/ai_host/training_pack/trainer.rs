@@ -257,7 +257,8 @@ pub(super) async fn spawn_worker(
 /// The command line every local training-pack process runs as:
 /// `<python> -I <script> --request <request> --output <output>`, with no
 /// shell, stdin and stdout null and its error stream written to a new
-/// `stderr` file. The trainers and the role scorer share it.
+/// `stderr` file. The trainers and the role scorer share it; the scorer's
+/// caller pipes its stdin to send the splits.
 pub(super) fn worker_command(
     python: &Path,
     script: &Path,
