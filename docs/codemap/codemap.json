@@ -9949,7 +9949,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 3,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -10110,6 +10110,25 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EsignQrCapability",
+      "EsignQrItem",
+      "EsignQrOutcome",
+      "EsignQrPage",
+      "EsignQrSigner"
+     ],
+     "path": "src/blob_artifact/esign/qr_capability.rs",
+     "purpose": "The QR capability a sealed document's certificate page prints (ARCH-0064a section 6 \"QR capability-URL\"…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 4,
+      "struct": 4
      }
     },
     {
@@ -18811,7 +18830,7 @@
      "path": "src/code_run/dispatcher/agent_verb.rs",
      "purpose": "Code mode's verb-table calls: the run's write origin and the receipt a write keeps",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -18844,7 +18863,7 @@
      "path": "src/code_run/dispatcher/agent_verb/receipts.rs",
      "purpose": "A verb write's receipt: its identity, its read, and how a step's write rows are compared with it",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -19050,7 +19069,7 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "State and export seam for the host-bound first-party dispatcher",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 6,
       "struct": 1,
       "type": 1
@@ -19389,7 +19408,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 62,
       "mod": 8,
       "re-export": 38
      }
@@ -38246,8 +38265,8 @@
      "purpose": "An organ call that waits for a node (OF-575, owner ruling MESH): a host that cannot start an organ, with…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
-      "fn": 9,
+      "crate-vis": 5,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -38259,7 +38278,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 10,
       "re-export": 3
      }
@@ -38376,6 +38395,16 @@
       "enum": 2,
       "fn": 2,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle/ref_state.rs",
+     "purpose": "The one owner of a settle ref's state (FIX 22386)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -48590,6 +48619,7 @@
      "purpose": "The learning dials a holder of `engine.controls` may tune (untangle 6.6b; S66-MAP = A): a closed list of…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -59995,7 +60025,7 @@
      "purpose": "A context pack's read of the live stretch its request names (ARCH-0052 #e5-read-union-open, ONE-1729): \"a…",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -66749,6 +66779,7 @@
      "path": "src/ports/query.rs",
      "purpose": "Read halves of the storage ports",
      "surface": {
+      "crate-vis": 2,
       "enum": 3,
       "struct": 3,
       "trait": 8,
@@ -81748,7 +81779,7 @@
      "path": "src/store/home_handoff_custody.rs",
      "purpose": "The home handoff's custody contract (FIX 8875, L04's half): each actor's content a home handoff carries is…",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -92494,6 +92525,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/code_run_write_identity.rs",
+     "purpose": "Doors for `tests/write_receipt_float_input.rs` (census L1-06): whether a resumed write meets the receipt row…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ViewForkEdit"
      ],
@@ -92723,6 +92764,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ErasableKeyState"
+     ],
+     "path": "src/test_doors/home_handoff_retire.rs",
+     "purpose": "Fixture doors for the home handoff retire purpose test (FIX 23943): erasable keys of two purposes in one…",
+     "surface": {
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/house_link.rs",
      "purpose": "The house link's bind-interval read (HOUSE-BIND = A, S3) for the test that reads it on both sides of an…",
@@ -92774,6 +92828,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/learning_setting_sourced.rs",
+     "purpose": "A learning setting's sourced read, for the cap-order test: the value in force for the whole vault beside the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/lifted_text.rs",
      "purpose": "Doors for `tests/primitive_a_evidence_spans.rs` (FIX-LIST EVIDENCE-SPANS-MASKED-COORDINATES): a lifted key…",
      "surface": {
@@ -92811,6 +92875,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ExtractionWidth",
+      "PriorScenario"
+     ],
+     "path": "src/test_doors/meso_extraction_width.rs",
+     "purpose": "Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -92818,7 +92897,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 73,
+      "mod": 77,
       "re-export": 1
      }
     },
@@ -102440,8 +102519,24 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/dreamer_meso_width.rs",
+     "purpose": "FIX 21927 P2: the lead's DREAMER-WIDTH ruling (13 Nov 2026) lets clean Generated Dreamer priors run wide…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dreamer_stage_line.rs",
      "purpose": "FIX 21929 (brief 21, Dreamer r5): a partition's stage line splits the residual `extract_ms` into the slot's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/edit_settle_organ_wait_ref.rs",
+     "purpose": "A ref an organ call holds is held for every settle door (FIX 22386)",
      "surface": {}
     },
     {
@@ -102522,6 +102617,14 @@
      "notable": [],
      "path": "tests/esign_commitments.rs",
      "purpose": "`ESIGN-COMMITMENTS` (ARCH-0064 §3, the OF-187 wire): a signed document opens the commitments it names",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/esign_qr_capability.rs",
+     "purpose": "The QR capability a sealed certificate prints (ARCH-0064a section 6 \"QR capability-URL\", [SGN-05]; FIX…",
      "surface": {}
     },
     {
@@ -102738,6 +102841,22 @@
      "notable": [],
      "path": "tests/holder_approval_fallback_floor.rs",
      "purpose": "A Grant holder's approval lands under the holder's Grant on a predicate no manifest rule names…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/holder_work_budget_cap_order.rs",
+     "purpose": "A holder's work budget stays within the owner's cap at every read, not only at the holder's door…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/home_handoff_retire_purpose.rs",
+     "purpose": "FIX 23943 [HOME-HANDOFF-RETIRE-TAKES-ANY-PURPOSE]: the holder's retire half of the home handoff…",
      "surface": {}
     },
     {
@@ -103772,6 +103891,14 @@
      "notable": [],
      "path": "tests/pass_budget_wait.rs",
      "purpose": "Row B2 of BUDGET-TRAP-UNTYPED-NO-SENDER: a step's spent budget waits on the write that refills it, or…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/phonetic_stage_deadline.rs",
+     "purpose": "The phonetic stage checks its deadline inside the stage (census L9-10; the retrieval hub's follow-up \"Two…",
      "surface": {}
     },
     {
@@ -104980,6 +105107,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/write_receipt_float_input.rs",
+     "purpose": "Census L1-06 (ARCH-0028:137, \"a float in a write's input can decode differently when its receipt is read back",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "wit/generated/imports.rs",
@@ -105080,7 +105215,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105570,7 +105705,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106480,7 +106615,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 76,
+     "files": 80,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106657,8 +106792,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7496,
-   "test_files": 1213
+   "source_files": 7502,
+   "test_files": 1220
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -114512,7 +114647,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SideTableRowProblem",
@@ -123374,6 +123509,7 @@
      "path": "src/landing.rs",
      "purpose": "An organ's results onto the artifact family's one landing (ARCH-0078 \"A proposal landing\"): each export file…",
      "surface": {
+      "crate-vis": 1,
       "fn": 4
      }
     },
@@ -130066,6 +130202,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign_qr.rs",
+     "purpose": "The public QR page a sealed document's certificate names (ARCH-0064a section 6, [SGN-05])…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -133809,6 +133955,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openapi/qr_page_paths.rs",
+     "purpose": "The public QR page a sealed certificate names (`/esign/verify`, ARCH-0064a section 6, [SGN-05])",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openapi/security.rs",
      "purpose": "Security-scheme wiring and schema property-description helper",
      "surface": {
@@ -136048,7 +136204,7 @@
      "path": "src/auth/locality.rs",
      "purpose": "Where the caller of a request sits (DEC-0005): on this device or off it",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -148187,6 +148343,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/gate_pin_core_write_lane.rs",
+     "purpose": "OPUS-T0-F gate pins, PR 9 (Engine NOTE 13 Nov 02:19): green pins for the write gate G80 of…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/gate_pin_landing_facet.rs",
      "purpose": "OPUS-T0-F gate pins, PR 4 (Engine task 12 Nov 19:38): green pins for the write gate G103 of…",
      "surface": {}
@@ -148738,6 +148902,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/unauthenticated_embedder_peer.rs",
+     "purpose": "An app made by `build_app` keeps the unauthenticated development hatch on this device, however its embedder…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -148785,7 +148957,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 774,
+     "files": 776,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -149333,8 +149505,8 @@
    },
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1862,
-   "test_files": 234
+   "source_files": 1864,
+   "test_files": 236
   },
   "oneiron-skill-attribution": {
    "files": [
