@@ -107,6 +107,11 @@ pub struct SyncConnection {
     /// Wakes the owner's residence directives naming this machine: the
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
+    /// Wakes the steady loop to judge again which worlds this machine
+    /// follows: a world pick, each residence upkeep tick and an authority
+    /// catch-up that took rows ring it. A changed set renegotiates at once
+    /// (ARCH-0023b #partial-sync).
+    follow_wake: Arc<tokio::sync::Notify>,
     /// Wakes the home handoff's delivery worker (FIX 5661 C2a): the
     /// residence upkeep rings it on each tick, its first at each connect.
     home_handoff_wake: Arc<tokio::sync::Notify>,
@@ -196,6 +201,7 @@ impl SyncConnection {
             config,
             mode,
             directive_wake: Arc::default(),
+            follow_wake: Arc::default(),
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
@@ -557,6 +563,48 @@ impl SyncConnection {
             .map_err(storage)?;
         self.mode.send_replace(effective);
         Ok(change)
+    }
+
+    /// Set the worlds the owner picked for this machine to follow
+    /// (ARCH-0023b #partial-sync), replacing the pick before; an empty pick
+    /// follows none. The pick persists on this machine, and the live socket
+    /// renegotiates at once when the worlds it follows change. A world this
+    /// machine may not read is never followed, and under sync all it follows
+    /// every world it may read, whatever it picked. Answers the pick.
+    pub fn set_followed_worlds(
+        &self,
+        worlds: std::collections::BTreeSet<crate::EntityId>,
+    ) -> Result<std::collections::BTreeSet<crate::EntityId>, crate::sync::TransportError> {
+        self.switch_followed_worlds(worlds, |_| Ok(()))
+    }
+
+    /// [`Self::set_followed_worlds`], with `finish` run in the transaction
+    /// that records the pick. The owner's follow directives record their
+    /// result there.
+    fn switch_followed_worlds(
+        &self,
+        worlds: std::collections::BTreeSet<crate::EntityId>,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()>,
+    ) -> Result<std::collections::BTreeSet<crate::EntityId>, crate::sync::TransportError> {
+        if self.config.client_config.federation_peer.is_some() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "a federation lane has no world pick",
+            ));
+        }
+        if worlds.len() > crate::authority::RESIDENCE_FOLLOW_WORLDS_MAX {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "a world pick names too many worlds",
+            ));
+        }
+        let vault = self.manager.vault();
+        vault
+            .with_write_txn_grouped(|txn| {
+                crate::sync::residence::set_device_world_pick_in_txn(vault, txn, &worlds)?;
+                finish(txn)
+            })
+            .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))?;
+        self.follow_wake.notify_one();
+        Ok(worlds)
     }
 
     /// Open one item for a person: its read cache, its local canonical row,

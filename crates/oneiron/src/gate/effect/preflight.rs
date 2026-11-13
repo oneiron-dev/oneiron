@@ -91,14 +91,15 @@ const fn preflight_reason(code: GateReasonCode) -> PreflightReason {
         | GateReasonCode::DenyPersonaSingleCycle
         | GateReasonCode::DenyUnresolvedRecordReference => PreflightReason::Deny,
         // The consent ladder's asks, the opted-out counterparty an override
-        // passes, and a campaign-compliance hold, which an exact approval
-        // returns to the decision it held (CA-06).
+        // passes, and a campaign-compliance or copy-review hold, which an
+        // exact approval returns to the decision it held (CA-06).
         GateReasonCode::PendingConsentIrreversibleEffect
         | GateReasonCode::PendingConsentBoundExceeded
         | GateReasonCode::PendingConsentCatastropheFloor
         | GateReasonCode::PendingConsentWriteClassificationFailed
         | GateReasonCode::PendingCounterpartyOptOut
-        | GateReasonCode::PendingCampaignCompliance => PreflightReason::OwnerDecision,
+        | GateReasonCode::PendingCampaignCompliance
+        | GateReasonCode::PendingCampaignCopyReview => PreflightReason::OwnerDecision,
         GateReasonCode::PendingExternalEffectAuthority => PreflightReason::MissingAuthority,
         // An approval of one effect releases consent only: an actor or
         // delegation-chain ceiling holds until its policy or grant changes.

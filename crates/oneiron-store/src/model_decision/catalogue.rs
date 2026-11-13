@@ -122,6 +122,14 @@ pub const CAMPAIGN_COMPLAINT_PAUSE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Whether one campaign body version follows the campaign's voice guide, and the reason
+/// class of that answer (ARCH-0059 #copy-review). Keyed by field.
+pub const CAMPAIGN_COPY_REVIEW: QuestionFamily = QuestionFamily {
+    name: "campaign.copy_review",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Which eligible model a new seat pins, then which of that model's efforts it runs at.
 /// Keyed by `model`, or by `effort` and the chosen model.
 pub const SEAT_PICK: QuestionFamily = QuestionFamily {
@@ -495,6 +503,17 @@ pub const QUOTA_SPENT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Which class a message to a busy agent takes (AGM-2 = C; ARCH-0079 #message-classes):
+/// interrupt, steer, follow_up or digest. Read on the rule and local rungs only, from the
+/// message's stamped envelope and its first line fenced as data; an unsure interrupt is asked
+/// of the person who sent it, and that tap tunes these bands. The class sets only when the
+/// message reaches the agent and never gives it authority. Keyed by the sender's kind.
+pub const MESSAGE_CLASS: QuestionFamily = QuestionFamily {
+    name: "agents.message_class",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -507,6 +526,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     ATTRIBUTION_PATTERN,
     CAMPAIGN_TASTE,
     CAMPAIGN_COMPLAINT_PAUSE,
+    CAMPAIGN_COPY_REVIEW,
     SEAT_PICK,
     DESCRIPTION_FIT,
     AUTO_CHECK,
@@ -549,4 +569,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     CLAIM_SOURCE_SUPPORT,
     SEAL_OBJECTIVE_FLAW,
     QUOTA_SPENT,
+    MESSAGE_CLASS,
 ];

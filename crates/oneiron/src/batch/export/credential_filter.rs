@@ -134,32 +134,91 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     }
 }
 
-/// One scoped export record (its metadata header, then its body) as an
-/// export releases it (FIX 8742; ARCH-0038: an export never carries a
-/// credential-like field that survived by bug, legacy import or a vault that
-/// ran with the scan off). The body is read as [`redacted_memory_payload`]
-/// reads a raw transport: each credential replaced in place, the safe bytes
-/// and their types as stored. `None` withholds the record: an ASSET whose
-/// body the filter would change, since a file leaves whole or not at all and
-/// its id may be its bytes' own hash.
+/// Release one scoped record with the partial archive's typed Nulled rule.
+/// If that rule and the raw release check change nothing, keep the record
+/// byte-exact. Otherwise keep its id and original metadata header around the
+/// Nulled typed body's bytes, only if the raw check leaves those bytes alone.
+/// A changed ASSET or proof-bound body is withheld, never rewritten. Also
+/// withhold a changed body that is Nulled, is a file reference, cannot encode,
+/// or no longer decodes as its native CLAIM or SKILL record.
 ///
 /// # Errors
-/// A record shorter than its header, or a failed re-encoding.
+/// A record shorter than its header, or a failed raw release check.
 pub(crate) fn export_released_record(
     entity_type: u8,
     mut record: Vec<u8>,
 ) -> Result<Option<Vec<u8>>> {
+    use crate::serialize::{ExportBody, ExportSecrets};
+
     if record.len() < ENTITY_METADATA_HEADER_LEN {
         return Err(Error::CorruptedIndex("scoped export record header"));
     }
     let body = record.split_off(ENTITY_METADATA_HEADER_LEN);
-    let stored = blake3::hash(&body);
-    let released = redacted_memory_payload(body)?;
-    if entity_type == crate::registry::ENTITY_TYPE_ASSET && blake3::hash(&released) != stored {
+    let nulled = ExportBody::from_bytes(&body, entity_type);
+    let included = ExportBody::from_bytes_with(&body, entity_type, ExportSecrets::Included);
+    let raw_unchanged = redacted_memory_payload(body.clone())? == body;
+    if nulled == included && raw_unchanged {
+        record.extend_from_slice(&body);
+        return Ok(Some(record));
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_ASSET
+        || proof_bound_body(entity_type, &body)
+        || matches!(nulled, ExportBody::Nulled | ExportBody::File(_))
+    {
         return Ok(None);
     }
-    record.extend_from_slice(&released);
+    let Ok(rewritten) = nulled.to_bytes() else {
+        return Ok(None);
+    };
+    if redacted_memory_payload(rewritten.clone())? != rewritten {
+        return Ok(None);
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && crate::write_envelope::claim_body::decode_claim_body(&rewritten, true).is_err()
+    {
+        return Ok(None);
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_SKILL
+        && crate::skill::decode_skill_record(&rewritten).is_err()
+    {
+        return Ok(None);
+    }
+    record.extend_from_slice(&rewritten);
     Ok(Some(record))
+}
+
+fn proof_bound_body(entity_type: u8, body: &[u8]) -> bool {
+    use crate::registry::{
+        ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR,
+        ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_RECEIPT_RECORD,
+        ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
+    };
+
+    if matches!(
+        entity_type,
+        ENTITY_TYPE_AUTHORITY_LOG
+            | ENTITY_TYPE_REDACTION_AUDIT
+            | ENTITY_TYPE_SKILL_CONTENT_ANCHOR
+            | ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+            | ENTITY_TYPE_RECEIPT_RECORD
+            | ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR
+    ) {
+        return true;
+    }
+    if entity_type != ENTITY_TYPE_CLAIM {
+        return false;
+    }
+    let Ok(claim) = crate::write_envelope::claim_body::decode_claim_body(body, true) else {
+        return true;
+    };
+    crate::claim::history_store::machine_history_kind(&claim.predicate).is_some()
+        || claim.evidence.as_ref().is_some_and(|evidence| {
+            evidence.as_map().is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|(key, _)| key.as_str() == Some("machine_signature"))
+            })
+        })
 }
 
 /// Stored bytes go back as they are only when the write door's reading of
