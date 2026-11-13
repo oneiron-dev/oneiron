@@ -68,8 +68,8 @@ const HOLD_NO_EVALUATOR: &str = "training.no_evaluator";
 /// host's stack (FIX 7568), so it never serves.
 const HOLD_PARITY_FAILED: &str = "training.parity_failed";
 
-/// A seat evaluator: it scores the held-out bytes `open_training_held_out`
-/// served against the returned checkpoint. It may retain run-bound verifier
+/// A seat evaluator: it scores the held-out bytes its claim
+/// (`claim_training_evaluation`) served against the returned checkpoint. It may retain run-bound verifier
 /// logs; the caller alone records the evaluation and advances its state.
 type TrainingEvaluator = Box<dyn Fn(&TrainingEvalInput) -> oneiron::Result<HeldOutResult>>;
 
