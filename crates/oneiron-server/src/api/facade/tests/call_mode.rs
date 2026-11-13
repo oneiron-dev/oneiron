@@ -25,14 +25,17 @@ async fn http_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
         assert!(!found.is_empty(), "{request}");
     }
     let (status, _) = facade
-        .post("recall", json!({"query": "night train", "effort": "call"}))
+        .post(
+            "vault.recall",
+            json!({"query": "night train", "effort": "call"}),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     for deadline_ms in [0, MAX_RECALL_DEADLINE_MS + 1] {
         for effort in ["call", "light"] {
             let (status, body) = facade
                 .post(
-                    "recall",
+                    "vault.recall",
                     json!({"query": "night train", "effort": effort, "deadline_ms": deadline_ms}),
                 )
                 .await;
@@ -70,7 +73,7 @@ async fn http_call_mode_answers_by_its_deadline_past_a_stalled_stage() {
     let started = Instant::now();
     let (status, pack) = facade
         .post(
-            "recall",
+            "vault.recall",
             json!({"query": "night ferry", "effort": "call", "deadline_ms": DEADLINE_MS}),
         )
         .await;

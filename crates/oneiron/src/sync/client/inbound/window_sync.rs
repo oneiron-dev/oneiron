@@ -115,8 +115,12 @@ impl SyncClient {
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
             {
                 let catch_up = self.setup_catch_up(window_key);
+                // A followed world's window is granted on each socket with no
+                // promotion marker; its vector went out with the request.
+                let followed = self.follows_full_window(window_key);
                 if !payload.is_empty()
                     || (!catch_up
+                        && !followed
                         && self
                             .vault
                             .sync_state_get(&format!("rp:w:{window_key}"))

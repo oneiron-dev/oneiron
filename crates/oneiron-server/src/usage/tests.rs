@@ -38,13 +38,21 @@ fn event(id: &str, currency: &str) -> UsageEvent {
 #[test]
 fn unmetered_modes_conflicts_overflow_and_invalid_keys() {
     let (_dir, ledger) = ledger();
-    for mode in [UsageMode::Local, UsageMode::Byo] {
-        assert!(
-            !ledger
-                .record_event(event("one", "USD"), mode, UsageEventOrigin::Posted)
-                .unwrap()
-                .recorded
-        );
+    // 37c638d3a6e (#1723, OF-310): a meter records facts for every payer, so
+    // a Local or Byo event is recorded once and replayed after. One key per
+    // mode: a key met again under another source is an idempotency conflict.
+    for (key, mode) in [("one-local", UsageMode::Local), ("one-byo", UsageMode::Byo)] {
+        let first = ledger
+            .record_event(event(key, "USD"), mode, UsageEventOrigin::Posted)
+            .unwrap();
+        assert!(first.recorded);
+        assert!(!first.replayed);
+        assert_eq!(first.source, mode);
+        let again = ledger
+            .record_event(event(key, "USD"), mode, UsageEventOrigin::Posted)
+            .unwrap();
+        assert!(!again.recorded);
+        assert!(again.replayed);
     }
     let mut e = event("one", "USD");
     ledger

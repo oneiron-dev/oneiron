@@ -8,7 +8,8 @@ mod seed_replacement;
 
 use owner_archive_restore::OwnerRestore;
 pub(crate) use owner_archive_restore::{
-    OwnerArchiveRestorePermit, owner_restore_opened_claim_in_txn,
+    OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
+    owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -825,7 +826,16 @@ fn insert_ready_row<R: Read + Seek>(
                         row.learned_at,
                     )
                 }
-                _ => vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at),
+                // The owner's restore lists each open proposal it inserts in its
+                // inbox group (R1, RULING 02:26 13 Nov).
+                _ => vault
+                    .put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
+                    .and_then(|()| match owner_restore {
+                        Some(restore) => owner_archive_restore::record_restored_member_in_txn(
+                            vault, wtxn, restore, &id, &claim,
+                        ),
+                        None => Ok(()),
+                    }),
             }
         }
         // FIX 7777: the witness archive owner writes the row as imported

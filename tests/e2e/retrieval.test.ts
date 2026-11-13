@@ -663,6 +663,22 @@ interface Retrieval04Pack extends ContextPackReply {
     readonly candidates_considered: number; readonly entities_hydrated: number;
     readonly neighbors_hydrated: number; readonly claims_suppressed: number;
   };
+  readonly l2_base?: { readonly content_hash: string; readonly body: string } | null;
+  readonly disclosure?: { readonly mode: string } | null;
+  readonly interlocutors?: readonly { readonly speaker: string; readonly class: string }[] | null;
+}
+interface Retrieval04L2Row {
+  readonly id: string; readonly subj: string; readonly pred: string | null;
+  readonly val: unknown; readonly world: string | null;
+}
+// A pack serves each claim about an L2 subject (the vault owner, and the
+// reader's own PERSON) once, as an l2_base row, and drops it from results and
+// neighbors (serialize/pack_preparation.rs prepare_entities skips
+// l2_base.evidence_ids). The visible stats are set before that cut
+// (api/context_pack/response_limits.rs scrub_context_pack_visible_stats), so
+// they count the served l2_base rows as well.
+function retrieval04L2Rows(pack: Retrieval04Pack): Retrieval04L2Row[] {
+  return pack.l2_base ? JSON.parse(pack.l2_base.body) as Retrieval04L2Row[] : [];
 }
 interface Retrieval04QueryPage {
   readonly items: { readonly id: string }[];
@@ -755,7 +771,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
           );
         }
         throw new Error(
-          `RETRIEVAL-04 ENGINE DEFECT 2026-11-11: owner ${label} Public user_stated fixture did not pass claim()'s auto/approved landing/readback guard; sensitivity-stamped writes are parked Proposed by requested_approval; world=${claimScope.world_id}; ${errorText(error)}`,
+          `RETRIEVAL-04 owner ${label} Public user_stated fixture did not pass claim()'s auto/approved landing/readback guard (FIX-LIST [CLAIM-SENSITIVITY-STAMP-FORCES-PROPOSED] was fixed by #7269); world=${claimScope.world_id}; ${errorText(error)}`,
           { cause: error },
         );
       }
@@ -890,23 +906,69 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     const packInput = { query: graphToken, limit: 20, hydrate: true, include_edges: true,
       edge_hop: 1, max_neighbors: 20, view: "full", budget: { token_budget: 8192 },
       filter: { include_stale: true } };
+    // Both fixture claims are about the owner, an L2 subject of every pack
+    // here. The L2 prefix holds the owner's base-reality claims only
+    // (pipeline/l2_evidence.rs), so the readable claim is an l2_base row and
+    // the hidden dream-world claim is a delta row (a result or neighbor).
+    const packShape = (reply: Retrieval04Pack, rows: readonly Retrieval04L2Row[]) => JSON.stringify({
+      results: reply.results.map(row => row.id), neighbors: reply.neighbors.map(row => row.id),
+      l2_rows: rows.map(row => ({ id: row.id, pred: row.pred, world: row.world,
+        matches_query: typeof row.val === "string" && row.val.includes(graphToken) })),
+      stats: reply.stats, disclosure: reply.disclosure?.mode ?? null,
+      interlocutors: reply.interlocutors?.map(stamp => stamp.class) ?? null,
+    });
     async function retrieval04CheckPacks() {
       const ownerPack = await engine.client.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
       expect(ownerPack.status).toBe(200);
-      expect(ownerPack.body.results.map(row => row.id)).toContain(readable.id);
-      expect(ownerPack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
-      expect(ownerPack.body.neighbors.map(row => row.id)).toContain(hidden.id);
+      const ownerL2 = retrieval04L2Rows(ownerPack.body);
+      try {
+        // Control: the owner's pack reaches the TASK anchor and both claims:
+        // the readable base claim in the L2 prefix, the hidden-world claim
+        // outside it, as a delta row of the TASK anchor's walk.
+        expect(ownerPack.body.disclosure?.mode ?? null).not.toBe("absence_clamp");
+        expect(ownerPack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
+        expect(ownerL2.map(row => row.val)).toContain(readableText);
+        expect(ownerL2.map(row => row.val)).not.toContain(hiddenText);
+        expect([...ownerPack.body.results, ...ownerPack.body.neighbors].map(row => row.id)).toContain(hidden.id);
+      } catch (error) {
+        throw new Error(`RETRIEVAL-04 owner context-pack control: ${errorText(error)}; pack=${packShape(ownerPack.body, ownerL2)}`,
+          { cause: error });
+      }
       const pack = await reader.raw<Retrieval04Pack>("POST", "/v1/core/context-pack", packInput);
       expect(pack.status).toBe(200);
-      expect(pack.body.results.map(row => row.id)).toContain(readable.id);
-      expect(pack.body.results.map(row => row.id)).toContain(graphAnchor.id_hex);
-      expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
-      retrieval04Receipt(pack.body.narrowing);
-      retrieval04Absent(pack.body, forbidden);
-      expect(pack.body.stats.claims_suppressed).toBe(0);
-      expect(pack.body.stats.candidates_considered).toBe(pack.body.results.length);
-      expect(pack.body.stats.entities_hydrated).toBe(pack.body.results.length);
-      expect(pack.body.stats.neighbors_hydrated).toBe(pack.body.neighbors.length);
+      const readerL2 = retrieval04L2Rows(pack.body);
+      try {
+        // P7 (ILDF2, one-1592 :34 "Unknown contact -> empty clearance -> public-only"):
+        // the reader is a principal-scoped core:read token with no interlocutors
+        // block, an Unknown party, so its pack assembles under the absence clamp
+        // and only positively Public rows take a candidate slot
+        // (pipeline/filters.rs, disclosure/disclosable_set.rs admits). The TASK is
+        // born Sensitive (federation/record_scope.rs default_stamp), so the pack
+        // withholds it although the reader's point read above admits it; the
+        // Public readable claim is served as an l2_base row.
+        expect(pack.body.disclosure?.mode).toBe("absence_clamp");
+        expect(pack.body.interlocutors?.some(stamp => stamp.class === "unknown")).toBe(true);
+        expect(pack.body.results.map(row => row.id)).not.toContain(graphAnchor.id_hex);
+        expect(pack.body.neighbors.map(row => row.id)).not.toContain(graphAnchor.id_hex);
+        expect(readerL2.map(row => row.val)).toContain(readableText);
+        expect(pack.body.neighbors.map(row => row.id)).not.toContain(hidden.id);
+        retrieval04Receipt(pack.body.narrowing);
+        retrieval04Absent(pack.body, forbidden);
+        // Honest counts: every counted row is one the reader was served, as a
+        // result, a neighbor or an l2_base row; the hidden claim is never one.
+        const servedQueryRows = readerL2.filter(row => typeof row.val === "string" && row.val.includes(graphToken)).length;
+        expect(servedQueryRows).toBe(1);
+        expect(pack.body.stats.claims_suppressed).toBe(0);
+        for (const counted of [pack.body.stats.candidates_considered, pack.body.stats.entities_hydrated]) {
+          expect(counted).toBeGreaterThanOrEqual(pack.body.results.length + servedQueryRows);
+          expect(counted).toBeLessThanOrEqual(pack.body.results.length + readerL2.length);
+        }
+        expect(pack.body.stats.neighbors_hydrated).toBeGreaterThanOrEqual(pack.body.neighbors.length);
+        expect(pack.body.stats.neighbors_hydrated).toBeLessThanOrEqual(pack.body.neighbors.length + readerL2.length);
+      } catch (error) {
+        throw new Error(`RETRIEVAL-04 reader context-pack: ${errorText(error)}; pack=${packShape(pack.body, readerL2)}`,
+          { cause: error });
+      }
       return { ownerPack, pack };
     }
     const { ownerPack, pack } = await retrieval04CheckPacks();
@@ -1473,7 +1535,15 @@ suite.test(test, "RETRIEVAL-08", "Warm and rebuilt graph parity should work", as
   }
 });
 
+// Readable filler claims RETRIEVAL-09 adds beside its six-row task clique: the
+// reader's walk admits about 9-17 fixture rows, so 56 more keep the clique at
+// or under 10% of the admitted graph (FIX-LIST [RETRIEVAL-09-FIXTURE-BELOW-COMMUNITY-CAP]).
+const retrieval09FillerCount = 56;
+
 /* RETRIEVAL-09: authored TURN self-reports, optional priors, real read ceiling. */
+/* RETRIEVAL-09 is a budget case: the 56 fillers take about 10 s (E2E job 20, nelly) and three
+ * axes read, configure and restore in turn, so the flow passed the 30 s cap. Its stated bound
+ * is 60 s; it belongs to the nightly tier. */
 suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should work", async () => {
   const fixture = await scenario<{
     rows: { label: string; vad?: Facade.QueryAffect; confidence: number }[];
@@ -1553,6 +1623,40 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       ]);
       hubs.push(hub); allowed.push(hub.id_hex);
     }
+    // FIX-LIST [RETRIEVAL-09-FIXTURE-BELOW-COMMUNITY-CAP]: since #7272 the
+    // reader's narrowed walk takes its community prior from the rows it admits
+    // alone, and a fine community over 10% of them takes none (6 x 10 > ~20
+    // rows). Readable filler claims about the owner share no query word and
+    // sit two hops from every claim seed (claim -> owner -> filler; the walk
+    // follows ClaimOf both ways), so the walk admits them as singletons: the
+    // admitted graph passes 60 rows and the six-row task clique stays one
+    // community. They are written before `before`, and none is hidden.
+    // One read-back of the owner's claim list proves every filler landed. A
+    // receipt wait per filler reads the whole vault.receipts page, which grows
+    // with the vault: 1.2-1.7 s per filler, so 56 of them passed the 30 s cap.
+    const fillerRefs: string[] = [];
+    for (let start = 0; start < retrieval09FillerCount; start += 8) {
+      const receipts = await Promise.all(Array.from(
+        { length: Math.min(8, retrieval09FillerCount - start) },
+        (_, offset) => engine.client.call("vault.claims.upsert", {
+          predicate: `profile.retrieval_filler_${start + offset}`,
+          subject_ref: engine.pairedActor.principalRef, value: `quiet ledger line ${start + offset}`,
+          confidence: 0.875, source: "user_stated", scope, occurred_at: at, learned_at: at,
+        }),
+      ));
+      for (const receipt of receipts) {
+        expect(["auto", "approved"]).toContain(receipt.approval);
+        fillerRefs.push(receipt.claim_short_id);
+      }
+    }
+    await awaitPublic(
+      () => engine.client.call("vault.claims.list", { subject_ref: engine.pairedActor.principalRef, limit: 1000 }),
+      page => page.value.filter(row => row.predicate.startsWith("profile.retrieval_filler_")).length === retrieval09FillerCount,
+      { label: "RETRIEVAL-09 filler claims landed" },
+    );
+    const fillers = await engine.client.call("vault.hydrate", { refs: fillerRefs });
+    expect(fillers.value).toHaveLength(retrieval09FillerCount);
+    allowed.push(...fillers.value.map(entity => entity.id_hex));
     const reader = await recordBoundReader(engine, allowed);
     const privateRow = records.get("private-community")!;
     expect((await reader.call("vault.get", { entity_ref: privateRow.ref })).value).toBeNull();
@@ -1597,8 +1701,17 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       const receipt = await retrieval09Diagnose(`weights.configure ${setting}`, () => engine.client.call("vault.retrieval.weights.configure", {
         expected_body_hash: current.body_hash, weights,
       }));
-      await retrieval09Diagnose(`weights.configure receipt ${setting}`, () => engine.awaitReceipt(receipt.receipt_ref));
-      const configured = (await retrieval09Diagnose(`weights.get after ${setting}`, () => engine.client.call("vault.retrieval.weights.get", {}))).weights;
+      expect(receipt.receipt_ref).toBeTruthy();
+      // The setting is read back through weights.get, not a receipt wait:
+      // awaitReceipt reads the whole vault.receipts page, which took 5.1 s
+      // after the fillers (E2E job 20), and this case configures six times.
+      const keys = Object.keys(weights) as (keyof Facade.RetrievalWeights)[];
+      const configured = (await retrieval09Diagnose(`weights.get after ${setting}`, () => awaitPublic(
+        () => engine.client.call("vault.retrieval.weights.get", {}),
+        read => Object.keys(read.weights).length === keys.length
+          && keys.every(key => Math.abs(read.weights[key] - weights[key]) < 5e-8),
+        { label: `RETRIEVAL-09 weights ${setting} read back` },
+      ))).weights;
       expect(Object.keys(configured).sort()).toEqual(Object.keys(weights).sort());
       // Every coordinate is f32-backed; preserve the numeric setting across
       // the wire round trip without requiring the original decimal spelling.
@@ -1636,9 +1749,10 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
       expect(rowOrder(off)).toEqual(rowOrder(baseline));
       expect(await claimSet(engine)).toEqual(before);
     }
+    const storedClaims = (await engine.client.call("vault.claims.list", { subject_ref: engine.pairedActor.principalRef, limit: 1000 })).value;
     for (const row of fixture.rows) {
-      const stored = (await engine.client.call("vault.claims.list", { subject_ref: engine.pairedActor.principalRef, limit: 1000 }))
-        .value.find(claim => claim.short_ref === records.get(row.label)!.ref || claim.claim_ref === records.get(row.label)!.id)!;
+      const stored = storedClaims
+        .find(claim => claim.short_ref === records.get(row.label)!.ref || claim.claim_ref === records.get(row.label)!.id)!;
       expect(stored.confidence).toBe(row.confidence);
       expect(stored.approval).toBe(records.get(row.label)!.receipt.approval);
     }
@@ -1660,7 +1774,7 @@ suite.test(test, "RETRIEVAL-09", "Optional affect and community priors should wo
     }
     if (cleanups.length) throw new Error(`cleanup: ${cleanups.join("; ")}`);
   }
-});
+}, 60_000);
 
 type ClusterVerb = "vault.cluster" | "vault.cluster.propose" | "vault.cluster.proposal" | "vault.cluster.resolve_proposal";
 // One tools/list per initialized MCP session: the server advertises
@@ -2279,9 +2393,8 @@ async function museRecallRefusalReceipt<V extends FacadeVerb>(
 
 // A scoped actor's authenticated HTTP refusal states its call receipt in the
 // error envelope and the x-oneiron-receipt-ref header (api/call_receipt.rs,
-// OF-538). Read that receipt back as owner through vault.receipts.get. A /ws
-// socket is owner-grade only for these actors (FIX 23077), so the HTTP reply
-// is the refusal under test.
+// OF-538). Read that receipt back as owner through vault.receipts.get; the
+// HTTP reply is the refusal under test.
 async function museRecallHttpRefusalReceipt(
   engine: EngineFixture,
   label: string,
@@ -3390,7 +3503,12 @@ suite.test(test, "MUSE-RECALL-09", "Recall above 1,048,576 records a limit quest
 // - P-RECALL-011: "World sections are labeled and presented base-first
 //   within their budgets." Source: ARCH-0004#world-scope. Proved in the
 //   typed pack (per-item world label, base group first) and in the rendered
-//   pack (base text before story text, story label before story text). The
+//   pack: the claims are all about the vault owner, whose L2 prefix holds
+//   the base claims only, and the story rows render after it as delta rows
+//   labeled with the story world; the out-of-scope world is absent. The
+//   story claims are written first, so claim-id order alone would put them
+//   ahead (FIX-LIST [RECALL-L2-PREFIX-WORLDS-UNPARTITIONED], Engine ruling
+//   E2E4-L2-WORLD-PARTITION = C). The
 //   exact non-base budget fraction is not asserted: no typed door read here
 //   lets the owner set or read that fraction. The fixture holds three base
 //   claims beside the three story claims, so the default non-base share
@@ -3440,6 +3558,26 @@ function museRecall03NoSentinels(value: unknown, sentinels: readonly string[]): 
   expect(sentinels.every((sentinel) => !text.includes(sentinel))).toBe(true);
 }
 
+// A rendered toon pack's l2_base rows. serialize/l2_prefix.rs with_l2_prefix
+// writes the first line as `l2_base: <JSON string of {content_hash, body}>`;
+// body is the row array context_pack/l2_base.rs render_l2_rows_with_handles
+// writes ({id, subj, pred, val, world}). A pack with no prefix has no rows.
+function museRecall03RenderedL2Rows(rendered: string): Retrieval04L2Row[] {
+  const tag = "l2_base: ";
+  const head = rendered.split("\n", 1)[0] ?? "";
+  if (!head.startsWith(tag)) return [];
+  const summary = JSON.parse(JSON.parse(head.slice(tag.length)) as string) as { readonly body: string };
+  return JSON.parse(summary.body) as Retrieval04L2Row[];
+}
+
+// The spellings an l2_base row's `world` takes for a WORLD: its short handle
+// (the entity_ref before its ":<hash>"), or its id hex where no short handle
+// resolves (l2_base.rs read_l2_handle).
+function museRecall03WorldHandles(world: { readonly entity_ref: string; readonly id_hex: string }): string[] {
+  const colon = world.entity_ref.lastIndexOf(":");
+  return [colon > 0 ? world.entity_ref.slice(0, colon) : world.entity_ref, world.id_hex];
+}
+
 function museRecall03NamesWorld(
   listed: readonly string[],
   candidates: readonly string[],
@@ -3471,8 +3609,9 @@ function museRecall03AssertBaseFirst(
     if (storyIndex < baseIndex) {
       // Slot order only: which world each matching item carries, never its text.
       const order = hits.map((item) => (item.value_text.includes(baseSentinel) ? "base" : item.world === baseLabel ? "base-world" : "story"));
+      // FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY], fixed by #7216.
       throw new Error(
-        `MUSE-RECALL-03 ENGINE DEFECT 2026-11-12: FIX [RECALL-WORLD-PARTITION-ALL-SCOPE-ONLY] P-RECALL-011 base section first (ARCH-0004 #world-scope); the pack partitions worlds only under the All scope, so a {story, include_base} recall stays flat in score order; base_index=${baseIndex} story_index=${storyIndex} order=${JSON.stringify(order)}`,
+        `MUSE-RECALL-03 P-RECALL-011 base section first (ARCH-0004 #world-scope): a story claim ranks before the base claim in a {story, include_base} recall; base_index=${baseIndex} story_index=${storyIndex} order=${JSON.stringify(order)}`,
       );
     }
     expect(storyIndex).toBeGreaterThan(baseIndex);
@@ -3563,16 +3702,18 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
       ...storyValues.map((value): [string, string] => [value, storyWorld.id_hex]),
       [otherValue, otherWorld.id_hex],
     ]);
+    // Story claims first: their claim ids (clock-ordered) sort before the
+    // base claims', so only the world partition renders the base rows first.
     const claimInputs: FacadeInput<"vault.claims.upsert">[] = [
-      ...[baseValue, ...baseExtraValues].map((value): FacadeInput<"vault.claims.upsert"> => ({
-        predicate: museRecall03Predicate, subject_ref: ownerRef, value,
-        confidence: 1, source: "user_stated", scope: baseScope,
-        occurred_at: museRecall03Occurred,
-      })),
       ...storyValues.map((value): FacadeInput<"vault.claims.upsert"> => ({
         predicate: museRecall03Predicate, subject_ref: ownerRef, value,
         confidence: 1, source: "user_stated",
         scope: { ...baseScope, world_id: storyWorld.id_hex },
+        occurred_at: museRecall03Occurred,
+      })),
+      ...[baseValue, ...baseExtraValues].map((value): FacadeInput<"vault.claims.upsert"> => ({
+        predicate: museRecall03Predicate, subject_ref: ownerRef, value,
+        confidence: 1, source: "user_stated", scope: baseScope,
         occurred_at: museRecall03Occurred,
       })),
       {
@@ -3668,14 +3809,38 @@ suite.test(test, "MUSE-RECALL-03", "Recall partitions worlds base-first with lab
     });
     expect(typeof renderedPack.rendered).toBe("string");
     const rendered = renderedPack.rendered ?? "";
-    const renderedBaseAt = rendered.indexOf(baseSentinel);
-    const renderedStoryAt = rendered.indexOf(storySentinels[0]!);
-    expect(renderedBaseAt).toBeGreaterThanOrEqual(0);
-    expect(renderedStoryAt).toBeGreaterThan(renderedBaseAt);
-    expect([storyWorldName, storyWorld.id_hex, storyWorld.entity_ref].some((label) => {
-      const at = rendered.indexOf(label);
-      return at >= 0 && at < renderedStoryAt;
-    })).toBe(true);
+    // P-RECALL-011 in the rendered pack. Every claim here is about the vault
+    // owner, an L2 subject. The L2 prefix (the toon pack's first line,
+    // serialize/l2_prefix.rs) is the owner's base-reality profile: it holds
+    // the base claims and no claim of a named world (pipeline/l2_evidence.rs).
+    // The story claims are delta rows, which the pack partitions base-first
+    // and labels with their world (#7304: `world_section`, the story world's
+    // id hex). So each story row renders after the last base row, with the
+    // story world named between them.
+    const l2Rows = museRecall03RenderedL2Rows(rendered);
+    const l2RowWith = (sentinel: string) => l2Rows.find(
+      (row) => (JSON.stringify(row.val) ?? "").includes(sentinel),
+    );
+    const storyWorldHandles = museRecall03WorldHandles(storyWorld);
+    const renderedBaseSentinels = [baseSentinel, ...baseExtraSentinels];
+    const basePositions = renderedBaseSentinels.map((sentinel) => rendered.indexOf(sentinel));
+    const storyPositions = storySentinels.map((sentinel) => rendered.indexOf(sentinel));
+    const lastBase = Math.max(...basePositions);
+    const storyLabelled = storyPositions.map((at) => at > lastBase
+      && storyWorldHandles.some((handle) => rendered.slice(lastBase, at).includes(handle)));
+    const l2BaseRows = renderedBaseSentinels.filter((sentinel) => l2RowWith(sentinel) !== undefined).length;
+    const l2StoryRows = storySentinels.filter((sentinel) => l2RowWith(sentinel) !== undefined).length;
+    const l2WorldRows = l2Rows.filter((row) => row.world !== null).length;
+    const renderedPartitioned = l2BaseRows === renderedBaseSentinels.length
+      && l2StoryRows === 0 && l2WorldRows === 0
+      && basePositions.every((at) => at >= 0)
+      && storyLabelled.every(Boolean);
+    if (!renderedPartitioned) {
+      // Positions and counts only, never text: rows carry redacted sentinels.
+      throw new Error(`MUSE-RECALL-03 the rendered recall pack (format=toon) does not render the owner's base claims first, in its L2 prefix, with the story rows labeled after them; rendered_head=${JSON.stringify(rendered.slice(0, 12))} l2_rows=${l2Rows.length} l2_base_rows=${l2BaseRows} l2_story_rows=${l2StoryRows} l2_world_rows=${l2WorldRows} base_positions=${JSON.stringify(basePositions)} story_positions=${JSON.stringify(storyPositions)} story_labelled=${JSON.stringify(storyLabelled)} rendered_chars=${rendered.length}`);
+    }
+    // The out-of-scope world's claim is in no part of the rendered pack.
+    expect(rendered.includes(otherSentinel)).toBe(false);
 
     const otherOnlyInput: FacadeInput<"vault.recall"> = {
       query: tokenOtherWorld, effort: "light", limit: 10,
@@ -4480,8 +4645,7 @@ suite.test(test, "MUSE-RECALL-05", "A world outside an agent's owner-minted gran
     if (!widenError) throw new Error("Agent self-widen was not refused with the standard error envelope");
     expect(widenError.code.length).toBeGreaterThan(0);
     expect(widenError.message.length).toBeGreaterThan(0);
-    // The refusal's call receipt, read back as owner. A /ws socket is
-    // owner-grade only for a scoped agent (FIX 23077), so the HTTP reply's
+    // The refusal's call receipt, read back as owner: the HTTP reply's
     // receipt is the one under test.
     await museRecallHttpRefusalReceipt(engine, "MUSE-RECALL-05", widenReply, "vault.agents.grants.mint");
     // The refused widen changed nothing, read back through the listing.
@@ -5049,12 +5213,6 @@ suite.test(test, "MUSE-RECALL-06", "A recall subscription sends a snapshot then 
         { cause: error },
       );
     }
-    if (stage.startsWith("write-only agent") && /WS upgrade (failed|closed)/.test(message)) {
-      throw new Error(
-        `MUSE-RECALL-06 ENGINE DEFECT 2026-11-11: scoped agent cannot reach WS facade/subscription; plain /ws requires owner grade, same pre-upgrade cause as FIX-LIST:23077 [FEDERATION-GUEST-WS-FACADE-ADMISSION]; ${stage}; ${message}`,
-        { cause: error },
-      );
-    }
     throw new Error(`MUSE-RECALL-06 ${stage}: ${message}`, { cause: error });
   } finally {
     await engine.close();
@@ -5278,8 +5436,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
     expect(museRecall07BodyField(readerHydrated.value[0]?.body, "content")).toBe(liveText);
 
     // These authenticated HTTP refusals carry a call receipt. Read it back as
-    // owner instead of re-driving the refusal over an owner-grade-only /ws
-    // socket with the scoped writer's credential.
+    // owner through vault.receipts.get.
     const readRefusalReceipt = async (
       reply: { readonly status: number; readonly headers: Headers; readonly body: unknown },
       verb: "vault.hydrate" | "vault.delete",
@@ -5833,19 +5990,7 @@ suite.test(test, "MUSE-RECALL-08", "Recall serializes the same pack in all five 
     expect((JSON.stringify(writerDenied.body) ?? "").includes(sentinel)).toBe(false);
 
     // The same refusal over WS leaves a call receipt the owner can read back.
-    let writerSocket: Awaited<ReturnType<typeof engine.websocket>>;
-    try {
-      writerSocket = await engine.websocket(writer);
-    } catch (error) {
-      const message = errorText(error);
-      if (/WS upgrade (failed|closed)/.test(message)) {
-        throw new Error(
-          `MUSE-RECALL-08 ENGINE DEFECT 2026-11-12: scoped agent cannot reach the WS facade; plain /ws requires owner grade, same pre-upgrade cause as FIX-LIST:23077 [FEDERATION-GUEST-WS-FACADE-ADMISSION]; actor=write-only agent ${writer.principalRef}; ${message}`,
-          { cause: error },
-        );
-      }
-      throw error;
-    }
+    const writerSocket = await engine.websocket(writer);
     let wsRefusal: unknown = undefined;
     try {
       await writerSocket.call("vault.recall", jsonRecall);
