@@ -171,6 +171,15 @@ impl<'a> HostSelfDispatcher<'a> {
         })
     }
 
+    /// The leased attempt this run serves, as the fence of its run signals
+    /// names it: the attempt, its lease owner and its lease generation (the
+    /// attempt count); `None` for a run no attempt lease binds (AGM-2).
+    pub(crate) fn signal_lease(&self) -> Option<(crate::attempt_queue::AttemptId, &str, u32)> {
+        self.agent_lease
+            .as_ref()
+            .map(|lease| (lease.attempt, lease.owner.as_str(), lease.generation))
+    }
+
     /// The write token of the leased run this dispatcher serves, from its
     /// lease, for a write the run makes outside a verb call's envelope (FIX
     /// 3103); `None` for a run no attempt lease binds.

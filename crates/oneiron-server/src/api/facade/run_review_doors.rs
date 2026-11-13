@@ -1,5 +1,6 @@
-//! The owner's cross-kind review and run compensation, on the caller's own
-//! credential handle. The facade refuses a non-owner before any hook runs.
+//! The owner's read of a run's changes, cross-kind review and run
+//! compensation, on the caller's own credential handle. The facade refuses a
+//! non-owner before any hook runs.
 //! A settlement or a revert records where his request reached this install
 //! (`surface`, the host's own reading of it): audit only (FIX 4650).
 
@@ -9,8 +10,8 @@ use crate::server::SyncServer;
 use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::run_review::{
-    RevertRunOutcome, RevertRunRequest, RunReview, RunReviewRequest, RunSettleRequest,
-    RunSettlement, RunSettlementRequest,
+    RevertRunOutcome, RevertRunRequest, RunChanges, RunChangesRequest, RunReview, RunReviewRequest,
+    RunSettleRequest, RunSettlement, RunSettlementRequest,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
@@ -27,6 +28,24 @@ fn reviewer(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<AuthenticatedO
             &[],
         )
     })
+}
+
+pub(crate) async fn vault_runs_changes_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: RunChangesRequest,
+) -> Listed<RunChanges> {
+    const VERB: &str = "vault.runs.changes.get";
+    let proof = match reviewer(server, auth) {
+        Ok(proof) => proof,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.run_changes_as_owner(&proof, &input)
+    })
+    .await
 }
 
 pub(crate) async fn vault_runs_review(

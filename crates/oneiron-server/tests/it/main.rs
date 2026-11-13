@@ -50,5 +50,8 @@ mod remote_pairing;
 mod reopen_after_restart;
 // Restarts the shipped server through `reopen_after_restart`'s helpers.
 #[cfg(unix)]
+mod serve_start_grant_backfill;
+// Restarts the shipped server through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
 mod slip_clock;
 mod ws_sync;

@@ -90,6 +90,9 @@ pub enum BatchState {
     RollingBack,
     RolledBack,
     Cancelled,
+    /// Never landed: a checked reconciliation successor carried its
+    /// change, and that successor is green (QUEUE Q1 = A). Terminal.
+    Superseded,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpeculativePath {

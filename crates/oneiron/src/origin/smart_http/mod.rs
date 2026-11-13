@@ -35,6 +35,10 @@
 //!   wire at all. Without both, a planted `refs/replace/<oid>` would make the
 //!   door's scan read benign substitute bytes while the original object is what
 //!   the push makes durable.
+//! - **No lazy fetch (ARCH-0068 #push-cert-open).** `GIT_NO_LAZY_FETCH=1` is in
+//!   the closed baseline too, as GitWire pins it for its own children: an
+//!   object a served repository lacks is an error on every git the serve path
+//!   runs, never a fetch from a promisor remote.
 //! - **No signed push.** `git receive-pack` writes a push certificate into the
 //!   object store as a blob before any hook runs, where no door window reads
 //!   it. The advertisement never offers `push-cert`, whatever the repository's
