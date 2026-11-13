@@ -1,3 +1,5 @@
+// The contact family's head writer is reached through `oneiron::test_doors`.
+#![cfg(oneiron_test_support)]
 // Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! ARCH-0057 §3 cutover (census L6-21): the send gate asks the claims-read
@@ -299,27 +301,37 @@ fn a_send_override_lifts_a_stamped_class_hold() {
 
     let result = dispatch(&vault, actor, EMAIL, "intent:overridden");
     assert!(
-        !held(&result),
-        "the override answers the hold: {:?}",
-        result.gate_reason_codes
+        traces(&result, ENFORCEMENT_HOLD_REASON),
+        "the stamped class holds the send: {:?}",
+        result.receipt.policy_trace
     );
     assert!(
         traces(&result, OVERRIDE_REASON),
         "the receipt names the override that decided it: {:?}",
         result.receipt.policy_trace
     );
-    assert!(traces(&result, ENFORCEMENT_HOLD_REASON));
+    assert!(
+        !held(&result),
+        "the override answers the hold: {:?}",
+        result.gate_reason_codes
+    );
 }
 
 #[test]
 fn a_contact_family_opt_out_alone_no_longer_holds() {
     let (_dir, vault, actor) = cutover_vault();
-    // The contact door accepts a record that already carries an opt-out and
-    // writes only the contact family's heads: no party `comm.opt_out` twin.
-    let record = contact_record()
-        .opted_out(CounterpartyOptOutReason::Unsubscribe, 2)
-        .unwrap();
+    let record = contact_record();
     put_contact(&vault, &record);
+    // Only the contact family's own heads move: no party `comm.opt_out`.
+    oneiron::test_doors::contact_family_heads::write_contact_family_heads(
+        &vault,
+        &test_id(CONTACT_SEED),
+        &record
+            .opted_out(CounterpartyOptOutReason::Unsubscribe, 2)
+            .unwrap(),
+        2,
+    )
+    .unwrap();
     assert!(
         vault
             .get_counterparty_contact(&test_id(CONTACT_SEED))
@@ -334,6 +346,26 @@ fn a_contact_family_opt_out_alone_no_longer_holds() {
         !held(&result),
         "COUNTERPARTY_CONTACT is no second authority: {:?}",
         result.gate_reason_codes
+    );
+}
+
+#[test]
+fn a_contact_created_opted_out_still_holds() {
+    let (_dir, vault, actor) = cutover_vault();
+    // The create door moves the party's `comm.opt_out` with the contact's.
+    put_contact(
+        &vault,
+        &contact_record()
+            .opted_out(CounterpartyOptOutReason::Unsubscribe, 2)
+            .unwrap(),
+    );
+
+    let result = dispatch(&vault, actor, EMAIL, "intent:born-opted-out");
+    assert_eq!(result.gate_reason_codes, vec![PENDING_OPT_OUT.to_owned()]);
+    assert!(
+        traces(&result, "counterparty_opt_out_unsubscribe"),
+        "{:?}",
+        result.receipt.policy_trace
     );
 }
 

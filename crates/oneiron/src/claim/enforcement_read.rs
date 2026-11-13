@@ -25,8 +25,7 @@ use rmpv::Value;
 
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyContactStatus, PREDICATE_COUNTERPARTY_CONTACT_STATUS,
-    normalize_channel_class,
+    CounterpartyContactRecord, CounterpartyContactStatus, normalize_channel_class,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -61,10 +60,8 @@ pub(crate) struct SendTarget<'a> {
 }
 
 /// One class whose live heads hold the send.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EnforcementHead {
-    /// The class's predicate.
-    pub(crate) predicate: String,
     /// The receipt reason the hold carries.
     pub(crate) receipt_reason: &'static str,
     /// Whether an owner override or the opt-out posture answers the hold.
@@ -114,7 +111,6 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
         .any(|record| record.status == CounterpartyContactStatus::Revoked)
     {
         heads.push(EnforcementHead {
-            predicate: PREDICATE_COUNTERPARTY_CONTACT_STATUS.to_owned(),
             receipt_reason: COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON,
             overridable: false,
         });
@@ -142,7 +138,6 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
                 send.verb,
             )? {
                 heads.push(EnforcementHead {
-                    predicate,
                     receipt_reason: COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON,
                     overridable: true,
                 });
@@ -158,7 +153,6 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
                 send.channel_class,
             ))? {
                 heads.push(EnforcementHead {
-                    predicate,
                     receipt_reason,
                     overridable: true,
                 });
@@ -172,7 +166,6 @@ pub(crate) fn enforcement_heads_for_send_in_txn(
         for predicate in generic {
             if generic_class_holds_in_txn(store, txn, &predicate, &subjects, send.channel_class)? {
                 heads.push(EnforcementHead {
-                    predicate,
                     receipt_reason: COUNTERPARTY_ENFORCEMENT_HOLD_RECEIPT_REASON,
                     overridable: true,
                 });
