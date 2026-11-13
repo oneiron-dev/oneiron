@@ -63,6 +63,7 @@ mod oneironer_shadow;
 mod perf;
 mod retrieval_trace_export;
 mod retrieval_turn_corpus;
+mod scorecard;
 mod swarm;
 mod teacher_probe;
 mod vector;
@@ -107,6 +108,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
         [cmd, rest @ ..] if cmd == "load" => load::run(rest),
         [cmd, rest @ ..] if cmd == "infer" => infer::run(rest),
+        [cmd, rest @ ..] if cmd == "scorecard" => scorecard::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -202,6 +204,17 @@ fn print_help() {
                                        mixed at 1/10/100/300 agents; JSONL\n\
           swarm --mode write|recall|mixed --agents 1|10|100|300\n\
                                        one seeded single-vault trial as JSON\n\
+          scorecard convert --dataset F --out-dir D --seed N\n\
+                                       --search N --held-out N --sealed N [--slice S]\n\
+                                       [--first-of-each-category C,C,..] [--pack-id ID]\n\
+                                       [--revision R]\n\
+                                       LongMemEval-S JSON into pack slices and split.json\n\
+          scorecard pack-embed --pack-dir D --slice S [--endpoint URL]\n\
+                                       [--model-id ID] [--batch N]\n\
+                                       fill a slice's vectors from the served embedder\n\
+          scorecard run --pack-dir D --slice S --engine-commit SHA --out F\n\
+                                       [--params F] [--budget-rows N] [--repeats N]\n\
+                                       replay a slice into a retrieval scorecard\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\
