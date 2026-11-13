@@ -614,10 +614,16 @@ impl<'v> Linker<'v> {
                 .into_iter()
                 .map(|hit| hit.id)
                 .collect();
-            every_part = Some(match every_part {
+            let held = match every_part {
                 None => holders,
                 Some(held) => held.intersection(&holders).copied().collect(),
-            });
+            };
+            // No person holds every part so far, so the rest add none.
+            if held.is_empty() {
+                every_part = None;
+                break;
+            }
+            every_part = Some(held);
         }
         hits.extend(every_part.unwrap_or_default());
         let mut found = BTreeSet::new();

@@ -126,7 +126,8 @@ fn save(vault: &Vault, text: &str, name: &str) -> (EntityId, MentionLink) {
 
 /// "Owan Smyth" is no name or alias of Owen Smith, so the identity key
 /// misses it. He is the one person it sounds like, so the mention is his
-/// candidate, and no provisional entity is minted. Main mints one.
+/// candidate, and no provisional entity is minted. One candidate is a soft
+/// link, so the nightly re-check asks nothing. Main mints one.
 #[test]
 fn a_near_spelling_links_to_the_one_person_it_sounds_like() {
     let dir = tempfile::tempdir().expect("dir");
@@ -149,6 +150,8 @@ fn a_near_spelling_links_to_the_one_person_it_sounds_like() {
             entities: vec![owen],
         }
     );
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert!(asks.is_empty(), "one candidate opens no ask: {asks:?}");
 }
 
 /// Two people sound like "Owan Smyth". The mention keeps both as candidates,
@@ -244,6 +247,14 @@ fn a_last_name_that_sounds_different_takes_no_phonetic_link() {
 #[test]
 fn a_shared_family_name_written_first_takes_no_phonetic_link() {
     assert_no_phonetic_link("Morimoto Yuki", "Morimoto Owen");
+}
+
+/// A part of combining marks alone is no part once the marks are stripped:
+/// "Owan \u{301}" is a first name alone, so it takes no phonetic link to
+/// Owen Smith and mints, as on main.
+#[test]
+fn a_part_of_marks_alone_takes_no_phonetic_link() {
+    assert_no_phonetic_link("Owen Smith", "Owan \u{301}");
 }
 
 /// With only `person_name` in the vault, a mention of `mention` is not

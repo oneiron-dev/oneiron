@@ -23,7 +23,7 @@ pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
             add_romaji(&mut codes, &latin);
             add_soundex(&mut codes, &latin);
             // Each part also finds a multi-part name from a single mention.
-            for part in latin.split(is_separator).filter(|part| !part.is_empty()) {
+            for part in parts(&latin) {
                 add_romaji(&mut codes, part);
                 add_soundex(&mut codes, part);
             }
@@ -53,27 +53,23 @@ pub struct LinkingCodes {
 /// The [`LinkingCodes`] of a name or a mention.
 pub fn linking_codes(name: &str) -> LinkingCodes {
     let normalized = normalize(name);
-    let parts = normalized
-        .split(is_separator)
-        .filter(|part| !part.is_empty())
-        .count();
-    if parts < 2 {
-        return LinkingCodes::default();
-    }
     let mut whole = BTreeSet::new();
     let mut every_part = BTreeSet::new();
     match spelling(&normalized) {
-        Spelling::Kana { folded, romaji } => {
+        // Kana parts are counted before the folding drops the separators.
+        Spelling::Kana { folded, romaji } if parts(&normalized).count() >= 2 => {
             whole.insert(format!("kana:{folded}"));
             add_romaji(&mut whole, &romaji);
         }
-        Spelling::Latin(latin) => {
+        // Latin parts are counted once their marks are stripped: a part of
+        // marks alone is no part.
+        Spelling::Latin(latin) if parts(&latin).count() >= 2 => {
             add_romaji(&mut whole, &latin);
-            for part in latin.split(is_separator).filter(|part| !part.is_empty()) {
+            for part in parts(&latin) {
                 add_soundex(&mut every_part, part);
             }
         }
-        Spelling::Other => {}
+        _ => {}
     }
     LinkingCodes {
         whole: whole.into_iter().collect(),
@@ -83,6 +79,11 @@ pub fn linking_codes(name: &str) -> LinkingCodes {
 
 fn normalize(name: &str) -> String {
     name.nfkc().flat_map(char::to_lowercase).collect()
+}
+
+/// The nonempty parts of a name, between its separators.
+fn parts(name: &str) -> impl Iterator<Item = &str> {
+    name.split(is_separator).filter(|part| !part.is_empty())
 }
 
 /// How the codes read a normalized name.
