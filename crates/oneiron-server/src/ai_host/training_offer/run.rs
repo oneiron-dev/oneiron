@@ -3,7 +3,9 @@
 //! Running the nightly pass now is a cadence act, so the caller is the owner
 //! or a holder of the maintenance-cadence class of `engine.controls`, checked
 //! in the writer that admits the request's own Coach attempt. The pass draws
-//! on the same day budget as the nightly pass (`DAY_BUDGET_UNITS`).
+//! on the same day budget as the nightly pass (`DAY_BUDGET_UNITS`), and reads
+//! the dated evidence window the request names, else the nightly pass's
+//! rolling one.
 //! Its offers are the Coach's, and each waits on the owner's answer.
 use oneiron::EntityId;
 use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerRunnerStore};
@@ -21,15 +23,15 @@ use super::super::coach_host::{
 use crate::server::SyncServer;
 
 /// Admits `actor` and the request's own Coach offer attempt in one writer,
-/// runs the pass on it, settles the attempt on the Coach queue's lease and
-/// budget line, and answers how the pass ended with the ids of the offers
-/// it raised.
+/// runs the pass on it over the request's evidence window, settles the
+/// attempt on the Coach queue's lease and budget line, and answers how the
+/// pass ended, the window it read and the ids of the offers it raised.
 ///
 /// # Errors
 ///
 /// The admission's refusal of a caller that is neither the live owner nor a
-/// maintenance-cadence holder; a pass that failed, after its attempt failed
-/// with it; storage errors.
+/// maintenance-cadence holder, or of a window that is not dated and bounded;
+/// a pass that failed, after its attempt failed with it; storage errors.
 pub(crate) fn run_now(
     server: &SyncServer,
     actor: EngineControlActor<'_>,
@@ -38,7 +40,7 @@ pub(crate) fn run_now(
     let vault = server.vault();
     let store = DreamerRunnerStore::new(vault);
     let now = vault.now_recorded_at();
-    let (admitted, caller) = match admit_offer_pass_run(
+    let (admitted, caller, window) = match admit_offer_pass_run(
         vault,
         actor,
         input,
@@ -51,18 +53,27 @@ pub(crate) fn run_now(
             started_milestone: None,
         },
     )? {
-        OfferPassRunAdmission::Admitted { attempt, caller } => (attempt, caller),
+        OfferPassRunAdmission::Admitted {
+            attempt,
+            caller,
+            window,
+        } => (
+            attempt,
+            caller,
+            window.unwrap_or(super::rolling_window(now)),
+        ),
         OfferPassRunAdmission::Waiting { attempt } => {
             return Ok(OfferPassRunAnswer::Waiting { attempt });
         }
     };
     let attempt = EntityId::from_bytes(*admitted.status.attempt.id.as_bytes())?;
-    match super::draft(server, &admitted, now) {
+    match super::draft(server, &admitted, now, window) {
         Ok(end) => {
             settle(vault, &store, &admitted, Ok(()), COACH_HOST_BUDGET_ID)?;
             Ok(OfferPassRunAnswer::Ran {
                 attempt,
                 caller,
+                window,
                 end,
                 offers: offers_of_attempt(vault, attempt)?
                     .into_iter()
