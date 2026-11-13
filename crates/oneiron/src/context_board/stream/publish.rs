@@ -17,6 +17,7 @@ use super::events::{BoardEvent, RouteObservation};
 use super::frames::{DeltaRow, StreamConnectionId};
 use super::provenance::VerifiedOwnTaskEvent;
 use super::registry::{BoardStreamRegistry, StreamConnectionState};
+use super::task_wake::{OwedTaskWake, TaskWakeKind};
 use crate::context_board::TaskBoardStatus;
 use crate::{EntityId, Result, Vault};
 
@@ -28,6 +29,7 @@ const PUBLISHED_TASKS_CAP: usize = 4096;
 /// One committed TASK as the board STREAM sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedTaskBoardState {
+    task: EntityId,
     task_ref: String,
     owner_ref: String,
     /// The actor an open consult addresses.
@@ -39,6 +41,9 @@ pub struct CommittedTaskBoardState {
     revision: String,
     /// The failed attempt heads its status folds from, sorted.
     failed_attempts: Vec<String>,
+    /// The wakes this TASK owes now: a failed TASK its owner's, a queued
+    /// consult its addressee's (census L2-38).
+    owed: Vec<OwedTaskWake>,
 }
 
 impl CommittedTaskBoardState {
@@ -57,7 +62,19 @@ impl CommittedTaskBoardState {
         let Some(authority) = vault.task_authority_state(task)? else {
             return Ok(None);
         };
+        let owed = match (presence.status, board.addressee) {
+            (TaskBoardStatus::Failed, _) => vec![OwedTaskWake {
+                kind: TaskWakeKind::Failed,
+                recipient: authority.owner_ref,
+            }],
+            (TaskBoardStatus::Queued, Some(addressee)) => vec![OwedTaskWake {
+                kind: TaskWakeKind::Arrived,
+                recipient: addressee,
+            }],
+            _ => Vec::new(),
+        };
         Ok(Some(Self {
+            task,
             task_ref: task.to_hex(),
             owner_ref: authority.owner_ref.to_hex(),
             consultee_ref: board.addressee.map(|actor| actor.to_hex()),
@@ -65,7 +82,39 @@ impl CommittedTaskBoardState {
             line: crate::context_board::tasks::intent_row(&presence).line,
             revision: revision(board.body_revision, &presence),
             failed_attempts: failed_attempts(&presence),
+            owed,
         }))
+    }
+
+    /// The TASK this state was read from.
+    #[must_use]
+    pub fn task(&self) -> EntityId {
+        self.task
+    }
+
+    pub(super) fn task_ref(&self) -> &str {
+        &self.task_ref
+    }
+
+    pub(super) fn line(&self) -> &str {
+        &self.line
+    }
+
+    /// The envelope id of this committed state's `what` event,
+    /// `<task id>:<what>:<revision>` (ARCH-0067 `#wake-envelope-id`).
+    pub(super) fn occurrence_ref(&self, what: &str) -> String {
+        format!("{}:{what}:{}", self.task_ref, self.revision)
+    }
+
+    pub(super) fn owed_wakes(&self) -> &[OwedTaskWake] {
+        &self.owed
+    }
+
+    /// Whether this TASK owes `recipient` the `kind` wake now.
+    pub(super) fn owes(&self, kind: TaskWakeKind, recipient: EntityId) -> bool {
+        self.owed
+            .iter()
+            .any(|owed| owed.kind == kind && owed.recipient == recipient)
     }
 
     /// The current TASK row for a STREAM delta. A host must admit this TASK
@@ -216,9 +265,12 @@ impl BoardStreamRegistry {
         let event = |actor_ref: &str, what: &str| VerifiedOwnTaskEvent {
             task_ref: state.task_ref.clone(),
             actor_ref: actor_ref.to_owned(),
-            event_ref: format!("{}:{what}:{}", state.task_ref, state.revision),
+            event_ref: state.occurrence_ref(what),
         };
         let admitted = |c: &StreamConnectionId, _: &StreamConnectionState| reads(c);
+        // An offer of a wake this TASK no longer owes is forgotten, so a
+        // later occurrence is offered to every connection again.
+        self.published_task_wakes.keep_owed(&state);
         match state.status {
             TaskBoardStatus::Done
                 if changed_status || previous.as_ref().is_some_and(|p| p.line != state.line) =>
@@ -234,24 +286,16 @@ impl BoardStreamRegistry {
                     admitted,
                 )
             }
-            TaskBoardStatus::Failed if changed_status || failed_again => self.route_event_where(
-                BoardEvent::OwnTaskFailed {
-                    event: event(&state.owner_ref, "failed"),
-                    line: state.line.clone(),
-                },
-                admitted,
-            ),
+            TaskBoardStatus::Failed if changed_status || failed_again => {
+                self.route_task_wake(&state, TaskWakeKind::Failed, &state.owner_ref, reads)
+            }
             TaskBoardStatus::Queued
                 if previous.as_ref().map(|p| &p.consultee_ref) != Some(&state.consultee_ref) =>
             {
                 match &state.consultee_ref {
-                    Some(consultee) => self.route_event_where(
-                        BoardEvent::ConsultArrived {
-                            event: event(consultee, "arrived"),
-                            line: state.line.clone(),
-                        },
-                        admitted,
-                    ),
+                    Some(consultee) => {
+                        self.route_task_wake(&state, TaskWakeKind::Arrived, consultee, reads)
+                    }
                     None => RouteObservation::default(),
                 }
             }

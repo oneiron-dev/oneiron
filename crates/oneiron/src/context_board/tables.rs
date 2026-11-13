@@ -39,4 +39,10 @@ crate::side_table::side_tables! {
     /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].
     CONTEXT_BOARD_SCRATCHPAD: VaultMeta b"context_board.scratchpad.v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A wake a committed TASK owes, staged by the board publisher (census L2-38): a failed
+    /// TASK's to its owner (tag `f`) or a queued consult's to its addressee (tag `a`). Value: the
+    /// envelope id it was staged under; nothing of the TASK. Node-local; a restore never takes it
+    /// from an image. Key: id16(task) + tag + id16(recipient).
+    CONTEXT_BOARD_TASK_WAKE: VaultMeta b"context_board.task_wake.v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
 }

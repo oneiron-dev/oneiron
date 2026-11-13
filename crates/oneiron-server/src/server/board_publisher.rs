@@ -22,12 +22,24 @@
 //! connections, naming the room and the turn and nothing of the turn. A wake
 //! handed to a connection, or no longer live, is settled; one whose agent has
 //! no connection waits for one.
+//!
+//! The TASK loop also stages each wake a committed TASK owes
+//! (`oneiron::context_board::PendingTaskWake`, census L2-38): a failed TASK's
+//! to its owner, a queued consult's to its addressee. A third loop runs on
+//! each attach and each connection's first bound reader. It offers every
+//! staged wake that is still live to each of its recipient's connections that
+//! may read the TASK and was not offered it yet, so a wake outlives a restart
+//! and reaches a connection that attaches later. It settles a staged wake once
+//! its TASK no longer owes it.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::AttemptQueue;
-use oneiron::context_board::{CommittedTaskBoardState, PendingDiaryReview, PendingRoomWake};
+use oneiron::context_board::{
+    CommittedTaskBoardState, PendingDiaryReview, PendingRoomWake, PendingTaskWake,
+    StreamConnectionId,
+};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use super::core::{BroadcastPayload, SyncServer};
@@ -70,7 +82,8 @@ impl SyncServer {
     /// Starts the publisher. It subscribes before it returns, so no TASK
     /// committed after this call is missed, and a review opened after it is
     /// read at the latest by the pass its commit starts. A connection that
-    /// attaches is read for by the pass its attach starts.
+    /// attaches is read for by the pass its attach starts, and the staged
+    /// TASK wakes by the pass its attach or its first bound reader starts.
     pub(crate) fn spawn_board_publisher(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let updates = self.vault().subscribe_task_updates();
         let commits = AttemptQueue::new(self.vault()).subscribe();
@@ -78,7 +91,8 @@ impl SyncServer {
         tokio::spawn(async move {
             tokio::join!(
                 Arc::clone(&server).publish_board_forever(updates),
-                server.publish_reviews_forever(commits),
+                Arc::clone(&server).publish_reviews_forever(commits),
+                server.publish_task_wakes_forever(),
             );
         })
     }
@@ -245,9 +259,16 @@ impl SyncServer {
                 Err(RecvError::Closed) => return,
             };
             let vault = Arc::clone(self.vault());
-            let state =
-                tokio::task::spawn_blocking(move || CommittedTaskBoardState::read(&vault, task))
-                    .await;
+            let state = tokio::task::spawn_blocking(move || {
+                let state = CommittedTaskBoardState::read(&vault, task)?;
+                // A wake the TASK owes is staged before it is routed, so it
+                // outlives the queues it lands in (census L2-38).
+                if let Err(error) = vault.stage_task_wakes(task, state.as_ref()) {
+                    tracing::warn!(kind = ?error.kind(), task = %task.to_hex(), "board publisher could not stage a TASK's wakes; its next write stages them");
+                }
+                Ok::<_, oneiron::Error>(state)
+            })
+            .await;
             match state {
                 Ok(Ok(Some(state))) => {
                     let (readers, runs) = {
@@ -283,7 +304,13 @@ impl SyncServer {
                         .streams_mut()
                         .publish_task_state(state, |connection| admitted.contains(connection));
                 }
-                Ok(Ok(None)) => {}
+                Ok(Ok(None)) => {
+                    self.mcp_registry
+                        .lock()
+                        .await
+                        .streams_mut()
+                        .forget_task_wakes(task);
+                }
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), task = %task.to_hex(), "board publisher could not read a committed TASK");
                 }
@@ -293,6 +320,114 @@ impl SyncServer {
             }
         }
     }
+
+    /// One pass over the staged TASK wakes first, then one per attach or
+    /// first bound reader. Signals sent meanwhile fold into the next pass,
+    /// which reads the whole staged set fresh. A failed pass is logged and
+    /// retried at the next signal.
+    async fn publish_task_wakes_forever(self: Arc<Self>) {
+        let replay = self
+            .mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .task_wake_replay_notifier();
+        loop {
+            self.publish_staged_task_wakes().await;
+            replay.notified().await;
+        }
+    }
+
+    /// One pass over the staged TASK wakes (census L2-38): each live wake
+    /// reaches every subscribed connection of its recipient that was not
+    /// offered it yet and whose bound reader may read the TASK now, by the
+    /// predicate a live route uses. A connection with no bound reader waits
+    /// for its first bind. A staged wake its TASK no longer owes is settled.
+    async fn publish_staged_task_wakes(&self) {
+        let vault = Arc::clone(self.vault());
+        let read = tokio::task::spawn_blocking(move || PendingTaskWake::read_all(&vault)).await;
+        let read = match read {
+            Ok(Ok(read)) => read,
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not read staged TASK wakes; it reads them again at the next attach");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher TASK wake read did not finish"
+                );
+                return;
+            }
+        };
+        let candidates = {
+            let registry = self.mcp_registry.lock().await;
+            let mut candidates = Vec::new();
+            for wake in &read.pending {
+                for connection in registry.streams().task_wake_candidates(wake) {
+                    let reader = match registry.stream_reader(&connection) {
+                        Some(reader) => Some(TaskWakeReader::Credential(reader)),
+                        None => registry.run_reader(&connection).map(TaskWakeReader::Run),
+                    };
+                    if let Some(reader) = reader {
+                        candidates.push((wake.task(), connection, reader));
+                    }
+                }
+            }
+            candidates
+        };
+        let vault = Arc::clone(self.vault());
+        let admitted = tokio::task::spawn_blocking(move || {
+            candidates
+                .into_iter()
+                .filter(|(task, _, reader)| match reader {
+                    TaskWakeReader::Credential(reader) => {
+                        crate::api::mcp_stream_reads_task(&vault, reader, task)
+                    }
+                    TaskWakeReader::Run(reader) => run_reads_task(&vault, reader, task),
+                })
+                .map(|(task, connection, _)| (task, connection))
+                .collect::<BTreeSet<(oneiron::EntityId, StreamConnectionId)>>()
+        })
+        .await;
+        let Ok(admitted) = admitted else {
+            tracing::warn!("board publisher TASK wake admission did not finish");
+            return;
+        };
+        let spent = read.spent;
+        {
+            let mut registry = self.mcp_registry.lock().await;
+            let streams = registry.streams_mut();
+            streams.forget_spent_task_wakes(&spent);
+            streams.publish_task_wakes(read.pending, |connection, wake| {
+                admitted.contains(&(wake.task(), connection.clone()))
+            });
+        }
+        if spent.is_empty() {
+            return;
+        }
+        let vault = Arc::clone(self.vault());
+        let settled = tokio::task::spawn_blocking(move || vault.settle_task_wakes(&spent)).await;
+        match settled {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not settle spent TASK wakes; the next pass finds them spent again");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher TASK wake settle did not finish"
+                );
+            }
+        }
+    }
+}
+
+/// The reader a staged TASK wake is admitted under: a credential connection's
+/// bound reader, or a pumped run's.
+enum TaskWakeReader {
+    Credential(crate::mcp::McpResolvedActor),
+    Run(oneiron::claim::ScopedReadActorKey),
 }
 
 /// One cloud erase-watch pass over this server's held device flows:
