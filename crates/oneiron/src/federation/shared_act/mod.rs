@@ -282,6 +282,11 @@ pub struct SharedActExecutionReceipt {
     /// its copy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detach: Option<DetachReport>,
+    /// The check-in decision the change ran on (2i; P24-SHAPE Q9 = A): its
+    /// act class, the actor's role, the mode, why it went, and the check-in
+    /// it spent. `None` for a change no door judges by check-in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
     pub completed_at: u64,
 }
 
@@ -816,6 +821,7 @@ impl Vault {
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
             proposer: None,
             detach: effect.detach,
+            check_in: None,
             completed_at: now,
         };
         self.store

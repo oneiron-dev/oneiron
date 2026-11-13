@@ -117,6 +117,10 @@ pub struct SharedMemberAddRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub role: Option<Role>,
+    /// The check-in an earlier call's `CHECK_IN_PENDING` named, 32 hex: once
+    /// a holder approved it, this call spends it and the add runs.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 impl InvitationSlip {
@@ -188,6 +192,10 @@ pub struct SharedMemberRoleRequest {
     /// `admin`, `member` or `viewer`.
     #[schemars(with = "String")]
     pub role: Role,
+    /// The check-in an earlier call's `CHECK_IN_PENDING` named, 32 hex: once
+    /// a holder approved it, this call spends it and the move runs.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// One member of a shared vault.
@@ -199,6 +207,21 @@ pub struct SharedMemberRequest {
     pub vault_id: u64,
     /// PERSON id, hex.
     pub member: String,
+}
+
+/// The member of a shared vault `vault.members.remove` removes.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SharedMemberRemoveRequest {
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
+    pub vault_id: u64,
+    /// PERSON id, hex.
+    pub member: String,
+    /// The check-in an earlier call's `CHECK_IN_PENDING` named, 32 hex: once
+    /// a holder approved it, this call spends it and the removal runs.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// The member change a Steward asks for (`vault.members.ask`).
@@ -272,6 +295,15 @@ impl From<SharedActExecution> for SharedActExecuted {
 fn person_id(field: &str, hex: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(hex)
         .map_err(|_| MemoryError::bad_request(format!("{field} is not an entity id")))
+}
+
+/// The settled check-in a membership call names, when it names one.
+fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> {
+    hex.map(|hex| {
+        EntityId::from_hex(hex)
+            .map_err(|_| MemoryError::bad_request("check_in_ref is not a check-in id"))
+    })
+    .transpose()
 }
 
 /// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
@@ -455,17 +487,29 @@ pub fn read_shared_deletion(vault: &Vault) -> MemoryResult<Option<SharedVaultDel
 /// `vault.members.add`: an Admin's `add_member` power invites a member, who
 /// joins on `vault.members.accept`. It only creates the invitation: the
 /// invitee binds a key of their own to it (`vault.members.invitation_slip`,
-/// or an owner's invitation pairing code; FIX 8745).
+/// or an owner's invitation pairing code; FIX 8745). The act checks in
+/// first (2i): an Owner's or an Admin's add goes, and a Deputy's goes on
+/// their own judgment; the receipt records the decision.
 pub fn add_shared_member_as(
     vault: &Vault,
     admin: &AuthenticatedOwner,
     input: SharedMemberAddRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
     let member = person_id("member", &input.member)?;
-    Ok(vault.add_shared_member(admin, input.vault_id, member, input.role)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.add_shared_member_with_check_in(
+        admin,
+        input.vault_id,
+        member,
+        input.role,
+        check_in,
+    )?)
 }
 
 /// `vault.members.change`: an Admin's `assign_role` power moves a member.
+/// The act checks in first (2i): a Deputy's move that is not a Member's
+/// raise to Admin waits on an Owner's answer (`CHECK_IN_PENDING`), and the
+/// call that names the approved check-in as `check_in_ref` runs it.
 pub fn change_shared_member_as(
     vault: &Vault,
     admin: &AuthenticatedOwner,
@@ -473,19 +517,30 @@ pub fn change_shared_member_as(
     input: SharedMemberRoleRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
     let member = person_id("member", &input.member)?;
-    Ok(vault.change_shared_member_role(admin, input.vault_id, member, input.role, slips)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.change_shared_member_role_with_check_in(
+        admin,
+        input.vault_id,
+        member,
+        input.role,
+        slips,
+        check_in,
+    )?)
 }
 
 /// `vault.members.remove`: an Admin's `remove_member` power removes a member
-/// who is not an Owner.
+/// who is not an Owner. The act checks in first (2i): a Deputy's removal
+/// waits on an Owner's answer (`CHECK_IN_PENDING`), and the call that names
+/// the approved check-in as `check_in_ref` runs it.
 pub fn remove_shared_member_as(
     vault: &Vault,
     admin: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
-    input: SharedMemberRequest,
+    input: SharedMemberRemoveRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
     let member = person_id("member", &input.member)?;
-    Ok(vault.remove_shared_member(admin, input.vault_id, member, slips)?)
+    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    Ok(vault.remove_shared_member_with_check_in(admin, input.vault_id, member, slips, check_in)?)
 }
 
 /// `vault.members.ask`: a Steward suggests one member change. It writes one
