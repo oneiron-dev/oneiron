@@ -81,6 +81,10 @@ const DECLARED_CARDINALITY: &[(&str, ClaimCardinality)] = &[
     ("character.backstory", ClaimCardinality::Set),
     // ARCH-0022 predicate registry additions, line 282 (multi).
     ("character.dynamic", ClaimCardinality::Set),
+    // Engine ruling 13 Nov 12:58 (the linker's role edges): a person holds
+    // many relationships of one word, so a second `relationship.friend`
+    // stands beside the first and never supersedes it.
+    ("relationship.*", ClaimCardinality::Set),
 ];
 
 /// Exact rows beat namespace wildcards regardless of table order. A wildcard

@@ -4,16 +4,19 @@
 //!
 //! A role edge is an ordinary claim `relationship.<word>` whose subject is
 //! the person the role is relative to and whose value is the related
-//! person's id: "Owen is my manager", said by the owner, is
-//! `relationship.manager` on the owner valued with Owen's id. The words are
-//! the fixed relationship labels ([`relationship_trust_class`]): no synonym
-//! is read, so `my boss` never reads a `relationship.manager` edge. The
-//! possessor of `my` is the one author of the mention's message, never the
-//! vault's owner by default; a message of no single author has none.
+//! person's id in canonical 32-hex form (Engine ruling 13 Nov 12:58, as
+//! `actor.subject_ref` holds its anchor): "Owen is my manager", said by the
+//! owner, is `relationship.manager` on the owner valued with Owen's id. The
+//! `relationship` root is multi-valued, so a second edge of one word stands
+//! beside the first. The words are the fixed relationship labels
+//! ([`relationship_trust_class`]): no synonym is read, so `my boss` never
+//! reads a `relationship.manager` edge. The possessor of `my` is the one
+//! author of the mention's message, never the vault's owner by default; a
+//! message of no single author has none.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::federation::{RelationshipTrustClass, relationship_trust_class};
@@ -69,43 +72,64 @@ pub(super) fn speaker_in_txn(
     })
 }
 
-/// The persons `possessor`'s role edges for `word` name, each with whether
-/// an Approved edge names them. Only Active claims count, Auto or Approved,
-/// whose value is an entity id; a Proposed or Rejected edge never does.
-/// `admits` keeps the claims the reader may see.
+/// The role edge a claim body is, when it is one of `possessor`'s for
+/// `predicate` that stands at `now`: Active, valid at `now`, about
+/// `possessor` itself, and valued with an entity id in canonical 32-hex
+/// form. The answer pairs that id with whether the edge is Approved. Auto
+/// and Proposed edges are unsure; a Rejected edge, which the owner refused,
+/// names no one.
+fn role_edge(
+    body: &ClaimBody,
+    possessor: &EntityId,
+    predicate: &str,
+    now: u64,
+) -> Option<(EntityId, bool)> {
+    if body.subject != ClaimSubject::Entity(*possessor)
+        || body.predicate != predicate
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.valid_from.is_some_and(|start| start > now)
+        || body.valid_to.is_some_and(|end| end <= now)
+    {
+        return None;
+    }
+    let approved = match body.approval {
+        ClaimApprovalStatus::Approved => true,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed => false,
+        ClaimApprovalStatus::Rejected => return None,
+    };
+    let hex = body.value.as_str()?;
+    let person = EntityId::from_hex(hex)
+        .ok()
+        .filter(|id| id.to_hex() == hex)?;
+    Some((person, approved))
+}
+
+/// The ids `possessor`'s role edges for `word` name at `now`
+/// ([`role_edge`]), each with whether an Approved edge names it, as stored:
+/// the caller resolves each to its head. `admits` keeps the claims the
+/// reader may see.
 pub(super) fn role_edges_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     possessor: &EntityId,
     word: &str,
+    now: u64,
     mut admits: impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<BTreeMap<EntityId, bool>> {
     let predicate = role_edge_predicate(word);
+    let mut edges = Vec::new();
+    vault.find_claim_for_subject_in_txn(txn, possessor, |claim, body| {
+        if let Some(edge) = role_edge(body, possessor, &predicate, now) {
+            edges.push((*claim, edge));
+        }
+        None::<()>
+    })?;
     let mut found = BTreeMap::new();
-    for claim in vault.claims_for_subject_in_txn(txn, possessor)? {
-        let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
-            continue;
-        };
-        if body.predicate != predicate || body.lifecycle != ClaimLifecycleStatus::Active {
-            continue;
+    for (claim, (person, approved)) in edges {
+        if admits(&claim)? {
+            let sure: &mut bool = found.entry(person).or_default();
+            *sure |= approved;
         }
-        let approved = match body.approval {
-            ClaimApprovalStatus::Approved => true,
-            ClaimApprovalStatus::Auto => false,
-            ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected => continue,
-        };
-        let Some(person) = body
-            .value
-            .as_str()
-            .and_then(|hex| EntityId::from_hex(hex).ok())
-        else {
-            continue;
-        };
-        if !admits(&claim)? {
-            continue;
-        }
-        let sure: &mut bool = found.entry(person).or_default();
-        *sure |= approved;
     }
     Ok(found)
 }

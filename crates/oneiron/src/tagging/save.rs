@@ -502,8 +502,8 @@ pub(crate) fn sounds_like_in_txn(
 }
 
 /// The persons the speaker of `message` names by a mention of `name` in
-/// `turn`, as the Linker's role rung finds them, for a re-check that runs
-/// outside a save.
+/// `turn` at `now`, as the Linker's role rung finds them, for a re-check
+/// that runs outside a save.
 pub(crate) fn role_hits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -511,11 +511,12 @@ pub(crate) fn role_hits_in_txn(
     message: &EntityId,
     kind: u8,
     name: &str,
+    now: u64,
 ) -> Result<Vec<EntityId>> {
     let Some(word) = role::role_word(kind, name) else {
         return Ok(Vec::new());
     };
-    Ok(Linker::new(vault, txn, turn, 0)?
+    Ok(Linker::new(vault, txn, turn, now)?
         .role_hits(txn, kind, &word, message, HintRead::Internal)?
         .into_keys()
         .collect())
@@ -678,11 +679,15 @@ impl<'v> Linker<'v> {
         Ok(found.into_iter().collect())
     }
 
-    /// The role rung (ARCH-0024 signal 3) for the role `word`: the canonical
-    /// heads of the live or archived persons the role edges of the speaker
-    /// of `message` name ([`role::role_edges_in_txn`]), each in a world the
-    /// turn is in, with whether an Approved edge names them. A caller's save
-    /// reads only the edges its read admits, and none with no read.
+    /// The role rung (ARCH-0024 signal 3) for the role `word`: the persons
+    /// the role edges of the speaker of `message` name
+    /// ([`role::role_edges_in_txn`]), with whether an Approved edge names
+    /// them. Each stored id is read as `actor.subject_ref`'s anchor is: it
+    /// follows redirects only to one head, which must be a live or archived
+    /// entity of `kind` in a world the turn is in; a deleted, split or
+    /// wrong-kind id names no one, never a guess. An edge counts only in a
+    /// world the turn is in. A caller's save reads only the edges its read
+    /// admits, and none with no read.
     fn role_hits(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -695,25 +700,30 @@ impl<'v> Linker<'v> {
         let Some(speaker) = role::speaker_in_txn(self.vault, txn, message)? else {
             return Ok(found);
         };
+        let (vault, now) = (self.vault, self.now);
         let edges = match hint_read {
             HintRead::Internal => {
-                role::role_edges_in_txn(self.vault, txn, &speaker, word, |_| Ok(true))?
+                role::role_edges_in_txn(vault, txn, &speaker, word, now, |claim| {
+                    self.shares_world(txn, claim)
+                })?
             }
             HintRead::Caller(None) => return Ok(found),
             HintRead::Caller(Some(read)) => {
                 let policy = read.live_policy_manifest_in(txn)?;
-                role::role_edges_in_txn(self.vault, txn, &speaker, word, |claim| {
-                    read.is_ref_readable_with_policy_in(txn, &policy, claim)
+                role::role_edges_in_txn(vault, txn, &speaker, word, now, |claim| {
+                    Ok(self.shares_world(txn, claim)?
+                        && read.is_ref_readable_with_policy_in(txn, &policy, claim)?)
                 })?
             }
         };
-        let store = &self.vault.store;
         for (person, approved) in edges {
-            for head in self.vault.resolve_entity_in_txn(txn, &person)? {
-                if linkable_in_txn(store, txn, &head, kind)? && self.shares_world(txn, &head)? {
-                    let sure: &mut bool = found.entry(head).or_default();
-                    *sure |= approved;
-                }
+            let heads = vault.resolve_entity_in_txn(txn, &person)?;
+            let [head] = heads.as_slice() else {
+                continue;
+            };
+            if linkable_in_txn(&vault.store, txn, head, kind)? && self.shares_world(txn, head)? {
+                let sure: &mut bool = found.entry(*head).or_default();
+                *sure |= approved;
             }
         }
         Ok(found)
