@@ -2,10 +2,10 @@
 //! Dreamer's old, weak claims through derive batches.
 //!
 //! The job pages `vault.consolidation.strength.observations.page`. It keeps
-//! a claim when the page judges its observed sources current, it has at
-//! least one observed source, its evidence has been quiet for the policy's
-//! window at the attempt's clock, and its strength scores strictly below the
-//! policy's `archive_below`. It commits one page's kept claims as the
+//! a claim when the page judges its observed sources current and names no
+//! archive fence for it, it has at least one observed source, its evidence
+//! has been quiet for the policy's window at the attempt's clock, and its
+//! strength scores strictly below the policy's `archive_below`. It commits one page's kept claims as the
 //! Archive items of one `vault.derive.commit`, each with the page's pins.
 //! The engine rechecks every pin, source, fence and score in each item's
 //! savepoint and refuses an item that no longer holds, with a receipt that
@@ -187,7 +187,7 @@ fn archive_items(page: &Page, now_ms: u64) -> Vec<Value> {
 
 /// The Archive item for `claim`, or `None` when the job keeps the claim.
 fn archive_item(page: &Page, claim: &ObservedClaim, now_ms: u64) -> Option<Value> {
-    if claim.status != CURRENT {
+    if claim.status != CURRENT || claim.fence.is_some() {
         return None;
     }
     let (Some(observed), Some(pin)) = (claim.signals.as_ref(), claim.pin.as_ref()) else {
@@ -319,6 +319,9 @@ struct ObservedClaim {
     status: String,
     signals: Option<ObservedSignals>,
     pin: Option<String>,
+    /// The archive fence's reason token for the Dreamer at the page's clock;
+    /// `None` when the fence lets the claim through now.
+    fence: Option<String>,
 }
 
 #[derive(Deserialize)]
