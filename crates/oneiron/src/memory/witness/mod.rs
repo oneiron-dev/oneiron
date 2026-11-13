@@ -6,6 +6,8 @@ mod archive;
 mod assertions;
 mod base;
 mod codec;
+#[cfg(feature = "sync")]
+mod foreign_speech;
 mod linked;
 mod program;
 mod reply_assertions;
@@ -42,6 +44,8 @@ pub(crate) use self::archive::{
 pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::foreign_speech::{ForeignTurn, speak_as_counterparty};
 pub(crate) use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 pub(crate) use self::source_attribution::{
