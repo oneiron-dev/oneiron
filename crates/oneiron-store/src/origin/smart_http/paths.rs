@@ -119,6 +119,16 @@ pub const DOOR_WORK_HEARTBEAT_POLLS: u32 = 2000;
 /// however slowly, is never cut.
 pub const SERVE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long a push's command section, its ref updates up to the first flush,
+/// may take to arrive whole from its first read: the door window's family.
+/// The section is read under the repository's coordinator, and a byte resets
+/// only the idle limit, so a section that trickled in would otherwise hold
+/// every other push to the repository for as long as it kept coming. Past it
+/// the push is refused as an idle stall and the coordinator is let go. A read
+/// already waiting when it passes ends at the idle limit, so the section holds
+/// the coordinator for at most this plus one idle limit.
+pub const SERVE_COMMAND_SECTION_TIMEOUT: Duration = DOOR_WINDOW_TIMEOUT;
+
 /// The name git gives a receive-pack's object quarantine, under the objects
 /// directory, ahead of its random suffix (`tmp-objdir.c`).
 pub const SERVE_QUARANTINE_PREFIX: &str = "tmp_objdir-incoming-";

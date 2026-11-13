@@ -40,8 +40,11 @@
 //!   it. The advertisement never offers `push-cert`, whatever the repository's
 //!   config says, and a request whose command section carries one is refused
 //!   before the backend reads a byte. That section, up to its first flush, is
-//!   the one part of a request body read ahead. It grows with the refs a push
-//!   names, so it is held whatever its size: in memory up to
+//!   the one part of a request body read ahead, and it is read under the
+//!   repository's coordinator, so it must arrive whole within
+//!   `SERVE_COMMAND_SECTION_TIMEOUT` of its first read or the push is refused
+//!   as an idle stall. It grows with the refs a push names, so it is held
+//!   whatever its size: in memory up to
 //!   `ORIGIN_COMMAND_SECTION_MEMORY_BYTES`, then in an unnamed file in the
 //!   door root ([`HeldBytes`]), above the disk floor its host keeps
 //!   ([`ExchangeBounds::spill_floor`]). A body the backend would inflate
@@ -77,7 +80,8 @@
 //! request or response body, caps no body, no rate and no push (its door holds
 //! one blob at a time under a per-blob memory floor, and its hook keeps a disk
 //! floor while it frames them), and expands no gix feature; an exchange that
-//! moves no byte for its idle limit is ended, never one that is merely slow. `git_wire.rs` and
+//! moves no byte for its idle limit is ended, never one that is merely slow,
+//! save a push whose command section misses its deadline. `git_wire.rs` and
 //! `credential_door.rs` are consumed read-only; this module owns neither.
 
 mod advertise;
@@ -127,9 +131,9 @@ pub use self::maintain::{
 pub use self::paths::{
     DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME,
     ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REF_UPDATE_BATCH, ORIGIN_REFUSED_REF_PREFIX,
-    ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_IDLE_TIMEOUT,
-    SERVE_REQUEST_ENV_KEYS, origin_door_root, origin_repo_dir, origin_serving_root,
-    validate_repo_name,
+    ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS,
+    SERVE_COMMAND_SECTION_TIMEOUT, SERVE_IDLE_TIMEOUT, SERVE_REQUEST_ENV_KEYS, origin_door_root,
+    origin_repo_dir, origin_serving_root, validate_repo_name,
 };
 pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
 pub(crate) use self::recipient_serve::store_may_need_masked_copy_in_txn;

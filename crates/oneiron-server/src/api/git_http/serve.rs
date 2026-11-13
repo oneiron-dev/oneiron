@@ -110,6 +110,7 @@ pub(super) async fn run_serve(
     let bounds = smart_http::ExchangeBounds {
         idle: server.transfers.idle,
         repository_wait: server.transfers.wait,
+        command_section: smart_http::SERVE_COMMAND_SECTION_TIMEOUT,
         scan: server.transfers.scan,
         spill_floor: Some(Arc::clone(&floor)),
     };
