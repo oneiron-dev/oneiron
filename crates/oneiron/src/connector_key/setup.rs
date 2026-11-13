@@ -61,9 +61,10 @@ pub const BROWSER_SESSION_CHECK: &str = "browser.session";
 /// Authenticated JMAP discovery and a domain read on the host's own mail
 /// server. Only a served host with a `[native_mail]` server runs it.
 pub const NATIVE_MAIL_JMAP_CHECK: &str = "native_mail.jmap";
-/// Google's token information for the stored Google Sheets grant (FIX
-/// 4862): the account it belongs to and the scopes it holds.
-pub const SHEETS_TOKEN_CHECK: &str = "sheets.token";
+/// Google's token information for the stored Google grant of the built-in
+/// Google pack (FIX 4862; L3-17): the account it belongs to and the scopes
+/// it holds.
+pub const GOOGLE_TOKEN_CHECK: &str = "google.token";
 const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 /// Google's OAuth token endpoint: where a stored Gmail refresh token is
 /// exchanged for the access token its check presents.
@@ -71,8 +72,8 @@ const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 /// Google's token information endpoint: the account and scopes an access
 /// token holds. The token goes in the form body, never in the URL.
 const GOOGLE_TOKENINFO_URL: &str = "https://oauth2.googleapis.com/tokeninfo";
-// Identity scopes can accompany a Google grant (Gmail's, Sheets') without
-// adding mail or spreadsheet access.
+// Identity scopes can accompany a Google grant (Gmail's, the Google pack's)
+// without adding mail or file access.
 const GOOGLE_IDENTITY_SCOPES: [&str; 5] = [
     "openid",
     "email",
@@ -154,7 +155,7 @@ impl ProviderConnectionChecks {
         GMAIL_PROFILE_CHECK,
         LINKEDIN_SESSION_CHECK,
         TELEGRAM_GET_ME_CHECK,
-        SHEETS_TOKEN_CHECK,
+        GOOGLE_TOKEN_CHECK,
     ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
@@ -267,13 +268,13 @@ impl ProviderConnectionChecks {
         self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
     }
 
-    /// Google's token information for the stored Sheets grant (FIX 4862):
+    /// Google's token information for the stored Google grant (FIX 4862):
     /// the grant's access token, refreshed first when the grant carries a
     /// refresh token and its OAuth client, goes in the form body of one POST
     /// to `url`. The scopes Google reports for the token stand as the scopes
     /// the credential holds. An exchanged access token is presented once and
     /// never kept.
-    fn send_sheets_token(&self, url: &str, value: &[u8]) -> Result<CheckReply> {
+    fn send_google_token(&self, url: &str, value: &[u8]) -> Result<CheckReply> {
         let (access_token, granted) = self.stored_google_access_token(value)?;
         let response = self
             .client
@@ -482,7 +483,7 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
             .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
                 reply = Some(match check.check {
                     GMAIL_PROFILE_CHECK => self.send_gmail_profile(&method, url, value)?,
-                    SHEETS_TOKEN_CHECK => self.send_sheets_token(url, value)?,
+                    GOOGLE_TOKEN_CHECK => self.send_google_token(url, value)?,
                     _ => self.send(check.check, &method, url, value)?,
                 });
                 Ok(())
@@ -512,7 +513,7 @@ fn provider_call(check: &str) -> std::result::Result<(reqwest::Method, &'static 
         ),
         LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
         TELEGRAM_GET_ME_CHECK => (reqwest::Method::GET, "https://api.telegram.org"),
-        SHEETS_TOKEN_CHECK => (reqwest::Method::POST, GOOGLE_TOKENINFO_URL),
+        GOOGLE_TOKEN_CHECK => (reqwest::Method::POST, GOOGLE_TOKENINFO_URL),
         BROWSER_SESSION_CHECK => {
             return Err(
                 "this host runs no browser guest; a served host with a [browser] guest checks it"
@@ -601,7 +602,7 @@ fn evidence_of(
         }
         // Google names the account by email when the grant holds an
         // identity scope, and by its stable subject id always.
-        SHEETS_TOKEN_CHECK => field("email")
+        GOOGLE_TOKEN_CHECK => field("email")
             .or_else(|| field("sub"))
             .unwrap_or_default()
             .to_owned(),
@@ -621,7 +622,7 @@ fn evidence_of(
         LINKEDIN_SESSION_CHECK => reply
             .get("miniProfile")
             .and_then(|profile| reply_field(profile, "publicIdentifier")),
-        SHEETS_TOKEN_CHECK => field("sub"),
+        GOOGLE_TOKEN_CHECK => field("sub"),
         _ => field("emailAddress"),
     }
     .map(str::to_owned);
@@ -671,7 +672,7 @@ fn connection_bound(
 
 /// The provider's word against the owner's: an account must be named, and
 /// reported scopes must be allowed, apart from undeclared Google identity
-/// scopes accompanying a Gmail or Sheets grant. Declared-but-declined scopes
+/// scopes accompanying a Gmail or Google pack grant. Declared-but-declined scopes
 /// still fail.
 fn judge_evidence(
     declared: &PackSetupConnection,
@@ -702,7 +703,7 @@ fn judge_evidence(
             .filter(|scope| {
                 !explained.contains(scope)
                     && !((declared.verify == GMAIL_PROFILE_CHECK
-                        || declared.verify == SHEETS_TOKEN_CHECK)
+                        || declared.verify == GOOGLE_TOKEN_CHECK)
                         && GOOGLE_IDENTITY_SCOPES.contains(scope))
             })
             .collect();

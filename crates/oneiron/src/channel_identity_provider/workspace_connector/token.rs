@@ -1,5 +1,5 @@
-//! The OAuth access token one Sheets send presents (FIX 4862), read from the
-//! stored grant inside the custody door that released it.
+//! The OAuth access token one workspace send presents (FIX 4862; L3-17),
+//! read from the stored grant inside the custody door that released it.
 //!
 //! A grant that carries a refresh token and its OAuth client (what the Google
 //! code exchange stores) is exchanged at Google's token endpoint for a fresh
@@ -23,7 +23,7 @@ pub(super) fn refresh_client() -> Result<reqwest::blocking::Client> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|_| Error::InvalidConfig("sheets refresh client setup failed".to_owned()))
+        .map_err(|_| Error::InvalidConfig("workspace refresh client setup failed".to_owned()))
 }
 
 /// The access token the stored grant `value` presents, refreshed when the
@@ -36,7 +36,7 @@ pub(super) fn access_token(
         return Ok(fresh);
     }
     let unusable =
-        || Error::InvalidConfig("sheets credential is not a usable access token".to_owned());
+        || Error::InvalidConfig("workspace credential is not a usable access token".to_owned());
     let text = std::str::from_utf8(value).map_err(|_| unusable())?.trim();
     let access_token = if text.starts_with('{') {
         let grant: StoredAccess = serde_json::from_str(text).map_err(|_| unusable())?;
