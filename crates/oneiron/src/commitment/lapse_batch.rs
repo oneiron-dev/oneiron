@@ -255,12 +255,13 @@ pub(crate) fn lapse_envelope_for(
 /// [`Vault::supersede_claim_in_txn`](crate::Vault::supersede_claim_in_txn)
 /// does, for the batch apply, which holds the store and not the vault.
 ///
-/// The predecessor closes `superseded` at `now`, and the `supersedes` edge
-/// and the revision pair land with it. A MACHINE-born predecessor closes
-/// through the host's signed close, attributed to `writer` when the lapse is
-/// a System writer's (the housekeeping pass's commitment lapse writer) and to
-/// the owner otherwise, as before. Every write stages in the caller's
-/// transaction, so a refusal takes the whole batch down with it.
+/// The predecessor closes `superseded` at `now`, a MACHINE-born one inside
+/// its own validity window, and the `supersedes` edge and the revision pair
+/// land with it. A MACHINE-born predecessor closes through the host's signed
+/// close, attributed to `writer` when the lapse is a System writer's (the
+/// housekeeping pass's commitment lapse writer) and to the owner otherwise,
+/// as before. Every write stages in the caller's transaction, so a refusal
+/// takes the whole batch down with it.
 #[expect(
     clippy::too_many_arguments,
     reason = "the lapse helper threads the batch apply chokepoint's existing handles verbatim"
@@ -279,8 +280,17 @@ fn supersede_with_successor_in_txn(
     let (mut body, header) = active_claim_parts_in(store, &*wtxn, &predecessor)?;
     crate::Vault::require_source_trust_supersession_rights(&successor_body, &body)?;
     // As the claim supersession: before its occurred start the predecessor
-    // closes at that start, and the supersession keeps the real `now`.
-    let closed_end = now.max(header.occurred_start);
+    // closes at that start, and the supersession keeps the real `now`. A
+    // MACHINE-born predecessor keeps its own validity end, which its signed
+    // history requires: a projected instance's window is its due instant,
+    // and the sweep runs after it.
+    let machine = crate::authority::machine_claim_needs_history(store, &*wtxn, &body)?;
+    let end = if machine {
+        crate::claim::transition::machine_close_end(&body, now)
+    } else {
+        now
+    };
+    let closed_end = end.max(header.occurred_start);
     let revisions = crate::claim::supersession_diff::capture_in_store_txn(
         store,
         &*wtxn,
@@ -288,8 +298,8 @@ fn supersede_with_successor_in_txn(
         successor,
     )?;
     body.lifecycle = ClaimLifecycleStatus::Superseded;
-    body.valid_to = Some(now);
-    if crate::authority::machine_claim_needs_history(store, &*wtxn, &body)? {
+    body.valid_to = Some(end);
+    if machine {
         let (closer, closer_class) = match writer.actor_class() {
             EdgeActorClass::System => (writer.entity_ref(), EdgeActorClass::System),
             EdgeActorClass::Human | EdgeActorClass::Agent => (
@@ -304,7 +314,7 @@ fn supersede_with_successor_in_txn(
             wtxn,
             predecessor,
             ClaimTransitionKind::SupersedeClose,
-            TransitionDelta::ValidTo(now),
+            TransitionDelta::ValidTo(end),
             closer,
             closer_class,
             TimeRange {
