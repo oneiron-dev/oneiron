@@ -18,6 +18,9 @@ use super::wake::WakeEnvelope;
 /// before the oldest of that kind is dropped.
 const PENDING_WAKES_CAP: usize = 256;
 
+/// RED PIN STUB: the bound's name only.
+pub const HANDED_WAKES_CAP: usize = 3 * PENDING_WAKES_CAP;
+
 #[derive(Debug)]
 pub struct StreamConnectionState {
     pub mode: BoardRenderMode,

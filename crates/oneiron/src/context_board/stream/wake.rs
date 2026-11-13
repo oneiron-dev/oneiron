@@ -7,6 +7,14 @@
 use super::frames::StreamConnectionId;
 use super::registry::BoardStreamRegistry;
 
+/// RED PIN STUB (census L8-18): the delivery state type with no record
+/// behind it. Never for main.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeDelivery {
+    Handed,
+    Acked,
+}
+
 /// One pending wake, minted from a committed TASK, from a pending
 /// diary-read review (FIX 2879), or from a staged room wake (FIX 15647).
 #[derive(
@@ -70,5 +78,16 @@ impl BoardStreamRegistry {
             .get_mut(c)
             .map(|st| st.wakes.drain(..).collect())
             .unwrap_or_default()
+    }
+
+    /// RED PIN STUB: records nothing.
+    pub fn acknowledge_wake(&mut self, _c: &StreamConnectionId, _event_ref: &str) -> bool {
+        false
+    }
+
+    /// RED PIN STUB: no record to read.
+    #[must_use]
+    pub fn wake_delivery(&self, _c: &StreamConnectionId, _event_ref: &str) -> Option<WakeDelivery> {
+        None
     }
 }
