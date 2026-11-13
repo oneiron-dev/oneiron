@@ -7,6 +7,12 @@
 //! when it can (`pending_execution`, FIX 12335).
 //! Removal is access revocation, never a group rekey. A new member joins only
 //! by accepting an invitation (`invitation`).
+//!
+//! The add, move and remove doors check in first, in their own writer
+//! (ROLES-CHECKIN 2i; P24-SHAPE Q3 to Q6 = A): an Owner's and an Admin's act
+//! goes, a Deputy's add and a Member's raise to Admin go on the person's own
+//! judgment, and a Deputy's other moves and removes wait for an Owner's
+//! answer. The receipt records the decision.
 mod invitation;
 mod owner_recovery;
 mod pending_execution;
@@ -17,16 +23,18 @@ pub use owner_recovery::OwnerRecoveryAuthorization;
 pub(super) use pending_execution::UnsignedExecution;
 
 use super::{
-    ChangeRecord, DetachOutcome, DetachReport, Effect, RemoveOwnerPlan, SharedActExecutionReceipt,
-    SharedActKind, SharedVaultChange, decode, invalid, live_owners, non_root,
+    ChangeRecord, DetachOutcome, DetachReport, Effect, RECEIPT_PREFIX, RemoveOwnerPlan,
+    SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode, encode, invalid, key,
+    live_owners, non_root,
 };
 use crate::authority::{
     CapabilitySlip, HostSlipIssuer, MembershipExecutionCause, OwnerHandover, OwnerHandoverCause,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::check_in::{ActClass, CheckInScope, DoorAct, DoorCheckIn, RolePreset};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::federation::record_scope::ScopedRecord;
 use crate::federation::{
     FederationGrant, FederationGrantRole as Role, FederationGrantScope, OrgAdminPower, Scope,
@@ -242,6 +250,105 @@ impl Vault {
             return Err(invalid());
         }
         Ok(role)
+    }
+    /// `member`'s membership grant row in the vault and its role, delegate
+    /// and `engine.controls` grants aside: the grant a person's pending
+    /// check-in climbs the ladder from.
+    fn member_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        member: EntityId,
+    ) -> Result<Option<(EntityId, Role)>> {
+        Ok(self
+            .member_grants_in_txn(txn, vault_id)?
+            .into_iter()
+            .find(|(_, grant)| {
+                grant.member_ref == member
+                    && grant.role != Role::Delegate
+                    && !crate::federation::is_engine_controls_grant(grant)
+            })
+            .map(|(id, grant)| (id, grant.role)))
+    }
+    /// Judges `effect`, which `actor` asks, in the door's writer `txn` (2i;
+    /// P24-SHAPE Q3 to Q6 = A): the act class from the typed change
+    /// ([`member_move_act`] for a role change), `actor`'s membership role,
+    /// and the digest of the exact change. A change the door could never
+    /// apply is refused here, before any ask opens; the door's own checks
+    /// run again when it applies.
+    fn member_effect_check_in_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        actor: EntityId,
+        effect: &MemberEffect,
+        now: u64,
+    ) -> Result<DoorCheckIn> {
+        let (verb, act, member, from, to) = match effect.change {
+            MemberChange::Add { member, role } => {
+                let preset = self
+                    .shared_vault_creation_in_txn(txn)?
+                    .and_then(|row| row.preset);
+                let role = role
+                    .or_else(|| {
+                        preset.map(crate::federation::SharedVaultPreset::default_member_role)
+                    })
+                    .unwrap_or(Role::Member);
+                non_root(Some(role))?;
+                if !crate::consent::person_is_live_in_txn(self, txn, &member)?
+                    || self.member_role_in_txn(txn, vault_id, member)?.is_some()
+                {
+                    return Err(invalid());
+                }
+                (
+                    MEMBERS_ADD_VERB,
+                    ActClass::MemberAdd,
+                    member,
+                    None,
+                    Some(role),
+                )
+            }
+            MemberChange::Change { member, to } => {
+                non_root(Some(to))?;
+                let from = self
+                    .member_role_in_txn(txn, vault_id, member)?
+                    .ok_or_else(invalid)?;
+                if from == Role::Owner || from == to {
+                    return Err(invalid());
+                }
+                let act = member_move_act(from, to);
+                (MEMBERS_CHANGE_VERB, act, member, Some(from), Some(to))
+            }
+            MemberChange::Remove { member } => {
+                let from = self
+                    .member_role_in_txn(txn, vault_id, member)?
+                    .ok_or_else(invalid)?;
+                if from == Role::Owner {
+                    return Err(invalid());
+                }
+                let act = ActClass::MemberRemove;
+                (MEMBERS_REMOVE_VERB, act, member, Some(from), None)
+            }
+        };
+        let (grant, role) = self
+            .member_grant_in_txn(txn, vault_id, actor)?
+            .ok_or_else(invalid)?;
+        let door_act = DoorAct {
+            person: actor,
+            role: RolePreset::of_grant_role(role),
+            grant,
+            verb,
+            act,
+            scope: CheckInScope::default(),
+            effect_digest: member_effect_digest(vault_id, actor, verb, member, from, to),
+        };
+        crate::check_in::person_door_check_in_in_txn(
+            self,
+            txn,
+            &door_act,
+            effect.check_in_ref.as_ref(),
+            now,
+        )
     }
     /// Every member of shared vault `vault_id` at their role, delegates and
     /// guests aside: the roster a vault shape reads (ARCH-0070).
@@ -594,18 +701,26 @@ impl Vault {
             &str,
         ) -> Result<(Effect, Option<UnsignedExecution>)>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.move_shared_member_for_ask(actor, vault_id, power, None, apply)
+        self.move_shared_member_for_ask(actor, vault_id, power, None, None, apply)
     }
 
     /// [`Self::move_shared_member`] applying a Steward's member ask `ask`
     /// when one is named (untangle 6.3d): in the same writer the ask closes
     /// as applied, and the receipt names its Steward as `proposer` beside
     /// the applier as `actor`.
+    ///
+    /// A door that names its typed `effect` is judged by check-in first, in
+    /// this writer, after the authority checks (2i; P24-SHAPE Q3 and Q4 =
+    /// A). Go: the change applies and the receipt records the decision. An
+    /// act that waits commits the pending check-in alone, applies nothing
+    /// and refuses with [`Error::CheckInPending`] naming it; a re-call that
+    /// names it as `check_in_ref` spends it here once it is eligible.
     fn move_shared_member_for_ask(
         &self,
         actor: &AuthenticatedOwner,
         vault_id: u64,
         power: Option<OrgAdminPower>,
+        effect: Option<MemberEffect>,
         ask: Option<&str>,
         apply: impl FnOnce(
             &mut heed::RwTxn<'_>,
@@ -633,6 +748,20 @@ impl Vault {
         if let Some(ask) = ask {
             self.member_ask_steward_stands_in_txn(&txn, ask, vault_id, &holders)?;
         }
+        let decision = match effect {
+            Some(effect) => {
+                match self
+                    .member_effect_check_in_in_txn(&mut txn, vault_id, actor_id, &effect, now)?
+                {
+                    DoorCheckIn::Go(decision) => Some(decision),
+                    DoorCheckIn::Wait(check_in) => {
+                        txn.commit()?;
+                        return Err(Error::CheckInPending(check_in.to_hex()));
+                    }
+                }
+            }
+            None => None,
+        };
         let owners = live_owners(&holders, None);
         let id = self.store.clock.entity_id()?.to_hex();
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
@@ -645,6 +774,14 @@ impl Vault {
         let mut receipt = self.record_shared_change_in_txn(
             &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
         )?;
+        if decision.is_some() {
+            receipt.check_in = decision;
+            self.store.vault_meta.put(
+                &mut txn,
+                &key(RECEIPT_PREFIX, &receipt.id),
+                &encode(&receipt)?,
+            )?;
+        }
         if let Some(ask) = ask {
             self.apply_member_ask_in_txn(&mut txn, ask, actor_id, &mut receipt, now)?;
         }
@@ -704,7 +841,24 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.add_shared_member_for_ask(admin, vault_id, member, role, None)
+        self.add_shared_member_with_check_in(admin, vault_id, member, role, None)
+    }
+    /// [`Self::add_shared_member`], spending `check_in_ref`, the settled
+    /// check-in an earlier call's `CHECK_IN_PENDING` named, when the act
+    /// waits on one (2i).
+    ///
+    /// # Errors
+    /// As [`Self::add_shared_member`]; [`Error::CheckInPending`] when the
+    /// act waits.
+    pub fn add_shared_member_with_check_in(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        role: Option<Role>,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<SharedActExecutionReceipt> {
+        self.add_shared_member_for_ask(admin, vault_id, member, role, None, check_in_ref)
     }
     pub(super) fn add_shared_member_for_ask(
         &self,
@@ -713,11 +867,16 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
         ask: Option<&str>,
+        check_in_ref: Option<EntityId>,
     ) -> Result<SharedActExecutionReceipt> {
         self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
+            Some(MemberEffect {
+                change: MemberChange::Add { member, role },
+                check_in_ref,
+            }),
             ask,
             |txn, inviter, now, _receipt| {
                 let preset = self
@@ -751,8 +910,37 @@ impl Vault {
         role: Role,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_shared_member_role_for_ask(admin, vault_id, member, role, slips, None)
+        self.change_shared_member_role_with_check_in(admin, vault_id, member, role, slips, None)
     }
+    /// [`Self::change_shared_member_role`], spending `check_in_ref` when the
+    /// act waits on one (2i).
+    ///
+    /// # Errors
+    /// As [`Self::change_shared_member_role`]; [`Error::CheckInPending`]
+    /// when the act waits.
+    pub fn change_shared_member_role_with_check_in(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        role: Role,
+        slips: Option<&HostSlipIssuer>,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<SharedActExecutionReceipt> {
+        self.change_shared_member_role_for_ask(
+            admin,
+            vault_id,
+            member,
+            role,
+            slips,
+            None,
+            check_in_ref,
+        )
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one role change: the applier's proof, the vault, the member, the role, the slip issuer, the Steward's ask and the check-in it spends"
+    )]
     pub(super) fn change_shared_member_role_for_ask(
         &self,
         admin: &AuthenticatedOwner,
@@ -761,12 +949,17 @@ impl Vault {
         role: Role,
         slips: Option<&HostSlipIssuer>,
         ask: Option<&str>,
+        check_in_ref: Option<EntityId>,
     ) -> Result<SharedActExecutionReceipt> {
         let own_issuer = self.membership_issuer(slips);
         self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::AssignRole),
+            Some(MemberEffect {
+                change: MemberChange::Change { member, to: role },
+                check_in_ref,
+            }),
             ask,
             |txn, giver, now, receipt| {
                 non_root(Some(role))?;
@@ -825,7 +1018,23 @@ impl Vault {
         member: EntityId,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.remove_shared_member_for_ask(admin, vault_id, member, slips, None)
+        self.remove_shared_member_with_check_in(admin, vault_id, member, slips, None)
+    }
+    /// [`Self::remove_shared_member`], spending `check_in_ref` when the act
+    /// waits on one (2i): a Deputy's remove always asks an Owner.
+    ///
+    /// # Errors
+    /// As [`Self::remove_shared_member`]; [`Error::CheckInPending`] when the
+    /// act waits.
+    pub fn remove_shared_member_with_check_in(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        slips: Option<&HostSlipIssuer>,
+        check_in_ref: Option<EntityId>,
+    ) -> Result<SharedActExecutionReceipt> {
+        self.remove_shared_member_for_ask(admin, vault_id, member, slips, None, check_in_ref)
     }
     pub(super) fn remove_shared_member_for_ask(
         &self,
@@ -834,12 +1043,17 @@ impl Vault {
         member: EntityId,
         slips: Option<&HostSlipIssuer>,
         ask: Option<&str>,
+        check_in_ref: Option<EntityId>,
     ) -> Result<SharedActExecutionReceipt> {
         let own_issuer = self.membership_issuer(slips);
         self.move_shared_member_for_ask(
             admin,
             vault_id,
             Some(OrgAdminPower::RemoveMember),
+            Some(MemberEffect {
+                change: MemberChange::Remove { member },
+                check_in_ref,
+            }),
             ask,
             |txn, _, now, receipt| {
                 let from = self
@@ -1051,4 +1265,69 @@ fn member_execution(
         withdrawn_grants: unsigned_withdrawals,
         handover: None,
     })
+}
+
+/// The saved verbs whose typed effects the membership doors judge by
+/// check-in. An applied Steward ask names the verb of the change it applies,
+/// so a direct call and an applied ask over the same effect are one ask.
+const MEMBERS_ADD_VERB: &str = "vault.members.add";
+const MEMBERS_CHANGE_VERB: &str = "vault.members.change";
+const MEMBERS_REMOVE_VERB: &str = "vault.members.remove";
+
+/// A membership door's typed effect, which check-in judges in the door's
+/// writer before it applies (P24-SHAPE Q3 to Q6 = A).
+pub(super) struct MemberEffect {
+    pub(super) change: MemberChange,
+    /// The settled check-in a re-call names: the act spends it.
+    pub(super) check_in_ref: Option<EntityId>,
+}
+
+/// One member change a door runs.
+#[derive(Clone, Copy)]
+pub(super) enum MemberChange {
+    /// Invite `member` at `role`, or at the preset's default member role.
+    Add {
+        member: EntityId,
+        role: Option<Role>,
+    },
+    /// Move `member` to `to`.
+    Change { member: EntityId, to: Role },
+    /// Remove `member`.
+    Remove { member: EntityId },
+}
+
+/// The act class of moving a member from `from` to `to` (P24-SHAPE Q5 = A):
+/// roles have no order, so the table is explicit. Member to Admin raises
+/// (`member_add`); every other move, Admin to Member and any move into or
+/// out of Steward among them, is `member_remove`, which a Deputy always
+/// asks.
+const fn member_move_act(from: Role, to: Role) -> ActClass {
+    match (from, to) {
+        (Role::Member, Role::Admin) => ActClass::MemberAdd,
+        _ => ActClass::MemberRemove,
+    }
+}
+
+/// The digest of one member change: the vault, the actor, the verb, the
+/// member and the roles it moves from and to. Another target or role is
+/// another effect, so another ask.
+fn member_effect_digest(
+    vault_id: u64,
+    actor: EntityId,
+    verb: &str,
+    member: EntityId,
+    from: Option<Role>,
+    to: Option<Role>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in membership effect v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(actor.as_bytes());
+    hasher.update(verb.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(member.as_bytes());
+    for role in [from, to] {
+        hasher.update(role.map_or("", Role::as_str).as_bytes());
+        hasher.update(&[0]);
+    }
+    *hasher.finalize().as_bytes()
 }

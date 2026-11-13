@@ -883,19 +883,13 @@ pub(crate) fn record_objection_in_txn(
 /// worker finds it used, and an abort leaves it eligible. Only the exact
 /// effect digest spends it, on an eligible basis
 /// ([`PendingCheckIn::eligible_basis`]). Writes a `consumed` receipt naming
-/// the basis. The act verbs that call it before they run are PR 3.
+/// the basis. The membership doors spend it through `effect` (P2.4b); PR
+/// 3's act gate spends it for the act verbs.
 ///
 /// # Errors
 ///
 /// No such row; another effect; a state that makes nothing eligible; a row
 /// already used; storage errors.
-#[cfg_attr(
-    not(oneiron_test_support),
-    allow(
-        dead_code,
-        reason = "PR 3's act gate spends it before an act runs; until then only the test door does"
-    )
-)]
 pub(crate) fn consume_pending_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
