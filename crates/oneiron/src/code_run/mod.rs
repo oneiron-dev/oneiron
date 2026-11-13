@@ -128,7 +128,8 @@ pub use self::correction::{
 };
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, ExecutorReply, ExecutorReplyPublisher, agent_attempt_run_ref,
-    check_write_gate_against_vault, recorded_verb_call, write_receipt_may_have_run,
+    check_write_gate_against_vault, envelope_run_ref, recorded_verb_call,
+    write_receipt_may_have_run,
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
