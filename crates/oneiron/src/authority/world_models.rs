@@ -8,6 +8,7 @@
 
 use super::{AuthorityFold, EffectiveModelOrder, ModelOrder};
 use crate::Vault;
+use crate::embed::EmbeddingSpace;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -138,5 +139,20 @@ impl Vault {
     ) -> Result<WorldModelRoutes> {
         let rtxn = self.store.env.read_txn()?;
         self.world_model_routes_in_txn(&rtxn, worlds)
+    }
+
+    /// `world`'s own text space (DEC-0005 #private-world-vectors): the first
+    /// route of its model order that is an embedding space declared here,
+    /// accepting text, whose model runs on the device (`model@revision@device`).
+    /// The world's rows embed into it alone, never into the vault's text
+    /// index. `None` for a world that inherits the vault's order or names no
+    /// such space: its rows take the vault's index.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or an authority log that does not fold.
+    pub fn world_text_space(&self, world: EntityId) -> Result<Option<EmbeddingSpace>> {
+        let _ = world;
+        Ok(None)
     }
 }

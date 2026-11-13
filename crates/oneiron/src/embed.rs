@@ -221,6 +221,7 @@ struct LeaseBatch {
     egress_denied: usize,
     egress_no_verdict: usize,
     device_local: usize,
+    world_space: usize,
 }
 
 /// One actually-filled measured item: the leased source it filled, with the actual
@@ -253,6 +254,11 @@ pub struct PendingEmbeddingReconcileReport {
     /// Rows a device-local world keeps (DEC-0005): embedded on device, or
     /// left pending unsent while no embedder on this device takes them.
     pub device_local: usize,
+    /// Rows a world with its own text space carries (DEC-0005
+    /// #private-world-vectors): left pending, unleased and unsent, for the
+    /// media pass of the world's space; never embedded into the vault's
+    /// index, here or by a rung.
+    pub world_space: usize,
     /// Actually-filled measured items, in fill order, for the operational
     /// `EmbedTokens` meter. Stale/deferred/reused/skipped/failed fills and
     /// unmeasured remote fills have no entry.
@@ -399,6 +405,7 @@ impl PendingEmbeddingReconciler {
             egress_denied: batch.egress_denied,
             egress_no_verdict: batch.egress_no_verdict,
             device_local: batch.device_local,
+            world_space: batch.world_space,
             ..PendingEmbeddingReconcileReport::default()
         };
         Ok(batch.work)
