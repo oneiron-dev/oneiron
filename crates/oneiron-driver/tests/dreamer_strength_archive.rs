@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use oneiron::attempt_queue::{AttemptQueue, AttemptState};
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{derive_item_receipts, row_live};
@@ -21,6 +22,7 @@ use oneiron::test_doors::dreamer_attempt_binding::{
     ObservedStrengthClaim, STRENGTH_RUN, enqueue_unadmitted_strength_attempt,
     observe_strength_claim,
 };
+use oneiron::test_doors::run_lifecycle::defer_enqueued;
 use oneiron::test_doors::steward::{
     STEWARD_ARCHIVE_VERB, STEWARD_READ_VERB, STEWARD_VERBS, archive_every_quiet_claim, dreamer,
     stand_steward_grant,
@@ -83,6 +85,14 @@ fn queued_strength(dir: &tempfile::TempDir, verbs: &[&str]) -> StrengthTestResul
     // quiet once the clock passes it.
     std::thread::sleep(std::time::Duration::from_millis(2_100));
     let now = vault.now_recorded_at();
+    // Only the strength attempt is due in the pass: anything the fixture's
+    // consolidation left queued (a PERSON `about` line, say) would call a
+    // model, and the pass ends at the first executor panic.
+    for record in AttemptQueue::new(&vault).list()? {
+        if matches!(record.state, AttemptState::Queued) {
+            defer_enqueued(&vault, record.id, now + 86_400)?;
+        }
+    }
     enqueue_unadmitted_strength_attempt(&vault, observed.seed, now)?;
     Ok(QueuedStrength {
         vault,
