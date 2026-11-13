@@ -230,14 +230,14 @@ fn replace_with_manual_head(
             &manual,
             &body,
             TimeRange {
-                start: 900,
-                end: 900,
+                start: 5_000,
+                end: 5_000,
             },
-            900,
+            5_000,
         )
         .expect("put manual head");
     vault
-        .supersede_claim(&manual, &derived, 901)
+        .supersede_claim(&manual, &derived, 5_001)
         .expect("manual head replaces the derived one");
 }
 
