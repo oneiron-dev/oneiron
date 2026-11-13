@@ -177,7 +177,7 @@ pub(super) fn settle_post(
     // verdict or an edit that landed while the post was parked decides a yes
     // that is not the owner's.
     memory
-        .require_settled_plan_pins_in(wtxn, &post.brief, approver)
+        .require_settled_plan_admission_in(wtxn, Some(post.assignee), Some(&post.brief), approver)
         .map_err(settle_refusal)?;
     memory
         .land_settled_post_in_txn(
@@ -220,7 +220,7 @@ pub(super) fn settle_brief(
     // Plan mode first, as at the revise door: an unapproved plan pin is a
     // plan refusal.
     memory
-        .require_settled_plan_pins_in(wtxn, &revision.brief, approver)
+        .require_settled_plan_admission_in(wtxn, body.assignee, Some(&revision.brief), approver)
         .map_err(settle_refusal)?;
     revision
         .brief

@@ -329,6 +329,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "AGENT_DEF_BIRTH_CUSTODY_OWNED",
         "AGENT_DEF_CREATING_OWNER",
         "AGENT_DEF_ID_PIN",
+        "AGENT_DEF_PLAN_MODE",
         "AGENT_DEF_POWER_GRANT",
         "AGENT_DEF_RESERVED_ACTOR_CENSUS_V2",
         "AGENT_DEF_TREE_PAUSE",

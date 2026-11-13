@@ -703,24 +703,35 @@ impl QueueTaskBrief {
 }
 
 impl Memory<'_> {
-    /// Refuses `brief` when it pins a plan-doc the owner has not approved at
-    /// the pinned revision (plan mode; Engine ruling Fri 13 Nov 03:05): an
+    /// Plan mode's admission of a TASK for `assignee` under `brief` (Engine
+    /// ruling Fri 13 Nov 03:05, RUN = A and SETTING = A). Refuses a brief that
+    /// pins a plan-doc the owner has not approved at the pinned revision: an
     /// agent's run starts from a plan only once the owner approved the text
-    /// it pins. The vault owner's own brief is never refused.
-    pub(super) fn require_approved_plan_pins_in(
+    /// it pins. Refuses a TASK for an agent whose plan mode is `required`
+    /// unless its brief pins such an approved plan; a brief-less create
+    /// (`brief` `None`) pins none. The vault owner's own TASK is never
+    /// refused.
+    pub(super) fn require_plan_admission_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        brief: &QueueTaskBrief,
+        assignee: Option<TaskAssignee>,
+        brief: Option<&QueueTaskBrief>,
     ) -> MemoryResult<()> {
         let vault = self.vault();
         if crate::memory::actor_is_vault_owner_in_txn(vault, txn, self.actor(), self.actor_class())?
         {
             return Ok(());
         }
-        for pin in &brief.context.read_first {
+        let mut pins_approved_plan = false;
+        for pin in brief
+            .into_iter()
+            .flat_map(|brief| &brief.context.read_first)
+        {
             match crate::note::plan_doc_pin_in_txn(vault, txn, pin.target)? {
                 None => {}
-                Some((revision, PlanDocState::Approved)) if revision == pin.digest => {}
+                Some((revision, PlanDocState::Approved)) if revision == pin.digest => {
+                    pins_approved_plan = true;
+                }
                 Some(_) => {
                     return Err(super::highway::invalid_state(
                         "gate.plan_not_approved: the brief pins a plan-doc the owner has not approved at the pinned revision",
@@ -729,20 +740,25 @@ impl Memory<'_> {
                 }
             }
         }
+        if !pins_approved_plan && let Some(TaskAssignee::AgentDef { agent_def_ref }) = assignee {
+            crate::agent_def::refuse_unplanned_run_in_txn(&vault.store, txn, agent_def_ref)?;
+        }
         Ok(())
     }
 
-    /// [`Self::require_approved_plan_pins_in`] in the writer that settles a
-    /// parked post or brief revision: a yes that is not the owner's (an
-    /// agent's take, another approver's approval) lands nothing from a plan
-    /// the owner has not approved at the pinned revision, though it was
-    /// approved when the proposal parked. The owner's approval, or a door
-    /// that records no approver (the owner's tray), is the owner's act and is
-    /// never refused.
-    pub(super) fn require_settled_plan_pins_in(
+    /// [`Self::require_plan_admission_in`] in the writer that settles a parked
+    /// post, brief revision or brief-less create: a yes that is not the
+    /// owner's (an agent's take, another approver's approval) lands nothing
+    /// from a plan the owner has not approved at the pinned revision, though
+    /// it was approved when the proposal parked, and no unplanned run of an
+    /// agent whose plan mode turned `required` since. The owner's approval, or
+    /// a door that records no approver (the owner's tray), is the owner's act
+    /// and is never refused.
+    pub(super) fn require_settled_plan_admission_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        brief: &QueueTaskBrief,
+        assignee: Option<TaskAssignee>,
+        brief: Option<&QueueTaskBrief>,
         approver: Option<crate::WriteActor>,
     ) -> MemoryResult<()> {
         let Some(approver) = approver else {
@@ -756,7 +772,7 @@ impl Memory<'_> {
         )? {
             return Ok(());
         }
-        self.require_approved_plan_pins_in(txn, brief)
+        self.require_plan_admission_in(txn, assignee, brief)
     }
 
     /// Pins one read-first handle for a brief: the row's digest as this vault
