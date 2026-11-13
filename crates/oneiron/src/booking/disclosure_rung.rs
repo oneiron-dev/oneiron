@@ -173,7 +173,7 @@ pub struct TitledEventRow {
 }
 
 /// A `Busy`-rung row: an opaque interval carrying no event material at all.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BusyBlockRow {
     pub start_utc: u64,
     pub end_utc: u64,
