@@ -219,16 +219,23 @@ fn asker_grant_in_txn(
     let Ok(id) = EntityId::from_hex(&pending.grant_ref) else {
         return Ok(None);
     };
+    Ok(grant_in_txn(vault, txn, &id)?.filter(|grant| grant.member_ref == pending.asker))
+}
+
+/// The live FederationGrant row `id`, decoded; `None` for any other row.
+pub(super) fn grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<FederationGrant>> {
     let LiveEntityRow::Live {
         entity_type: ENTITY_TYPE_FEDERATION_GRANT,
         body,
-    } = live_entity_row_in_txn(&vault.store, txn, &id)?
+    } = live_entity_row_in_txn(&vault.store, txn, id)?
     else {
         return Ok(None);
     };
-    Ok(decode_federation_grant_body(&body)
-        .ok()
-        .filter(|grant| grant.member_ref == pending.asker))
+    Ok(decode_federation_grant_body(&body).ok())
 }
 
 /// The grantor of the asker's `grant`: its `delegated_by`, else the
@@ -388,7 +395,7 @@ fn holder_standing_in_txn(
 /// (or names one that is no world id), and it is narrowed on no axis the
 /// pending row cannot place the effect on. A grant has no project axis; a
 /// project's act is placed by its world.
-fn covers_effect(grant: &FederationGrant, scope: &CheckInScope) -> bool {
+pub(super) fn covers_effect(grant: &FederationGrant, scope: &CheckInScope) -> bool {
     let bounds = &grant.authority_scope;
     let world = matches!(bounds.worlds, ScopeAxis::All)
         || scope

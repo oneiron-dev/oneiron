@@ -17,6 +17,13 @@ crate::side_table::side_tables! {
     CHECK_IN_DUE: VaultMeta b"check_in:due:v1:" Named
         // Restore class: live, as the rows it indexes are.
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The pending check-in an agent's `vault.check_in.open` opened for one natural key, so a
+    /// repeat returns the same handle (ROLES-CHECKIN P2.3, 2f; Engine ruling P23-SHAPE Q2 = A).
+    /// Written with the row it names and deleted with it. Key: 32 bytes (the BLAKE3 key of the
+    /// asker, verb, act class, scope and effect digest). Value: the pending check-in id.
+    CHECK_IN_OPEN_KEY: VaultMeta b"check_in:open_key:v1:" Named
+        // Restore class: live, as the rows it names are.
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One transition of a pending check-in, as the receipt family reads it (`check_in`): opened,
     /// climbed, skipped, extended, answered, let go, held, proceeded with an undo, window passed
     /// or objection held, written in the transition's own transaction. Key: string (the receipt
