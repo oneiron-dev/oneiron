@@ -10,6 +10,11 @@ mod attempt_cancels;
 mod board_frames;
 use oneiron_base::step_cancellation as cancel;
 mod capture;
+/// Measurement only, not for merge (OPUS-E2E-1): the code-mode step
+/// capture's costs, for `tests/code_mode_capture_cost.rs`.
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub mod capture_cost_door;
 pub mod checkpoint_read;
 mod code_check;
 mod compaction;

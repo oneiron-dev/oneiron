@@ -4,13 +4,21 @@
 //! whole verb catalog's declarations, about 1.1 MB, and every step's replay
 //! capture writes that request as the side-row wall admits it. Each line
 //! `## COST <stage> ms=<n>` times one stage over the real prompt.
+//!
+//! A door for `tests/code_mode_capture_cost.rs`, compiled only under
+//! `--cfg oneiron_test_support`: the oneiron lib test target does not build
+//! on main (3 resolve errors in gate/tests/auto_checker.rs and
+//! federation/system_agent_grant/narrowing/tests.rs, 13 Nov).
+
+use std::collections::BTreeMap;
 use std::time::Instant;
 
-use super::*;
 use crate::llm::{
-    CallClass, CallEnvelope, CallPurpose, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence,
+    CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
+    ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence,
 };
+use crate::registry::ENTITY_TYPE_PERSON;
+use crate::{AttemptId, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
 
 fn timed<T>(stage: &str, run: impl FnOnce() -> T) -> T {
     let start = Instant::now();
@@ -24,9 +32,8 @@ fn timed<T>(stage: &str, run: impl FnOnce() -> T) -> T {
 
 fn code_mode_request(prompt: &str, task: &str) -> LlmRequest {
     LlmRequest {
-        model: model(),
+        model: ModelId::new("test/executor@v1").expect("model id"),
         envelope: CallEnvelope {
-            seat_effort: None,
             scope: crate::llm::Scope::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
@@ -36,6 +43,9 @@ fn code_mode_request(prompt: &str, task: &str) -> LlmRequest {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
+            seat_effort: None,
         },
         messages: vec![
             LlmMessage {
@@ -54,16 +64,19 @@ fn code_mode_request(prompt: &str, task: &str) -> LlmRequest {
             },
         ],
         tools: Vec::new(),
-        params: std::collections::BTreeMap::new(),
-        provider_options: std::collections::BTreeMap::new(),
+        params: BTreeMap::new(),
+        provider_options: BTreeMap::new(),
         host_segments: None,
     }
 }
 
-#[test]
-fn code_mode_step_request_costs_before_its_model_call() {
+/// Times each stage a code-mode step's request passes before its model
+/// call, over the executor's real system prompt, and three saved-workflow
+/// step captures of it (each a run of its own) in `vault`, a fresh vault the
+/// caller opened. Prints one `## COST` line per stage.
+pub fn measure_code_mode_step_capture(vault: &Vault) {
     let prompt = timed("system_prompt_render", || {
-        host::executor_system_prompt("wire")
+        super::host::executor_system_prompt("wire")
     });
     eprintln!("## COST prompt_bytes={}", prompt.len());
     let tokens = timed("tokens_o200k", || {
@@ -91,14 +104,23 @@ fn code_mode_step_request_costs_before_its_model_call() {
     timed("request_parse", || {
         serde_json::from_slice::<LlmRequest>(&bytes).expect("request parses")
     });
-    let (_dir, vault) = open_test_vault();
-    let actor = WriteActor::new(seed_person(&vault, 0xA0), EdgeActorClass::Agent);
+    let person = EntityId::from_bytes([0x5C; 16]).expect("entity id");
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .expect("seed person");
+    let actor = WriteActor::new(person, EdgeActorClass::Agent);
     for round in 0..3_u8 {
         let request = code_mode_request(&prompt, &format!("task {round}"));
         let handle = timed(&format!("capture_workflow_step_run{round}"), || {
             crate::code_run::capture_workflow_step(
-                &vault,
-                crate::AttemptId::now(),
+                vault,
+                AttemptId::now(),
                 1,
                 actor,
                 &request,
