@@ -49,6 +49,7 @@ pub mod membership;
 pub mod model_binding_proposer;
 pub mod note_bm25f_repair;
 pub mod off_record_shell;
+pub mod pad_offer_invalidation;
 pub mod park_typed_wait;
 pub mod provenance_body_checkpoint;
 pub mod repo_base_manifest;
