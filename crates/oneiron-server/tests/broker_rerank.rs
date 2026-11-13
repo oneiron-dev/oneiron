@@ -8,7 +8,8 @@
 //!   once, to `/v1/rerank`, with the key the broker added. Its scores come
 //!   back in document order, and its receipt names the broker.
 //! - A key the provider echoes, in an answer or in an error, is in no
-//!   answer, error, receipt row or log line of this process.
+//!   answer, error, reranker seat status row, receipt row or log line of
+//!   this process.
 //! - A reply of exactly the broker's whole-reply bound answers; a reply one
 //!   byte over it is refused, and no score comes back.
 #![cfg(unix)]
@@ -443,6 +444,17 @@ async fn a_key_the_rerank_provider_echoes_is_in_no_log_error_or_receipt() {
             .all(|request| request.header("authorization") == Some(keyed.as_str())),
         "every send carried the key the broker added"
     );
+    // The reranker seat's status row, where a rung's error string lands.
+    let status = f.runtime.live_status();
+    let seat = status
+        .seats
+        .iter()
+        .find(|seat| seat.role == "reranker")
+        .expect("FIXTURE: the status names the reranker seat");
+    let row = serde_json::to_string(seat).expect("seat status json");
+    assert_no_key(&f.key, &row, "the reranker seat's status row");
+    let whole = serde_json::to_string(&status).expect("models status json");
+    assert_no_key(&f.key, &whole, "the models status");
     f.assert_no_key_in_receipts();
     let logs = captured_logs();
     assert!(
