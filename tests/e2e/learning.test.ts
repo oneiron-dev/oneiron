@@ -355,4 +355,7 @@ type Learning09 = {
   resume: { attempt: Ref; same_candidate: Ref; preserved_outputs: Ref[] };
 };
 // Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
-suite.todo(test, "LEARNING-09", "waits on vault.research.advance with exposure reservation, then one same-attempt/candidate/partial-output journey through both holds over a vault.research.create_root root");
+// Pass: vault.research.advance {root} runs the host pass for a campaign bound with an
+// execution spec and answers each continuation's pending/running/state/held_line; a
+// confirmation reserves one exposure per sealed serving on the exploration line first.
+suite.todo(test, "LEARNING-09", "waits on its arming PR: one same-attempt/candidate/partial-output journey through both holds, driven by vault.research.advance over a vault.research.create_root root");
