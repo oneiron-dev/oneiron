@@ -42,7 +42,7 @@ pub(super) fn clear_policy_manifests_for_test(vault: &crate::Vault) {
                 ids.push(id);
             }
             for id in ids {
-                crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+                crate::batch::deindex_entity_for_test(&vault, wtxn, &id)?;
             }
             Ok(())
         })

@@ -210,7 +210,7 @@ fn pinned_actor_without_row_is_proposed() -> Result<()> {
     // 0xA2 Keeper) — so nothing can act with preset authority.
     vault.with_write_txn(|wtxn| {
         for byte in 0xA1..=0xA6 {
-            crate::batch::deindex_entity_for_test(&vault.store, wtxn, &pinned_actor_id(byte))?;
+            crate::batch::deindex_entity_for_test(&vault, wtxn, &pinned_actor_id(byte))?;
         }
         Ok(())
     })?;

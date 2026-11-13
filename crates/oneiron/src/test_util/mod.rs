@@ -679,7 +679,7 @@ pub(crate) fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
     let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
     vault
         .with_write_txn(|wtxn| {
-            crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+            crate::batch::deindex_entity_for_test(&vault, wtxn, &id)?;
             Ok(())
         })
         .expect("clear default policy manifest for legacy test fixture");
