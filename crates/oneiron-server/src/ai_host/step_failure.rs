@@ -2,9 +2,11 @@
 //! the one door that may retry or end an agent-dispatch attempt, and the one
 //! that carries the step's run tree and authority scope onto a retry.
 //!
-//! A model call the provider answered with a retryable error is a host
-//! tripwire (T1) whose evidence is the failed attempt itself (its
-//! `last_error` keeps the reason). It is tried again after a backoff, up to
+//! A model call the provider answered with a retryable error, and a park
+//! whose save hit a store fault, are host tripwires (T1) whose evidence is
+//! the failed attempt itself (its `last_error` keeps the reason; the stable
+//! reason names which one, [`StepRetryCause`]). Each is tried again after a
+//! backoff, up to
 //! the vault's `workflow_step_max_tries` consecutive tries (shipped five).
 //! Anything else, and a retryable failure past the cap, ends the step for a
 //! person to look at (escalation `Human`, no healer case),
@@ -27,8 +29,30 @@ pub(super) struct FailedStep {
     pub(super) leaf: AttemptId,
     /// The lease generation: fences the settlement to this lease.
     pub(super) lease_count: u32,
-    /// A later try of the same call may succeed.
-    pub(super) retryable: bool,
+    /// Why a later try of the same call may succeed, when it may.
+    pub(super) retry: Option<StepRetryCause>,
+}
+
+/// Why a failed step is tried again: the stable reason of its retryable
+/// evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StepRetryCause {
+    /// The provider answered the step's model call with a retryable error.
+    ModelCallFailed,
+    /// The step's park did not save for a store fault (storage, I/O, a full
+    /// map). The retry runs the same leaf from its cursor checkpoint, so its
+    /// call has the same invocation and finds the ask its hook saved.
+    ParkSaveFailed,
+}
+
+impl StepRetryCause {
+    /// The stable reason the ladder's evidence carries.
+    pub(super) fn stable_reason(self) -> &'static str {
+        match self {
+            Self::ModelCallFailed => "workflow_step_model_call_failed",
+            Self::ParkSaveFailed => "workflow_step_park_save_failed",
+        }
+    }
 }
 
 /// Leases `lease_owner` holds while none of its steps runs: a claim that
@@ -43,7 +67,7 @@ pub(super) fn held_leases(vault: &Vault, lease_owner: &str) -> oneiron::Result<V
         .map(|row| FailedStep {
             leaf: row.id,
             lease_count: row.attempt_count,
-            retryable: false,
+            retry: None,
         })
         .collect())
 }
@@ -66,12 +90,12 @@ pub(super) fn settle(
         .target
         .agent_definition_ref()?;
     let as_entity = |id: AttemptId| EntityId::from_bytes(*id.as_bytes());
-    let evidence = if step.retryable {
+    let evidence = if let Some(cause) = step.retry {
         TypedFailureEvidence {
             evidence_ref: Some(as_entity(step.leaf)?.to_hex()),
             verdict: TypedFailureVerdict::Retryable,
             tier: Some(DetectorTier::T1Tripwire),
-            stable_reason: "workflow_step_model_call_failed".to_owned(),
+            stable_reason: cause.stable_reason().to_owned(),
         }
     } else {
         // The host has no detector verdict for this failure; the ladder

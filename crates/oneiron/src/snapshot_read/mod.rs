@@ -29,7 +29,7 @@ pub use evidence_spans::{
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
-    PolicyPreflightRequest, policy_preflight, validate_policy_preflight,
+    PolicyPreflightRequest, PolicyPreflightVerdict, policy_preflight, validate_policy_preflight,
 };
 pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, reply_evidence_as_reader, reply_evidence_embedded,
@@ -55,6 +55,7 @@ pub use strength_observations::{
 };
 pub(crate) use strength_observations::{
     classify_observation_sources_in_txn, observation_reader_scope_for_actor_in_txn,
+    strength_observations_page_bound,
 };
 // The integration tests' doors name a cited source's version as a caller's
 // read serves it (untangle 6.7a).

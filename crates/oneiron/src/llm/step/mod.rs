@@ -64,6 +64,7 @@ pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,
     send_peer_result_signal,
 };
+pub(crate) use self::retry::stated_reset_at;
 pub(crate) use self::trap::{
     TrapBrokenPark, TrapConsumePrecheck, retire_peer_wait_binding_for_trap_in_txn,
     trap_consume_precheck_in_txn, wake_trap_in_txn,

@@ -452,6 +452,71 @@ pub fn write_upper_case_dreamer_permit(vault: &Vault) -> Result<()> {
     })
 }
 
+/// The shipped policy with one more grant-policy row: a Steward holder row
+/// for `holder` on the vault's root that holds the worlds `worlds` (every
+/// world when `None`) and the verbs `verbs` (every verb when `None`), every
+/// other data axis whole. The owner's standing word that narrows what one
+/// Steward holds (RULING REMINT-POLICY-ROWS = A).
+///
+/// # Errors
+///
+/// The vault's.
+pub fn write_steward_holder_row(
+    vault: &Vault,
+    holder: EntityId,
+    worlds: Option<&[EntityId]>,
+    verbs: Option<&[&str]>,
+) -> Result<()> {
+    use crate::federation::grant_policy::{GrantPolicyRow, ROWS_KEY, encode_row};
+    use crate::federation::{FederationGrantRole, FederationGrantScope, Scope, ScopeId};
+    let root = {
+        let txn = vault.store.env.read_txn()?;
+        vault.steward_root_scope_in_txn(&txn)?
+    };
+    let FederationGrantScope::Vault { vault_id } = root else {
+        return Err(Error::InvariantViolation(
+            "a Steward grant names a vault root",
+        ));
+    };
+    let mut scope = Scope::top();
+    if let Some(worlds) = worlds {
+        scope.worlds = worlds.iter().map(|world| ScopeId(*world)).collect();
+    }
+    if let Some(verbs) = verbs {
+        scope.verbs = verbs.iter().map(|verb| (*verb).to_owned()).collect();
+    }
+    let row = encode_row(&GrantPolicyRow::HolderOverride {
+        role: FederationGrantRole::Steward,
+        vault_id,
+        holder,
+        scope,
+    })?;
+    rewrite_shipped_policy(vault, |entries| {
+        let rmpv::Value::Array(rows) = policy_entry(entries, ROWS_KEY)? else {
+            return Err(Error::InvalidConfig(
+                "the grant-policy rows are not a list".into(),
+            ));
+        };
+        rows.push(row);
+        Ok(())
+    })
+}
+
+/// The shipped policy with an empty grant-policy row list: no precedence
+/// row and no role default, so no Steward scope resolves, as an owner who
+/// emptied the list leaves it.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn empty_grant_policy_rows(vault: &Vault) -> Result<()> {
+    rewrite_shipped_policy(vault, |entries| {
+        *policy_entry(entries, crate::federation::grant_policy::ROWS_KEY)? =
+            rmpv::Value::Array(Vec::new());
+        Ok(())
+    })
+}
+
 /// Revokes every live MACHINE binding of base agent `agent` with the host
 /// root's signed `RevokeActor`, as a host that withdraws the agent's
 /// delegation does. Its Steward grant stays as it stands. Returns how many
