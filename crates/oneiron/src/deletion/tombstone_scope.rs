@@ -118,17 +118,18 @@ pub(crate) fn deleted_scope_in(
 }
 
 /// The relationship read `id` held when delete `request` took it. Only a row
-/// bound to that request answers, and only one captured with the read.
+/// bound to that request answers: `None` when no row is, `Some(None)` for a
+/// row captured before the read existed (an older delete).
 pub(crate) fn deleted_relationship_read_in(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     request: &[u8; 16],
-) -> Result<Option<RelationshipRead>> {
+) -> Result<Option<Option<RelationshipRead>>> {
     Ok(TOMBSTONE_SCOPE
         .get(store, txn, &HexId(*id))?
         .filter(|row| row.request.as_ref() == Some(request))
-        .and_then(|row| row.relationship_read))
+        .map(|row| row.relationship_read))
 }
 
 /// A live row's scope is written. With no live row (none, or a deleted

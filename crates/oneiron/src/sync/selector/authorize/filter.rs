@@ -501,20 +501,23 @@ pub(in crate::sync::selector) fn filter_window_doc(
         }
         // FIX SELECTOR-TOMBSTONE-LABEL (OPUS-LEAKS): a tombstone names the
         // row's id, the delete's reason and its time, so a member who is not
-        // an Owner takes it only of a row it reads at the relationship gate:
-        // by the row's bytes while the window still holds a body for it, and
-        // by the relationship read its delete captured. A read that fails
-        // withholds the tombstone.
+        // an Owner takes it only of a row it reads at the relationship gate.
+        // The relationship read its delete captured decides first: it was
+        // taken while the row was live, before the delete retired a MESSAGE's
+        // or SUMMARY's scope stamp. With no capture bound to the tombstone's
+        // request, a body the window still holds decides by its bytes. A read
+        // that fails withholds the tombstone.
         let member = member_access.as_ref();
-        if member.is_some()
-            && let Some(blob) =
-                crate::sync::loro_support::map_get_bytes(&source_entities, &id.to_hex())
-            && blob.len() > ENTITY_METADATA_HEADER_LEN
-            && !member_reads_labels(vault, &ttxn, member, &id, &blob).unwrap_or(false)
-        {
-            return;
-        }
-        if super::super::tombstones::member_reads_deleted(vault, &ttxn, member, &id, value) {
+        let reads =
+            super::super::tombstones::member_reads_by_capture(vault, &ttxn, member, &id, value)
+                .unwrap_or_else(|| {
+                    crate::sync::loro_support::map_get_bytes(&source_entities, &id.to_hex())
+                        .filter(|blob| blob.len() > ENTITY_METADATA_HEADER_LEN)
+                        .is_none_or(|blob| {
+                            member_reads_labels(vault, &ttxn, member, &id, &blob).unwrap_or(false)
+                        })
+                });
+        if reads {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });
