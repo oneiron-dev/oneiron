@@ -11,7 +11,7 @@ use super::{
 };
 use crate::Result;
 use crate::lens::generated_ui::{GeneratedUiComponentAtom, GeneratedUiPrimitive};
-use crate::lens::self_ui::SelfUiControl;
+use crate::lens::self_ui::{SelfUiAction, SelfUiControl};
 use crate::lens::validate::fallback_lens_text;
 use crate::lens::wire_limits::serialize_tagged;
 
@@ -269,6 +269,46 @@ impl LensAtom {
         match self {
             Self::ResultSet(atom) => Some(atom),
             _ => None,
+        }
+    }
+
+    /// The one engine-typed action this atom carries: a `self.ui` control's, a
+    /// quick filter's, or an app component's when it declares one
+    /// (GENUI-COMPONENT-ACTIONS). The card's manifest may declare an action only
+    /// for an element that carries that same action, and the event gate checks
+    /// each event against it. Every other atom carries none; a result set's
+    /// action bar is an allowlist over the manifest, not an action of its own.
+    #[must_use]
+    pub fn action(&self) -> Option<&SelfUiAction> {
+        match self {
+            Self::SelfUi(control) => Some(control.action()),
+            Self::QuickFilter(atom) => Some(&atom.action),
+            Self::Component(atom) => atom.action.as_ref(),
+            Self::TextBlock(_)
+            | Self::LedgerRow(_)
+            | Self::ClaimLine(_)
+            | Self::StatusDot(_)
+            | Self::Seal(_)
+            | Self::MetaLine(_)
+            | Self::DossierSection(_)
+            | Self::ThreadEntry(_)
+            | Self::Sheet(_)
+            | Self::Slip(_)
+            | Self::Receipt(_)
+            | Self::Charter(_)
+            | Self::Postmark(_)
+            | Self::PackLine(_)
+            | Self::AnswerSheet(_)
+            | Self::TwoClocks(_)
+            | Self::NeighborhoodGraph(_)
+            | Self::AsofScrubber(_)
+            | Self::Throbber(_)
+            | Self::VoiceLine(_)
+            | Self::InspectorSheet(_)
+            | Self::InspectorRail(_)
+            | Self::InspectorTrail(_)
+            | Self::Media(_)
+            | Self::ResultSet(_) => None,
         }
     }
 
