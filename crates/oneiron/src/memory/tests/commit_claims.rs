@@ -357,11 +357,28 @@ fn commit_batch_gating_is_per_element() {
         .expect("commit batch");
 
     assert_eq!(receipts.len(), 3);
-    assert_eq!(receipts[0].approval, "auto");
-    assert_eq!(receipts[1].approval, "rejected");
-    assert!(receipts[1].receipt_ref.starts_with("rejected:"));
+    let crate::memory::CommitOutcome::Landed(first) = &receipts[0] else {
+        panic!("first element lands: {:?}", receipts[0]);
+    };
+    assert_eq!(first.approval, "auto");
+    assert!(
+        matches!(receipts[1], crate::memory::CommitOutcome::Refused { .. }),
+        "middle element is refused: {:?}",
+        receipts[1]
+    );
+    let crate::memory::CommitOutcome::Refused { receipt_ref, .. } = &receipts[1] else {
+        unreachable!("middle element is refused");
+    };
+    assert!(
+        receipt_ref
+            .as_deref()
+            .is_some_and(|reference| reference.starts_with("reference_refusal:"))
+    );
+    let crate::memory::CommitOutcome::Landed(third) = &receipts[2] else {
+        panic!("elements after a rejection still land: {:?}", receipts[2]);
+    };
     assert_eq!(
-        receipts[2].approval, "auto",
+        third.approval, "auto",
         "elements after a rejection still land"
     );
 
@@ -370,14 +387,14 @@ fn commit_batch_gating_is_per_element() {
     assert!(
         receipts_list
             .iter()
-            .any(|r| r.receipt_ref == receipts[0].receipt_ref)
+            .any(|r| r.receipt_ref == first.receipt_ref)
     );
     assert!(
         receipts_list
             .iter()
-            .any(|r| r.receipt_ref == receipts[2].receipt_ref)
+            .any(|r| r.receipt_ref == third.receipt_ref)
     );
-    assert_ne!(receipts[0].receipt_ref, receipts[2].receipt_ref);
+    assert_ne!(first.receipt_ref, third.receipt_ref);
 
     // The rejected element persisted nothing.
     let claims = facade
@@ -772,9 +789,12 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
         chunk.copy_from_slice(&raw[..chunk.len()]);
     }
 
-    let version = facade
+    let crate::memory::BlobVersionAppendOutcome::Landed(version) = facade
         .append_blob_version(&artifact.id_hex, &bytes, None, 1101, None)
-        .expect("append");
+        .expect("append")
+    else {
+        panic!("human append lands under the cleared manifest");
+    };
     assert_eq!(version.version, 1);
     assert_eq!(version.content_hash_hex.len(), 64);
 
@@ -785,9 +805,12 @@ fn blob_door_round_trips_bytes_and_dedupes_head() {
     assert_eq!(read, bytes, "byte identity through the blob door");
 
     // Re-appending identical head bytes is a dedupe no-op.
-    let again = facade
+    let crate::memory::BlobVersionAppendOutcome::Landed(again) = facade
         .append_blob_version(&artifact.id_hex, &bytes, None, 1102, None)
-        .expect("re-append");
+        .expect("re-append")
+    else {
+        panic!("dedupe re-append lands under the cleared manifest");
+    };
     assert_eq!(again.version, 1);
 }
 
@@ -1339,6 +1362,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             ENTITY_TYPE_FEDERATION_GRANT,
             test_time(1),
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()
@@ -1410,6 +1434,7 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
             ENTITY_TYPE_FEDERATION_GRANT,
             test_time(1),
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()

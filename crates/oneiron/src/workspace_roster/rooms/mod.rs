@@ -30,8 +30,6 @@ mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-ROOMS-TESTS]: the lib test target's type check fails here (13 errors: E0308 x8, E0063 x3, E0639 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod thread_delete;

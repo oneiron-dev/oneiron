@@ -52,8 +52,6 @@ mod consent_bundle;
 mod consolidation_readers;
 mod credential_lifetimes;
 mod critical_confirm_holds;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CRITICAL-CONFIRM-INDEX]: the lib test target's type check fails here (13 errors: E0061 x10, E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
 mod delegation;
