@@ -1,7 +1,9 @@
 //! Census row L6-18 (ARCH-0052 threat-model note): a process that holds an
-//! off-record overlay writes no core file. Linux only: the dumpable flag is a
-//! Linux prctl. This file is its own test binary, so the process-wide change
-//! reaches no other test.
+//! off-record overlay writes no core file, by default. Linux only: the
+//! dumpable flag is a Linux prctl. This file is its own test binary, so the
+//! process-wide change reaches no other test; the operator's off switch is
+//! `session_overlay_dump_suppression_off.rs`, in a process of its own. It
+//! names only main's paths, so it runs red on main.
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
 use std::fs::File;
