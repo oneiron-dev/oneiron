@@ -200,10 +200,7 @@ impl ConsolidationExecutor<'_> {
                     index,
                     self.boxed_window_slot_job(started, stages, *run_started, attempt, ctx),
                 )),
-                WindowSlotRun::Rung(_) => rungs.push((
-                    index,
-                    contained_rung(self.run_rung_job(attempt, ctx), attempt),
-                )),
+                WindowSlotRun::Rung(_) => rungs.push((index, self.boxed_rung_job(attempt, ctx))),
                 WindowSlotRun::Settled(..) | WindowSlotRun::Serial => {}
             }
         }
@@ -246,7 +243,7 @@ impl ConsolidationExecutor<'_> {
             let serial = matches!(slot, WindowSlotRun::Serial);
             let caught = {
                 let mut finish =
-                    pin!(self.finish_window_slot(slot, *attempt, ctx, stopped, committed));
+                    self.boxed_finish_window_slot(slot, *attempt, ctx, stopped, committed);
                 poll_fn(|task_cx| {
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
                         finish.as_mut().poll(task_cx)
@@ -385,7 +382,7 @@ impl ConsolidationExecutor<'_> {
     ) -> SlotWork {
         let attempt_id = attempt.status.attempt.id;
         let prefix = self
-            .extract_partition_prefix(
+            .boxed_extract_partition_prefix(
                 &started.payload,
                 &started.resources,
                 ctx,
@@ -429,7 +426,62 @@ impl ConsolidationExecutor<'_> {
     // stack slot for the whole call. Built inline, the slot jobs and the
     // settles and re-runs of `finish_window_slot` overflowed the 2 MiB
     // test thread of `dreamer_window_finish_order`; built here, the
-    // caller's frame holds only a pointer.
+    // caller's frame holds only a pointer. A slot's finish now runs
+    // beneath its slot job's prefix rather than beneath the window's
+    // settle, so the prefix, the rung job, each slot's settle and the
+    // serial `execute` are boxed as well: no frame on that path keeps a
+    // whole executor future.
+
+    /// [`Self::extract_partition_prefix`], for a window slot's prefix.
+    fn boxed_extract_partition_prefix<'s>(
+        &'s self,
+        payload_input: &'s Value,
+        resources: &'s BranchResources<'_>,
+        ctx: &'s WakeAttemptContext<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
+        run_id: Option<String>,
+        charges: &'s mut StepChargeTally,
+    ) -> Pin<Box<dyn Future<Output = crate::llm::DurableStepResult<PartitionPrefix>> + 's>> {
+        Box::pin(self.extract_partition_prefix(
+            payload_input,
+            resources,
+            ctx,
+            attempt_id,
+            run_id,
+            charges,
+        ))
+    }
+
+    /// A sieve rung job behind its panic containment.
+    fn boxed_rung_job<'s>(
+        &'s self,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s WakeAttemptContext<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(contained_rung(self.run_rung_job(attempt, ctx), attempt))
+    }
+
+    /// [`Self::finish_window_slot`], for one slot's settle.
+    fn boxed_finish_window_slot<'s, 'w>(
+        &'s mut self,
+        slot: WindowSlotRun<'w>,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s mut WakeAttemptContext<'w>,
+        stopped: Option<WindowStopped>,
+        committed: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(self.finish_window_slot(slot, attempt, ctx, stopped, committed))
+    }
+
+    /// The serial `execute`, for a window slot of a shape the window
+    /// does not run.
+    fn boxed_execute<'s>(
+        &'s mut self,
+        attempt: &'s DreamerAdmittedAttempt,
+        ctx: &'s mut WakeAttemptContext<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<DreamerAttemptExecution>> + 's>> {
+        Box::pin(self.execute(attempt, ctx))
+    }
 
     /// [`Self::run_window_slot_job`] behind its panic containment.
     fn boxed_window_slot_job<'s>(
@@ -547,7 +599,7 @@ impl ConsolidationExecutor<'_> {
                 ))
             }),
             WindowSlotRun::Serial => match stopped {
-                None => self.execute(attempt, ctx).await,
+                None => self.boxed_execute(attempt, ctx).await,
                 // Never ran: no prefix, no spend. After a panic it
                 // takes the panic outcome; after a pass-ending error
                 // it parks resumable at zero.
