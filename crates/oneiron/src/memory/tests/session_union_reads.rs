@@ -17,7 +17,10 @@ fn room_turn(
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, words)],
                 occurred_at: 900,
+                thread_audience: None,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("session witness");
@@ -34,10 +37,8 @@ fn room_turn(
 /// A vault that keeps its retrieval runs, so a run that reaches base shows.
 fn telemetry_vault() -> (tempfile::TempDir, crate::Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let config = VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
     let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     (dir, vault)
 }
@@ -135,6 +136,8 @@ fn a_walk_in_the_room_reaches_its_rows_past_a_warm_base_cache_and_caches_nothing
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "said in base")],
             occurred_at: 800,
+            thread_audience: None,
+            assertions: Default::default(),
         })
         .expect("base witness");
     let warmed = vault

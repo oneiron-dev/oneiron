@@ -10,8 +10,6 @@ mod asset_resolve;
 mod authority_revocation;
 mod commit_claims;
 mod delete_tombstone;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-DEVICE-LOCAL-RECEIPTS]: the lib test target's type check fails here (6 errors: E0061 x2, E0599 x2, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
@@ -21,8 +19,6 @@ mod self_grant;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-RECALL]: the lib test target's type check fails here (5 errors: E0061 x2, E0063 x2, E0639 x1); port it, then drop this gate
 #[cfg(any())]
 mod session_recall;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-UNION-READS]: the lib test target's type check fails here (4 errors: E0063 x2, E0061 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_union_reads;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-WITNESS]: the lib test target's type check fails here (28 errors: E0063 x14, E0061 x13, E0639 x1); port it, then drop this gate
 #[cfg(any())]

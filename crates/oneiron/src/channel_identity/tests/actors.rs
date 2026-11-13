@@ -93,10 +93,12 @@ fn mail_and_enrichment_are_distinct_scoped_actors_with_own_keys_and_priors() -> 
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 1,
+                None,
                 &crate::claim::encode_claim_body(&enrichment)?,
             )
             .commit()?;
-        let effective = crate::provider_confidence::effective_confidence(&vault, &id)?;
+        let effective =
+            crate::provider_confidence::effective_confidence(&vault, &id)?.resolved_or_error()?;
         assert!((effective - 0.6).abs() < 0.0001);
         assert_eq!(
             vault

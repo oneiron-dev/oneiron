@@ -22,8 +22,6 @@ mod rerank_hyde_session_stale;
 mod rerank_words;
 mod retrieval_blend;
 mod room_reads;
-// FIX [LIBTEST-QUARANTINE-PIPELINE-TESTS-SCORING-BASICS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 mod scoring_basics;
 mod telemetry_trace;
 mod temporal;
