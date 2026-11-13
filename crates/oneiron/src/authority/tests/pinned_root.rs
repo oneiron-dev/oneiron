@@ -29,11 +29,14 @@ fn anchor_mark(host: &Host, prepared: &PreparedRoot, request: &MachineEnrolmentR
         machine: request.machine,
         owner: host.owner.actor(),
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     });
     let fold = host.vault.authority_fold().unwrap();
     let at = prepared.entry().ts;
@@ -104,9 +107,11 @@ fn a_restore_that_makes_a_new_machine_opens_unpinned() {
     let image = backups.path().join("image");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     pin(&host.vault, second);
+    let checkpoint_key = host.vault.checkpoint_key().unwrap();
 
     let (replacement, _) = Vault::restore_checkpoint_replacing(
         &image,
+        &checkpoint_key,
         &backups.path().join("replacement"),
         VaultConfig::default(),
         &host.vault,
@@ -118,6 +123,7 @@ fn a_restore_that_makes_a_new_machine_opens_unpinned() {
 
     let (copy, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &checkpoint_key,
         &backups.path().join("copy"),
         VaultConfig::default(),
         &host.vault,
@@ -126,6 +132,7 @@ fn a_restore_that_makes_a_new_machine_opens_unpinned() {
     .unwrap();
     let (elsewhere, _) = Vault::restore_checkpoint(
         &image,
+        &checkpoint_key,
         &backups.path().join("elsewhere"),
         VaultConfig::default(),
         crate::recovery::checkpoint::RestoreReason::Restore,
@@ -134,6 +141,7 @@ fn a_restore_that_makes_a_new_machine_opens_unpinned() {
     .unwrap();
     let (beside, _) = Vault::restore_checkpoint_beside(
         &image,
+        &checkpoint_key,
         &backups.path().join("beside"),
         VaultConfig::default(),
         &host.vault.side_restore_source().unwrap(),
@@ -158,9 +166,16 @@ fn an_activated_archive_opens_unpinned() {
     let backups = crate::test_support::restore_tempdir();
     let (image, staged) = (backups.path().join("image"), backups.path().join("staged"));
     vault.snapshot_checkpoint(&image, 100).unwrap();
-    let (replacement, _) =
-        Vault::restore_checkpoint_replacing(&image, &staged, VaultConfig::default(), &vault, 200)
-            .unwrap();
+    let checkpoint_key = vault.checkpoint_key().unwrap();
+    let (replacement, _) = Vault::restore_checkpoint_replacing(
+        &image,
+        &checkpoint_key,
+        &staged,
+        VaultConfig::default(),
+        &vault,
+        200,
+    )
+    .unwrap();
     // As `oneiron restore` exchanges the two directories.
     vault
         .swap_in_replacement(&replacement, || {

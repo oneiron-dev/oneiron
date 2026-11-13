@@ -252,8 +252,6 @@ pub use resident::{
     ResidentWakeMode, resident_attempt_reviews_diary, resident_attempt_wakes_for_room,
 };
 
-// FIX [LIBTEST-QUARANTINE-AGENT-DISPATCH-RESIDENT-TESTS]: the lib test target's type check fails here (6 errors: E0063 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod resident_tests;
 pub(crate) mod tables;

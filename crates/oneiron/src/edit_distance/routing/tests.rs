@@ -1,19 +1,22 @@
 use super::*;
 
 use crate::config::VaultConfig;
+use crate::edit_distance::ProposalArtifactRef;
 use crate::edit_distance::attribution::{
     AmendmentCause, AmendmentEvidence, judge_amendment, record_amendment_evidence,
 };
-use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
+use crate::edit_distance::delta::{
+    EndpointRef, MeasuredEnd, delta_from_reconstructed, put_amendment_delta_in_txn,
+};
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 
 // ─── fixtures ───────────────────────────────────────────────────────────
 
-/// The two compiled generations, by the role this projection measures. The
-/// swap fixtures use REGISTERED models on purpose: it is the `ModelStack`
-/// reverse resolution under test, not the unregistered fallback.
+/// The two executor revisions the swap test folds under. Each is a full
+/// `id@revision` identity on purpose: the executor stamp is what keys heads
+/// apart, so a generation must read as a stamp.
 const STACK_V2_MODEL: &str = "oneiron/orchestrator-default@2026-07-06";
 const STACK_V1_MODEL: &str = "oneiron/orchestrator-default@2026-06-01";
 
@@ -101,7 +104,17 @@ fn fold(vault: &Vault, actor: EntityId, amendment: &Amendment<'_>) -> Result<f64
 /// has not folded yet.
 fn judge(vault: &Vault, actor: EntityId, amendment: &Amendment<'_>) -> Result<f64> {
     let (before, after) = artifact(amendment.changed);
-    let delta = delta_from_reconstructed(&before, &after);
+    let record = ProposalArtifactRef::mint();
+    let delta = delta_from_reconstructed(
+        MeasuredEnd {
+            at: EndpointRef::imported_proposed(record),
+            content: before.as_str(),
+        },
+        MeasuredEnd {
+            at: EndpointRef::imported_final(record),
+            content: after.as_str(),
+        },
+    );
     let d_norm = delta.d_norm;
     vault.with_write_txn(|wtxn| {
         put_amendment_delta_in_txn(vault, wtxn, amendment.receipt, &delta)?;
@@ -109,7 +122,8 @@ fn judge(vault: &Vault, actor: EntityId, amendment: &Amendment<'_>) -> Result<f6
     })?;
     let mut evidence = AmendmentEvidence::new(amendment.receipt, actor, amendment.task_class)
         .at(10)
-        .with_cause(amendment.cause);
+        .with_cause(amendment.cause)
+        .with_executor(serving_model_version(vault)?);
     if amendment.cause == AmendmentCause::ProposalWrong {
         evidence = evidence.with_routing_facts(false, true);
     }
@@ -118,10 +132,10 @@ fn judge(vault: &Vault, actor: EntityId, amendment: &Amendment<'_>) -> Result<f6
     Ok(f64::from(d_norm))
 }
 
-fn stats_for(vault: &Vault, version: &str, task_class: &str) -> Result<Option<RoutingScopeStats>> {
+fn stats_for(vault: &Vault, executor: &str, task_class: &str) -> Result<Option<RoutingScopeStats>> {
     Ok(routing_data_bar(vault)?
         .into_iter()
-        .find(|row| row.key.model_version == version && row.key.task_class == task_class))
+        .find(|row| row.key.executor == executor && row.key.task_class == task_class))
 }
 
 fn close_to(left: f32, right: f32) -> bool {
@@ -142,18 +156,29 @@ fn a_model_swap_starts_a_fresh_aggregate_and_never_blends() -> Result<()> {
     fold(&vault, actor, &Amendment::sound("r3", "prose", 2))?;
 
     set_rollout_rung(&vault, "prose", RolloutRung::DataBar)?;
-    let old = stats_for(&vault, "stack:default-v1", "prose")?.expect("old generation retained");
-    let new = stats_for(&vault, "stack:default-v2", "prose")?.expect("new generation opened");
+    let old = stats_for(&vault, STACK_V1_MODEL, "prose")?.expect("old generation retained");
+    let new = stats_for(&vault, STACK_V2_MODEL, "prose")?.expect("new generation opened");
 
-    assert_eq!(old.runs, 2, "the old row keeps exactly the runs it earned");
-    assert_eq!(new.runs, 1, "the new generation starts from nothing");
+    assert_eq!(
+        old.hint.runs, 2,
+        "the old row keeps exactly the runs it earned"
+    );
+    assert_eq!(new.hint.runs, 1, "the new generation starts from nothing");
     // NEG: no row anywhere holds the merged history.
     assert!(
-        routing_data_bar(&vault)?.iter().all(|row| row.runs < 3),
+        routing_data_bar(&vault)?
+            .iter()
+            .all(|row| row.hint.runs < 3),
         "a swap must never fold two generations into one row"
     );
     assert!(
-        close_to(old.hint.outcome_score, 1.0) && close_to(new.hint.outcome_score, 1.0),
+        old.hint
+            .sound_share
+            .is_some_and(|share| close_to(share, 1.0))
+            && new
+                .hint
+                .sound_share
+                .is_some_and(|share| close_to(share, 1.0)),
         "each row scores from its own runs"
     );
     Ok(())
@@ -174,8 +199,8 @@ fn a_receipt_folds_once_even_across_a_swap() -> Result<()> {
     set_rollout_rung(&vault, "prose", RolloutRung::DataBar)?;
     let rows = routing_data_bar(&vault)?;
     assert_eq!(rows.len(), 1, "one run, one scope");
-    assert_eq!(rows[0].runs, 1);
-    assert_eq!(rows[0].key.model_version, "stack:default-v1");
+    assert_eq!(rows[0].hint.runs, 1);
+    assert_eq!(rows[0].key.executor, STACK_V1_MODEL);
     Ok(())
 }
 
@@ -204,7 +229,7 @@ fn concurrent_folds_of_one_receipt_still_count_one_run() -> Result<()> {
 
     set_rollout_rung(&vault, "prose", RolloutRung::DataBar)?;
     let row = stats_for(&vault, &serving_model_version(&vault)?, "prose")?.expect("scope folded");
-    assert_eq!(row.runs, 1, "one receipt is one run, whoever folds it");
+    assert_eq!(row.hint.runs, 1, "one receipt is one run, whoever folds it");
     Ok(())
 }
 
