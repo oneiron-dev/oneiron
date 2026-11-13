@@ -675,7 +675,7 @@ impl Vault {
 
     /// The vault root a Steward grant on this vault names: the shared vault,
     /// else this install's own residence.
-    pub(super) fn steward_root_scope_in_txn(
+    pub(crate) fn steward_root_scope_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<FederationGrantScope> {
