@@ -368,7 +368,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     let claim = seeded_test_entity_id(0x0024_6503);
     let scripts = vec![
         format!(
-            "const receipt = await self.memory.put_claim({{id:'{}', predicate:'profile.favorite_drink', subject:'{}', value:'sencha'}}); console.log(receipt.id);",
+            "const receipt = await vault.claims.put({{id:'{}', predicate:'profile.favorite_drink', subject:'{}', value:'sencha'}}); console.log(receipt.id);",
             claim.to_hex(),
             subject.to_hex()
         ),
@@ -518,7 +518,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     assert_mcp_structured_error(&body, "code_run_binding_failed");
 }
 
-const CODE_MODE_RECALL: &str = "const pack = await self.memory.recall({query: 'heron lantern', \
+const CODE_MODE_RECALL: &str = "const pack = await vault.recall({query: 'heron lantern', \
     effort: 'medium', scope: {}}); finish(JSON.stringify(pack));";
 
 /// Witnesses one message through the tool list's generated `witness` tool.
@@ -551,7 +551,7 @@ async fn witness_through_tool_list(
 }
 
 /// Done means (ARCH-0028, OF-246/OF-227): through the shipped HTTP MCP wire, an
-/// `execute_code` run calls `self.memory.recall({query, effort, scope})` and
+/// `execute_code` run calls `vault.recall({query, effort, scope})` and
 /// reads back a phrase saved earlier in the same vault. Before this change the
 /// method did not exist.
 #[tokio::test]
@@ -645,7 +645,7 @@ async fn quickjs_execute_code_serves_a_64_kib_task() {
 /// same gate, never around it.
 #[tokio::test]
 async fn quickjs_code_mode_keeps_connector_narrowing() {
-    let refused = "try { await self.memory.recall({query: 'heron lantern'}); finish('reached'); } \
+    let refused = "try { await vault.recall({query: 'heron lantern'}); finish('reached'); } \
         catch (error) { finish('refused ' + String(error)); }";
     let mode = code_mode_server(vec![refused.to_owned()]);
     let owner = seeded_test_entity_id(0x0024_6521);
@@ -1053,7 +1053,7 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
 async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list() {
     let facet = seeded_test_entity_id(0x0024_6552).to_hex();
     let script = format!(
-        "try {{ await self.memory.recall({{query: 'heron lantern', scope: {{facet_ref: '{facet}'}}}}); \
+        "try {{ await vault.recall({{query: 'heron lantern', scope: {{facet_ref: '{facet}'}}}}); \
          finish('reached'); }} catch (error) {{ finish('refused ' + String(error)); }}"
     );
     let mode = code_mode_server(vec![script]);
@@ -1241,7 +1241,7 @@ async fn execute_code(
 /// Done means (U16): the server the serve path builds serves `execute_code`.
 /// With `[models]` filling the generative seat and `[models.code_mode]` naming
 /// a prompt package, `AiHost::attach` binds the checked-in component; a run's
-/// model step is that seat's model, and its `self.memory.recall` reads back a
+/// model step is that seat's model, and its `vault.recall` reads back a
 /// phrase saved in the vault. The run's clock is the time it started.
 #[tokio::test]
 async fn the_served_vault_runs_execute_code_on_its_generative_seat() {

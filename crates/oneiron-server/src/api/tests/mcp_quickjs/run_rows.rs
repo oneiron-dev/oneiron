@@ -128,7 +128,7 @@ fn recorded_field<'a>(outcome: &'a rmpv::Value, key: &str) -> Option<&'a str> {
 /// read lane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
-    let search = "await self.memory.search({query: 'heron lantern'});";
+    let search = "await vault.search({query: 'heron lantern'});";
     // Step 1 answers with nothing, so it speaks no trailing bubble: its
     // search is the one call of the step that meets the door.
     let scripts = vec![
@@ -251,7 +251,7 @@ async fn witness_on_turn(
 /// the agent's run finds the unscoped words and nothing of the relationship's.
 #[tokio::test]
 async fn quickjs_a_runs_search_reads_under_the_credential_builders_key() {
-    let search = "await self.memory.search({query: 'heron lantern'}); finish('');";
+    let search = "await vault.search({query: 'heron lantern'}); finish('');";
     let mode = code_mode_server(vec![search.to_owned()]);
     let (speaker, agent) = (
         seeded_test_entity_id(0x0024_65c1),

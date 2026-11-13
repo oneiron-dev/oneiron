@@ -143,7 +143,7 @@ async fn a_code_runs_search_off_this_device_finds_no_device_local_claim() {
     let portable = seeded_test_entity_id(0x0024_66e4);
     let kept = seeded_test_entity_id(0x0024_66e5);
     let mode = code_mode_server(vec![
-        "await self.memory.search({query: 'orchid'}); finish('searched');".to_owned(),
+        "await vault.search({query: 'orchid'}); finish('searched');".to_owned(),
     ]);
     for (id, kind) in [
         (subject, oneiron::registry::ENTITY_TYPE_PERSON),
@@ -260,7 +260,7 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
     let successor = put_world_claim(&mode.vault, subject, "profile.favorite_lantern", world);
     mode.vault.supersede_claim(&successor, &head, 3).unwrap();
     let script = format!(
-        "try {{ await self.memory.supersede_claim({{oldId: '{}', newId: '{}', now: 5}}); }} \
+        "try {{ await vault.claims.supersede({{oldId: '{}', newId: '{}', now: 5}}); }} \
          catch (error) {{}} finish('');",
         head.to_hex(),
         fresh.to_hex()
@@ -362,7 +362,7 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
             .unwrap();
     }
     mode.backend.scripts.lock().unwrap().push_back(format!(
-        "const pairs = await self.memory.tasks.outcomes({{group_ref: '{}'}}); \
+        "const pairs = await tasks.outcomes({{group_ref: '{}'}}); \
          finish(String(pairs.length));",
         handle.group_ref.to_hex()
     ));
