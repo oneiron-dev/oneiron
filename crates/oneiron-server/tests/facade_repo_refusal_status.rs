@@ -4,17 +4,19 @@
 //! failure. `vault.repo.symbols.observe` (NO-DOOR SYMBOL-LEASE-OBSERVATION)
 //! and `vault.repo.proposal_resolve` are routed run doors: an unknown live
 //! run meets the live-run guard first.
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use engine_stack::run_on_engine_stack;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
-use oneiron_server::{
-    ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
-};
+use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -24,22 +26,7 @@ use tower::ServiceExt;
 /// the router runs on threads sized as the server sizes its own.
 #[test]
 fn repo_refusals_answer_their_own_status() {
-    let run = std::thread::Builder::new()
-        .name("facade-repo-refusal-status".into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(repo_refusals())
-        })
-        .expect("spawn the engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
+    run_on_engine_stack("facade-repo-refusal-status", repo_refusals);
 }
 
 /// One owner-signed facade call and its status, error code and body.
