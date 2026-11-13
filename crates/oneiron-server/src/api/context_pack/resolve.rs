@@ -2,7 +2,8 @@
 
 use super::super::{MemoriesRequest, core_engine_error, json_payload, non_empty_query};
 pub(crate) use super::builder_controls::*;
-use super::controls::CoreContextPackRequest;
+use super::controls::{CoreContextPackRequest, CoreInterlocutorControls};
+use super::interlocutor::RoomAudience;
 use super::media_query::embed_media_seeds;
 use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
@@ -376,12 +377,28 @@ pub(crate) async fn execute_context_pack(
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
     // the one applied (design §11 rule 6).
+    // ARCH-0052 D5 rule 1 (ROOM-PACK-STRETCH-TIER-A = A): a pack bound to
+    // its room's stretch, whose every interlocutor is seated there, reads the
+    // stretch's own rows past Tier A; the clamp still judges them.
     let disclosure = resolve_core_disclosure_with_once(
         &server.vault,
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
         &once,
-    )?;
+    )?
+    .map(|ctx| match stretch.as_ref() {
+        Some(stretch)
+            if seats_every_interlocutor(
+                stretch,
+                room.as_ref(),
+                req.interlocutors.as_ref(),
+                auth,
+            ) =>
+        {
+            stretch.bind_disclosure(ctx)
+        }
+        _ => ctx,
+    });
     if let Some(ctx) = disclosure.as_ref() {
         builder = builder.disclosure_context(ctx.clone());
     }
@@ -492,6 +509,35 @@ fn context_pack_room<'v>(
         rooms.bind_pack_member(key, member)
     };
     bound.map_err(|error| core_engine_error("context-pack stretch bind failed", error))
+}
+
+/// Whether every interlocutor of a pack bound to `stretch` is seated in the
+/// stretch's room (ARCH-0052 D5 rule 1; ROOM-PACK-STRETCH-TIER-A = A, the
+/// lead 14 Nov 05:3x): the pack names that room as its conversation, its
+/// proven reader is on the room's roster, and every party its clamp meets
+/// came from that roster. A live call's speaker the roster does not seat, a
+/// third party or voice session the request names, or a principal other
+/// than the reader is not seated there, so the stretch's rows stay Tier A.
+fn seats_every_interlocutor(
+    stretch: &oneiron::off_record::RoomPackSession<'_>,
+    room: Option<&RoomAudience>,
+    controls: Option<&CoreInterlocutorControls>,
+    auth: &CoreAuth,
+) -> bool {
+    let Some(room) = room else {
+        return false;
+    };
+    let Some(reader) = room.reader else {
+        return false;
+    };
+    stretch.room() == Some(room.room)
+        && !room.live.reads_unknown()
+        && controls.is_none_or(|controls| {
+            controls.third_parties.is_empty() && controls.voice_session_ref.is_none()
+        })
+        && auth
+            .principal_ref()
+            .is_none_or(|principal| oneiron::EntityId::from_hex(principal).ok() == Some(reader))
 }
 
 /// The person or agent a pack's caller is, on their own live slip, who may

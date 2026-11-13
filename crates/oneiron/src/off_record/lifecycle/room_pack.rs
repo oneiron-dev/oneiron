@@ -206,6 +206,31 @@ impl RoomPackRead<'_> {
 }
 
 impl RoomPackSession<'_> {
+    /// The room this stretch runs in; `None` for a stretch entered alone.
+    #[must_use]
+    pub fn room(&self) -> Option<EntityId> {
+        self.stretch.map(|stretch| stretch.room)
+    }
+
+    /// `disclosure` bound to this room stretch, for a pack whose caller
+    /// checked that every interlocutor is seated in the stretch's room
+    /// (ARCH-0052 D5 rule 1; ROOM-PACK-STRETCH-TIER-A = A, from the owner's
+    /// OFFRECORD-WORDS = A, ARCH-0052:18: "one-way mirror"). The stretch's
+    /// own rows are then not Tier A by rule 1, so its reader reads them
+    /// under the room's rules and the audience's clearance; a row of any
+    /// other live room stays Tier A. A stretch entered alone has no room to
+    /// seat anyone in, so its clamp stays as it was.
+    #[must_use]
+    pub fn bind_disclosure(
+        &self,
+        disclosure: crate::disclosure::DisclosureContext,
+    ) -> crate::disclosure::DisclosureContext {
+        if self.stretch.is_none() {
+            return disclosure;
+        }
+        disclosure.bound_to_stretch(self.session.session_ref())
+    }
+
     /// The pack's read of this stretch: one composed snapshot and the
     /// telemetry door over the route captured at bind.
     ///

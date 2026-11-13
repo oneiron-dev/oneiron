@@ -30,13 +30,12 @@ use oneiron_authority::federation::Scope;
 use oneiron_contracts::affect::Vad;
 
 use super::disclosable_set::DisclosableSet;
-use super::disclosure_tier;
 use super::scope_codec::{DisclosureScope, disclosure_scope_body_value};
 
 use super::tier_classification::{
     DISCLOSURE_TIER_VALUE_TIER_A, DisclosureMode, DisclosureTier, PREDICATE_DISCLOSURE_SCOPE,
-    PREDICATE_DISCLOSURE_TIER, is_disclosure_claim_predicate, read_stored_claim_body,
-    validate_disclosure_claim_structure,
+    PREDICATE_DISCLOSURE_TIER, disclosure_tier_bound, is_disclosure_claim_predicate,
+    read_stored_claim_body, validate_disclosure_claim_structure,
 };
 
 /// Enforcement-truth per-counterparty-contact disclosure scope row; one O(1)
@@ -312,6 +311,11 @@ pub struct DisclosureContext {
     mode: DisclosureMode,
     interlocutors: InterlocutorSet,
     disclosable: DisclosableSet,
+    /// The session ref of the live room stretch a context pack is bound to,
+    /// when every interlocutor of the pack is seated in its room: Tier-A
+    /// rule 1 skips that stretch's own rows ([`disclosure_tier_bound`]).
+    /// `None` everywhere else, so rule 1 stays absolute.
+    bound_stretch: Option<String>,
 }
 
 impl DisclosureContext {
@@ -360,6 +364,7 @@ impl DisclosureContext {
             mode: DisclosureMode::from_set(&set),
             disclosable: DisclosableSet::resolve_with_once(vault, &set, reader, once)?,
             interlocutors: set,
+            bound_stretch: None,
         })
     }
 
@@ -383,7 +388,22 @@ impl DisclosureContext {
                 crate::claim::ScopedReadActorKey::read_authority(&scope),
             ),
             interlocutors: set,
+            bound_stretch: None,
         })
+    }
+
+    /// This clamp for a context pack bound to the live room stretch
+    /// `session_ref` names, whose every interlocutor is seated in that room
+    /// (ARCH-0052 D5 rule 1, ROOM-PACK-STRETCH-TIER-A = A): the stretch's
+    /// own rows are not Tier A by rule 1, so they meet the audience's
+    /// clearance (P7) as a base row does. Only the stretch's own bind sets
+    /// it ([`crate::off_record::RoomPackSession::bind_disclosure`]).
+    #[must_use]
+    pub(crate) fn bound_to_stretch(self, session_ref: &str) -> Self {
+        Self {
+            bound_stretch: Some(session_ref.to_owned()),
+            ..self
+        }
     }
 
     #[must_use]
@@ -457,7 +477,14 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
-        if !Self::below_tier_a(store, rtxn, id, entity_type, claim_body)? {
+        if !Self::below_tier_a_bound(
+            store,
+            rtxn,
+            id,
+            entity_type,
+            claim_body,
+            self.bound_stretch.as_deref(),
+        )? {
             return Ok(false);
         }
         if entity_type == ENTITY_TYPE_TURN && !self.admits_turn_messages(store, rtxn, id)? {
@@ -517,6 +544,19 @@ impl DisclosureContext {
         entity_type: u8,
         claim_body: Option<&ClaimBody>,
     ) -> Result<bool> {
+        Self::below_tier_a_bound(store, rtxn, id, entity_type, claim_body, None)
+    }
+
+    /// [`Self::below_tier_a`] in an assembly bound to the live room stretch
+    /// `bound_stretch` names, as [`disclosure_tier_bound`] judges it.
+    fn below_tier_a_bound(
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+        bound_stretch: Option<&str>,
+    ) -> Result<bool> {
         // Signed claim-history controls are transport/audit bytes, never
         // agent-visible content to any audience but the owner alone.
         // Scoped sync has its own authenticated closure and effective-scope door.
@@ -547,7 +587,10 @@ impl DisclosureContext {
         } else {
             None
         };
-        Ok(disclosure_tier(store, rtxn, id, entity_type, body)? != DisclosureTier::TierA)
+        Ok(
+            disclosure_tier_bound(store, rtxn, id, entity_type, body, bound_stretch)?
+                != DisclosureTier::TierA,
+        )
     }
 
     /// Whether the clamp admits every MESSAGE `PartOf` `turn`. An erased

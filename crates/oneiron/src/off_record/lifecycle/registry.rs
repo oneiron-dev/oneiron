@@ -330,6 +330,25 @@ impl OffRecordSessionRegistry {
         Ok(false)
     }
 
+    /// Whether `id` is a member of the live session `session_ref`'s overlay
+    /// and of no other live overlay: a row of that stretch's own, as a
+    /// context pack bound to it reads it (ARCH-0052 D5 rule 1,
+    /// ROOM-PACK-STRETCH-TIER-A = A). Unlike [`Self::owning_session_ref`],
+    /// which names any one live owner, a second live owner answers `false`.
+    pub(crate) fn is_member_only_of(&self, id: &EntityId, session_ref: &str) -> Result<bool> {
+        let sessions = self.published.load();
+        let mut member = false;
+        for (live_ref, entry) in sessions.iter() {
+            if entry.published_record.load().is_some() && entry.overlay.contains_entity(id)? {
+                if live_ref != session_ref {
+                    return Ok(false);
+                }
+                member = true;
+            }
+        }
+        Ok(member)
+    }
+
     /// The live session that owns `id` as an overlay member, if any (K7).
     ///
     /// Ownership is unique by construction: conversation shells are allocated
