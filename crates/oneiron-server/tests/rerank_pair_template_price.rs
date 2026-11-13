@@ -319,7 +319,7 @@ async fn probe() -> Payload {
         "FIXTURE: the recall reranks a block of the seeded passages: {documents:?}"
     );
     let query = u64::try_from(QUERY.len()).expect("query bytes");
-    let word_units = documents
+    let word_units: u64 = documents
         .iter()
         .map(|document| query + u64::try_from(document.len()).expect("document bytes"))
         .sum();
