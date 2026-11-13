@@ -206,8 +206,6 @@ pub(crate) use source_custody::{retire_source_holder_in_txn, stage_source_custod
 #[cfg(test)]
 mod source_replication_tests;
 
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-SOURCE-CUSTODY-TESTS]: the lib test target's type check fails here (12 errors: E0061 x7, E0308 x3, E0599 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod source_custody_tests;
 pub(crate) mod tables;
