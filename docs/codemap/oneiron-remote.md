@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/in_process.rs` | src | s | 3 struct · 1 trait · 1 fn | InProcessReply, InProcessRequest, InProcessStream, InProcessTransport | A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket… |
 | `src/invocation.rs` | src | s | 2 fn · 1 crate-vis | — | Client invocation ids (ARCH-0080 §3, OF-580) |
 | `src/lens_frames.rs` | src | s | 2 struct · 1 enum · 2 fn | CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest | A host-rendered lens card's events and its close (OF-181), over the server routes `POST… |
-| `src/lib.rs` | src | m | 3 struct · 23 fn · 1 mod · 6 re-export | HostRootProfile, OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
+| `src/lib.rs` | src | m | 3 struct · 24 fn · 1 mod · 6 re-export | HostRootProfile, OneironClient, OpenOptions | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) |
 | `src/llm.rs` | src | s | 1 struct · 1 trait · 2 fn | OwnServerTransport, RemoteLlmClient | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
 | `src/llm/response.rs` | src | s | 2 crate-vis | — | Async raw-LLM replies decode without retaining a whole raw body |
 | `src/native_limit_questions.rs` | src | s | 1 struct · 3 crate-vis | NativeLimitQuestion | Native SDK host snapshots of the shared vault's engine-limit crossings |
@@ -38,6 +38,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/tests.rs` | test | s | — | — | — |
 | `src/remote/wire.rs` | src | s | 3 crate-vis | — | The transport seam under [`RemoteClient`] (OF-237): what carries a request this client signed, and the reply… |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
+| `tests/dreamer_attempt_binding.rs` | test | m | — | — | A strength attempt's job client (untangle 6.9c PR 3, RULING S69C-DESIGN item 5)… |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
 | `tests/facade_contract.rs` | test | s | — | — | ONE-1441 shared-backend contract tests (blueprint §Test/Shared #1–#4) |
 | `tests/key_value_contract.rs` | test | s | — | — | The dispatcher exposes exact keyed memory, not recall reconstruction |
