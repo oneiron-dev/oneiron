@@ -81,20 +81,35 @@ impl AgentDispatcher<'_> {
         if units == 0 {
             return Ok(());
         }
-        let key = row_key(scope, lease);
         let mut txn = self.vault.store.env.write_txn()?;
-        let staged = match PENDING.get(&self.vault.store, &txn, &key)? {
+        self.stage_lease_spend_in_txn(&mut txn, scope, lease, units)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// [`Self::stage_lease_spend`] in the caller's write transaction `txn`,
+    /// so the stage commits with what else the caller writes there, or not
+    /// at all: a scoped media job stages its end's part in the commit that
+    /// writes its end row or its delete, so no restart takes up a job whose
+    /// end is staged ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH]).
+    #[doc(hidden)]
+    pub fn stage_lease_spend_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        scope: &SpendScopeId,
+        lease: EntityId,
+        units: u64,
+    ) -> Result<()> {
+        if units == 0 {
+            return Ok(());
+        }
+        let key = row_key(scope, lease);
+        let staged = match PENDING.get(&self.vault.store, txn, &key)? {
             Some(value) => row_units(&value)?,
             None => 0,
         };
         let total = staged.saturating_add(units);
-        PENDING.put(
-            &self.vault.store,
-            &mut txn,
-            &key,
-            &total.to_be_bytes().to_vec(),
-        )?;
-        txn.commit()?;
+        PENDING.put(&self.vault.store, txn, &key, &total.to_be_bytes().to_vec())?;
         Ok(())
     }
 

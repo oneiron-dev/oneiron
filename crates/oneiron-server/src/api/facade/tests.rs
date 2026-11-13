@@ -437,10 +437,16 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     .await;
     assert_ne!(status, StatusCode::OK);
     let claim = json!({"room_ref":room.to_hex(),"turn_ref":turn});
-    let (status, outcome) = post(&server, &other_token, "rooms.claim", claim.clone()).await;
+    let (status, outcome) = post(&server, &other_token, "vault.rooms.claim", claim.clone()).await;
     assert_eq!(status, StatusCode::OK, "{outcome}");
     assert_eq!(outcome, json!("NotAddressed"));
-    let (status, claimed) = post(&server, &addressed_token, "rooms.claim", claim.clone()).await;
+    let (status, claimed) = post(
+        &server,
+        &addressed_token,
+        "vault.rooms.claim",
+        claim.clone(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{claimed}");
     assert_eq!(claimed["Claimed"]["actor"], addressed.to_hex());
     assert!(
@@ -450,7 +456,7 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
             .starts_with("rooms.claim:")
     );
     assert_eq!(
-        post(&server, &addressed_token, "rooms.claim", claim)
+        post(&server, &addressed_token, "vault.rooms.claim", claim)
             .await
             .1,
         claimed

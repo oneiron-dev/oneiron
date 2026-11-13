@@ -312,8 +312,35 @@ impl AttemptQueue<'_> {
             .into_iter()
             .filter(|record| record.task_ref.as_deref() == Some(task_ref))
             .collect();
-        let mut seen: HashSet<AttemptId> = records.iter().map(|record| record.id).collect();
-        let mut pending: VecDeque<AttemptId> = records.iter().map(|record| record.id).collect();
+        let descendants =
+            self.descendant_ids_in_txn(txn, records.iter().map(|record| record.id))?;
+        // Each row is decoded once: the TASK's own above, its descendants here.
+        records.extend(self.working_rows_in_txn(txn, descendants)?);
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
+    /// The working rows under `roots` in the run tree, every state, the roots
+    /// themselves left out; creation order. What an agent's runs spawned
+    /// (AUTHOR-OFF, `agent_def::made_by`).
+    pub(crate) fn descendant_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        roots: impl IntoIterator<Item = AttemptId>,
+    ) -> Result<Vec<AttemptRecord>> {
+        let descendants = self.descendant_ids_in_txn(txn, roots)?;
+        self.working_rows_in_txn(txn, descendants)
+    }
+
+    /// The ids under `roots` in the run tree, breadth first, each once; the
+    /// roots themselves left out.
+    fn descendant_ids_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        roots: impl IntoIterator<Item = AttemptId>,
+    ) -> Result<Vec<AttemptId>> {
+        let mut pending: VecDeque<AttemptId> = roots.into_iter().collect();
+        let mut seen: HashSet<AttemptId> = pending.iter().copied().collect();
         let mut descendants = Vec::new();
         while let Some(parent) = pending.pop_front() {
             for child in
@@ -325,10 +352,7 @@ impl AttemptQueue<'_> {
                 }
             }
         }
-        // Each row is decoded once: the TASK's own above, its descendants here.
-        records.extend(self.working_rows_in_txn(txn, descendants)?);
-        records.sort_by(attempt_record_order);
-        Ok(records)
+        Ok(descendants)
     }
 
     /// The rows the workflow pump's wake reads (FIX 11318): every Queued or

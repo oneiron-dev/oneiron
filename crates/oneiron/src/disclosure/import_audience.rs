@@ -139,7 +139,7 @@ impl Vault {
                 .map(|option| option.audience)
                 .ok_or_else(invalid)?;
             let rule = import_audience_rule_ref(topic)?;
-            let claim = ClaimBody::new(
+            let mut claim = ClaimBody::new(
                 PREDICATE_DISCLOSURE_IMPORT_AUDIENCE,
                 ClaimSubject::Entity(*topic),
                 import_audience_value(*topic, audience, seq),
@@ -147,6 +147,8 @@ impl Vault {
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
             )?;
+            // The topic is a derived id with no row, so it has no FACET.
+            claim.scope_facet = self.claim_put_facet_in_txn(txn, &rule)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             self.put_disclosure_claim_in_txn(txn, &rule, &claim, now)?;
             cluster.state = ImportAudienceState::Settled {

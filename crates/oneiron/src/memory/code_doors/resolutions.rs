@@ -5,6 +5,7 @@
 use super::proposals::{fork_hex, owner_submission};
 use super::*;
 use crate::critic::{CritiqueArtifact, CritiqueProvenance};
+use crate::repo_mutation::proposal::OwnerRequestAttribution;
 use crate::store::repo_mutation_record::RepoMutationOperation;
 use crate::{
     repo_mutation::proposal::RepoProposal, store::repo_proposal_record::RepoProposalOperation,
@@ -16,19 +17,28 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeProposalResolveRequest,
     ) -> MemoryResult<CodeProposalSubmitted> {
-        self.code_proposal_resolve(owner, input, None)
+        let attribution = OwnerRequestAttribution::new("vault.code.proposal_resolve", &input)?;
+        self.code_proposal_resolve(owner, input, None, &attribution)
     }
 
     /// Submits a fresh redacted review of an approved conflict resolution.
-    /// Fresh owner attribution and the current conflict checks are retained;
-    /// the engine fills content without copying the original's authority.
+    /// Fresh engine attribution and the current conflict checks are
+    /// retained; the engine fills content without copying the original's
+    /// authority.
     pub fn code_proposal_resolve_rereview_as(
         &self,
         owner: &AuthenticatedOwner,
         original: EntityId,
         input: CodeProposalResolveRequest,
     ) -> MemoryResult<CodeProposalSubmitted> {
-        self.code_proposal_resolve(owner, input, Some(original))
+        let attribution = OwnerRequestAttribution::new(
+            "vault.code.proposal_resolve_rereview",
+            &CodeProposalResolveRereviewRequest {
+                original,
+                change: input.clone(),
+            },
+        )?;
+        self.code_proposal_resolve(owner, input, Some(original), &attribution)
     }
 
     fn code_proposal_resolve(
@@ -36,6 +46,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: CodeProposalResolveRequest,
         original: Option<EntityId>,
+        attribution: &OwnerRequestAttribution,
     ) -> MemoryResult<CodeProposalSubmitted> {
         let actor = self.code_owner(owner)?;
         let repo = self.code_repo(input.change.repo)?;
@@ -71,12 +82,22 @@ impl Memory<'_> {
             ));
         }
         let row = match original {
-            Some(original) => self
-                .vault
-                .propose_repo_rereview_as_owner(owner, repo_id, original, request, catalog)?,
-            None => self
-                .vault
-                .propose_repo_mutation_as_owner(owner, repo_id, request, catalog, repair_of)?,
+            Some(original) => self.vault.propose_repo_rereview_as_owner(
+                owner,
+                repo_id,
+                original,
+                request,
+                catalog,
+                attribution,
+            )?,
+            None => self.vault.propose_repo_mutation_as_owner(
+                owner,
+                repo_id,
+                request,
+                catalog,
+                repair_of,
+                attribution,
+            )?,
         };
         self.code_submitted(repo_id, actor, &row)
     }

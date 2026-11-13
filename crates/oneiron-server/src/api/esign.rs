@@ -566,6 +566,7 @@ mod tests {
             lifecycle: None,
             token_expires_at: None,
             project: None,
+            commitments: Vec::new(),
         };
         vault
             .create_esign_document(

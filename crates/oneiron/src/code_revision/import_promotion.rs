@@ -131,7 +131,11 @@ impl Vault {
                         start: now,
                         end: now,
                     };
-                    self.put_reserved_claim_in_txn(txn, &id, &approval.claim_body()?, at, now)?;
+                    // The subject is the import manifest, which has no
+                    // FACET of its own.
+                    let mut body = approval.claim_body()?;
+                    body.scope_facet = self.claim_put_facet_in_txn(txn, &id)?;
+                    self.put_reserved_claim_in_txn(txn, &id, &body, at, now)?;
                 }
             }
             if stored.is_none() {

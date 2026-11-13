@@ -363,16 +363,13 @@ impl MediaRuntime {
             drop(held);
             return self.ended(id);
         }
-        let charges = held.charges();
         let state = held.poll().await;
         if let Ok(ended) = &state
             && ended.ended()
         {
             // Its end settled its permit: what that charged reaches the
-            // scope that funds it before its end is written (FIX 11496).
-            if charges {
-                self.book_job_scope(id);
-            }
+            // scope that funds it in the commit that writes its end (FIX
+            // 11496, S7299-P1).
             return self.complete_kept_job(id, ended);
         }
         state
