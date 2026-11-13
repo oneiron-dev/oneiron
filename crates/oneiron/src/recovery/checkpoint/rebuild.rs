@@ -260,6 +260,8 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     // Restored proposals and contact claims bypassed their index writers.
     vault.backfill_widen_contact_verdict_index(true)?;
     crate::counterparty_contact::backfill_counterparty_identity_index(vault, true)?;
+    // Restored MACHINE rows bypassed the body stage's endpoint index writer.
+    vault.backfill_mesh_machine_endpoint_index(true)?;
     // Restored PROJECT rows bypassed the staging hook: keep their chains.
     vault.capture_project_revisions(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;
