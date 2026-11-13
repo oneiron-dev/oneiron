@@ -148105,6 +148105,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/doctor_off_record_dump_suppression.rs",
+     "purpose": "Census row L6-18: `oneiron doctor` reports the operator's core-dump switch for a process that holds an…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/doctor_synced_folder.rs",
      "purpose": "A vault in a folder a sync service watches is named by the shipped binary: `init` prints a warning and…",
      "surface": {}
@@ -149300,7 +149308,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1862,
-   "test_files": 233
+   "test_files": 234
   },
   "oneiron-skill-attribution": {
    "files": [
@@ -156296,6 +156304,18 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session_overlay/dump_suppression.rs",
+     "purpose": "Core-dump suppression for a process that holds off-record room bytes (ARCH-0052 threat-model note…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [
       "ObservedAllocator",
@@ -156350,7 +156370,7 @@
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
      "surface": {
       "mod": 7,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -158383,6 +158403,22 @@
       "static": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session_overlay_dump_suppression.rs",
+     "purpose": "Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/session_overlay_dump_suppression_off.rs",
+     "purpose": "Census row L6-18: the operator's off switch",
+     "surface": {}
     }
    ],
    "modules": {
@@ -159710,7 +159746,7 @@
      "purpose": "Store-layer modules of core `serialize`; core re-exports each one at its old path"
     },
     "session_overlay": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -159950,8 +159986,8 @@
    },
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 643,
-   "test_files": 4
+   "source_files": 644,
+   "test_files": 6
   },
   "oneiron-testkit": {
    "files": [
