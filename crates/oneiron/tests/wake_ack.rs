@@ -1,10 +1,10 @@
 //! Census L8-18 (RC99, ARCH-0067 §7 `#wake-envelope-id`): the host's
 //! acknowledgement of a wake envelope id is recorded on the engine side, in
 //! memory, per occurrence. A second failure's wake of the same TASK is never
-//! lost to the first one's acknowledgement. The failed TASK goes through the
-//! own-task producer (`publish_task_state`) by
-//! `oneiron::test_doors::wake_envelope_ack`, built only under
-//! `--cfg oneiron_test_support`.
+//! lost to the first one's acknowledgement. Each failure's wake is routed as
+//! the own-task producer routes one, under its own envelope id
+//! (`<task id>:failed:<revision>`), by `oneiron::test_doors::wake_envelope_ack`,
+//! built only under `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
@@ -36,7 +36,8 @@ fn acked_envelope_id_is_recorded_per_occurrence() {
     attach(&mut streams, &other, "other-l818");
 
     // The first failure: one envelope, drained to the host.
-    let published = doors::publish_failed_task(&mut streams, TASK, OWNER, "rev-1", &["attempt-1"]);
+    let first_failure = format!("{TASK}:failed:rev-1");
+    let published = doors::route_task_failure(&mut streams, TASK, OWNER, &first_failure);
     assert_eq!(
         published.wake_enqueued, 1,
         "the first failure queues one wake"
@@ -48,7 +49,10 @@ fn acked_envelope_id_is_recorded_per_occurrence() {
         "the host is handed the first failure's wake"
     );
     let first_id = first[0].event_ref.clone();
-    assert_eq!(first_id, format!("{TASK}:failed:rev-1"));
+    assert_eq!(
+        first_id, first_failure,
+        "the wake carries its occurrence's id"
+    );
     assert_eq!(
         streams.wake_delivery(&connection, &first_id),
         Some(WakeDelivery::Handed),
@@ -69,14 +73,10 @@ fn acked_envelope_id_is_recorded_per_occurrence() {
         Some(WakeDelivery::Acked)
     );
 
-    // The same TASK fails again on a new attempt head: a new occurrence.
-    let published = doors::publish_failed_task(
-        &mut streams,
-        TASK,
-        OWNER,
-        "rev-2",
-        &["attempt-1", "attempt-2"],
-    );
+    // The same TASK fails again, at a new committed state: a new occurrence
+    // with its own envelope id.
+    let second_failure = format!("{TASK}:failed:rev-2");
+    let published = doors::route_task_failure(&mut streams, TASK, OWNER, &second_failure);
     assert_eq!(
         published.wake_enqueued, 1,
         "the second failure queues its own wake"
@@ -88,7 +88,10 @@ fn acked_envelope_id_is_recorded_per_occurrence() {
         "the second failure's wake is not lost to the first one's acknowledgement"
     );
     let second_id = second[0].event_ref.clone();
-    assert_eq!(second_id, format!("{TASK}:failed:rev-2"));
+    assert_eq!(
+        second_id, second_failure,
+        "the wake carries its occurrence's id"
+    );
     assert_eq!(
         streams.wake_delivery(&connection, &second_id),
         Some(WakeDelivery::Handed),

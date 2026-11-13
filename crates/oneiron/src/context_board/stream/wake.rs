@@ -127,3 +127,25 @@ impl BoardStreamRegistry {
             .map(|(_, delivery)| *delivery)
     }
 }
+
+#[cfg(oneiron_test_support)]
+impl BoardStreamRegistry {
+    /// Routes TASK `task_ref`'s failure wake to owner `owner_ref`, as the
+    /// own-task producer routes one, under envelope id `event_ref`, for
+    /// `test_doors::wake_envelope_ack`. Never API.
+    pub(crate) fn route_task_failure_for_test_door(
+        &mut self,
+        task_ref: &str,
+        owner_ref: &str,
+        event_ref: &str,
+    ) -> super::events::RouteObservation {
+        self.route_event(super::events::BoardEvent::OwnTaskFailed {
+            event: super::provenance::VerifiedOwnTaskEvent {
+                task_ref: task_ref.to_owned(),
+                actor_ref: owner_ref.to_owned(),
+                event_ref: event_ref.to_owned(),
+            },
+            line: format!("{task_ref} failed"),
+        })
+    }
+}
