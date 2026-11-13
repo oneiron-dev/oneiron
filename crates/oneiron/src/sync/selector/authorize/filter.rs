@@ -97,18 +97,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // (federation:G, co-ownership is direct access to the whole vault).
     // Admin, Steward, Member, Viewer, Delegate and Guest grants are gated. An
     // owner check that fails gates.
-    let member_access = if grant.role == crate::federation::FederationGrantRole::Owner
-        || crate::memory::owner_exemption_holds_in_txn(vault, &rtxn, grant.member_ref)
-            .unwrap_or(false)
-    {
-        None
-    } else {
-        Some(crate::access_grant::AccessContext::load(
-            vault,
-            &rtxn,
-            Some(grant.member_ref),
-        )?)
-    };
+    let member_access = member_label_access(vault, &rtxn, &grant)?;
     // Credentials never leave through a selector, whatever the carrier says, and neither does
     // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
@@ -525,12 +514,34 @@ pub(in crate::sync::selector) fn filter_window_doc(
     Ok(out)
 }
 
+/// The access context `grant`'s member reads with at the relationship gate
+/// (FIX SELECTOR-RELATIONSHIP-LABELS): `None` for an Owner's member, the
+/// vault owner or a co-Owner on an Owner-role grant, which reads every row.
+/// An owner check that fails gates.
+pub(in crate::sync::selector) fn member_label_access<'v>(
+    vault: &'v Vault,
+    rtxn: &heed::RoTxn<'_>,
+    grant: &crate::federation::FederationGrant,
+) -> Result<Option<crate::access_grant::AccessContext<'v>>> {
+    if grant.role == crate::federation::FederationGrantRole::Owner
+        || crate::memory::owner_exemption_holds_in_txn(vault, rtxn, grant.member_ref)
+            .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+    Ok(Some(crate::access_grant::AccessContext::load(
+        vault,
+        rtxn,
+        Some(grant.member_ref),
+    )?))
+}
+
 /// Whether the selector's member reads the row `raw` of `id` at the
 /// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
 /// Owner's member (the vault owner, or a co-Owner on an Owner-role grant),
 /// which reads every row. A CLAIM body that does not decode is withheld, as
 /// the causal check withholds it.
-fn member_reads_labels(
+pub(in crate::sync::selector) fn member_reads_labels(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     member: Option<&crate::access_grant::AccessContext<'_>>,
