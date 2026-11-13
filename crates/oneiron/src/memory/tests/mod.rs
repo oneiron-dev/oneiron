@@ -29,8 +29,6 @@ mod session_union_reads;
 mod session_witness;
 mod shared_effects;
 mod support;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-TAKES-NOTES]: the lib test target's type check fails here (12 errors: E0308 x10, E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod takes_notes;
 // FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-WITNESS-POLICY]: the lib test target's type check fails here (22 errors: E0063 x21, E0061 x1); port it, then drop this gate
 #[cfg(any())]

@@ -77,8 +77,6 @@ mod scoped_policy_values;
 mod scoped_read;
 mod special_doors;
 mod support;
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-TRUST-BOUNDARY]: the lib test target's type check fails here (15 errors: E0061 x9, E0308 x6); port it, then drop this gate
-#[cfg(any())]
 mod trust_boundary;
 mod vad_vetting;
 mod witness_message;

@@ -66,8 +66,6 @@ use crate::sync::SyncQueue;
 pub(crate) mod batch_temporal;
 pub(crate) mod claim_lifecycle;
 pub(crate) mod claim_vad;
-// FIX [LIBTEST-QUARANTINE-TESTS-CLAIMS]: the lib test target's type check fails here (12 errors: E0061 x12); port it, then drop this gate
-#[cfg(any())]
 pub(crate) mod claims;
 pub(crate) mod deletion;
 pub(crate) mod edge_prov_lifecycle;
