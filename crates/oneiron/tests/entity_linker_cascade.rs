@@ -3,11 +3,14 @@
 //! A person's name of two or more parts that the identity key misses is
 //! looked up next over the phonetic postings every PERSON birth writes: a
 //! person sounds like it who holds its whole romaji or kana code, or the
-//! Soundex code of every one of its parts. One person who sounds like the
-//! name is its candidate. Two or more stay candidates together: the nightly
-//! identity re-check asks which one it is (IDENTITY_SETTLE), and nothing is
-//! merged. A first name alone keeps the old path, a provisional entity, and
-//! so does a name whose parts sound unlike every person's.
+//! Soundex code of every one of its parts. Two or more people who sound like
+//! the name stay candidates together: the nightly identity re-check asks
+//! which one it is (IDENTITY_SETTLE), and nothing is merged. One person alone
+//! is an unsure match (OF-123): the mention mints its own provisional person,
+//! as on main, the re-check asks whether it is that person or someone new,
+//! and an agent about to act on the name asks first. A first name alone
+//! mints with no ask, as on main, and so does a name whose parts sound unlike
+//! every person's.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test entity_linker_cascade`.
@@ -19,14 +22,21 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::batch::generate_phonetic_codes;
-use oneiron::dreamer_runner::maintenance::identity::IdentityAskReason;
+use oneiron::dreamer_runner::maintenance::identity::{
+    IdentityActNow, IdentityActNowRequest, IdentityAskReason, IdentityEffect,
+};
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::extraction::{EncoderOutput, NerSpan};
-use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{
+    MEMORY_CODE_IDENTITY_UNSETTLED, MessagePersonRequest, WitnessAssertions, WitnessAuthor,
+    WitnessMessage, WitnessTurn,
+};
+use oneiron::outbound::MentionProvenance;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::tagging::{HeldTagsOutcome, MentionLink, TaggingMarkerConfig, TaggingMode};
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::identity_recheck::run_identity_recheck;
+use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const CHECKPOINT: &str = "0123456789abcdef";
@@ -40,8 +50,8 @@ fn now_seconds() -> u64 {
         .as_secs()
 }
 
-/// A vault whose tagger saves its tags, mapping the `PERSON` label.
-fn open(dir: &tempfile::TempDir) -> Arc<Vault> {
+/// A device config whose tagger saves its tags, mapping the `PERSON` label.
+fn tagging_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.tagging = Some(
         TaggingMarkerConfig::new(CHECKPOINT)
@@ -49,7 +59,12 @@ fn open(dir: &tempfile::TempDir) -> Arc<Vault> {
             .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
             .with_mode(TaggingMode::Save),
     );
-    Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    config
+}
+
+/// A vault whose tagger saves its tags.
+fn open(dir: &tempfile::TempDir) -> Arc<Vault> {
+    Arc::new(Vault::open(dir.path(), tagging_config()).expect("open vault"))
 }
 
 /// A PERSON named `name`; its birth writes its identity hints and its
@@ -68,11 +83,16 @@ fn person(vault: &Vault, name: &str) -> EntityId {
     id
 }
 
-/// Witnesses `text` as one turn whose held tags name `name` in it as a
-/// `PERSON`, saved in the witness write; returns the turn and the saved
-/// link of that one mention.
+/// [`save_as`], said by a fresh PERSON.
 fn save(vault: &Vault, text: &str, name: &str) -> (EntityId, MentionLink) {
     let speaker = person(vault, "fixture speaker");
+    save_as(vault, speaker, text, name)
+}
+
+/// Witnesses `text` as one turn of `author` whose held tags name `name` in
+/// it as a `PERSON`, saved in the witness write; returns the turn and the
+/// saved link of that one mention.
+fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId, MentionLink) {
     let start = text.find(name).expect("the name is in the text");
     let turn = WitnessTurn {
         conversation_ref: ROOM.into(),
@@ -108,7 +128,7 @@ fn save(vault: &Vault, text: &str, name: &str) -> (EntityId, MentionLink) {
         mood_parts: Vec::new(),
     };
     let (_, outcome) = vault
-        .memory(speaker, EdgeActorClass::Human)
+        .memory(author, EdgeActorClass::Human)
         .witness_with_held_tags(&turn, &tags)
         .expect("witness with held tags");
     assert!(
@@ -125,11 +145,12 @@ fn save(vault: &Vault, text: &str, name: &str) -> (EntityId, MentionLink) {
 }
 
 /// "Owan Smyth" is no name or alias of Owen Smith, so the identity key
-/// misses it. He is the one person it sounds like, so the mention is his
-/// candidate, and no provisional entity is minted. One candidate is a soft
-/// link, so the nightly re-check asks nothing. Main mints one.
+/// misses it. He is the one person it sounds like, which is an unsure
+/// match: the mention mints its own provisional person, and the nightly
+/// re-check opens one IDENTITY_SETTLE ask, Owen Smith or someone new. Main
+/// mints and asks nothing.
 #[test]
-fn a_near_spelling_links_to_the_one_person_it_sounds_like() {
+fn a_lone_sound_match_mints_and_the_recheck_asks_about_it() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(&dir);
     let owen = person(&vault, "Owen Smith");
@@ -141,17 +162,9 @@ fn a_near_spelling_links_to_the_one_person_it_sounds_like() {
         "the identity key misses the spelling"
     );
 
-    let (_, link) = save(&vault, "Owan Smyth called.", "Owan Smyth");
+    let (turn, link) = save(&vault, "Owan Smyth called.", "Owan Smyth");
 
-    assert_eq!(
-        link,
-        MentionLink::Candidates {
-            kind: ENTITY_TYPE_PERSON,
-            entities: vec![owen],
-        }
-    );
-    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
-    assert!(asks.is_empty(), "one candidate opens no ask: {asks:?}");
+    assert_asks_whether_it_is(&vault, (turn, link), "Owan Smyth", owen);
 }
 
 /// Two people sound like "Owan Smyth". The mention keeps both as candidates,
@@ -192,42 +205,100 @@ fn two_people_who_sound_alike_raise_a_settle_ask_and_stay_two() {
 }
 
 /// A kana spelling of a name shares its romaji key with the Latin one, so
-/// "もり ゆき" is a candidate of Mori Yuki. Main mints one.
+/// "もり ゆき" sounds like Mori Yuki alone: it mints, and the nightly
+/// re-check asks whether it is Mori Yuki. Main mints and asks nothing.
 #[test]
-fn a_kana_spelling_links_to_the_romaji_name() {
+fn a_kana_spelling_is_asked_about_the_romaji_name() {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(&dir);
     let yuki = person(&vault, "Mori Yuki");
 
-    let (_, link) = save(&vault, "もり ゆきが来た。", "もり ゆき");
+    let (turn, link) = save(&vault, "もり ゆきが来た。", "もり ゆき");
 
+    assert_asks_whether_it_is(&vault, (turn, link), "もり ゆき", yuki);
+}
+
+/// An agent about to act on a lone sound match asks first (OF-123). With
+/// only John Smith in the vault, "Jon Smyth" mints. A message to John Smith
+/// that names that mention as its source is refused IDENTITY_UNSETTLED, and
+/// `self.identity.settle` opens the act-now ask, John Smith or someone new.
+/// On main the mention's own provisional settles it at once, so the message
+/// is not refused.
+#[test]
+fn an_effect_on_a_lone_sound_match_asks_first() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault =
+        Arc::new(open_member_vault(dir.path(), tagging_config(), &[]).expect("fixture vault"));
+    let (owner, _proof) = embedded_owner(&vault).expect("the owner");
+    let john = person(&vault, "John Smith");
+
+    let (turn, link) = save_as(&vault, owner, "Jon Smyth called.", "Jon Smyth");
+    let provisional = assert_mints(&vault, link);
+    let tags = vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("the turn has saved tags");
+    let mention = &tags.mentions[0];
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+
+    let refused = memory
+        .message_person(&MessagePersonRequest {
+            pr: john.to_hex(),
+            text: "The meeting moved to noon.".to_owned(),
+            mention: Some(MentionProvenance {
+                turn: turn.to_hex(),
+                message: mention.message.to_hex(),
+                start: u64::try_from(mention.start).expect("span start"),
+                end: u64::try_from(mention.end).expect("span end"),
+            }),
+            from_project: None,
+            to_project: None,
+        })
+        .expect_err("a message to a lone sound match waits for its ask");
+    assert_eq!(refused.code, MEMORY_CODE_IDENTITY_UNSETTLED, "{refused:?}");
+
+    let opened = memory
+        .identity_act_now(&IdentityActNowRequest {
+            name: "Jon Smyth".to_owned(),
+            conversation: None,
+            effect: IdentityEffect::Send,
+            prompt: "Which Jon Smyth?".to_owned(),
+            someone_new: "Someone new".to_owned(),
+            provisional: None,
+        })
+        .expect("the act-now ask");
+    assert!(
+        matches!(opened, IdentityActNow::Deciding { .. }),
+        "a lone sound match opens the act-now ask: {opened:?}"
+    );
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    let ask = &asks[0];
+    assert_eq!(ask.name, "Jon Smyth");
     assert_eq!(
-        link,
-        MentionLink::Candidates {
-            kind: ENTITY_TYPE_PERSON,
-            entities: vec![yuki],
+        ask.reason,
+        IdentityAskReason::ActNow {
+            effect: IdentityEffect::Send
         }
+    );
+    assert_eq!(ask.provisional, Some(provisional));
+    assert_eq!(
+        ask.candidates.iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([john, provisional])
     );
 }
 
-/// A first name alone is too common to name one person by its sound: "Owan"
-/// takes no phonetic link to Owen Smith and mints a provisional entity, as
-/// on main.
+/// A first name alone is too common to name one person by its sound:
+/// "Owan" mints and is not asked about Owen Smith, as on main.
 #[test]
 fn a_first_name_alone_takes_no_phonetic_link() {
-    let dir = tempfile::tempdir().expect("dir");
-    let vault = open(&dir);
-    person(&vault, "Owen Smith");
-
-    let (_, link) = save(&vault, "Owan called.", "Owan");
-
-    assert_mints(&vault, link);
+    assert_no_phonetic_link("Owen Smith", "Owan");
 }
 
 /// "Robert Jones" and Robert Smith share the Soundex code of the whole
 /// name, R163, because the first name's consonants fill all four of its
-/// characters. The last names' own codes, J520 and S530, differ, so Robert
-/// Smith is not a candidate and the mention mints, as on main.
+/// characters. The last names' own codes, J520 and S530, differ, so the
+/// mention mints and is not asked about Robert Smith, as on main.
 #[test]
 fn a_shared_first_name_takes_no_phonetic_link() {
     assert_no_phonetic_link("Robert Smith", "Robert Jones");
@@ -235,7 +306,7 @@ fn a_shared_first_name_takes_no_phonetic_link() {
 
 /// "Owen Snow" and Owen Smith share the Soundex code of the whole name,
 /// O525, which stops inside the last name. The last names' own codes, S500
-/// and S530, differ, so the mention mints, as on main.
+/// and S530, differ, so the mention mints with no ask, as on main.
 #[test]
 fn a_last_name_that_sounds_different_takes_no_phonetic_link() {
     assert_no_phonetic_link("Owen Smith", "Owen Snow");
@@ -243,22 +314,23 @@ fn a_last_name_that_sounds_different_takes_no_phonetic_link() {
 
 /// A family name written first fills the whole name's Soundex code alone:
 /// "Morimoto Owen" and Morimoto Yuki are both M653. The given names' codes,
-/// O500 and Y200, differ, so the mention mints, as on main.
+/// O500 and Y200, differ, so the mention mints with no ask, as on main.
 #[test]
 fn a_shared_family_name_written_first_takes_no_phonetic_link() {
     assert_no_phonetic_link("Morimoto Yuki", "Morimoto Owen");
 }
 
 /// A part of combining marks alone is no part once the marks are stripped:
-/// "Owan \u{301}" is a first name alone, so it takes no phonetic link to
-/// Owen Smith and mints, as on main.
+/// "Owan \u{301}" is a first name alone, so it mints and is not asked about
+/// Owen Smith, as on main.
 #[test]
 fn a_part_of_marks_alone_takes_no_phonetic_link() {
     assert_no_phonetic_link("Owen Smith", "Owan \u{301}");
 }
 
 /// With only `person_name` in the vault, a mention of `mention` is not
-/// their candidate: it mints a provisional person.
+/// matched to them: it mints a provisional person, and the nightly
+/// re-check opens no ask.
 fn assert_no_phonetic_link(person_name: &str, mention: &str) {
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(&dir);
@@ -267,10 +339,37 @@ fn assert_no_phonetic_link(person_name: &str, mention: &str) {
     let (_, link) = save(&vault, &format!("{mention} called."), mention);
 
     assert_mints(&vault, link);
+    let asks = run_identity_recheck(&vault, now_seconds()).expect("recheck");
+    assert!(asks.is_empty(), "no ask follows: {asks:?}");
 }
 
-/// The mention minted a provisional person: it is no one's candidate.
-fn assert_mints(vault: &Vault, link: MentionLink) {
+/// The mention `name` in `turn` minted its own provisional person, and the
+/// nightly re-check opened one IDENTITY_SETTLE ask: is it `real`, or
+/// someone new?
+fn assert_asks_whether_it_is(
+    vault: &Vault,
+    (turn, link): (EntityId, MentionLink),
+    name: &str,
+    real: EntityId,
+) {
+    let provisional = assert_mints(vault, link);
+    let asks = run_identity_recheck(vault, now_seconds()).expect("recheck");
+    assert_eq!(asks.len(), 1, "one ask for the one mention: {asks:?}");
+    let ask = &asks[0];
+    assert_eq!(ask.kind, ENTITY_TYPE_PERSON);
+    assert_eq!(ask.name, name);
+    assert_eq!(ask.turn, turn);
+    assert_eq!(ask.reason, IdentityAskReason::Unsettled);
+    assert_eq!(ask.provisional, Some(provisional));
+    assert_eq!(
+        ask.candidates.iter().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([real, provisional])
+    );
+}
+
+/// The mention minted a provisional person, which is returned: it is no
+/// one's candidate.
+fn assert_mints(vault: &Vault, link: MentionLink) -> EntityId {
     let MentionLink::Minted { kind, entity } = link else {
         panic!("the mention mints: {link:?}");
     };
@@ -281,6 +380,7 @@ fn assert_mints(vault: &Vault, link: MentionLink) {
             .expect("provisional read")
             .is_some()
     );
+    entity
 }
 
 /// The codes a write posts are the ones main posts: the linker's whole-name
