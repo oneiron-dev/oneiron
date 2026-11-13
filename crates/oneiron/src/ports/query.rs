@@ -318,7 +318,10 @@ pub(crate) const PHONETIC_IDS_PER_CHECKPOINT: usize = 256;
 pub(crate) fn phonetic_checkpoint(
     deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<()> {
-    deadline.map_or(Ok(()), crate::retrieval_depth::RetrievalDeadline::checkpoint)
+    deadline.map_or(
+        Ok(()),
+        crate::retrieval_depth::RetrievalDeadline::checkpoint,
+    )
 }
 
 /// Read half used by retrieval pipelines that hold only a storage snapshot.
@@ -334,9 +337,9 @@ pub trait RetrievalIndexRead: Transactions {
     }
     /// [`Self::port_retrieval_phonetic_search`] under a retrieval deadline:
     /// it checks in before each code's posting, every
-    /// [`PHONETIC_IDS_PER_CHECKPOINT`] ids inside one, and before the final
+    /// `PHONETIC_IDS_PER_CHECKPOINT` ids inside one, and before the final
     /// sort, so a stage past its share stops there with
-    /// [`crate::error::Error::RetrievalStageCut`] instead of reading every posting.
+    /// `Error::RetrievalStageCut` instead of reading every posting.
     fn port_retrieval_phonetic_search_with_deadline(
         &self,
         txn: &Self::Read<'_>,
