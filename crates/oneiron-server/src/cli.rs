@@ -308,6 +308,12 @@ pub struct EmbedderServeArgs {
     /// a bearer token. Never the key itself.
     #[arg(long)]
     pub api_key_env: Option<String>,
+    /// TOML file of `[[account]]` rows, each an `id` and `key_sha256`, the
+    /// SHA-256 digest of that account's own bearer key in hex: a request may
+    /// send any account's key, as well as the `--api-key-env` key. Re-read
+    /// on SIGHUP, so one account is added or revoked without a restart.
+    #[arg(long)]
+    pub accounts_file: Option<PathBuf>,
     /// Another name a request's `model` may give, beside the model id.
     #[arg(long = "model-alias")]
     pub model_aliases: Vec<String>,

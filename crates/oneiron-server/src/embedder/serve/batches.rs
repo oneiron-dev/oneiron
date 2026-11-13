@@ -33,6 +33,7 @@ use axum::response::Response;
 use base64::Engine as _;
 use serde::Serialize;
 
+use super::accounts::Caller;
 use super::budget::{Fixed, answer_bytes, encoding_bytes};
 use super::{ANSWER_PIECE, EmbeddingRow, Encoded, MAX_INPUTS, Served, Usage, refuse, waited_out};
 use crate::admission::Permit;
@@ -52,6 +53,9 @@ pub(super) struct EmbeddingRequestWork {
     /// The client reads an `error` member that ends an answer a later batch
     /// could not complete ([`error_terminal`]).
     pub(super) error_member: bool,
+    /// Whose key the request carried: an account's input tokens count
+    /// toward its day ([`super::accounts`]).
+    pub(super) caller: Caller,
 }
 
 /// What the transport takes of an answer: its pieces, or the error that
@@ -183,6 +187,9 @@ async fn embed_request_batches(
     if embedded.rows.len() != range.len() || embedded.tokens_per_item.len() != range.len() {
         return Err(BatchFailure::Embedding);
     }
+    // The model has done the work, so it counts toward the account's day
+    // whatever becomes of the answer.
+    served.count_input_tokens(&work.caller, embedded.tokens);
     let mut rows = Fixed(Vec::with_capacity(encoding_bytes(range.len(), dimensions)));
     for (offset, (row, input_tokens)) in embedded
         .rows
