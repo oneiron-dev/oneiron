@@ -304,6 +304,12 @@ name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The rerank pair template price cases root their owner on a `MemoryKeystore` too.
+[[test]]
+name = "rerank_pair_template_price"
+path = "tests/rerank_pair_template_price.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 
