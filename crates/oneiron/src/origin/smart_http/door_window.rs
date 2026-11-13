@@ -210,8 +210,8 @@ pub(super) fn serve_door_window(
         // taken on this door thread; the serving thread holds that coordinator.
         // A checkout push's ref moves and changed paths go to the writer,
         // which rechecks the push's authority (G1-PUSH) and names a refusal.
-        // The owner's leave for each rewrite of the protected ref is spent
-        // there too (L8-51).
+        // The owner's leave for each deletion or rewrite of the protected ref
+        // is spent there too (L8-51).
         let recorded = context
             .admission
             .ok_or_else(|| receive_pack_provenance_refused("intent has no admission"))

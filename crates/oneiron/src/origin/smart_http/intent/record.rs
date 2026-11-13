@@ -2,8 +2,8 @@
 //! admitted push while pre-receive still blocks every ref effect. A push
 //! admitted with its keys marked (FIX 7608) writes those marks in the same
 //! transaction, so marks and intent commit together or not at all. The
-//! owner's leave for each rewrite of the protected ref the door let pass
-//! (L8-51) is spent there too, last, so one leave lands one move.
+//! owner's leave for each deletion or rewrite of the protected ref the door
+//! let pass (L8-51) is spent there too, last, so one leave lands one move.
 
 use std::path::Path;
 
