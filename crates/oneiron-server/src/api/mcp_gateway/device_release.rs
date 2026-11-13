@@ -71,20 +71,12 @@ fn carrier_releases_toward(
 ) -> bool {
     let mut rows = rider_rows.to_vec();
     if let oneiron::context_board::FrameKind::Delta(delta) = &frame.kind {
-        for row in delta {
-            if let Some(task) = row.key.strip_prefix("tasks:") {
-                rows.extend(oneiron::EntityId::from_hex(task).ok());
-            } else if let Some(child) = row
-                .key
-                .strip_prefix(oneiron::context_board::CHILD_DONE_KEY_PREFIX)
-                && !matches!(
-                    oneiron::context_board::child_release_hold(vault, child, destination),
-                    Ok(None)
-                )
-            {
-                return false;
-            }
-        }
+        rows.extend(
+            delta
+                .iter()
+                .filter_map(|row| row.key.strip_prefix("tasks:"))
+                .filter_map(|task| oneiron::EntityId::from_hex(task).ok()),
+        );
     }
     serde_json::to_vec(frame).is_ok_and(|bytes| {
         let hold = crate::device_local::retained_hold(vault, destination, &rows, &bytes);
