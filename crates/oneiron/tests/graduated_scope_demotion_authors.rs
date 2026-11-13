@@ -13,7 +13,7 @@
 //! The shipped grant rows give the `policy.change` verb to no role, so the
 //! owner first lets the Admin role carry it, and a run spawns its child
 //! through the dispatcher, both through the hidden doors in
-//! `oneiron::test_doors::ramp_demotion`, built only under
+//! `oneiron::test_doors::consent_graduation_demotion`, built only under
 //! `--cfg oneiron_test_support`; every assertion is here. Without that cfg
 //! this target is empty. Run:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test -p oneiron
@@ -29,7 +29,7 @@ use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::ramp_demotion as doors;
+use oneiron::test_doors::consent_graduation_demotion as doors;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
