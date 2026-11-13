@@ -220,8 +220,10 @@ fn i2_reports_both_the_two_head_defect_and_its_lifecycle_details() {
 #[test]
 fn i1_reports_inherited_assignment_and_remaining_defects_even_with_equal_live_count() {
     let model = split_variant(true);
-    let mut observed = Observed::default();
-    observed.live = Some(model.live_claims());
+    let mut observed = Observed {
+        live: Some(model.live_claims()),
+        ..Observed::default()
+    };
     observed.assigned.insert(Ent(3), vec![]);
     let error = model.i1_counts_conserve(&observed).unwrap_err();
     assert_eq!(error.invariant, "I1");

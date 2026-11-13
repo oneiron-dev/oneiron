@@ -36,6 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
 
+use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::identity_topology::{
     IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
@@ -47,6 +48,7 @@ use oneiron::memory::{
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
+use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault,
@@ -75,6 +77,10 @@ const BORN: TimeRange = TimeRange {
     end: 100,
 };
 
+/// The fixture host's root secret: a fixed test value, so every open
+/// derives the same host issuer and the rooted vault recognises its host.
+const HOST_ISSUER_SECRET: &[u8] = b"oneiron-testkit reference-model host";
+
 /// A supersedes edge to a claim the steps never wrote, or more than one.
 const UNKNOWN_CLAIM: ClaimKey = ClaimKey(0);
 
@@ -100,9 +106,10 @@ pub struct EngineVault {
 }
 
 impl EngineVault {
-    /// A fresh vault holding `universe`: the owner, one agent per model agent
-    /// with the owner's read-and-propose grant, one PERSON per model entity,
-    /// and two audiences. `Aud(0)` is a facet the owner creates, which only
+    /// A fresh vault holding `universe`: the owner, one agent definition per
+    /// model agent, created by the owner and holding the owner's
+    /// read-and-propose grant, one PERSON per model entity, and two
+    /// audiences. `Aud(0)` is a facet the owner creates, which only
     /// the owner writes in; `Aud(1)` is the vault's default facet, where the
     /// agents propose.
     pub fn new(universe: &Universe) -> Result<Self, String> {
@@ -122,9 +129,31 @@ impl EngineVault {
         let owner_proof = authenticate(&vault, owner)?;
         let mut agents = Vec::new();
         for n in 0..universe.agents {
-            let agent = vault
-                .ensure_agent_principal(&format!("model-agent-{n}"))
-                .map_err(|error| format!("agent {n}: {error:?}"))?;
+            // The owner creates the agent through the owner's create door,
+            // which stamps the owner as its creator, so the owner's later
+            // correction supersedes the agent's approved claim. A bare
+            // PERSON holding a Grant is no agent of the owner's: the engine
+            // refuses that correction and keeps the claim for review.
+            let agent = clock
+                .store_clock()
+                .entity_id()
+                .map_err(|error| format!("agent {n} id: {error:?}"))?;
+            create_agent_definition_as(
+                &vault,
+                &owner_proof,
+                AgentDefinitionCreateRequest {
+                    agent_def_ref: agent,
+                    definition: serde_json::from_value(json!({
+                        "agent_id": format!("model-agent-{n}"),
+                        "desc": "A reference-model agent",
+                        "version": "1.0.0",
+                        "ceiling": "auto",
+                        "enabled": true,
+                    }))
+                    .map_err(|error| format!("agent {n} definition: {error}"))?,
+                },
+            )
+            .map_err(|error| format!("the owner creates agent {n}: {error:?}"))?;
             vault
                 .grant_foreign_principal(&owner_proof, &agent.to_hex())
                 .map_err(|error| format!("the owner grants agent {n}: {error:?}"))?;
@@ -528,6 +557,21 @@ fn open(
     vault
         .prepare_install_signing()
         .map_err(|error| format!("this install's signing keys: {error:?}"))?;
+    // As a served vault is: rooted under its host, which binds the embedded
+    // owner as `human`, with the engine's machine signers and a live profile
+    // of this install. Each call after the first open only reuses the root,
+    // retains the signers and finds the profile standing.
+    let issuer = HostSlipIssuer::from_secret(HOST_ISSUER_SECRET)
+        .map_err(|error| format!("the host issuer: {error:?}"))?;
+    vault
+        .ensure_host_root_slip(&issuer)
+        .map_err(|error| format!("the host root: {error:?}"))?;
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .map_err(|error| format!("the engine machine signers: {error:?}"))?;
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .map_err(|error| format!("this install's machine profile: {error:?}"))?;
     Ok(vault)
 }
 
