@@ -5,19 +5,29 @@
 //! grant and never the old one; the receipt's cause is `provider_refresh`.
 //! Nothing is written for a record the owner revoked or rotated since the
 //! door read it, or for a portable record, and at most one write-back lands
-//! per day.
+//! per day. A pack setup check that held for the grant the door read still
+//! holds for the newer one, and shows the newer grant's issued-at (RULING
+//! MICROSOFT365-WRITEBACK-CHECK-STALE, 14 Nov 07:34); a check that no longer
+//! held stays stale.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test microsoft365_refresh_write_back`
 
 use std::sync::Arc;
 
 use oneiron::authority::ActSurface;
+use oneiron::connector_key::{
+    MICROSOFT365_ME_CHECK, PackConnectionCheck, PackConnectionEvidence, PackConnectionVerifier,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
 use oneiron::secret_lease::DoorInjectionReceipt;
 use oneiron::secret_rotation::{RotationCause, RotationKind};
+use oneiron::skill_hub::pack_catalog::{
+    PackInstallStatus, PackSetupAnswer, PackSetupAuth, PackSetupCheck, PackSetupConnectionState,
+    PackSetupView,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::microsoft_token::store_refreshed_grant;
 use oneiron::{Vault, VaultConfig};
@@ -32,6 +42,11 @@ const DAY_SECS: u64 = 24 * 60 * 60;
 const STORED_GRANT: &[u8] = br#"{"access_token":"at-1","refresh_token":"rt-1","client_id":"client-1","tenant":"organizations"}"#;
 const SUCCESSOR_GRANT: &[u8] = br#"{"access_token":"at-2","refresh_token":"rt-2","client_id":"client-1","tenant":"organizations"}"#;
 const LATER_GRANT: &[u8] = br#"{"access_token":"at-3","refresh_token":"rt-3","client_id":"client-1","tenant":"organizations"}"#;
+const PACK: &str = "oneiron.microsoft365";
+const CONNECTION: &str = "microsoft365";
+const EXCEL_WRITE: &str = "excel.write";
+const FILES_READ_WRITE: &str = "https://graph.microsoft.com/Files.ReadWrite";
+const ACCOUNT: &str = "owen@example.com";
 
 struct WriteBackFixture {
     vault: Vault,
@@ -192,5 +207,145 @@ fn a_portable_record_takes_no_write_back() -> TestResult {
         None
     );
     assert_eq!(door_read(&fixture.vault)?.0, STORED_GRANT);
+    Ok(())
+}
+
+/// The `microsoft365.me` check, offline: the provider boundary of the pack's
+/// setup. Custody, grants and qualification still run through the engine's
+/// own doors. The account and the evidence are synthetic.
+struct FixtureMicrosoft365Me;
+
+impl PackConnectionVerifier for FixtureMicrosoft365Me {
+    fn verify(
+        &self,
+        _vault: &Vault,
+        check: &PackConnectionCheck<'_>,
+    ) -> Result<PackConnectionEvidence, String> {
+        assert_eq!(check.pack, PACK);
+        assert_eq!(check.connection, CONNECTION);
+        assert_eq!(check.check, MICROSOFT365_ME_CHECK);
+        assert_eq!(check.auth, PackSetupAuth::Oauth);
+        assert_eq!(
+            check.allowed_scopes,
+            [FILES_READ_WRITE.to_owned()].as_slice()
+        );
+        Ok(PackConnectionEvidence {
+            account: ACCOUNT.to_owned(),
+            provider_account: Some("fixture-graph-user".to_owned()),
+            scopes: vec![FILES_READ_WRITE.to_owned()],
+            evidence: "fixture-microsoft365-me".to_owned(),
+        })
+    }
+}
+
+fn connection(view: &PackSetupView) -> TestResult<&PackSetupConnectionState> {
+    view.connections
+        .iter()
+        .find(|state| state.id == CONNECTION)
+        .ok_or_else(|| "the Microsoft 365 connection is missing from the setup view".into())
+}
+
+fn grant_issued_at(state: &PackSetupConnectionState) -> Option<u64> {
+    state
+        .secrets
+        .iter()
+        .find(|secret| secret.name == GRANT_NAME)
+        .and_then(|secret| secret.issued_at)
+}
+
+/// The owner sets up the Microsoft 365 pack over the stored grant: Excel
+/// allowed and the connection checked, so the built-in turns Active. Returns
+/// the setup's content hash.
+fn checked_setup(fixture: &WriteBackFixture) -> TestResult<String> {
+    let setup = fixture
+        .vault
+        .prepare_pack_setup(&fixture.owner, PACK, None)?;
+    assert_eq!(setup.status, PackInstallStatus::Candidate);
+    fixture.vault.answer_pack_setup(
+        &fixture.owner,
+        PACK,
+        Some(&setup.content_hash),
+        &PackSetupAnswer::Allow {
+            connection: CONNECTION.to_owned(),
+            permissions: vec![EXCEL_WRITE.to_owned()],
+        },
+    )?;
+    let checked = fixture.vault.verify_pack_connection(
+        &fixture.owner,
+        PACK,
+        Some(&setup.content_hash),
+        CONNECTION,
+        &FixtureMicrosoft365Me,
+    )?;
+    assert!(checked.ready);
+    assert_eq!(checked.status, PackInstallStatus::Active);
+    let state = connection(&checked)?;
+    assert!(
+        matches!(state.check, PackSetupCheck::Verified { .. }),
+        "the fixture check verifies: {:?}",
+        state.check
+    );
+    assert_eq!(grant_issued_at(state), Some(STORED_AT));
+    Ok(setup.content_hash)
+}
+
+#[test]
+fn a_checked_setup_stays_verified_across_a_write_back() -> TestResult {
+    let fixture = write_back_fixture(CustodyClass::CustodyDeviceBound, true)?;
+    let content_hash = checked_setup(&fixture)?;
+    let (_, door) = door_read(&fixture.vault)?;
+    let at = STORED_AT + DAY_SECS + 1;
+    let receipt = store_refreshed_grant(&fixture.vault, &door, SUCCESSOR_GRANT, at)?
+        .ok_or("the write-back lands for the record the door read")?;
+    assert_eq!(receipt.cause, RotationCause::ProviderRefresh);
+    let after = fixture
+        .vault
+        .pack_setup(&fixture.owner, PACK, Some(&content_hash))?;
+    let state = connection(&after)?;
+    match &state.check {
+        PackSetupCheck::Verified { account, .. } => assert_eq!(account, ACCOUNT),
+        other => return Err(format!("the write-back staled the check: {other:?}").into()),
+    }
+    assert!(state.ready);
+    assert!(after.ready);
+    assert_eq!(after.status, PackInstallStatus::Active);
+    // The setup view shows the newer grant's age.
+    assert_eq!(grant_issued_at(state), Some(at));
+    Ok(())
+}
+
+#[test]
+fn a_check_the_owner_staled_stays_stale_after_a_write_back() -> TestResult {
+    let fixture = write_back_fixture(CustodyClass::CustodyDeviceBound, true)?;
+    let content_hash = checked_setup(&fixture)?;
+    // The owner rotates the grant after the check: the check no longer holds.
+    let rotated_at = STORED_AT + 10;
+    fixture
+        .vault
+        .rotate_secret_as_owner(&fixture.owner, GRANT_NAME, LATER_GRANT, rotated_at)?;
+    let stale = fixture
+        .vault
+        .pack_setup(&fixture.owner, PACK, Some(&content_hash))?;
+    assert!(
+        matches!(connection(&stale)?.check, PackSetupCheck::Stale { .. }),
+        "an owner rotation stales the check: {:?}",
+        connection(&stale)?.check
+    );
+    let (read, door) = door_read(&fixture.vault)?;
+    assert_eq!(read, LATER_GRANT);
+    let at = rotated_at + DAY_SECS;
+    assert!(store_refreshed_grant(&fixture.vault, &door, SUCCESSOR_GRANT, at)?.is_some());
+    // The write-back keeps only a check that held; this one stays stale.
+    let after = fixture
+        .vault
+        .pack_setup(&fixture.owner, PACK, Some(&content_hash))?;
+    let state = connection(&after)?;
+    assert!(
+        matches!(state.check, PackSetupCheck::Stale { .. }),
+        "a stale check stays stale across a write-back: {:?}",
+        state.check
+    );
+    assert!(!state.ready);
+    assert_eq!(grant_issued_at(state), Some(at));
     Ok(())
 }
