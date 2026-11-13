@@ -406,6 +406,26 @@ fn probability(value: &Value) -> Option<f64> {
     (p.is_finite() && (0.0..=1.0).contains(&p)).then_some(p)
 }
 
+/// The answer and probability a written reply gives over `contract`; `None`
+/// when the reply names nothing the contract takes, or no probability.
+///
+/// The reply says how sure the model is of its own answer. A yes/no's
+/// probability is P(yes) on every path (the joint read stores it so), so a no
+/// answer stores 1 - sure (FIX 22368).
+pub(crate) fn written_decision(
+    reply: BigReply,
+    contract: &AnswerContract,
+    text: &str,
+) -> Option<(DecisionAnswer, f64)> {
+    let (answer, sure) = reply.read(text)?;
+    let answer = typed(contract, &answer)?;
+    let probability = match answer {
+        DecisionAnswer::Noul(false) => 1.0 - sure,
+        _ => sure,
+    };
+    Some((answer, probability))
+}
+
 /// The written answer as one the contract takes.
 fn typed(contract: &AnswerContract, answer: &Value) -> Option<DecisionAnswer> {
     let text = answer
@@ -590,25 +610,21 @@ impl DecisionModel for BigModel {
                 ..decision
             });
         }
-        let Some((answer, probability)) = self.reply.read(&text) else {
+        let Some((answer, probability)) =
+            written_decision(self.reply, &call.question.contract, &text)
+        else {
             return Ok(ProviderDecision {
                 served,
                 ..abstained()
             });
         };
-        Ok(match typed(&call.question.contract, &answer) {
-            Some(answer) => ProviderDecision {
-                answer,
-                probability: Some(probability),
-                paired: None,
-                person: None,
-                served,
-                cost_per_thousand: Some(cost),
-            },
-            None => ProviderDecision {
-                served,
-                ..abstained()
-            },
+        Ok(ProviderDecision {
+            answer,
+            probability: Some(probability),
+            paired: None,
+            person: None,
+            served,
+            cost_per_thousand: Some(cost),
         })
     }
 }

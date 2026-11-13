@@ -5,7 +5,6 @@ use super::*;
 /// The owner's answer every member of the reviewed run settles under.
 pub(super) struct RunAnswer<'a> {
     pub(super) owner: &'a AuthenticatedOwner,
-    pub(super) owner_answer: Option<&'a crate::consent::OwnerAuthoredWrite>,
     pub(super) actor: WriteActor,
     pub(super) approve: bool,
     pub(super) now: u64,
@@ -85,6 +84,9 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         let id = EntityId::from_hex(claim_ref)?;
         if outcome.verdict == RunChangeVerdict::Waiting {
+            // The approval spends its proof, so each claim member takes its
+            // own, revalidated in this settlement's transaction.
+            let owner_answer = answer.owner.owner_answer_in_txn(self.vault(), txn)?;
             let settled = self.vault().settle_proposed_claim_in_txn(
                 txn,
                 id,
@@ -94,7 +96,7 @@ impl Memory<'_> {
                     GateConsentBundleAction::Decline
                 },
                 answer.actor,
-                answer.owner_answer,
+                owner_answer,
                 answer.now,
             )?;
             metrics.extend(settled.recorded);

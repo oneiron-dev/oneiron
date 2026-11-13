@@ -2,13 +2,13 @@
   "schema": "oneiron-fleet-process-v1",
   "terminal": true,
   "command": [
-    "<host-home>/w7-build/wt/W7-C10/target/release/oneiron-bench",
+    "target/release/oneiron-bench",
     "fleet",
     "run",
     "--plan",
-    "<host-home>/w7-build/wt/W7-C10/.w7/fleet-arch-plan-retry.json",
+    ".w7/fleet-arch-plan-retry.json",
     "--out",
-    "<host-home>/w7-build/wt/W7-C10/target/fleet-evidence/arch-retry.json"
+    "target/fleet-evidence/arch-retry.json"
   ],
   "pid": 1625365,
   "exit_code": 0,

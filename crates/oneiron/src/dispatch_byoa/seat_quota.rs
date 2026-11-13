@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::codebase::entity_id_from_hash_material;
+use crate::dreamer_runner::{ModelSeatAvailability, ModelSeatAvailableSource};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::llm::SpentKind;
@@ -27,6 +28,9 @@ use super::seat::{RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatSpent};
 use super::work_binding::{capture_hop_seat_quota_in_txn, capture_seat_in_txn};
 
 /// Records quota for the actual terminal attempt, with or without an artifact.
+/// Returns the routed seat index and whether a Completed capture restored
+/// the seat's login and resumed its parks: the grouped commit's owner
+/// notifies attempt observers for the resumed parks after it commits.
 pub(super) fn record_runner_quota_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -34,14 +38,37 @@ pub(super) fn record_runner_quota_in_txn(
     attempt: &AttemptRecord,
     fallback: usize,
     spent: Option<&SeatSpent>,
-) -> ByoaResult<Option<usize>> {
+) -> ByoaResult<(Option<usize>, bool)> {
     let seat = capture_seat_in_txn(vault, txn, policy, attempt, fallback)?;
     let quota = match seat {
         Some(index) => seat_quota_id(policy.seat(index)?)?,
         None => EntityId::from_bytes(capture_hop_seat_quota_in_txn(vault, txn, attempt)?.1)?,
     };
-    record_seat_quota_by_id_in_txn(vault, txn, quota, attempt, spent)?;
-    Ok(seat)
+    let restored = record_seat_quota_by_id_in_txn(vault, txn, quota, attempt, spent)?;
+    Ok((seat, restored))
+}
+
+/// The quota id a capture's routing recorded under: the seat its head hop
+/// maps to in the current policy, or the hop's frozen identity when the seat
+/// was removed (FIX 11984); the caller's `fallback` for unbound work. The
+/// read twin of the id the routing writer records under, so a typed seat
+/// park names the seat the quota names.
+///
+/// # Errors
+/// A binding that does not decode; a store failure.
+pub fn runner_capture_seat_quota_id(
+    vault: &Vault,
+    policy: &RunnerSeatPolicy,
+    attempt: &AttemptRecord,
+    fallback: usize,
+) -> ByoaResult<EntityId> {
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    match capture_seat_in_txn(vault, &rtxn, policy, attempt, fallback)? {
+        Some(index) => seat_quota_id(policy.seat(index)?),
+        None => Ok(EntityId::from_bytes(
+            capture_hop_seat_quota_in_txn(vault, &rtxn, attempt)?.1,
+        )?),
+    }
 }
 
 /// Domain a seat's quota record id is derived under.
@@ -102,8 +129,8 @@ pub struct RunnerSeatQuota {
     pub topped_up_at: Option<u64>,
 }
 
-/// The id a seat's quota record lives under.
-pub(super) fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
+/// The id a seat's quota record lives under: the runner seat's model-seat id.
+pub fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
     let auth: &[u8] = match seat.auth {
         SeatAuth::VendorLogin => b"vendor_login",
         SeatAuth::ApiKey => b"api_key",
@@ -122,7 +149,8 @@ pub(super) fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
 /// comes from the current seat or the capture hop's frozen identity when the
 /// seat was removed (FIX 11984). Any other capture proves nothing and records
 /// nothing. A replay, and an older capture settling after a newer reading,
-/// keep the head.
+/// keep the head. Returns whether the capture restored the seat's login and
+/// resumed its parks.
 ///
 /// # Errors
 /// A record that does not encode or decode; a store failure.
@@ -132,12 +160,12 @@ pub(super) fn record_seat_quota_by_id_in_txn(
     id: EntityId,
     attempt: &AttemptRecord,
     spent: Option<&SeatSpent>,
-) -> ByoaResult<()> {
+) -> ByoaResult<bool> {
     let head: Option<SeatQuotaRecord> = head_record(vault, wtxn, &id)?;
     let cleared = attempt.state == AttemptState::Completed
         && head.as_ref().is_some_and(|head| head.spent.is_some());
     if spent.is_none() && !cleared {
-        return Ok(());
+        return Ok(false);
     }
     let record = SeatQuotaRecord {
         attempt: *attempt.id.as_bytes(),
@@ -149,9 +177,48 @@ pub(super) fn record_seat_quota_by_id_in_txn(
         .as_ref()
         .is_some_and(|head| head.attempt == record.attempt || head.observed_at > record.observed_at)
     {
-        return Ok(());
+        return Ok(false);
     }
-    append_quota_in_txn(vault, wtxn, &id, &record, record.observed_at)
+    append_quota_in_txn(vault, wtxn, &id, &record, record.observed_at)?;
+    if spent.is_none() && cleared {
+        // A completed run on a spent seat proves its login works again: the
+        // seat-available write answers the refusal generation the row holds,
+        // in this same grouped write.
+        return record_login_restored_in_txn(vault, wtxn, &id);
+    }
+    Ok(false)
+}
+
+/// Records a completed run's login-restored evidence on its runner seat: when
+/// the seat's row is Unavailable, the seat-available write answers the
+/// generation it holds, waking that seat's parks in this same grouped write.
+/// No row, or an Available row, records nothing. Returns whether any park
+/// resumed: the grouped commit's owner notifies attempt observers for them
+/// after it commits.
+///
+/// # Errors
+/// A seat row that does not decode; a store failure.
+fn record_login_restored_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> ByoaResult<bool> {
+    let Some(state) = vault.model_seat_state_in_txn(wtxn, *id)? else {
+        return Ok(false);
+    };
+    if !matches!(state.availability, ModelSeatAvailability::Unavailable) {
+        return Ok(false);
+    }
+    let resumed = vault.record_model_seat_available_in_txn(
+        wtxn,
+        *id,
+        state.generation,
+        ModelSeatAvailableSource::LoginRestored,
+    )?;
+    if !resumed.is_empty() {
+        crate::batch::queue_proactivity_change(vault, wtxn);
+    }
+    Ok(!resumed.is_empty())
 }
 
 /// Clears `seat`'s quota on the owner's word that its spent credit is

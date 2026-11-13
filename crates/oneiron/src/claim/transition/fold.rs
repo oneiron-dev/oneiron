@@ -6,6 +6,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimDemotionRung, ClaimLifecycleStatus, ClaimSubject,
 };
 use crate::entity_id::EntityId;
+use crate::write_envelope::claim_body::decay_transition;
 
 use super::event::{
     ClaimTransitionKind, SignedClaimTransitionEvent, TransitionDelta, TransitionEventHash,
@@ -267,15 +268,13 @@ impl ClaimTransitionProjection {
                 };
             }
             (ClaimTransitionKind::Decay, TransitionDelta::ClaimOfWeight(weight)) => {
-                if !weight.is_finite()
-                    || !(0.0..=1.0).contains(&weight)
-                    || self.demotion_rung.is_some()
-                    || self.claim_of_weight.is_none_or(|old| weight >= old)
-                {
-                    return Err(TransitionFoldError::Rollback);
-                }
+                // The live door's rule (FIX 22387): a decayed claim decays
+                // again to a lower weight; no verified birth weight, no decay.
+                let old = self.claim_of_weight.ok_or(TransitionFoldError::Rollback)?;
+                let rung = decay_transition(self.demotion_rung, old, weight)
+                    .map_err(|_| TransitionFoldError::Rollback)?;
                 self.claim_of_weight = Some(weight);
-                self.demotion_rung = Some(ClaimDemotionRung::Decayed);
+                self.demotion_rung = Some(rung);
             }
             (ClaimTransitionKind::Weaken, TransitionDelta::Confidence(confidence)) => {
                 if !matches!(

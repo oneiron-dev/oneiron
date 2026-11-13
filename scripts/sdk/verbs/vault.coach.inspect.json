@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>",
   "call": "memory.coach_inspect(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },

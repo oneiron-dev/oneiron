@@ -11,6 +11,7 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
 
+use crate::sync_harness::ENTITY_METADATA_HEADER_LEN;
 use crate::sync_harness::{
     T0, TestNode, WINDOW, exchange, map_get_bytes, map_insert_bytes, sync_through_doors,
     time_range, vault_pair,
@@ -68,7 +69,8 @@ fn asset_of(vault: &Vault, bytes: &[u8]) -> Option<EntityId> {
         .into_iter()
         .find(|id| {
             vault.get_raw(id).unwrap().is_some_and(|raw| {
-                raw.first() == Some(&ENTITY_TYPE_ASSET) && raw.get(25..) == Some(bytes)
+                raw.first() == Some(&ENTITY_TYPE_ASSET)
+                    && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(bytes)
             })
         })
 }
@@ -94,6 +96,7 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     let (mut a, mut b) = vault_pair();
     let key = WindowKey::new(WINDOW);
     let deleted = upload(&mut a, T0, &[UNIQUE, SHARED]);
+    let own = upload(&mut b, T0 + 10, &[SHARED]);
     exchange(&a, &b, WINDOW);
     let unique = asset_of(&a.vault, UNIQUE).expect("A stores the unique version");
     let shared = asset_of(&a.vault, SHARED).expect("A stores the shared version");
@@ -103,8 +106,6 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     );
     let stale = map_get_bytes(&a.doc(WINDOW).get_map("entities"), &unique.to_hex())
         .expect("A's window carries the unique bytes");
-    let own = upload(&mut b, T0 + 10, &[SHARED]);
-    exchange(&a, &b, WINDOW);
 
     delete_artifact(&mut a, &deleted);
     exchange(&a, &b, WINDOW);

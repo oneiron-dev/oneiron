@@ -403,7 +403,14 @@ fn with_no_vault_running_the_session_starts_the_configured_one() {
     let pid = u32::try_from(started["pid"].as_u64().expect("pid")).expect("pid fits u32");
     let url = started["url"].as_str().expect("url").to_owned();
     sigterm(pid);
-    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert_eq!(
+        said[1],
+        "Oneiron: started local; no hosted vault is signed in to \
+         here (`oneiron hosted login`); pin one with --url, \
+         ONEIRON_URL or hook config.",
+        "{said:?}"
+    );
     assert!(
         said[0].contains(&url),
         "the line names the started vault: {said:?}"
@@ -457,7 +464,14 @@ fn a_session_whose_started_server_cannot_open_the_vault_binds_the_one_that_holds
         session.join().expect("the session start")
     });
 
-    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert_eq!(
+        said[1],
+        "Oneiron: started local; no hosted vault is signed in to \
+         here (`oneiron hosted login`); pin one with --url, \
+         ONEIRON_URL or hook config.",
+        "{said:?}"
+    );
     assert!(
         said[0].contains(&url),
         "the session binds the server that holds the vault: {said:?}"

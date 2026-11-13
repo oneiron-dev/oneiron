@@ -407,6 +407,24 @@ pub enum BudgetDenied {
     /// the work waits for the owner's answer, never for a top-up.
     #[error("held for the account owner's answer")]
     HostCheck,
+    /// Nothing funds the host-paid call: the host delivered no allocation,
+    /// the allocation is spent, it is not the funding grant's wallet, or the
+    /// call's price overflows the allocation's unit. No budget write frees
+    /// it (BUDGET-TRAP-UNTYPED-NO-SENDER, D3).
+    #[error("no allocation funds the call")]
+    Unfunded,
+    /// The owner pinned `resident`'s share of the allocation, and the call
+    /// does not fit it (FIX 7767). `needed_units` is the share, in the
+    /// allocation's unit, the call needed: what the resident had used and
+    /// held, plus the call's reservation. An owner's share write that gives
+    /// the resident that share frees it.
+    #[error(
+        "the owner's pinned share for this resident is spent: the call needs a share of {needed_units} units"
+    )]
+    ResidentShareSpent {
+        resident: oneiron_contracts::EntityId,
+        needed_units: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

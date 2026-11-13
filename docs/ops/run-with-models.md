@@ -52,7 +52,7 @@ out in DETAILED replaces what a shorthand gave it.
 ```toml
 # HIGH: one model for every seat (chat and agents, checks, the Dreamer).
 [models]
-default = "cpa:owen7/gpt-6.1-sol"     # "<provider>:<the provider's own model id>"
+default = "cpa:<account>/gpt-6.1-sol"     # "<provider>:<the provider's own model id>"
 prompt = "Answer briefly."             # optional; or prompt_file = "rung.md"
 
 [models.providers.cpa]

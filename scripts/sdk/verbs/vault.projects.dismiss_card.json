@@ -5,6 +5,7 @@
   "output": "crate::task_verb::sdk::ProjectCardDismissal",
   "call": "ProjectCardDismissal { dismissed: memory.projects_dismiss_card(&input.card_id)?, card_id: input.card_id }",
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },

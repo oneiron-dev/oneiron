@@ -496,7 +496,7 @@ impl Memory<'_> {
             staged,
             GateConsentBundleAction::Approve,
             WriteActor::new(self.actor, self.actor_class),
-            owner_answer.as_ref(),
+            owner_answer,
             now,
         )?;
         Ok(approved.dreamer_run)
@@ -754,6 +754,22 @@ fn dreamer_principal() -> Result<WriteActor, Error> {
         crate::dreamer_runner::authority::dreamer_actor_id()?,
         EdgeActorClass::System,
     ))
+}
+
+/// The owner's live hold on `actor`'s conflict review of `subject`, its own
+/// or the whole vault's, by the Grant's ref (untangle 6.7a-2): a derivation
+/// batch's settlement honours it as the Dreamer's review does.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn conflict_review_held_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    subject: EntityId,
+) -> Result<Option<String>, Error> {
+    live_review_bound(vault, txn, actor, HOLD_VERB, subject)
 }
 
 /// The live standing Grant of `verb` naming `actor` on `subject`, its own or

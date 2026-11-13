@@ -471,7 +471,8 @@ fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
                 );
             }
             let rendered = pack.rendered.expect("rendered pack");
-            // Light renders the minimal profile, which carries no content.
+            // Light renders the minimal profile, which carries no MESSAGE field
+            // (only TURN and SUMMARY rows carry `txt` there).
             if effort == Effort::Medium {
                 assert!(rendered.contains("harbor view"), "{format:?}: {rendered}");
             }

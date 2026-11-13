@@ -2,17 +2,15 @@
 
 use heed::{RoTxn, RwTxn};
 
-use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::commitment::{
-    CommitmentRecord, CommitmentStatus, CommitmentStrength, decode_commitment_claim,
-};
+use crate::commitment::{CommitmentInstanceState, CommitmentRecord, CommitmentStrength};
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::{WakeTrigger, request_wake_in_txn};
 use crate::error::{Error, Result};
 use crate::store::consolidation_scope::DreamerConsolidationScope;
+use crate::{EntityId, Vault};
 
 use super::wake_event::{CommitmentWakeDue, encode_commitment_wake_event};
 
@@ -96,9 +94,10 @@ pub enum CommitmentWakeSkip {
     SeriesWithdrawn,
 }
 
-/// Eligibility verdict for one instance, before any write happens.
+/// Eligibility verdict for one instance, before any write happens. An
+/// eligible verdict carries the instance's open record.
 pub(super) enum WakeEligibility {
-    Eligible,
+    Eligible(CommitmentRecord),
     Skip(CommitmentWakeSkip),
 }
 
@@ -134,7 +133,9 @@ pub fn fire_due_commitment_wake(
                 CommitmentWakeSkip::Raced,
             ));
         }
-        if let WakeEligibility::Skip(skip) = wake_eligibility_in_txn(vault, wtxn, &due)? {
+        if let WakeEligibility::Skip(skip) =
+            instance_wake_eligibility_in_txn(vault, wtxn, &due.instance_id)?
+        {
             vault.settle_wake_phase_in_txn(wtxn, &due)?;
             return Ok(CommitmentWakeFireOutcome::Skipped(skip));
         }
@@ -144,80 +145,59 @@ pub fn fire_due_commitment_wake(
     })
 }
 
-fn wake_eligibility_in_txn(
-    vault: &Vault,
-    wtxn: &RwTxn<'_>,
-    due: &CommitmentWakeDue,
-) -> Result<WakeEligibility> {
-    // The instance's current status sits at the head of its status chain.
-    let head = vault.commitment_head_in_txn(wtxn, &due.instance_id)?;
-    let Some(body) = vault.get_claim_in_txn(wtxn, &head)? else {
-        return Ok(WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance));
-    };
-    // A non-commitment claim at an instance ref is an index that outlived its
-    // subject: the same fact a missing entity states, so it settles the same way.
-    let Some(record) = decode_commitment_claim(&body)? else {
-        return Ok(WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance));
-    };
-    if let skip @ WakeEligibility::Skip(_) = wake_eligibility(&record) {
-        return Ok(skip);
-    }
-    series_eligibility_in_txn(vault, wtxn, &record)
-}
-
-/// [`wake_eligibility`] plus the series check, read from the vault as it is
-/// now: what the executor and the approval door ask before they act.
-pub(super) fn current_wake_eligibility(
-    vault: &Vault,
-    record: &CommitmentRecord,
-) -> Result<WakeEligibility> {
-    if let skip @ WakeEligibility::Skip(_) = wake_eligibility(record) {
-        return Ok(skip);
-    }
-    let txn = vault.store.env.read_txn()?;
-    series_eligibility_in_txn(vault, &txn, record)
-}
-
-/// [`current_wake_eligibility`] through the caller's transaction: the same
-/// two checks, for an approval the caller commits beside its own write.
-pub(super) fn current_wake_eligibility_in_txn(
+/// The wake verdict for one instance, read in `txn` from its joint state
+/// ([`CommitmentInstanceState`], FIX 22383) and its series: what the fire
+/// door, the executor and the approval door ask before they act. Only an open
+/// instance on an active head wakes; a withdrawn one (its claim retracted while
+/// its promise still says open) skips as closed.
+pub(super) fn instance_wake_eligibility_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    record: &CommitmentRecord,
+    instance: &EntityId,
 ) -> Result<WakeEligibility> {
-    if let skip @ WakeEligibility::Skip(_) = wake_eligibility(record) {
-        return Ok(skip);
+    // The instance's current status sits at the head of its status chain. A
+    // non-commitment claim at an instance ref is an index that outlived its
+    // subject: the same fact a missing entity states, so it settles the same
+    // way.
+    let record = match vault.commitment_instance_state_in_txn(txn, instance)? {
+        CommitmentInstanceState::Missing => {
+            return Ok(WakeEligibility::Skip(CommitmentWakeSkip::MissingInstance));
+        }
+        // An inert promise is not in force: it is owed no wake.
+        CommitmentInstanceState::Inert(_)
+        | CommitmentInstanceState::Closed(_)
+        | CommitmentInstanceState::Withdrawn => {
+            return Ok(WakeEligibility::Skip(CommitmentWakeSkip::ClosedInstance));
+        }
+        CommitmentInstanceState::Open(record) => record,
+    };
+    match record.strength {
+        CommitmentStrength::Commitment => {}
+        CommitmentStrength::StatedIntention => {
+            return Ok(WakeEligibility::Skip(CommitmentWakeSkip::StatedIntention));
+        }
+        CommitmentStrength::Decision => {
+            return Ok(WakeEligibility::Skip(CommitmentWakeSkip::Decision));
+        }
     }
-    series_eligibility_in_txn(vault, txn, record)
-}
-
-/// Eligible while the instance's series still fires, so an instance a
-/// rejected or replaced series minted stops waking.
-fn series_eligibility_in_txn(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    record: &CommitmentRecord,
-) -> Result<WakeEligibility> {
+    // Eligible while the instance's series still fires, so an instance a
+    // rejected or replaced series minted stops waking.
     Ok(
-        if vault.commitment_instance_series_fires_in_txn(txn, record)? {
-            WakeEligibility::Eligible
+        if vault.commitment_instance_series_fires_in_txn(txn, &record)? {
+            WakeEligibility::Eligible(record)
         } else {
             WakeEligibility::Skip(CommitmentWakeSkip::SeriesWithdrawn)
         },
     )
 }
 
-pub(super) fn wake_eligibility(record: &CommitmentRecord) -> WakeEligibility {
-    if record.status != CommitmentStatus::Open {
-        return WakeEligibility::Skip(CommitmentWakeSkip::ClosedInstance);
-    }
-    match record.strength {
-        CommitmentStrength::Commitment => WakeEligibility::Eligible,
-        CommitmentStrength::StatedIntention => {
-            WakeEligibility::Skip(CommitmentWakeSkip::StatedIntention)
-        }
-        CommitmentStrength::Decision => WakeEligibility::Skip(CommitmentWakeSkip::Decision),
-    }
+/// [`instance_wake_eligibility_in_txn`] in its own read transaction.
+pub(super) fn instance_wake_eligibility(
+    vault: &Vault,
+    instance: &EntityId,
+) -> Result<WakeEligibility> {
+    let txn = vault.store.env.read_txn()?;
+    instance_wake_eligibility_in_txn(vault, &txn, instance)
 }
 
 fn enqueue_commitment_wake_in_txn(

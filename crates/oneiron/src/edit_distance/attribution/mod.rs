@@ -165,17 +165,14 @@ mod tests;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, PREDICATE_ACTOR_EDIT_COST,
-    PREDICATE_SKILL_EDIT_COST,
-};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource};
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::skill_attribution::{
-    AttributionJudge, AttributionVerdict, EditHunk, HunkVerdict, JudgeRequest, OutcomeEvidence,
+    AttributionVerdict, EditHunk, HunkVerdict, JudgeRequest, OutcomeEvidence,
 };
 #[cfg(test)]
 use crate::temporal::TimeRange;

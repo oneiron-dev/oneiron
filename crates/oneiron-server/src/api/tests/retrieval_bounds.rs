@@ -92,7 +92,7 @@ async fn an_over_large_limit_is_served_at_the_ceiling_and_says_so() {
             ),
             (
                 "POST",
-                "/v1/core/facade/recall".to_owned(),
+                "/v1/core/facade/vault.recall".to_owned(),
                 Some(json!({"query": "lantern", "limit": limit})),
                 "/retrieval_meta/limit_clamped",
             ),
@@ -145,7 +145,7 @@ async fn an_over_large_limit_is_served_at_the_ceiling_through_mcp() {
                 "/response/limit_clamped",
             ),
             (
-                "recall",
+                "vault.recall",
                 "read_memory",
                 json!({"spec": {"query": "lantern", "limit": limit}}),
                 "/retrieval_meta/limit_clamped",

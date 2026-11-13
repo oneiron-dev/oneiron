@@ -210,6 +210,16 @@ pub(super) fn delete_annotation_hold_in_txn(
     Ok(())
 }
 
+/// Whether `id` is marked as paused for an annotation hold, for the test doors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn annotation_hold_marked_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: AttemptId,
+) -> Result<bool> {
+    Ok(ANNOTATION_HOLD.get(store, txn, &id)?.is_some())
+}
+
 /// The ids marked as paused for an annotation hold, in id order; a mark may outlive its hold.
 pub(super) fn annotation_hold_ids_in_txn(
     store: &Store,

@@ -136,6 +136,8 @@ fn step_derived_effect_rechecks_resident_eligibility_and_still_uses_gate()
         subject: agent,
         deadline: None,
         now_ms: 1_000,
+        spend_scope: None,
+        wake_pass_bound: false,
     };
     let step_request = request();
     let guard = BudgetGuard::with_reserve_units(

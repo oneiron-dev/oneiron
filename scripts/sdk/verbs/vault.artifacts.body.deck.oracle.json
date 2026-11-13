@@ -5,6 +5,7 @@
   "output": "crate::office_body::DeckGateView",
   "call": "memory.artifacts_body_deck_oracle(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

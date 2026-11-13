@@ -5,11 +5,12 @@
 //! projected alone, so no projection recurses, however deep the tree.
 
 use oneiron::run_tree::{RunTreeWire, RunTreeWireNode};
+use oneiron::store::model_step_submission::StepBudgetRefusal;
 
 use super::{
     CoreRunTreeDeletion, CoreRunTreeEvent, CoreRunTreeEventKind, CoreRunTreeFailure,
     CoreRunTreeNode, CoreRunTreeRepair, CoreRunTreeResponse, CoreRunTreeStatus,
-    CoreRunTreeTimestamps,
+    CoreRunTreeTimestamps, CoreStepBudgetRefusal,
 };
 
 /// `tree` as the core run-tree response: its flat table, with every node,
@@ -67,6 +68,7 @@ fn core_run_tree_node(node: RunTreeWireNode) -> CoreRunTreeNode {
         },
         failure: failure.map(|failure| CoreRunTreeFailure {
             reason: failure.reason,
+            budget_refusal: failure.budget_refusal.map(core_step_budget_refusal),
         }),
         events: events.into_iter().map(core_run_tree_event).collect(),
         children,
@@ -127,5 +129,35 @@ fn core_run_tree_repair(repair: oneiron::RunTreeRepair) -> CoreRunTreeRepair {
             attempt_id,
             parent_id,
         },
+    }
+}
+
+/// The core run tree's typed budget refusal, field for field.
+fn core_step_budget_refusal(refusal: StepBudgetRefusal) -> CoreStepBudgetRefusal {
+    match refusal {
+        StepBudgetRefusal::BoundaryClosed {
+            scope,
+            available_units,
+            asked_units,
+        } => CoreStepBudgetRefusal::BoundaryClosed {
+            scope,
+            available_units,
+            asked_units,
+        },
+        StepBudgetRefusal::CeilingReached {
+            scope,
+            available_units,
+            asked_units,
+        } => CoreStepBudgetRefusal::CeilingReached {
+            scope,
+            available_units,
+            asked_units,
+        },
+        StepBudgetRefusal::Unbound { asked_units } => {
+            CoreStepBudgetRefusal::Unbound { asked_units }
+        }
+        StepBudgetRefusal::Unfunded { asked_units } => {
+            CoreStepBudgetRefusal::Unfunded { asked_units }
+        }
     }
 }

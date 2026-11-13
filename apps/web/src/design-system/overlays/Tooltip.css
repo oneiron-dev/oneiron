@@ -1,0 +1,31 @@
+/* The popover attribute keeps the layer hidden until it opens; nothing here
+   sets display, so the closed state stays the browser's. */
+.sl-tooltip {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  z-index: var(--sl-z-tip);
+  max-width: 300px;
+  overflow: hidden;
+  padding: 6px 10px 7px;
+  border-radius: var(--sl-radius);
+  background: var(--sl-pop);
+  box-shadow: var(--sl-pop-shadow);
+  color: var(--sl-ink-1);
+  font-family: var(--sl-serif);
+  font-size: var(--sl-t-do);
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.sl-tooltip-label {
+  display: block;
+  font-weight: 500;
+  color: var(--sl-ink-1);
+}
+
+.sl-tooltip-caption {
+  display: block;
+  color: var(--sl-ink-2);
+}

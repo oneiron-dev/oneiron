@@ -363,6 +363,16 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
+        // SPAWN-KNOB: the caller's powers decide first, before any seat,
+        // source or key is read; the child is born with the grant they give.
+        let powers = match self.check_spawn_powers(
+            SelfEffect::ReaderSpawn,
+            call.powers,
+            call.intent_key.as_bytes(),
+        )? {
+            Ok(powers) => powers,
+            Err(denied) => return Ok(SelfDispatchOutcome::Denied(denied)),
+        };
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
             return Ok(failed("reader_spawn_unbound"));
         };
@@ -389,6 +399,7 @@ impl HostSelfDispatcher<'_> {
             kind: crate::code_run::ReaderJobKind::Read,
             ask: call.ask,
             parent_lease: None,
+            powers,
         };
         let (job, replay) =
             match self
@@ -473,7 +484,8 @@ impl HostSelfDispatcher<'_> {
     ///
     /// The wait keeps the `tasks.wait` marker a parked step records, as a
     /// verb hook's ask does, its prompt naming the set. One naming a
-    /// world-privacy request waits on it instead (FIX 4706).
+    /// world-privacy request waits on it instead (FIX 4706), and one naming
+    /// AGENT children waits on them (slice 6.5b).
     pub(super) fn dispatch_task_wait_set(
         &self,
         call: TaskWaitSetCall,
@@ -487,6 +499,12 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
+        // Slice 6.5b: a wait over AGENT children of the run. An executor's
+        // step parks on it; a call from no executor site is answered the
+        // reduction as it stands.
+        if let Some(agents) = &call.agents {
+            return self.dispatch_agent_wait(&call, agents, site.is_some());
+        }
         // FIX 4706: a wait on a world-privacy request, no children.
         if let Some(request) = &call.request {
             return self.dispatch_world_privacy_wait(&call, request);

@@ -343,7 +343,8 @@ fn revert_claim_in_txn(
         return Ok(reverted);
     }
     if claim_kind(body) == DreamerChangeKind::Evidence {
-        vault.retract_edge_provenance_in_txn(txn, &claim, now, false)?;
+        // `now` is milliseconds; the provenance retract takes Unix seconds.
+        vault.retract_edge_provenance_in_txn(txn, &claim, now / 1_000, false)?;
         let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Evidence);
         reverted.retracted.push(claim);
         return Ok(reverted);

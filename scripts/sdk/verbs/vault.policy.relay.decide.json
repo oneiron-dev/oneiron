@@ -5,6 +5,7 @@
   "output": "crate::policy_model::doors::HostedRelayDecision",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.policy.relay.decide\", &input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "host_door": true,
   "host_door_precheck": false,
   "host_door_lists": true,

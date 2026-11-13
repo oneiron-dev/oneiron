@@ -148,7 +148,10 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         // as a diagnosed fault, and every read surface that folds on
         // `failure.is_some()` would then count it as one.
         failure: match state {
-            AttemptState::Failed => record.last_error.map(|reason| RunTreeFailure { reason }),
+            AttemptState::Failed => record.last_error.map(|reason| RunTreeFailure {
+                reason,
+                budget_refusal: record.budget_refusal,
+            }),
             AttemptState::Queued
             | AttemptState::Leased
             | AttemptState::Paused

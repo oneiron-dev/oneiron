@@ -346,7 +346,7 @@ impl RepoProjectionClaim {
     /// A store failure, or another record under the id.
     pub(crate) fn put_in_txn(&self, vault: &Vault, wtxn: &mut RwTxn<'_>, at: u64) -> Result<bool> {
         let id = self.id()?;
-        let body = self.claim()?;
+        let mut body = self.claim()?;
         match vault.get_claim_in_txn(wtxn, &id)? {
             Some(stored)
                 if stored.predicate == body.predicate
@@ -368,6 +368,10 @@ impl RepoProjectionClaim {
             None => {}
         }
         let occurred = TimeRange { start: at, end: at };
+        // Born in the vault default facet: the graph id is no FACET, so the
+        // derived substrate id `ClaimBody::new` stamps would be refused at
+        // birth (#4389).
+        body.scope_facet = vault.default_facet_in_txn(wtxn)?;
         vault.put_reserved_claim_in_txn(wtxn, &id, &body, occurred, at)?;
         Ok(true)
     }

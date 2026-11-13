@@ -41,6 +41,9 @@ export interface ProviderScenario { readonly id:string;readonly steps:readonly P
 export interface SeenFixtureCall {
   readonly fixtureId:string|null;readonly origin:string;readonly sequence:number;readonly role:string|null;readonly purpose:string|null;
   readonly method:string;readonly path:string;readonly body:unknown;readonly standing?:boolean;
+  /** HTTP request headers with lower-case names, in memory. A persisted artifact keeps only the
+   * values of PERSISTED_HEADER_VALUES; every other value is written as [REDACTED]. */
+  readonly headers?:Readonly<Record<string,string>>;
 }
 export class ProviderScriptError extends Error { override name="ProviderScriptError" }
 function subset(expected:Json,actual:unknown):boolean {
@@ -48,13 +51,30 @@ function subset(expected:Json,actual:unknown):boolean {
   if(expected&&typeof expected==="object") return !!actual&&typeof actual==="object"&&Object.entries(expected).every(([k,v])=>subset(v,(actual as Record<string,unknown>)[k]));
   return Object.is(expected,actual);
 }
+/** A request that names a boolean `stream` gets a reply of the same kind: a buffered reply to a streamed
+ * request (or a stream to a buffered one) never matches, so the miss fails at send time. */
+function streamAgrees(step: ProviderStep, body: unknown): boolean {
+  const stream=(body as {stream?:unknown}|null)?.stream;
+  return typeof stream!=="boolean"||stream===(step.response.kind==="stream");
+}
 function matches(step: ProviderStep, method: string, path: string, body: unknown): boolean {
-  return step.request.method===method&&step.request.path===path&&
+  return step.request.method===method&&step.request.path===path&&streamAgrees(step,body)&&
     (step.request.model===undefined||subset({model:step.request.model},body))&&
     (!step.request.fields||subset(step.request.fields,body))&&
     (step.request.system===undefined||(Array.isArray((body as any)?.messages) && (body as any).messages[0]?.role === "system" && (body as any).messages[0]?.content === step.request.system));
 }
 function event(data:Json,name?:string):string {return `${name ? `event: ${name}\n` : ""}data: ${JSON.stringify(data)}\n\n`}
+function requestHeaders(request:Request):Record<string,string> {
+  const headers:Record<string,string>={};
+  for(const [name,value] of request.headers) headers[name.toLowerCase()]=value;
+  return headers;
+}
+/** Header values a provider artifact keeps; they carry no credential. */
+const PERSISTED_HEADER_VALUES=new Set(["accept","accept-encoding","content-encoding","content-length","content-type","user-agent"]);
+function persistedCall(call:SeenFixtureCall):SeenFixtureCall {
+  if(!call.headers) return call;
+  return {...call,headers:Object.fromEntries(Object.entries(call.headers).map(([name,value])=>[name,PERSISTED_HEADER_VALUES.has(name)?value:"[REDACTED]"]))};
+}
 /** Usage is declared by the independent scenario, never estimated from engine prompts. */
 export function openaiText(id:string,model:string,text:string,usage:ProviderUsage):ProviderResponse {
   return {kind:"json",body:{id,object:"chat.completion",model,choices:[{index:0,message:{role:"assistant",content:text},finish_reason:"stop"}],
@@ -93,6 +113,8 @@ export class ScriptedProviders {
   private readonly pending=new Map<string,ProviderStep[]>();
   private readonly standing=new Map<string,ProviderStep[]>();
   private readonly seen:SeenFixtureCall[]=[];
+  /** HTTP request headers by seen sequence, joined into SeenFixtureCall on read. */
+  private readonly headers=new Map<number,Readonly<Record<string,string>>>();
   private readonly violations:string[]=[];
   private readonly barriers=new Map<string,{promise:Promise<void>;release:()=>void}>();
   private readonly released=new Set<string>();
@@ -157,7 +179,11 @@ export class ScriptedProviders {
     if(!exchange||!accepted) throw new ProviderScriptError(`Unexpected WS provider message: ${state.script.id}`);
     for(const part of exchange.replies) {if(part.barrier) await this.hold(part.barrier);send(part.data)}
   }
-  get seenFixtureCalls():readonly SeenFixtureCall[] {return structuredClone(this.seen)}
+  get seenFixtureCalls():readonly SeenFixtureCall[] {return structuredClone(this.seen.map(call=>this.withHeaders(call)))}
+  private withHeaders(call:SeenFixtureCall):SeenFixtureCall {
+    const headers=this.headers.get(call.sequence);
+    return headers?{...call,headers}:call;
+  }
   releaseBarrier(name:string):void {
     this.released.add(name);this.barriers.get(name)?.release();
   }
@@ -199,6 +225,8 @@ export class ScriptedProviders {
       else if(codec&&codec!=="identity") throw new ProviderScriptError(`Unsupported declared request codec ${codec}`);
       if(bytes.length) {const raw=new TextDecoder().decode(bytes);try{body=JSON.parse(raw)}catch{body=bytes}}
       const path=new URL(request.url).pathname;
+      // Both seen.push calls below take this sequence: nothing between here and them awaits.
+      this.headers.set(this.seen.length,requestHeaders(request));
       const standing=this.standing.get(origin)?.find(candidate=>matches(candidate,request.method,path,body));
       if(standing) {
         this.seen.push({fixtureId:standing.id,origin,sequence:this.seen.length,role:standing.role,purpose:standing.purpose,method:request.method,path,body,standing:true});
@@ -215,7 +243,8 @@ export class ScriptedProviders {
       const step=this.pending.get(origin)?.shift();
       const accepted=step&&matches(step,request.method,path,body);
       this.seen.push({fixtureId:accepted?step.id:null,origin,sequence:this.seen.length,role:step?.role??null,purpose:step?.purpose??null,method:request.method,path,body});
-      if(!accepted) throw new ProviderScriptError(`Unexpected provider request on ${origin}: ${request.method} ${path}; expected ${step?.id??"no more calls"}`);
+      if(!accepted) throw new ProviderScriptError(`Unexpected provider request on ${origin}: ${request.method} ${path}; expected ${step?.id??"no more calls"}`
+        +(step&&!streamAgrees(step,body)?` (stream mismatch: the request has stream=${String((body as {stream?:unknown}).stream)}, the step answers ${step.response.kind})`:""));
       if(step.barrier) await this.hold(step.barrier);
       const reply=step.response;
       if(reply.kind==="json") return Response.json(reply.body,{status:reply.status??200,...(reply.headers?{headers:reply.headers}:{})});
@@ -239,7 +268,7 @@ export class ScriptedProviders {
     const unconsumed=[...this.pending.values()].flat().map(step=>step.id)
       .concat([...this.sockets.values()].flat().map(script=>script.id))
       .concat(this.socketStates.filter(state=>state.index<state.script.exchanges.length).map(state=>state.script.id));
-    await this.scenario.artifacts?.json(`provider-${this.scenario.id}.json`,{scenario:this.scenario.id,script:this.scenario.steps,sockets:this.scenario.sockets??[],seen:redactor.value(this.seen),violations:this.violations,unconsumed,standing:[...this.standing.values()].flat().map(step=>step.id)});
+    await this.scenario.artifacts?.json(`provider-${this.scenario.id}.json`,{scenario:this.scenario.id,script:this.scenario.steps,sockets:this.scenario.sockets??[],seen:redactor.value(this.seen.map(call=>persistedCall(this.withHeaders(call)))),violations:this.violations,unconsumed,standing:[...this.standing.values()].flat().map(step=>step.id)});
     if(this.violations.length||unconsumed.length) throw new ProviderScriptError(`${this.scenario.id}: ${this.violations.join("; ")}; unconsumed: ${unconsumed.join(", ")}`);
   }
 }

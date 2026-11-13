@@ -38,7 +38,7 @@ type Task = {
   doors: Door[]
 }
 
-const HUMANS: Record<'o' | 'y', string> = { o: 'Owen', y: 'Yuki' }
+const HUMANS: Record<'o' | 'y', string> = { o: 'owen', y: 'yuki' }
 const AGENTS: Record<'eiri' | 'tory' | 'antevon', { name: string; tip: string }> = {
   eiri: { name: 'Eiri', tip: 'Eiri · outbound · every send waits for your click' },
   tory: { name: 'Tory', tip: 'Tory · research' },

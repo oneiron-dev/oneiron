@@ -6,6 +6,7 @@
 //! it from a verified, unattenuated owner slip. Neither adds a prompt: the
 //! owner acts once and the engine writes the receipt.
 
+pub(crate) mod agent_grants;
 pub(crate) mod backup;
 pub(crate) mod cleanup;
 pub(crate) mod courtesy_delete;

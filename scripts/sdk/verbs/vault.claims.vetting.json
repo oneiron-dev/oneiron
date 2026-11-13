@@ -4,6 +4,7 @@
   "input": "crate::memory::ClaimProposalReviewRequest",
   "output": "crate::memory::ClaimProposalReview",
   "scope": "Read",
+  "act_class": "read",
   "call": "memory.claim_vetting_review_as_owner(&memory.embedded_owner(\"vault.claims.vetting\")?, &input)?",
   "host_door": true,
   "host_door_lists": true,

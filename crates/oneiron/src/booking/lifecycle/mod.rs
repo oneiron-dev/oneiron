@@ -55,6 +55,7 @@ mod claim;
 mod confirmation_state;
 mod door;
 mod emergency;
+mod feed_move;
 mod hold_source;
 mod occurrence;
 mod passport;
@@ -82,6 +83,11 @@ pub use self::door::{
     run_booking_lifecycle_attempt, run_booking_lifecycle_attempt_with_invites,
     run_booking_lifecycle_once,
 };
+pub use self::feed_move::{
+    BOOKING_REVISION_INVITE_ATTEMPT_KIND, BookingRevisionInviteDrain, BookingRevisionInvitePayload,
+    run_booking_revision_invites,
+};
+pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
@@ -383,7 +389,27 @@ struct BookingFacts {
     event_type: EventTypeKey,
     slot: TimeRange,
     /// The LIVE status head, so a transition rules on what the booking is now
-    /// rather than on what its token was issued for.
+    /// rather than on what its token was issued for. The booking's own word
+    /// only: a cancel reads it, so a cancel still lands on a booking whose
+    /// calendar was cancelled.
     status: BookingStatus,
+    /// Whether a `calendar.status` head on the EVENT says cancelled: the
+    /// booking's own cancel, or a calendar provider's that need not change
+    /// `booking.status` (FIX 22385).
+    calendar_cancelled: bool,
     context: Option<BookingConfirmationContext>,
+}
+
+impl BookingFacts {
+    /// What the booking is now for a transition that keeps it live (a move,
+    /// a reminder): Cancelled when its own status head or a calendar
+    /// cancellation says so. The cap reads the same two heads
+    /// (`claim::is_confirmed_booking_in`).
+    fn effective_status(&self) -> BookingStatus {
+        if self.calendar_cancelled {
+            BookingStatus::Cancelled
+        } else {
+            self.status
+        }
+    }
 }

@@ -5,6 +5,7 @@
   "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
   "call": "memory.coping_outcome_record_as_owner(&memory.embedded_owner(\"vault.affect.coping.record\")?, &input)?",
   "scope": "Write",
+  "act_class": "reversible_work",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

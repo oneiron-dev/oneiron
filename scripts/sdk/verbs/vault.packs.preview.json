@@ -6,6 +6,7 @@
   "call": "crate::task_verb::sdk::pack_preview_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.preview\")?, input)?",
   "host_door": true,
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

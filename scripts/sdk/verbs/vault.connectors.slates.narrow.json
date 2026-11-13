@@ -9,6 +9,7 @@
   "host_door_lists": true,
   "host_door_caller": true,
   "scope": "Write",
+  "act_class": "unstated",
   "section": false,
   "openapi": true
 }

@@ -15,7 +15,7 @@
 //! credential is served by the owner door (`preview_archive_purge`,
 //! `confirm_archive_purge`); every other caller, an owner on a narrowed
 //! credential included, by its checked siblings under the caller's own
-//! archive-delete authority (`federation::require_archive_delete_in_txn`).
+//! delete authority (`federation::require_delete_authority_in_txn`).
 
 use serde::{Deserialize, Serialize};
 

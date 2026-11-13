@@ -5,6 +5,7 @@
   "output": "crate::office_body::DeckGateView",
   "call": "memory.artifacts_body_deck_gate(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

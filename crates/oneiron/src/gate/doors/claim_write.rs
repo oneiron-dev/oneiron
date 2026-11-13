@@ -10,7 +10,7 @@ mod stored_close;
 use record_inner::check_claim_policy_for_write_with_record_inner;
 pub(crate) use reference_hook::check_claim_policy_for_write_with_record_with_reader_reference_probe;
 pub(crate) use reference_read::unresolved_claim_reference;
-use stored_close::{closes_stored_row_only, closes_stored_value};
+use stored_close::{approves_stored_proposal_only, closes_stored_row_only, closes_stored_value};
 
 use super::burst_inputs::claim_burst_inputs;
 use super::consent::{
@@ -18,9 +18,9 @@ use super::consent::{
     gate_decision_matches_pending_candidate, reject_gate_decision,
 };
 use super::dreamer_run::{
-    dreamer_attempt_id_from_write_envelope, dreamer_isolation_decision, dreamer_precommit_denial,
-    dreamer_run_id_from_write_envelope, live_run_claim_put_from_write_envelope,
-    pending_consent_dreamer_run_id,
+    derivation_class_write, dreamer_attempt_id_from_write_envelope, dreamer_isolation_decision,
+    dreamer_precommit_denial, dreamer_run_id_from_write_envelope,
+    live_run_claim_put_from_write_envelope, pending_consent_dreamer_run_id,
 };
 use super::peripheral::{
     ClaimGateWrite, GateWriteMode, auto_check_value_preview, edge_actor_class_str,

@@ -5,6 +5,7 @@
   "output": "crate::memory::MessageStreamReceipt",
   "call": "memory.messages_cancel_stream(&input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },

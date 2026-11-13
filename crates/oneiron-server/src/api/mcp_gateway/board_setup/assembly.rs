@@ -150,8 +150,9 @@ pub(super) fn mcp_hook_pins(
     Ok(pins)
 }
 
-/// A keyframe's MEMORIES, which runs no retrieval: the policy manifest's pins
-/// and the rows its hook blocks pin, read as the HTTP board reads them
+/// A keyframe's MEMORIES, which runs no retrieval: the policy manifest's pins,
+/// the rows its hook blocks pin and the bound room's shared pins the
+/// connector sees (ROOM-SCOPED-PINS P2b), read as the HTTP board reads them
 /// ([`crate::api::context_board::board_pins_projection`]) under this
 /// credential, in the bound `room` its own read admitted, else with no room
 /// (FIX 1051). The credential's read is not narrowed to its world or facet,
@@ -174,8 +175,26 @@ pub(super) fn mcp_pinned_memories(
         .auth
         .as_ref()
         .expect("a scoped read holds the connector's proof");
-    crate::api::context_board::board_pins_projection(&server.vault, auth, read, room, &pins)
-        .map_err(super::mcp_api_error)
+    // The room's shared pins read through the facade its ROOM renders
+    // through ([`mcp_bound_room`]), so MEMORIES pins what ROOM shows.
+    let memory = room.map(|_| {
+        crate::api::mcp_credential_memory(
+            &server.vault,
+            actor.auth.as_ref(),
+            actor.actor_ref,
+            actor.actor_class,
+        )
+        .at(actor.locality())
+    });
+    crate::api::context_board::board_pins_projection(
+        &server.vault,
+        auth,
+        read,
+        room,
+        memory.as_ref(),
+        &pins,
+    )
+    .map_err(super::mcp_api_error)
 }
 
 /// The working set's pins (FIX 17594, WORKING SET A) for this connector's
@@ -349,6 +368,7 @@ pub(super) fn mcp_board_sections(
     let narrowed = super::children::mcp_children_narrowed(actor);
     let mut bare_children = std::collections::BTreeSet::new();
     rows.attach_people_admitted(
+        &server.vault,
         &oneiron::context_board::PeopleView::new(&people, resident),
         &children,
         |child| {

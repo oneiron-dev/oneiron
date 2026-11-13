@@ -40,7 +40,9 @@ fn run_connection(run_id: EntityId) -> StreamConnectionId {
 /// SCRATCHPAD is the live pad of `session`, the session the attached agent's
 /// own call names (its session header, or its MCP connector's off-record
 /// session; FIX 2340); a call that names none renders no pad. The run is
-/// held as before, whatever session the call names.
+/// held as before, whatever session the call names. Its MEMORIES joins the
+/// shared pins of the room the run's leased attempt works in
+/// (ROOM-SCOPED-PINS P2c), as the board of the run's own door does.
 async fn on_run_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -57,6 +59,7 @@ async fn on_run_board(
         writer,
         &connection,
         session.as_deref(),
+        Some(run.attempt()),
         call,
         &mut hooks,
     )

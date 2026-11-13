@@ -177,6 +177,8 @@ pub(crate) async fn start_desktop_workers(
             sync_server.spawn_resident_pump_admitted(admitted(), crate::server::admit_every_pass()),
             // The official CLIs' runs, on the person's own runtime (FIX 4552).
             sync_server.spawn_seat_host(),
+            // Due model-seat resets, released under the same admission.
+            Some(sync_server.spawn_model_seat_watcher_admitted(admitted())),
             Some(sync_server.spawn_connector_settler_admitted(admitted())),
         ];
         let tagging = tagging.map(|handle| (handle, stopping.clone()));

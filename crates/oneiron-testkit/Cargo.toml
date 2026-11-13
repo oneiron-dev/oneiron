@@ -1,0 +1,30 @@
+[package]
+name = "oneiron-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Test fixtures for oneiron door tests and the E2E seeding script: fixture vault copies, a fake clock, a scripted model provider, a hashing embedder, a free-port server spawn, fault injection, a receipt reader and the test lint"
+repository.workspace = true
+# Test support only: a dev-dependency of the crates whose tests use it, never
+# a dependency of a shipped crate or binary.
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore", features = ["test-keystore"] }
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
+blake3 = { workspace = true }
+futures-core = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"
+toml = "0.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

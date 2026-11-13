@@ -174,7 +174,7 @@ side_tables! {
         // Restore class: A window's ready generation is this vault's own record of the exchanges
         // its live connections owe, so it follows the live vault: a restore neither drops one owed
         // nor brings back an image's (FIX 19634).
-        [restore: live] [family: unregistered] [tier: canonical];
+        [restore: live] [family: structure] [tier: canonical];
     /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
     /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
     SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw
@@ -220,6 +220,10 @@ side_tables! {
         [restore: content] [family: unclassified] [tier: canonical];
     /// A window promoted from thin to canonical residence; reconnect replays it. Key: window key.
     SYNC_RESIDENCE_PROMOTED_WINDOW: SyncState b"rp:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// A window this machine holds in full whose retain the home refused; the residence upkeep
+    /// asks again (OF-534). Value: [1]. Key: window key.
+    SYNC_RESIDENCE_RETAIN_REFUSED_WINDOW: SyncState b"rr:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).

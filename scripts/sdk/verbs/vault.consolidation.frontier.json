@@ -4,6 +4,7 @@
   "input": "crate::memory::consolidation_frontier::ConsolidationFrontierRequest",
   "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
   "scope": "Write",
+  "act_class": "unstated",
   "call": "memory.consolidation_frontier_as_owner(&memory.embedded_owner(\"vault.consolidation.frontier\")?, &input)?",
   "host_door": true,
   "host_door_lists": true,

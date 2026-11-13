@@ -119,6 +119,15 @@ pub trait StoreProjectWrites: Send + Sync {
         data: &[u8],
     ) -> Result<()>;
 
+    /// The engine's `workspace_roster::index_extra_room`.
+    fn index_extra_room(
+        &self,
+        store: &Store,
+        txn: &mut RwTxn<'_>,
+        id: EntityId,
+        data: &[u8],
+    ) -> Result<()>;
+
     /// The engine's `workspace_roster::root_project_in`.
     fn root_project_in(&self, store: &Store, txn: &RoTxn<'_>) -> Result<Option<EntityId>>;
 

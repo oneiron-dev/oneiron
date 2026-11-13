@@ -175,6 +175,30 @@ pub(super) fn apply_short_id_plan(
     Ok(())
 }
 
+/// Moves `id`'s short-id rows, named `short_id` and keyed by
+/// `old_content_hash`, to `content_hash` in the writer's transaction, as a
+/// put's update does. For a write outside the batch writer that changes the
+/// bytes a live read hashes (FIX SUMMARY-SHORT-REF-INDEX).
+pub(crate) fn refresh_short_id_hash_in_txn(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    short_id: String,
+    old_content_hash: u8,
+    content_hash: u8,
+) -> Result<()> {
+    apply_short_id_plan(
+        store,
+        wtxn,
+        id,
+        ShortIdPlan::UpdateExisting {
+            short_id,
+            old_content_hash,
+            content_hash,
+        },
+    )
+}
+
 pub(crate) fn delete_short_id_rows_for_id(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
@@ -269,10 +293,14 @@ pub(super) fn delete_related_edges(
         }
     }
     for (kind, target) in &outbound {
-        store.port_remove_edge_rows(wtxn, id, *kind, target)?;
+        if store.port_remove_edge_rows(wtxn, id, *kind, target)? {
+            crate::feeds::record_edge_change_in_txn(store, wtxn, id, *kind, target, false)?;
+        }
     }
     for (kind, source) in &inbound {
-        store.port_remove_edge_rows(wtxn, source, *kind, id)?;
+        if store.port_remove_edge_rows(wtxn, source, *kind, id)? {
+            crate::feeds::record_edge_change_in_txn(store, wtxn, source, *kind, id, false)?;
+        }
     }
 
     let mut neighbors: Vec<EntityId> = outbound

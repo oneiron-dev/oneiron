@@ -4,8 +4,8 @@
 pub(crate) use oneiron_store::serialize::export_value::tree::*;
 
 use super::{
-    ExportValue, byte_container_is_opaque_or_tainted, credential_key, exported_text, invalid,
-    reference_field, safe_text,
+    ExportSecrets, ExportValue, byte_container_is_opaque_or_tainted, credential_key, exported_text,
+    invalid, reference_field, safe_text,
 };
 use crate::batch::secret_scan::{release_joined_messagepack, release_joined_strings};
 use crate::error::Result;
@@ -15,13 +15,31 @@ use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-/// `value` as the export carries it. Every node is judged where it sits:
-/// a credential field, a joined secret, an id slot and opaque bytes, at any
-/// depth. `text_depth` is how deep in nested text the value was decoded.
+/// `value` as the export carries it under [`ExportSecrets::Nulled`]: every node
+/// is judged where it sits (a credential field, a joined secret, an id slot
+/// and opaque bytes, at any depth). `text_depth` is how deep in nested text
+/// the value was decoded.
 pub(super) fn export_value_tree(value: &Mp, entity_type: u8, text_depth: usize) -> ExportValue {
+    export_value_tree_with(value, entity_type, text_depth, ExportSecrets::Nulled)
+}
+
+/// `value` as the export carries it under `secrets`. Under
+/// [`ExportSecrets::Included`] (the Owner's whole-vault archive with secrets
+/// included) no credential rule nulls: credential-named fields are kept, UTF-8
+/// strings are kept without [`safe_text`], binary is kept as [`ExportValue::BinaryText`]
+/// when UTF-8 with no control char else [`ExportValue::Binary`], arrays open
+/// without opaque/joined checks, a map value after a Nil key is read, and Ext
+/// is kept as [`ExportValue::Ext`]. A non-UTF-8 MessagePack string stays Nil.
+pub(super) fn export_value_tree_with(
+    value: &Mp,
+    entity_type: u8,
+    text_depth: usize,
+    secrets: ExportSecrets,
+) -> ExportValue {
     let read = Reader {
         entity_type,
         text_depth,
+        secrets,
     };
     let mut open = match read.node(value, "", 0) {
         Node::Done(value) => return value,
@@ -56,6 +74,7 @@ pub(super) fn export_value_tree(value: &Mp, entity_type: u8, text_depth: usize) 
 struct Reader {
     entity_type: u8,
     text_depth: usize,
+    secrets: ExportSecrets,
 }
 
 /// A node read alone, or a container opened for its items.
@@ -72,12 +91,17 @@ struct Open<'v> {
     depth: usize,
     /// The items exported so far; a map's keys and values in turn.
     out: Vec<ExportValue>,
+    secrets: ExportSecrets,
 }
 
 impl Reader {
     fn node<'v>(&self, value: &'v Mp, key: &str, depth: usize) -> Node<'v> {
-        if credential_key(key) {
+        let included = self.secrets == ExportSecrets::Included;
+        if !included && credential_key(key) {
             return Node::Done(ExportValue::Nil);
+        }
+        if included {
+            return self.node_included(value, key, depth);
         }
         Node::Done(match value {
             Mp::Nil => ExportValue::Nil,
@@ -128,6 +152,7 @@ impl Reader {
                     items: Items::Array(values),
                     depth,
                     out: Vec::with_capacity(values.len()),
+                    secrets: self.secrets,
                 });
             }
             Mp::Map(entries) => {
@@ -135,10 +160,51 @@ impl Reader {
                     items: Items::Map(entries),
                     depth,
                     out: Vec::with_capacity(entries.len().saturating_mul(2)),
+                    secrets: self.secrets,
                 });
             }
             Mp::Ext(_, _) => ExportValue::Nil,
         })
+    }
+
+    /// [`Self::node`] under [`ExportSecrets::Included`]: no credential rule
+    /// nulls. A non-UTF-8 MessagePack string stays Nil.
+    fn node_included<'v>(&self, value: &'v Mp, key: &str, depth: usize) -> Node<'v> {
+        if let Mp::Binary(bytes) = value
+            && reference_field(key, bytes, self.entity_type, depth)
+        {
+            return Node::Done(ExportValue::EntityReference(bytes.clone()));
+        }
+        match value {
+            Mp::Nil => Node::Done(ExportValue::Nil),
+            Mp::Boolean(value) => Node::Done(ExportValue::Boolean(*value)),
+            Mp::Integer(value) => Node::Done(ExportValue::Integer(value.to_string())),
+            Mp::F32(value) => Node::Done(ExportValue::F32(value.to_bits())),
+            Mp::F64(value) => Node::Done(ExportValue::F64(value.to_bits())),
+            Mp::String(value) => Node::Done(match value.as_str() {
+                Some(value) => ExportValue::String(value.to_owned()),
+                None => ExportValue::Nil,
+            }),
+            Mp::Binary(bytes) => Node::Done(match std::str::from_utf8(bytes) {
+                Ok(text) if !text.chars().any(char::is_control) => {
+                    ExportValue::BinaryText(text.to_owned())
+                }
+                _ => ExportValue::Binary(bytes.clone()),
+            }),
+            Mp::Array(values) => Node::Open(Open {
+                items: Items::Array(values),
+                depth,
+                out: Vec::with_capacity(values.len()),
+                secrets: self.secrets,
+            }),
+            Mp::Map(entries) => Node::Open(Open {
+                items: Items::Map(entries),
+                depth,
+                out: Vec::with_capacity(entries.len().saturating_mul(2)),
+                secrets: self.secrets,
+            }),
+            Mp::Ext(kind, bytes) => Node::Done(ExportValue::Ext(*kind, bytes.clone())),
+        }
     }
 }
 
@@ -152,7 +218,14 @@ impl<'v> Open<'v> {
             Items::Map(entries) => match entries.get(at / 2) {
                 None => Next::Closed,
                 Some((key, _)) if at % 2 == 0 => Next::Item(key, ""),
-                Some(_) if matches!(self.out.last(), Some(ExportValue::Nil)) => Next::Nil,
+                // Under Included a map value after a Nil key is read as its own
+                // value; only under Nulled does a nulled key force its value Nil.
+                Some(_)
+                    if self.secrets == ExportSecrets::Nulled
+                        && matches!(self.out.last(), Some(ExportValue::Nil)) =>
+                {
+                    Next::Nil
+                }
                 Some((key, value)) => Next::Item(value, field_name(key)),
             },
         }
@@ -161,6 +234,10 @@ impl<'v> Open<'v> {
     fn close(self) -> ExportValue {
         match self.items {
             Items::Array(_) => {
+                // Under Included no joined-strings check runs: the array goes out.
+                if self.secrets == ExportSecrets::Included {
+                    return ExportValue::Array(self.out);
+                }
                 // Read again once items are nulled: the text left is what a second
                 // pass reads joined, so the array is its own fixed point.
                 let joined = {
@@ -232,6 +309,8 @@ fn leaf_msgpack(value: &ExportValue) -> Result<Mp> {
         ExportValue::String(value) => Mp::from(value.as_str()),
         ExportValue::EntityReference(value) => Mp::Binary(value.clone()),
         ExportValue::BinaryText(value) => Mp::Binary(value.as_bytes().to_vec()),
+        ExportValue::Binary(value) => Mp::Binary(value.clone()),
+        ExportValue::Ext(kind, value) => Mp::Ext(*kind, value.clone()),
         ExportValue::Array(_) | ExportValue::Map(_) => {
             return Err(invalid("container node read as a leaf"));
         }
@@ -274,7 +353,9 @@ fn postorder(value: &ExportValue) -> Vec<Postorder<'_>> {
     nodes
 }
 
-/// One node as the archive writes it.
+/// One node as the archive writes it. `Binary`/`Ext` are only ever written
+/// by the Owner's whole-vault archive with secrets included; every other
+/// export never writes them.
 #[derive(Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 enum NodeOut<'v> {
@@ -285,6 +366,8 @@ enum NodeOut<'v> {
     String(&'v str),
     EntityReference(&'v [u8]),
     BinaryText(&'v str),
+    Binary(&'v [u8]),
+    Ext(i8, &'v [u8]),
     Array(usize),
     Map(usize),
     #[serde(untagged)]
@@ -304,6 +387,8 @@ impl<'v> NodeOut<'v> {
                 ExportValue::String(value) => Self::String(value),
                 ExportValue::EntityReference(bytes) => Self::EntityReference(bytes),
                 ExportValue::BinaryText(value) => Self::BinaryText(value),
+                ExportValue::Binary(value) => Self::Binary(value),
+                ExportValue::Ext(kind, value) => Self::Ext(*kind, value),
                 // A container is never a leaf of the postorder.
                 ExportValue::Nil | ExportValue::Array(_) | ExportValue::Map(_) => Self::Nil,
             },
@@ -378,6 +463,8 @@ impl<'de> Visitor<'de> for NodesVisitor {
                 NodeIn::String(value) => (ExportValue::String(value), 0),
                 NodeIn::EntityReference(bytes) => (ExportValue::EntityReference(bytes), 0),
                 NodeIn::BinaryText(value) => (ExportValue::BinaryText(value), 0),
+                NodeIn::Binary(value) => (ExportValue::Binary(value), 0),
+                NodeIn::Ext(kind, value) => (ExportValue::Ext(kind, value), 0),
             };
             built.push(value);
         }

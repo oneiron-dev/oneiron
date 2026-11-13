@@ -291,6 +291,125 @@ pub fn spend_lease_as_owner(
     lease_view(&AgentDispatcher::new(vault), &scope_id(&input.scope)?)
 }
 
+/// `vault.budgets.lease` for a caller other than the owner (slice 6.5a,
+/// S65-BUDGET = A): a lease in the scope tree of a run the caller is the
+/// actor of, that is its own attempt's scope or one its run reserved below
+/// it, at any depth. The view is the owner's: the lease, what it may still
+/// spend and the hard ancestor that binds it. Opening and raising a lease
+/// stay the owner's acts; reserving and settling stay the engine's
+/// accounting.
+///
+/// One snapshot proves the caller's read authority
+/// (`Memory::prove_read_authority_in_txn`: a bound credential that was
+/// revoked or has expired reads nothing), places the scope in a run of the
+/// caller's own, and reads the lease.
+///
+/// # Errors
+///
+/// A malformed scope id; a caller whose bound credential grants it no read
+/// or no longer holds, and a scope outside the caller's own runs'
+/// (`FORBIDDEN`); a missing scope; storage errors.
+pub fn spend_lease_as_reader(
+    memory: &Memory<'_>,
+    input: &SpendScopeRequest,
+) -> MemoryResult<SpendLeaseView> {
+    let scope = scope_id(&input.scope)?;
+    let vault = memory.vault();
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    memory.prove_read_authority_in_txn(&txn)?;
+    if !in_own_scope_tree_in_txn(memory, &txn, &scope)? {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "vault.budgets.lease reads the owner's leases and those of the caller's own runs",
+            &["Call it as the vault's owner, or for a scope your run spends under or reserved."],
+        ));
+    }
+    let lease = super::spend_record::SCOPE
+        .get(&vault.store, &txn, &scope.0)?
+        .ok_or_else(|| invalid("spend scope is missing"))?;
+    let spend = AgentDispatcher::new(vault).spend_read_at_in_txn(&txn, &scope)?;
+    Ok(SpendLeaseView { lease, spend })
+}
+
+/// `vault.budgets.lease` on an in-process handle: the embedded owner's read,
+/// or [`spend_lease_as_reader`] for any other caller.
+///
+/// # Errors
+///
+/// As the read it takes.
+pub fn spend_lease_embedded(
+    memory: &Memory<'_>,
+    input: &SpendScopeRequest,
+) -> MemoryResult<SpendLeaseView> {
+    match memory.embedded_owner("vault.budgets.lease") {
+        Ok(owner) => spend_lease_as_owner(memory.vault(), &owner, input).map_err(MemoryError::from),
+        Err(_) => spend_lease_as_reader(memory, input),
+    }
+}
+
+/// `vault.budgets.settlements` for a person or agent on a verified slip of
+/// its own: of one served run's settlements `rows`, as the host's usage
+/// ledger read them, those whose stamp names the caller as the agent the call
+/// served (`RunRungSettlement::agent`: the engine's stamp on an `engine`
+/// record, the poster's on a `posted` one). An unbound call names no agent,
+/// and no call names a person, so a person reads none. The owner reads every
+/// row on its own proof.
+///
+/// The caller's read authority is proved after the ledger read the rows, so
+/// a credential revoked or expired before that proof reads nothing
+/// (`Memory::prove_read_authority_in_txn`).
+///
+/// # Errors
+///
+/// A caller whose bound credential grants it no read or no longer holds
+/// (`FORBIDDEN`); storage errors.
+pub fn own_run_settlements_as_reader(
+    memory: &Memory<'_>,
+    rows: Vec<RunRungSettlement>,
+) -> MemoryResult<Vec<RunRungSettlement>> {
+    let txn = memory
+        .vault()
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)?;
+    memory.prove_read_authority_in_txn(&txn)?;
+    let caller = memory.actor().to_hex();
+    Ok(rows
+        .into_iter()
+        .filter(|row| row.agent.as_deref() == Some(caller.as_str()))
+        .collect())
+}
+
+/// Whether `scope`, or a scope above it in its tree, is the spend scope of an
+/// attempt the caller is the actor of, as `txn` reads it. A launch root names
+/// no attempt.
+fn in_own_scope_tree_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    scope: &SpendScopeId,
+) -> MemoryResult<bool> {
+    let vault = memory.vault();
+    let caller = crate::WriteActor::new(memory.actor(), memory.actor_class());
+    let mut seen = std::collections::HashSet::new();
+    let mut next = Some(scope.clone());
+    while let Some(id) = next {
+        // A tree's parents end at its root; a scope met twice is a corrupt row.
+        if !seen.insert(id.clone()) {
+            return Err(crate::Error::CorruptedIndex("spend scope parent cycle").into());
+        }
+        if let Ok(attempt) = attempt_id(id.as_str())
+            && crate::snapshot_read::is_attempt_actor_in_txn(vault, txn, caller, attempt)?
+        {
+            return Ok(true);
+        }
+        next = super::spend_record::SCOPE
+            .get(&vault.store, txn, &id.0)?
+            .and_then(|row| row.parent);
+    }
+    Ok(false)
+}
+
 pub fn top_up_spend_lease_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,

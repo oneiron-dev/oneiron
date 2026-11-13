@@ -58,7 +58,7 @@ pub use cards::{
 };
 pub use draft::{
     DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput, DraftPage, DraftStep,
-    PressedThrough, SlotCandidate, SlotField, draft_from_steps,
+    DraftTypeRef, PressedThrough, SlotCandidate, SlotField, draft_from_steps,
 };
 #[cfg(feature = "driver")]
 pub use live_run::filled_checks;

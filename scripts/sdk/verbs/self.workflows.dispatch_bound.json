@@ -3,6 +3,7 @@
   "input": "crate::task_verb::sdk::WorkflowBoundDispatchRequest",
   "output": "crate::task_verb::sdk::WorkflowRunView",
   "scope": "Write",
+  "act_class": "spawn",
   "context": "run",
   "effect": "WorkflowDispatch",
   "run_surface": "live"

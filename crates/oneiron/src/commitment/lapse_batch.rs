@@ -15,7 +15,6 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
 use super::codec::commitment_claim_candidate_from_body;
-use super::write::STATUS_CHANGE_MINTS_SUCCESSOR;
 use super::{CommitmentStatus, PREDICATE_COMMITMENT_RECORD, decode_commitment_value};
 use crate::error::ClaimError;
 
@@ -87,7 +86,7 @@ pub(crate) fn pending_commitment_lapses_in_txn(
         }
         record.status = CommitmentStatus::Lapsed;
         let claim = lapse_claim_id(id)?;
-        if claim != *id && store.port_entity_present(txn, &claim)? {
+        if store.port_entity_present(txn, &claim)? {
             return Err(Error::InvalidClaimBody(
                 "commitment lapse successor id already exists",
             ));
@@ -119,9 +118,8 @@ pub(crate) fn pending_commitment_lapses_in_txn(
 /// means that recognition was lost, which is a fail-closed invariant violation
 /// rather than a reason to write ungated.
 ///
-/// With [`STATUS_CHANGE_MINTS_SUCCESSOR`], each lapse is a successor claim
-/// that supersedes its commitment ([`lapse_through_successors_in_txn`]);
-/// otherwise the Lapsed body rewrites the commitment's own row.
+/// Each lapse is a successor claim that supersedes its commitment
+/// ([`lapse_through_successors_in_txn`]).
 #[expect(
     clippy::too_many_arguments,
     reason = "the lapse helper threads the batch apply chokepoint's existing handles verbatim"
@@ -143,52 +141,16 @@ pub(crate) fn lapse_commitments_in_txn(
             "local claim write policy snapshot missing",
         ));
     }
-    if STATUS_CHANGE_MINTS_SUCCESSOR {
-        return lapse_through_successors_in_txn(
-            store,
-            config,
-            analyzer,
-            wtxn,
-            ids,
-            envelope,
-            learned_at,
-            text_index_trusted,
-            preflight_gate_decision_ids,
-        );
-    }
-    let pending = pending_commitment_lapses_in_txn(store, &*wtxn, ids)?;
-    if pending.is_empty() {
-        return Ok(());
-    }
-    let mut ops = Vec::with_capacity(pending.len() * 2);
-    for lapse in pending {
-        ops.push(BatchOp::ClaimCandidate {
-            id: lapse.id,
-            candidate: Box::new(lapse.candidate),
-            envelope: envelope.clone(),
-            occurred: lapse.occurred,
-            learned_at,
-            internal_lexical_query_hint: false,
-        });
-        ops.push(BatchOp::ReconcileLexicalQueryHints {
-            source: lapse.id,
-            keep: Vec::new(),
-        });
-    }
-    // Decisions were already recorded by the batch preflight, which is what
-    // makes a denial survive rollback; recording again here would mint a
-    // second Gate receipt per lapsed instance. The preflight identities ride
-    // through so a pending bind reuses its own receipt instead of a fresh one.
-    apply_ops_with_gate_mode(
+    lapse_through_successors_in_txn(
         store,
         config,
         analyzer,
         wtxn,
-        ops,
+        ids,
+        envelope,
+        learned_at,
         text_index_trusted,
-        ApplyOpsGateMode::new(false, true)
-            .with_source_in_gate_input()
-            .with_preflight_gate_decision_ids(preflight_gate_decision_ids),
+        preflight_gate_decision_ids,
     )
 }
 

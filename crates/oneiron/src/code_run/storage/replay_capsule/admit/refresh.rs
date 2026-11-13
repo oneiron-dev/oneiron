@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use super::super::declarations::{request_as_stored, stored_request_hash};
 use super::super::pieces::{manifest_pieces_in_txn, release_superseded_in_txn};
 use super::*;
 use crate::code_run::replay::ResultOccurrence;
@@ -15,8 +16,13 @@ pub(crate) fn refresh_staged_request(
     vault: &Vault,
     update: &CapsuleRequestUpdate<'_>,
 ) -> Result<Option<u64>> {
-    let sent = update
+    let sent_hash = update
         .request
+        .canonical_hash()
+        .map_err(|error| Error::InvalidConfig(format!("capsule request: {error}")))?;
+    // FIX row [AGENT-RUN-START-LATENCY-4S]: stored with the executor's
+    // declarations named by reference, as a staged capture is.
+    let stored = request_as_stored(update.request)
         .canonical_bytes()
         .map_err(|error| Error::InvalidConfig(format!("capsule request: {error}")))?;
     let Some(actor) = staged_actor(vault, update)? else {
@@ -28,7 +34,7 @@ pub(crate) fn refresh_staged_request(
     };
     let reserved = spilling(
         vault.code_result_inline_bytes(),
-        &unheld_lens(vault, &sent, scope)?,
+        &unheld_lens(vault, &stored, scope)?,
     );
     with_spill(vault, reserved, |wtxn, spill| {
         let Some(mut capsule) = CAPSULES.get(&vault.store, wtxn, &update.key)? else {
@@ -66,11 +72,11 @@ pub(crate) fn refresh_staged_request(
             CapsuleRequest::Withheld { .. } => None,
         };
         let key_bytes = CAPSULES.key_bytes(&update.key);
-        match admit_request_or_refusal_in_txn(vault, wtxn, &key_bytes, &sent)? {
+        match admit_request_or_refusal_in_txn(vault, wtxn, &key_bytes, &stored)? {
             Ok(admitted) => {
                 let pieces = RequestPieces::of(&admitted.bytes)?;
                 spill.holds(&pieces.lens_in_txn(&vault.store, wtxn, scope)?)?;
-                let stored_hash = *blake3::hash(&admitted.bytes).as_bytes();
+                let stored_hash = stored_request_hash(&admitted.request, &admitted.bytes)?;
                 let path = format!("{}.{}", update.path, blake3::Hash::from(stored_hash));
                 let body = pieces.publish_in_txn(vault, wtxn, spill, scope, &path)?;
                 capsule.request = CapsuleRequest::Kept {
@@ -103,7 +109,7 @@ pub(crate) fn refresh_staged_request(
             }
             Err(error) => return Err(error.into()),
         }
-        capsule.request_hash = *blake3::hash(&sent).as_bytes();
+        capsule.request_hash = sent_hash;
         capsule.messages_digest = update.messages;
         // The appended host evidence has no complete row witness yet.
         capsule.source_rows = None;
@@ -120,7 +126,7 @@ pub(crate) fn refresh_staged_request(
             super::super::start_parts::drop_unheld_body_in_txn(&vault.store, wtxn, &digest)?;
         }
         release_superseded_in_txn(&vault.store, wtxn, scope, &superseded)?;
-        Ok(Some(sent.len() as u64))
+        Ok(Some(stored.len() as u64))
     })
 }
 
