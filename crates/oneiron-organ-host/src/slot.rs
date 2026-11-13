@@ -1,8 +1,9 @@
 //! One installed organ: its process, its crash history, its condition.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
+use std::{mem, ptr};
 
 use oneiron_organ_protocol::OrganIdentity;
 
@@ -16,6 +17,10 @@ const CRASH_WINDOW: Duration = Duration::from_secs(600);
 const QUARANTINE_AFTER: usize = 5;
 const BACKOFF_BASE: Duration = Duration::from_millis(250);
 const BACKOFF_CAP: Duration = Duration::from_secs(30);
+/// `internal` answers in a row after which the live process is recycled
+/// (ARCH-0075, organ error codes): `internal` names a bug, and a fresh
+/// process holds nothing the old one may have broken.
+const RECYCLE_AFTER_INTERNAL: u32 = 3;
 
 /// Where an installed organ stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +64,14 @@ struct SlotState {
     /// Processes started for one call each ([`Slot::fresh_process`]): never
     /// `process`, and stopped when that call ends.
     one_call: Vec<Arc<OrganProcess>>,
+    /// Processes a recycle retired ([`Slot::answered`]): never `process`
+    /// again, and each is stopped once no call is in flight on it
+    /// ([`Slot::take_idle_recycled`]).
+    recycled: Vec<Arc<OrganProcess>>,
+    /// The live process's run of `internal` answers in a row: whose, and
+    /// how many. The `Weak` keeps that process's allocation, so no later
+    /// process can share its address.
+    internal_run: Option<(Weak<OrganProcess>, u32)>,
     crashes: VecDeque<Instant>,
     not_before: Option<Instant>,
     unavailable: Option<Unavailable>,
@@ -220,7 +233,8 @@ impl Slot {
         }
     }
 
-    /// Forgets `process` as the live one or a one-call one. Whether it was.
+    /// Forgets `process` as the live one, a one-call one or a recycled one.
+    /// Whether it was.
     fn forget(state: &mut SlotState, process: &Arc<OrganProcess>) -> bool {
         if state
             .process
@@ -230,9 +244,57 @@ impl Slot {
             state.process = None;
             return true;
         }
-        let before = state.one_call.len();
+        let before = state.one_call.len() + state.recycled.len();
         state.one_call.retain(|one| !Arc::ptr_eq(one, process));
-        state.one_call.len() < before
+        state.recycled.retain(|old| !Arc::ptr_eq(old, process));
+        state.one_call.len() + state.recycled.len() < before
+    }
+
+    /// `process` answered a call: with the organ's `internal` code, or with
+    /// anything else, which ends its run. The live process's third
+    /// `internal` in a row recycles it: it stops being the live process, so
+    /// the next call starts a fresh one, and it waits among the recycled
+    /// ones until no call is in flight on it. A recycle is the host's own
+    /// decision, so it counts no crash and sets no backoff. A one-call
+    /// process, or one the slot has already let go, is not counted: no
+    /// later call reaches it here. Whether this answer recycled `process`.
+    pub(crate) fn answered(&self, process: &Arc<OrganProcess>, internal: bool) -> bool {
+        let mut state = self.lock();
+        let live = state
+            .process
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, process));
+        if !live {
+            return false;
+        }
+        let before = match &state.internal_run {
+            Some((of, run)) if ptr::eq(of.as_ptr(), Arc::as_ptr(process)) => *run,
+            _ => 0,
+        };
+        let run = if internal {
+            before.saturating_add(1)
+        } else {
+            0
+        };
+        if run < RECYCLE_AFTER_INTERNAL {
+            state.internal_run = (run > 0).then(|| (Arc::downgrade(process), run));
+            return false;
+        }
+        state.internal_run = None;
+        state.process = None;
+        state.recycled.push(Arc::clone(process));
+        true
+    }
+
+    /// Lets go of every recycled process with no call in flight on it, or
+    /// whose socket has closed, for the caller to stop.
+    pub(crate) fn take_idle_recycled(&self) -> Vec<Arc<OrganProcess>> {
+        let mut state = self.lock();
+        let (idle, busy): (Vec<_>, Vec<_>) = mem::take(&mut state.recycled)
+            .into_iter()
+            .partition(|process| process.idle_for().is_some() || !process.is_alive());
+        state.recycled = busy;
+        idle
     }
 
     /// The process died under a call: forget it, and count the crash unless
@@ -294,6 +356,8 @@ impl Slot {
         state.unavailable = Some(reason);
         state.process = None;
         state.one_call.clear();
+        state.recycled.clear();
+        state.internal_run = None;
         state.generations.retain(|old| old.is_running());
         state.generations.clone()
     }
