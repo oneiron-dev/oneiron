@@ -8398,6 +8398,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-dreamer"
+version = "0.1.0"
+dependencies = [
+ "oneiron-remote",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-driver"
 version = "0.1.0"
 dependencies = [
