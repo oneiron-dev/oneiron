@@ -67,9 +67,6 @@ use tower::ServiceExt;
 
 /// The company's shared vault the member holds a seat in.
 const SHARED: u64 = 42;
-/// The first-party actor the default policy manifest grants an Auto
-/// ceiling, so its TASK create takes direct effect.
-const TASK_OWNER_BYTES: [u8; 16] = [0xE1; 16];
 const COMPANY: &str = "Acme";
 const MEMBER: &str = "owen";
 const QUESTION: &str = "Is owen in the office on Thursday?";
@@ -83,7 +80,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// One served, rooted vault: its router, its host's slip issuer and root
-/// slip, and its owner's engine proof.
+/// slip, its owner bound under that root, and the owner's engine proof.
 struct Host {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
@@ -91,6 +88,7 @@ struct Host {
     issuer: HostSlipIssuer,
     root_slip: CapabilitySlip,
     root_token: String,
+    owner: EntityId,
     proof: AuthenticatedOwner,
     vault_id: AuthorityVaultId,
 }
@@ -137,6 +135,7 @@ impl Host {
             issuer,
             root_slip,
             root_token,
+            owner,
             proof,
             vault_id,
         }
@@ -419,18 +418,17 @@ async fn thursday() -> Thursday {
     );
 
     let agent = Agent::pair(&company, "scheduling-agent", [0x51; 32]).await;
-    let task_owner = person(
-        &company.vault,
-        EntityId::from_bytes(TASK_OWNER_BYTES).expect("task owner id"),
-    );
+    // The company's owner opens the TASK: on a rooted vault only a bound
+    // writer creates one, and the inquiry asks only that it is an open TASK
+    // of this vault.
     let task = company
         .vault
-        .memory(task_owner, EdgeActorClass::Agent)
+        .memory(company.owner, EdgeActorClass::Human)
         .tasks_create(&TaskCreateSpec::new(
             rmpv::Value::from("plan the Thursday review"),
             None,
+            Some(company.owner),
             None,
-            Some(3_600),
         ))
         .expect("the TASK")
         .task_ref
