@@ -303,7 +303,7 @@ async function setup(id: string, projectRefs: readonly string[] = ["@project-nor
   const data = await (await loadFixtures()).readJson<Data>("memory-canonical-cases");
   const providers = await ScriptedProviders.start({ id: `memory-projects-${id}`, origins: ["decider", "drafter"], steps: [] });
   const engine = await EngineFixture.start({ id, profile, serverConfig: memoryModels(providers),
-    serverLog: "info,oneiron::workflow_pump=debug,oneiron_server::ai_host=debug,oneiron_server::big_rung=debug,oneiron_server::decision_host=debug,oneiron::agent_dispatch=debug,oneiron::llm::decision=debug,oneiron::workspace_roster=debug" });
+    serverLog: "debug,oneiron::workflow_pump=info,hyper=info,hyper_util=info,h2=info,tower=info,tower_http=info,reqwest=info,rustls=info,wasmtime=info,wasmtime_cranelift=info,cranelift_codegen=info,cranelift_frontend=info,heed=info,tokio=info,runtime=info,mio=info" });
   const occurred = 1769947200; // Public setup input, never an engine clock override.
   await installProjectProposal(engine);
   // Each minted project costs the house three agent runs (decide, draft, goal intake), about 4.5 s
