@@ -676,7 +676,12 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
         mcp_scoped_envelope(narrowed, "read_memory", &scope),
         json!({"run_ref": "quickjs-world", "task": "recall the heron lantern"}),
     );
-    for request in [
+    // `vault.recall` is a filtered row (`mcp_scope: filtered`), so the tool
+    // list answers a narrowed connector with its own world's memory instead
+    // of refusing it (Engine ruling 07:14 Fri 13 Nov). The whole body is
+    // checked; a leak prints from the leaked text, since a failure line is cut.
+    let (_, body) = route_json(
+        mode.server.clone(),
         mcp_endpoint_call_request(
             MCP_TOOL_FIRST_PATH,
             "quickjs-world",
@@ -684,15 +689,26 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
             "vault.recall",
             tool,
         ),
-        mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
-    ] {
-        let body = mcp_refusal(&mode.server, request).await;
-        assert_eq!(
-            body["error"]["data"]["error_code"], "mcp_scope_refused",
-            "{body}"
-        );
-        assert!(!body.to_string().contains("north gate"), "{body}");
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert_ne!(body["result"]["isError"], json!(true), "{body}");
+    let text = body.to_string();
+    if let Some(at) = text.find("north gate") {
+        let from = text.get(at.saturating_sub(160)..).unwrap_or(&text[at..]);
+        panic!("the narrowed recall leaked another world's memory: {from}");
     }
+    // `execute_code` is refused at admission for a narrowed connector.
+    let body = mcp_refusal(
+        &mode.server,
+        mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
+    )
+    .await;
+    assert_eq!(
+        body["error"]["data"]["error_code"], "mcp_scope_refused",
+        "{body}"
+    );
+    assert!(!body.to_string().contains("north gate"), "{body}");
     assert!(
         mode.backend.requests.lock().unwrap().is_empty(),
         "a refused run reaches no model"
