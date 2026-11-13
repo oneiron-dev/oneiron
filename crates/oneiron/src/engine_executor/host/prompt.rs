@@ -7,7 +7,7 @@ use super::*;
 /// The system and per-turn sites render the SAME resolved prompt-package
 /// block. The prose lives outside Rust so agent-facing instructions cannot
 /// drift from prompt tooling or be hand-copied between call sites.
-pub(in crate::engine_executor) fn executor_system_prompt(wire: &str) -> String {
+pub(crate) fn executor_system_prompt(wire: &str) -> String {
     let wire = wire.trim_end();
     let [host_verbs, verbs, runtime_types] = executor_declarations().map(|file| file.text);
     let revision = crate::task_verb::sdk::code_mode_catalog_fragment().revision;

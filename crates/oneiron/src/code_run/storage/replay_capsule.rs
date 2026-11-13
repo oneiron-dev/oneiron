@@ -348,6 +348,29 @@ pub(crate) fn capsule_request(
     vault: &Vault,
     capsule: &StepReplayCapsule,
 ) -> Result<Option<LlmRequest>> {
+    let Some(bytes) = stored_request_bytes(vault, capsule)? else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_slice(&bytes).ok())
+}
+
+/// The capsule's request as the capsule stores it, for the doors: its
+/// pieces put together, before any read of them as a request.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn capsule_stored_request_bytes(
+    vault: &Vault,
+    capsule: &StepReplayCapsule,
+) -> Result<Option<Vec<u8>>> {
+    stored_request_bytes(vault, capsule)
+}
+
+/// The bytes [`capsule_request`] reads as a request: `None` as it says,
+/// short of the read itself.
+fn stored_request_bytes(vault: &Vault, capsule: &StepReplayCapsule) -> Result<Option<Vec<u8>>> {
     let CapsuleRequest::Kept {
         body,
         path,
@@ -375,7 +398,7 @@ pub(crate) fn capsule_request(
     if blake3::hash(&bytes).as_bytes() != stored_hash {
         return Ok(None);
     }
-    Ok(serde_json::from_slice(&bytes).ok())
+    Ok(Some(bytes))
 }
 
 /// Binds a single-call workflow step's answer to its capsule (FIX 3611):

@@ -58,7 +58,8 @@ use serde_json::json;
 
 pub(super) use self::boundary::executor_boundary_contract;
 pub(super) use self::deadline_replay::DeadlineReplay;
-pub(super) use self::prompt::{executor_system_prompt, executor_turn_instruction};
+pub(crate) use self::prompt::executor_system_prompt;
+pub(super) use self::prompt::executor_turn_instruction;
 use self::results::recorded_output;
 pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 

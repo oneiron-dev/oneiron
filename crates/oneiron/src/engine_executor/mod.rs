@@ -80,6 +80,8 @@ pub use self::types::{
 };
 
 #[cfg(oneiron_test_support)]
+pub(crate) use self::host::executor_system_prompt;
+#[cfg(oneiron_test_support)]
 pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 
 #[cfg(test)]
