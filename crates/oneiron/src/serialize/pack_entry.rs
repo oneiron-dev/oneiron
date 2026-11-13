@@ -225,6 +225,8 @@ pub(super) fn serialize_prepared_pack(
     mut prepared: PreparedPack,
     tokenizer: PackTokenizer,
 ) -> Vec<u8> {
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::pack_encode_work::record_pack_encode();
     let empty =
         prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
     let l2_base = prepared.l2_base.clone();
