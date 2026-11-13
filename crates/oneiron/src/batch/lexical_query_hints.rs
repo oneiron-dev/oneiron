@@ -88,7 +88,9 @@ pub(crate) fn validate_staged_raw_put(
 /// the consolidation watermark, so the witness and structural doors already
 /// refuse one (F30, `memory::witness::validate_witness_occurrence`); this
 /// door joins them (ARCH-0002 `#turn-time-built`). The sync door does not:
-/// it never runs the public raw checks.
+/// it never runs the public raw checks, and a peer's learned time is kept.
+/// Nor does a whole-vault import, which keeps the archive's learned time
+/// (`BatchBuilder::put_archived`).
 pub(super) fn refuse_future_turn(entity_type: u8, learned_at: u64, now: u64) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_TURN
         && learned_at > now.saturating_add(crate::memory::WITNESS_OCCURRENCE_SKEW_SECS)
