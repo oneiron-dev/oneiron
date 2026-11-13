@@ -373,7 +373,7 @@ impl Vectors {
         if dims == 0 {
             return Err(PackError::BadDims);
         }
-        if data.len() % dims != 0 {
+        if !data.len().is_multiple_of(dims) {
             return Err(PackError::BadVectorBytes {
                 len: data.len() * 4,
             });
@@ -393,8 +393,8 @@ impl Vectors {
         }
         let stride = dims
             .checked_mul(4)
-            .ok_or_else(|| PackError::BadVectorBytes { len: bytes.len() })?;
-        if bytes.len() % stride != 0 {
+            .ok_or(PackError::BadVectorBytes { len: bytes.len() })?;
+        if !bytes.len().is_multiple_of(stride) {
             return Err(PackError::BadVectorBytes { len: bytes.len() });
         }
         let mut data = Vec::with_capacity(bytes.len() / 4);
