@@ -34,7 +34,11 @@
 //! shared endpoint still tells a CPU's vectors from a GPU's.
 //!
 //! A request's bearer key is checked from its headers before any of its body
-//! is read. A body is read only under room in a budget, which it holds until
+//! is read. The key is the operator's (`--api-key-env`) or one account's, from
+//! the accounts file (`--accounts-file`, [`accounts`]): each account has its
+//! own key, revoked on its own, and the request's work runs in a span that
+//! names its account. An account past its soft daily quota is served, and
+//! asks. A body is read only under room in a budget, which it holds until
 //! its request's work ends: small bodies (queries, a vault's document
 //! batches) and large ones each have their own, so a recall that declares its
 //! length never waits behind an upload. A body that declares its length
@@ -69,6 +73,7 @@ use axum::routing::{get, post};
 use oneiron::embed::{Embedder, EmbeddingProvenance};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
+use tracing::Instrument;
 use zeroize::Zeroizing;
 
 use super::local::evidence::RunProfile;
@@ -79,9 +84,12 @@ use crate::byte_line::ByteLine;
 use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
+mod accounts;
 mod batches;
 mod body;
 mod budget;
+pub(crate) use accounts::AccountKeys;
+use accounts::Caller;
 use budget::answer_bytes;
 #[cfg(test)]
 use budget::encoding_bytes;
@@ -130,8 +138,12 @@ pub(crate) const ONEIRON_WIRE: u32 = 1;
 /// Where to listen, and who may ask.
 pub(crate) struct Listen {
     pub(crate) addr: SocketAddr,
-    /// The bearer key every request must carry, if any.
+    /// The operator's bearer key, if any.
     pub(crate) key: Option<Zeroizing<String>>,
+    /// Each account's own key, from the accounts file, if one is given.
+    /// With a key or an accounts file, every request must carry one of
+    /// their keys.
+    pub(crate) accounts: Option<AccountKeys>,
     /// Names a request's `model` may give besides the space id.
     pub(crate) aliases: Vec<String>,
     /// The `[limits]` the endpoint serves under.
@@ -145,9 +157,9 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
             "embedder serve runs the local provider; the configured provider is not local"
         );
     }
-    if !listen.addr.ip().is_loopback() && listen.key.is_none() {
+    if !listen.addr.ip().is_loopback() && listen.key.is_none() && listen.accounts.is_none() {
         anyhow::bail!(
-            "embedder serve on a non-loopback address needs --api-key-env: anyone who can reach it could spend this host's model"
+            "embedder serve on a non-loopback address needs --api-key-env or --accounts-file: anyone who can reach it could spend this host's model"
         );
     }
     let embedder: Arc<dyn ServedModel> =
@@ -159,14 +171,17 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         model_id = embedder.model_id(),
         dimensions = embedder.dimensions(),
         auth = listen.key.is_some(),
+        accounts = ?listen.accounts.as_ref().map(AccountKeys::count),
         "embedder endpoint serving /v1/embeddings"
     );
-    let served = Arc::new(Served::new(
-        embedder,
-        listen.aliases,
-        listen.key,
-        &listen.limits,
-    )?);
+    let mut served = Served::new(embedder, listen.aliases, listen.key, &listen.limits)?;
+    if let Some(accounts) = listen.accounts {
+        let accounts = Arc::new(accounts);
+        #[cfg(unix)]
+        accounts.reload_on_hangup()?;
+        served = served.with_accounts(accounts);
+    }
+    let served = Arc::new(served);
     let questions = Arc::clone(&served.questions);
     // One read hands a body at most its piece, the room it reserves before
     // it reads ([`body`], FIX 149).
@@ -238,7 +253,10 @@ struct Served {
     embedder: Arc<dyn ServedModel>,
     /// The space id first, then the aliases.
     names: Vec<String>,
+    /// The operator's key.
     key: Option<Zeroizing<String>>,
+    /// Each account's own key ([`accounts`]).
+    accounts: Option<Arc<AccountKeys>>,
     /// Requests held at once, from the key check until the request's
     /// embedding work ends: the `embedder_requests` row. Past it a request
     /// waits its turn.
@@ -289,6 +307,7 @@ impl Served {
             embedder,
             names,
             key,
+            accounts: None,
             requests: Admission::new(
                 LimitRow::EmbedderRequests,
                 Arc::clone(&questions),
@@ -304,6 +323,39 @@ impl Served {
             wait,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
         })
+    }
+
+    /// Serves each account's own key beside the operator's.
+    fn with_accounts(mut self, accounts: Arc<AccountKeys>) -> Self {
+        self.accounts = Some(accounts);
+        self
+    }
+
+    /// Counts the input tokens the model just took for `caller`'s account.
+    /// The account's first crossing of its soft quota in a UTC day asks,
+    /// once, and names the account; the work goes on either way.
+    fn count_input_tokens(&self, caller: &Caller, tokens: usize) {
+        let (Caller::Account(id), Some(accounts)) = (caller, &self.accounts) else {
+            return;
+        };
+        let tokens = u64::try_from(tokens).unwrap_or(u64::MAX);
+        let Some(crossed) =
+            accounts.count_input_tokens(id, tokens, oneiron_vault_contract::now_ts())
+        else {
+            return;
+        };
+        self.questions.ask(
+            LimitRow::EmbedderAccountDailyInputTokens,
+            crossed.bound,
+            crossed.observed,
+        );
+        tracing::warn!(
+            kind = "account_daily_input_tokens",
+            account = %id,
+            bound = crossed.bound,
+            observed = crossed.observed,
+            "an account crossed its daily input tokens; its requests are still served; is everything okay?"
+        );
     }
 
     /// Body bytes held now: reserved for bodies being read, or kept by
@@ -345,10 +397,18 @@ fn routes(served: Arc<Served>) -> Router {
         .with_state(served)
 }
 
-async fn require_key(State(served): State<Arc<Served>>, request: Request, next: Next) -> Response {
-    match unauthorised(&served, request.headers()) {
-        Some(refused) => refused,
-        None => next.run(request).await,
+async fn require_key(
+    State(served): State<Arc<Served>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    match caller_of(&served, request.headers()) {
+        Ok(caller) => {
+            let span = tracing::info_span!("embedder_request", caller = caller.name());
+            request.extensions_mut().insert(caller);
+            next.run(request).instrument(span).await
+        }
+        Err(refused) => refused,
     }
 }
 
@@ -454,6 +514,11 @@ struct Usage {
 }
 
 async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Response {
+    let caller = request
+        .extensions()
+        .get::<Caller>()
+        .cloned()
+        .unwrap_or(Caller::Open);
     let Ok(held) = served.requests.admit(()).await else {
         return waited_out();
     };
@@ -565,28 +630,44 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
         base64,
         model: request.model,
         error_member: request.error_member,
+        caller,
     };
     batches::stream_embedding_rows(Arc::clone(&served), work, (held, body_held)).await
 }
 
-/// The refusal for a request without the configured bearer key; `None` when
-/// no key is configured or the request carries it.
-fn unauthorised(served: &Served, headers: &HeaderMap) -> Option<Response> {
-    let key = served.key.as_ref()?;
+/// Who a request is, by the bearer key it carries: the operator, one
+/// account, or anyone when no key and no accounts file is configured. A
+/// request whose key is neither the operator's nor any account's is refused.
+fn caller_of(served: &Served, headers: &HeaderMap) -> Result<Caller, Response> {
+    if served.key.is_none() && served.accounts.is_none() {
+        return Ok(Caller::Open);
+    }
     let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
-    if bool::from(presented.as_bytes().ct_eq(key.as_bytes())) {
-        crate::http_listener::authenticated();
-        return None;
-    }
-    Some(refuse(
-        StatusCode::UNAUTHORIZED,
-        "invalid_api_key",
-        "this endpoint needs its bearer key",
-    ))
+    let operator = served
+        .key
+        .as_ref()
+        .is_some_and(|key| bool::from(presented.as_bytes().ct_eq(key.as_bytes())));
+    let account = served
+        .accounts
+        .as_ref()
+        .and_then(|accounts| accounts.account_for(presented.as_bytes()));
+    let caller = match (operator, account) {
+        (true, _) => Caller::Operator,
+        (false, Some(account)) => Caller::Account(account),
+        (false, None) => {
+            return Err(refuse(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "this endpoint needs its bearer key",
+            ));
+        }
+    };
+    crate::http_listener::authenticated();
+    Ok(caller)
 }
 
 /// An OpenAI-shaped error body. The message never echoes an input.
