@@ -5,7 +5,10 @@
 //! only. Compiled only under `--cfg oneiron_test_support` (`test_doors`);
 //! hidden, never API.
 
+use std::future::Future;
 use std::path::Path;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::{
@@ -13,8 +16,14 @@ use crate::dreamer_consolidation::{
     scan_dirty_turns,
 };
 use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
-use crate::dreamer_runner::EnqueueDreamerAttemptOutcome;
+use crate::dreamer_runner::{
+    DREAMER_SERVER_PARK_OWNER, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, ModelSeatId,
+};
 use crate::dreamer_wake::DreamerAttemptExecutor;
+use crate::dreamer_wake::{
+    DreamerWakeDriver, RunWakePass, WakeCancellation, WakePassDeadline, WakeTrigger,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::{HostInferenceBinding, HostInferenceContext};
@@ -152,4 +161,94 @@ impl DreamerAttemptExecutor for PartitionPassExecutor<'_> {
         };
         DreamerAttemptExecutor::execute(&mut inner, attempt, ctx).await
     }
+}
+
+/// A stub executor that refuses every admitted try on one seat, as a spent
+/// model seat's step does.
+struct SeatRefusal {
+    seat: ModelSeatId,
+    reset_at_s: Option<u64>,
+}
+
+impl DreamerAttemptExecutor for SeatRefusal {
+    async fn execute(
+        &mut self,
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        Ok(DreamerAttemptExecution::ParkOnSeat {
+            reason: "model seat refused the step".to_owned(),
+            seat: *self.seat.as_bytes(),
+            reset_at_s: self.reset_at_s,
+        })
+    }
+}
+
+/// Polls `future` until it is ready: the wake pass yields only at its
+/// attempt boundaries.
+fn ready<F: Future>(future: F) -> F::Output {
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut future = pin!(future);
+    for _ in 0..10_000 {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return output;
+        }
+    }
+    panic!("the seat park pass is pending on something other than an attempt boundary");
+}
+
+/// Enqueues one Micro try under `tag` and runs one wake pass at `now`, leased
+/// under the server's park owner, whose executor refuses it on `seat` with
+/// `reset_at_s`: the driver parks the try on the seat's wait, as a spent
+/// seat's step does. Answers the try.
+///
+/// # Errors
+///
+/// The vault's, or a pass that does not park the try.
+#[doc(hidden)]
+pub fn park_try_on_seat(
+    vault: &Vault,
+    seat: ModelSeatId,
+    reset_at_s: Option<u64>,
+    tag: &str,
+    now: u64,
+) -> Result<AttemptId> {
+    let store = DreamerRunnerStore::new(vault);
+    let (EnqueueDreamerAttemptOutcome::Enqueued(status)
+    | EnqueueDreamerAttemptOutcome::Existing(status)) =
+        store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Micro,
+            input: rmpv::Value::from(format!("input:{tag}")),
+            parent_attempt: None,
+            dedupe_key: Some(tag.to_owned()),
+            run_id: None,
+            now,
+        })?;
+    let attempt = status.attempt.id;
+    let mut driver = DreamerWakeDriver::new(
+        vault,
+        "wake",
+        WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0)),
+    );
+    ready(driver.run_wake_pass(
+        RunWakePass {
+            trigger: WakeTrigger::Compaction,
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: crate::identity::load_or_mint_client_id(vault)?,
+            lease_owner: DREAMER_SERVER_PARK_OWNER.to_owned(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            now,
+            host_scope: None,
+            destination_bound: None,
+        },
+        &mut SeatRefusal { seat, reset_at_s },
+        &WakeCancellation::new(),
+    ))?;
+    if store.parked_attempt(attempt)?.is_none() {
+        return Err(Error::InvalidConfig(
+            "the seat park pass did not park the try".into(),
+        ));
+    }
+    Ok(attempt)
 }
