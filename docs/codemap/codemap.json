@@ -93707,7 +93707,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "fn": 2,
       "re-export": 1
      }
@@ -103242,6 +103242,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/rerank_document_message.rs",
+     "purpose": "L9-11 (ARCH-0004 #rerank-door-open): a MESSAGE whose words live in its entity document is reranked at those…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/residence_rpc_hello.rs",
      "purpose": "The residence RPC lane's hello lists the codecs only, not the sealed world-update frame kind (FIX…",
      "surface": {}
@@ -105736,7 +105744,7 @@
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7462,
-   "test_files": 1154
+   "test_files": 1155
   },
   "oneiron-agent-runtime": {
    "files": [
