@@ -32,91 +32,138 @@ fn init_and_doctor_name_the_sync_service_of_a_vault_in_a_synced_folder() {
         (
             "a Dropbox root",
             dropbox.join("notes/vault"),
-            "Dropbox",
+            "dropbox",
             &dropbox,
         ),
         (
             "iCloud Drive",
             mobile_documents.join("com~apple~CloudDocs/vault"),
-            "iCloud Drive",
+            "icloud-drive",
             &mobile_documents,
         ),
         (
             "a macOS cloud storage provider",
             cloud_storage.join("vault"),
-            "Google Drive",
+            "google-drive",
             &cloud_storage,
         ),
         (
             "a Syncthing folder",
             syncthing.join("vault"),
-            "Syncthing",
+            "syncthing",
             &syncthing,
         ),
         (
             "a link into a Dropbox root",
             base.join("linked/vault"),
-            "Dropbox",
+            "dropbox",
             &dropbox,
         ),
     ];
     for (index, (case, vault, service, root)) in cases.into_iter().enumerate() {
-        std::fs::create_dir_all(vault.parent().unwrap()).unwrap();
         let config = base.join(format!("oneiron-{index}.toml"));
-        let init = stdout(oneiron(
-            &["init", vault.to_str().unwrap(), "--embedder", "none"],
-            &config,
-        ));
-        let warning = format!(
-            "warning: the vault is inside a {service} folder ({})",
-            root.display()
-        );
-        assert!(
-            init.contains(&warning),
-            "init under {case} prints {warning:?}: {init}"
-        );
-        let report = doctor(&vault, &config);
-        let folder = &report["location"]["synced_folder"];
-        assert_eq!(
-            folder["service"].as_str(),
-            Some(service),
-            "doctor names the service under {case}: {report}"
-        );
-        assert_eq!(
-            folder["root"].as_str(),
-            root.to_str(),
-            "doctor names the synced folder under {case}: {report}"
-        );
+        assert_reported(case, &vault, &config, service, root, false);
     }
 }
 
+/// iCloud's Desktop & Documents sync leaves no marker on the home folder, so
+/// a vault under it is reported as likely synced when iCloud Drive holds a
+/// folder of the same name.
+#[test]
+fn init_and_doctor_report_icloud_desktop_and_documents_sync_as_likely() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().canonicalize().unwrap().join("home");
+    std::fs::create_dir_all(home.join("Library/Mobile Documents/com~apple~CloudDocs/Documents"))
+        .unwrap();
+    let documents = home.join("Documents");
+    assert_reported(
+        "a home Documents folder iCloud Drive mirrors",
+        &documents.join("oneiron/vault"),
+        &dir.path().join("oneiron.toml"),
+        "icloud-desktop-documents",
+        &documents,
+        true,
+    );
+}
+
 /// `~/.dropbox` is the Dropbox client's settings directory, not a synced
-/// root: a vault beside it is reported as in no synced folder.
+/// root, and a home Documents folder with no iCloud Drive twin is not
+/// synced: vaults there are reported as in no synced folder.
 #[test]
 fn a_vault_in_no_synced_folder_gets_no_warning() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(home.join(".dropbox")).unwrap();
-    std::fs::create_dir_all(home.join("Library")).unwrap();
-    let vault = home.join("Library/Application Support/Oneiron/vault");
+    std::fs::create_dir_all(home.join("Library/Mobile Documents/com~apple~CloudDocs")).unwrap();
+    let vaults = [
+        home.join("Library/Application Support/Oneiron/vault"),
+        home.join("Documents/vault"),
+    ];
+    for (index, vault) in vaults.iter().enumerate() {
+        std::fs::create_dir_all(vault.parent().unwrap()).unwrap();
+        let config = dir.path().join(format!("oneiron-{index}.toml"));
+        let init = stdout(oneiron(
+            &["init", vault.to_str().unwrap(), "--embedder", "none"],
+            &config,
+        ));
+        assert!(
+            !init.contains("warning: the vault is"),
+            "init warns of no sync service for {}: {init}",
+            vault.display()
+        );
+        let report = doctor(vault, &config);
+        assert!(
+            report["location"].get("vault").is_some(),
+            "doctor reports the location: {report}"
+        );
+        assert!(
+            report["location"].get("synced_folder").is_none(),
+            "doctor reports no synced folder for {}: {report}",
+            vault.display()
+        );
+    }
+}
+
+/// `init` of `vault` prints the synced-folder warning, and `doctor` reports
+/// `service`, its canonical `root` and whether the service is inferred.
+fn assert_reported(
+    case: &str,
+    vault: &Path,
+    config: &Path,
+    service: &str,
+    root: &Path,
+    likely: bool,
+) {
     std::fs::create_dir_all(vault.parent().unwrap()).unwrap();
-    let config = dir.path().join("oneiron.toml");
     let init = stdout(oneiron(
         &["init", vault.to_str().unwrap(), "--embedder", "none"],
-        &config,
+        config,
     ));
-    assert!(
-        !init.contains("warning: the vault is inside"),
-        "init warns of no sync service: {init}"
-    );
-    let report = doctor(&vault, &config);
-    assert!(
-        report["location"].get("vault").is_some(),
-        "doctor reports the location: {report}"
+    let warning = format!(
+        "warning: the vault is {}in a folder `{service}` syncs ({})",
+        if likely { "likely " } else { "" },
+        root.display()
     );
     assert!(
-        report["location"].get("synced_folder").is_none(),
-        "doctor reports no synced folder: {report}"
+        init.contains(&warning),
+        "init under {case} prints {warning:?}: {init}"
+    );
+    let report = doctor(vault, config);
+    let folder = &report["location"]["synced_folder"];
+    assert_eq!(
+        folder["service"].as_str(),
+        Some(service),
+        "doctor names the service under {case}: {report}"
+    );
+    assert_eq!(
+        folder["root"].as_str(),
+        root.to_str(),
+        "doctor names the synced folder under {case}: {report}"
+    );
+    assert_eq!(
+        folder["likely"].as_bool(),
+        Some(likely),
+        "doctor says whether the service is inferred under {case}: {report}"
     );
 }
 
