@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{io, thread};
 
-use oneiron::authority::ActSurface;
+use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::consent::lifecycle::{ApproveOnceRequest, approve_once};
 use oneiron::federation::{GitPushCaller, GitPushCredential};
@@ -162,6 +162,14 @@ impl TestOrigin {
             .prepare_install_signing()
             .expect("load this install's signing keys");
         let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+        // Rooted and profiled as `oneiron init` leaves a serving install: the
+        // owner's Grant act on this install needs its machine profile in the
+        // vault's roster to carry it.
+        let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
+        vault.ensure_host_root_slip(&issuer).expect("host root");
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("this install's machine profile");
         let proof = vault
             .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
             .expect("owner proof");
