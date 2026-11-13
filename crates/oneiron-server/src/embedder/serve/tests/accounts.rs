@@ -14,6 +14,9 @@ use super::*;
 const OWEN_KEY: &str = "owen-account-key";
 /// Another account's own key.
 const YUKI_KEY: &str = "yuki-account-key";
+/// A key of digits only, which TOML reads as a number when it is written
+/// unquoted where its digest belongs.
+const DIGITS_KEY: &str = "173928406581736492";
 
 /// One `[[account]]` row, with its soft quota if `daily_input_tokens` is set.
 fn account_row(id: &str, key: &str, daily_input_tokens: Option<u64>) -> String {
@@ -174,6 +177,10 @@ fn accounts_file_rows_that_cannot_name_one_key_each_do_not_load() {
             format!("[[account]]\nid = \"acct-owen\"\nkey_sha256 = \"{OWEN_KEY}\"\n"),
         ),
         (
+            "an unquoted key of digits in place of its digest",
+            format!("[[account]]\nid = \"acct-owen\"\nkey_sha256 = {DIGITS_KEY}\n"),
+        ),
+        (
             "a field the file does not have",
             format!(
                 "[[account]]\nid = \"acct-owen\"\nkey_sha256 = \"{digest}\"\nkey = \"{OWEN_KEY}\"\n"
@@ -182,7 +189,18 @@ fn accounts_file_rows_that_cannot_name_one_key_each_do_not_load() {
     ];
     for (case, text) in refused {
         std::fs::write(&path, text).expect("written");
-        assert!(AccountKeys::load(&path).is_err(), "{case} loads");
+        let refusal = AccountKeys::load(&path)
+            .err()
+            .unwrap_or_else(|| panic!("{case} loads"));
+        // The reload after SIGHUP logs this text and keeps the old table, so
+        // a key quoted here would stay valid in the log.
+        let refusal = format!("{refusal:#}");
+        for key in [OWEN_KEY, DIGITS_KEY] {
+            assert!(
+                !refusal.contains(key),
+                "{case}: the refusal quotes a key: {refusal}"
+            );
+        }
     }
     std::fs::write(&path, "").expect("written");
     assert_eq!(
