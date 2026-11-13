@@ -371,7 +371,7 @@ impl Vault {
             )?;
             // An auto grant names no caller principal, so its close names no one.
             let closure_decision = self
-                .complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker, None)?;
+                .complete_deferred_claim_with_checker_in_txn(txn, id, None, now, checker, None)?;
             // FIX 5993: a granted commitment series projects from its grant.
             self.index_consented_commitment_series_in_txn(txn, &body, id, now)?;
             // A Dreamer replacement granted Auto is an Auto write like any the
@@ -458,18 +458,24 @@ impl Vault {
     /// Called only by explicit local approval/authority settlement doors, never reads/replay.
     /// `closer` is the door's verified actor, whom a supersession's close
     /// names (FIX 11039); `None` names no one, as before.
+    ///
+    /// `critical_confirm` is the tray removal of the owner's Clear of the
+    /// claim's critical confirm, when that Clear settles it: a supersession
+    /// closes the row with that same removal, so it says `Answered` only when
+    /// the Clear's own close of the obligation did (FIX 22394). `None` for
+    /// every other door; a critical proposal then stays parked.
     pub(crate) fn complete_deferred_claim_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-        critical_confirmed: bool,
+        critical_confirm: Option<crate::store::TrayRemoval>,
         now: u64,
         closer: Option<crate::WriteActor>,
     ) -> Result<()> {
         self.complete_deferred_claim_with_checker_in_txn(
             txn,
             id,
-            critical_confirmed,
+            critical_confirm,
             now,
             None,
             closer,
@@ -481,7 +487,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-        critical_confirmed: bool,
+        critical_confirm: Option<crate::store::TrayRemoval>,
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
         closer: Option<crate::WriteActor>,
@@ -517,7 +523,7 @@ impl Vault {
                 }));
             }
         }
-        if proposal.critical && !critical_confirmed {
+        if proposal.critical && critical_confirm.is_none() {
             return Err(Error::Gate(crate::error::GateError::GateWriteRejected {
                 outcome: "pending",
                 reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],
@@ -547,12 +553,8 @@ impl Vault {
                     "superseded",
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,
-                    if critical_confirmed {
-                        // Keep the outer Clear's existing obligation result.
-                        crate::store::TrayRemoval::Answered
-                    } else {
-                        crate::store::TrayRemoval::Unanswered
-                    },
+                    // Keep the outer Clear's existing obligation result.
+                    critical_confirm.unwrap_or(crate::store::TrayRemoval::Unanswered),
                 )?;
                 let envelope = super::supersession_provenance::envelope(&body)?;
                 super::supersession_provenance::write_companion(
