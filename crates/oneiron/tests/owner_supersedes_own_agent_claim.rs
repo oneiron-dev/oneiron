@@ -209,8 +209,12 @@ impl Fixture {
     }
 
     /// An enabled agent definition the member writes in person through the
-    /// bound raw entity put, as a member's code-mode run would.
+    /// bound raw entity put, as a member's code-mode run would, under the
+    /// owner's read and propose Grant every claim author here holds.
     fn member_made_agent(&self) -> EntityId {
+        self.vault
+            .grant_foreign_principal(&self.owner_proof, &self.member.to_hex())
+            .expect("the owner grants the member read and propose");
         let agent = EntityId::now();
         let definition = AgentDefinition::new(
             "owner-supersede-member-made",
