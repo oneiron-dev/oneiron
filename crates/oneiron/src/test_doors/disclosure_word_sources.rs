@@ -35,6 +35,59 @@ pub fn seed_cleared_contact(
     Ok(())
 }
 
+/// Installs, in the default policy manifest slot, the shipped policy plus one
+/// exact rule that labels `predicate` normal criticality and normal
+/// sensitivity. The shipped policy declares no `conversation.summary` rule,
+/// so such a claim is critical, and `Vault::put_claim` composes no consent:
+/// the gate parks it at the criticality floor. With this rule the raw door
+/// lands it as it lands a declared ordinary predicate.
+///
+/// # Errors
+/// The shipped policy's decode or encode, or the manifest write's error.
+pub fn install_shipped_policy_with_ordinary_predicate(
+    vault: &Vault,
+    predicate: &str,
+) -> Result<()> {
+    let rmpv::Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
+            .map_err(|_| Error::InvalidConfig("default policy".into()))?
+    else {
+        return Err(Error::InvalidConfig("default policy is not a map".into()));
+    };
+    let rule = rmpv::Value::Map(vec![
+        (rmpv::Value::from("prefix"), rmpv::Value::from(predicate)),
+        (rmpv::Value::from("exact"), rmpv::Value::Boolean(true)),
+        (
+            rmpv::Value::from("axes"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("criticality"),
+                    rmpv::Value::from("normal"),
+                ),
+                (
+                    rmpv::Value::from("sensitivity"),
+                    rmpv::Value::from("normal"),
+                ),
+            ]),
+        ),
+    ]);
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+    {
+        Some((_, rmpv::Value::Array(rules))) => rules.push(rule),
+        _ => return Err(Error::InvalidConfig("default policy has no rules".into())),
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
+    crate::test_fixtures::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
 /// Owner-marks `record` Tier A now, by the vault's clock.
 ///
 /// # Errors

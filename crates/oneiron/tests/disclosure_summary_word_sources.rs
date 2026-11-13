@@ -26,7 +26,7 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_SUMMARY;
 use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_claim_revision_with_contact, clamp_admits_owner_alone, clamp_admits_with_contact,
-    mark_tier_a, seed_cleared_contact,
+    install_shipped_policy_with_ordinary_predicate, mark_tier_a, seed_cleared_contact,
 };
 use oneiron::test_doors::scope_summary::mint_scope_summary;
 use oneiron::{
@@ -227,6 +227,10 @@ fn a_claim_revision_served_is_judged_on_the_sources_of_its_own_words() -> TestRe
     let fixture = open()?;
     let vault = &fixture.vault;
     let [plan, step] = fixture.trunk;
+    // The engine lands its summaries through its own writer; this test writes
+    // two revisions through the raw claim door, which the shipped policy parks
+    // at the criticality floor for an undeclared predicate.
+    install_shipped_policy_with_ordinary_predicate(vault, "conversation.summary")?;
     let claim = EntityId::now();
     let served = conversation_summary(fixture.owner, "The plan.", plan)?;
     put_claim_now(vault, &claim, &served)?;
