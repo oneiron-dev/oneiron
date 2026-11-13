@@ -172,4 +172,17 @@ impl Vault {
             .of_world(&world)
             .cloned())
     }
+
+    /// Every space some world names as its own text space
+    /// ([`Self::world_text_space`]), once each, in id order: the spaces a host
+    /// fills with its worlds' rows on the device, and adds to a text query's
+    /// lists.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or an authority log that does not fold.
+    pub fn world_text_spaces(&self) -> Result<Vec<EmbeddingSpace>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(WorldTextSpaces::read_in(self, &rtxn)?.spaces())
+    }
 }

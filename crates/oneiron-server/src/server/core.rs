@@ -231,6 +231,9 @@ pub struct SyncServer {
     pub(crate) model_slots: Arc<SharedModelSlots>,
     /// Custody-backed candidates, beside the incumbent's immutable slot.
     pub(crate) trained_embedders: super::trained_embedding::TrainedEmbedders,
+    /// The small local models private worlds embed their rows with, by
+    /// device text space (DEC-0005 #private-world-vectors).
+    pub(crate) device_space_towers: super::device_embedding::DeviceSpaceTowers,
     /// The nonsecret file/vault facts an open-vault first-run setup must match.
     pub(crate) model_setup: Option<ModelSetupConfig>,
     /// Plain/embedded worker admission and late-worker handles, installed before
@@ -358,8 +361,8 @@ const _: fn(&SyncServer) = |server| {
         seat_helpers, model_budgets, cloud_registration, connector_elicitations, browser_guest,
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
-        trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
-        decision_reads, decisions, hook_runtime,
+        trained_embedders, device_space_towers, model_setup, model_setup_runtime, gpu_pool, llm,
+        decision_read, decision_reads, decisions, hook_runtime,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,

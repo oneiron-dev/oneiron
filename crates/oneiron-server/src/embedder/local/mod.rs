@@ -22,6 +22,7 @@ pub(super) mod batcher;
 pub(super) mod checkpoint;
 pub(super) mod cpu_q8;
 pub(super) mod device;
+pub(super) mod device_space;
 pub(super) mod evidence;
 pub(super) mod isq;
 pub(crate) mod model_manager;

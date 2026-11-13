@@ -91,6 +91,16 @@ impl WorldTextSpaces {
         self.by_world.get(world)
     }
 
+    /// Every space some world names, once each, in id order.
+    pub(crate) fn spaces(&self) -> Vec<EmbeddingSpace> {
+        let by_id: BTreeMap<&str, &EmbeddingSpace> = self
+            .by_world
+            .values()
+            .map(|space| (space.id.as_str(), space))
+            .collect();
+        by_id.into_values().cloned().collect()
+    }
+
     /// Whether some world names `space_id` as its text space.
     pub(crate) fn names(&self, space_id: &str) -> bool {
         self.by_world.values().any(|space| space.id == space_id)

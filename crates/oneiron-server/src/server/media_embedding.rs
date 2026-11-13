@@ -466,6 +466,17 @@ impl SyncServer {
         (passes, room_embedded)
     }
 
+    /// One backfill pass as the worker runs it ([`Self::backfill_media_pass`]),
+    /// with no room state kept: each space's own pass. Blocking.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn backfill_media_pass_once(
+        &self,
+        runtime: &tokio::runtime::Handle,
+    ) -> Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)> {
+        self.backfill_media_pass(runtime, &mut RoomPasses::default())
+            .0
+    }
+
     /// `space`'s pass over the records live off-record rooms stage
     /// ([`oneiron::Vault::reconcile_session_media_embeddings`], FIX 2345),
     /// through the same model and egress gate as its base pass. A failure

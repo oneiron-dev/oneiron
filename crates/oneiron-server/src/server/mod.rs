@@ -14,6 +14,7 @@ mod core;
 mod courtesy_delete;
 mod deletion;
 mod desktop_seats;
+mod device_embedding;
 mod embedding;
 mod hook_regen_pass;
 mod housekeeping;
@@ -64,6 +65,9 @@ pub use self::core::{SyncServer, TaskWorkTurn};
 pub(crate) use self::deletion::DeletionMarker;
 pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::desktop_seats::{RunSeats, Seat, SeatGuest};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::device_embedding::DeviceTextModel;
+pub(crate) use self::device_embedding::{WORLD_SPACE_QUERY_KINDS, world_space_query_vectors};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, PassControl, admit_every_pass};
 pub(crate) use self::lifecycle::LifecycleScheduler;
 pub(crate) use self::live_runs::{

@@ -17,6 +17,7 @@ pub(crate) use endpoint::reported_mark;
 pub(crate) use endpoint::{PodRelease, VaultRelease};
 mod remote;
 pub(crate) use local::checkpoint::CheckpointEmbedder;
+pub(crate) use local::device_space::DeviceSpaceModel;
 pub(crate) use local::model_manager;
 pub(crate) use local::prepare as prepare_local;
 pub(crate) use remote::build_remote_rung;
