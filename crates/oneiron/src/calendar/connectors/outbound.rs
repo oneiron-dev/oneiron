@@ -1247,7 +1247,5 @@ pub(super) fn ingest_error(reason: &'static str) -> CalendarConnectorError {
     CalendarConnectorError::Calendar(ingest_reason(reason))
 }
 
-// FIX [LIBTEST-QUARANTINE-CALENDAR-CONNECTORS-OUTBOUND-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

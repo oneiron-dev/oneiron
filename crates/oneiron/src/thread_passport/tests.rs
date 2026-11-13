@@ -545,7 +545,5 @@ fn second_identity_first_write_reuses_the_thread_a_message_already_joined() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-THREAD-PASSPORT-REGRESSIONS]: the lib test target's type check fails here (2 errors: E0308 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "regressions.rs"]
 mod regressions;

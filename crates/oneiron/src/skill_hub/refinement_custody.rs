@@ -319,7 +319,5 @@ pub(crate) fn refinement_carriers_for_holder_in_txn(
         .collect()
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-REFINEMENT-CUSTODY-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

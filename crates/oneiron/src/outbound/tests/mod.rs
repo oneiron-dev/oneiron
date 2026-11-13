@@ -10,8 +10,6 @@ mod dispatch_budget;
 #[path = "sender_selection/facet_selection.rs"]
 mod facet_selection;
 mod gate_window;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-LINKEDIN-CONNECT]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod linkedin_connect;
 mod linkedin_send;
 // FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-PIPELINE-CONTRACT]: the lib test target's type check fails here (3 errors: E0639 x2, E0063 x1); port it, then drop this gate

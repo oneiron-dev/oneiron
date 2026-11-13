@@ -276,14 +276,9 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
 fn fanout_rulings_use_the_vault_id_source_and_replay_the_same_receipt() {
     let clock = crate::ports::ManualClock::new(100);
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(
-        dir.path(),
-        VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     let actor = own_agent(&vault);
     let human = owner(&vault);
     let mut input = plan(&vault, 26);
@@ -858,10 +853,8 @@ impl DecisionProvider for InterleavingClassifier<'_> {
 fn a_fan_out_held_across_a_window_counts_in_the_window_it_lands_in() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = crate::ports::ManualClock::new(599);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("open vault");
     let actor = own_agent(&vault);
     let facade = vault.memory(actor, EdgeActorClass::Agent);

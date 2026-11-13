@@ -117,7 +117,9 @@ fn generated_ui_capability_negotiation_degrades_unsupported_primitives() -> Resu
         panic!("media should degrade to text_block");
     };
     assert_eq!(
-        atom.fallback_text(),
+        LensAtom::TextBlock(atom.clone())
+            .default_fallback_text()
+            .as_str(),
         "Portrait fallback",
         "degraded text must use the node fallback"
     );

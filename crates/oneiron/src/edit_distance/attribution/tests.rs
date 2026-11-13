@@ -4,7 +4,11 @@ use rmpv::Value;
 
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::config::VaultConfig;
-use crate::edit_distance::delta::{delta_from_reconstructed, put_amendment_delta_in_txn};
+use crate::edit_distance::ProposalArtifactRef;
+use crate::edit_distance::delta::{
+    EndpointRef, MeasuredEnd, delta_from_reconstructed, put_amendment_delta_in_txn,
+};
+use crate::edit_distance::myers::myers_line_diff;
 use crate::error::ClaimError;
 use crate::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder, DecisionProvider,
@@ -62,7 +66,17 @@ fn put_skill(vault: &Vault, skill_id: &str) -> Result<EntityId> {
 /// Records a real ED-01 Δ against `receipt_id`, so the evidence door's
 /// grounding resolves the way production's would.
 fn measure_amendment(vault: &Vault, receipt_id: &str, before: &str, after: &str) -> Result<f32> {
-    let delta = delta_from_reconstructed(before, after);
+    let record = ProposalArtifactRef::mint();
+    let delta = delta_from_reconstructed(
+        MeasuredEnd {
+            at: EndpointRef::imported_proposed(record),
+            content: before,
+        },
+        MeasuredEnd {
+            at: EndpointRef::imported_final(record),
+            content: after,
+        },
+    );
     let d_norm = delta.d_norm;
     vault.with_write_txn(|wtxn| {
         put_amendment_delta_in_txn(vault, wtxn, receipt_id, &delta)?;
@@ -489,11 +503,7 @@ fn a_two_hunk_edit_charges_each_route_only_its_share() -> Result<()> {
     let judgment = judge_amendment_hunks(&vault, receipt, Some(&decisions), &hunks)?
         .expect("a split amendment routes");
     // Each hunk weighs what the pinned ED metric measures for it.
-    let mass = |hunk: &EditHunk<'_>| {
-        delta_from_reconstructed(hunk.before, hunk.after)
-            .ops_summary
-            .edit_mass()
-    };
+    let mass = |hunk: &EditHunk<'_>| myers_line_diff(hunk.before, hunk.after).ops.edit_mass();
     let defect_share = mass(&hunks[0]) / (mass(&hunks[0]) + mass(&hunks[1]));
     assert!(
         defect_share > 0.0 && defect_share < 0.5,

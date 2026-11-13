@@ -111,8 +111,6 @@ pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-LLM-STEP-STEP-ONLY-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod step_only_tests;
 // FIX [LIBTEST-QUARANTINE-LLM-STEP-TESTS]: the lib test target's type check fails here (22 errors: E0063 x18, E0061 x1, E0027 x1, E0308 x1, E0277 x1); port it, then drop this gate

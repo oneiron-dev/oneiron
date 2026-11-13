@@ -96,6 +96,9 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             warnings: Vec::new(),
             pptx_holder_limits: None,
             slide_judgments: Vec::new(),
+            paragraph_judgments: Vec::new(),
+            paragraph_question: None,
+            slide_question: None,
         },
         inspection: StructureSummary {
             format: OfficeFormat::Xlsx,
@@ -584,6 +587,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         settled_at: 42,
         actor_ref: Some("cafef00d".to_owned()),
         brief_ref: Some("brief:codec".to_owned()),
+        grant_ref: None,
         before_version: Some(6),
         version: Some(7),
         content_hash: Some([0xA5; BLOB_ARTIFACT_CONTENT_HASH_LEN]),
@@ -592,6 +596,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         pptx_slide_creation_id_mints: Vec::new(),
         pptx_review_identities: Vec::new(),
         pptx_judgments: Vec::new(),
+        docx_judgments: Vec::new(),
         anchors: vec![
             SettledAnchor {
                 thread_id: EntityId::now(),
@@ -606,6 +611,8 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         ],
         reason: None,
         sheet_answers: None,
+        deck: None,
+        discarded_words: None,
     };
     let bytes = encode_settlement_record(&selected)?;
     assert_eq!(decode_settlement_record(&bytes)?, selected);
@@ -629,6 +636,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         settled_at: 43,
         actor_ref: None,
         brief_ref: None,
+        grant_ref: None,
         before_version: None,
         version: None,
         content_hash: None,
@@ -637,9 +645,12 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         pptx_slide_creation_id_mints: Vec::new(),
         pptx_review_identities: Vec::new(),
         pptx_judgments: Vec::new(),
+        docx_judgments: Vec::new(),
         anchors: Vec::new(),
         reason: Some("not wanted".to_owned()),
         sheet_answers: None,
+        deck: None,
+        discarded_words: None,
     };
     let bytes = encode_settlement_record(&discarded)?;
     assert_eq!(decode_settlement_record(&bytes)?, discarded);

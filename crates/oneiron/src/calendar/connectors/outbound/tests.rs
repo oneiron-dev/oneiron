@@ -379,7 +379,7 @@ fn remote_applied_resume_uses_stored_snapshot_after_a_newer_local_edit() {
         expected_etag: row.expected_etag.clone(),
         uid: uid.clone(),
         sequence: row.sequence,
-        ics: render_owner_vevent(&vault, &event, &uid, row.sequence, NOW)
+        ics: render_owner_vevent(&vault, &event, &uid, row.sequence, NOW, None, None)
             .unwrap()
             .ics,
     };

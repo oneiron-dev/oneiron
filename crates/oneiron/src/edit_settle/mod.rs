@@ -150,8 +150,6 @@ pub(crate) fn purge_artifact_retention_in_txn(
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-EDIT-SETTLE-TESTS]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

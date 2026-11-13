@@ -355,8 +355,6 @@ mod entity_refs_serde {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-BOOKING-DISCLOSURE-RUNG-TESTS]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,7 +587,7 @@ mod tests {
         assert_eq!(project(&grant, &id(8), &calendar), RungProjection::Nothing);
         assert_eq!(project(&grant, &reader, &id(10)), RungProjection::Nothing);
 
-        let companion = AccessGrant::companion_profile_read(reader, id(3), id(4), 1_700);
+        let companion = AccessGrant::companion_profile_read(reader, id(3), Some(id(4)), 1_700);
         assert_eq!(
             project(&companion, &reader, &calendar),
             RungProjection::Nothing

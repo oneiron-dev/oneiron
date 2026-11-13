@@ -40,6 +40,12 @@ fn ruling(candidate: EntityId, id: EntityId, claim: bool) -> RefinementReceipt {
             paired: Vec::new(),
             person: Vec::new(),
             time: None,
+            images: Vec::new(),
+            think_row: None,
+            person_row: None,
+            rule: None,
+            asked: None,
+            state_cut: None,
         },
         human_ask: None,
     };

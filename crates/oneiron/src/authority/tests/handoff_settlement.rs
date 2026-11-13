@@ -317,6 +317,7 @@ fn no_door_admits_a_new_row_on_a_retired_roots_resident_row() {
                 crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
                 TimeRange { start: 3, end: 3 },
                 3,
+                None,
                 &encode_authority_log_entry_body(&fork).unwrap(),
             )
             .commit()
@@ -373,6 +374,7 @@ fn a_hosted_vaults_replicated_door_keeps_its_cloud_successor() {
                 crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &encode_authority_log_entry_body(&fork).unwrap(),
             )
             .commit()
