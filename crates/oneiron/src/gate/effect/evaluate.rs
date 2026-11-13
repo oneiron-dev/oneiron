@@ -467,27 +467,26 @@ fn judge_counterparty_policy(
         .as_ref()
         .and_then(|effect| effect.standing_grant_ref.clone());
 
-    // CA-06 campaign-compliance stage (ONE-1777). The evaluator hydrates its
-    // own typed facts from the claim substrate on THIS txn and answers with a
-    // pure verdict; the mapping to a decision stays here, where decisions are
-    // constructed. It runs BEFORE the connector-key and budget stages — both
-    // guarded on would-be-Allow — so a legal-row hold never consumes budget,
-    // exactly like the counterparty-opt-out wall. A Block holds a would-be
-    // Allow AND a Pending for an owner answer rather than replacing either
-    // with Deny. An existing approval or its retained press retry restores
-    // the PRE-CA-06 decision; every later gate still applies. Effects outside
-    // a campaign never reach the evaluator at all.
+    // CA-06 campaign-compliance stage (ONE-1777) and the copy-review stage
+    // (ARCH-0059 #copy-review), in `campaign_stage_hold`. Each reads its own
+    // facts on THIS txn and answers with a pure verdict; the mapping to a
+    // decision stays here, where decisions are constructed. They run BEFORE
+    // the connector-key and budget stages — both guarded on would-be-Allow —
+    // so a legal-row or copy hold never consumes budget, exactly like the
+    // counterparty-opt-out wall. A hold holds a would-be Allow AND a Pending
+    // for an owner answer rather than replacing either with Deny. An
+    // existing approval or its retained press retry restores the PRE-CA-06
+    // decision; every later gate still applies. Effects outside a campaign
+    // never reach either stage's verdict.
     if decision.outcome() != GateOutcome::Deny
-        && let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) =
-            store
-                .gate_hooks
-                .campaign_compliance_gate(store, txn, &hydrated_effect, created_at)?
+        && let Some((reason_codes, receipt_reasons)) =
+            campaign_stage_hold(store, txn, &hydrated_effect, created_at)?
         && approve_once.is_none()
         && !press_retry_authorized
         && !mail_retry_authorized
     {
-        decision = GateDecision::pending(vec![GateReasonCode::PendingCampaignCompliance])
-            .with_receipt_reasons([reason.receipt_reason()])
+        decision = GateDecision::pending(reason_codes)
+            .with_receipt_reasons(receipt_reasons)
             .with_receipt_reasons(external_effect_receipt_reasons(
                 input
                     .external_effect
@@ -773,4 +772,33 @@ fn judge_counterparty_policy(
         budget_target,
         scoped_capability: scoped_mcp_capability,
     })
+}
+
+/// The campaign stages' hold on `effect`, before the approval guards: the
+/// CA-06 compliance Block (ONE-1777) and the copy-review hold (ARCH-0059
+/// #copy-review), each with its reason code and receipt reason. Both are pure
+/// reads on `txn`; `None` when neither stage holds the send.
+fn campaign_stage_hold(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    now_utc: u64,
+) -> Result<Option<(Vec<GateReasonCode>, Vec<&'static str>)>> {
+    let mut reason_codes = Vec::new();
+    let mut receipt_reasons = Vec::new();
+    if let Some(crate::gate::dispatch_compliance::ComplianceVerdict::Block { reason, .. }) = store
+        .gate_hooks
+        .campaign_compliance_gate(store, txn, effect, now_utc)?
+    {
+        reason_codes.push(GateReasonCode::PendingCampaignCompliance);
+        receipt_reasons.push(reason.receipt_reason());
+    }
+    if let Some(hold) = store
+        .gate_hooks
+        .campaign_copy_review_gate(store, txn, effect)?
+    {
+        reason_codes.push(GateReasonCode::PendingCampaignCopyReview);
+        receipt_reasons.push(hold.receipt_reason());
+    }
+    Ok((!reason_codes.is_empty()).then_some((reason_codes, receipt_reasons)))
 }
