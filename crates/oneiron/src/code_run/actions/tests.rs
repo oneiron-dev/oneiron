@@ -296,6 +296,8 @@ fn authorized_agent_edits_inference_rows_and_next_call_uses_them() -> Result<()>
         model: crate::llm::ModelId::new("test/own@r1").unwrap(),
         envelope: CallEnvelope {
             seat_effort: None,
+            host_keyless: false,
+            host_paid: false,
             scope: Default::default(),
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
@@ -316,6 +318,7 @@ fn authorized_agent_edits_inference_rows_and_next_call_uses_them() -> Result<()>
         binding: crate::llm::HostInferenceBinding::Advertised {
             model: request.model.clone(),
             locality: ModelLocality::OwnServer,
+            keyless: false,
         },
         extraction_egress: None,
     };
@@ -480,7 +483,8 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
                 idempotency_key: "foreign-owner".into(),
                 ..call.clone()
             },
-            &foreign_proof
+            &foreign_proof,
+            crate::authority::ActSurface::ThisInstall,
         ),
         Err(Error::Gate(
             crate::error::GateError::ConsentOwnerNotAuthenticated(_)
@@ -492,15 +496,28 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
         true,
         crate::store::GateDecisionId::now(),
     )?;
-    let result =
-        registry.execute_agent_with_owner(&vault, agent, &principal, &call, &owner_proof)?;
+    let result = registry.execute_agent_with_owner(
+        &vault,
+        agent,
+        &principal,
+        &call,
+        &owner_proof,
+        crate::authority::ActSurface::ThisInstall,
+    )?;
     assert_eq!(
         result.outcome,
         SelfDispatchOutcome::WakePolicyWritten(policy)
     );
     assert_eq!(vault.dreamer_wake_policy()?, policy);
     assert_eq!(
-        registry.execute_agent_with_owner(&vault, agent, &principal, &call, &owner_proof)?,
+        registry.execute_agent_with_owner(
+            &vault,
+            agent,
+            &principal,
+            &call,
+            &owner_proof,
+            crate::authority::ActSurface::ThisInstall,
+        )?,
         result
     );
 
@@ -515,7 +532,14 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
     };
     assert!(
         registry
-            .execute_agent_with_owner(&vault, agent, &principal, &spoofed, &owner_proof)
+            .execute_agent_with_owner(
+                &vault,
+                agent,
+                &principal,
+                &spoofed,
+                &owner_proof,
+                crate::authority::ActSurface::ThisInstall,
+            )
             .is_err()
     );
     assert_eq!(vault.dreamer_wake_policy()?, policy);
@@ -574,7 +598,14 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
     // Even an identical replay cannot use a now-revoked owner witness.
     vault.delete_entity_with_reason(&owner_id, crate::deletion::DeleteReason::UserDelete)?;
     assert!(matches!(
-        registry.execute_agent_with_owner(&vault, agent, &principal, &call, &owner_proof,),
+        registry.execute_agent_with_owner(
+            &vault,
+            agent,
+            &principal,
+            &call,
+            &owner_proof,
+            crate::authority::ActSurface::ThisInstall,
+        ),
         Err(Error::Gate(
             crate::error::GateError::ConsentOwnerNotAuthenticated(_)
         ))
