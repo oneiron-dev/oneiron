@@ -59,7 +59,7 @@ pub const TRAINING_RUN_WAIT_MAX_MS: u64 = 30_000;
 const TRAINING_RUN_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// `vault.coach.training_runs.prepare`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoleTrainingPrepareRequest {
     /// The owner's role plan, sealed held-out cohort, compute choice,
@@ -74,7 +74,7 @@ pub struct RoleTrainingPrepareRequest {
 
 /// The reservoir filters of a role run's export. Both are optional; both
 /// narrow.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoleTrainingScope {
     #[serde(default)]
@@ -95,7 +95,7 @@ impl RoleTrainingScope {
 
 /// A prepared role run: what the owner authorizes, and the split the
 /// exporter wrote.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RoleTrainingPrepared {
     pub run: EntityId,
     /// The run's `spec_blake3`, as 64 hex: what the owner authorizes.
@@ -136,7 +136,7 @@ impl RoleTrainingPrepared {
 }
 
 /// `vault.coach.training_runs.get`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TrainingRunGetRequest {
     pub run: EntityId,
@@ -159,7 +159,7 @@ pub struct TrainingRunExecuteRequest {
 }
 
 /// Where a run stands for its reader.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TrainingRunProgress {
     /// The run moves with no one's act: queued for the host, training, or
@@ -172,7 +172,7 @@ pub enum TrainingRunProgress {
     Done,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrainingRunPhase {
     Queued,
@@ -180,7 +180,7 @@ pub enum TrainingRunPhase {
     Evaluating,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrainingRunNeed {
     /// The owner authorizes the prepared spec.
@@ -190,7 +190,7 @@ pub enum TrainingRunNeed {
 }
 
 /// A run's held-out summary.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrainingRunEvaluation {
     pub cases: u64,
     pub metrics: BTreeMap<String, f64>,
@@ -198,7 +198,7 @@ pub struct TrainingRunEvaluation {
 }
 
 /// `vault.coach.training_runs.get`'s answer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrainingRunObservation {
     pub run: EntityId,
     /// The run's `spec_blake3`, as 64 hex.

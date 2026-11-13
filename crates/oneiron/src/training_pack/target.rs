@@ -18,7 +18,7 @@ pub const QUESTION_RENDERER: &str = "oneiron.detector-target-text/1";
 
 /// The plan's target. A role plan writes `role` and `output_binding` as the
 /// plan's own keys, as before; a question plan writes one `question` key.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum TrainingTarget {
     Role {
@@ -32,7 +32,7 @@ pub enum TrainingTarget {
 
 /// The one exact question a head answers, and the new model id its
 /// checkpoints carry.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuestionTarget {
     pub question_id: String,
     pub question_version: u32,
