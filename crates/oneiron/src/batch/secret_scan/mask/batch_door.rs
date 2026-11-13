@@ -21,13 +21,15 @@ use crate::write_envelope::ClaimCandidate;
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
-/// before. `at` stamps each custody record the batch mints. It also returns
+/// before. `person_writer` is the person who writes the batch in their own
+/// name, named as the writer of each key it lifts (L6-03-WRITER-MARK).
+/// `at` stamps each custody record the batch mints. It also returns
 /// each MACHINE claim candidate the minted pass rewrote with its pre-mask
 /// body, in op order, so the candidate apply can renew its proof over what
 /// is stored (FIX 11356); a replayed batch reports none.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the batch's own apply parts, its origin and its time"
+    reason = "the batch's own apply parts, its origin, its writer and its time"
 )]
 pub(in crate::batch) fn mask_batch_ops(
     store: &Store,
@@ -37,6 +39,7 @@ pub(in crate::batch) fn mask_batch_ops(
     ops: &mut [BatchOp],
     text_index_trusted: bool,
     masks: bool,
+    person_writer: Option<EntityId>,
     at: u64,
 ) -> Result<(MaskedFiles, Vec<(EntityId, ClaimCandidate)>)> {
     let refusal = match scan_batch_ops(store, &*wtxn, ops) {
@@ -83,6 +86,7 @@ pub(in crate::batch) fn mask_batch_ops(
         shapes_read,
         places_split_phrases: true,
         text_log: TextLog::recording(),
+        person_writer,
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;

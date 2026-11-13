@@ -89,20 +89,25 @@ pub(crate) fn actor_for_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Opti
         .map(|InflightActor(writer)| writer))
 }
 
+/// The person `writer` writes as in their own name: the writer itself when
+/// it is of the human class. An agent's or the system's writer names none.
+pub(crate) fn person_writing(writer: &WriteActor) -> Option<EntityId> {
+    (writer.actor_class() == EdgeActorClass::Human).then_some(writer.entity_ref())
+}
+
 /// The person writing in their own name in `txn`: its actor content
-/// transaction's writer, when that writer is of the human class. An agent's
-/// or the system's writer, and a write outside any actor content
-/// transaction, names none. It reads the store alone, for the mask on write,
-/// which records the writer of each key it lifts (L6-03-WRITER-MARK).
+/// transaction's writer, when that writer is of the human class
+/// ([`person_writing`]). An agent's or the system's writer, and a write
+/// outside any actor content transaction, names none. It reads the store
+/// alone, for the mask on write, which records the writer of each key it
+/// lifts (L6-03-WRITER-MARK) when its batch names no person writer.
 pub(crate) fn person_writer_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<EntityId>> {
     Ok(ACTIVE_ACTOR
         .get(store, txn, &())?
-        .map(|InflightActor(writer)| writer)
-        .filter(|writer| writer.actor_class() == EdgeActorClass::Human)
-        .map(WriteActor::entity_ref))
+        .and_then(|InflightActor(writer)| person_writing(&writer)))
 }
 
 pub(crate) struct ActorContentTxn<'v, 't, 'env> {

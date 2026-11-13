@@ -83,6 +83,13 @@ pub(crate) struct ApplyOpsGateMode {
     /// Each bound raw CLAIM put's verified caller envelope
     /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
     pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
+    /// The PERSON who writes this batch in their own name: its actor when
+    /// that actor is a person, else the person its door authored it
+    /// through (`BatchBuilder::authored_through`). The door's mask names
+    /// them as the writer of each key it lifts (L6-03-WRITER-MARK), with or
+    /// without an actor content transaction. An agent's or the system's
+    /// batch names none.
+    pub(super) person_writer: Option<EntityId>,
     pub(super) prepared_person_substrate: Option<super::PreparedPersonSubstrate>,
     pub(super) prepared_agent_birth: Option<crate::agent_def::PreparedAgentDefinitionBirth>,
     pub(super) prepared_setup_owner: Option<crate::agent_def::PreparedSetupOwner>,
@@ -114,6 +121,7 @@ impl ApplyOpsGateMode {
             replicated_puts: std::collections::BTreeSet::new(),
             marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
+            person_writer: None,
             prepared_person_substrate: None,
             prepared_agent_birth: None,
             prepared_setup_owner: None,
@@ -182,6 +190,13 @@ impl ApplyOpsGateMode {
         proof: crate::skill_hub::RefinementAdmissionProof,
     ) -> Self {
         self.refinement_admission = Some(proof);
+        self
+    }
+
+    /// Names the person who writes this batch in their own name, for the
+    /// door's mask (its `person_writer` field).
+    pub(super) fn with_person_writer(mut self, writer: Option<EntityId>) -> Self {
+        self.person_writer = writer;
         self
     }
 
