@@ -5,6 +5,10 @@
 //! E2-HOT B, 2026-10-09).
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
