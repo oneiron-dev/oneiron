@@ -195,6 +195,15 @@ async fn quickjs_code_mode_graph_fs_rows_refuse_an_actor_bound_to_execute_code_a
          finish(tries.join(', '));"
     );
     let mode = code_mode_server(vec![script]);
+    mode.vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"graph-fs claim subject",
+        )
+        .expect("seed the claim's subject");
     seed_claim(
         &mode.server,
         claim,
