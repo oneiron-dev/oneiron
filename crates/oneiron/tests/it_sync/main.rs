@@ -18,6 +18,7 @@ mod device_world_follow;
 mod device_world_follow_live;
 mod rung0_cold_start_conformance;
 mod sync_blob_artifact_delete;
+mod sync_blob_version_claim_release;
 mod sync_bridge;
 mod sync_byzantine_lww;
 mod sync_client_wiring;
