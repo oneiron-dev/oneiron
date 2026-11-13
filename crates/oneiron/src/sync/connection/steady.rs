@@ -90,12 +90,11 @@ impl SyncConnection {
         if *mode_rx.borrow_and_update() != client.config.residence_mode {
             return LoopExit::Renegotiate;
         }
-        // The worlds this negotiation followed, read before its first frame:
-        // a pick, a world setting or a grant that changed them since, or
-        // changes them later, renegotiates at once (ARCH-0023b
+        // The worlds this negotiation's frames followed, read before its
+        // first frame: a pick, a world setting or a grant that changed them
+        // since, or changes them later, renegotiates at once (ARCH-0023b
         // #partial-sync), as a mode change does.
-        let followed = client.negotiated_worlds.clone();
-        if client.effective_worlds().ok() != followed {
+        if client.follow_set_changed() {
             return LoopExit::Renegotiate;
         }
         let mut left_rx = self.left.subscribe();
@@ -719,7 +718,7 @@ impl SyncConnection {
                 () = self.follow_wake.notified() => {
                     // Only a changed set renegotiates: follow backfills, an
                     // unfollowed world is no longer asked for.
-                    if client.effective_worlds().ok() != followed {
+                    if client.follow_set_changed() {
                         self.queue_on_exit(&mut gate, debounce_buffer).await;
                         let mut send_left = self.left.subscribe();
                         tokio::select! {
