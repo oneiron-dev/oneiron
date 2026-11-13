@@ -335,7 +335,7 @@ async fn thursday() -> Thursday {
             json!({"company_vault": hex(&company.vault_id), "company_name": COMPANY}),
         )
         .await;
-    assert_eq!(edge["check_in_mode"], "ask_when_unsure", "{edge}");
+    assert_eq!(edge["check_in_mode"], "auto", "{edge}");
     assert_eq!(edge["keep_allowed"], "task", "{edge}");
     let edge_grant = edge["grant"].as_str().expect("edge grant").to_owned();
     let reciprocal = company
@@ -654,11 +654,11 @@ fn the_member_opens_lists_and_closes_a_statement_on_an_edge() {
                 json!({
                     "company_vault": hex(&UNOPENED_COMPANY),
                     "company_name": COMPANY,
-                    "check_in_mode": "always_ask",
+                    "check_in_mode": "manual",
                 }),
             )
             .await;
-        assert_eq!(edge["check_in_mode"], "always_ask", "{edge}");
+        assert_eq!(edge["check_in_mode"], "manual", "{edge}");
         let grant = edge["grant"].clone();
 
         let empty = member

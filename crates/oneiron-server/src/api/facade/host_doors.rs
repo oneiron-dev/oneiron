@@ -95,7 +95,6 @@ pub(crate) use super::clustering_doors::*;
 pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::identity_doors::*;
-pub(crate) use super::inquiry_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
@@ -171,6 +170,8 @@ pub(crate) use super::weave_admin_doors::{
 };
 // The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
 pub(crate) use super::inbox_group_doors::*;
+// The inquiry rows (INQUIRE-1 PR 5), likewise.
+pub(crate) use super::inquiry_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
