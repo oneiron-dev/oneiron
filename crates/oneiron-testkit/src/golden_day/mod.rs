@@ -57,8 +57,8 @@ use crate::fixture::{SeedError, TestVault};
 use crate::provider::{ScriptedBackend, SeenCall};
 use crate::receipt::ReceiptReader;
 
-pub use manifest::{FieldClass, MANIFEST, SCHEMA_VERSION};
-pub use normalise::{MEASURED, NormaliseError, Normaliser, UnknownKey, render};
+pub use manifest::{AUTHORITY_CLOCK_KEYS, FieldClass, MANIFEST, SCHEMA_VERSION};
+pub use normalise::{MEASURED, NormaliseError, Normaliser, UnknownKey, mask_measured, render};
 
 /// The script's name, in the dump and in the golden file's name.
 pub const SCRIPT: &str = "golden-day-1";
@@ -190,8 +190,9 @@ impl GoldenDayRun {
 
     /// The golden form: the steps and the model calls named first, in
     /// scenario order; then each receipt stream's rows sorted
-    /// ([`Normaliser::sort_rows`]) and named; then every bound ref replaced
-    /// inside strings.
+    /// ([`Normaliser::sort_rows`]) and named, the authority rows' clock
+    /// readings ([`AUTHORITY_CLOCK_KEYS`]) masked before the sort; then every
+    /// bound ref replaced inside strings.
     ///
     /// # Errors
     /// A key the manifest does not classify, or a value its class does not
@@ -207,6 +208,9 @@ impl GoldenDayRun {
         for stream in ["gate_ledger", "family", "authority_audit"] {
             let mut part = self.raw["streams"][stream].clone();
             if let Some(Value::Array(rows)) = part.get_mut("rows") {
+                if stream == "authority_audit" {
+                    mask_measured(rows, AUTHORITY_CLOCK_KEYS);
+                }
                 let sorted = normaliser.sort_rows(std::mem::take(rows));
                 *rows = sorted;
             }

@@ -328,6 +328,21 @@ impl Normaliser {
     }
 }
 
+/// Replaces each of `keys` in each row object with [`MEASURED`], as the
+/// [`FieldClass::Measured`] class does: its presence kept, its value not; a
+/// null stays null. A row without the key stays without it.
+pub fn mask_measured(rows: &mut [Value], keys: &[&str]) {
+    for row in rows {
+        if let Some(object) = row.as_object_mut() {
+            for key in keys {
+                if let Some(value) = object.get_mut(*key).filter(|value| !value.is_null()) {
+                    *value = Value::String(MEASURED.to_owned());
+                }
+            }
+        }
+    }
+}
+
 fn replace_within(value: Value, bound: &[(&str, &str)]) -> Value {
     match value {
         Value::String(text) => Value::String(replace_text(text, bound)),

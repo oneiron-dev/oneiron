@@ -220,3 +220,29 @@ fn run_minted_refs_are_named_in_first_seen_order_bound_refs_by_name_and_real_tim
     assert_eq!(steps[0]["refused"], "the owner owner refused claim c-1");
     assert_eq!(steps[1]["wall_ms"], MEASURED);
 }
+
+#[test]
+fn the_authority_clock_keys_of_a_row_are_masked_and_its_other_keys_kept() {
+    let mut rows = vec![
+        json!({"seq": 0, "source_op": "genesis", "advisory_ts": 1_800_000_001_u64,
+               "learned_at": 1_800_000_001_u64, "occurred_start": 1_800_000_001_u64,
+               "occurred_end": 1_800_000_001_u64, "expires_at": 2_115_360_001_u64}),
+        json!({"seq": 1, "source_op": "agent_grant_act", "advisory_ts": 1_800_000_003_u64,
+               "expires_at": null}),
+    ];
+
+    golden_day::mask_measured(&mut rows, golden_day::AUTHORITY_CLOCK_KEYS);
+
+    for key in golden_day::AUTHORITY_CLOCK_KEYS {
+        assert_eq!(rows[0][*key], MEASURED, "{key}");
+    }
+    assert_eq!(rows[0]["seq"], 0);
+    assert_eq!(rows[0]["source_op"], "genesis");
+    assert_eq!(rows[1]["advisory_ts"], MEASURED);
+    assert_eq!(rows[1]["expires_at"], Value::Null, "a null stays null");
+    assert!(
+        rows[1].get("learned_at").is_none(),
+        "a key the row lacks stays absent: {}",
+        rows[1]
+    );
+}
