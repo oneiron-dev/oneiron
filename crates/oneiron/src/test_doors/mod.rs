@@ -42,6 +42,7 @@ pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
 pub mod house_link;
+pub mod hydration_decode_guard;
 pub mod identity_recheck;
 pub mod inquiry;
 pub mod label_writers;
