@@ -196,8 +196,6 @@ use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-VAULT-CLEANUP-QODO-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod qodo_tests;
 #[cfg(test)]

@@ -1547,6 +1547,7 @@ fn exercise_suppression_remote_quarantine(observer: bool, divergent: bool) -> cr
                         end: LEARNED_AT,
                     },
                     LEARNED_AT,
+                    None,
                     &original,
                 )
                 .apply(txn)
@@ -1817,6 +1818,7 @@ fn reverse_receipt_recovery_preserves_audit_and_quarantines_tombstone() -> crate
                     end: LEARNED_AT,
                 },
                 LEARNED_AT,
+                None,
                 &body,
             )
             .apply(txn)

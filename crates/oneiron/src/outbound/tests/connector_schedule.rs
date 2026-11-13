@@ -29,6 +29,7 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
         trigger_ref: "session:durable-idempotency".to_owned(),
         job_ref: None,
         occurred_at: Some(90),
+        mention: None,
     };
     let first = vault
         .memory(actor, EdgeActorClass::Agent)
@@ -2060,13 +2061,9 @@ fn terminal_outcome_follows_ledger_resolution_on_every_door() -> crate::Result<(
                     assert!(!send_receipt_exists_for_task(&vault, task_ref)?, "{case}");
                     drop(vault);
                     let clock = crate::ports::ManualClock::new(retry_at + 1);
-                    let vault = Vault::open(
-                        tmp.path(),
-                        VaultConfig {
-                            store_clock: clock.bundle(),
-                            ..VaultConfig::default()
-                        },
-                    )?;
+                    let mut vault_config = VaultConfig::default();
+                    vault_config.store_clock = clock.bundle();
+                    let vault = Vault::open(tmp.path(), vault_config)?;
                     AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
                         kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
                         payload: connector_send_attempt_payload(task_ref)?,

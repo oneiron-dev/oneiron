@@ -866,6 +866,7 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
                     end: 400,
                 },
                 learned_at: 400,
+                row_version: None,
                 // Not a `{name, version}` MessagePack map → decode_model_entity_body fails.
                 data: b"forged-model".to_vec(),
                 allow_maintenance: true,

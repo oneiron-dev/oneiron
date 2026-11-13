@@ -37,8 +37,6 @@ mod dial_pattern_roles;
 mod door_invariants;
 mod edge_identity;
 mod foundations;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-HOSTED-REGISTRATION-RELAY]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod hosted_registration_relay;
 mod outage_contracts;
 // FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-OWNER-DECISIONS-LEDGER]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate

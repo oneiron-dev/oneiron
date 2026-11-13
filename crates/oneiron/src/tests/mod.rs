@@ -80,8 +80,6 @@ pub(crate) mod entity_edge_kinds;
 pub(crate) mod graph_topology;
 pub(crate) mod identity_topology_delete_interlock;
 pub(crate) mod open_gates;
-// FIX [LIBTEST-QUARANTINE-TESTS-PROV-DELETES]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 pub(crate) mod prov_deletes;
 pub(crate) mod reput_phonetic;
 pub(crate) mod session_misc;

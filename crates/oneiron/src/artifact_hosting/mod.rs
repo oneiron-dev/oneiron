@@ -424,7 +424,5 @@ use self::publish::publish_artifact_pointer_in_txn;
 pub(crate) use self::publish::{artifact_publish_gate_refs_in_txn, artifact_publish_receipts};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-ARTIFACT-HOSTING-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

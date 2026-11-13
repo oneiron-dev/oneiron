@@ -27,8 +27,6 @@ mod room_reads;
 // FIX [LIBTEST-QUARANTINE-PIPELINE-TESTS-SCORING-BASICS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
 #[cfg(any())]
 mod scoring_basics;
-// FIX [LIBTEST-QUARANTINE-PIPELINE-TESTS-TELEMETRY-TRACE]: the lib test target's type check fails here (2 errors: E0061 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod telemetry_trace;
 mod temporal;
 mod world_access;

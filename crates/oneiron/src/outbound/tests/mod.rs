@@ -1,8 +1,6 @@
 // FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-QUALIFICATION]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
 #[cfg(any())]
 mod connector_qualification;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-SCHEDULE]: the lib test target's type check fails here (2 errors: E0639 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod connector_schedule;
 // FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-DISPATCH-BUDGET]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
 #[cfg(any())]

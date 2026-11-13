@@ -732,26 +732,21 @@ fn readers_finding(vault: &Vault, wanted: &[&[u8]]) -> BTreeSet<(&'static str, u
     for row in vault.export_records_in_scope(&top, &top, &top).unwrap() {
         hit("export_records_in_scope", &row.id);
     }
-    let export = vault
-        .export_whole_vault(crate::context_pack::PackFormat::Json)
-        .unwrap();
-    let document: serde_json::Value = serde_json::from_slice(export.bytes()).unwrap();
+    let export = vault.export_whole_vault(true).unwrap();
+    let document = vault.read_whole_vault_archive(export.bytes()).unwrap();
     let bundle: serde_json::Value =
         serde_json::from_slice(&vault.export_entity_bundle_json(&ids).unwrap()).unwrap();
-    for (reader, rows) in [
-        (
-            "export_whole_vault",
-            &document["evidence_ledger"]["entities"],
-        ),
-        ("export_entity_bundle_json", &bundle["entities"]),
-    ] {
-        for row in rows.as_array().into_iter().flatten() {
-            if let Some(id) = row["id"]
-                .as_str()
-                .and_then(|id| EntityId::from_hex(id).ok())
-            {
-                hit(reader, &id);
-            }
+    for row in &document.evidence_ledger.entities {
+        if let Ok(id) = EntityId::from_hex(&row.id) {
+            hit("export_whole_vault", &id);
+        }
+    }
+    for row in bundle["entities"].as_array().into_iter().flatten() {
+        if let Some(id) = row["id"]
+            .as_str()
+            .and_then(|id| EntityId::from_hex(id).ok())
+        {
+            hit("export_entity_bundle_json", &id);
         }
     }
     // A scoped read's admission of a candidate, which reads no revision.

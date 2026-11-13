@@ -22,8 +22,6 @@ pub use self::values::{EnvKey, EnvSecretRef, EnvStepId, RepoRelativeGlob, RepoRe
 
 pub(crate) use self::blueprint::env_blueprint_repo_identity;
 
-// FIX [LIBTEST-QUARANTINE-CHECKOUT-ENV-BLUEPRINT-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

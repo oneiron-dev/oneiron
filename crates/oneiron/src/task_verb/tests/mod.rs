@@ -54,8 +54,6 @@ use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{Vault, unix_seconds_now};
 use rmpv::Value;
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-BOARD-ACK]: the lib test target's type check fails here (2 errors: E0061 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod board_ack;
 // FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CANCEL]: the lib test target's type check fails here (4 errors: E0061 x3, E0063 x1); port it, then drop this gate
 #[cfg(any())]
@@ -63,8 +61,6 @@ mod cancel;
 // FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CONSULT-FANOUT]: the lib test target's type check fails here (2 errors: E0639 x2); port it, then drop this gate
 #[cfg(any())]
 mod consult_fanout;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CONSULT-LADDER]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
-#[cfg(any())]
 mod consult_ladder;
 // FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CONSULT-LIFECYCLE]: the lib test target's type check fails here (7 errors: E0599 x4, E0063 x2, E0639 x1); port it, then drop this gate
 #[cfg(any())]
@@ -72,8 +68,6 @@ mod consult_lifecycle;
 mod consult_party;
 mod consult_party_generation;
 mod consult_party_migration;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-TESTS-CREATE-ADMISSION]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod create_admission;
 mod magistrate_route_result;
 mod presence_scan;

@@ -343,7 +343,11 @@ fn ungranted_publish_proposes_until_grant_then_receipts_and_replays() -> Result<
     );
     let stored = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Share))?;
     assert!(stored.contains(&receipt));
-    vault.revoke_standing_outbound_grant(&grant_id, 13)?;
+    let grant = vault
+        .get_standing_outbound_grant(&grant_id)?
+        .expect("grant stored");
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    vault.revoke_consent_grant(&owner, &grant.grant_ref())?;
     // Revoking a grant blocks a NEW publish, but cannot erase the old proof.
     let next = ArtifactPublishVerbRequest::new(
         "site",

@@ -631,8 +631,6 @@ pub(in crate::sync) fn apply_pending_window_updates_in_txn(
     Ok(applied)
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-HISTORY-FREE-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod history_free_tests;
 // FIX [LIBTEST-QUARANTINE-SYNC-WINDOW-TESTS]: the lib test target's type check fails here (31 errors: E0061 x23, E0277 x5, E0063 x3); port it, then drop this gate

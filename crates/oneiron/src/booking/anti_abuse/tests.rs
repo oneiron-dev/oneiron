@@ -1131,6 +1131,7 @@ fn borderline_submission_builds_pending_review_inbox_group() {
         .inbox_groups(crate::inbox::InboxQuery::new(10))
         .expect("inbox groups");
     let group = groups
+        .groups
         .iter()
         .find(|group| group.run_id == run_id)
         .expect("the quarantine run projects a pending-review inbox group");
@@ -2010,8 +2011,10 @@ fn a_restore_goes_ahead_past_a_submission_quarantined_since() {
         panic!("two live negatives route to quarantine");
     };
     quarantine_borderline_submission(&vault, &facts, &reason, 2).expect("quarantine");
+    let key = vault.checkpoint_key().expect("checkpoint key");
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,
