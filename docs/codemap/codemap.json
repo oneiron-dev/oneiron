@@ -102286,6 +102286,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/delegation_expiry_wall_clock.rs",
+     "purpose": "A delegation's end is wall time (census L7-18)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/delete_authority.rs",
      "purpose": "DEL-2: the delete authority on every delete (ARCH-0043, owner DEL-2 = A, 9 Oct: \"Members delete their own…",
      "surface": {}
@@ -106624,7 +106632,7 @@
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7495,
-   "test_files": 1210
+   "test_files": 1211
   },
   "oneiron-agent-runtime": {
    "files": [
