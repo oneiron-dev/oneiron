@@ -89,7 +89,9 @@ mod served;
 mod siwc_responses;
 // SEAT-PARK-MODEL-STEP-PATH: the housekeeping tick's restore of a lapsed SIWC login.
 pub(crate) mod siwc_seat_login;
-// SEAT-PARK-MODEL-STEP-PATH: an SIWC offer's model seat and the refusals that name it.
+// SEAT-PARK-MODEL-STEP-PATH: an SIWC offer's model seat and the refusals that name it,
+// for the test door only.
+#[cfg(oneiron_test_support)]
 pub(crate) use siwc_responses::{seat_refusal, siwc_offer_seat};
 pub(crate) mod soniox;
 mod source_admission;
