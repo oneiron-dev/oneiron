@@ -87,7 +87,7 @@ const OFFER_PURPOSE: &str = "other:coach_training_offer";
 /// Coach's own calls run on another seat (`generative_reasoner`).
 const STUDIED_ROLE: &str = "checker";
 /// The stock option the fixture prices beside the incumbent.
-const CANDIDATE_MODEL: &str = "fixture:candidate-small";
+const CANDIDATE_MODEL: &str = "fixture/candidate-small@r1";
 const DAY_SECS: u64 = 86_400;
 /// The shipped offer skill, which the fixture's hub serves.
 const OFFER_SKILL: &str = include_str!("../../../skills/training-offer/SKILL.md");
