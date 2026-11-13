@@ -723,6 +723,35 @@ pub fn dreamer_failed_on_refused_step(
     })
 }
 
+/// The spent model seat a failed durable step waits on, with the reset its refusal stated
+/// (SEAT-PARK-MODEL-STEP-PATH): a login-backed seat's spent window that states its reset gives
+/// `(seat, Some(reset))`, and its lapsed login gives `(seat, None)`; the try parks on that seat's
+/// wait, which the seat's available write wakes. `None` for every other step error, an API key's
+/// refusal and a window that states no reset among them, which park as
+/// [`dreamer_park_cause_of_step`] says.
+#[must_use]
+pub(crate) fn dreamer_seat_refusal_of_step(
+    error: &crate::model_step_error::DurableStepError,
+) -> Option<(ModelSeatId, Option<u64>)> {
+    use crate::model_step_error::DurableStepError;
+    use oneiron_model::llm::{FatalLlmError, LlmError, RetryableLlmError, SpentKind};
+    let (DurableStepError::Llm(source)
+    | DurableStepError::ClassifiedLlm { source, .. }
+    | DurableStepError::SpentLlm { source, .. }) = error
+    else {
+        return None;
+    };
+    match source {
+        LlmError::Retryable(RetryableLlmError::QuotaSpent {
+            kind: SpentKind::Window,
+            seat: Some(seat),
+            ..
+        }) => crate::llm::stated_reset_at(source).map(|reset| (*seat, Some(reset))),
+        LlmError::Fatal(FatalLlmError::SeatSignedOut { seat }) => Some((*seat, None)),
+        _ => None,
+    }
+}
+
 /// Private parked-attempt row keyed by attempt id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerParkedAttemptRecord {
