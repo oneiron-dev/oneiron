@@ -34,16 +34,28 @@ pub enum MetricRole {
 }
 
 /// One named axis in a pinned metric set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct MetricAxis {
     pub name: String,
     pub direction: MetricDirection,
     pub role: MetricRole,
+    /// The largest change on this axis, either way, that still counts as no
+    /// change (RESEARCH-0651's acceptance rule: without it, latency jitter
+    /// escalates every comparison). Finite and non-negative; 0, the default,
+    /// counts every change, and is left out when serialized, so a config
+    /// that names none keeps its bytes.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tolerance: f64,
+}
+
+/// Whether `value` is zero: a default tolerance is not serialized.
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 /// Evaluator-owned metric set identity and the axes used by the decision rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct MetricSet {
     pub set_id: String,
@@ -185,6 +197,12 @@ impl CampaignConfig {
             if !names.insert(&axis.name) {
                 return invalid("metric_set.axes", "duplicate metric axis");
             }
+            if !axis.tolerance.is_finite() || axis.tolerance < 0.0 {
+                return invalid(
+                    "metric_set.axes",
+                    "tolerance must be finite and non-negative",
+                );
+            }
             primary |= axis.role == MetricRole::Primary;
         }
         if !primary {
@@ -260,6 +278,7 @@ impl CampaignConfig {
     /// Decide only from both arms' held-out values. This scores dominance:
     /// ties reject, improvements without regressions promote, and mixed
     /// improvements/regressions escalate rather than silently crossing floors.
+    /// A change no larger than its axis's tolerance is a tie on that axis.
     pub fn decide_held_out(
         &self,
         incumbent: &Measurement,
@@ -299,6 +318,11 @@ impl CampaignConfig {
             if !delta.is_finite() {
                 return invalid("measurement", "metric delta overflowed");
             }
+            let delta = if delta.abs() <= axis.tolerance {
+                0.0
+            } else {
+                delta
+            };
             better |= delta > 0.0;
             worse |= delta < 0.0;
             if axis.role == MetricRole::Floor && delta < 0.0 {
