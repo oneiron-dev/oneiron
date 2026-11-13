@@ -33055,7 +33055,7 @@
      "path": "src/dreamer_runner/lease_fence.rs",
      "purpose": "The lease a wake pass ran an admitted try under, and the park fenced on it (FIX 6057): a held program…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -34934,7 +34934,7 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 6,
       "re-export": 21
      }
@@ -35011,6 +35011,16 @@
       "enum": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/policy_wait.rs",
+     "purpose": "The policy waits of executor-error parks: an ExecutorError park whose refusal an owner policy write clears…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -36238,7 +36248,7 @@
      "path": "src/dreamer_wake/settlement.rs",
      "purpose": "What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -43917,7 +43927,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManifestContribution"
@@ -102388,6 +102398,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/executor_error_policy_requeue.rs",
+     "purpose": "FIX 23347 part 2 (Engine ruling 06:28, 13 Nov): an executor-error park that waits on owner policy is…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104181,6 +104199,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/source_audience_turn_message_lineage.rs",
+     "purpose": "FIX SOURCE-AUDIENCE-TURN-MESSAGE-LINEAGE: a witnessed TURN's words are its MESSAGE rows', so the read judge…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/source_audience_unresolved_binding.rs",
      "purpose": "FIX 22346: an image binding whose live policy is absent reads to no one and never travels",
      "surface": {}
@@ -105263,7 +105289,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 225,
+     "files": 226,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -106390,10 +106416,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 270,
+   "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7488,
-   "test_files": 1194
+   "source_files": 7489,
+   "test_files": 1196
   },
   "oneiron-agent-runtime": {
    "files": [
