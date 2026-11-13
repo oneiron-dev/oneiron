@@ -533,6 +533,11 @@ pub(super) async fn handle_window_sync(
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .retain_own_device_positions(&server.reassert_manager, &window, positions);
             }
+            // The relayed ask intents this import landed for asks this home
+            // admitted go to their consumer now, as the client lane's do
+            // (FIX 20468); the ask sweep stays the backstop. A failure is
+            // logged there and never fails the import.
+            oneiron::sync::ask_forward::consume_landed_intents(server.vault());
         }
         window_sub_tags::VV_RESPONSE => {
             // Client's VV answering our VV_REQUEST — export and send only our

@@ -73,6 +73,13 @@ pub(crate) struct AgentAuthoring {
     /// of its own takes its slice from. `None` for an unbound lane, which
     /// grants nothing by itself.
     read_key: Option<crate::claim::ScopedReadActorKey>,
+    /// What the author writer made of each definition the batch staged, for
+    /// the committing door's receipt.
+    receipts: super::AgentDefinitionWriteReceipts,
+    /// The author's instance whose grant decides `save_agent` (SPAWN-KNOB):
+    /// the run attempt the writing actor carries; `None` answers to the
+    /// author's root grant.
+    instance: Option<super::AgentPowerTarget>,
 }
 
 impl AgentAuthoring {
@@ -87,7 +94,14 @@ impl AgentAuthoring {
             author: actor.entity_ref(),
             door,
             read_key: read_key.cloned(),
+            receipts: super::AgentDefinitionWriteReceipts::default(),
+            instance: super::actor_instance(actor),
         })
+    }
+
+    /// The receipts the author writer fills as the batch applies.
+    pub(crate) fn receipts(&self) -> super::AgentDefinitionWriteReceipts {
+        self.receipts.clone()
     }
 }
 
@@ -107,7 +121,7 @@ const PROPOSED_CHANGE_ID_CONTEXT: &str = "oneiron agent_def proposed change id v
 /// # Errors
 ///
 /// An invalid-key error when the derived bytes are a reserved id pattern.
-fn proposed_change_id(stored: &EntityId, version: &str) -> Result<EntityId> {
+pub(super) fn proposed_change_id(stored: &EntityId, version: &str) -> Result<EntityId> {
     let mut hasher = blake3::Hasher::new_derive_key(PROPOSED_CHANGE_ID_CONTEXT);
     hasher.update(stored.as_bytes());
     hasher.update(version.as_bytes());
@@ -156,7 +170,7 @@ fn scope_within(request: &AgentScope, holder: &AgentScope) -> bool {
 
 /// Whether every grant `request` names is one `holder` holds: its scope, its
 /// skills, its connectors and its code-mode MCPs.
-fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
+pub(super) fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
     scope_within(&request.scope, &holder.scope)
         && request
             .skills
@@ -174,7 +188,7 @@ fn grants_within(request: &AgentDefinition, holder: &AgentDefinition) -> bool {
 
 /// Whether a definition is one its agent runs under: active, approved and
 /// switched on.
-fn stands(definition: &AgentDefinition) -> bool {
+pub(crate) fn stands(definition: &AgentDefinition) -> bool {
     definition.lifecycle_status == ClaimLifecycleStatus::Active
         && definition.enabled
         && matches!(
@@ -283,12 +297,16 @@ impl Vault {
             requested,
             scope_widens,
             AGENTS_PUT_DOOR,
+            lease.map(|lease| super::AgentPowerTarget::Attempt(lease.attempt)),
         )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
-        wtxn.commit()?;
-        crate::context_board::ensure_agent_person(
+        // PEOPLE (ARCH-0067): the definition and its person land in this one
+        // writer, so a person that cannot be built leaves no definition
+        // behind for a retry of this create-only door to find occupied.
+        crate::context_board::ensure_agent_person_in_txn(
             self,
+            &mut wtxn,
             *id,
             definition
                 .display_name
@@ -296,6 +314,7 @@ impl Vault {
                 .unwrap_or(&definition.agent_id),
             learned_at,
         )?;
+        wtxn.commit()?;
         Ok(disposition)
     }
 
@@ -344,6 +363,7 @@ impl Vault {
         if claims.single_use && issuer.is_none() {
             return Ok(None);
         }
+        // A credential's author answers to its own root grant.
         let (definition, disposition) = self.prepare_agent_definition_for_author_in_txn(
             txn,
             author,
@@ -351,6 +371,7 @@ impl Vault {
             requested,
             false,
             AGENTS_PUT_DOOR,
+            None,
         )?;
         if disposition != AgentDefinitionPutDisposition::Active {
             return Ok(None);
@@ -402,7 +423,7 @@ impl Vault {
     }
 
     /// Encodes (validating) and writes an `AgentDefinition` through the generic
-    /// entity door.
+    /// entity door, with its person, in one writer.
     pub fn put_agent_definition(
         &self,
         id: &EntityId,
@@ -411,14 +432,20 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let data = encode_agent_definition(def)?;
-        self.put_entity(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)?;
-        // PEOPLE (ARCH-0067): every agent is a person with a `pr` handle.
-        crate::context_board::ensure_agent_person(
-            self,
-            *id,
-            def.display_name.as_deref().unwrap_or(&def.agent_id),
-            learned_at,
-        )
+        self.with_write_txn(|txn| {
+            self.batch_in()
+                .put(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)
+                .apply(txn)?;
+            // PEOPLE (ARCH-0067): every agent is a person with a `pr` handle.
+            // A person that cannot be built leaves no definition behind.
+            crate::context_board::ensure_agent_person_in_txn(
+                self,
+                txn,
+                *id,
+                def.display_name.as_deref().unwrap_or(&def.agent_id),
+                learned_at,
+            )
+        })
     }
 
     /// Transaction-composable [`Self::put_agent_definition`]: the definition
@@ -546,17 +573,47 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let data = encode_agent_definition(def)?;
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let existing = self.read_agent_definition_in_txn(txn, id)?;
-            if expected_version.is_some_and(|version| version != existing.version) {
-                return Err(Error::ConcurrentWrite("agent definition revision changed"));
-            }
-            validate_agent_definition_update(&existing, def)?;
-            super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
-            self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
+            self.update_agent_definition_as_owner_in_txn(
+                txn,
+                owner,
+                id,
+                expected_version,
+                def,
+                occurred,
+                learned_at,
+            )
         })
+    }
+
+    /// Owner edit of an AGENT_DEF in the caller's writer: rechecks the proof,
+    /// fences the revision, runs the immutable-field gate, moves the id pin,
+    /// and writes the row. The whole-vault seed-replacement adapter calls this
+    /// in the import writer; the public owner doors reach it through
+    /// [`Self::update_agent_definition_as_checked`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "owner, target, revision, body and event time are one edit in the caller's writer"
+    )]
+    pub(crate) fn update_agent_definition_as_owner_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_version: Option<&str>,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_agent_definition(def)?;
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let existing = self.read_agent_definition_in_txn(txn, id)?;
+        if expected_version.is_some_and(|version| version != existing.version) {
+            return Err(Error::ConcurrentWrite("agent definition revision changed"));
+        }
+        validate_agent_definition_update(&existing, def)?;
+        super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
+        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
     }
 
     /// [`Self::update_agent_definition_at_version_as`] in the caller's
@@ -765,6 +822,9 @@ impl Vault {
         id: &EntityId,
         body: &[u8],
     ) -> Result<AuthoredPut> {
+        // SPAWN-KNOB: an author whose `save_agent` is off writes no
+        // definition, new or changed.
+        super::ensure_save_agent_in_txn(&self.store, txn, authoring.author, authoring.instance)?;
         match live_entity_row_in_txn(&self.store, txn, id)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
@@ -777,7 +837,27 @@ impl Vault {
             LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {}
         }
         let requested = decode_agent_definition(body)?;
+        let definition =
+            self.prepare_agent_authored_create_in_txn(txn, authoring, id, &requested)?;
+        encode_agent_definition(&definition).map(AuthoredPut::Bounded)
+    }
+
+    /// Prepares a fresh agent-authored definition in the caller's writer
+    /// (ARCH-0053:20), using the same slice rule as a generic definition put.
+    /// The caller writes the bounded definition in this transaction.
+    ///
+    /// # Errors
+    ///
+    /// The author writer's refusals, as [`Self::agent_authored_put_in_txn`].
+    pub(crate) fn prepare_agent_authored_create_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authoring: &AgentAuthoring,
+        id: &EntityId,
+        requested: &AgentDefinition,
+    ) -> Result<AgentDefinition> {
         let author = &authoring.author;
+        super::ensure_save_agent_in_txn(&self.store, txn, *author, authoring.instance)?;
         let author_holds_definition = matches!(
             live_entity_row_in_txn(&self.store, txn, author)?,
             LiveEntityRow::Live {
@@ -790,16 +870,17 @@ impl Vault {
                 txn,
                 author,
                 id,
-                &requested,
+                requested,
                 false,
                 authoring.door,
+                authoring.instance,
             )?
             .0
         } else {
-            self.ensure_new_authored_definition_in_txn(txn, id, &requested)?;
-            let within = !super::widening::has_model_choice(&requested)
-                && self.within_granted_slice_in_txn(txn, authoring, &requested)?;
-            let mut definition = requested;
+            self.ensure_new_authored_definition_in_txn(txn, id, requested)?;
+            let within = !super::widening::has_model_choice(requested)
+                && self.within_granted_slice_in_txn(txn, authoring, requested)?;
+            let mut definition = requested.clone();
             mark_agent_authored(&mut definition, author, authoring.door);
             definition.approval_status = if within {
                 ClaimApprovalStatus::Approved
@@ -808,7 +889,7 @@ impl Vault {
             };
             definition
         };
-        encode_agent_definition(&definition).map(AuthoredPut::Bounded)
+        Ok(definition)
     }
 
     /// Whether `requested` is inside the slice of an agent that holds no
@@ -1070,9 +1151,26 @@ impl Vault {
         proposal.approval_status = ClaimApprovalStatus::Proposed;
         // A reserved logical id names its one seeded row.
         proposal.logical_id = None;
+        let body = encode_agent_definition(&proposal)?;
+        // The proposal lands on its own id, past the below-owner widening
+        // check, which judged the put at the stored row's id. A proposal the
+        // owner rejected stays rejected: bringing it back to waiting moves
+        // its approval up, which is the owner's (`widening`).
+        if super::widening::agent_definition_put_widens_in_txn(
+            &self.store,
+            txn,
+            &proposal_id,
+            &body,
+        )? {
+            return Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(
+                    "only the vault owner brings back a proposed change it answered",
+                ),
+            ));
+        }
         Ok(AuthoredPut::ProposedChange {
             id: proposal_id,
-            body: encode_agent_definition(&proposal)?,
+            body,
         })
     }
 
@@ -1166,6 +1264,7 @@ impl Vault {
         let Some(authoring) = authoring else {
             return Ok(());
         };
+        let mut receipts = Vec::new();
         for op in ops {
             if let BatchOp::Put {
                 id,
@@ -1175,21 +1274,38 @@ impl Vault {
             } = op
                 && *entity_type == ENTITY_TYPE_AGENT_DEF
             {
-                match self.agent_authored_put_in_txn(txn, authoring, id, data)? {
-                    AuthoredPut::AsStaged => {}
-                    AuthoredPut::Bounded(body) => *data = body,
+                let staged = *id;
+                let receipt = match self.agent_authored_put_in_txn(txn, authoring, id, data)? {
+                    AuthoredPut::AsStaged => super::write_receipt::stored_at_its_id(
+                        decode_agent_definition(data)?.approval_status,
+                    ),
+                    AuthoredPut::Bounded(body) => {
+                        let receipt = super::write_receipt::stored_at_its_id(
+                            decode_agent_definition(&body)?.approval_status,
+                        );
+                        *data = body;
+                        receipt
+                    }
                     AuthoredPut::ProposedChange { id: proposal, body } => {
                         *id = proposal;
                         *data = body;
+                        super::write_receipt::stored_as_proposed_change(&proposal)
                     }
-                }
+                };
+                receipts.push((staged, receipt));
             }
         }
-        Ok(())
+        authoring.receipts.replace(receipts)
     }
 
     /// Prepares the same author-bounded definition for a door that owns its
-    /// writer. `door` is the verb name its provenance records.
+    /// writer. `door` is the verb name its provenance records; `instance` is
+    /// the author's instance whose `save_agent` decides (SPAWN-KNOB), `None`
+    /// for its root grant.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the author writer binds author, target, request, scope, door and the deciding grant in one read"
+    )]
     fn prepare_agent_definition_for_author_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -1198,7 +1314,9 @@ impl Vault {
         requested: &AgentDefinition,
         scope_widens: bool,
         door: &'static str,
+        instance: Option<super::AgentPowerTarget>,
     ) -> Result<(AgentDefinition, AgentDefinitionPutDisposition)> {
+        super::ensure_save_agent_in_txn(&self.store, txn, *author, instance)?;
         let author_def = self.read_agent_definition_in_txn(txn, author)?;
         if !stands(&author_def) {
             return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
@@ -1237,7 +1355,7 @@ impl Vault {
         Ok((definition, disposition))
     }
 
-    fn apply_agent_definition_body(
+    pub(super) fn apply_agent_definition_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
@@ -1265,6 +1383,16 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        // A raw apply records no changed row, so the edit names its row to
+        // the owning write door as the builder does: the door leaves the
+        // row's window a durable owed-mirror marker and mirrors the new body
+        // into a live window. Without it, the window keeps the old body, and
+        // its next cold open lands that body back over this edit
+        // (AGENT-DEF-DIAL-REVERTS-ON-RESTART). Without sync there is no
+        // window to mirror into.
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
+        Ok(())
     }
 }

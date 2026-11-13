@@ -57,6 +57,7 @@ pub use self::fit_install::{
     PREDICATE_SKILL_SECTION_FIT, PluginSectionFitEvidence, PluginSectionFitOutcome,
     PluginSectionInstalled, install_plugin_section_after_fit, plugin_section_fit_evidence,
 };
+pub(crate) use self::fit_install::{ensure_fit_install_writer_machine, fit_install_writer_id};
 pub(crate) use self::fit_install::{
     scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };

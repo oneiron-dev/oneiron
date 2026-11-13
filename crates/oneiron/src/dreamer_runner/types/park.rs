@@ -27,8 +27,8 @@ pub struct ParkDreamerAttempt {
 /// A model seat's durable identity: one login or subscription.
 pub type ModelSeatId = EntityId;
 
-/// Exactly what wakes a parked attempt. A Budget, Consent, Peer or Human wait exists only on a
-/// trap park: for Consent, Peer and Human, the code-run wait's delivery wakes the trap through
+/// Exactly what wakes a parked attempt. A Budget, PassBudget, ResidentShare, Consent, Peer or Human
+/// wait exists only on a trap park: for Consent, Peer and Human, the code-run wait's delivery wakes the trap through
 /// the `TRAPS` binding written beside the park. A Seat wait exists only on the driver's own park.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DreamerParkWait {
@@ -40,6 +40,18 @@ pub enum DreamerParkWait {
         /// The units the reservation asked of that scope: the reservation less what the open
         /// scopes below it could still cover when the step parked.
         asked_units: u64,
+    },
+    /// The guard of the wake pass the step ran in refused the step's reservation, which asked it
+    /// for `asked_units`; that guard is rebuilt each pass, so a later pass whose guard has room
+    /// for them wakes the trap at its start. A step also bound to a spend scope (a free-time
+    /// item's) names the scope's nearest open hard scope, whose top-up that leaves room for them
+    /// wakes the trap too: the scope's own room is stale until the pass settles the step's spend.
+    PassBudget {
+        /// The units the refused reservation asked of the pass's guard.
+        asked_units: u64,
+        /// The nearest open hard scope above the step's spend scope, when the step has one: the
+        /// scope a top-up raises to give the step room.
+        scope: Option<SpendScopeId>,
     },
     /// A held effect's consent answer or an outbound call's settled reply delivered on the wait.
     Consent {
@@ -65,6 +77,15 @@ pub enum DreamerParkWait {
         /// The vendor-reported reset in seconds, when the refusal named one.
         reset_at_s: Option<u64>,
     },
+    /// The owner pinned this resident's share of the host's allocation, and the step's call did
+    /// not fit it; the owner's share write that frees the call wakes the trap (D3).
+    ResidentShare {
+        /// The resident whose share refused the call.
+        resident: EntityId,
+        /// The share, in the allocation's unit, the call needed: what the resident had used and
+        /// held, plus the call's reservation.
+        needed_units: u64,
+    },
 }
 
 impl DreamerParkWait {
@@ -73,10 +94,12 @@ impl DreamerParkWait {
     pub fn class(&self) -> DreamerParkWaitClass {
         match self {
             Self::Budget { .. } => DreamerParkWaitClass::Budget,
+            Self::PassBudget { .. } => DreamerParkWaitClass::PassBudget,
             Self::Consent { .. } => DreamerParkWaitClass::Consent,
             Self::Peer { .. } => DreamerParkWaitClass::Peer,
             Self::Human { .. } => DreamerParkWaitClass::Human,
             Self::Seat { .. } => DreamerParkWaitClass::Seat,
+            Self::ResidentShare { .. } => DreamerParkWaitClass::ResidentShare,
         }
     }
 }

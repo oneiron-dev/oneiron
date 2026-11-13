@@ -41,7 +41,8 @@ pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_ow
 
 pub(crate) use crate::model_step_record::MODEL_STEP_ATTEMPT_KIND;
 pub use crate::store::model_step_submission::{
-    ModelStepFailure, ModelStepFailureClass, ModelStepResult, ModelStepRetryPolicy, ModelStepSubmit,
+    ModelStepFailure, ModelStepFailureClass, ModelStepResult, ModelStepRetryPolicy,
+    ModelStepSubmit, StepBudgetRefusal,
 };
 const WORKER: &str = "model-step-door";
 
@@ -517,6 +518,7 @@ async fn submit(
         deadline: None,
         now_ms: vault.now_recorded_at().saturating_mul(1000),
         spend_scope,
+        wake_pass_bound: false,
     };
     let outcome = if let Some((backend, guard, _)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
@@ -561,7 +563,9 @@ async fn submit(
                 )?;
             }
             Some(ModelStepResult::Failed { failure }) => {
-                queue.fail_in_txn(
+                // A typed budget refusal settles on the step's own row beside
+                // its text, so its run tree and receipt read it typed.
+                queue.fail_with_refusal_in_txn(
                     txn,
                     FailAttempt {
                         id,
@@ -570,6 +574,7 @@ async fn submit(
                         reason: failure.message.clone(),
                         now,
                     },
+                    failure.budget_refusal.clone(),
                 )?;
             }
             _ => {}
@@ -844,6 +849,7 @@ fn failure(error: DurableStepError) -> ModelStepFailure {
         validation_attempts: None,
         validation_errors: Vec::new(),
         spent_usage: None,
+        budget_refusal: None,
     };
     match error {
         DurableStepError::Llm(source) | DurableStepError::ClassifiedLlm { source, .. } => {
@@ -881,6 +887,10 @@ fn failure(error: DurableStepError) -> ModelStepFailure {
             out.spent_usage = Some(*usage);
         }
         DurableStepError::DeadlineHardCut => out.class = ModelStepFailureClass::DeadlineHardCut,
+        DurableStepError::BudgetRefused(refusal) => {
+            out.class = ModelStepFailureClass::BudgetRefused;
+            out.budget_refusal = Some(refusal);
+        }
         DurableStepError::Engine(_) | DurableStepError::Canonical(_) => {}
     }
     out

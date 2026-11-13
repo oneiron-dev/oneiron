@@ -25,6 +25,7 @@ async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -
                 .block_on(self.state.handle_request(CtlRequest::Shed {
                     cause: ShedCause::LongOutboundWait,
                     waited_secs: 2,
+                    wait_id: None,
                 }))
                 .unwrap();
             assert!(matches!(
@@ -57,8 +58,11 @@ async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -
     let actor = OutboundDispatchActor::agent(actor_id);
     // The seeded first-party actor ceiling plus a real owner grant authorizes
     // the send. Maintenance policy bytes remain forbidden at the public put door.
+    // Owner-minted standing consent since 282c8eb3d58 (FIX 11874): the embedded owner mints,
+    // and the vault stamps the grant's time.
     vault.mint_standing_outbound_grant(
-        &oneiron::EntityId::from_bytes([0xBC; 16])?,
+        &crate::test_credentials::embedded_owner(&vault),
+        oneiron::EntityId::from_bytes([0xBC; 16])?,
         &GrantMintIntent {
             principal_ref: actor_id.to_hex(),
             origin_component_id: "ctl-test".into(),
@@ -68,7 +72,6 @@ async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -
                 verb_class: "send".into(),
             },
         },
-        2,
     )?;
     let server = Arc::new(crate::SyncServer::new(
         vault.clone(),

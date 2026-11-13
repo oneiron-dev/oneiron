@@ -1,13 +1,15 @@
-//! The owner's one inbox over both group kinds (FIX 3026): the Dreamer run
-//! groups over the pending-consent tray and the vault shape's apply groups
-//! (ARCH-0070 `shape:plan-apply`), interleaved on one page, and the owner's
-//! answer to a group dispatched by its kind. Each kind keeps its own
-//! projection, authority and settlement; this module only orders them and
-//! routes the answer.
+//! The owner's one inbox over every group kind (FIX 3026): the Dreamer run
+//! groups over the pending-consent tray, the vault shape's apply groups
+//! (ARCH-0070 `shape:plan-apply`) and the owner's whole-vault restores
+//! (`restore_group`), interleaved on one page, and the owner's answer to a
+//! group dispatched by its kind. Each kind keeps its own projection,
+//! authority and settlement; this module only orders them and routes the
+//! answer. A restore group's answer settles claims on the owner's memory
+//! handle (`Memory::resolve_inbox_group_of_kind`).
 //!
 //! A page orders its groups by source time, newest first (a Dreamer group's
-//! earliest open proposal, a shape group's apply start), then by kind, then
-//! by group key. Its `next` names the last group served, and the next page
+//! earliest open proposal, a shape group's apply start, a restore's receipt
+//! time), then by kind, then by group key. Its `next` names the last group served, and the next page
 //! resumes past it, so every group stays reachable through the pages.
 //! `Vault::inbox_groups_unified` and `Vault::resolve_inbox_group_of_kind`
 //! are its call surface.
@@ -24,6 +26,7 @@ use crate::edit_distance::miner::CompilationTargetValidation;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::inbox::compilation_target::CompilationTarget;
+use crate::inbox::restore_group::{RestoreInboxGroup, RestoreInboxResolution};
 use crate::vault_shape::{ShapeApplyReceipt, ShapeInboxGroup};
 use crate::write_envelope::WriteActor;
 
@@ -50,6 +53,9 @@ pub enum InboxGroupKind {
     Dreamer,
     /// A vault shape apply's items waiting for the owner's word.
     Shape,
+    /// An owner whole-vault restore's restored claims, keyed by its restore
+    /// receipt.
+    Restore,
 }
 
 impl InboxGroupKind {
@@ -57,6 +63,7 @@ impl InboxGroupKind {
         match self {
             Self::Dreamer => 0,
             Self::Shape => 1,
+            Self::Restore => 2,
         }
     }
 
@@ -64,6 +71,7 @@ impl InboxGroupKind {
         match byte {
             0 => Some(Self::Dreamer),
             1 => Some(Self::Shape),
+            2 => Some(Self::Restore),
             _ => None,
         }
     }
@@ -75,9 +83,10 @@ impl InboxGroupKind {
 pub enum UnifiedInboxGroup {
     Dreamer { group: InboxGroup },
     Shape { group: ShapeInboxGroup },
+    Restore { group: RestoreInboxGroup },
 }
 
-/// One page of the owner's inbox groups of both kinds, and where the next
+/// One page of the owner's inbox groups of every kind, and where the next
 /// page resumes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UnifiedInboxGroupPage {
@@ -170,7 +179,7 @@ impl From<&InboxGroupResolveTarget> for CompilationTarget {
     }
 }
 
-/// The owner's answer to one inbox group of either kind.
+/// The owner's answer to one inbox group of any kind.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InboxGroupResolveRequest {
@@ -179,12 +188,12 @@ pub struct InboxGroupResolveRequest {
     pub group_key: String,
     pub verb: InboxBulkVerb,
     /// Narrows a Dreamer group's bundle to its `new_claim`, `update` or
-    /// `conflict` rows. A shape group has no verb classes.
+    /// `conflict` rows. A shape or restore group has no verb classes.
     #[serde(default)]
     pub verb_class: Option<String>,
     /// The host's compilation target for a Dreamer answer. Absent keeps
     /// today's path: no principal, no learning. Present is authoritative
-    /// (ARCH-0056). A shape group ignores it.
+    /// (ARCH-0056). A shape group ignores it; a restore group refuses it.
     #[serde(default)]
     pub target: Option<InboxGroupResolveTarget>,
 }
@@ -197,20 +206,24 @@ pub enum InboxGroupResolution {
     Dreamer { resolution: InboxBundleResolution },
     /// The shape apply's journal after the answer, each item where it stands.
     Shape { receipt: ShapeApplyReceipt },
+    /// Each restored claim's verdict and the act's one bundle receipt.
+    Restore { resolution: RestoreInboxResolution },
 }
 
 /// A group the page may serve: a Dreamer group is built only when served.
 enum Candidate {
     Dreamer,
     Shape(ShapeInboxGroup),
+    Restore(RestoreInboxGroup),
 }
 
 impl Vault {
-    /// One page of the owner's inbox groups of both kinds, newest first, at
+    /// One page of the owner's inbox groups of every kind, newest first, at
     /// most `limit` visible ones, resuming past `after`. Each Dreamer group
     /// is built complete and surfaced under the persisted review dial, as
     /// [`Vault::inbox_groups`] builds it; each shape group is
-    /// [`Vault::inbox_shape_groups`]'s. A `limit` of zero serves one group,
+    /// [`Vault::inbox_shape_groups`]'s, and each restore group
+    /// `Vault::inbox_restore_groups`'s. A `limit` of zero serves one group,
     /// so every page advances.
     ///
     /// # Errors
@@ -250,6 +263,16 @@ impl Vault {
                 Candidate::Shape(group),
             )
         }));
+        candidates.extend(self.inbox_restore_groups()?.into_iter().map(|group| {
+            (
+                UnifiedInboxGroupCursor::at(
+                    group.created_at,
+                    InboxGroupKind::Restore,
+                    &group.group_key,
+                ),
+                Candidate::Restore(group),
+            )
+        }));
         candidates.sort_by(|a, b| a.0.cmp(&b.0));
         let first = after.map_or(0, |after| {
             candidates.partition_point(|(place, _)| place <= after)
@@ -265,6 +288,7 @@ impl Vault {
                     }
                 }
                 Candidate::Shape(group) => UnifiedInboxGroup::Shape { group },
+                Candidate::Restore(group) => UnifiedInboxGroup::Restore { group },
             };
             groups.push(group);
             if groups.len() == limit {
@@ -282,13 +306,15 @@ impl Vault {
     /// [`Vault::resolve_inbox_group_as_verb_class_at`] when the request
     /// carries a target), or a shape apply's answer
     /// ([`Vault::resolve_shape_inbox_group`]), with the host's slip issuer
-    /// when it has one.
+    /// when it has one. A restore group settles claims on the owner's memory
+    /// handle, so it is answered through `Memory::resolve_inbox_group_of_kind`
+    /// and refused here.
     ///
     /// # Errors
     ///
     /// An owner proof that no longer holds, no open group of that kind and
     /// key, a verb class named for a shape group, an invalid learning
-    /// target, or a store failure.
+    /// target, a restore group, or a store failure.
     pub fn resolve_inbox_group_of_kind(
         &self,
         owner: &AuthenticatedOwner,
@@ -337,6 +363,9 @@ impl Vault {
                     )?,
                 })
             }
+            InboxGroupKind::Restore => Err(Error::InvalidConfig(
+                "a restore group is answered on the owner's memory handle".to_owned(),
+            )),
         }
     }
 

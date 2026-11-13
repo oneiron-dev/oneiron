@@ -207,6 +207,12 @@ pub struct PackInstallReceipt {
     /// The agent an active travelling AgentPack minted, hex (OF-491).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    /// The agent whose own local pack this is, hex, as its put door verified
+    /// it; `None` for the owner's and the hub's installs. An owner door that
+    /// completes the held install mints its travelling agent through the
+    /// author writer under this agent, verified again (ARCH-0053:20).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_author: Option<String>,
     pub installed_at: u64,
     /// A travelling agent's world whose current setting does not cover this
     /// machine: "please double-check", kept with the install, which landed

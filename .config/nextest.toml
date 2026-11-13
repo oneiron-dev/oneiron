@@ -115,6 +115,7 @@ not (
   | test(~hnsw_recall_at_10_vs_bruteforce)
   | (binary(=it_sync) & test(/^sync_convergence_props::/))
   | (package(oneiron) & test(=conversation_dag::tests::replay::ready_parent_budget_continues_after_reopen_without_other_traffic))
+  | (package(oneiron-testkit) & binary(=canary) & test(=a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary))
 )
 & not (none())
 """
@@ -130,11 +131,16 @@ path = "junit.xml"
 
 # The budget set runs nightly only, with a bound of its own. The 10,001-record
 # test keeps the 60-minute bound the default profile's override gives it.
+# The canary leak detector's Dreamer pass (two wakes over the canary vault,
+# then a scan as every actor) took 200 s and 604 s on loaded fleet hosts: it
+# is a leak detector whose red is a FIX row, not a merge gate, so it runs
+# nightly under this bound instead of being killed at the pr tier's 120 s.
 [[profile.nightly.overrides]]
 filter = """
 test(~vault_open_drop_cycles_survive_pthread_key_limit)
 | test(~hnsw_recall_at_10_vs_bruteforce)
 | (binary(=it_sync) & test(/^sync_convergence_props::/))
+| (package(oneiron-testkit) & binary(=canary) & test(=a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary))
 """
 slow-timeout = { period = "60s", terminate-after = 30 }
 

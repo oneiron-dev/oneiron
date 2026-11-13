@@ -152,6 +152,7 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
                 ask: args.ask,
                 intent_key: args.intent_key,
                 bound: None,
+                powers: args.powers,
             }))
         }
         RunVerb::Summarize => {
@@ -235,7 +236,8 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
         | RunVerb::SelfCodeProposalResolve
         | RunVerb::SelfCodeMergeQueueEnqueue
         | RunVerb::SelfCodeCheckoutBind
-        | RunVerb::SelfCodeExport) => SelfCall::Repo(Box::new(
+        | RunVerb::SelfCodeExport
+        | RunVerb::SelfCodeSymbolsObserve) => SelfCall::Repo(Box::new(
             super::RepoRunCall::decode(verb, input)?
                 .ok_or_else(|| failure("invalid typed component arguments"))?,
         )),

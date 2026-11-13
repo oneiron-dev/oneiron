@@ -27,7 +27,7 @@ use std::fmt;
 use oneiron::agent_dispatch::{
     AgentDispatcher, GrantSpendBinding, SpendScopeId, decode_agent_dispatch_input,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptState};
+use oneiron::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use oneiron::dreamer_runner::{
     DreamerParkCause, ParkDreamerAttempt, decode_dreamer_attempt_payload,
 };
@@ -241,6 +241,70 @@ pub(crate) fn requires_payer(
     Ok(room || AgentDispatcher::new(vault).workflow_payer_required(attempt)?)
 }
 
+/// [`requires_payer`] for the leased try `leased`, its room read from the
+/// dispatch input its payload carries: the predicate a live run's doors share
+/// with its steps (OF-531, LIVE-RUN-PAYER-REQUIRED). A room-bound or
+/// member-bound run whose root no longer names a payer, its payer erased
+/// while it holds its lease included, is a typed fault at its next model
+/// call, never the vault owner's default.
+///
+/// # Errors
+///
+/// A payload or dispatch input that does not decode; storage errors.
+pub(crate) fn leased_requires_payer(
+    vault: &Vault,
+    leased: &AttemptRecord,
+) -> oneiron::Result<bool> {
+    let input = decode_dreamer_attempt_payload(&leased.payload)
+        .and_then(|payload| decode_agent_dispatch_input(&payload.input))?;
+    requires_payer(vault, leased.id, input.room.is_some())
+}
+
+/// The live run a host call that bills the run's payer acts for (FIX 8902):
+/// its leased try and the scope its entries spend under. A door that serves
+/// the run across calls keeps this, never a payer read once: each call reads
+/// its payer afresh with [`Self::funding`]
+/// (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK).
+#[derive(Clone)]
+pub(crate) struct LiveRunPayer {
+    leased: AttemptRecord,
+    scope: Option<SpendScopeId>,
+}
+
+impl LiveRunPayer {
+    /// The run whose leased try is `leased`, spending under `scope`.
+    pub(crate) fn new(leased: AttemptRecord, scope: Option<SpendScopeId>) -> Self {
+        Self { leased, scope }
+    }
+
+    /// Who a call for the run bills now, read as the run's entry meter reads
+    /// it ([`leased_requires_payer`], then [`scope_funding`]): `None` keeps
+    /// the vault owner's default, for a run that spends under no scope or
+    /// whose root names no payer and that no room or member binds.
+    ///
+    /// # Errors
+    ///
+    /// The payer fault the run's model doors refuse with:
+    /// [`PayerFault::Missing`] also where the run's payer requirement cannot
+    /// be read.
+    pub(crate) fn funding(&self, vault: &Vault) -> Result<Option<PayerPerson>, PayerFault> {
+        let Some(scope) = self.scope.as_ref() else {
+            return Ok(None);
+        };
+        let required = leased_requires_payer(vault, &self.leased).map_err(|error| {
+            tracing::warn!(
+                %error,
+                attempt = ?self.leased.id,
+                "a live run's payer requirement could not be read"
+            );
+            PayerFault::Missing {
+                scope: Some(scope.clone()),
+            }
+        })?;
+        scope_funding(vault, Some(scope), required)
+    }
+}
+
 /// How a launch that `agent` answers in `room`, or its thread `branch`, for
 /// `requester` is funded (FIX 805): a chat or voice turn, or a queued
 /// Continue or Retry. This is the one place that says which launch is
@@ -448,9 +512,7 @@ pub(crate) fn resume_payer_parks(
         {
             continue;
         }
-        let strict = decode_dreamer_attempt_payload(&row.payload)
-            .and_then(|payload| decode_agent_dispatch_input(&payload.input))
-            .and_then(|input| requires_payer(vault, row.id, input.room.is_some()));
+        let strict = leased_requires_payer(vault, row);
         let waits = match (dispatcher.spend_scope_for_attempt(row.id), strict) {
             (Ok(scope), Ok(strict)) => matches!(
                 scope_run_funding(vault, scope.as_ref(), strict),

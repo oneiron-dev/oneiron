@@ -525,10 +525,13 @@ function codeCustody06SlipId(credential: string): number[] {
   return slipId;
 }
 
-function codeCustody06ErrorBody(reply: { body: unknown }): Record<string, unknown> {
+function codeCustody06ErrorBody(reply: { body: unknown; status?: number; headers?: Headers }): Record<string, unknown> {
   const body = reply.body as { error?: unknown };
-  if (!body || typeof body !== "object" || !body.error || typeof body.error !== "object")
-    throw new Error("Expected an error envelope");
+  if (!body || typeof body !== "object" || !body.error || typeof body.error !== "object") {
+    // Shape only (status, media type, top-level keys), never values.
+    const shape = body && typeof body === "object" ? `keys=${JSON.stringify(Object.keys(body).sort())}` : `body_type=${typeof body}`;
+    throw new Error(`Expected an error envelope; status=${reply.status ?? "<none>"} content_type=${reply.headers?.get("content-type") ?? "<none>"} ${shape}`);
+  }
   return body.error as Record<string, unknown>;
 }
 
@@ -609,8 +612,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const bytesA = Buffer.from(readA.content_base64, "base64");
     expect(bytesA.length).toBe(size);
     expect(codeCustody06Sha256(bytesA)).toBe(oid);
-    const putB = await codeCustody06ExpectedSuccess("owner B put vault.artifacts.put", () =>
-      engine.client.call("vault.artifacts.put", {
+    // Owner B's put queues behind owner A's 16 MiB landing (3.3 s and 3.6 s in two
+    // runs on set bd95597c, over 10 s on a loaded host), so it takes the transfer budget.
+    const putB = await codeCustody06Transfer("owner B put vault.artifacts.put", () =>
+      transfers.call("vault.artifacts.put", {
         name: "custody-06-owner-b", media_type: "application/octet-stream", occurred_at: codeCustody06Occurred,
       }));
     const appendB = await codeCustody06Transfer(`owner B append vault.artifacts.append ${transferBytes}`, () =>
@@ -621,7 +626,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     expect(appendB.landed.version).toBe(1);
     const versionB = appendB.landed.version;
     // Register accepts a served name without .git and a short branch name.
-    const registered = await codeCustody06ExpectedSuccess(`ENGINE DEFECT 2026-11-11: FIX [ORIGIN-REGISTER-GIT-REF-FORMAT-UNSUPPORTED] origin.register runs git init --ref-format=files, which Git < 2.45 rejects (exit 129); CODE-CUSTODY-06 owner register vault.code.origin.register repo=${codeCustody06Repo} default_branch=main`, () =>
+    const registered = await codeCustody06ExpectedSuccess(`CODE-CUSTODY-06 owner register (FIX [ORIGIN-REGISTER-GIT-REF-FORMAT-UNSUPPORTED], fixed by #7052) vault.code.origin.register repo=${codeCustody06Repo} default_branch=main`, () =>
       engine.client.call("vault.code.origin.register", {
         repo: codeCustody06Repo, default_branch: "main",
       }));
@@ -778,6 +783,8 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
       operation: "download", transfers: ["basic"], objects: [{ oid, size }],
     });
     expect(deadLfs.status).toBe(401);
+    // FIX [GIT-LFS-PREHANDLER-REFUSAL-BARE-BODY], fixed by #7201: the binding
+    // door envelopes its pre-route refusal on the LFS paths too.
     expect(codeCustody06ErrorBody(deadLfs).code).toBe("UNAUTHORIZED");
     const stillLive = await codeCustody06ExpectedSuccess("independent read-scoped slip self.actor", () =>
       agent.client.call("self.actor", {}));

@@ -117,6 +117,7 @@ fn grant_skill_reads(
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )?;
     Ok(())

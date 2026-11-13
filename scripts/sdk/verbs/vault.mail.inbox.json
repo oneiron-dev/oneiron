@@ -5,6 +5,7 @@
   "output": "crate::mail_pack::MailInboxPage",
   "call": "memory.mail_inbox(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

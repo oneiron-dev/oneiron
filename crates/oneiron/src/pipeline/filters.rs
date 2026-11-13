@@ -308,7 +308,8 @@ fn claim_facet_scope(
 /// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
 ///
 /// CLAIM-sourced adjacency only — this is the local query door. The write
-/// table also admits `TURN | EVENT → FACET`, and those stamps carry disclosure
+/// table also admits `TURN | EVENT | NOTE | ASSET | ASSET_TEXT | TASK → FACET`,
+/// and those stamps carry disclosure
 /// weight on the federation selector door even though they never reach this
 /// enum (see [`crate::batch::validate_facet_of_edge`]).
 enum ClaimFacetScope {
@@ -453,9 +454,7 @@ pub(super) fn apply_world_filter(
 
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        // Base is an explicit member, never implicit in a named world; a
-        // world-scoped row passes only for its own world.
-        let holds = |world: Option<EntityId>| world == target;
+        let holds = |world: Option<EntityId>| base_or_named_world_holds(target, world);
         if record_world(store, rtxn, &scored.id, Some(&holds))?.is_some_and(holds) {
             kept.push(scored);
         }
@@ -897,6 +896,15 @@ pub(super) fn pipeline_candidate_matches_world_filter(
         }
     };
 
-    let holds = |world: Option<EntityId>| world == target;
+    let holds = |world: Option<EntityId>| base_or_named_world_holds(target, world);
     Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
+}
+
+/// Whether a row at `world` (`None` is base reality) is inside the `Base`
+/// scope (`named` is `None`: base alone) or the `World(id)` scope (`named` is
+/// `Some(id)`: base and that world). ARCH-0004 #world-scope gives `World(id)`
+/// the default selection `{base, id}`; a caller that declines base selects a
+/// `WorldSet` without it. A row of any other world stays out.
+fn base_or_named_world_holds(named: Option<EntityId>, world: Option<EntityId>) -> bool {
+    world.is_none() || world == named
 }

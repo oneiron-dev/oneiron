@@ -32,7 +32,7 @@ use rmpv::Value;
 
 use crate::batch::{EdgeValueFields, EntityMetadataHeader};
 use crate::claim::{ClaimSource, ClaimSubject};
-use crate::commitment::{CommitmentStatus, FulfillmentSource};
+use crate::commitment::{CommitmentInstanceState, CommitmentStatus, FulfillmentSource};
 use crate::commitment_schedule::CommitmentInstanceOutcome;
 use crate::dreamer_promotion::{
     DreamerRunContext, PromotionCandidate, PromotionOutcome, promote_consolidated_claims,
@@ -281,10 +281,23 @@ pub fn fulfill_commitments_for_brief(
     targets.dedup();
 
     for commitment_ref in targets {
-        let record = match vault.get_commitment_claim(&commitment_ref) {
-            Ok(Some(record)) => record,
-            Ok(None) | Err(Error::InvalidClaimBody(_)) => {
+        let record = match vault.commitment_instance_state(&commitment_ref) {
+            Ok(CommitmentInstanceState::Open(record) | CommitmentInstanceState::Closed(record)) => {
+                record
+            }
+            // A withdrawn promise (its claim retracted while open, FIX 22383)
+            // is not fulfilled by its brief: it is already closed.
+            Ok(CommitmentInstanceState::Withdrawn) => {
+                already_closed.push(commitment_ref);
+                continue;
+            }
+            Ok(CommitmentInstanceState::Missing) | Err(Error::InvalidClaimBody(_)) => {
                 return Err(Error::CorruptedIndex("brief fulfills non-commitment claim"));
+            }
+            // The link door names only an open promise, and an inert one was
+            // never open (Inert -> Open is one way).
+            Ok(CommitmentInstanceState::Inert(_)) => {
+                return Err(Error::CorruptedIndex("brief fulfills an inert commitment"));
             }
             Err(other) => return Err(other),
         };
@@ -305,6 +318,11 @@ pub fn fulfill_commitments_for_brief(
             CommitmentStatus::Released
             | CommitmentStatus::Lapsed
             | CommitmentStatus::Superseded => already_closed.push(commitment_ref),
+            CommitmentStatus::Inert => {
+                return Err(Error::InvariantViolation(
+                    "inert commitment reached the brief fulfillment arm",
+                ));
+            }
         }
     }
 
@@ -325,7 +343,10 @@ pub fn fulfill_commitments_for_brief(
 ///
 /// Classification happens HERE, before any write: `Open` enters the
 /// all-or-nothing lapse batch, and each terminal status repairs its close hook
-/// with the matching outcome and its OWN committed header time.
+/// with the matching outcome and its OWN committed header time. A withdrawn
+/// instance (its claim retracted while open, FIX 22383) never lapses and is
+/// given no status: the sweep drops the due phases that outlived its
+/// retraction, so it neither blocks the batch nor comes back.
 ///
 /// This is a batch operation, not a scheduler. Nothing here polls, sleeps, or
 /// owns a thread; the caller decides when a sweep runs.
@@ -337,12 +358,28 @@ pub fn lapse_overdue_commitments(
     let candidates = vault.overdue_commitment_instances(now)?;
     let mut to_lapse = Vec::new();
     let mut repairs = Vec::new();
+    let mut withdrawn = Vec::new();
     for instance_ref in candidates {
-        let Some(record) = vault.get_commitment_claim(&instance_ref)? else {
-            return Err(Error::CorruptedIndex("commitment due index"));
+        let record = match vault.commitment_instance_state(&instance_ref)? {
+            CommitmentInstanceState::Open(record) | CommitmentInstanceState::Closed(record) => {
+                record
+            }
+            CommitmentInstanceState::Withdrawn => {
+                withdrawn.push(instance_ref);
+                continue;
+            }
+            // An inert promise enters no due index.
+            CommitmentInstanceState::Missing | CommitmentInstanceState::Inert(_) => {
+                return Err(Error::CorruptedIndex("commitment due index"));
+            }
         };
         match record.status {
             CommitmentStatus::Open => to_lapse.push(instance_ref),
+            CommitmentStatus::Inert => {
+                return Err(Error::InvariantViolation(
+                    "inert commitment reached the lapse arm",
+                ));
+            }
             CommitmentStatus::Lapsed
             | CommitmentStatus::Fulfilled
             | CommitmentStatus::Released
@@ -352,7 +389,7 @@ pub fn lapse_overdue_commitments(
                     CommitmentStatus::Fulfilled => CommitmentInstanceOutcome::Fulfilled,
                     CommitmentStatus::Released => CommitmentInstanceOutcome::Released,
                     CommitmentStatus::Superseded => CommitmentInstanceOutcome::Superseded,
-                    CommitmentStatus::Open => {
+                    CommitmentStatus::Open | CommitmentStatus::Inert => {
                         return Err(Error::InvariantViolation(
                             "open commitment reached the terminal repair arm",
                         ));
@@ -387,6 +424,9 @@ pub fn lapse_overdue_commitments(
     }
     for (instance_ref, outcome, closed_at) in &repairs {
         vault.on_instance_closed(instance_ref, *outcome, envelope, *closed_at)?;
+    }
+    for instance_ref in &withdrawn {
+        vault.clear_withdrawn_commitment_due(instance_ref)?;
     }
 
     Ok(LapseSweepReport {

@@ -21,6 +21,7 @@ mod host;
 mod program_entry;
 mod record;
 mod repl;
+pub mod reply_evidence;
 mod run_position;
 mod self_brief;
 mod shadow_step;
@@ -78,6 +79,9 @@ pub use self::types::{
     StoreReceiptTree, guest_response_with_budget,
 };
 
+pub(crate) use self::host::executor_declarations_block;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::host::executor_system_prompt;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 

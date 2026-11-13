@@ -8,7 +8,9 @@ use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key,
 };
 use crate::attempt_queue::engine::AttemptQueue;
-use crate::attempt_queue::lifecycle::{NewAttempt, RunEvent, RunLifecycle, RunRow, RunStep};
+use crate::attempt_queue::lifecycle::{
+    NewAttempt, PackReceiptActor, RunEvent, RunLifecycle, RunRow, RunStep, TerminalCommit,
+};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState};
 use crate::attempt_queue::validate::{
@@ -101,9 +103,6 @@ impl AttemptQueue<'_> {
             reserve_spent_units: record.cancel_state.reserve.spent_units,
         };
         let _ = RunLifecycle::finish_landing(&mut record, input.now, cancellation);
-        record.backoff_until = None;
-        record.last_error = None;
-        record.updated_at = input.now;
         let landed_resume_point = record.cancel_state.resume_point.clone();
         let landed_reserve_spent = record.cancel_state.reserve.spent_units;
         RunLifecycle::append_cancel_receipt(
@@ -120,25 +119,17 @@ impl AttemptQueue<'_> {
             input.now,
         )?;
 
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
         // Landing is a terminal attempt door too: preserve the existing PACK
         // receipt invariant when the live attempt accumulated a manifest.
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-            self.store,
+        self.commit_terminal_in_txn(
             wtxn,
-            &record,
-            record
-                .cancel_state
-                .cancellation
-                .as_ref()
-                .map_or(ATTEMPT_RUNTIME_ACTOR, |cancellation| {
-                    cancellation.actor.as_str()
-                }),
+            &mut record,
+            TerminalCommit {
+                last_error: None,
+                now: input.now,
+                receipt_actor: PackReceiptActor::StoredCancellation,
+            },
         )?;
-        self.delete_dedupe_entry_for_record(wtxn, &record)?;
 
         // A landing that hands off is not the end of the work: its successor
         // surfaces when it settles.
@@ -269,22 +260,20 @@ impl AttemptQueue<'_> {
             input.reason,
             input.now,
         )?;
-        let encoded = self.encode_in_txn(wtxn, &mut record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, record.id.as_bytes(), &encoded)?;
         // The cleared pause takes its annotation-hold mark with it, as the
         // operator's Cancel does.
         crate::attempt_queue::index::delete_annotation_hold_in_txn(self.store, wtxn, record.id)?;
         // A hard cancellation is a terminal queue door, so a PACK loaded by
         // the attempt still receives the same atomic receipt as complete/fail.
-        crate::receipt::stamp_attempt_pack_receipt_in_txn(
-            self.store,
+        self.commit_terminal_in_txn(
             wtxn,
-            &record,
-            input.authority.actor(),
+            &mut record,
+            TerminalCommit {
+                last_error: None,
+                now: input.now,
+                receipt_actor: PackReceiptActor::Caller(input.authority.actor()),
+            },
         )?;
-        self.delete_dedupe_entry_for_record(wtxn, &record)?;
         self.notify_settled_in_txn(wtxn, &record)?;
         // FIX 900: a force-cancelled child settles its spend lease in the
         // same write (OF-532); idempotent, a no-op when unmetered.
@@ -350,7 +339,8 @@ impl AttemptQueue<'_> {
     /// — that row belongs to cleanup's hard rung. Per-row it applies exactly
     /// [`Self::warn_lease_expiry`]'s rule, through the same private
     /// `lease_warning_step` decision, so the sweep and the single-row door
-    /// cannot drift.
+    /// cannot drift. A run parked on its signal keeps its lease and has no
+    /// work to land, so it is counted, never warned (FIX RUN-LEASE).
     pub fn warn_expiring_leases(
         &self,
         input: WarnExpiringAttemptLeases,
@@ -389,7 +379,9 @@ impl AttemptQueue<'_> {
                 continue;
             }
             report.scanned += 1;
-            match lease_warning_step(&record, input.now, input.lease_timeout_secs) {
+            let parked = self.parked_in_txn(&wtxn, id)?;
+            match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+                LeaseWarningStep::Parked => report.parked += 1,
                 LeaseWarningStep::Expired => report.expired += 1,
                 LeaseWarningStep::NotDue => report.not_due += 1,
                 LeaseWarningStep::AlreadyRequested => report.already_requested += 1,
@@ -416,6 +408,8 @@ impl AttemptQueue<'_> {
     /// the whole point of the distinction: expiry can only reclaim or force,
     /// and by then the worker's unlanded work is already lost. The request is
     /// idempotent per outstanding ask, so repeated polling records one row.
+    /// A run parked on its signal is answered [`LeaseWarningOutcome::Parked`]
+    /// and nothing is recorded (FIX RUN-LEASE).
     pub fn warn_lease_expiry(&self, input: WarnAttemptLeaseExpiry) -> Result<LeaseWarningOutcome> {
         if input.lease_timeout_secs == 0 {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
@@ -433,7 +427,9 @@ impl AttemptQueue<'_> {
             AttemptState::Leased => {}
             state => return Err(invalid_transition("lease_warning", state.as_str())),
         }
-        match lease_warning_step(&record, input.now, input.lease_timeout_secs) {
+        let parked = self.parked_in_txn(&wtxn, input.id)?;
+        match lease_warning_step(&record, parked, input.now, input.lease_timeout_secs) {
+            LeaseWarningStep::Parked => return Ok(LeaseWarningOutcome::Parked(record)),
             LeaseWarningStep::Expired => return Ok(LeaseWarningOutcome::Expired(record)),
             LeaseWarningStep::NotDue => return Ok(LeaseWarningOutcome::NotDue(record)),
             LeaseWarningStep::AlreadyRequested => {
@@ -469,6 +465,9 @@ fn runtime_landing_request(trigger: LandingTrigger) -> SoftRequestAuthorship {
 /// sweep and the single-attempt door so both rungs read the same clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LeaseWarningStep {
+    /// The run is parked on its signal: it keeps its lease, which cleanup
+    /// never reclaims, and has no work to land.
+    Parked,
     /// Already past expiry: cleanup's hard rung owns it, never a warning.
     Expired,
     /// Inside the lease and before the warning window.
@@ -481,9 +480,13 @@ enum LeaseWarningStep {
 
 fn lease_warning_step(
     record: &AttemptRecord,
+    parked: bool,
     now: u64,
     lease_timeout_secs: u64,
 ) -> LeaseWarningStep {
+    if parked {
+        return LeaseWarningStep::Parked;
+    }
     if lease_expired(record, now, lease_timeout_secs) {
         return LeaseWarningStep::Expired;
     }
@@ -529,7 +532,9 @@ pub(in crate::attempt_queue) fn validate_force_authority(
 /// `actor` comes from the [`ForceCancelAuthority`], never from request text,
 /// and the reason rides the cancellation receipt rather than `last_error` — a
 /// cancelled row is not a failed one. `watch` is the store's, which the
-/// receipt append measures against its `[limits]` row.
+/// receipt append measures against its `[limits]` row. Each caller then ends
+/// through [`AttemptQueue::commit_terminal_in_txn`] with no error text, which
+/// writes the row's backoff, error and settle instant.
 pub(in crate::attempt_queue) fn force_cancel_record(
     watch: &LimitWatch,
     record: &mut AttemptRecord,
@@ -555,9 +560,6 @@ pub(in crate::attempt_queue) fn force_cancel_record(
     ) {
         return Err(invalid_transition("cancel_force", record.state.as_str()));
     }
-    record.backoff_until = None;
-    record.last_error = None;
-    record.updated_at = now;
     let resume_point = record.cancel_state.resume_point.clone();
     let reserve_spent_units = record.cancel_state.reserve.spent_units;
     RunLifecycle::append_cancel_receipt(

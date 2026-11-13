@@ -41,6 +41,11 @@ crate::side_table::side_tables! {
     /// body hash32. Key: id16 (project).
     PROJECT_GOAL_INTAKE_POINTER_WRITE: VaultMeta b"project.goal_intake.pointer_write/" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A full goal revision proposal (LEARNING-01): the proposed record, the goal claim and
+    /// generation it revises, its proposer, reasons, evidence, diff and any dismissal. Never the
+    /// goal in force. Key: id16 (project) + id16 (proposal).
+    PROJECT_GOAL_PROPOSAL: VaultMeta b"project.goal_proposal.v1/" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The vault's per-project history budget, set by the owner. Key: ().
     PROJECT_HISTORY_POLICY: VaultMeta b"project.history_policy.v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
@@ -161,6 +166,10 @@ crate::side_table::side_tables! {
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::store::actor_scrubs::erase_turn_actor_in_txn;
+    /// Version (u64be) of the one-time room-row backfill a writable open completed for one room
+    /// (THREAD-TASK-EVERY-ROOM P2). Key: id16 (room).
+    ROOMS_TURN_BACKFILL: VaultMeta b"rooms.turn_backfill.v1/" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw

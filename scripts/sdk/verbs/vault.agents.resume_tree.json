@@ -1,0 +1,17 @@
+{
+  "name": "vault.agents.resume_tree",
+  "description": "The owner undoes one tree pause, in one act with one receipt: each member still as the pause left it goes back on, and a member moved since is left as found and named. A repeat answers the first resume and writes nothing.",
+  "input": "crate::task_verb::sdk::AgentTreeResumeRequest",
+  "output": "crate::task_verb::sdk::AgentTreeResumeReceipt",
+  "call": "crate::task_verb::sdk::resume_agent_tree_as(memory.vault(), &memory.embedded_owner(\"vault.agents.resume_tree\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

@@ -7,12 +7,13 @@
 //! origin the call came in on.
 //!
 //! The sources that do today are a library run of a filed program that met
-//! its filled postcondition, its type and subgoal the program record's, and
-//! an agent's TASK run that ended (CUA E8b), its checks and question its
-//! TASK's done-means and its type the run's recorded stamp.
-//! A draft names its checks but no recorded type, and a raw batch names
-//! neither, so they capture nothing and say why in the log. A capture that
-//! fails is logged with its cause and never fails the call.
+//! its filled postcondition, its type and subgoal the program record's, an
+//! agent's TASK run that ended (CUA E8b), its checks and question its
+//! TASK's done-means and its type the run's recorded stamp, and a draft of
+//! an unfiled run whose caller recorded its task type (FIX 10508), its
+//! checks and subgoal the draft's. A draft that records no type or names no
+//! check, and a raw batch, capture nothing and say why in the log. A capture
+//! that fails is logged with its cause and never fails the call.
 
 use super::*;
 use oneiron::browser_library::{SolvedCaptureReceipt, SolvedRunCapture, SolvedSource, workflow};
@@ -32,13 +33,28 @@ pub(super) struct BrowserCapture<'a, 'v> {
 
 /// What a source names for its capture (CUA E8a): the checks the page
 /// must meet, the exact subgoal, the recorded task type, where they came
-/// from, and the history entry its span starts after.
+/// from, the history entry its span starts after, and the entry it ends
+/// with when the source names one (a draft's own `through_seq`).
 pub(super) struct CheckedSpan {
     pub(super) subgoal: String,
     pub(super) checks: Vec<ExpectInput>,
     pub(super) type_ref: TypeRef,
     pub(super) source: SolvedSource,
     pub(super) after_seq: Option<u64>,
+    pub(super) through_seq: Option<u64>,
+}
+
+impl CheckedSpan {
+    /// The entry this span's capture ends with: the span's own end or
+    /// `pre_press`, the entry before the last granted press (FIX 10511),
+    /// whichever comes first; by default (None) the draft's own default
+    /// end. A draft's capture never keeps steps past the span it drafted.
+    fn capture_through(&self, pre_press: Option<u64>) -> Option<u64> {
+        match (self.through_seq, pre_press) {
+            (Some(own), Some(press)) => Some(own.min(press)),
+            (own, press) => own.or(press),
+        }
+    }
 }
 
 impl BrowserCapture<'_, '_> {
@@ -84,14 +100,17 @@ impl BrowserCapture<'_, '_> {
         session: &mut BrowserSession,
         span: CheckedSpan,
     ) -> Result<String, String> {
+        // A span its goal reached before a granted press ends there
+        // (FIX 10511), not on the press; a draft's span ends no later than
+        // the entry it drafted through.
+        let through_seq = span.capture_through(session.pre_press_through(span.after_seq));
         let input = DraftInput {
             subgoal: span.subgoal.clone(),
             postcondition: span.checks,
             after_seq: span.after_seq,
-            // A span its goal reached before a granted press ends there
-            // (FIX 10511), not on the press.
-            through_seq: session.pre_press_through(span.after_seq),
+            through_seq,
             past_press: SOLVED_PAST_PRESS,
+            type_ref: None,
         };
         let snapshot = session
             .snapshot_solved_run(input)
@@ -178,6 +197,7 @@ impl RunGuests {
             type_ref,
             source: SolvedSource::TaskRun { task },
             after_seq: None,
+            through_seq: None,
         };
         match capture.capture_checked_run(driver, span) {
             Ok(note) => tracing::info!(%note, "TASK run solved-run capture"),
@@ -218,11 +238,68 @@ fn checked_span(
                 type_ref: record.type_ref,
                 source: SolvedSource::LibraryRun { workflow: id },
                 after_seq: mark,
+                through_seq: None,
             }))
         }
-        AgentVerb::SelfBrowserLibraryDraft => {
-            Err("a draft names its checks but no recorded task type".to_owned())
-        }
+        AgentVerb::SelfBrowserLibraryDraft => draft_span(input).map(Some),
         _ => Ok(None),
     }
+}
+
+/// What a `self.browser.library.draft` call with `input` names for a
+/// capture (FIX 10508): its subgoal and checks, the task type its caller
+/// recorded, and the span it drafted (after its `after_seq`, through its
+/// `through_seq`). Why not, for a draft that records no type, a type that
+/// is not a task type's form, or no check.
+fn draft_span(input: &Value) -> Result<CheckedSpan, String> {
+    let input: DraftInput = serde_json::from_value(input.clone())
+        .map_err(|error| format!("library draft input: {error}"))?;
+    let type_ref = TypeRef::from(
+        input
+            .type_ref
+            .ok_or_else(|| "a draft records no task type".to_owned())?,
+    );
+    type_ref
+        .validate()
+        .map_err(|error| format!("draft task type: {error}"))?;
+    if input.postcondition.is_empty() {
+        return Err("a draft names no check".to_owned());
+    }
+    Ok(CheckedSpan {
+        subgoal: input.subgoal,
+        checks: input.postcondition,
+        type_ref,
+        source: SolvedSource::UnfiledDraft,
+        after_seq: input.after_seq,
+        through_seq: input.through_seq,
+    })
+}
+
+/// Door for `tests/library_draft_task_type.rs` (FIX 10508): what
+/// [`checked_span`] names for a `self.browser.library.draft` call with
+/// `input`, its answer `output` and the history mark `mark` before it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn draft_checked_span(
+    vault: &oneiron::Vault,
+    input: &Value,
+    output: &Value,
+    mark: Option<u64>,
+) -> Result<Option<crate::test_doors::solved_runs::CheckedSpanView>, String> {
+    let span = checked_span(
+        vault,
+        AgentVerb::SelfBrowserLibraryDraft,
+        input,
+        output,
+        mark,
+    )?;
+    Ok(
+        span.map(|span| crate::test_doors::solved_runs::CheckedSpanView {
+            subgoal: span.subgoal,
+            checks: span.checks.len(),
+            type_ref: span.type_ref,
+            source: span.source,
+            after_seq: span.after_seq,
+            through_seq: span.through_seq,
+        }),
+    )
 }

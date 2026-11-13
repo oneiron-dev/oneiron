@@ -136,7 +136,7 @@ fn catastrophe_rows_ask_every_role_but_owner() {
         .filter(|row| row.fixed)
         .map(|row| row.act)
         .collect();
-    assert_eq!(fixed, [ActClass::WidenOwnGrant]);
+    assert_eq!(fixed, [ActClass::GrantWidenOwn]);
 
     for act in catastrophe.iter().copied().chain(fixed) {
         assert!(
@@ -192,9 +192,9 @@ fn built_floor_classes_are_c_or_f_rows() {
 #[test]
 fn deputy_defaults_follow_r3() {
     let deputy = |act| mode_of(resolve_mode(&request(RolePreset::Deputy, act)));
-    assert_eq!(deputy(ActClass::RemoveOrDemoteMember), Some(AlwaysAsk));
-    assert_eq!(deputy(ActClass::AddOrRaiseMember), Some(AskWhenUnsure));
-    assert_eq!(deputy(ActClass::DeleteItems), Some(AskWhenUnsure));
+    assert_eq!(deputy(ActClass::MemberRemove), Some(AlwaysAsk));
+    assert_eq!(deputy(ActClass::MemberAdd), Some(AskWhenUnsure));
+    assert_eq!(deputy(ActClass::Delete), Some(AskWhenUnsure));
     assert_eq!(deputy(ActClass::ReversibleWork), Some(NeverAsk));
     for act in [
         ActClass::Erase,
@@ -206,7 +206,7 @@ fn deputy_defaults_follow_r3() {
     // The remove row is not a catastrophe row: an explicit row may loosen it.
     let loosened = CheckInRequest {
         explicit_mode: Some(AskWhenUnsure),
-        ..request(RolePreset::Deputy, ActClass::RemoveOrDemoteMember)
+        ..request(RolePreset::Deputy, ActClass::MemberRemove)
     };
     assert_eq!(mode_of(resolve_mode(&loosened)), Some(AskWhenUnsure));
 }
@@ -224,10 +224,7 @@ fn power_then_role_default_then_explicit_row() {
         ResolvedMode::Absent
     );
     assert_eq!(
-        resolve_mode(&without_power(
-            RolePreset::Steward,
-            ActClass::AddOrRaiseMember
-        )),
+        resolve_mode(&without_power(RolePreset::Steward, ActClass::MemberAdd)),
         ResolvedMode::Propose
     );
     // Any actor, in any role, may open an erase proposal.
@@ -239,7 +236,7 @@ fn power_then_role_default_then_explicit_row() {
         );
     }
     assert_eq!(
-        resolve_mode(&request(RolePreset::Owner, ActClass::SpendAboveCap)),
+        resolve_mode(&request(RolePreset::Owner, ActClass::SpendOverCap)),
         ResolvedMode::Mode {
             mode: NeverAsk,
             source: ModeSource::RoleDefault
@@ -247,7 +244,7 @@ fn power_then_role_default_then_explicit_row() {
     );
     let tightened = CheckInRequest {
         explicit_mode: Some(AskWhenUnsure),
-        ..request(RolePreset::Owner, ActClass::SpendAboveCap)
+        ..request(RolePreset::Owner, ActClass::SpendOverCap)
     };
     assert_eq!(
         resolve_mode(&tightened),
@@ -269,7 +266,7 @@ fn power_then_role_default_then_explicit_row() {
 /// The ladder (ARCH-0082 #ladder): rung 0, then the mode, then the unsure test.
 #[test]
 fn ladder_goes_waits_or_asks_the_model() {
-    let act = ActClass::SpendAboveCap;
+    let act = ActClass::SpendOverCap;
     let cases = [
         (
             NeverAsk,
@@ -331,16 +328,10 @@ fn ladder_goes_waits_or_asks_the_model() {
         assert_eq!(stub.calls.get(), calls, "{mode:?} {standing:?} {answer:?}");
     }
     // The model never decides a grant widen: unsure there means ask.
-    assert_eq!(
-        ActClass::WidenAnothersGrant.row().model_check,
-        ModelCheck::Never
-    );
+    assert_eq!(ActClass::GrantWiden.row().model_check, ModelCheck::Never);
     let stub = Stub::new(Some(true));
     assert_eq!(
-        check_in(
-            &request(RolePreset::Deputy, ActClass::WidenAnothersGrant),
-            &stub
-        ),
+        check_in(&request(RolePreset::Deputy, ActClass::GrantWiden), &stub),
         CheckInAnswer::Wait(WaitReason::ModelNotAllowed)
     );
     assert_eq!(stub.calls.get(), 0);

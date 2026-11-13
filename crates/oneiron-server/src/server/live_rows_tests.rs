@@ -50,7 +50,11 @@ fn turn() -> WitnessTurn {
             metadata: None,
             is_visible: true,
             order: 0,
+            parts: None,
+            quote: None,
         }],
+        assertions: Default::default(),
+        thread_audience: None,
     }
 }
 

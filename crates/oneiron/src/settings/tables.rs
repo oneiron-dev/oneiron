@@ -34,11 +34,20 @@ crate::side_table::side_tables! {
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The owner's non-base world claim fraction (ARCH-0004 #world-scope): the most of a context
+    /// pack's claims worlds other than base may hold, from 0 to 1. Absent reads as the default in
+    /// `settings::non_base_world_claim_fraction`. Key: ().
+    NON_BASE_WORLD_CLAIM_FRACTION: VaultMeta b"settings:recall:v1:non_base_world_claim_fraction" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The owner's bounds on primitive A's snapshot handles (slice 6.4b): open handles per actor,
     /// the default and the most lifetime, rows and bytes per page, and rows per handle. Absent
     /// reads as the defaults in `settings::snapshot_read`. Key: ().
     SNAPSHOT_READ_SETTINGS: VaultMeta b"settings:snapshot_read:v1" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The owner's undo-send window (DEC-0006 #undo-send): the seconds every send waits on every
+    /// outbound channel, and each channel's own length. Absent is off. Key: ().
+    UNDO_SEND_SETTING: VaultMeta b"settings:outbound:v1:undo_send" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The owner's switch over an Admin deleting a private room thread (FIX 6382): `false` turns
     /// it off. Absent is on. Key: ().
     ROOM_THREADS_ADMIN_DELETE: VaultMeta b"settings:rooms:v1:admin_delete" Named

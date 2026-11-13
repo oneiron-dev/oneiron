@@ -19,7 +19,7 @@ pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
 };
 pub(crate) use people::{
-    PreparedAgentPerson, agent_person_id, ensure_agent_person, ensure_agent_person_in_txn,
+    PreparedAgentPerson, agent_person_id, ensure_agent_person_in_txn,
     ensure_seeded_agent_person_in_txn, prepare_agent_person_after_puts_in_txn,
     seeded_agent_person_ids,
 };
@@ -168,6 +168,7 @@ pub use plugin::{
     render_plugin_sections, section_manifest_digest, validate_manifest_for_admission,
     validate_manifest_for_proposal,
 };
+pub(crate) use plugin::{ensure_fit_install_writer_machine, fit_install_writer_id};
 pub(crate) use plugin::{
     scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };

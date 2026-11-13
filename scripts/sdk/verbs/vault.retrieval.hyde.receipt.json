@@ -5,6 +5,7 @@
   "output": "Option<crate::query_expansion::host::HydeHostReceipt>",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.retrieval.hyde.receipt\", &input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "admission": {

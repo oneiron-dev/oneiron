@@ -25,6 +25,12 @@ crate::side_table::side_tables! {
     /// (message).
     CONVERSATION_MESSAGE_OWNER: VaultMeta b"conversation:message_owner:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Single-byte `[1]` marker that a room pin door is rewriting a room body's shared pins or
+    /// their policy, set and cleared inside its write transaction. Key: id16 (room).
+    CONVERSATION_PIN_UPDATE: VaultMeta b"conversation:pin_update:" Raw
+        [restore: refuse_image_entities "room roles and membership"]
+        [family: unclassified]
+        [tier: canonical];
     /// Host-local room role grant of one current member. Key: id16 (room) + id16 (person).
     CONVERSATION_ROLE_GRANT: VaultMeta b"conversation:role_grant:v1:" Named
         [restore: refuse_image_entities "room roles and membership"]

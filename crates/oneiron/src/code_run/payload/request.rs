@@ -182,11 +182,24 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
         }
         // The guest's call: the source the host bound to it is not the
         // guest's, and a replay resolves it again.
-        SelfCall::ReaderSpawn(call) => request_map(vec![
-            ("source", Value::from(call.source.as_str())),
-            ("ask", Value::from(call.ask.as_str())),
-            ("intent_key", Value::from(call.intent_key.as_str())),
-        ]),
+        SelfCall::ReaderSpawn(call) => {
+            let mut entries = vec![
+                ("source", Value::from(call.source.as_str())),
+                ("ask", Value::from(call.ask.as_str())),
+                ("intent_key", Value::from(call.intent_key.as_str())),
+            ];
+            // SPAWN-KNOB: only a spawn that names powers records them.
+            if let Some(powers) = &call.powers {
+                entries.push((
+                    "powers",
+                    Value::from(
+                        serde_json::to_string(powers)
+                            .map_err(|_| invalid_code_run_replay("reader spawn powers encode"))?,
+                    ),
+                ));
+            }
+            request_map(entries)
+        }
         SelfCall::ReaderReport(call) => request_map(vec![
             ("task", entity_id_value(call.task)),
             ("result_ref", Value::from(call.result_ref.as_str())),

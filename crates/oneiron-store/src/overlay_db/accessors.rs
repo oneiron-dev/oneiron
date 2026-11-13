@@ -46,13 +46,20 @@ impl ComposedOverlay {
 
 pub struct OverlayDb {
     base: Database<Bytes, Bytes>,
+    name: &'static str,
     overlay: Option<ComposedOverlay>,
 }
 
 impl OverlayDb {
     pub fn canonical(base: Database<Bytes, Bytes>) -> Self {
+        Self::canonical_named(base, "<not-labeled>")
+    }
+
+    /// A canonical accessor labeled with its physical LMDB database name.
+    pub fn canonical_named(base: Database<Bytes, Bytes>, name: &'static str) -> Self {
         Self {
             base,
+            name,
             overlay: None,
         }
     }
@@ -65,6 +72,7 @@ impl OverlayDb {
     ) -> Self {
         Self {
             base,
+            name: "<overlay>",
             overlay: Some(ComposedOverlay {
                 live: overlay,
                 snapshot,
@@ -181,13 +189,31 @@ impl OverlayDb {
     pub fn put(&self, txn: &mut RwTxn<'_>, key: &[u8], data: &[u8]) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.put(overlay.keyspace, key, data),
-            None => Ok(self.base.put(txn, key, data)?),
+            None => Ok(self.base.put(txn, key, data).map_err(|error| {
+                trace_page_full(
+                    error,
+                    &self.base,
+                    self.name,
+                    txn,
+                    "put",
+                    (Some(key.len()), Some(data.len())),
+                )
+            })?),
         }
     }
 
     pub fn delete(&self, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
-            return Ok(self.base.delete(txn, key)?);
+            return Ok(self.base.delete(txn, key).map_err(|error| {
+                trace_page_full(
+                    error,
+                    &self.base,
+                    self.name,
+                    txn,
+                    "delete",
+                    (Some(key.len()), None),
+                )
+            })?);
         };
         let existed = self.get(txn, key)?.is_some();
         if existed {
@@ -219,7 +245,19 @@ impl OverlayDb {
         data: &[u8],
     ) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
-            return Ok(self.base.delete_one_duplicate(txn, key, data)?);
+            return Ok(self
+                .base
+                .delete_one_duplicate(txn, key, data)
+                .map_err(|error| {
+                    trace_page_full(
+                        error,
+                        &self.base,
+                        self.name,
+                        txn,
+                        "delete_one_duplicate",
+                        (Some(key.len()), Some(data.len())),
+                    )
+                })?);
         };
         let mut exact_count = 0_usize;
         if let Some(values) = self.get_duplicates(txn, key)? {
@@ -251,7 +289,9 @@ impl OverlayDb {
     pub fn clear(&self, txn: &mut RwTxn<'_>) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.clear(overlay.keyspace),
-            None => Ok(self.base.clear(txn)?),
+            None => Ok(self.base.clear(txn).map_err(|error| {
+                trace_page_full(error, &self.base, self.name, txn, "clear", (None, None))
+            })?),
         }
     }
 
@@ -392,13 +432,20 @@ impl OverlayDb {
 
 pub struct OverlayStrDb {
     base: Database<Str, Bytes>,
+    name: &'static str,
     overlay: Option<ComposedOverlay>,
 }
 
 impl OverlayStrDb {
     pub fn canonical(base: Database<Str, Bytes>) -> Self {
+        Self::canonical_named(base, "<not-labeled>")
+    }
+
+    /// A canonical accessor labeled with its physical LMDB database name.
+    pub fn canonical_named(base: Database<Str, Bytes>, name: &'static str) -> Self {
         Self {
             base,
+            name,
             overlay: None,
         }
     }
@@ -415,6 +462,7 @@ impl OverlayStrDb {
     ) -> Self {
         Self {
             base,
+            name: "<overlay>",
             overlay: Some(ComposedOverlay {
                 live: overlay,
                 snapshot,
@@ -440,13 +488,31 @@ impl OverlayStrDb {
     pub fn put(&self, txn: &mut RwTxn<'_>, key: &str, data: &[u8]) -> Result<()> {
         match &self.overlay {
             Some(overlay) => overlay.live.put(overlay.keyspace, key.as_bytes(), data),
-            None => Ok(self.base.put(txn, key, data)?),
+            None => Ok(self.base.put(txn, key, data).map_err(|error| {
+                trace_page_full(
+                    error,
+                    &self.base,
+                    self.name,
+                    txn,
+                    "put",
+                    (Some(key.len()), Some(data.len())),
+                )
+            })?),
         }
     }
 
     pub fn delete(&self, txn: &mut RwTxn<'_>, key: &str) -> Result<bool> {
         let Some(overlay) = &self.overlay else {
-            return Ok(self.base.delete(txn, key)?);
+            return Ok(self.base.delete(txn, key).map_err(|error| {
+                trace_page_full(
+                    error,
+                    &self.base,
+                    self.name,
+                    txn,
+                    "delete",
+                    (Some(key.len()), None),
+                )
+            })?);
         };
         let existed = self.get(txn, key)?.is_some();
         if existed {
@@ -518,4 +584,89 @@ impl OverlayStrDb {
             view,
         ))))
     }
+}
+
+// Invoked only by an error closure, never by a successful LMDB write.
+fn trace_page_full<KC, DC>(
+    error: heed::Error,
+    database: &Database<KC, DC>,
+    name: &str,
+    txn: &RoTxn<'_>,
+    call: &str,
+    lengths: (Option<usize>, Option<usize>),
+) -> heed::Error {
+    if let Some(line) = page_full_record(&error, database, name, txn, call, lengths) {
+        tracing::error!(target: "oneiron::store::page_full", "{line}");
+        #[cfg(oneiron_test_support)]
+        eprintln!("## PAGE-FULL {line}");
+    }
+    error
+}
+
+/// The trace line for a write that failed with `MDB_PAGE_FULL`, or `None` for
+/// any other error. It names the physical database, its persisted flags, the
+/// heed call, the input key and value byte lengths (never their content), the
+/// map size and last page, the database's page counts while the failed
+/// transaction still answers, and the thread.
+pub(super) fn page_full_record<KC, DC>(
+    error: &heed::Error,
+    database: &Database<KC, DC>,
+    name: &str,
+    txn: &RoTxn<'_>,
+    call: &str,
+    (key_len, value_len): (Option<usize>, Option<usize>),
+) -> Option<String> {
+    if !matches!(error, heed::Error::Mdb(heed::MdbError::PageFull)) {
+        return None;
+    }
+    let env = txn.environment();
+    let info = env.info();
+    let database_flags = match database.raw_flags(txn) {
+        Ok(flags) => format!("{flags:#x}"),
+        Err(error) => format!("unavailable({error:?})"),
+    };
+    // LMDB marks a transaction failed on PAGE_FULL, so its stat normally
+    // answers BAD_TXN; the page size then comes from the environment.
+    let stat = match database.stat(txn) {
+        Ok(stat) => {
+            let heed::DatabaseStat {
+                page_size,
+                depth,
+                branch_pages,
+                leaf_pages,
+                overflow_pages,
+                entries,
+            } = stat;
+            format!(
+                "transaction_stat=usable page_size={page_size} page_size_source=transaction \
+                 depth={depth} branch_pages={branch_pages} leaf_pages={leaf_pages} \
+                 overflow_pages={overflow_pages} entries={entries}"
+            )
+        }
+        Err(stat_error) => {
+            let page_size = match env.page_size() {
+                Ok(size) => size.to_string(),
+                Err(error) => format!("unavailable({error:?})"),
+            };
+            format!(
+                "transaction_stat=unavailable({stat_error:?}) page_size={page_size} \
+                 page_size_source=environment depth=unavailable branch_pages=unavailable \
+                 leaf_pages=unavailable overflow_pages=unavailable entries=unavailable"
+            )
+        }
+    };
+    let write_flags = if call == "put" {
+        "0x0"
+    } else {
+        "not-applicable"
+    };
+    let map_size = info.map_size;
+    let last_page_number = info.last_page_number;
+    let thread_name = std::thread::current().name().map(str::to_owned);
+    Some(format!(
+        "database={name:?} database_flags={database_flags} heed_call={call} \
+         write_flags={write_flags} key_len={key_len:?} value_len={value_len:?} \
+         map_size={map_size} last_page_number={last_page_number} {stat} \
+         thread_name={thread_name:?} group_commit_member=not-in-scope"
+    ))
 }

@@ -233,6 +233,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints holder base grant");
@@ -254,6 +255,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints other top grant");
@@ -272,6 +274,7 @@ fn gate_decision_get_fixture() -> GateDecisionGetFixture {
             repo_bounds: None,
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
+            working_view_bounds: None,
         },
     )
     .expect("owner mints readonly base read grant");
