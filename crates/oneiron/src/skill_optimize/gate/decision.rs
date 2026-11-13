@@ -181,9 +181,7 @@ fn rule_on_proposal(
     race_hook();
 
     let prepared = vault.with_write_txn_grouped(|wtxn| {
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(vault, wtxn)?;
-        }
+        let reader = Some(goal_reader_in_txn(vault, wtxn, owner)?);
         ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         require_open_optimizer_proposal(&staged)?;
@@ -227,8 +225,8 @@ fn rule_on_proposal(
                     &held_out,
                     &outcomes,
                     tier_verdict_in_txn(vault, &*wtxn, proposal, &staged)?.tier(),
-                    goal_definition_in_txn(vault, wtxn, &target)?.revision,
-                    goal_definition_in_txn(vault, wtxn, &target)?.goal_id,
+                    goal_definition_in_txn(vault, wtxn, &target, reader)?.revision,
+                    goal_definition_in_txn(vault, wtxn, &target, reader)?.goal_id,
                 )?;
                 // Idempotence, before the LLM tier rather than after it. A gate
                 // call is a DELIVERY, and deliveries are retried; asking the
@@ -254,7 +252,7 @@ fn rule_on_proposal(
                     target_record: current,
                     held_out,
                     basis,
-                    goal_definition: goal_definition_in_txn(vault, wtxn, &target)?,
+                    goal_definition: goal_definition_in_txn(vault, wtxn, &target, reader)?,
                 })))
             }
             _ => Err(retry(
@@ -375,8 +373,9 @@ fn rule_on_proposal(
         let current = readable_target(vault.read_skill_record_in_txn(&*wtxn, &target).map(Some))?;
         // A changed goal cannot return an old standing acceptance even if the
         // bodies and evidence stayed fixed while the judge was thinking.
-        if goal_definition_in_txn(vault, wtxn, &target)?.revision != basis.goal_revision
-            || goal_definition_in_txn(vault, wtxn, &target)?.goal_id != basis.goal_id
+        // Integrity: compare only the revision and id that were scored.
+        if goal_definition_in_txn(vault, wtxn, &target, None)?.revision != basis.goal_revision
+            || goal_definition_in_txn(vault, wtxn, &target, None)?.goal_id != basis.goal_id
         {
             return Err(retry("goal definition moved while the scorer was thinking"));
         }

@@ -98,8 +98,9 @@ fn basis_in_txn(
     target: &EntityId,
     current: &SkillRecord,
     judge_revision: &str,
+    reader: WriteActor,
 ) -> Result<(PreflightBasis, GoalDefinition, Vec<String>)> {
-    let definition = goal_definition_in_txn(vault, txn, target)?;
+    let definition = goal_definition_in_txn(vault, txn, target, Some(reader))?;
     let held_out = held_out_receipts_in_txn(vault, txn, target)?;
     let basis = PreflightBasis {
         proposal_digest: skill_body_binding_digest(staged)?,
@@ -160,6 +161,7 @@ fn preflight_with_owner(
         &target,
         &current,
         scorer.judge_revision(),
+        goal_reader_in_txn(vault, &txn, owner)?,
     )?;
     if let Some(row) = PREFLIGHTS.get(&vault.store, &txn, proposal)?
         && row.basis == basis
@@ -218,9 +220,7 @@ fn preflight_with_owner(
         passed,
     };
     vault.with_write_txn_grouped(|txn| {
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(vault, txn)?;
-        }
+        let reader = goal_reader_in_txn(vault, txn, owner)?;
         let staged_now = vault.read_skill_record_in_txn(txn, proposal)?;
         let current_now = vault.read_skill_record_in_txn(txn, &target)?;
         let (now, _, _) = basis_in_txn(
@@ -230,6 +230,7 @@ fn preflight_with_owner(
             &target,
             &current_now,
             scorer.judge_revision(),
+            reader,
         )?;
         if now != row.basis {
             return Err(retry(
@@ -261,7 +262,7 @@ pub(crate) fn skill_edit_trial_basis_in_txn(
     if !target_is_current(&staged, &current) || staged.version == current.version {
         return Ok(None);
     }
-    let definition = goal_definition_in_txn(vault, txn, &target)?;
+    let definition = goal_definition_in_txn(vault, txn, &target, Some(coach_reader()?))?;
     let Some(join) = definition.project else {
         return Ok(None);
     };
