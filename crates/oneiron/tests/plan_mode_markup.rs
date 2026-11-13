@@ -307,6 +307,58 @@ fn a_thread_drifts_when_its_line_is_rewritten() {
 }
 
 #[test]
+fn a_thread_stays_drifted_when_a_deleted_letter_is_typed_again() {
+    let fixture = fixture();
+    let plan_ref = propose(&fixture);
+    let plan = EntityId::from_hex(&plan_ref).expect("the plan-doc id");
+    let opened = mark_up_step(&fixture, &plan_ref).expect("the owner marks up a plan line");
+    let thread_ref = text(&opened, "/thread_id").to_owned();
+    let start = number(&opened, "/origin/locator/char_start");
+    let letter = start
+        + MARKED_STEP
+            .chars()
+            .position(|c| c == 'u')
+            .expect("a 'u' inside the line") as u64;
+    let replace_letter = |with: &str| {
+        edit(&fixture, plan, |doc| NoteProgramEdit::ReplaceSpan {
+            start: doc
+                .anchor(usize::try_from(letter).unwrap())
+                .expect("the letter's start"),
+            end: doc
+                .anchor(usize::try_from(letter + 1).unwrap())
+                .expect("the letter's end"),
+            text: with.to_owned(),
+        });
+    };
+
+    // A letter inside the line is replaced: the quoted characters no longer
+    // all stand.
+    replace_letter("o");
+    let markdown = text(&read_plan(&fixture, &plan_ref), "/markdown").to_owned();
+    assert!(
+        markdown.contains("Merge the doplicate dawn readings"),
+        "the letter is replaced: {markdown}"
+    );
+    let replaced = read_thread(&fixture, &plan_ref, &thread_ref);
+    assert_eq!(text(&replaced, "/resolution"), "drifted", "{replaced}");
+
+    // Typing the same letter back gives the line its old text, but the
+    // quoted letter itself stays deleted: the thread stays drifted on the
+    // span it was opened on and never reattaches to the new letter.
+    replace_letter("u");
+    let markdown = text(&read_plan(&fixture, &plan_ref), "/markdown").to_owned();
+    assert!(
+        markdown.contains(MARKED_STEP),
+        "the line has its old text: {markdown}"
+    );
+    let retyped = read_thread(&fixture, &plan_ref, &thread_ref);
+    assert_eq!(text(&retyped, "/resolution"), "drifted", "{retyped}");
+    assert_eq!(retyped.get("anchor"), retyped.get("origin"), "{retyped}");
+    assert_eq!(text(&retyped, "/anchor/quote"), MARKED_STEP, "{retyped}");
+    assert_eq!(number(&retyped, "/anchor/locator/char_start"), start);
+}
+
+#[test]
 fn a_note_that_is_no_plan_doc_takes_no_thread() {
     let fixture = fixture();
     let note = fixture
