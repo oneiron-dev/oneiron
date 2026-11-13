@@ -390,6 +390,24 @@ pub(crate) fn retire(s: &Store, w: &mut RwTxn<'_>, k: KeyRef) -> Result<()> {
     }
 }
 
+/// The refs of the scope opening keys custody holds for `grant`: keys of
+/// another purpose than the handoff's, which the retire purpose test hands
+/// to [`retire`] (FIX 23943).
+///
+/// # Errors
+/// Custody faults.
+#[cfg(oneiron_test_support)]
+pub(crate) fn grant_scope_refs_for_test(s: &Store, grant: &EntityId) -> Result<Vec<KeyRef>> {
+    let Some(custody) = s.core.key_custody.local() else {
+        return Ok(Vec::new());
+    };
+    Ok(custody
+        .erasable_keys_of(ErasablePurpose::GrantScope, grant.as_bytes())?
+        .into_iter()
+        .map(|item| KeyRef(item.key_ref))
+        .collect())
+}
+
 /// Every key of `actor` this vault knows, whatever handoff it served
 /// (frozen, acknowledged, cancelled, fully or partly staged) and an aborted
 /// writer's orphans: each metadata row naming it and each key custody holds
