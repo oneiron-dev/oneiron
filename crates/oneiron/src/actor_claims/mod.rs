@@ -115,6 +115,7 @@ pub use self::rows::{
     PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT,
 };
 pub use self::validate::{actor_claim_lineage, is_actor_claim_predicate};
+pub(crate) use self::write::actor_claim_facet_in_txn;
 pub use self::write::{project_actor_claims_from_judgments, skill_fit_for, write_actor_claim};
 
 pub use self::candidate::{

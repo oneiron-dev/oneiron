@@ -673,7 +673,7 @@ async fn mcp_room_history_reads_inside_the_rosters_scope() {
             MCP_TOOL_FIRST_PATH,
             credential,
             id,
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({ "arguments": arguments }),
@@ -769,7 +769,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-exact",
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({
@@ -799,7 +799,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-first",
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({
@@ -825,7 +825,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 MCP_TOOL_FIRST_PATH,
                 credential,
                 "room-next",
-                "rooms.messages",
+                "vault.rooms.messages",
                 mcp_merge_args(
                     mcp_endpoint_envelope(owner, "read_room"),
                     json!({
@@ -865,7 +865,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
                 MCP_TOOL_FIRST_PATH,
                 credential,
                 "room-claim",
-                "rooms.claim",
+                "vault.rooms.claim",
                 mcp_merge_args(
                     mcp_endpoint_envelope(actor, "claim_turn"),
                     json!({
@@ -897,7 +897,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-list-first",
-            "rooms.list",
+            "vault.rooms.list",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({"page": {"limit": 1}}),
@@ -920,7 +920,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "room-list-next",
-            "rooms.list",
+            "vault.rooms.list",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({
@@ -959,14 +959,14 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
         })
         .expect("thread");
     for (verb, args) in [
-        ("rooms.render", json!({"room_ref":room.to_hex()})),
-        ("rooms.find", json!({"room_ref":room.to_hex()})),
+        ("vault.rooms.render", json!({"room_ref":room.to_hex()})),
+        ("vault.rooms.find", json!({"room_ref":room.to_hex()})),
         (
-            "rooms.get",
+            "vault.rooms.get",
             json!({"room_ref":room.to_hex(),"turn_ref":thread.to_hex()}),
         ),
         (
-            "rooms.trunk",
+            "vault.rooms.trunk",
             json!({"room_ref":room.to_hex(),"turn_ref":turns[0].to_hex()}),
         ),
     ] {
@@ -1201,7 +1201,7 @@ async fn mcp_room_messages(
             MCP_TOOL_FIRST_PATH,
             credential,
             request_id,
-            "rooms.messages",
+            "vault.rooms.messages",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_room"),
                 json!({"arguments": arguments, "page": page}),

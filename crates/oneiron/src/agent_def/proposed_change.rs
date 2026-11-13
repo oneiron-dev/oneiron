@@ -31,9 +31,9 @@ use crate::{EdgeActorClass, WriteActor};
 
 /// The provenance key under which a proposal names the stored row it would
 /// replace (`agent_authored_update_in_txn`).
-const REPLACES_KEY: &str = "replaces";
+pub(super) const REPLACES_KEY: &str = "replaces";
 /// The provenance key naming the agent that wrote the proposal.
-const AUTHOR_KEY: &str = "author";
+pub(super) const AUTHOR_KEY: &str = "author";
 /// The provenance key naming the door the proposal was put through.
 const DOOR_KEY: &str = "definedVia";
 /// The content kind of the gate decision that records the owner's answer.
@@ -86,7 +86,7 @@ pub(crate) struct ProposedAgentDefinitionChangeSettlement {
 }
 
 /// The text a definition's provenance map holds under `key`.
-fn provenance_text<'a>(definition: &'a AgentDefinition, key: &str) -> Option<&'a str> {
+pub(super) fn provenance_text<'a>(definition: &'a AgentDefinition, key: &str) -> Option<&'a str> {
     let rmpv::Value::Map(entries) = &definition.provenance else {
         return None;
     };

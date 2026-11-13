@@ -34,6 +34,20 @@ pub fn commitment_claim_candidate(record: &CommitmentRecord) -> Result<ClaimCand
     commitment_claim_candidate_with_confidence(record, 1.0)
 }
 
+/// Builds the `commitment.record` candidate of an INERT birth: a promise a
+/// signing document names before anyone signs it (ARCH-0064 §3). Only the
+/// e-sign draft writer births one; every public door births open.
+pub(crate) fn inert_commitment_claim_candidate(
+    record: &CommitmentRecord,
+) -> Result<ClaimCandidate> {
+    if record.status != CommitmentStatus::Inert {
+        return Err(Error::InvalidClaimBody(
+            "inert commitment candidate must be inert at birth",
+        ));
+    }
+    commitment_claim_candidate_with_confidence(record, 1.0)
+}
+
 /// Encodes a commitment record value in canonical MessagePack field order.
 pub fn encode_commitment_value(record: &CommitmentRecord) -> Result<Value> {
     record.validate()?;
