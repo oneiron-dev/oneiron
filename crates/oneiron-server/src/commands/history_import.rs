@@ -15,9 +15,6 @@ use std::path::Path;
 use std::time::Instant;
 
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::ingest::archive_precheck::{
-    self, ArchiveBounds, ArchiveRefusal, EntryReader, SkippedEntry,
-};
 use oneiron::ingest::history::{
     HistoryConversation, HistoryDryRun, HistoryFile, HistoryImportReport, HistoryLedgerSnapshot,
     HistoryMessage, HistorySkips, HistorySource,
@@ -31,11 +28,8 @@ use crate::files_intake::{ImportWarning, hard_linked};
 
 /// The most a zipped export's `conversations.json` unzips to: the codec's
 /// bound, so a small zip cannot inflate without limit (rule 5 keeps a codec
-/// bound). The archive pre-check counts the real bytes against it (and
-/// against the room under `[import] storage_cap_bytes`, when that is less),
-/// after it has checked the zip's entry list (ARCH-0027 #archive-precheck).
-/// An export that is not zipped, and every session log, is read whole
-/// whatever its size.
+/// bound). An export that is not zipped, and every session log, is read
+/// whole whatever its size.
 const MAX_UNZIPPED_EXPORT_BYTES: u64 = 2 << 30;
 
 /// What serve's queue lands in one pass, decoded: messages, and bytes of
@@ -127,7 +121,7 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     let (mut files, mut conversations) = if source == HistorySource::HookTranscript {
         decode_hook_transcript(&config, &path)?
     } else {
-        decode(source, &path, &ExportBounds::for_config(&config)?)?
+        decode(source, &path)?
     };
     earliest_first(&mut conversations);
     progress(&format!(
@@ -322,19 +316,15 @@ fn progress(line: &str) {
 }
 
 /// Reads and decodes everything under `path`: one export file, or every
-/// session log beneath a folder. A zipped export is read under `bounds`.
-fn decode(
-    source: HistorySource,
-    path: &Path,
-    bounds: &ExportBounds,
-) -> anyhow::Result<(Files, Vec<HistoryConversation>)> {
+/// session log beneath a folder.
+fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<HistoryConversation>)> {
     let decode_one = |text: &str, file: &HistoryFile, shown: &Path| {
         source
             .decode(text, file)
             .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))
     };
     if matches!(source, HistorySource::Chatgpt | HistorySource::Claude) {
-        let (text, skipped) = read_export(path, bounds)?;
+        let text = read_export(path)?;
         let file = HistoryFile {
             stem: EXPORT_CONVERSATIONS.to_owned(),
             parent: None,
@@ -346,13 +336,6 @@ fn decode(
             Files {
                 read: 1,
                 decoded,
-                warnings: skipped
-                    .into_iter()
-                    .map(|skip| ImportWarning::ArchiveEntrySkipped {
-                        name: skip.name,
-                        reason: skip.reason.as_str(),
-                    })
-                    .collect(),
                 ..Files::default()
             },
             conversations,
@@ -485,13 +468,8 @@ fn read_text(mut reader: impl Read, shown: &Path) -> anyhow::Result<String> {
     reader
         .read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))?;
-    Ok(text_of(bytes))
-}
-
-/// `bytes` as text, any invalid UTF-8 replaced.
-fn text_of(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes)
-        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 }
 
 /// What decoded conversations hold in memory: their messages, and every
@@ -734,152 +712,88 @@ fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
 }
 
 /// An export's conversations: the zip, its `conversations.json`, or the
-/// unzipped folder holding it; and the zip's entries the archive pre-check
-/// skipped.
-fn read_export(path: &Path, bounds: &ExportBounds) -> anyhow::Result<(String, Vec<SkippedEntry>)> {
+/// unzipped folder holding it.
+fn read_export(path: &Path) -> anyhow::Result<String> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     if metadata.is_dir() {
         let file = open_in(path, EXPORT_CONVERSATIONS)?
             .ok_or_else(|| anyhow::anyhow!("{} holds no {EXPORT_CONVERSATIONS}", path.display()))?;
-        return Ok((
-            read_text(file, &path.join(EXPORT_CONVERSATIONS))?,
-            Vec::new(),
-        ));
+        return read_text(file, &path.join(EXPORT_CONVERSATIONS));
     }
     let zipped = path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"));
     if zipped {
-        read_zipped_export(path, bounds)
+        read_zipped_export(path)
     } else {
         let file = File::open(path)
             .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
-        Ok((read_text(file, path)?, Vec::new()))
+        read_text(file, path)
     }
 }
 
-/// The shallowest `conversations.json` inside an export zip, read through the
-/// archive pre-check (ARCH-0027 #archive-precheck), and the entries the
-/// pre-check skipped and listed. A link, an escaping path or a special file
-/// is never picked; an archive the pre-check refuses lands nothing.
-fn read_zipped_export(
-    path: &Path,
-    bounds: &ExportBounds,
-) -> anyhow::Result<(String, Vec<SkippedEntry>)> {
+/// The shallowest `conversations.json` inside an export zip.
+fn read_zipped_export(path: &Path) -> anyhow::Result<String> {
     let file =
         File::open(path).map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
-    let mut archive = archive_precheck::check_archive(file, bounds.archive)
-        .map_err(|refusal| bounds.refused(path, refusal))?;
-    let at = archive
-        .entries()
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| {
-            !entry.directory
-                && entry
-                    .path
-                    .file_name()
-                    .is_some_and(|name| name == EXPORT_CONVERSATIONS)
-        })
-        .min_by_key(|(at, entry)| (entry.path.components().count(), *at))
-        .map(|(at, _)| at)
-        .ok_or_else(|| anyhow::anyhow!("{} holds no {EXPORT_CONVERSATIONS}", path.display()))?;
-    let bytes = archive
-        .read_entry(at, EntryReader::Json, bounds.entry_bound())
-        .map_err(|refusal| bounds.refused(path, refusal))?;
-    Ok((text_of(bytes), archive.into_skipped()))
-}
-
-/// What an export read out of a zip may hold (the `[import]` rows, ARCH-0027
-/// #archive-precheck): the pre-check's entry cap, and the room the vault's
-/// storage cap leaves.
-struct ExportBounds {
-    archive: ArchiveBounds,
-    /// `[import] storage_cap_bytes` less what the vault's folder holds;
-    /// `None` without a cap.
-    room: Option<u64>,
-}
-
-impl ExportBounds {
-    fn for_config(config: &ServeConfig) -> anyhow::Result<Self> {
-        let room = config
-            .import
-            .storage_cap_bytes
-            .map(|cap| folder_bytes(&config.vault_path).map(|held| cap.saturating_sub(held)))
-            .transpose()?;
-        Ok(Self {
-            archive: ArchiveBounds {
-                max_entries: config.import.archive_entry_cap(),
-            },
-            room,
-        })
-    }
-
-    /// The most an export's entry unzips to: the codec's bound, or the room
-    /// under the storage cap where that is less.
-    fn entry_bound(&self) -> u64 {
-        self.room.map_or(MAX_UNZIPPED_EXPORT_BYTES, |room| {
-            room.min(MAX_UNZIPPED_EXPORT_BYTES)
-        })
-    }
-
-    /// The command's error for a refusal, naming the `[import]` row that
-    /// bounds it. Nothing was written.
-    fn refused(&self, path: &Path, refusal: ArchiveRefusal) -> anyhow::Error {
-        let shown = path.display();
-        match refusal {
-            ArchiveRefusal::TooManyEntries { declared, cap } => anyhow::anyhow!(
-                "{shown} declares {declared} entries, past the archive entry cap \
-                 `[import] archive_max_entries` ({cap}); raise the row to import it. \
-                 Nothing was imported"
-            ),
-            // Only the room under the storage cap bounds a read below the
-            // codec's bound.
-            ArchiveRefusal::PastBound { name, bound } if bound < MAX_UNZIPPED_EXPORT_BYTES => {
-                anyhow::anyhow!(
-                    "{name:?} in {shown} unzips past the vault's storage cap \
-                     (`[import] storage_cap_bytes`; {bound} bytes were left under it): the \
-                     import stopped there, and nothing was imported"
-                )
-            }
-            ArchiveRefusal::PastBound { name, bound } => anyhow::anyhow!(
-                "{name:?} in {shown} unzips to more than {bound} bytes; a zipped export is \
-                 unzipped up to {MAX_UNZIPPED_EXPORT_BYTES}. Nothing was imported"
-            ),
-            other => anyhow::anyhow!(
-                "{shown}: the archive pre-check refused it ({other}). Nothing was imported"
-            ),
-        }
-    }
-}
-
-/// What the folder at `dir` holds on disk: every file below it, through no
-/// link. A folder that does not exist holds nothing.
-fn folder_bytes(dir: &Path) -> anyhow::Result<u64> {
-    let mut held = 0_u64;
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => anyhow::bail!("read {}: {error}", dir.display()),
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|error| anyhow::anyhow!("{} is not a readable zip: {error}", path.display()))?;
+    let mut best: Option<(usize, usize)> = None;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        let Some(name) = entry.enclosed_name() else {
+            continue;
         };
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| anyhow::anyhow!("read {}: {error}", dir.display()))?;
-            // Never through a link: the entry's own metadata.
-            let metadata = entry
-                .metadata()
-                .map_err(|error| anyhow::anyhow!("read {}: {error}", entry.path().display()))?;
-            if metadata.is_dir() {
-                pending.push(entry.path());
-            } else if metadata.is_file() {
-                held = held.saturating_add(metadata.len());
+        if name
+            .file_name()
+            .is_some_and(|name| name == EXPORT_CONVERSATIONS)
+        {
+            let depth = name.components().count();
+            if best.is_none_or(|(_, best_depth)| depth < best_depth) {
+                best = Some((index, depth));
             }
         }
     }
-    Ok(held)
+    let (index, _) =
+        best.ok_or_else(|| anyhow::anyhow!("{} holds no {EXPORT_CONVERSATIONS}", path.display()))?;
+    let entry = archive.by_index(index)?;
+    // The size the zip declares, refused before anything is unzipped; the
+    // read below holds a zip that declares less to the same bound.
+    anyhow::ensure!(
+        entry.size() <= MAX_UNZIPPED_EXPORT_BYTES,
+        "{EXPORT_CONVERSATIONS} in {} unzips to {} bytes; a zipped export is unzipped up \
+         to {MAX_UNZIPPED_EXPORT_BYTES}",
+        path.display(),
+        entry.size()
+    );
+    read_limited(entry, path, MAX_UNZIPPED_EXPORT_BYTES)
+}
+
+/// Reads at most `limit` bytes, whatever a header claimed, and refuses more.
+fn read_limited(reader: impl Read, path: &Path, limit: u64) -> anyhow::Result<String> {
+    read_within(reader, path, limit)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} is larger than {limit} bytes; nothing was imported",
+            path.display()
+        )
+    })
+}
+
+/// Reads at most `limit` bytes, whatever a header claimed; `None` when there
+/// are more.
+fn read_within(reader: impl Read, path: &Path, limit: u64) -> anyhow::Result<Option<String>> {
+    let mut bytes = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8(bytes).unwrap_or_else(|error| {
+        String::from_utf8_lossy(error.as_bytes()).into_owned()
+    })))
 }
 
 /// The session a Claude Code subagent log ran in: the folder above the
