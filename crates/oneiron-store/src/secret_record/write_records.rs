@@ -39,12 +39,14 @@ impl FoundKeyAction {
     }
 }
 
-/// The owner's last act on one found key, and its receipt.
+/// The last act on one found key, and its receipt: the owner's, or for a
+/// not-a-secret or kept-as-text ruling, the record's writer's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FoundKeySettled {
     pub action: FoundKeyAction,
-    /// The owner who acted; `None` for a rotation, whose receipt names it,
-    /// or once that owner was erased (FIX 3520).
+    /// The person who acted: the owner, or the person who wrote the value
+    /// where it was found when they ruled it; `None` for a rotation, whose
+    /// receipt names it, or once that person was erased (FIX 3520).
     pub by: Option<EntityId>,
     pub at: u64,
     /// The act's receipt: `rotation:<hex>`, `redaction:<hex>` or
@@ -63,6 +65,9 @@ pub struct FoundNote {
     pub handle: String,
     pub reason: &'static str,
     pub place: String,
+    /// The person who wrote the value there in their own name, when a
+    /// person did; `None` for an agent's or the engine's write.
+    pub writer: Option<EntityId>,
 }
 
 /// Who the owner names for an active custody change.
