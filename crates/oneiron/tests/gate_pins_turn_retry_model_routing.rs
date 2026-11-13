@@ -362,27 +362,44 @@ fn exchange(fixture: &RoomFixture) -> TestResult<Exchange> {
         )
         .map_err(|error| format!("fixture: owen's addressed TURN: {error:?}"))?
         .id;
-    // His words, witnessed into that TURN: a Retry answers the newest turn
-    // before the reply that holds a User line.
-    owen.rooms_speak(&WitnessTurn {
-        conversation_ref: fixture.room.to_hex(),
-        turn_ref: Some(user_turn.to_hex()),
-        thread_audience: None,
-        messages: vec![WitnessMessage {
-            id: Some(EntityId::now().to_hex()),
-            author: WitnessAuthor::User,
-            message_type: "text".into(),
-            content: "owen asks".into(),
-            parts: None,
-            metadata: Some(serde_json::json!({})),
-            is_visible: true,
-            order: 0,
-            quote: None,
-        }],
-        occurred_at: vault.now_recorded_at(),
-        assertions: Default::default(),
-    })
-    .map_err(|error| format!("fixture: owen's MESSAGE in his TURN: {error:?}"))?;
+    // His words, a DAG MESSAGE in that TURN: a Retry answers the newest turn
+    // before the reply that holds a User line. The witness refuses a TURN
+    // whose body stamps no speaker, and a DAG TURN's body stamps none, so
+    // the MESSAGE joins it on the DAG, as
+    // tests/thread_task_one_surface.rs appends one.
+    let now = vault.now_recorded_at();
+    vault
+        .append_dag_record(
+            &owen,
+            &AppendRecord {
+                conversation: fixture.room,
+                parent: None,
+                reply_to: None,
+                quote: None,
+                address: AddressMode::Broadcast,
+                recipients: vec![],
+                advance: false,
+                kind: ENTITY_TYPE_MESSAGE,
+                containing_turn: Some(user_turn),
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                body: rmp_serde::to_vec_named(&serde_json::json!({
+                    "author": "user",
+                    "type": "text",
+                    "content": "owen asks",
+                    "is_visible": true,
+                    "order": 0,
+                }))?,
+                text: vec![],
+                session: None,
+                actor: WriteActor::new(fixture.owen, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .map_err(|error| format!("fixture: owen's MESSAGE in his TURN: {error:?}"))?;
     let row = owen
         .rooms_messages(fixture.room)?
         .into_iter()
