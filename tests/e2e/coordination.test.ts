@@ -4290,7 +4290,8 @@ async function museLoop08AuditRows(client: PublicHttpClient): Promise<MuseLoop08
 // Doors used: vault.structural.put + pairActor (agent), vault.conversations.create,
 // vault.claims.seed (agent proposes), vault.claims.list / vault.writes.pending
 // (second-door reads), vault.runs.review / settle / settlement (owner decides),
-// vault.revert_run (owner subset, then all), vault.claims.upsert (later edit),
+// vault.revert_run (owner subset, then all), vault.claims.upsert (the owner's refused
+// direct edit of the agent's claim; the author's later edit, settled in a second run),
 // vault.claims.history + vault.receipts + engine.awaitReceipt (undo readbacks),
 // facade raw routes for wrong actors, vault.authority.audit + /v1/core/slips/revoke
 // for the revoked-credential leg, engine.restart().
@@ -4472,13 +4473,49 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
     expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
 
-    // A later owner edit rests on beta, then undo-all is asked for.
-    const betaEdit = await owner.call("vault.claims.upsert", {
+    // The owner cannot replace the agent's approved claim in place: a self-Grant
+    // never replaces another author's claim (ARCH-0040: "An admin override is not the default").
+    const ownerEdit = await owner.raw<MuseLoop08ErrorBody>("POST", "/v1/core/facade/vault.claims.upsert", {
       predicate: betaPredicate, subject_ref: subjectRef, value: betaValueTwo,
       confidence: 1, source: "user_stated", scope, occurred_at: occurred + 60,
     } satisfies FacadeInput<"vault.claims.upsert">);
-    await engine.awaitReceipt(betaEdit.receipt_ref);
-    expect((await museLoop08Claims(owner, subjectRef, betaPredicate)).some((row) => row.value === betaValueTwo)).toBe(true);
+    expect({ status: ownerEdit.status, code: ownerEdit.body?.error?.code, message: ownerEdit.body?.error?.message })
+      .toMatchObject({ status: 403, code: "FORBIDDEN" });
+    expect(ownerEdit.body.error.message).toContain("another author's claim");
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate, "active")).map((row) => row.value)).toEqual([betaValueOne]);
+
+    // A later write rests on beta: its author edits it through its own self-Grant.
+    // The replacement lands Proposed with beta's closure staged; the owner settles it in a second run.
+    const betaEdit = await proposer.client.call("vault.claims.upsert", {
+      predicate: betaPredicate, subject_ref: subjectRef, value: betaValueTwo,
+      confidence: 1, source: "generated", scope, evidence_turn_refs: [evidenceTurn], occurred_at: occurred + 60,
+    } satisfies FacadeInput<"vault.claims.upsert">);
+    expect(betaEdit.approval).toBe("proposed");
+    const betaEditRefs = [betaEdit.claim_short_id, betaEdit.claim?.id, betaEdit.claim?.short_id]
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    const pendingWithEdit = await awaitPublic(
+      () => museLoop08PendingRefs(owner),
+      (refs) => betaEditRefs.some((ref) => refs.has(ref)),
+      { label: "the author's later edit of beta parked in writes.pending" },
+    );
+    const betaEditRef = betaEditRefs.find((ref) => pendingWithEdit.has(ref))!;
+    const laterRunId = "muse-loop-08-later-edit";
+    const laterReview: FacadeInput<"vault.runs.review"> = {
+      run_id: laterRunId,
+      changes: [{ kind: "claim" as const, claim_ref: betaEditRef }],
+    };
+    const laterReviewed = await owner.call("vault.runs.review", laterReview);
+    await owner.call("vault.runs.settle", {
+      review: laterReview, review_id: laterReviewed.review_id, decision: "approve",
+    } satisfies FacadeInput<"vault.runs.settle">);
+    const laterSettlement = await owner.call("vault.runs.settlement", {
+      run_id: laterRunId,
+    } satisfies FacadeInput<"vault.runs.settlement">);
+    expect(laterSettlement.verdict).toBe("landed");
+    expect(await museLoop08Lifecycle(owner, subjectRef, betaPredicate, betaRow.claim_ref)).toBe("superseded");
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate, "active")).map((row) => row.value)).toEqual([betaValueTwo]);
+
+    // Undo-all of the first run: beta cannot come back cleanly, so it is reported, not undone.
     const rest = await owner.call("vault.revert_run", {
       run_id: settlement.run_id,
     } satisfies FacadeInput<"vault.revert_run">);
@@ -4525,6 +4562,7 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
       runId, claimRefs,
       changes: { alpha: alphaChange, beta: betaChange, gamma: gammaChange },
       settlementReceipt: settlement.receipt, revertHandle: settlement.revert_handle,
+      laterRunId, laterEdit: betaEditRef, laterSettlementReceipt: laterSettlement.receipt,
       selective: selective.compensated, restCompensated: rest.compensated, restNotUndone: rest.not_undone,
     });
   } finally {
