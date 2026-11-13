@@ -14,6 +14,7 @@ pub mod checkpoint_registry;
 pub mod claim_facet_birth;
 pub mod claim_source_recheck;
 pub mod claim_transition;
+pub mod claim_value_redaction;
 pub mod coach;
 pub mod code_reply_healer;
 pub mod code_run_answer;
