@@ -224,8 +224,9 @@ impl Vault {
     /// leaves only once its audit row and each mailbox's person's notice are
     /// written, in one write (fix list row 15416); when that write does not
     /// commit, the copy is made again without those mailboxes, each named in
-    /// it. Once it commits, the copy leaves as it was recorded, under its one
-    /// export id, even when a step after the commit fails.
+    /// it, and recorded as any other copy is, never withheld (L5-17). Once it
+    /// commits, the copy leaves as it was recorded, under its one export id,
+    /// even when a step after the commit fails.
     fn entity_bundle_json(&self, ids: &[EntityId], scope: ExportScope) -> Result<Vec<u8>> {
         let bundle = self.entity_bundle_pass(ids, scope, false)?;
         if scope != ExportScope::WholeVault {
@@ -239,7 +240,7 @@ impl Vault {
             self,
             &bundle.json,
             bundle.thread_roots,
-            Some(&member_mail),
+            &member_mail,
         ) {
             Ok(()) => Ok(bundle.json),
             // The write did not commit: no audit row and no notice of it
@@ -255,14 +256,9 @@ impl Vault {
                         "an export whose mailboxes' people were not told carries a mailbox",
                     ));
                 }
-                // The copy made again leaves only once its own audit row,
-                // counting no mailbox, commits (fix list row 15416).
-                crate::memory::record_member_mail_json_export(
-                    self,
-                    &bundle.json,
-                    bundle.thread_roots,
-                    None,
-                )?;
+                // The copy made again is recorded as any other copy is, its
+                // row counting no mailbox, and never withheld (L5-17).
+                crate::memory::record_remade_json_export(self, &bundle.json, bundle.thread_roots);
                 Ok(bundle.json)
             }
         }

@@ -225,7 +225,7 @@ pub(crate) use rooms::{
     reject_audience_edit_delete, reject_audience_edit_unlink, scrub_room_audience,
 };
 pub(crate) use rooms::{
-    ExportThreadRoots, THREAD_NOTICE_PRODUCER, notify_exported_threads_in_txn,
+    ExportThreadRoots, NoticeDelivery, THREAD_NOTICE_PRODUCER, notify_exported_threads_in_txn,
     notify_thread_members_in_txn,
 };
 pub use rooms::{

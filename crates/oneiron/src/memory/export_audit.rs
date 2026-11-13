@@ -10,9 +10,16 @@
 //! vault's edits now name (FIX 6681).
 //!
 //! Export is never gated: the row and the notices are written after the
-//! copy is made, in a write of their own, and whatever they meet is logged
-//! and never withholds the copy. An owner's export that carries his act is
-//! also signed in that write as an `ExportAct` every machine he admits
+//! copy is made, in a write of their own, and whatever they meet never
+//! withholds the copy. When anyone is owed them, the copy carrying a TURN
+//! of a thread or the vault having a live Owner beside its exporter, the
+//! copy's owed row is written first, before it is handed back, and the
+//! audit's write writes the row and every notice or nothing; one that does
+//! not commit leaves the owed row for a housekeeping pass to write (L5-17,
+//! [`super::export_audit_owed`]). An owed row that is not written is logged
+//! with the export id, and the copy is still served. Whatever a copy no one
+//! is owed the audit of meets is logged. An owner's export that carries his
+//! act is also signed in that write as an `ExportAct` every machine he admits
 //! folds and checks (FIX 4624), on the same terms: a record that cannot be
 //! signed is logged, and the copy and its row stand. Each custody value the
 //! copy carried as its handle because it did not open here is recorded in
@@ -26,18 +33,18 @@
 //! are written in one write before the copy leaves
 //! ([`record_member_mail_export`]), and a write that does not commit leaves
 //! those mailboxes out of the copy, made again: its row, counting none, is
-//! written the same way before that copy leaves, and it never leaves
-//! unaudited.
+//! then written as any other copy's is ([`record_remade_export`]).
 
 use serde::{Deserialize, Serialize};
 
+use super::export_audit_owed::ExportAuditOwed;
 use crate::Vault;
-use crate::authority::{HolderExportBasis, HolderExportRequest, OwnerAct};
+use crate::authority::{HolderExportBasis, HolderExportNeed, HolderExportRequest, OwnerAct};
 use crate::batch::export::{ExportDiaryRead, WholeVaultExportReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::side_table::{self, Named, SideTable};
-use crate::workspace_roster::ExportThreadRoots;
+use crate::workspace_roster::{ExportThreadRoots, NoticeDelivery, notify_exported_threads_in_txn};
 
 /// The `format` of an off-record room's talk, which its door answers as
 /// JSON.
@@ -61,9 +68,10 @@ pub enum ExportAuditScope {
 
 /// One copy that left the vault, written by the call that made it, so every
 /// owner can see that the vault left, whose copy it was and in what shape.
-/// Never the bytes. A row that cannot be written is logged and does not
-/// withhold the copy, but for a copy that carries another member's personal
-/// mailbox: that row is written before the copy leaves (fix list row 15416).
+/// Never the bytes. A row that cannot be written never withholds the copy:
+/// it stays owed to a housekeeping pass when anyone is owed it (L5-17), and
+/// is logged otherwise. A copy that carries another member's personal
+/// mailbox writes it before the copy leaves (fix list row 15416).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportReceipt {
@@ -220,17 +228,39 @@ fn export_receipts_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec
     Ok(receipts)
 }
 
-/// Records `copy`, once it has left (FIX 6427): its audit row under a fresh
+/// Records `copy`, once it is made (FIX 6427): its audit row under a fresh
 /// id from the vault's clock, and, for each private thread it carries whose
 /// audience does not hold its exporter now, that thread's members' notice
 /// of it, in one write of its own. A root base does not hold is read in the
 /// published overlay of the live off-record stretch that holds it; one gone
 /// since the copy read it, from the binding that read resolved and the
-/// edits base holds now (FIX 6681). Best effort: whatever this meets is
-/// logged and never reaches the copy's door, and a row not written still
-/// lets the notices go. Returns where each custody value the copy carried as
-/// its handle stands for its holder (FIX 4624(b)): recorded, or why not.
+/// edits base holds now (FIX 6681). When anyone is owed the audit, its owed
+/// row is written first ([`super::export_audit_owed`], L5-17): the audit's
+/// write then writes the row and every notice or nothing, and one that does
+/// not commit leaves the owed row for a housekeeping pass. Nothing here
+/// reaches the copy's door: an owed row that is not written is logged with
+/// the export id, and a copy no one is owed the audit of, or whose owed row
+/// was not written, is audited best effort, whatever it meets logged, a row
+/// not written still letting the notices go. Returns where each custody
+/// value the copy carried as its handle stands for its holder (FIX
+/// 4624(b)): recorded, or why not.
 pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExportRequest> {
+    record_copy(vault, copy, None)
+}
+
+/// [`record_export`] for an Owner's copy made again without the members'
+/// mailboxes it would have carried, after the write that tells their
+/// people did not commit (fix list row 15416): its row counts no mailbox.
+pub(crate) fn record_remade_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExportRequest> {
+    record_copy(vault, copy, Some(0))
+}
+
+/// [`record_export`], its row counting `member_mailboxes`.
+fn record_copy(
+    vault: &Vault,
+    copy: ExportCopy,
+    member_mailboxes: Option<u64>,
+) -> Vec<HolderExportRequest> {
     let ExportCopy {
         scope,
         exporter,
@@ -255,69 +285,42 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExport
         .iter()
         .map(HolderExportRequest::need)
         .collect();
-    let written = vault.with_write_txn(|txn| {
-        // The id's allocation floor is kept with the row that names it.
-        let at = match crate::ports::recorded_at_in_txn(&vault.store, txn) {
-            Ok(at) => at,
-            Err(error) => {
-                tracing::warn!(%error, "export audit: clock floor not recorded");
-                vault.store.clock.now_recorded_at()
-            }
-        };
-        // The signed record goes before the holder requests, which link it,
-        // and both before the row, which lists them: each in a savepoint of
-        // its own, so a fault leaves the write as it was.
-        let export_act = act.and_then(|act| {
-            vault.record_export_act_op_in_txn(txn, act, export, &format, bytes, digest.as_deref())
-        });
-        let holder_requests = vault.record_holder_export_requests_in_txn(
-            txn,
-            HolderExportBasis {
-                act,
-                export,
-                digest: digest
-                    .as_deref()
-                    .and_then(|hex| blake3::Hash::from_hex(hex).ok())
-                    .map(|hash| *hash.as_bytes()),
-                export_act,
-                recipient,
-                needs: &needs,
-            },
-        );
-        let receipt = ExportReceipt {
+    let mut owed = ExportAuditOwed {
+        receipt: ExportReceipt {
             export,
             scope,
             exporter,
-            at,
+            at: 0,
             format,
             bytes,
             digest,
             by,
             diary_reads,
             act,
-            holder_requests,
-            member_mailboxes: None,
-        };
-        if let Err(error) = append_in_txn(vault, txn, &receipt) {
-            tracing::warn!(
-                export = %export.to_hex(),
-                %error,
-                "export served without its audit row"
-            );
-        }
-        crate::workspace_roster::notify_exported_threads_in_txn(
-            vault,
-            txn,
-            &thread_roots,
-            exporter,
-            export,
-        );
-        Ok(receipt.holder_requests)
-    });
+            holder_requests: needs
+                .iter()
+                .copied()
+                .map(HolderExportRequest::unrecorded)
+                .collect(),
+            member_mailboxes,
+        },
+        threads: thread_roots,
+    };
+    let strict = super::export_audit_owed::owe(vault, &mut owed);
+    let written =
+        vault.with_write_txn(|txn| write_audit_in_txn(vault, txn, owed, &needs, recipient, strict));
     match written {
         Ok(holder_requests) => holder_requests,
         Err(error) => {
-            tracing::warn!(export = %export.to_hex(), %error, "export served without its audit");
+            if strict {
+                tracing::warn!(
+                    export = %export.to_hex(),
+                    %error,
+                    "export served; its audit stays owed to the next housekeeping pass"
+                );
+            } else {
+                tracing::warn!(export = %export.to_hex(), %error, "export served without its audit");
+            }
             // Nothing the write did stands: no request waits for a holder.
             needs
                 .into_iter()
@@ -327,8 +330,101 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExport
     }
 }
 
+/// [`record_export`]'s write, in `txn`: the owner's act signed and the
+/// custody values the copy carried as their handles recorded for their
+/// holders (`needs`, sealed to `recipient`), each best effort in a
+/// savepoint of its own, then `owed`'s row and its threads' notices. With
+/// `strict`, the copy's owed row stands: the row and each notice are
+/// written or the write fails, and the owed row goes in it; a row a
+/// housekeeping pass wrote first is written no more. Otherwise each is best
+/// effort.
+///
+/// # Errors
+///
+/// With `strict` alone: the row, a notice or the owed row's drop not
+/// written.
+fn write_audit_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owed: ExportAuditOwed,
+    needs: &[HolderExportNeed],
+    recipient: Option<EntityId>,
+    strict: bool,
+) -> crate::Result<Vec<HolderExportRequest>> {
+    #[cfg(oneiron_test_support)]
+    if super::export_audit_owed::test_faults::audit_write_fails() {
+        return Err(super::export_audit_owed::test_faults::FAULT);
+    }
+    let ExportAuditOwed {
+        mut receipt,
+        threads,
+    } = owed;
+    let export = receipt.export;
+    if strict && !super::export_audit_owed::owed_in_txn(vault, txn, export)? {
+        // A housekeeping pass wrote the row and the notices first, the
+        // holder requests standing as not recorded.
+        return Ok(receipt.holder_requests);
+    }
+    if !strict {
+        // The id's allocation floor is kept with the row that names it; an
+        // owed row kept it with itself.
+        receipt.at = match crate::ports::recorded_at_in_txn(&vault.store, txn) {
+            Ok(at) => at,
+            Err(error) => {
+                tracing::warn!(%error, "export audit: clock floor not recorded");
+                vault.store.clock.now_recorded_at()
+            }
+        };
+    }
+    // The signed record goes before the holder requests, which link it, and
+    // both before the row, which lists them: each in a savepoint of its own,
+    // so a fault leaves the write as it was.
+    let export_act = receipt.act.and_then(|act| {
+        vault.record_export_act_op_in_txn(
+            txn,
+            act,
+            export,
+            &receipt.format,
+            receipt.bytes,
+            receipt.digest.as_deref(),
+        )
+    });
+    receipt.holder_requests = vault.record_holder_export_requests_in_txn(
+        txn,
+        HolderExportBasis {
+            act: receipt.act,
+            export,
+            digest: receipt
+                .digest
+                .as_deref()
+                .and_then(|hex| blake3::Hash::from_hex(hex).ok())
+                .map(|hash| *hash.as_bytes()),
+            export_act,
+            recipient,
+            needs,
+        },
+    );
+    let delivery = if strict {
+        append_in_txn(vault, txn, &receipt)?;
+        super::export_audit_owed::settle_in_txn(vault, txn, export)?;
+        NoticeDelivery::Owed
+    } else {
+        if let Err(error) = append_in_txn(vault, txn, &receipt) {
+            tracing::warn!(
+                export = %export.to_hex(),
+                %error,
+                "export served without its audit row"
+            );
+        }
+        NoticeDelivery::BestEffort
+    };
+    // Best effort never fails.
+    notify_exported_threads_in_txn(vault, txn, &threads, receipt.exporter, export, delivery)?;
+    Ok(receipt.holder_requests)
+}
+
 /// Appends `receipt` after the last row, in `txn`.
-fn append_in_txn(
+pub(super) fn append_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     receipt: &ExportReceipt,
@@ -389,47 +485,61 @@ pub(crate) fn raw_records_copy(
 /// for the embedded owner ([`record_export`]), with its length and digest,
 /// `roots` being the root of each thread a TURN it carries is of.
 pub(crate) fn record_raw_json_export(vault: &Vault, json: &[u8], roots: ExportThreadRoots) {
-    let exporter = match crate::vault::embedded_owner_actor_id() {
-        Ok(exporter) => exporter,
+    if let Some(copy) = raw_json_copy(json, roots) {
+        record_export(vault, copy);
+    }
+}
+
+/// The audit of the whole-vault JSON bundle `json` a raw `Vault` door
+/// encoded for the embedded owner: its length and digest, no act, and each
+/// private thread it carries, `roots`. `None`, logged, with no embedded
+/// owner to record.
+fn raw_json_copy(json: &[u8], roots: ExportThreadRoots) -> Option<ExportCopy> {
+    match crate::vault::embedded_owner_actor_id() {
+        Ok(exporter) => Some(ExportCopy {
+            bytes: u64::try_from(json.len()).ok(),
+            digest: Some(blake3::hash(json).to_hex().to_string()),
+            ..ExportCopy::raw(exporter, EXPORT_FORMAT_JSON, Vec::new(), roots)
+        }),
         Err(error) => {
             tracing::warn!(%error, "JSON export served without its audit: no owner");
-            return;
+            None
         }
-    };
-    let copy = ExportCopy {
-        bytes: u64::try_from(json.len()).ok(),
-        digest: Some(blake3::hash(json).to_hex().to_string()),
-        ..ExportCopy::raw(exporter, EXPORT_FORMAT_JSON, Vec::new(), roots)
-    };
-    record_export(vault, copy);
+    }
 }
 
 /// Records the whole-vault JSON bundle `json` a raw `Vault` door encoded,
-/// which carries other members' personal mailboxes (fix list row 15416),
-/// before a byte of it leaves ([`record_member_mail_export`]): its length
-/// and digest, no act, and each private thread it carries, `roots`. With no
-/// `mailboxes`, `json` is the bundle made again without them after such a
-/// write did not commit, recorded the same strict way, counting no mailbox.
+/// which carries other members' personal mailboxes, `mailboxes` (fix list
+/// row 15416), before a byte of it leaves ([`record_member_mail_export`]):
+/// its length and digest, no act, and each private thread it carries,
+/// `roots`.
 ///
 /// # Errors
 ///
-/// As [`record_member_mail_export`], or no embedded owner to record.
+/// As [`record_member_mail_export`].
 pub(crate) fn record_member_mail_json_export(
     vault: &Vault,
     json: &[u8],
     roots: ExportThreadRoots,
-    mailboxes: Option<&crate::mail_pack::CarriedMemberMailboxes>,
+    mailboxes: &crate::mail_pack::CarriedMemberMailboxes,
 ) -> crate::Result<()> {
-    let exporter = match mailboxes {
-        Some(mailboxes) => mailboxes.exporter(),
-        None => crate::vault::embedded_owner_actor_id()?,
-    };
     let copy = ExportCopy {
         bytes: u64::try_from(json.len()).ok(),
         digest: Some(blake3::hash(json).to_hex().to_string()),
-        ..ExportCopy::raw(exporter, EXPORT_FORMAT_JSON, Vec::new(), roots)
+        ..ExportCopy::raw(mailboxes.exporter(), EXPORT_FORMAT_JSON, Vec::new(), roots)
     };
     record_member_mail_export(vault, copy, mailboxes).map(drop)
+}
+
+/// Records the whole-vault JSON bundle `json` a raw `Vault` door made again
+/// for the embedded owner without the members' mailboxes it would have
+/// carried, after the write that tells their people did not commit (fix
+/// list row 15416), as [`record_remade_export`] records a copy: its length
+/// and digest, no act, and each private thread it carries, `roots`.
+pub(crate) fn record_remade_json_export(vault: &Vault, json: &[u8], roots: ExportThreadRoots) {
+    if let Some(copy) = raw_json_copy(json, roots) {
+        record_remade_export(vault, copy);
+    }
 }
 
 /// Records `copy`, an Owner's copy of whatever shape that carries other
@@ -439,21 +549,17 @@ pub(crate) fn record_member_mail_json_export(
 /// ([`crate::mail_pack::tell_member_mailboxes_in_txn`]), the owner's act and
 /// the custody values the copy carried as their handles as [`record_export`]
 /// records them, its audit row with how many such mailboxes it carries, and
-/// each private thread it carries told as [`record_export`] tells it. Such a
-/// copy is never also recorded through [`record_export`]. Nothing here but
-/// the act and the holder requests, which [`record_export`] records best
-/// effort too, is best effort: whatever this meets before the commit fails
-/// the write and nothing of it stands, and the copy's door then leaves
-/// those mailboxes out of the copy. Once the write commits, its row and
-/// notices stand and this answers where each custody value stands for its
-/// holder (FIX 4624(b)): a step the write door runs after the commit that
-/// fails is logged, never read as a rollback, so the copy keeps its one
-/// export id.
-///
-/// With no `mailboxes`, `copy` is the one made again without them after
-/// such a write did not commit: its row, counting no mailbox, is written
-/// the same way before a byte of it leaves, with no notice and no approval
-/// used, and a write that does not commit releases nothing.
+/// each private thread it carries told as [`record_export`] tells an owed
+/// copy's (L5-17). Such a copy is never also recorded through
+/// [`record_export`]. Nothing here but the act and the holder requests,
+/// which [`record_export`] records best effort too, is best effort: whatever
+/// this meets before the commit fails the write and nothing of it stands,
+/// and the copy's door then leaves those mailboxes out of the copy and
+/// records the copy made again ([`record_remade_export`]). Once the write
+/// commits, its row and notices stand and this answers where each custody
+/// value stands for its holder (FIX 4624(b)): a step the write door runs
+/// after the commit that fails is logged, never read as a rollback, so the
+/// copy keeps its one export id.
 ///
 /// # Errors
 ///
@@ -462,7 +568,7 @@ pub(crate) fn record_member_mail_json_export(
 pub(crate) fn record_member_mail_export(
     vault: &Vault,
     copy: ExportCopy,
-    mailboxes: Option<&crate::mail_pack::CarriedMemberMailboxes>,
+    mailboxes: &crate::mail_pack::CarriedMemberMailboxes,
 ) -> crate::Result<Vec<HolderExportRequest>> {
     let ExportCopy {
         scope,
@@ -490,14 +596,8 @@ pub(crate) fn record_member_mail_export(
         |txn| -> crate::Result<Vec<HolderExportRequest>> {
             // The id's allocation floor is kept with the row that names it.
             let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let told = match mailboxes {
-                Some(mailboxes) => crate::mail_pack::tell_member_mailboxes_in_txn(
-                    vault, txn, mailboxes, export, at,
-                )?,
-                // The copy made again carries no mailbox and uses no
-                // approval: no one is told.
-                None => 0,
-            };
+            let told =
+                crate::mail_pack::tell_member_mailboxes_in_txn(vault, txn, mailboxes, export, at)?;
             // The signed record goes before the holder requests, which link
             // it, and both before the row, which lists them, as
             // [`record_export`] writes them.
@@ -540,13 +640,14 @@ pub(crate) fn record_member_mail_export(
                 member_mailboxes: Some(told),
             };
             append_in_txn(vault, txn, &receipt)?;
-            crate::workspace_roster::notify_exported_threads_in_txn(
+            notify_exported_threads_in_txn(
                 vault,
                 txn,
                 &thread_roots,
                 exporter,
                 export,
-            );
+                NoticeDelivery::Owed,
+            )?;
             Ok(receipt.holder_requests)
         },
         |holder_requests| {

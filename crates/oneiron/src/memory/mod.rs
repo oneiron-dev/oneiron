@@ -103,6 +103,7 @@ mod entity_erase;
 pub mod erase_sweep;
 mod export;
 mod export_audit;
+mod export_audit_owed;
 mod export_kept;
 mod export_owner_copy;
 mod feeds;
@@ -259,8 +260,13 @@ pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
     ExportCopy, owner_copy_in_txn, raw_export_copy, raw_records_copy, record_export,
     record_member_mail_export, record_member_mail_json_export, record_raw_json_export,
-    turn_thread_root,
+    record_remade_export, record_remade_json_export, turn_thread_root,
 };
+pub(crate) use export_audit_owed::{
+    deliver_owed_export_audits, erase_export_audit_owed_actor_in_txn,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use export_audit_owed::{owed_export_audits, test_faults as export_audit_faults};
 pub use export_kept::KeptExportLapse;
 pub use export_transfer_read::{
     EXPORT_TRANSFER_READ_BYTES, ExportTransferPiece, ExportTransferReadRequest,

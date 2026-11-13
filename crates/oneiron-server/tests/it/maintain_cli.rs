@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::reopen_after_restart::{oneiron, stdout};
 
-const ENGINE_SWEEPS: [&str; 19] = [
+const ENGINE_SWEEPS: [&str; 20] = [
     "secret_lease_expiry",
     "critical_confirm_expiry",
     "symbol_lease_expiry",
@@ -19,6 +19,7 @@ const ENGINE_SWEEPS: [&str; 19] = [
     "secret_lift_history",
     "claim_vad_debt",
     "found_key_notices",
+    "export_audit_owed",
     "body_line_index_rebuild",
     "annotation_body_anchors",
     "drafter_corpus_sweep",

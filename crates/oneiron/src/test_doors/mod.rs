@@ -28,6 +28,7 @@ pub mod derive;
 pub mod derive_verbs;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
+pub mod export_audit_owed;
 pub mod fanout_admission;
 pub mod feeds;
 pub mod grant_roles;

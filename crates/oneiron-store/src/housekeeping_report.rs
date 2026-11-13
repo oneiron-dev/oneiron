@@ -142,6 +142,12 @@ pub enum SweepWork {
         /// Due records whose notices were raised.
         records: u64,
     },
+    ExportAuditOwed {
+        /// Owed export audits whose row and notices committed.
+        delivered: u64,
+        /// Owed export audits whose write failed; each stays owed.
+        failed: u64,
+    },
     BodyLineIndexRebuild {
         /// Indexes rebuilt and readable now.
         rebuilt: u64,
@@ -202,6 +208,7 @@ impl SweepWork {
                 .saturating_add(work.obligations_undecodable),
             Self::SecretLift(work) => work.failed,
             Self::ClaimVadDebt { failed, .. }
+            | Self::ExportAuditOwed { failed, .. }
             | Self::BodyLineIndexRebuild { failed, .. }
             | Self::AnnotationBodyAnchors { failed, .. } => failed,
             _ => 0,
@@ -239,6 +246,7 @@ impl SweepWork {
             Self::SecretLift(work) => work == SecretLiftWork::default(),
             Self::ClaimVadDebt { settled, failed } => settled == 0 && failed == 0,
             Self::FoundKeyNotices { records } => records == 0,
+            Self::ExportAuditOwed { delivered, failed } => delivered == 0 && failed == 0,
             Self::BodyLineIndexRebuild {
                 rebuilt,
                 failed,
