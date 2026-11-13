@@ -21,6 +21,7 @@ use oneiron::agent_def::workflow::WorkflowDefinition;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
 use oneiron::attempt_queue::{AttemptId, AttemptState};
 use oneiron::authority::MachineRole;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::verb_hook_ask::{HookAsk, SavedAsk};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
@@ -35,12 +36,13 @@ const VERB: &str = "self.use";
 /// hook asks about: the cursor checkpoint's `use_ordinal`.
 const ANSWERED_USES: u64 = 2;
 
-/// A rooted, served vault with its owner, and one workflow of one step
-/// dispatched.
+/// A rooted, served vault with its owner and the owner's proof, and one
+/// workflow of one step dispatched.
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
     owner: EntityId,
+    owner_proof: AuthenticatedOwner,
     root: AttemptId,
 }
 
@@ -51,7 +53,7 @@ impl Fixture {
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
-        let (owner, _owner_proof) = embedded_owner(&vault)?;
+        let (owner, owner_proof) = embedded_owner(&vault)?;
         vault.ensure_host_root_slip(&issuer)?;
         let agent = saved_agent(&vault, name)?;
         let workflow = EntityId::now();
@@ -71,8 +73,20 @@ impl Fixture {
             _dir: dir,
             vault,
             owner,
+            owner_proof,
             root,
         })
+    }
+
+    /// The owner's asking pre-hook on the step's `self.use`, bound as a
+    /// pack's bind writes it.
+    fn hook(&self) -> Result<HookAsk, TestError> {
+        Ok(HookAsk::on_verb(
+            &self.vault,
+            self.owner,
+            &self.owner_proof,
+            VERB,
+        )?)
     }
 
     /// The step's first try, with the hook's ask saved under its next
@@ -118,7 +132,7 @@ fn retried_call(
 #[test]
 fn a_park_whose_save_fails_on_storage_retries_the_same_leaf_and_finds_the_same_ask() -> TestResult {
     let fixture = Fixture::new("park-storage")?;
-    let hook = HookAsk::on_verb(fixture.owner, VERB);
+    let hook = fixture.hook()?;
     let (first, asked) = fixture.first_try_asked(&hook)?;
 
     let settled = fail_park(&fixture.vault, fixture.root, &first, ParkFault::Storage, 21)?;
@@ -158,7 +172,7 @@ fn a_park_whose_save_fails_on_storage_retries_the_same_leaf_and_finds_the_same_a
 fn an_ask_answered_proceed_during_the_backoff_lets_the_retried_call_run_with_no_park() -> TestResult
 {
     let fixture = Fixture::new("park-proceed")?;
-    let hook = HookAsk::on_verb(fixture.owner, VERB);
+    let hook = fixture.hook()?;
     let (first, asked) = fixture.first_try_asked(&hook)?;
 
     fail_park(&fixture.vault, fixture.root, &first, ParkFault::Storage, 21)?;
@@ -177,7 +191,7 @@ fn an_ask_answered_proceed_during_the_backoff_lets_the_retried_call_run_with_no_
 #[test]
 fn a_park_whose_save_is_refused_still_ends_the_leaf() -> TestResult {
     let fixture = Fixture::new("park-refused")?;
-    let hook = HookAsk::on_verb(fixture.owner, VERB);
+    let hook = fixture.hook()?;
     let (first, _asked) = fixture.first_try_asked(&hook)?;
 
     let settled = fail_park(&fixture.vault, fixture.root, &first, ParkFault::Refused, 21)?;
