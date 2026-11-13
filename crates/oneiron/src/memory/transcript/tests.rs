@@ -16,9 +16,11 @@ fn said(order: u32, author: WitnessAuthor, content: &str) -> WitnessMessage {
         author,
         message_type: "dialogue".to_owned(),
         content: content.to_owned(),
+        parts: None,
         metadata: None,
         is_visible: true,
         order,
+        quote: None,
     }
 }
 
@@ -36,8 +38,10 @@ fn witness(
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
             messages,
             occurred_at: at,
+            assertions: Default::default(),
         })
         .expect("witness a turn")
         .message_short_ids
@@ -358,6 +362,7 @@ fn scoped_room() -> ScopedRoom {
                 created_at: crate::unix_seconds_now(),
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )
         .expect("scoped message grant");

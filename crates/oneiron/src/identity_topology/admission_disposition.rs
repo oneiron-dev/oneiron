@@ -801,8 +801,6 @@ pub(crate) fn validate_incoming_disposition_in_txn(
 
 /// A fact sealed by `key`, as an install this vault may not know seals it:
 /// the trust-root fixtures deliver it like any peer row.
-// FIX [LIBTEST-QUARANTINE-IDENTITY-TOPOLOGY-ADMISSION-DISPOSITION-ITEMS]: the lib test target's type check fails here (3 errors: E0308 x1, E0061 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 pub(crate) fn sealed_by_key_for_test(
     key: &ed25519_dalek::SigningKey,
@@ -811,21 +809,32 @@ pub(crate) fn sealed_by_key_for_test(
     verdict: AdmissionVerdict,
 ) -> Result<AdmissionDisposition> {
     let core_digest = core_digest(core)?;
-    let signature = key
-        .sign(&AdmissionDisposition::transcript(
-            &target,
-            &core_digest,
-            verdict,
-            None,
-        ))
-        .to_bytes();
+    // An engine seal, as `AdmissionDisposition::seal` makes, carried by a
+    // MACHINE this vault never enrolled.
+    let carrier = EntityId::now();
+    let authority = SealAuthority::Engine(super::act_admission::EngineCause::Unattributed);
+    let authority_heads = BTreeSet::new();
+    let proposer = ProposerStamp::Bound(None);
+    let transcript = AdmissionDisposition::transcript(
+        &target,
+        &core_digest,
+        verdict,
+        None,
+        &carrier,
+        (&authority, &authority_heads),
+        &proposer,
+    )?;
     Ok(AdmissionDisposition {
         target,
         core_digest,
         verdict,
         reason: None,
+        carrier,
+        authority,
+        authority_heads,
+        proposer,
         signer_pk: key.verifying_key().to_bytes(),
-        signature,
+        signature: key.sign(&transcript).to_bytes(),
     })
 }
 

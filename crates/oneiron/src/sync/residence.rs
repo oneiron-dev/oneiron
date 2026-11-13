@@ -1,8 +1,6 @@
 //! Grant-checked, per-item residence projections over a window document.
 //! Window keys stay opaque here so a world-plus-month key has the same shape.
 
-// FIX [LIBTEST-QUARANTINE-SYNC-RESIDENCE-TESTS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
