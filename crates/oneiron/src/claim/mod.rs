@@ -114,7 +114,9 @@ mod write_target;
 pub use aging_profiles::ClaimAgingProfiles;
 pub use core_types::*;
 pub use decay::*;
-pub(crate) use deferred::{OwnClaimRetract, claim_has_deferred_action_in_txn};
+pub(crate) use deferred::{
+    OwnClaimRetract, claim_has_deferred_action_in_txn, owner_ruling_receipt_fields,
+};
 pub(crate) use evidence_support::has_live_support_in_txn;
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use history_handoff::*;

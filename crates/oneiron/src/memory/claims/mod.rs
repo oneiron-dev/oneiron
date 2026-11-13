@@ -338,8 +338,10 @@ pub struct MemoryReceipt {
     pub claim: Option<crate::lens::RecordRef>,
     /// A receipt's own fields (a hook run's hook, CODE id, body hash
     /// and run key), with its trigger, job and principal refs. A code capture
-    /// names its repo artifact and retained snapshot hash; otherwise empty on a
-    /// gate-ledger row.
+    /// names its repo artifact and retained snapshot hash; the owner's ruling
+    /// over their own agent's claim names the superseded claim and its author
+    /// (`superseded`, `superseded_author`, `superseded_author_class`);
+    /// otherwise empty on a gate-ledger row.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, String>,
 }
