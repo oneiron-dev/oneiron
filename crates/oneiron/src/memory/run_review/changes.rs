@@ -5,6 +5,7 @@
 //! reference its dispatcher bound, never guessed from an actor or a time.
 //! `Memory::run_changes_as_owner` is its call surface;
 //! `record_run_claim_in_txn` is its claim writer,
+//! `record_run_edge_in_txn` its code-run edge writer,
 //! `record_run_topology_in_txn` its identity-topology writer,
 //! `record_run_deletion_in_txn` its delete and erase writer,
 //! `record_run_effect_in_txn` its external-effect writer and
@@ -87,6 +88,32 @@ pub(crate) fn record_run_claim_in_txn(
         run,
         RunReviewChange::Claim {
             claim_ref: id.to_hex(),
+        },
+    )
+}
+
+/// Records that the run `envelope` names put an edge whose `edge.provenance`
+/// Claim is `provenance`, in the edge's own write transaction (ruling
+/// RUNCHANGES-EDGE-REF = A). An envelope no code run built names no run, and
+/// records nothing.
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_edge_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    envelope: &crate::WriteEnvelope,
+    provenance: EntityId,
+) -> crate::Result<()> {
+    let Some(run) = crate::code_run::envelope_run_ref(envelope) else {
+        return Ok(());
+    };
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::Edge {
+            provenance_ref: provenance.to_hex(),
         },
     )
 }
@@ -396,10 +423,9 @@ fn journal_member_in_txn(
         RunReviewChange::Note { note_ref, fork_ref } => {
             note_member_in_txn(memory.vault(), txn, &row, note_ref, fork_ref)?
         }
-        RunReviewChange::Edge { .. } => {
-            return Err(MemoryError::bad_request(
-                "the run journal holds a change kind it does not record",
-            ));
+        // Its provenance Claim is read as a claim is; its undo retracts it.
+        RunReviewChange::Edge { provenance_ref } => {
+            claim_member_in_txn(memory, txn, &row, provenance_ref)?
         }
     };
     Ok(StoredChange {
@@ -411,12 +437,13 @@ fn journal_member_in_txn(
     })
 }
 
-/// A journal claim's verdict and undo. A claim the gate still holds, or
-/// refused, never landed. A landed claim takes the undo a settle would give
-/// it: Authored, from the claim's own author, bound to the claim as it
-/// stands now; the revert's own checks then keep it when a later change
-/// rests on it. A claim deleted since the run wrote it has no undo, so the
-/// revert reports it as dependent.
+/// A journal claim's verdict and undo, or a journal edge's, read from its
+/// provenance Claim. A claim the gate still holds, or refused, never landed.
+/// A landed claim takes the undo a settle would give it: Authored, from the
+/// claim's own author, bound to the claim as it stands now; the revert's own
+/// checks then keep it when a later change rests on it. A claim deleted
+/// since the run wrote it has no undo, so the revert reports it as
+/// dependent.
 fn claim_member_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,

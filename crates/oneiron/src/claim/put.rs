@@ -18,6 +18,10 @@ use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use oneiron_contracts::affect::Vad;
 
+/// A code run's edge record attests who put the edge, which the trap knows,
+/// so its confidence is whole, as a NOTE birth's link record's is.
+const CODE_RUN_EDGE_PROVENANCE_CONFIDENCE: f32 = 1.0;
+
 impl Vault {
     /// Writes a typed CLAIM (type 0) entity with full structural validation
     /// (D11 key set, D17 predicate gate, D18 fail-closed body validation).
@@ -582,7 +586,9 @@ impl Vault {
     }
 
     /// `landing` runs first in the write transaction; its refusal writes
-    /// nothing, not even a gate receipt.
+    /// nothing, not even a gate receipt. An edge the gate allows lands with
+    /// its `edge.provenance` Claim in the same transaction, and that Claim
+    /// joins the run's change journal.
     #[expect(
         clippy::too_many_arguments,
         reason = "code-run edge trap carries gate material plus edge tuple"
@@ -628,8 +634,49 @@ impl Vault {
             false,
             true,
         )?;
+        self.put_code_run_edge_provenance_in_txn(&mut wtxn, src, kind, tgt, envelope)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// The `edge.provenance` Claim of the edge a code run's trap just put in
+    /// `wtxn` (ruling RUNCHANGES-EDGE-REF = A): the run's actor and class,
+    /// written in the edge's own transaction, and joined to the run's change
+    /// journal as its edge change. The edge already passed the trap's gate,
+    /// so its audit record runs no claim write gate of its own and leaves the
+    /// edge's value as stored. A run's undo retracts it through the existing
+    /// provenance retraction.
+    fn put_code_run_edge_provenance_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        envelope: &WriteEnvelope,
+    ) -> Result<()> {
+        let actor = envelope.actor();
+        let claim_id = self.store.clock.entity_id()?;
+        let learned_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        let record = crate::provenance::EdgeProvenanceClaimBody::new(
+            actor.entity_ref(),
+            CODE_RUN_EDGE_PROVENANCE_CONFIDENCE,
+            crate::provenance::SupersessionStatus::Confirmed,
+        );
+        self.put_authored_link_provenance_in_txn(
+            wtxn,
+            crate::provenance::EdgeProvenanceWrite {
+                claim_id: &claim_id,
+                subject: &crate::provenance::EdgeRef::new(*src, kind, *tgt),
+                body: &record,
+                actor_class: actor.actor_class(),
+                learned_at,
+                explicit_prior: None,
+                scope_project: None,
+                imported_evidence: None,
+                generated_evidence: None,
+            },
+        )?;
+        crate::memory::run_review::record_run_edge_in_txn(&self.store, wtxn, envelope, claim_id)
     }
 
     fn validate_code_run_write_actor_binding_in_txn(

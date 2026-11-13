@@ -16,8 +16,9 @@ pub use changes::{RunChanges, RunChangesRequest};
 #[cfg(oneiron_test_support)]
 pub(crate) use changes::{journal_changes, journal_row_sizes};
 pub(crate) use changes::{
-    record_run_claim_in_txn, record_run_deletion_in_txn, record_run_effect_in_txn,
-    record_run_note_in_txn, record_run_note_landing_in_txn, record_run_topology_in_txn,
+    record_run_claim_in_txn, record_run_deletion_in_txn, record_run_edge_in_txn,
+    record_run_effect_in_txn, record_run_note_in_txn, record_run_note_landing_in_txn,
+    record_run_topology_in_txn,
 };
 pub(crate) use receipts::run_settlement_receipts;
 

@@ -634,13 +634,14 @@ impl Vault {
     }
 
     /// The `edge.provenance` Claim of one link a NOTE birth's content writer
-    /// staged in `wtxn` (FIX 3959), written in that same transaction, never a
-    /// nested one, through the authored-structural path of
-    /// [`Vault::put_structural_edge_provenance`]: the engine's audit record of
-    /// a link the birth already passed its writer's gate for, so it runs no
-    /// claim write gate, and the link keeps its stored value, 12 B structural
-    /// or 24 B semantic, with no flags. It records the verified actor, its
-    /// class and the body's validated `source_revision_ref`.
+    /// staged in `wtxn` (FIX 3959), or of the edge a code run's edge trap put
+    /// in it (ruling RUNCHANGES-EDGE-REF = A), written in that same
+    /// transaction, never a nested one, through the authored-structural path
+    /// of [`Vault::put_structural_edge_provenance`]: the engine's audit record
+    /// of a link its writer's gate already passed, so it runs no claim write
+    /// gate, and the link keeps its stored value, 12 B structural or 24 B
+    /// semantic, with no flags. It records the verified actor, its class and
+    /// the body's validated `source_revision_ref`.
     pub(crate) fn put_authored_link_provenance_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -1068,9 +1069,10 @@ enum ProvenanceWriteDoor {
     /// A Claim its writer asserts: the claim write gate judges it, and a
     /// semantic subject's flags are stamped from its cohort winner.
     Asserted,
-    /// The engine's audit record of a link a NOTE birth staged in the same
-    /// transaction (FIX 3959): the birth already passed its writer's gate,
-    /// so the record runs none, and the link keeps its stored value.
+    /// The engine's audit record of a link a NOTE birth (FIX 3959) or a code
+    /// run's edge trap staged in the same transaction: its writer's gate
+    /// already passed, so the record runs none, and the link keeps its
+    /// stored value.
     AuthoredLink,
 }
 
