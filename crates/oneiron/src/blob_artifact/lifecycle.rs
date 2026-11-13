@@ -339,6 +339,66 @@ pub(crate) fn archive_version_stands_in_txn(
         }))
 }
 
+/// The owner's delete of a live artifact's lone `blob.version` claim, run as the release of the
+/// version it records (ASTRA-R2-002; Engine ruling 13 Nov 17:56). The claim goes with its version
+/// and, unless another holder keeps them, with its bytes, so no replica that syncs later keeps
+/// them. Where this vault holds the artifact's chain, the chain's version whose ledger claim this
+/// is goes as a response release does, and the artifact stays even when emptied. A vault without
+/// that version (a replica) tears the claim and settles its pair and bytes the same way.
+///
+/// `false` when a legal hold on the artifact, the claim or its ASSET keeps the version: nothing
+/// went.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn release_claimed_version_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    claim: &EntityId,
+    artifact: &EntityId,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<bool> {
+    let store = write.store;
+    let mut chained = None;
+    for row in VERSIONS.iter_from(store, wtxn, artifact.as_bytes())? {
+        let (_, record) = row?;
+        if record.claim_id == *claim {
+            chained = Some((record.version, record.content_hash));
+            break;
+        }
+    }
+    if let Some((version, chained_hash)) = chained {
+        release_version_in_txn(write, wtxn, artifact, version, &chained_hash, false)?;
+        return Ok(VERSIONS.get(store, wtxn, &(*artifact, version))?.is_none());
+    }
+    let asset = blob_artifact_asset_entity_id(content_hash)?;
+    for id in [artifact, claim, &asset] {
+        if crate::store::legal_hold::held_in_txn(store, wtxn, id.as_bytes())? {
+            return Ok(false);
+        }
+    }
+    let mut cleanup = BlobArtifactLifecycleCleanup::default();
+    tear_in_txn(write, wtxn, claim, &mut cleanup)?;
+    if forget_released_pair_in_txn(store, wtxn, artifact, content_hash)? {
+        release_unheld_bytes(
+            store,
+            wtxn,
+            content_hash,
+            artifact,
+            &mut cleanup,
+            &|txn, id| crate::batch::deindex_entity(write, txn, id),
+        )?;
+    }
+    if cleanup.had_graph_mutation {
+        crate::store::graph_version::increment_graph_version(store, wtxn)?;
+    }
+    if cleanup.had_vector {
+        crate::store::vector_index::increment_vector_version(store, wtxn)?;
+    }
+    Ok(true)
+}
+
 fn release_version_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     wtxn: &mut RwTxn<'_>,

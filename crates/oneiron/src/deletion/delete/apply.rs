@@ -186,6 +186,7 @@ impl Vault {
             receipt_id: None,
             sweep_key: None,
             turn_program_details: turn_program_details.to_vec(),
+            version_release: false,
         });
     }
 

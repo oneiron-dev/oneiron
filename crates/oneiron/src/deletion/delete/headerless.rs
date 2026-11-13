@@ -241,6 +241,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
+                version_release: false,
             });
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
@@ -313,6 +314,7 @@ impl Vault {
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
+                version_release: false,
             });
         }
 
@@ -352,6 +354,7 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
             turn_program_details,
+            version_release: false,
         })
     }
 }
