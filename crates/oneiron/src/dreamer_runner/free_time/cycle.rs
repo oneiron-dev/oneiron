@@ -407,6 +407,27 @@ fn open_cycle_in_txn(
     })
 }
 
+/// The writer of [`Vault::enqueue_due_free_time_cycles`] alone, for a
+/// boundary its scan found: a test stands a scan that read the policy before
+/// a later act (FABLE-6918-1).
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Runs the writer for `agent`'s scanned `boundary` at `now` on node
+    /// `local_node_id`; `true` when a cycle opened.
+    pub(crate) fn open_scanned_free_time_boundary_for_doors(
+        &self,
+        agent: EntityId,
+        boundary: u64,
+        now: u64,
+        local_node_id: u64,
+    ) -> Result<bool> {
+        let opened = self.with_write_txn_grouped(|txn| {
+            open_cycle_in_txn(self, txn, agent, boundary, now, local_node_id)
+        })?;
+        Ok(matches!(opened, Opened::Cycle))
+    }
+}
+
 /// Opens `policy`'s cycle at `boundary`: its root scope under the owner's
 /// total and saved say-so, its two items, and its row.
 fn open_items_in_txn(
