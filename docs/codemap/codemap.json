@@ -15779,7 +15779,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/checkout/lease/transactions.rs",
@@ -24218,7 +24218,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 3,
       "re-export": 17
      }
@@ -24619,7 +24619,7 @@
      "path": "src/connector_key/txn.rs",
      "purpose": "Connector key index keys and transaction primitives",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 18,
       "struct": 1
      }
     },
@@ -63611,7 +63611,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_chokepoint/budget.rs",
@@ -92505,6 +92505,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/connector_key_suspend.rs",
+     "purpose": "Door for `tests/connector_key_suspend_admission.rs` (FIX 22392): the shared suspend writer, as a budget…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -92808,7 +92818,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 72,
+      "mod": 73,
       "re-export": 1
      }
     },
@@ -101956,6 +101966,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/checkout_retained_renew.rs",
+     "purpose": "FIX 22391 CHECKOUT-RENEW: a teardown that retains a checkout leaves its holder the fence, and the holder…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/checkpoint_registry_rows.rs",
      "purpose": "Every side table states a complete checkpoint row (fix list rows 22409-22423, 22346): a payload family, a…",
      "surface": {}
@@ -102177,6 +102195,14 @@
      "surface": {
       "crate-vis": 7
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/connector_key_suspend_admission.rs",
+     "purpose": "FIX 22392 CONNECTOR-KEY: the one writer of a connector key's suspension admits Active -> Suspended alone",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -106454,7 +106480,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 75,
+     "files": 76,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106631,8 +106657,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7495,
-   "test_files": 1211
+   "source_files": 7496,
+   "test_files": 1213
   },
   "oneiron-agent-runtime": {
    "files": [
