@@ -396,6 +396,7 @@ fn serve_connection(
             ExchangeBounds {
                 idle: SERVE_IDLE_TIMEOUT,
                 repository_wait: Duration::from_secs(30),
+                command_section: smart_http::SERVE_COMMAND_SECTION_TIMEOUT,
                 scan: ScanBounds::default(),
                 spill_floor: None,
             },
