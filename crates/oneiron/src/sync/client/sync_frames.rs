@@ -15,9 +15,11 @@ impl SyncClient {
     /// Every socket has its own subscribed-key set. A reconnect retains its
     /// local Docs and root, but must negotiate every world VV again after
     /// the server's root response (and after all shared base VVs). The
-    /// worlds it follows are read here, before its first frame: a change
-    /// after this point renegotiates once the steady loop starts.
-    pub(in crate::sync) fn begin_connection_sync(&mut self) {
+    /// worlds it follows are read here, before its first frame, and every
+    /// frame of this negotiation selects from them
+    /// (`negotiated_worlds_or_live`): a change after this point
+    /// renegotiates once the steady loop starts.
+    pub(crate) fn begin_connection_sync(&mut self) {
         self.negotiated_worlds = self.effective_worlds().ok();
         self.requested_windows
             .lock()
@@ -33,6 +35,18 @@ impl SyncClient {
         // A grant or a replacement on an earlier socket proves nothing on this one (FIX 20202).
         self.promotions_granted.clear();
         self.replacements_installed.clear();
+    }
+
+    /// The worlds this negotiation's frames select from: the set read as
+    /// its connection began, which the steady loop compares
+    /// ([`Self::follow_set_changed`]), so a change during the negotiation
+    /// renegotiates. Before any connection began, or when that read failed,
+    /// the set read now.
+    fn negotiated_worlds_or_live(&self) -> std::result::Result<FollowedWorlds, TransportError> {
+        match &self.negotiated_worlds {
+            Some(worlds) => Ok(worlds.clone()),
+            None => self.effective_worlds(),
+        }
     }
 
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
