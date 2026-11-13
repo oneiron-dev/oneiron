@@ -225,7 +225,8 @@ impl Vault {
         Ok(())
     }
     /// `member`'s one membership role in the vault, delegate grants aside.
-    pub(super) fn member_role_in_txn(
+    /// Check-in reads an agent's role from it (P24-SHAPE Q1 = A).
+    pub(crate) fn member_role_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,

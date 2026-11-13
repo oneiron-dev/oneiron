@@ -4,10 +4,12 @@
 //! durable ask when it waits.
 //!
 //! Both take the verb whose act would run, where its effect sits and the
-//! effect's digest. The act class is the verb row's own, the role and the
-//! power come from the caller's own live owner Grant that lists the verb (or
-//! the caller is the vault owner), and the answer is go, wait, propose,
-//! absent or unstated ([`CheckInVerdict`]); see `crate::check_in::asker`.
+//! effect's digest. The act class is the verb row's own, the power comes
+//! from the caller's own live owner Grant that lists the verb and the role
+//! from the caller's live membership row on that Grant's vault, else the
+//! Grant's own (or the caller is the vault owner), and the answer is go,
+//! wait, propose, absent or unstated ([`CheckInVerdict`]); see
+//! `crate::check_in::asker`.
 //!
 //! * `preflight` (a read, `read`) writes nothing. A wait names the handle
 //!   only when the same saved call is already open.
