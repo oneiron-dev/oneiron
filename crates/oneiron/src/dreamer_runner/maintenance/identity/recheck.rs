@@ -308,6 +308,11 @@ pub(in crate::dreamer_runner::maintenance) fn run(
     _attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<()> {
+    run_page(vault, now)
+}
+
+/// [`run`]'s page, which reads nothing of the attempt.
+pub(super) fn run_page(vault: &Vault, now: u64) -> Result<()> {
     // Mentions settle through the Dreamer's lane; a vault that cannot
     // resolve it runs the pass as before the lane did, and says so (FIX
     // 10374).
