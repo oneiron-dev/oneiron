@@ -206,8 +206,6 @@ pub(super) struct MeteredMailWire<'w> {
     /// Whether the change feed reads now: it may spend the whole minute,
     /// the copy only [`COPY_SHARE_PERCENT`] of it.
     live: Cell<bool>,
-    /// Whether a call of this step was refused.
-    refused: Cell<bool>,
 }
 
 impl<'w> MeteredMailWire<'w> {
@@ -217,7 +215,6 @@ impl<'w> MeteredMailWire<'w> {
             inner,
             window: Cell::new(window),
             live: Cell::new(true),
-            refused: Cell::new(false),
         }
     }
 
@@ -231,21 +228,15 @@ impl<'w> MeteredMailWire<'w> {
         self.window.get()
     }
 
-    /// When the source's rest ends, if a call of this step was refused or
-    /// it still rests at `now`.
+    /// When the source's rest ends, while it still rests at `now`.
     pub(super) fn resting_until(&self, now: u64) -> Option<u64> {
-        let window = self.window.get();
-        if self.refused.get() {
-            return window.resting_until;
-        }
-        window.resting_at(now)
+        self.window.get().resting_at(now)
     }
 
     /// Rests the source until `until` and answers the refusal.
     fn rest(&self, mut window: MailQuotaWindow, until: u64) -> Error {
         window.resting_until = Some(until);
         self.window.set(window);
-        self.refused.set(true);
         resting()
     }
 
@@ -258,7 +249,6 @@ impl<'w> MeteredMailWire<'w> {
         let now = crate::unix_seconds_now();
         let mut window = self.window.get();
         if window.resting_at(now).is_some() {
-            self.refused.set(true);
             return Err(resting());
         }
         window.roll(now);

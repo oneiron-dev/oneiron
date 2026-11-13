@@ -68,13 +68,13 @@ const MESSAGE_HEADERS: [&str; 9] = [
 pub struct HttpGmailMailWire<'v> {
     vault: &'v Vault,
     client: reqwest::blocking::Client,
+    /// The answer bytes read from Gmail so far.
+    read_bytes: Cell<u64>,
     /// The credentials this wire has seen read their source's mailbox.
     verified: VerifiedCredentials,
     /// The fresh access tokens its sources' stored grants were exchanged
     /// for (fix list row 16311).
     tokens: FreshGoogleTokens,
-    /// The answer bytes read from Gmail so far.
-    read_bytes: Cell<u64>,
 }
 
 impl<'v> HttpGmailMailWire<'v> {
@@ -87,9 +87,9 @@ impl<'v> HttpGmailMailWire<'v> {
         Ok(Self {
             vault,
             client: rest::https_client()?,
+            read_bytes: Cell::new(0),
             verified: VerifiedCredentials::new(),
             tokens: FreshGoogleTokens::new(),
-            read_bytes: Cell::new(0),
         })
     }
 
