@@ -10294,13 +10294,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/seal/auto_commit.rs",
      "purpose": "Native policy checker for the verified SealJob producer",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -10474,7 +10474,7 @@
      "path": "src/blob_artifact/made_by.rs",
      "purpose": "The made_by receipt every blob version carries (ARCH-0078 \"The provenance receipt\", ARCH-0035 Rule A): what…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -46494,7 +46494,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 13
      }
     },
@@ -49287,7 +49287,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LinearEffectKind",
@@ -62646,7 +62646,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ServeReport",
@@ -103629,6 +103629,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/origin_serve_command_section_deadline.rs",
+     "purpose": "Census L4-31, ARCH-0068 #ra1-push-spool-open: \"deadline for a trickling command section\"",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -105817,7 +105825,7 @@
     "linear_sync": {
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
@@ -106613,10 +106621,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 272,
+   "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7495,
-   "test_files": 1209
+   "test_files": 1210
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -123588,6 +123596,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sandbox/syscall_filter.rs",
+     "purpose": "The syscall filter on Linux (census L4-09, ARCH-0075 \"Syscalls\"): a seccomp deny-list that every organ…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -123807,6 +123825,14 @@
      "path": "tests/organ_fence.rs",
      "purpose": "OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/organ_syscall_filter.rs",
+     "purpose": "The organ's syscall filter (census L4-09, ARCH-0075 \"Syscalls\"): an organ that calls ptrace dies by the…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -123937,7 +123963,7 @@
      "purpose": "Where an organ call runs (OF-575, owner ruling MESH): on this machine when it can start the organ, else on…"
     },
     "sandbox": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -123974,8 +124000,8 @@
    },
    "over_bar": 2,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 49,
-   "test_files": 4
+   "source_files": 50,
+   "test_files": 5
   },
   "oneiron-organ-protocol": {
    "files": [
@@ -154469,7 +154495,7 @@
      "path": "src/origin/smart_http/paths.rs",
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
-      "const": 23,
+      "const": 24,
       "fn": 6
      }
     },
