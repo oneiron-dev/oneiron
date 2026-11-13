@@ -919,7 +919,5 @@ mod test_hooks;
 #[cfg(test)]
 use test_hooks::panic_if_armed;
 
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-TESTS]: the lib test target's type check fails here (48 errors: E0061 x41, E0063 x7); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
