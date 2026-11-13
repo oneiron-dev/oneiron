@@ -506,6 +506,13 @@ fn admit(
         // revive a remote detector's local observations.
         return Ok(EntityStep::Skip);
     }
+    // A world-access grant or default stands only on the node that wrote it (RULING
+    // L2-53-CEILING): an older peer's row is dropped, and the rest of its window lands.
+    if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && crate::sync::local_claims::world_access_claim(data)
+    {
+        return Ok(EntityStep::Skip);
+    }
     // Byte-identical replay is an idempotent skip. The immutable kinds decide it inside their
     // own door instead: a REDACTION_AUDIT receipt beside its lease verification, a type-76
     // event beside its divergence and seq-clock checks, and an AUTHORITY_LOG row (ONE-1604-D5)

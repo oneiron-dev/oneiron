@@ -7,21 +7,44 @@ use loro::LoroMap;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::decode_claim_body;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::{EntityId, Result, Vault};
+use crate::{
+    EntityId, PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, Result,
+    Vault,
+};
 
 use super::bridge::parse_edge_key;
 use super::loro_support::map_for_each_value_bytes;
 
 /// E-sign events have no authenticated replay format. Every receiving batch
-/// refuses them, so no sync door may ship them. Undecodable CLAIM carriers
-/// also fail closed: their predicate cannot be proved exportable.
+/// refuses them, so no sync door may ship them. The world-access tiers are
+/// local authority ([`world_access_claim`]), so no sync door ships them
+/// either. Undecodable CLAIM carriers also fail closed: their predicate
+/// cannot be proved exportable.
 pub(super) fn claim_sync_allowed(raw: &[u8]) -> bool {
     if raw.first().copied() != Some(ENTITY_TYPE_CLAIM) {
         return true;
     }
     EntityMetadataHeader::parse(raw).is_some()
-        && decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-            .is_ok_and(|body| !body.predicate.starts_with("esign."))
+        && decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).is_ok_and(|body| {
+            !body.predicate.starts_with("esign.") && !world_access_predicate(&body.predicate)
+        })
+}
+
+/// Whether `data`, the body of a CLAIM row, is an ALLOWED-SET grant or a
+/// DEFAULT-SUBSET row. Both world-access tiers are local authority (ARCH-0067
+/// #phasing; RULING L2-53-CEILING, 14 Nov): a replicated put skips source
+/// trust, so a synced grant could set the worlds of an agent on a node whose
+/// owner never granted them. No sync door ships one, and every door that
+/// replays a peer's rows drops one: dropped, not refused, so the rest of an
+/// older peer's window still lands. Every row the world-authority fold reads
+/// was therefore written on this node.
+pub(super) fn world_access_claim(data: &[u8]) -> bool {
+    decode_claim_body(data, true).is_ok_and(|body| world_access_predicate(&body.predicate))
+}
+
+fn world_access_predicate(predicate: &str) -> bool {
+    predicate == PREDICATE_WORLD_ACCESS_ALLOWED_SET
+        || predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
 }
 
 pub(super) fn local_claim_sync_allowed(vault: &Vault, id: &EntityId) -> Result<bool> {
