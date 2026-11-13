@@ -4245,6 +4245,16 @@ async function museLoop08Lifecycle(
   return rows.find((row) => row.claim_ref === claimRef)?.lifecycle;
 }
 
+// A typed call whose refusal names its wire reason (HTTP status, code, message), not a bare status.
+async function museLoop08WithWireReason<T>(label: string, call: Promise<T>): Promise<T> {
+  try { return await call; } catch (error) {
+    if (error instanceof PublicHttpError) {
+      throw new Error(`${label}: HTTP ${error.reply.status} ${error.error?.code ?? "no-code"}: ${(error.error?.message ?? "").slice(0, 300)}`);
+    }
+    throw error;
+  }
+}
+
 async function museLoop08PendingRefs(client: PublicHttpClient): Promise<Set<string>> {
   const rows = await client.call("vault.writes.pending", {
     limit: 1000,
@@ -4290,7 +4300,7 @@ async function museLoop08AuditRows(client: PublicHttpClient): Promise<MuseLoop08
 // Doors used: vault.structural.put + pairActor (agent), vault.conversations.create,
 // vault.claims.seed (agent proposes), vault.claims.list / vault.writes.pending
 // (second-door reads), vault.runs.review / settle / settlement (owner decides),
-// vault.revert_run (owner subset, then all), vault.claims.upsert (later edit),
+// vault.revert_run (owner subset, then all), vault.claims.upsert (the owner's later edit supersedes beta),
 // vault.claims.history + vault.receipts + engine.awaitReceipt (undo readbacks),
 // facade raw routes for wrong actors, vault.authority.audit + /v1/core/slips/revoke
 // for the revoked-credential leg, engine.restart().
@@ -4472,13 +4482,16 @@ suite.test(test, "MUSE-LOOP-08", "Owner settles agent-proposed claims, undoes a 
     expect((await museLoop08Claims(owner, subjectRef, betaPredicate))[0]?.value).toBe(betaValueOne);
     expect((await museLoop08Claims(owner, subjectRef, gammaPredicate))[0]?.value).toBe(gammaValue);
 
-    // A later owner edit rests on beta, then undo-all is asked for.
-    const betaEdit = await owner.call("vault.claims.upsert", {
+    // A later owner edit rests on beta, then undo-all is asked for. The owner's upsert over
+    // their own agent's claim supersedes it in one act (lead ruling 12:19 Fri 13 Nov, #7385).
+    const betaEdit = await museLoop08WithWireReason("the owner's later edit of beta", owner.call("vault.claims.upsert", {
       predicate: betaPredicate, subject_ref: subjectRef, value: betaValueTwo,
       confidence: 1, source: "user_stated", scope, occurred_at: occurred + 60,
-    } satisfies FacadeInput<"vault.claims.upsert">);
+    } satisfies FacadeInput<"vault.claims.upsert">));
+    expect(betaEdit.approval).toBe("auto");
     await engine.awaitReceipt(betaEdit.receipt_ref);
-    expect((await museLoop08Claims(owner, subjectRef, betaPredicate)).some((row) => row.value === betaValueTwo)).toBe(true);
+    expect(await museLoop08Lifecycle(owner, subjectRef, betaPredicate, betaRow.claim_ref)).toBe("superseded");
+    expect((await museLoop08Claims(owner, subjectRef, betaPredicate, "active")).map((row) => row.value)).toEqual([betaValueTwo]);
     const rest = await owner.call("vault.revert_run", {
       run_id: settlement.run_id,
     } satisfies FacadeInput<"vault.revert_run">);
