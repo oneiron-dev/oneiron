@@ -27,25 +27,27 @@ use oneiron::{EntityId, Vault, VaultConfig};
 
 use crate::sync_harness::window_update_frame;
 
+/// The secret of the fixture host's slip issuer.
+pub(super) const FIXTURE_HOST_SECRET: &[u8] = b"device-world-follow";
+
 /// A device vault holding three worlds: `founder` and `granted` readable
 /// everywhere, and `kept_home` kept on the owner's machines, which this
 /// device is not.
-struct Device {
+pub(super) struct Device {
     _dir: tempfile::TempDir,
-    vault: Arc<Vault>,
+    pub(super) vault: Arc<Vault>,
     owner: AuthenticatedOwner,
-    founder: EntityId,
-    granted: EntityId,
+    pub(super) founder: EntityId,
+    pub(super) granted: EntityId,
     kept_home: EntityId,
 }
 
 impl Device {
-    fn open() -> Self {
+    pub(super) fn open() -> Self {
         let dir = tempfile::tempdir().expect("device vault directory");
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh device vault");
         let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
-        let issuer =
-            HostSlipIssuer::from_secret(b"device-world-follow").expect("fixture host issuer");
+        let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST_SECRET).expect("fixture host issuer");
         vault.ensure_host_root_slip(&issuer).expect("host root");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
         vault
@@ -89,10 +91,10 @@ impl Device {
                 },
                 None,
             )
-            .expect("the owner keeps the world on his machines");
+            .expect("the owner keeps the world on their machines");
     }
 
-    fn manager(&self) -> Arc<WindowManager> {
+    pub(super) fn manager(&self) -> Arc<WindowManager> {
         Arc::new(WindowManager::new(
             Arc::clone(&self.vault),
             Arc::new(Materializer::new()),
@@ -119,7 +121,7 @@ impl Device {
     }
 }
 
-fn now_secs() -> u64 {
+pub(super) fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after the epoch")
@@ -128,7 +130,7 @@ fn now_secs() -> u64 {
 
 /// The home's root update listing this month's base window and each world's
 /// window of this month.
-fn root_frame(at: u64, worlds: &[EntityId]) -> Vec<u8> {
+pub(super) fn root_frame(at: u64, worlds: &[EntityId]) -> Vec<u8> {
     let mut windows = vec![WindowKey::from_timestamp(at)];
     windows.extend(worlds.iter().map(|world| WindowKey::for_world(at, *world)));
     let root = create_root_doc("server", "vault", &windows);
@@ -176,6 +178,26 @@ fn world_promotion_requests(frames: &[Vec<u8>]) -> Vec<WindowKey> {
     keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     keys.dedup();
     keys
+}
+
+/// A device client in opened residence, its items opened by a selector.
+fn opened_client(device: &Device) -> SyncClient {
+    SyncClient::new(
+        device.manager(),
+        SyncClientConfig {
+            residence_mode: SyncResidenceMode::Opened,
+            residence_selector: Some(SyncSelector::new(
+                EntityId::now(),
+                EntityId::now(),
+                SyncSelectorWorld::All,
+                Vec::new(),
+                Vec::new(),
+            )),
+            ..SyncClientConfig::default()
+        },
+    )
+    .expect("opened device client")
+    .0
 }
 
 /// A window update of `world`'s window this month, as the home relays one.
@@ -244,29 +266,10 @@ fn a_picked_world_syncs_its_full_windows_when_opened() {
     connection
         .set_followed_worlds([device.founder].into_iter().collect())
         .expect("the owner's pick");
-    let selected = |device: &Device| {
-        let manager = device.manager();
-        SyncClient::new(
-            manager,
-            SyncClientConfig {
-                residence_mode: SyncResidenceMode::Opened,
-                residence_selector: Some(SyncSelector::new(
-                    EntityId::now(),
-                    EntityId::now(),
-                    SyncSelectorWorld::All,
-                    Vec::new(),
-                    Vec::new(),
-                )),
-                ..SyncClientConfig::default()
-            },
-        )
-        .expect("opened device client")
-        .0
-    };
 
     // The home's root arrives after the first frames: the picked world's
     // window is asked to be promoted, then for its vector.
-    let mut client = selected(&device);
+    let mut client = opened_client(&device);
     let mut frames = client.generate_initial_sync();
     frames.extend(client.handle_server_message(&root).expect("root update"));
     let founder = WindowKey::for_world(at, device.founder);
@@ -287,11 +290,68 @@ fn a_picked_world_syncs_its_full_windows_when_opened() {
         .expect("the device takes the home's grant for its followed window");
 
     // The next connect asks for it in its first frames, the root now held.
-    let reconnected = selected(&device);
+    let reconnected = opened_client(&device);
     assert_eq!(
         world_promotion_requests(&reconnected.generate_initial_sync()),
         vec![founder],
         "a reconnect asks again for the followed window's promotion",
+    );
+}
+
+/// The owner picks another world while a negotiation builds its frames and
+/// picks the first world again before its steady loop starts. The steady
+/// loop compares the pick with the one the negotiation read as it began, so
+/// every frame of the negotiation asks for that pick: else the socket would
+/// follow a world the device no longer picked and never renegotiate.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_negotiation_follows_the_pick_read_as_it_began() {
+    use oneiron::test_doors::world_follow;
+
+    let device = Device::open();
+    let at = now_secs();
+    let root = root_frame(at, &[device.founder, device.granted]);
+    let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
+        .expect("the device's connection");
+    let pick = |world: EntityId| {
+        connection
+            .set_followed_worlds([world].into_iter().collect())
+            .expect("the owner's pick");
+    };
+    let founder = WindowKey::for_world(at, device.founder);
+
+    // The home's root arrives after the first frames.
+    pick(device.founder);
+    let mut client = opened_client(&device);
+    world_follow::begin_connection_sync(&mut client);
+    pick(device.granted);
+    let mut frames = client.generate_initial_sync();
+    frames.extend(client.handle_server_message(&root).expect("root update"));
+    pick(device.founder);
+    assert!(
+        !world_follow::follow_set_changed(&client),
+        "precondition: the steady loop sees the pick its negotiation began with",
+    );
+    assert_eq!(
+        world_promotion_requests(&frames),
+        vec![founder.clone()],
+        "the root's requests ask for the pick the negotiation read as it began",
+    );
+
+    // The next socket, the root now held: its first frames ask for it too.
+    let mut reconnected = opened_client(&device);
+    world_follow::begin_connection_sync(&mut reconnected);
+    pick(device.granted);
+    let frames = reconnected.generate_initial_sync();
+    pick(device.founder);
+    assert!(
+        !world_follow::follow_set_changed(&reconnected),
+        "precondition: the steady loop sees the pick its negotiation began with",
+    );
+    assert_eq!(
+        world_promotion_requests(&frames),
+        vec![founder],
+        "the first frames ask for the pick the negotiation read as it began",
     );
 }
 
