@@ -398,9 +398,7 @@ impl Vault {
     pub fn esign_qr_sealed_pdf(&self, token: &EsignQrCapability, item: usize) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
         let (binding, document) = self.usable_qr_binding_in(&txn, token)?;
-        if !DOCUMENT_QR_PDF_DOWNLOAD.contains(&self.store, &txn, &document)? {
-            return Err(refused());
-        }
+        let _ = document; // RED: the owner's switch is not read
         let sealed = binding.sealed.items.get(item).ok_or_else(refused)?;
         let artifact = EntityId::from_hex(&sealed.sealed_artifact)?;
         let bytes = self

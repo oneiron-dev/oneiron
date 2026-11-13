@@ -27,13 +27,7 @@ impl Memory<'_> {
     /// the caller is no member of, or a document already drafted.
     pub fn esign_create(&self, input: &EsignCreateRequest) -> MemoryResult<EsignDraftView> {
         let document = document_id(&input.document_ref)?;
-        // Every envelope is sensitive unless the owner says otherwise
-        // (ARCH-0064a section 6): no other caller loosens it.
-        if input.qr_pdf_download && !self.is_vault_owner()? {
-            return Err(MemoryError::bad_request(
-                "only the vault owner turns on a document's QR PDF download",
-            ));
-        }
+        // RED: any caller turns the QR PDF download on
         if let EsignScope::Credential(lane) = self.esign_scope()? {
             return self.esign_create_in_lane(&lane, document, input);
         }

@@ -130,9 +130,7 @@ async fn pdf(
 /// under no caller, so guesses at a capability ask the call-volume question
 /// past the per-verb row; none is refused for its rate.
 fn refused(server: &SyncServer, path: &str) -> Response {
-    let _ = server
-        .wire_telemetry
-        .record_capability_refusal(&format!("POST {path}"), oneiron_vault_contract::now_ts());
+    let _ = (server, path); // RED: refusals are not counted
     (
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error":{"code":"verification_unavailable"}})),
