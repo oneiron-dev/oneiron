@@ -216,7 +216,11 @@ pub(super) fn binding(
                 crate::ports::DeletionMarker::HardDelete,
                 &id,
             )?;
-            if matches!(member, RunReviewChange::Erase { .. }) != hard.is_some() {
+            // An erase needs the entity's hard marker. A delete binds either
+            // way: a run that deleted and then erased one entity lists both
+            // changes, and the revert reads the delete one-way from that
+            // marker.
+            if matches!(member, RunReviewChange::Erase { .. }) && hard.is_none() {
                 return Err(MemoryError::bad_request(
                     "the requested undo class does not match the deletion",
                 ));
@@ -256,16 +260,12 @@ pub(super) fn review_in_txn(
         hash.update(&(bytes.len() as u64).to_be_bytes());
         hash.update(&bytes);
         changes.push(RunChangeOutcome {
-            change: member.change().to_owned(),
+            change: member.change(),
             verdict,
             receipt: None,
         });
     }
-    let read_refs: Vec<_> = input
-        .changes
-        .iter()
-        .map(|m| m.change().to_owned())
-        .collect();
+    let read_refs: Vec<_> = input.changes.iter().map(RunReviewChange::change).collect();
     Ok(RunReview {
         run_id: run,
         review_id: hash.finalize().to_hex().to_string(),
