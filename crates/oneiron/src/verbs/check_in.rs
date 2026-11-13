@@ -99,7 +99,7 @@ pub enum CheckInVerdict {
         reason: String,
         act_class: String,
         mode: String,
-        handle: Option<CheckInHandleView>,
+        handle: Option<Box<CheckInHandleView>>,
     },
     /// The caller lacks the power; a role it holds may propose the act to a
     /// holder.
@@ -258,7 +258,7 @@ fn verdict_view(verdict: AskVerdict, handle: Option<CheckInHandleView>) -> Check
             reason: reason.as_str().to_owned(),
             act_class: act.as_str().to_owned(),
             mode: mode.as_str().to_owned(),
-            handle,
+            handle: handle.map(Box::new),
         },
         AskVerdict::Propose { act } => CheckInVerdict::Propose {
             act_class: act.as_str().to_owned(),
