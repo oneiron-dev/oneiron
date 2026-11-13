@@ -22,7 +22,10 @@
 //! `training.no_evaluator`.
 //!
 //! `vault.coach.training_runs.execute` runs the same arm for one run on a
-//! caller's request (`step`), outside the Coach's queue.
+//! caller's request (`step`), outside the Coach's queue. Each writer that
+//! step starts (the dispatch, a hold, the evaluation claim) admits that
+//! caller again in its own snapshot; the Coach's own steps carry none.
+//! One evaluation holds a returned run at a time, whoever asks.
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
@@ -30,7 +33,8 @@ use oneiron::llm::run_admission::{
     BudgetLine, CallOutcome, PaidConnector, RunAdmission, RunDeclaration,
 };
 use oneiron::training_pack::{
-    HeldOutResult, TrainingConnector, TrainingEvalInput, TrainingRun, TrainingState,
+    HeldOutResult, TrainingConnector, TrainingEvalInput, TrainingRun, TrainingRunCaller,
+    TrainingState,
 };
 use oneiron::{EntityId, Error, Vault};
 
@@ -80,7 +84,7 @@ pub(super) fn run(
     let Some(run) = server.vault().run_coach_training_run(admitted)? else {
         return Ok(());
     };
-    step(server, &run, now).map(drop)
+    step(server, &run, now, None).map(drop)
 }
 
 /// What one host step did for a run.
@@ -99,19 +103,22 @@ pub(crate) enum TrainingStep {
 /// unscored one is scored (or held). Any other run is left as it is, as the
 /// Coach's queue never hands one over. The Coach's queued attempt and
 /// `vault.coach.training_runs.execute` both run it; the run's writer admits
-/// one dispatch and one completion whichever comes first.
+/// one dispatch, one completion and one evaluation whichever comes first.
+/// An execute's `caller` is admitted again by each writer the step starts;
+/// a recovery records the result of a dispatch its writer already admitted.
 pub(crate) fn step(
     server: &SyncServer,
     run: &TrainingRun,
     now: u64,
+    caller: Option<TrainingRunCaller>,
 ) -> oneiron::Result<TrainingStep> {
     if run.state == TrainingState::Authorized {
-        return train(server, run, now);
+        return train(server, run, now, caller);
     }
     if run.state == TrainingState::Running {
         recover(server, run)?;
     } else if run.awaits_host() {
-        evaluate(server, run, now)?;
+        evaluate(server, run, now, caller.as_ref())?;
     }
     Ok(TrainingStep::Settled)
 }
@@ -192,21 +199,32 @@ fn training_evaluator(server: &SyncServer, run: &TrainingRun) -> Option<Training
 
 /// Hands an authorized run to its own thread, or holds it with the reason
 /// this host cannot dispatch it.
-fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<TrainingStep> {
+fn train(
+    server: &SyncServer,
+    run: &TrainingRun,
+    now: u64,
+    caller: Option<TrainingRunCaller>,
+) -> oneiron::Result<TrainingStep> {
     let vault = server.vault();
     let (Some(binding), Some(connector)) = (
         trainer_binding(server, &run.compute.connector),
         training_connector(server, run),
     ) else {
         let detail = format!("{}: no trainer adapter on this host", run.compute.connector);
-        vault.hold_training_run(&run.id, HOLD_NO_CONNECTOR, &detail, now)?;
+        vault.hold_training_run_for(&run.id, HOLD_NO_CONNECTOR, &detail, now, caller.as_ref())?;
         return Ok(TrainingStep::Settled);
     };
     let declaration = match training_declaration(run) {
         Ok(declaration) => declaration,
         Err(error) => {
             let detail = format!("{:?}", error.kind());
-            vault.hold_training_run(&run.id, HOLD_NO_ADMISSION, &detail, now)?;
+            vault.hold_training_run_for(
+                &run.id,
+                HOLD_NO_ADMISSION,
+                &detail,
+                now,
+                caller.as_ref(),
+            )?;
             return Ok(TrainingStep::Settled);
         }
     };
@@ -218,27 +236,40 @@ fn train(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<Tr
     let vault = Arc::clone(vault);
     let id = run.id;
     crate::engine_thread(format!("training-run-{}", id.to_hex()))
-        .spawn(move || dispatch(&vault, &id, &admission, &binding, connector.as_ref()))
+        .spawn(move || {
+            dispatch(
+                &vault,
+                &id,
+                &admission,
+                &binding,
+                connector.as_ref(),
+                caller,
+            );
+        })
         .map_err(|_| Error::InvalidConfig("the training run's thread did not start".into()))?;
     Ok(TrainingStep::Dispatched)
 }
 
 /// The thread one dispatched run waits on. A refusal before dispatch leaves
 /// the run authorized, so the owner reads why on it; once dispatched, the
-/// run's own durable state is the record.
+/// run's own durable state is the record. An execute's `caller` the
+/// dispatch writer no longer admits leaves no hold either: that writer
+/// admits it too.
 fn dispatch(
     vault: &Vault,
     id: &EntityId,
     admission: &RunAdmission,
     binding: &PaidConnector,
     connector: &dyn TrainingConnector,
+    caller: Option<TrainingRunCaller>,
 ) {
     let outcome = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
-        Ok(runtime) => runtime
-            .block_on(vault.execute_authorized_training_pack(id, admission, binding, connector)),
+        Ok(runtime) => runtime.block_on(
+            vault.execute_authorized_training_pack_for(id, admission, binding, connector, caller),
+        ),
         Err(_) => Err(Error::InvalidConfig(
             "the training run's runtime did not start".into(),
         )),
@@ -255,9 +286,13 @@ fn dispatch(
         .is_some_and(|run| run.state == TrainingState::Authorized);
     if refused {
         let detail = format!("{:?}", error.kind());
-        if let Err(error) =
-            vault.hold_training_run(id, HOLD_REFUSED, &detail, vault.now_recorded_at())
-        {
+        if let Err(error) = vault.hold_training_run_for(
+            id,
+            HOLD_REFUSED,
+            &detail,
+            vault.now_recorded_at(),
+            caller.as_ref(),
+        ) {
             tracing::warn!(kind = ?error.kind(), "a refused training run kept no hold");
         }
     }
@@ -343,11 +378,18 @@ fn recover(server: &SyncServer, run: &TrainingRun) -> oneiron::Result<()> {
 }
 
 /// Scores a returned run through the held-out door, or holds it until this
-/// host has an evaluator for its seat. The evaluator sees only what
-/// `open_training_held_out` serves, and its result goes through
-/// `record_training_evaluation`. A question head whose receipt did not
-/// reproduce on this host (FIX 7568) holds as parity-failed first.
-fn evaluate(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<()> {
+/// host has an evaluator for its seat. The evaluator sees only what its
+/// claim (`claim_training_evaluation`) serves, and its result goes through
+/// `record_training_evaluation`. A run another evaluation holds, or one
+/// scored since, is left to it; an evaluator that fails releases its claim,
+/// so a later step scores the run again. A question head whose receipt did
+/// not reproduce on this host (FIX 7568) holds as parity-failed first.
+fn evaluate(
+    server: &SyncServer,
+    run: &TrainingRun,
+    now: u64,
+    caller: Option<&TrainingRunCaller>,
+) -> oneiron::Result<()> {
     let vault = server.vault();
     let parity = run
         .result
@@ -359,19 +401,32 @@ fn evaluate(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result
             parity.token_mismatches.len(),
             parity.token_mismatches.join(", ")
         );
-        vault.hold_training_run(&run.id, HOLD_PARITY_FAILED, &detail, now)?;
+        vault.hold_training_run_for(&run.id, HOLD_PARITY_FAILED, &detail, now, caller)?;
         return Ok(());
     }
     let Some(evaluator) = training_evaluator(server, run) else {
-        vault.hold_training_run(
+        vault.hold_training_run_for(
             &run.id,
             HOLD_NO_EVALUATOR,
             "no seat evaluator or trained-weight loader on this host",
             now,
+            caller,
         )?;
         return Ok(());
     };
-    let input = vault.open_training_held_out(&run.id)?;
-    vault.record_training_evaluation(&run.id, &evaluator(&input)?)?;
+    let Some(input) = vault.claim_training_evaluation(&run.id, caller)? else {
+        return Ok(());
+    };
+    let evaluation = match evaluator(&input) {
+        Ok(evaluation) => evaluation,
+        Err(error) => {
+            // The claim lapses on its own if its release does not commit.
+            if let Err(release) = vault.release_training_evaluation(&run.id, &input.exposure.id) {
+                tracing::warn!(kind = ?release.kind(), "a failed evaluation kept its claim");
+            }
+            return Err(error);
+        }
+    };
+    vault.record_training_evaluation(&run.id, &evaluation)?;
     Ok(())
 }

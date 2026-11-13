@@ -30,8 +30,6 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::EdgeActorClass;
-use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::edit_distance::reservoir::ReservoirScope;
 use crate::entity_id::EntityId;
 use crate::memory::{
@@ -39,7 +37,8 @@ use crate::memory::{
     MemoryResult,
 };
 use crate::training_pack::{
-    ArtifactPin, SplitSide, TrainingHold, TrainingPackDraft, TrainingRun, TrainingState,
+    ArtifactPin, SplitSide, TrainingHold, TrainingPackDraft, TrainingRun, TrainingRunCaller,
+    TrainingState,
 };
 
 /// The owner's role prepare: the row's own name.
@@ -398,33 +397,19 @@ fn read_admitted(
 }
 
 /// The vault owner, or an agent one live Grant from a live owner names and
-/// lists `verb` for, in `txn`.
+/// lists `verb` for, in `txn`: the rule each execute-started writer checks
+/// again ([`TrainingRunCaller`]).
 fn admit_caller_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, verb: &str) -> MemoryResult<()> {
-    let vault = memory.vault();
-    if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
-    {
-        return Ok(());
+    match training_run_caller(memory).refusal_in_txn(memory.vault(), txn, verb)? {
+        None => Ok(()),
+        Some(why) => Err(refused(verb, why)),
     }
-    if memory.actor_class() != EdgeActorClass::Agent {
-        return Err(refused(
-            verb,
-            "the caller is neither the vault owner nor an agent",
-        ));
-    }
-    match principal_standing_or_lapse_in_txn(
-        vault,
-        txn,
-        memory.actor(),
-        EdgeActorClass::Agent,
-        verb,
-    )? {
-        Ok(standing) if standing.grant.is_some() => Ok(()),
-        Err(NoStanding::PactStandingLapsed) => Err(refused(verb, PACT_STANDING_LAPSED)),
-        Ok(_) | Err(NoStanding::NotStanding) => Err(refused(
-            verb,
-            "no live Grant from a live owner names this agent and lists the verb",
-        )),
-    }
+}
+
+/// The caller of `memory`, as an execute carries it to the writers it
+/// starts.
+pub fn training_run_caller(memory: &Memory<'_>) -> TrainingRunCaller {
+    TrainingRunCaller::new(memory.actor(), memory.actor_class())
 }
 
 /// The refusal of a caller `verb` does not admit.

@@ -9,8 +9,9 @@ use oneiron::memory::{
 use oneiron::task_verb::sdk::{
     RoleTrainingPrepareRequest, RoleTrainingPrepared, TRAINING_RUN_EXECUTE_VERB,
     TRAINING_RUN_PREPARE_VERB, TrainingRunExecuteRequest, TrainingRunObservation, TrainingRunPhase,
-    TrainingRunProgress, training_run_execute_admits, training_run_observation,
-    training_run_progress, training_run_read_for_execute, training_run_to_execute,
+    TrainingRunProgress, training_run_caller, training_run_execute_admits,
+    training_run_observation, training_run_progress, training_run_read_for_execute,
+    training_run_to_execute,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
 
@@ -67,8 +68,9 @@ pub(crate) async fn vault_coach_training_runs_prepare(
 
 /// `vault.coach.training_runs.execute`: this host's next step for a run its
 /// owner authorized, for the owner or an agent whose own live Grant lists
-/// the verb, checked in each snapshot the door reads. The answer is the
-/// run's progress, not row content, so the door lists none.
+/// the verb, checked in each snapshot the door reads and again in each
+/// writer its steps start. The answer is the run's progress, not row
+/// content, so the door lists none.
 pub(crate) async fn vault_coach_training_runs_execute(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -107,7 +109,9 @@ pub(super) fn training_run_executor_admits(
 /// it waits while the run moves on its own and scores a run that returns
 /// inside the bound, then answers where the run stands. The bound ends only
 /// this call: the run's trainer keeps running, and a later execute or the
-/// Coach's queue takes the run on from where it stands.
+/// Coach's queue takes the run on from where it stands. Each step carries
+/// the caller to the writers it starts; a step whose writer refused the
+/// caller answers with the refusal the door's own read then gives.
 fn execute(
     server: &SyncServer,
     memory: &Memory<'_>,
@@ -116,8 +120,16 @@ fn execute(
     let started = Instant::now();
     let bound = Duration::from_millis(input.wait_ms);
     let before = training_run_to_execute(memory, input)?;
+    let caller = Some(training_run_caller(memory));
     let now = || server.vault().now_recorded_at();
-    let mut dispatched = step(server, &before, now()).map_err(failed)? == TrainingStep::Dispatched;
+    let take_step = |run: &TrainingRun| {
+        step(server, run, now(), caller).map_err(|error| {
+            training_run_read_for_execute(memory, &input.run)
+                .err()
+                .unwrap_or_else(|| failed(error))
+        })
+    };
+    let mut dispatched = take_step(&before)? == TrainingStep::Dispatched;
     let mut scored = before.state == TrainingState::Returned;
     loop {
         let run = training_run_read_for_execute(memory, &input.run)?.ok_or_else(|| {
@@ -142,7 +154,7 @@ fn execute(
                 phase: TrainingRunPhase::Evaluating,
             } if !scored => {
                 scored = true;
-                step(server, &run, now()).map_err(failed)?;
+                take_step(&run)?;
                 continue;
             }
             TrainingRunProgress::Running { .. } => {}

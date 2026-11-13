@@ -6,7 +6,10 @@ nothing: no optimisation, no network, no spend, and only the Python standard lib
 It reads the staged training rows and the staged starting files, checks each against the
 request's pins, and returns two fixed load sets whose weights file records the SHA-256 of
 the rows it read, so a test can tell that the actual staged corpus reached it. Its probe
-logits are fixed, the same on both sides. Any failed check writes a refused receipt.
+logits are fixed, the same on both sides, unless the plan's settings name an
+`export_logit_skew`: that is added to the last export logit while the receipt still states
+a largest difference of 0, so a test can tell which difference the engine keeps. Any
+failed check writes a refused receipt.
 
 Run as the host runs a worker: `<python> -I role_trainer_worker.py --request <job json>
 --output <new dir>`.
@@ -193,12 +196,14 @@ def train(request_bytes: bytes, out: Path) -> dict:
     for side in ("training", "export"):
         row = _write_file(out, f"{side}/{WEIGHTS_NAME}", "weights", weights, source)
         sets[side] = {"model": model, "files": [row], "load_set_blake3": load_set_blake3(model, [row])}
+    skew = float(job["settings"].get("export_logit_skew", 0.0))
+    export_logits = FIXED_LOGITS[:-1] + [FIXED_LOGITS[-1] + skew]
     probes = [
         {
             "probe_id": probe["id"],
             "input_blake3": blake3_hex(canonical_json(probe["input"])),
             "training_logits": FIXED_LOGITS,
-            "export_logits": FIXED_LOGITS,
+            "export_logits": export_logits,
             "training_argmax": 0,
             "export_argmax": 0,
             "max_logit_difference": 0.0,

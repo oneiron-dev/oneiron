@@ -8,7 +8,10 @@
 //! - an agent executes only with a Grant listing the verb;
 //! - a role run on a question connector, or on a recipe the role trainer does
 //!   not list, holds with `training.no_connector` and answers at once;
-//! - an unknown run and a wait above the cap are refused.
+//! - an unknown run and a wait above the cap are refused;
+//! - the export check judges the difference the probe's own logits give, not
+//!   the worker's stated one, so a summary inside the wire's rounding slack
+//!   does not pass a zero tolerance.
 //!
 //! Reads JSON and the vault's own run record, so on a main without the role
 //! trainer every case fails at its first role-trainer prepare (404, no such
@@ -312,6 +315,49 @@ fn execute_holds_a_role_run_on_a_recipe_the_role_trainer_does_not_list() {
                 .exists(),
             "no job directory for a run the trainer does not serve"
         );
+        fixture.finish().await;
+    });
+}
+
+/// The worker states a largest logit difference of 0 while its export logits
+/// sit 5e-10 from its training ones: inside the wire's rounding slack, so the
+/// receipt is accepted, but the engine keeps the 5e-10 its logits give, and
+/// that fails the owner's zero tolerance.
+#[test]
+fn the_export_check_judges_the_logits_difference_not_the_workers_summary() {
+    run_on_engine_stack("role-execute-logit-difference", || async {
+        let fixture = Fixture::new().await;
+        let mut seeded = seed_role_run(&fixture.vault);
+        seeded.draft["plan"]["export_logit_tolerance"] = json!(0.0);
+        seeded.draft["plan"]["settings"]["export_logit_skew"] = json!(5e-10);
+        let (run, spec) = prepare(&fixture, &seeded.draft, ROLE_TRAINER).await;
+        let (status, handoff) = fixture.authorize(&run, &spec).await;
+        assert_eq!(status, StatusCode::OK, "owner authorize: {handoff}");
+
+        let (status, read) = fixture
+            .as_owner(EXECUTE_VERB, json!({"run": run, "wait_ms": WAIT_MS}))
+            .await;
+        let job = role_jobs_root(fixture.dir.path()).join(format!("{run}-{spec}"));
+        assert_eq!(status, StatusCode::OK, "owner execute: {read}");
+        assert_eq!(read["state"], "returned", "{read}\n{}", job_evidence(&job));
+        let receipt: Value = serde_json::from_slice(
+            &std::fs::read(job.join("output/receipt.json")).expect("the worker's receipt"),
+        )
+        .expect("receipt JSON");
+        assert_eq!(
+            receipt["probes"][0]["max_logit_difference"],
+            json!(0.0),
+            "{receipt}"
+        );
+
+        let record = stored(&fixture, &run);
+        let checks = &record.result.as_ref().expect("the returned result").checks;
+        assert_eq!(checks.argmax_flips, 0, "{checks:?}");
+        assert!(
+            checks.max_logit_difference > checks.tolerance,
+            "the logits' difference is kept: {checks:?}"
+        );
+        assert!(!checks.passed(), "{checks:?}");
         fixture.finish().await;
     });
 }

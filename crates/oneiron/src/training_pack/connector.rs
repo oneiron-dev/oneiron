@@ -17,7 +17,8 @@ use super::{
     CandleParityCheck, CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck,
     PinnedCheckpoint, ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin,
     TrainingDeclarationPin, TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult,
-    TrainingRun, TrainingState, hash_json, invalid, json_value, run_in_txn,
+    TrainingRun, TrainingRunCaller, TrainingState, admit_caller_in_txn, hash_json, invalid,
+    json_value, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -202,6 +203,24 @@ impl Vault {
         binding: &PaidConnector,
         connector: &dyn TrainingConnector,
     ) -> Result<TrainingRun> {
+        self.execute_authorized_training_pack_for(id, admission, binding, connector, None)
+            .await
+    }
+
+    /// [`Self::execute_authorized_training_pack`] for the run's execute
+    /// `caller`, when one started it: the writer that moves the run to
+    /// Running admits the caller again in its own snapshot (LEARN-GRANT), and
+    /// a caller it no longer admits leaves the run authorized and undispatched.
+    /// The dispatched job's own completion needs no caller: its writer admitted
+    /// the job.
+    pub async fn execute_authorized_training_pack_for(
+        &self,
+        id: &EntityId,
+        admission: &RunAdmission,
+        binding: &PaidConnector,
+        connector: &dyn TrainingConnector,
+        caller: Option<TrainingRunCaller>,
+    ) -> Result<TrainingRun> {
         let run = self
             .training_run(id)?
             .ok_or_else(|| invalid("training run not found"))?;
@@ -230,6 +249,7 @@ impl Vault {
             .admit_paid(binding, run.compute.quantity)
             .map_err(|e| invalid(&e.to_string()))?;
         self.with_write_txn_grouped(|txn| {
+            admit_caller_in_txn(self, txn, caller.as_ref())?;
             let mut current = run_in_txn(self, txn, id)?;
             if current.state != TrainingState::Authorized {
                 return Err(invalid(
