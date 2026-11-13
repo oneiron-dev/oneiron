@@ -8006,13 +8006,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/document_import/owner_archive_restore.rs",
-     "purpose": "The owner act and call-scoped source permit for a whole-vault archive restore, and the claims that restore…",
+     "purpose": "The owner act and call-scoped source permit for a whole-vault archive restore, the claims that restore…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -46689,9 +46689,9 @@
      "path": "src/inbox/mod.rs",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -46770,6 +46770,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RestoreInboxGroup",
+      "RestoreInboxResolution",
+      "RestoreMemberOutcome",
+      "RestoreMemberVerdict",
+      "RestoreMemberWait"
+     ],
+     "path": "src/inbox/restore_group.rs",
+     "purpose": "The owner's whole-vault restores as inbox groups (RULING 02:26 13 Nov, NOTE ARCHIVE-RESTORE-APPROVE-DESIGN…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/inbox/root_group.rs",
      "purpose": "Complete root group cards (FIX 9871): every open Dreamer proposal in the tray, read in one pass with its…",
@@ -46827,7 +46845,7 @@
       "UnifiedInboxGroupPage"
      ],
      "path": "src/inbox/unified.rs",
-     "purpose": "The owner's one inbox over both group kinds (FIX 3026): the Dreamer run groups over the pending-consent tray…",
+     "purpose": "The owner's one inbox over every group kind (FIX 3026): the Dreamer run groups over the pending-consent…",
      "surface": {
       "enum": 4,
       "fn": 5,
@@ -53610,6 +53628,16 @@
      "path": "src/memory/claims/settle/conflict_head.rs",
      "purpose": "The head an approved proposal supersedes (e2e MEMORY-01; ARCH-0040 `mcp:5`, ARCH-0003 conflictSet): the…",
      "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/settle/restored_member.rs",
+     "purpose": "One member of an owner restore's inbox group, settled on the `vault.claims.settle` path (RULING 02:26 13…",
+     "surface": {
       "crate-vis": 2
      }
     },
@@ -56397,6 +56425,16 @@
      "purpose": "FIX 4727: each reviewed run's settlement projects into `vault.receipts` as the common `ProposalOutcome`…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/restore_group.rs",
+     "purpose": "The owner's answer to an owner restore's inbox group (RULING 02:26 13 Nov, NOTE…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -101243,6 +101281,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/archive_restore_inbox_group.rs",
+     "purpose": "The owner approves the claims of one whole-vault restore in one receipted act (RULING 02:26 13 Nov, NOTE…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -104805,7 +104851,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104945,7 +104991,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 402,
+     "files": 404,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105689,8 +105735,8 @@
    },
    "over_bar": 264,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7459,
-   "test_files": 1153
+   "source_files": 7462,
+   "test_files": 1154
   },
   "oneiron-agent-runtime": {
    "files": [
