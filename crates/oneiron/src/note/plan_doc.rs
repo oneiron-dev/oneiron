@@ -309,7 +309,7 @@ fn revision_hex(revision: &[u8; 32]) -> String {
     crate::entity_id::bytes_to_hex_lower(revision)
 }
 
-fn is_plan_doc_kind(kind: &NoteKind) -> bool {
+pub(super) fn is_plan_doc_kind(kind: &NoteKind) -> bool {
     matches!(kind, NoteKind::Plugin(tag) if tag == PLAN_DOC_PLUGIN_TAG)
 }
 
