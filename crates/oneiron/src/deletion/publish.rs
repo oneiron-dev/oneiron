@@ -215,9 +215,10 @@ impl Vault {
             // The merge runs OUTSIDE the materializer lock: importing into
             // an observed doc fires Observer B synchronously on this
             // thread, and the callback takes the (non-reentrant) lock
-            // itself. The snapshot MODE is resolved here too — its scrub
-            // takes its own write txn, which cannot nest inside the publish
-            // txn opened below.
+            // itself. The snapshot MODE and a policy prune's history-free
+            // pin are settled under the lock, before the publish txn opens
+            // below: each takes a write txn of its own, which cannot nest
+            // inside the publish txn.
             let merged_update_keys =
                 merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
             // The snapshot-mode decision, the gate staging, the tombstone
@@ -242,6 +243,8 @@ impl Vault {
             // lock is NOT held here (manager lock-order pin).
             let delete_update = {
                 let _guard = materializer.lock();
+                // Before the mode, which reads the pin (fix list row 17211).
+                let prunes_policies = self.pin_before_policy_prune(id, &window_key, &window.doc)?;
                 let history_free = self.resolve_window_snapshot_mode(&window_key, &window.doc)?;
                 self.prepare_topology_delete(id, window_ts, value)?;
                 self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
@@ -278,6 +281,15 @@ impl Vault {
                             id,
                             &value.encode(),
                         )?;
+                        // The policies no binding reaches now go in this
+                        // commit; the window was pinned before the txn opened.
+                        if prunes_policies {
+                            crate::sync::source_audiences::prune_unreached_policies(
+                                self,
+                                &window.doc,
+                                None,
+                            )?;
+                        }
                         window
                             .doc
                             .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
@@ -329,6 +341,7 @@ impl Vault {
             }
             Err(err) => return Err(err),
         };
+        let prunes_policies = self.pin_before_policy_prune(id, &window_key, &doc)?;
         let history_free = self.resolve_window_snapshot_mode(&window_key, &doc)?;
         self.prepare_topology_delete(id, window_ts, value)?;
         self.stage_deletion_gate_recovery(id, value, gate_decision, gate)?;
@@ -360,6 +373,9 @@ impl Vault {
         self.store
             .sync_hooks
             .apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
+        if prunes_policies {
+            crate::sync::source_audiences::prune_unreached_policies(self, &doc, None)?;
+        }
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
@@ -677,6 +693,35 @@ impl Vault {
         }
         count.finish(self);
         Ok(keys)
+    }
+
+    /// Whether the tombstone of `id` leaves a policy revision or receipt in
+    /// `doc`'s source-audience map that no binding reaches. If it does, the
+    /// window is pinned history-free first, in a writer of its own (fix list
+    /// row 17211). This runs before [`Self::resolve_window_snapshot_mode`],
+    /// which reads the pin, and before the publish transaction opens, which
+    /// LMDB cannot nest. The tombstone's own mutation then deletes those
+    /// keys, after the re-fold. A refused or failed publication keeps the
+    /// pin, never an unpinned pruned document. Under a pin, the mutation also
+    /// prunes a policy an import left unreached meanwhile. Without one it
+    /// prunes nothing, and the next export's scrub prunes it.
+    #[cfg(feature = "sync")]
+    fn pin_before_policy_prune(
+        &self,
+        id: &EntityId,
+        window_key: &crate::window_key::WindowKey,
+        doc: &loro::LoroDoc,
+    ) -> Result<bool> {
+        // A tombstone removes the bindings of the row and of its masked copy
+        // (FIX 7608).
+        let removed: std::collections::BTreeSet<EntityId> = std::iter::once(*id)
+            .chain(crate::origin::secret_projection::copy_id::copy_id(id).ok())
+            .collect();
+        if !crate::sync::source_audiences::removal_prunes_policies(doc, &removed) {
+            return Ok(false);
+        }
+        crate::sync::window::require_history_free_window(self, window_key)?;
+        Ok(true)
     }
 
     /// Decides history-free versus ordinary snapshot bytes for this window

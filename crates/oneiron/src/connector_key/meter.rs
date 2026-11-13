@@ -17,7 +17,7 @@ use super::record::{
     CalendarPeriod, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
     EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetWindow,
 };
-use super::txn::suspend_connector_key_in_txn;
+use super::txn::{SuspendAdmission, SuspendCause, suspend_connector_key_in_txn};
 
 mod charge;
 mod rate_window;

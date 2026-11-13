@@ -11,10 +11,7 @@ use serde_json::Value;
 
 use self::connector_wait::connector_call_answer;
 use crate::EntityId;
-use crate::code_run::payload::{
-    agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
-    self_call_request_value,
-};
+use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
@@ -33,9 +30,27 @@ use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
 
 use self::receipts::{
     KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
-    VERB_HOOK_STOPPED, is_write, meets, never_ran_mark, row_identity, standing_refusal,
+    VERB_HOOK_STOPPED, is_write, meets, never_ran_mark, records_call, standing_refusal,
 };
 pub(crate) use self::receipts::{recorded_call, write_receipt_may_have_run};
+
+/// Test door (census L1-06): records `first` as the bridge records a write,
+/// then answers whether `again`, the same step's write made again, meets
+/// that row by the comparison `kept_write_answer` makes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn resumed_write_meets_recorded_row(
+    first: &SelfAgentVerbCall,
+    again: &SelfAgentVerbCall,
+) -> Result<bool> {
+    let row = CodeRunBridgeCall::record(
+        0,
+        &SelfCall::AgentVerb(first.clone()),
+        &never_ran_mark(VERB_HOOK_STOPPED),
+        0,
+        0,
+    )?;
+    Ok(records_call(&row, again))
+}
 
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
@@ -361,7 +376,7 @@ impl HostSelfDispatcher<'_> {
                 call.clone(),
             ))?)?
         } else {
-            row_identity(row) == Some(call_identity(call.verb.as_str(), &call.input))
+            records_call(row, &call)
         };
         if !recorded {
             return Err(Error::InvariantViolation(

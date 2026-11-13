@@ -172,6 +172,55 @@ pub(crate) async fn serve_artifact_path(
     Ok(response)
 }
 
+/// Who reads a live pointer, as the artifact listener and the app backend
+/// route judge one request.
+struct ArtifactReadCaller {
+    /// The identified principal of an unrestricted read credential: a
+    /// world member's Grant admits it.
+    principal: Option<oneiron::EntityId>,
+    /// The vault owner's proof when the request is his own: a private
+    /// pointer serves him alone (PUBLIC-BACKEND = A).
+    owner: Option<oneiron::consent::AuthenticatedOwner>,
+}
+
+/// Judges the caller of one artifact read. An adapter without content-scope
+/// enforcement must reject narrowed credentials: neither a write-only slip
+/// nor an identity alone grants a read. On a managed vault the caller is the
+/// request's own (a slip, or the owner its supervisor attested); a caller
+/// that does not authenticate reads as no one.
+///
+/// The owner's proof comes from the owner routes' own rule
+/// ([`super::owner_routes::owner`]): his full slip, a managed vault's
+/// attested owner, or a self-hosted root. His narrowed slip is not owner
+/// grade and reads as its principal, which no private pointer admits. The
+/// dev hatch is never the owner here: it admits a request with no
+/// credential, so on the one artifact origin a hostile bundle's same-origin
+/// fetch would read the owner's private artifacts (F02, H103).
+fn artifact_read_caller(request: &Parts, server: &SyncServer) -> ArtifactReadCaller {
+    let caller = CoreAuth::for_managed_request(
+        &request.headers,
+        &request.extensions,
+        crate::auth::request_path(request),
+        server,
+    )
+    .unwrap_or_else(|| {
+        CoreAuth::from_headers(&request.headers, &server.config, server.vault().as_ref())
+    })
+    .ok()
+    .filter(|auth| auth.has_scope(CoreScope::Read));
+    let owner = caller
+        .as_ref()
+        .filter(|auth| !auth.is_local_dev_hatch())
+        .and_then(|auth| super::owner_routes::owner(auth, server).ok());
+    let principal = caller
+        .filter(|auth| auth.require_unrestricted_record_scope().is_ok())
+        .and_then(|auth| {
+            auth.principal_ref()
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+        });
+    ArtifactReadCaller { principal, owner }
+}
+
 async fn serve_artifact_file(
     server: Arc<SyncServer>,
     route: &ArtifactRoute,
@@ -179,29 +228,7 @@ async fn serve_artifact_file(
     code_policy: &'static str,
 ) -> Result<Response, EnvelopedApiError> {
     let request_headers = &request.headers;
-    // An adapter without content-scope enforcement must reject narrowed
-    // credentials. Neither a write-only slip nor an identity alone grants a read.
-    // On a managed vault the caller is the request's own (a slip, or the
-    // owner its supervisor attested), so the owner reads his own private
-    // artifacts; a caller that does not authenticate reads as no one.
-    let caller = CoreAuth::for_managed_request(
-        request_headers,
-        &request.extensions,
-        crate::auth::request_path(request),
-        &server,
-    )
-    .unwrap_or_else(|| {
-        CoreAuth::from_headers(request_headers, &server.config, server.vault().as_ref())
-    });
-    let principal = caller
-        .ok()
-        .filter(|auth| {
-            auth.has_scope(CoreScope::Read) && auth.require_unrestricted_record_scope().is_ok()
-        })
-        .and_then(|auth| {
-            auth.principal_ref()
-                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
-        });
+    let caller = artifact_read_caller(request, &server);
     let Some(file) = server
         .vault
         .resolve_authorized_artifact_file_cooperative(
@@ -209,7 +236,8 @@ async fn serve_artifact_file(
             route.selector,
             route.path(),
             route.token.as_deref(),
-            principal,
+            caller.principal,
+            caller.owner.as_ref(),
         )
         .await
         .map_err(|error| core_engine_error("artifact serving failed", error))?
