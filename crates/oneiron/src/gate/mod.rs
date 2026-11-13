@@ -118,10 +118,7 @@ pub(crate) use self::dreamer_grant::body_with_agent_derive_rows;
 // regression door (`test_doors::untangle_regressions`) read it here.
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::dreamer_grant::DREAMER_LANDING_ROWS_REF;
-pub(crate) use self::dreamer_grant::{
-    DreamerLandingVerdict, body_with_steward_rows, dreamer_landing_verdict_in_txn,
-    dreamer_rows_held,
-};
+pub(crate) use self::dreamer_grant::{body_with_steward_rows, dreamer_rows_held};
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;

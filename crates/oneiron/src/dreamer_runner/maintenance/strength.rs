@@ -1,10 +1,8 @@
 //! Nightly strength maintenance rides the existing wake recipe/run-tree lane.
-use super::super::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerParkCause, DreamerRunnerStore,
-};
+use super::super::{DreamerAttemptPayload, DreamerParkCause, DreamerRunnerStore};
+use crate::Result;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_wake::DreamerAttemptExecution;
-use crate::{Result, Vault};
 use rmpv::Value;
 
 pub const CONSOLIDATION_STRENGTH_FACET: &str = "dreamer.consolidation_strength";
@@ -48,13 +46,4 @@ impl DreamerRunnerStore<'_> {
         )?;
         Ok(())
     }
-}
-
-pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now_ms: u64) -> Result<()> {
-    crate::dreamer_consolidation::strength::archive_quiet_claims(
-        vault,
-        attempt.status.attempt.id,
-        now_ms,
-    )?;
-    Ok(())
 }
