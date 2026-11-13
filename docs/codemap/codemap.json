@@ -32893,7 +32893,7 @@
      "path": "src/dreamer_runner/free_time/cycle.rs",
      "purpose": "A free-time cycle (FIX 4453): its owner-set clock, its opening on the elected home, and its end",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 2,
       "struct": 3
@@ -32944,7 +32944,7 @@
      "path": "src/dreamer_runner/free_time/handoff.rs",
      "purpose": "FIX 5661: the free-time families a home move carries, as adapters on L03's carrier C1…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
      }
     },
     {
@@ -92670,6 +92670,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/free_time_cycle_writer.rs",
+     "purpose": "A door to the free-time cycle writer (FABLE-6918-1): the writer of one due boundary alone, as…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CarriedPolicyRows",
+      "StoredPolicyRow"
+     ],
+     "path": "src/test_doors/free_time_handoff.rs",
+     "purpose": "Doors to the free-time policy rows a home move carries (FABLE-6918-2): the table's own export and adoption…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/grant_roles.rs",
      "purpose": "Door for `tests/grant_roles_seven.rs` (ROLES R1, the lead 11 Nov 11:38): the default membership scope a…",
      "surface": {
@@ -92784,7 +92808,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 70,
+      "mod": 72,
       "re-export": 1
      }
     },
@@ -102009,7 +102033,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/coach_budgets.rs",
@@ -102536,6 +102560,14 @@
      "notable": [],
      "path": "tests/force_cancel_pause.rs",
      "purpose": "[FORCE-CANCEL-KEEPS-ACTIVE-PAUSE]: the hard cancel of a held row clears its pause, as the operator's Cancel…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/free_time_policy_handoff.rs",
+     "purpose": "A holder's schedule move lands on a new home (FABLE-6918-2)",
      "surface": {}
     },
     {
@@ -106390,7 +106422,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 73,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -106567,8 +106599,8 @@
    },
    "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7493,
-   "test_files": 1206
+   "source_files": 7495,
+   "test_files": 1207
   },
   "oneiron-agent-runtime": {
    "files": [
