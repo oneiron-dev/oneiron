@@ -413,7 +413,38 @@ pub(crate) async fn build_server(
     } else {
         sync_server
     };
+    // Bound before any worker starts, so every admitted call is attributed.
+    bind_vault_owner_usage_metering(&sync_server);
     Ok((sync_server, gpu_poller))
+}
+
+/// Binds a self-hosted vault's usage meter to the vault's own billing owner,
+/// its embedded owner, whose account owner spend bills
+/// (`PayerAccount::VaultOwner`, `ai_host::payer_funding`). Settled calls,
+/// recalls and embed fills are then recorded, and the nightly training-offer
+/// pass has a workload to read (FIX 11011, FIX 22868). Any other posture
+/// stays unmetered here: the cloud names a hosted vault's billing owner, and
+/// serve never invents one. A failed bind (a vault whose authority log has no
+/// genesis yet: no auth secret on a fresh vault) leaves this start unmetered,
+/// as every reader of the meter allows; the next start binds it again.
+fn bind_vault_owner_usage_metering(server: &SyncServer) {
+    if server.vault().privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
+        return;
+    }
+    let bound = || -> anyhow::Result<()> {
+        let owner = oneiron::EntityId::derive(
+            oneiron_contracts::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR,
+            &[],
+        )?;
+        server.bind_usage_metering(owner.to_hex())?;
+        Ok(())
+    };
+    if let Err(error) = bound() {
+        tracing::warn!(
+            %error,
+            "usage is not metered on this start; the next start binds it again"
+        );
+    }
 }
 
 /// One embedder build: its slot, the pool it routes through, and only the
