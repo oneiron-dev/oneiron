@@ -86,6 +86,14 @@ fn settle_held(
 ) -> oneiron::Result<()> {
     let status = &claimed.status;
     let attempt = &status.attempt;
+    // A person's pause the run took at its step boundary: its row is already
+    // Paused and its lease released, so nothing settles; a resume queues the
+    // same try, and its next lease runs on.
+    if let Ok(BoundRun::Agent(outcome)) = &ran
+        && matches!(outcome.status, EngineExecutorStatus::Paused { .. })
+    {
+        return Ok(());
+    }
     // OF-540: the run's execution context, bound while its lease holds; one
     // that cannot bind leaves the run to close unattributed.
     if let Err(error) =
@@ -117,6 +125,8 @@ fn settle_held(
             EngineExecutorStatus::Yielded { .. } | EngineExecutorStatus::WindowFull { .. } => {
                 "agent_run_unfinished"
             }
+            // Returned above, before the attribution bind.
+            EngineExecutorStatus::Paused { .. } => return Ok(()),
         },
         // A model call no provider answered, the run's own step's or a host
         // door's (FIX 3194): the same attempt parks, its lease and spend
