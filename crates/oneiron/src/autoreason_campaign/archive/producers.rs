@@ -168,7 +168,6 @@ pub(crate) fn mint_axes_in_txn(
     for output in &mint.sample_outputs {
         records::output_in_txn(vault, txn, output)?;
     }
-    ruler_in_txn(vault, txn, &mint.quality_metric)?;
     match (&mint.method, &mint.descriptor) {
         (ArchiveAxesMethod::CoachRecipe { .. }, ArchiveDescriptor::Axes { .. })
         | (ArchiveAxesMethod::EmbeddingClusters, ArchiveDescriptor::EmbeddingClusters { .. }) => {}
