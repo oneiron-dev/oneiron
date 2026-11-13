@@ -295,6 +295,7 @@ impl Vault {
                     })
                     .unwrap_or(Role::Member);
                 non_root(Some(role))?;
+                self.reserved_role_given_by_owner_in_txn(txn, vault_id, actor, role)?;
                 if !crate::consent::person_is_live_in_txn(self, txn, &member)?
                     || self.member_role_in_txn(txn, vault_id, member)?.is_some()
                 {
@@ -310,6 +311,7 @@ impl Vault {
             }
             MemberChange::Change { member, to } => {
                 non_root(Some(to))?;
+                self.reserved_role_given_by_owner_in_txn(txn, vault_id, actor, to)?;
                 refuse_house_mind_move_in_txn(self, txn, &member)?;
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
