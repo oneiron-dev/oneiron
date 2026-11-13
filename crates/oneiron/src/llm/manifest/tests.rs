@@ -28,6 +28,8 @@ fn fixture() -> ModelManifest {
                                 ModelId::new(format!("local/{role:?}@r1")).unwrap(),
                             )])
                         },
+                        disposition: None,
+                        reads_audio: false,
                     },
                 )
             })
@@ -261,6 +263,8 @@ fn widened_resident_route_is_refused_at_inference_admission() {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::ThirdParty,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -272,6 +276,7 @@ fn widened_resident_route_is_refused_at_inference_admission() {
         binding: crate::llm::HostInferenceBinding::Advertised {
             model: manifest.binding(ModelRole::Checker).unwrap().model.clone(),
             locality: ModelLocality::ThirdParty,
+            keyless: false,
         },
         extraction_egress: None,
     };
@@ -321,6 +326,8 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
             ),
             response_format: ResponseFormat::Text,
             locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
         },
         messages: vec![],
         tools: vec![],
@@ -340,6 +347,7 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         binding: super::super::HostInferenceBinding::Advertised {
             model: manifest.binding(ModelRole::Checker).unwrap().model.clone(),
             locality: ModelLocality::OwnServer,
+            keyless: false,
         },
         extraction_egress: None,
     };

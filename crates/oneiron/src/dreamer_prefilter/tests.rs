@@ -1,7 +1,5 @@
 use super::*;
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-PREFILTER-TESTS-REPAIR-REGRESSIONS]: the lib test target's type check fails here (6 errors: E0061 x5, E0609 x1); port it, then drop this gate
-#[cfg(any())]
 mod repair_regressions;
 
 use crate::config::VaultConfig;
