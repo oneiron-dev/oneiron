@@ -309,6 +309,8 @@ pub use plan_doc::{
     PlanDocSettlementView, PlanDocState, PlanDocVerdictRequest, PlanDocVerdictView, PlanDocView,
     approve_plan_doc_as, reject_plan_doc_as,
 };
+mod plan_markup;
+pub(crate) use plan_markup::require_plan_doc_span_in_txn;
 mod kind_contract;
 #[cfg(all(test, feature = "sync"))]
 mod live_body_tests;
