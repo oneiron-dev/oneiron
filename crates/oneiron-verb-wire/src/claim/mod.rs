@@ -13,11 +13,6 @@ pub use oneiron_store::write_envelope::claim_body::PREDICATE_VAULT_DEFAULT_FACET
 pub use oneiron_store::write_envelope::claim_body::base_world_id;
 pub use oneiron_store::write_envelope::claim_body::default_project_id;
 pub use oneiron_store::write_envelope::claim_body::substrate_facet_id;
-use rmpv::Value;
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicUsize;
 
 pub mod aging_profiles;
 pub mod decay;

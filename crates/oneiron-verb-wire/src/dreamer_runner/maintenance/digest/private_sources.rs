@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// One private thread turn a proposal's words were drawn from when its
 /// digest was assembled (FIX 6411).

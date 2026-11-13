@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/extraction/types.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::affect::Vad;
 pub use oneiron_store::extraction_work::ExtractionWork;
 use serde::Deserialize;
 use serde::Serialize;
@@ -60,31 +59,6 @@ pub struct SpeakerLink {
     pub span: usize,
     pub target: SpeakerTarget,
     pub confidence: f32,
-}
-
-/// The mood a model measured over one window of a turn it read in several
-/// (FIX 9518): from `message`/`start` to `end_message`/`end`, UTF-8 byte
-/// offsets into those messages of the input. The model gives no mood of the
-/// whole turn then, and none is made up from the parts.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MoodPart {
-    pub message: usize,
-    pub start: usize,
-    pub end_message: usize,
-    pub end: usize,
-    /// Read strictly, as an answer's whole mood is.
-    #[serde(deserialize_with = "strict_part_vad")]
-    pub vad: Vad,
-}
-
-pub fn strict_part_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vad, D::Error> {
-    let vad = WireVad::deserialize(deserializer)?;
-    Ok(Vad {
-        valence: vad.valence,
-        arousal: vad.arousal,
-        dominance: vad.dominance,
-    })
 }
 
 /// The runtime that ran one call. A call names the runtime that actually ran

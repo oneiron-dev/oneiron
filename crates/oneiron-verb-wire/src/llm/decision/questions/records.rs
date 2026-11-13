@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::llm::decision::questions::criteria::MAX_CRITERION_BYTES;
-use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::model_decision::questions::CalibrationPair;
 pub use oneiron_store::model_decision::questions::DecisionRoute;
 pub use oneiron_store::model_decision::questions::OmittedNeighbor;
@@ -19,7 +18,6 @@ pub use oneiron_store::model_decision::questions::RoutingPolicy;
 pub use oneiron_store::model_decision::questions::SourceConflict;
 pub use oneiron_store::model_decision::questions::WindowOutcome;
 use oneiron_store::setting_seed::SettingSpec;
-use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -36,24 +34,3 @@ pub const QUESTION_CALL_BUDGET_MS: SettingSpec = SettingSpec {
     max: oneiron_base::request_limits::MAX_RECALL_DEADLINE_MS as f64,
     seed: crate::receipt::questions::GRAPH_ASK_UNIT_DEADLINE_MS as f64,
 };
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AnswerRecord {
-    #[serde(with = "super::super::codec::entity")]
-    #[schemars(with = "String")]
-    pub claim: EntityId,
-    #[serde(with = "super::super::codec::entity")]
-    #[schemars(with = "String")]
-    pub unit: EntityId,
-    pub decision: TypedDecision,
-    /// Engine-computed hash of the live source row and its document frontier.
-    pub frontier: [u8; 32],
-    pub source_kind: u8,
-    pub answered_at: u64,
-    /// The readable neighbours this answer left out, each with why: it was
-    /// answered using the sources compatible with its unit alone. Refs and
-    /// reasons only, never a body; empty when none was left out.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub omitted: Vec<OmittedNeighbor>,
-}

@@ -1,6 +1,9 @@
 //! Moved from `crates/oneiron/src/memory/code_view_doors/types.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+pub use crate::build_cache::command_spec::CodeBuildSpec;
+use crate::code_view::VisibleFilePolicy;
+use crate::origin::secret_projection::types::RepoFileProjectionView;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::build_cache::command_spec::CodeBuildClass;
 pub use oneiron_store::build_cache::command_spec::CodeSecretTaintRef;

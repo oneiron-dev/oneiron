@@ -9,10 +9,31 @@ use crate::pipeline::TemporalSearchReport;
 use crate::ports::EntityStoreRead;
 use crate::temporal::TemporalAnchorMode;
 
-#[doc(hidden)]
-pub use oneiron_verb_wire::memory::search_temporal::{
-    TemporalSearchHit, TemporalSearchRange, TemporalSearchResult,
-};
+/// An inclusive UTC range in Unix seconds. An outer range only narrows results;
+/// it is not an anchor and adaptive widening never removes it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalSearchRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+impl TemporalSearchRange {
+    fn validate(self) -> MemoryResult<()> {
+        caps::check_as_of(Some(self.start))?;
+        caps::check_as_of(Some(self.end))?;
+        if self.start > self.end {
+            return Err(MemoryError::bad_request(
+                "temporal range start must not exceed end",
+            ));
+        }
+        Ok(())
+    }
+
+    fn overlaps(self, start: u64, end: u64) -> bool {
+        self.start <= end && start <= self.end
+    }
+}
 
 /// The engine's explicit temporal controls. `start` and `end` anchor the selected
 /// axis; `both` uses them for occurrence and requires the separate learned range.
@@ -80,6 +101,9 @@ impl TemporalSearchRequest {
         Ok(())
     }
 }
+
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::search_temporal::{TemporalSearchHit, TemporalSearchResult};
 
 impl Memory<'_> {
     pub fn query_temporal(

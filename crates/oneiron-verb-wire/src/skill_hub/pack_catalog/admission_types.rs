@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/skill_hub/pack_catalog/admission_types.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_hub::pack_catalog::manifest::PackAdapter;
-
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]

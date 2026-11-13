@@ -3,13 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::sync::Mutex;
-use std::sync::PoisonError;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
-use std::time::Instant;
 
 /// What the rerank stage of a recall at high, xhigh or max did. Absent below
 /// high.

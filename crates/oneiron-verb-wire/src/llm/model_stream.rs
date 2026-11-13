@@ -8,7 +8,6 @@ use oneiron_model::llm::LlmUsage;
 use oneiron_model::llm::ModelId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

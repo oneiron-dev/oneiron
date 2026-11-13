@@ -20,17 +20,11 @@ pub use crate::claim::scoped_read::weave_serve::WeaveWrongLinkRequest;
 pub use crate::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveDiscoveryView;
 pub use crate::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveFindingView;
 pub use crate::claim::scoped_read::weave_trigger::WeaveDigestRendered;
-use crate::claim::*;
 pub use oneiron_contracts::claim::ReadScope;
 pub use oneiron_contracts::claim::ScopedReadReceipt;
 pub use oneiron_store::ports::point_read::PointRead;
 pub use oneiron_store::ports::point_read::ReadTarget;
 pub use oneiron_store::ports::read_result::ScopedReadResult;
-use rmpv::Value;
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicUsize;
 
 pub mod weave_digest;
 pub mod weave_lens;

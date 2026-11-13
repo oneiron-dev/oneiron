@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_store::write_envelope::task_body::TaskRole;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

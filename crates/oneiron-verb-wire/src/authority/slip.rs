@@ -1,11 +1,6 @@
 //! Moved from `crates/oneiron/src/authority/slip.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
-use oneiron_authority::authority::canonical;
 use oneiron_authority::federation::Scope;
 use serde::Deserialize;
 use serde::Serialize;

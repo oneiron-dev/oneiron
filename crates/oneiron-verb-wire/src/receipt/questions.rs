@@ -14,7 +14,6 @@ use oneiron_store::model_decision::questions::OutcomeLabel;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
 
 /// `ai.verdict`'s clock, in milliseconds, when the request names none.
 pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;

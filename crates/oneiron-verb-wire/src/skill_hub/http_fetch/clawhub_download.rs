@@ -3,9 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::Read;
-use std::time::Duration;
-use std::time::Instant;
 
 /// Untrusted provider metadata. `content_hash` has no qualified native hash
 /// algorithm; neither it nor the archive URL is an admission proof.

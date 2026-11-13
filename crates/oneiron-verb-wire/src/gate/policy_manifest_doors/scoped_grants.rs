@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/gate/policy_manifest_doors/scoped_grants.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

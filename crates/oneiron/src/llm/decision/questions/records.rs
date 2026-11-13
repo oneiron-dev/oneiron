@@ -13,7 +13,7 @@ pub use super::criteria::{MAX_CRITERION_BYTES, QuestionCriteria};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::decision::questions::records::{
-    ARTIFACT_ADAPTER, AnswerRecord, QUESTION_CALL_BUDGET_MS,
+    ARTIFACT_ADAPTER, QUESTION_CALL_BUDGET_MS,
 };
 
 /// One artifact a standing artifact question asks: the artifact its answers land in, and
@@ -249,6 +249,27 @@ pub struct AnswerProposal {
     pub rule: Option<HostRuleRef>,
     /// Provider-reported cost at the answered rung, when known.
     pub cost_per_thousand: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerRecord {
+    #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
+    pub claim: EntityId,
+    #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
+    pub unit: EntityId,
+    pub decision: TypedDecision,
+    /// Engine-computed hash of the live source row and its document frontier.
+    pub frontier: [u8; 32],
+    pub source_kind: u8,
+    pub answered_at: u64,
+    /// The readable neighbours this answer left out, each with why: it was
+    /// answered using the sources compatible with its unit alone. Refs and
+    /// reasons only, never a body; empty when none was left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub omitted: Vec<OmittedNeighbor>,
 }
 
 /// A standing question's scheduled backfill: from `due_at`, the question

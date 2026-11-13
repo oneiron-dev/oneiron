@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/llm/decision/ladder/ask_consent.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::vault_shape::grant::ShapeGrantBound;
 use oneiron_base::error::Result;
 use oneiron_consent_state::consent::effect::CatastropheClass;
 use oneiron_consent_state::consent::effect::UndoFidelity;

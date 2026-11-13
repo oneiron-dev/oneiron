@@ -2,10 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::memory::commitment_doors::*;
-use rmpv::Value;
-use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

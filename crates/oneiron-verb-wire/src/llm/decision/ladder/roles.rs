@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/llm/decision/ladder/roles.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+pub use crate::store::decision_ask_role::AskRole;
 use oneiron_base::error::Result as VaultResult;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::model_decision::AskAct;

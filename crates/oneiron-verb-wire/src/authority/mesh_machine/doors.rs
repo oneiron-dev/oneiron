@@ -2,15 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::authority::mesh_machine::*;
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::net::SocketAddr;
 
 /// A paired MACHINE's address and proofs of both keys over its binding.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

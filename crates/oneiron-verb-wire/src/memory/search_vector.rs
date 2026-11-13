@@ -1,10 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/search_vector.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::memory::MemoryError;
-use oneiron_contracts::memory::MemoryResult;
 use oneiron_store::embedding::EmbeddingMatchEvidence;
-use oneiron_store::embedding_vocabulary::InputKind;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -25,48 +22,6 @@ pub enum VectorSearchLane {
     Ordinary,
     /// Explicit speculative voice quality for the text index, at a reduced limit.
     VoiceHot,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct VectorSearchRequest {
-    /// Omit for the vault's text index; otherwise the complete declared pin.
-    #[serde(default)]
-    pub space: Option<String>,
-    #[serde(default)]
-    pub query_kind: Option<InputKind>,
-    pub query: Vec<f32>,
-    /// Stored input kinds in a declared space, not registry kinds.
-    #[serde(default)]
-    pub kinds: Vec<InputKind>,
-    pub limit: usize,
-    #[serde(default)]
-    pub lane: VectorSearchLane,
-    /// The caller's retrieval filter (FIX 3977): bound before candidate
-    /// generation, so it narrows every channel, seed and terminal read.
-    #[serde(default)]
-    pub filter: Option<oneiron_contracts::gate::ReadFilterInput>,
-}
-
-impl VectorSearchRequest {
-    pub fn validate(&self) -> MemoryResult<()> {
-        caps::check_limit_nonzero(self.limit)?;
-        caps::check_dimensions(self.query.len())?;
-        if let Some(error) = oneiron_base::error::Error::invalid_vector_component(&self.query) {
-            return Err(error.into());
-        }
-        if self.space.is_none() && (self.query_kind.is_some() || !self.kinds.is_empty()) {
-            return Err(MemoryError::bad_request(
-                "query_kind and kinds name a declared space; set space too",
-            ));
-        }
-        if self.space.is_some() && self.lane == VectorSearchLane::VoiceHot {
-            return Err(MemoryError::bad_request(
-                "voice_hot prefix scoring is a text-index lane; omit space",
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// The source revision is the same pin the dense lane retrieved. It can be

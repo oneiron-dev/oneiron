@@ -3,11 +3,7 @@
 
 use crate::memory::witness::stream::*;
 use oneiron_model::llm::FinishReason;
-use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 /// A MESSAGE's completion, read from its latest stream receipt and its seed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema)]

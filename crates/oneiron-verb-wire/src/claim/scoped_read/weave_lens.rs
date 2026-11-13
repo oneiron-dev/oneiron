@@ -6,8 +6,6 @@ use oneiron_base::error::Result;
 use oneiron_lens_wire::lens::atom::LensText;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 pub fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("weave lens: {reason}"))

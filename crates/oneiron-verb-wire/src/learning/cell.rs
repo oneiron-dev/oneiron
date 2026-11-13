@@ -4,8 +4,6 @@
 pub use crate::claim::learning_predicate::LearningPredicate;
 pub use crate::receipt::task_type_ref::ROOT_TYPE_NODE;
 pub use crate::receipt::task_type_ref::TypeRef;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// Longest qualifier text a cell keeps, in bytes.
 pub const MAX_QUALIFIER_BYTES: usize = 256;

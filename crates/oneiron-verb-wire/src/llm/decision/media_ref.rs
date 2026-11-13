@@ -1,6 +1,9 @@
 //! Moved from `crates/oneiron/src/llm/decision/media_ref.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::ingest::meeting_audio::types::SourceSpan;
+use crate::ingest::meeting_audio::types::SpeakerTrack;
+use crate::ingest::meeting_audio::types::SpeechSpan;
 use oneiron_model::llm::FatalLlmError;
 use oneiron_model::llm::LlmResult;
 use oneiron_model::llm::image::ImageBytes;

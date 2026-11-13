@@ -1,12 +1,11 @@
 //! Moved from `crates/oneiron/src/memory/code_doors/secrets.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::code_doors::*;
+use crate::store::code_document_receipt::CodeOpProvenance;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::critic_lens::LensCatalog;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Where a marked blob was seen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/code_doors/types.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::store::code_document_receipt::CodeOpProvenance;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::critic_lens::LensCatalog;
 use oneiron_store::repo_proposal_record::RepoProposalStatus;

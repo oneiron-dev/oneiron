@@ -5,7 +5,6 @@ use crate::llm::seat::DescriptionSource;
 use oneiron_model::llm::ReasoningEffort;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

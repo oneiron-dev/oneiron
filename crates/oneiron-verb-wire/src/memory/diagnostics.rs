@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/diagnostics.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::structural::*;
-use crate::memory::*;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

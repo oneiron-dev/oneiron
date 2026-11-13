@@ -7,7 +7,6 @@ pub use crate::dreamer_runner::maintenance::identity::evidence::IdentityMentionV
 pub use crate::dreamer_runner::maintenance::identity::evidence::IdentityResolutionView;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// What an agent must do to the person now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

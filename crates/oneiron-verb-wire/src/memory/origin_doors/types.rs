@@ -1,6 +1,8 @@
 //! Moved from `crates/oneiron/src/memory/origin_doors/types.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::origin::residence::OriginAuthority;
+use crate::origin::residence::OriginResidence;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;

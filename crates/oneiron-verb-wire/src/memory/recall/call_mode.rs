@@ -5,7 +5,6 @@ use crate::memory::recall::Effort;
 pub use oneiron_base::request_limits::DEFAULT_CALL_MODE_DEADLINE;
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::Duration;
 
 /// Where a recall request sets the one effort dial: one of the five effort
 /// levels, or `call`, the call mode for live calls. Call mode is a position

@@ -1,11 +1,9 @@
 //! Moved from `crates/oneiron/src/memory/merge_queue_doors/check_receipt.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::merge_queue_doors::*;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::Path;
 
 /// One inputs reference of one checker work row to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

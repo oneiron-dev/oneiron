@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/task_verb/ask_forward.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The holder's proof for one intent: their slip, and their signature over
 /// the slip's binding transcript (`CapabilitySlip::binding_transcript`) of

@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// A delivered digest's locator from an inbox notification's `source.result`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

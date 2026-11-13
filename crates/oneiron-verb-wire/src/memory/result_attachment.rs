@@ -5,7 +5,6 @@ use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
 /// The metadata key a MESSAGE's result attachment sits under. Only the
 /// executor door writes it.

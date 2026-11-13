@@ -7,9 +7,6 @@ use crate::receipt::pack_attribution::UsedProvenanceEdge;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::VecDeque;
 
 /// One fractional share, with its complete eligible used chain. An erase
 /// redacts only the ids it names (FIX 8988): the share keeps its decay and

@@ -5,9 +5,6 @@ pub use crate::llm::seat::policy::SeatPrecedence;
 use oneiron_base::error::Error;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::time::Instant;
 
 pub fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())

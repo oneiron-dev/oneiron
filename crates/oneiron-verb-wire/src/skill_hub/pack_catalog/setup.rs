@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub const MAX_SETUP_TOKEN_BYTES: usize = 64;
 

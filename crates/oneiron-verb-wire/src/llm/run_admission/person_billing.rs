@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/llm/run_admission/person_billing.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+pub use crate::store::person_billing_account::FiledBillingAccount;
 use serde::Deserialize;
 use serde::Serialize;
 

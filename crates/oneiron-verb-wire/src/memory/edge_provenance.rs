@@ -2,13 +2,11 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::edge::EdgeActorClass;
-use oneiron_base::edge::EdgeKind;
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 use oneiron_contracts::gate::ReadFilterInput;
 use oneiron_store::write_envelope::provenance::edge_ref::SupersessionStatus;
 use serde::Deserialize;
 use serde::Serialize;
-use std::cell::RefCell;
 
 /// `vault.edges.provenance` input: one directed edge, named by its two
 /// endpoint refs and its kind.

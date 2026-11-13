@@ -4,8 +4,6 @@ pub use crate::memory::repo_doors::custody::RepoExportInput;
 pub use crate::memory::repo_doors::custody::RepoExportOutput;
 pub use crate::memory::repo_doors::neighbor_types::*;
 pub use crate::memory::repo_doors::types::*;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub mod custody;
 pub mod neighbor_types;

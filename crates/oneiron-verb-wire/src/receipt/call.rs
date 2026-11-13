@@ -5,9 +5,6 @@ use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// The wire a call arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

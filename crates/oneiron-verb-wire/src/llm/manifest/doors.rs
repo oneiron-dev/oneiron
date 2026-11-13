@@ -9,7 +9,6 @@ use oneiron_model::model_binding::ModelRole;
 use oneiron_model::model_binding::ModelSlot;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Binds the Oneironer the server has loaded. The binding's identity is the
 /// loaded slot's; these guards only compare with it, and a mismatch refuses.

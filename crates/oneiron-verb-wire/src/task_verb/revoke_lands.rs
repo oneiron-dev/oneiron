@@ -1,11 +1,9 @@
 //! Moved from `crates/oneiron/src/task_verb/revoke_lands.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::connector_key::slate::SlatePackSource;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use serde_json::Value;
-use std::fmt;
 
 /// What the owner reviewed, not a mutable pack name or source alias.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

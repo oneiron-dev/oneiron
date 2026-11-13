@@ -1,14 +1,8 @@
 //! Moved from `crates/oneiron/src/memory/reads.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::recall::*;
-use crate::memory::structural::*;
-use crate::memory::*;
-use oneiron_base::edge::EdgeKind;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Filter for [`Memory::claim_list`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

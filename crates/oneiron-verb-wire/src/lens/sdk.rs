@@ -49,7 +49,7 @@ pub struct LensDefaultRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveLensRequest {
-    pub sections: Vec<oneiron_authority::claim_history_handoff::WeaveSectionInput>,
+    pub sections: Vec<crate::claim::scoped_read::weave_serve::WeaveSectionInput>,
     #[serde(default)]
     pub surface: Option<GeneratedUiSurfaceCapabilities>,
 }

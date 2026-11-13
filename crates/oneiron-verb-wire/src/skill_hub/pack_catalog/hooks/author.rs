@@ -1,14 +1,9 @@
 //! Moved from `crates/oneiron/src/skill_hub/pack_catalog/hooks/author.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_hub::pack_catalog::hooks::*;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Who a hook runs as (ARCH-0080 §6, §7, §9): the owner who bound it, a
 /// resident agent that wrote it into the `local` pack, or a hub pack's

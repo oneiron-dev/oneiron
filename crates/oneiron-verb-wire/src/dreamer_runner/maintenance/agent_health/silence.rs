@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The activity `silent` judged one leased attempt's quiet by (OF-568 L5),
 /// each part the newest of its kind since the attempt's claim. A card holds

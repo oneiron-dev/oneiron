@@ -6,7 +6,6 @@ use oneiron_base::error::Result;
 use oneiron_lens_wire::lens::wire_ids::LensHandleRole;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

@@ -1,11 +1,9 @@
 //! Moved from `crates/oneiron/src/task_verb/comm_widen/revoke.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::task_verb::comm_widen::*;
 use oneiron_authority::authority::CommReach;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// What the owner's revocation of one run's stop-asking choice did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

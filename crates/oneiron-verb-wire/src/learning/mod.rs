@@ -14,7 +14,6 @@ pub use oneiron_base::learning_estimate::EstimateValue;
 pub use oneiron_base::learning_estimate::Prior;
 pub use oneiron_base::learning_estimate::PriorOrigin;
 pub use oneiron_base::learning_estimate::Window;
-pub(crate) use oneiron_base::learning_ranking as ranking;
 pub use oneiron_store::write_envelope::learning_predicate::LEARNING_NAMESPACE;
 pub use oneiron_store::write_envelope::learning_predicate::LEARNING_PREDICATES;
 pub use oneiron_store::write_envelope::learning_predicate::PREDICATE_LEARNING_EDIT_COST;

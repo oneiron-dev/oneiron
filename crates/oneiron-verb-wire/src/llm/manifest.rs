@@ -17,11 +17,6 @@ pub use oneiron_model::model_binding::VerdictMode;
 use oneiron_model::model_binding::invalid;
 pub use oneiron_model::teacher_probe_policy::TEACHER_PROBE_ID;
 pub use oneiron_model::teacher_probe_policy::TeacherProbePolicy;
-pub(crate) use oneiron_model::teacher_probe_policy::valid_holder_ref as valid_teacher_probe_holder_ref;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::path::Path;
 
 pub fn model_for_route(
     binding: &ModelBinding,

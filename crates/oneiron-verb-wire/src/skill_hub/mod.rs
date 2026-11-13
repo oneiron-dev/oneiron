@@ -1,6 +1,5 @@
 pub use crate::skill_hub::admission::HubAdmissionReceipt;
 pub use crate::skill_hub::default_hub::MODEL_PACK_NAME;
-pub(crate) use crate::skill_hub::default_hub::MODEL_PACK_SUBTREE;
 pub use crate::skill_hub::http_fetch::clawhub::ClawHubSearchHit;
 pub use crate::skill_hub::http_fetch::clawhub::ClawHubSearchOwner;
 pub use crate::skill_hub::http_fetch::clawhub::ClawHubSearchReply;
@@ -13,7 +12,6 @@ pub use crate::skill_hub::install_transition::InstallHoldReason;
 pub use crate::skill_hub::install_transition::InstallLifecycle;
 pub use oneiron_store::claim_refinement_control::SharedSkillDelta;
 pub use oneiron_store::claim_refinement_control::SharedSkillLane;
-pub(crate) use oneiron_store::refinement_carrier::refinement_carrier_payload;
 pub use oneiron_store::skill_hub_predicates::PREDICATE_SKILL_HUB_PROVENANCE;
 pub use oneiron_store::skill_hub_predicates::PREDICATE_SKILL_SCAN_VERDICT;
 pub use oneiron_store::write_envelope::skill_source::HubFile;

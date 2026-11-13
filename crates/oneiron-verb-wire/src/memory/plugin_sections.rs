@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/plugin_sections.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::context_board::plugin::manifest::SectionManifestEnvelope;
 pub use crate::memory::plugin_sections::install::PluginSectionInstallOutcome;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::write_envelope::skill_source::HubRef;

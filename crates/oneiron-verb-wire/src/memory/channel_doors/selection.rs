@@ -1,14 +1,14 @@
 //! Moved from `crates/oneiron/src/memory/channel_doors/selection.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::channel_identity_selection::selection_resolution::ChannelIdentitySelectionDecision;
+use crate::channel_identity_selection::selection_resolution::SelectionRuleScope;
 use crate::memory::channel_doors::*;
 use oneiron_authority::channel_selection_vocabulary::ChannelIdentityFace;
 use oneiron_authority::channel_selection_vocabulary::RelationshipContext;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
-use std::collections::BTreeSet;
 
 /// Authorship fields are deliberately absent. The authenticated writer and
 /// engine clock stamp the persisted row.

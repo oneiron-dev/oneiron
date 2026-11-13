@@ -4,9 +4,6 @@
 use crate::memory::witness::stream::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

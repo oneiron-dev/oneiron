@@ -2,6 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::authority::task_ask_handle::TaskAskHandle;
+pub use crate::disclosure::task_ask_default::TaskAskDefault;
+pub use crate::failure_ladder::task_terminal::TaskTerminalDisposition;
 pub use crate::task_verb::ask_forward::AskForwardHolderProof;
 pub use crate::task_verb::ask_soft_confirm_types::TaskAskConfirmation;
 pub use crate::task_verb::ask_soft_confirm_types::TaskAskConfirmationDecision;
@@ -26,8 +28,6 @@ pub use crate::task_verb::fanout_launch::FanoutCheckChoice;
 pub use crate::task_verb::highway_types::TaskAccept;
 pub use crate::task_verb::highway_types::TaskRedo;
 pub use crate::task_verb::verb_kind::TaskTtl;
-pub(crate) use oneiron_store::task_body_checks::reject_born_expired_task_deadline;
-pub(crate) use oneiron_store::task_body_checks::reject_incoherent_task_terminal;
 use serde::Deserialize;
 use serde::Serialize;
 

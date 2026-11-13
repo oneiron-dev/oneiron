@@ -7,16 +7,13 @@ pub use crate::memory::recall::home::RecallResidenceHit;
 pub use crate::memory::recall::home::RecallResidenceSource;
 pub use crate::memory::recall::paid::RerankReport;
 pub use crate::memory::recall::paid::RerankSkip;
-use crate::memory::structural::*;
-use crate::memory::*;
+use crate::retrieval_depth::controls::RecallTelemetry;
 pub use oneiron_base::request_limits::DEFAULT_CALL_MODE_DEADLINE;
 use oneiron_base::retrieval_quality::ConfidenceAdjustment;
 use oneiron_base::retrieval_quality::RetrievalDegradation;
 use oneiron_base::retrieval_quality::RetrievalQuality;
-use oneiron_store::serialize::pack_format::FieldProfile;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Retrieval effort dial (S6). Deliberately distinct from `llm.rs`
 /// `ReasoningEffort` (the LLM dial) and `context_pack.rs` `FieldProfile`.

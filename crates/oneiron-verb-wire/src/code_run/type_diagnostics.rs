@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::OnceLock;
 
 /// The prefix of a step check's public reference.
 pub const CHECK_REF_PREFIX: &str = "type_diagnostics:";

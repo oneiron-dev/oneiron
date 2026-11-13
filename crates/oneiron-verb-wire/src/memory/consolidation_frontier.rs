@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/consolidation_frontier.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::dreamer_promotion::admission::PromotionEvidenceReason;
 use crate::memory::consolidation::ConsolidationMessageEvidence;
 use oneiron_contracts::claim::ClaimSource;
 use serde::Deserialize;

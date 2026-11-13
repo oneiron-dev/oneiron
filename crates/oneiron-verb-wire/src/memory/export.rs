@@ -6,10 +6,6 @@ pub use oneiron_store::serialize::export_format::EXPORT_TARGET_ARCHIVE;
 pub use oneiron_store::serialize::export_format::EXPORT_TARGET_OKF;
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::io::Write;
 
 /// The export target. `archive` (the default) is the whole vault: one ZIP of
 /// one JSONL file per record kind, each attached file once by BLAKE3, and a

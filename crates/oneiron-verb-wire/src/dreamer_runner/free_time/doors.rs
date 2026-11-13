@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/dreamer_runner/free_time/doors.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::agent_dispatch::budget_doors::RunRungSettlement;
 use crate::dreamer_runner::free_time::FreeTimeKind;
 use crate::dreamer_runner::free_time::cycle::FreeTimeCycleState;
 use crate::dreamer_runner::free_time::policy::FreeTimeSchedule;
@@ -10,7 +11,6 @@ use crate::dreamer_runner::free_time::receipt::FreeTimeItemOutcome;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::ops::Bound;
 
 /// One agent's free-time policy.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

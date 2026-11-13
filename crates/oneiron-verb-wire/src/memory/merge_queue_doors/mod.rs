@@ -7,9 +7,6 @@ pub use crate::memory::merge_queue_doors::review_policy::QueueReviewPolicySetReq
 pub use crate::memory::merge_queue_doors::review_policy::QueueReviewPolicyState;
 pub use crate::memory::merge_queue_doors::review_policy::QueueReviewPolicyView;
 pub use crate::memory::merge_queue_doors::types::*;
-use serde::Deserialize;
-use serde::Serialize;
-use std::path::Path;
 
 pub mod check_receipt;
 pub mod checker_types;

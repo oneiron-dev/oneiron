@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The agent's report, not an outcome label. Uncertainty requests examination
 /// just as an explicit flaw does, but is not a claim that a flaw exists.

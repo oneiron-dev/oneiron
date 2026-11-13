@@ -17,6 +17,9 @@ pub use crate::skill_hub::pack_catalog::setup_session::PackSetupCheck;
 pub use crate::skill_hub::pack_catalog::setup_session::PackSetupConnectionState;
 pub use crate::skill_hub::pack_catalog::setup_session::PackSetupPermissionState;
 pub use crate::skill_hub::pack_catalog::setup_session::PackSetupSecretState;
+pub use crate::store::pack_hook_proposal::HookRenderClass;
+pub use crate::store::pack_hook_proposal::HookWidening;
+pub use crate::store::pack_hook_proposal::PackHookProposalStatus;
 pub use oneiron_store::pack_hook_actor_class::HookActorClass;
 
 pub mod admission_types;

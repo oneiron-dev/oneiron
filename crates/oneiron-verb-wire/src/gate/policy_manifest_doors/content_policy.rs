@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/gate/policy_manifest_doors/content_policy.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::gate;
 use oneiron_policy_vocabulary::policy_model::contract::PolicyOutputContract;
 use oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRule;
 use serde::Deserialize;

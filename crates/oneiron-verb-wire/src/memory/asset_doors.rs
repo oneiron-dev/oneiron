@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::memory::asset_resolve::types::ServedAssetForm;
-use base64::Engine as _;
 use oneiron_store::embedding_vocabulary::InputKind;
 use serde::Deserialize;
 use serde::Serialize;

@@ -12,8 +12,6 @@ pub use oneiron_store::model_description_rows::ModelWireFormat;
 pub use oneiron_store::model_score_diff::ModelScoreDiff;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScoreObservation {

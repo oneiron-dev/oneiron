@@ -5,9 +5,7 @@
 use super::{CallPurpose, Deserialize, EntityId, ImageBytes, LlmCapability, Serialize, ServedForm};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::memory::asset_resolve::types::{
-    ImageViewRequest, PulledImage, ServedAssetForm,
-};
+pub use oneiron_verb_wire::memory::asset_resolve::types::{ImageViewRequest, ServedAssetForm};
 
 /// Who reads an asset: what the consumer's model takes in, and the call
 /// purpose the read serves, which the host's per-image pick reads.
@@ -41,6 +39,31 @@ pub struct ResolvedAsset {
 
 #[doc(hidden)]
 pub use oneiron_wake_contract::memory::asset_resolve::types::PixelRegion;
+
+/// Pixels fetched through an image's handle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PulledImage {
+    /// 32-hex ASSET id.
+    pub asset_ref: String,
+    /// `view`, `crop`, `zoom` or `ask_image`, as its receipt records it.
+    pub pull: String,
+    pub mime_type: String,
+    /// Standard base64.
+    pub bytes: String,
+    /// The pixels' size, when their encoding says it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// The raw pixels, for an in-process caller that sends them on.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub image: Option<ImageBytes>,
+    /// The canonical stored blob, not a hash of masked, cropped or scaled pixels.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub evidence: Option<super::EvidenceVersion>,
+}
 
 /// The rows one generated image landed as.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

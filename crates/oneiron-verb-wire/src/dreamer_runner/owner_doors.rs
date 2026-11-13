@@ -7,7 +7,6 @@ use oneiron_store::attempt_state::AttemptState;
 use oneiron_wake_contract::store::attempt_cancel::AttemptResumePoint;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
 
 /// The elected MACRO home as this node's private runner row records it.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

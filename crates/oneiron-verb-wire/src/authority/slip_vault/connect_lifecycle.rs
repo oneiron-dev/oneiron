@@ -1,14 +1,9 @@
 //! Moved from `crates/oneiron/src/authority/slip_vault/connect_lifecycle.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use ed25519_dalek::Signer;
 use oneiron_authority::federation::FederationDirectionScope;
 use oneiron_authority::federation::Scope;
 use oneiron_authority::federation::SelectorRange;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use rand_core::OsRng;
-use rand_core::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
 

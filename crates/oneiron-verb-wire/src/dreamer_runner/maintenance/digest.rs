@@ -8,7 +8,6 @@ pub use crate::dreamer_runner::maintenance::digest::view::DigestReadRequest;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The derived group the cleanup line (ARCH-0073, OF-449) renders under.
 pub const CLEANUP_GROUP: &str = "dreamer.cleanup";

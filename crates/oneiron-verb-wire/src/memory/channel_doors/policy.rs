@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/channel_doors/policy.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::channel_doors::*;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowApnsInterruptionLevel;
 use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowContextCondition;
@@ -9,8 +8,6 @@ use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowResolutio
 use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowVerbClass;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

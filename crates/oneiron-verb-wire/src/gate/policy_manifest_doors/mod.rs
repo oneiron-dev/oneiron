@@ -16,9 +16,6 @@ pub use crate::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsR
 pub use crate::gate::policy_manifest_doors::retrieval_weights::RetrievalWeightsView;
 pub use crate::gate::policy_manifest_doors::scoped_grants::PolicyGrantExtension;
 pub use crate::gate::policy_manifest_doors::types::*;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
 
 pub mod agent_verb_classes;
 pub mod claim_aging;

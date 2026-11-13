@@ -1,3 +1,5 @@
+pub use crate::claim::scoped_read::weave_report::WeaveSectionKind;
+pub use crate::claim::scoped_read::weave_report::WeaveSectionSpec;
 pub use crate::lens::activation::LensActivateRequest;
 pub use crate::lens::activation::LensDeactivateRequest;
 pub use crate::lens::inspection::INSPECTION_HANDLE_LEN;
@@ -23,12 +25,6 @@ pub use crate::lens::selection::LensSelectRequest;
 pub use crate::lens::selection::LensSelectedSpan;
 pub use crate::lens::selection::LensSelectionRange;
 pub use crate::lens::selection::LensSelectionResolveRequest;
-pub use oneiron_authority::claim_history_handoff::WeaveItem;
-pub use oneiron_authority::claim_history_handoff::WeaveReader;
-pub use oneiron_authority::claim_history_handoff::WeaveReport;
-pub use oneiron_authority::claim_history_handoff::WeaveSection;
-pub use oneiron_authority::claim_history_handoff::WeaveSectionKind;
-pub use oneiron_authority::claim_history_handoff::WeaveSectionSpec;
 pub use oneiron_base::request_limits::RECORD_REF_MAX_BYTES;
 pub use oneiron_lens_wire::lens::atom::AnswerSheetAtom;
 pub use oneiron_lens_wire::lens::atom::AsofScrubberAtom;

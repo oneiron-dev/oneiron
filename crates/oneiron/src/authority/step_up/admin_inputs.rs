@@ -12,6 +12,15 @@ use crate::lens::WeaveLensRequest;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::authority::step_up::admin_inputs::{
-    WeaveAdminDigestRequest, WeaveAdminItemWrongRequest, WeaveAdminLensRequest,
-    WeaveAdminLinkWrongRequest, WeaveAdminReportRequest,
+    WeaveAdminDigestRequest, WeaveAdminLensRequest, WeaveAdminLinkWrongRequest,
+    WeaveAdminReportRequest,
 };
+
+/// `vault.weave.admin.item.wrong`'s input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveAdminItemWrongRequest {
+    /// The Admin membership grant the label stands on (32 hex).
+    pub membership_grant: String,
+    pub request: WeaveWrongItemRequest,
+}

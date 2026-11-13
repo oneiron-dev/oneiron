@@ -1,13 +1,8 @@
 //! Moved from `crates/oneiron/src/memory/claims/settle.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::claims::*;
-use crate::memory::structural::*;
-use crate::memory::*;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 
 /// Why a committed settlement warns (FIX 7600).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

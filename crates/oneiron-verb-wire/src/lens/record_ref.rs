@@ -5,7 +5,6 @@ pub use oneiron_base::request_limits::RECORD_REF_MAX_BYTES;
 pub use oneiron_store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// `vault.refs.resolve`'s one input.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

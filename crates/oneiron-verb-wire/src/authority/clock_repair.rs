@@ -1,18 +1,8 @@
 //! Moved from `crates/oneiron/src/authority/clock_repair.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::authority::*;
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
 use serde::Deserialize;
 use serde::Serialize;
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io::Cursor;
-use std::time::Instant;
 
 /// What one repair found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

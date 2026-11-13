@@ -92,13 +92,26 @@ pub struct EncoderInput {
     pub speaker: Option<SpeakerRole>,
 }
 #[doc(hidden)]
-use oneiron_verb_wire::memory::extraction::types::strict_part_vad;
-#[doc(hidden)]
 pub use oneiron_verb_wire::memory::extraction::types::{
     ContextLink, CorefLink, EncoderExecution, ExecutionCompute, ExecutionPick, ExecutionRuntime,
-    MoodPart, NerSpan, SpeakerLink, SpeakerTarget,
+    NerSpan, SpeakerLink, SpeakerTarget,
 };
 
+/// The mood a model measured over one window of a turn it read in several
+/// (FIX 9518): from `message`/`start` to `end_message`/`end`, UTF-8 byte
+/// offsets into those messages of the input. The model gives no mood of the
+/// whole turn then, and none is made up from the parts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoodPart {
+    pub message: usize,
+    pub start: usize,
+    pub end_message: usize,
+    pub end: usize,
+    /// Read strictly, as an answer's whole mood is.
+    #[serde(deserialize_with = "strict_part_vad")]
+    pub vad: Vad,
+}
 /// What a tagger returns for one input. A model returns what it has heads
 /// for: a spans-only model sends no links and no mood. A span carries at
 /// most one of a link, a context link and a speaker link.
@@ -144,6 +157,14 @@ fn strict_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Optio
             dominance: vad.dominance,
         }),
     )
+}
+fn strict_part_vad<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vad, D::Error> {
+    let vad = WireVad::deserialize(deserializer)?;
+    Ok(Vad {
+        valence: vad.valence,
+        arousal: vad.arousal,
+        dominance: vad.dominance,
+    })
 }
 pub use crate::store::ExtractionWork;
 /// Who one extraction call is made for: the key a host's dispatcher shares

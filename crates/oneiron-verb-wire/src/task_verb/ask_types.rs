@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::authority::task_ask_handle::TaskAskHandle;
+pub use crate::disclosure::task_ask_default::TaskAskDefault;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
@@ -9,7 +10,6 @@ use oneiron_store::consent_bound::ActionClass;
 use oneiron_store::consent_bound::ActionEnvelope;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Selects a scope, never its authority holders. Holders come from live grants.

@@ -4,6 +4,7 @@ pub use crate::llm::decision::ladder::roles::AskTo;
 pub use crate::llm::decision::ladder::roles::HumanDecisionRequest;
 pub use crate::llm::decision::ladder::roles::ResolvedRole;
 pub use crate::llm::decision::ladder::roles::RoleHolder;
+pub use crate::store::decision_ask_role::AskRole;
 pub use oneiron_store::model_decision::AskAct;
 pub use oneiron_store::model_decision::HolderKind;
 pub use oneiron_store::model_decision::MAX_DECISION_STATE_BYTES;
@@ -15,8 +16,6 @@ pub use oneiron_store::model_decision::RoleRank;
 pub use oneiron_store::model_decision::SCORE_LEVELS_FIELD;
 pub use oneiron_store::model_decision::level_score;
 pub use oneiron_store::model_decision::score_levels_in;
-pub(super) use oneiron_store::model_decision::validate_pin;
-use serde_json::Value;
 
 pub mod ask_consent;
 pub mod roles;

@@ -51,7 +51,38 @@ use super::*;
 pub use crate::machine_destination::EffectiveRead;
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::authority::world_privacy::{EffectiveModelOrder, EffectiveWorldPrivacy};
+pub use oneiron_verb_wire::authority::world_privacy::EffectiveModelOrder;
+
+/// One world's settings as the fold decides them.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub struct EffectiveWorldPrivacy {
+    pub read: EffectiveRead,
+    pub sealed: SealedCopies,
+    pub models: EffectiveModelOrder,
+}
+
+impl Default for EffectiveWorldPrivacy {
+    fn default() -> Self {
+        PrivacyMeet::of(&WorldPrivacy::default()).effective()
+    }
+}
+
+impl EffectiveWorldPrivacy {
+    /// Any world under a conflicted vault root: readable nowhere, editable by
+    /// no one, with no sealed copies and no model order.
+    pub(super) fn unknowable() -> Self {
+        Self {
+            read: EffectiveRead::Conflicted {
+                contenders: BTreeSet::new(),
+            },
+            sealed: SealedCopies::Off,
+            models: EffectiveModelOrder::Conflicted,
+        }
+    }
+}
 
 pub use crate::machine_destination::Destination;
 

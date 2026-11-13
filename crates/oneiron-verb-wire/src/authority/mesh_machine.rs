@@ -4,11 +4,8 @@
 pub use crate::authority::mesh_machine::doors::MeshAlpnGrant;
 pub use crate::authority::mesh_machine::doors::MeshBindingIdentity;
 pub use crate::authority::mesh_machine::doors::MeshMachineBinding;
-use ed25519_dalek::Signature;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::net::SocketAddr;
 
 /// Address hints. This structure has no authority by itself.

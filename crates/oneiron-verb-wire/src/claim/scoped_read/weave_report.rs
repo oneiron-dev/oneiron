@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::edge::EdgeKind;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,

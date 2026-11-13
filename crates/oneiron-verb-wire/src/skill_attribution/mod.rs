@@ -1,7 +1,5 @@
 pub use crate::skill_attribution::late_credit::LateCreditReceipt;
 pub use crate::skill_attribution::late_credit::LateCreditShare;
-pub(crate) use oneiron_skill_attribution::row_ids::attribution_judgment_row_ids;
-pub(crate) use oneiron_skill_attribution::row_ids::edit_proposal_row_ids;
 pub use oneiron_skill_attribution::types::AttemptOutcome;
 pub use oneiron_skill_attribution::types::AttributionJudgment;
 pub use oneiron_skill_attribution::types::AttributionLane;

@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/coping_doors.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::memory::claim_admission::ClaimScope;
 use oneiron_store::write_envelope::coping_outcome::CopingStrategy;
 use serde::Deserialize;
 use serde::Serialize;

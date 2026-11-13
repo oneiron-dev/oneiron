@@ -1,10 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/claim_stale.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::structural::*;
-use crate::memory::*;
 pub use oneiron_contracts::gate::ReadFilterInput;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

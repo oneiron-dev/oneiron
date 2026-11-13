@@ -1,10 +1,11 @@
 //! Moved from `crates/oneiron/src/memory/consolidation.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::dreamer_promotion::admission::PromotionEvidenceReason;
+use crate::memory::claim_admission::ClaimScope;
 use oneiron_store::write_envelope::claim_body::EvidenceRef;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// One generated proposal. Source, approval, actor, provenance and clocks are
 /// deliberately absent: only the host promotion writer may stamp those axes.

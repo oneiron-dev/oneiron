@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/plugin_sections/install.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::context_board::plugin::manifest::SectionManifestEnvelope;
 use serde::Deserialize;
 use serde::Serialize;
 

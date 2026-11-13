@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// An answer to the width check of a fan-out that already went out. The
 /// check held nothing, so there is no deny: ack records the ruling, and

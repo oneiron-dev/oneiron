@@ -1,6 +1,8 @@
 //! Moved from `crates/oneiron/src/memory/merge_queue_doors/review_policy.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::merge_queue::review_policy::QueueReviewPolicy;
+use crate::merge_queue::review_policy::QueueReviewThresholds;
 use oneiron_store::critic_lens::LensCatalog;
 use serde::Deserialize;
 use serde::Serialize;

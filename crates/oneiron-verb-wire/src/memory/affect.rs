@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/affect.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::memory::claim_admission::ClaimScope;
 use oneiron_contracts::affect::VadAnnotationSource;
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;

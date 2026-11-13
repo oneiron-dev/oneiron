@@ -1,4 +1,6 @@
 pub use crate::llm::run_admission::person_billing::BillingAccountFiling;
+pub use crate::store::person_billing_account::FiledBillingAccount;
+pub use crate::store::resident_budget_rows::ResidentShare;
 pub use oneiron_model::llm::WorkCancel;
 pub use oneiron_model::llm::WorkContext;
 pub use oneiron_model::llm::WorkId;

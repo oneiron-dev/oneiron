@@ -1,6 +1,8 @@
 //! Moved from `crates/oneiron/src/memory/codebase_doors/types.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+pub use crate::origin::secret_projection::types::RepoFileProjectionKind;
+pub use crate::origin::secret_projection::types::RepoFileProjectionView;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;

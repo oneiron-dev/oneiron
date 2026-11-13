@@ -2,6 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::memory::code_doors::types::CodeProposalSubmitRequest;
+use crate::repo_mutation::proposal::settlement::RepoProposalDecision;
+use crate::repo_mutation::proposal::settlement::RepoProposalSettlement;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::repo_proposal_record::RepoProposalStatus;
 use serde::Deserialize;

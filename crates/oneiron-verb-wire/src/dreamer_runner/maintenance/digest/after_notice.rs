@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The derived group the applied-maintenance line renders under.
 pub const APPLIED_GROUP: &str = "dreamer.applied";

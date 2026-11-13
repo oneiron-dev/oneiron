@@ -1,19 +1,6 @@
 //! Moved from `crates/oneiron/src/authority/owner_act.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::authority::*;
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
-use serde::Deserialize;
-use serde::Serialize;
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io::Cursor;
-use std::time::Instant;
-
 /// What an owner act's commit did about the key work that follows it (mesh
 /// contract §5, the honest receipt). Only a holder opens, mints or rewraps a
 /// key: a carrier that holds none records the decision, and its receipt says

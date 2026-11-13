@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/witness/reply_assertions.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::ReplyAssertions;
 use serde::Deserialize;

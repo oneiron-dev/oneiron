@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/origin_doors/import_types.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+pub use crate::code_revision::import_types::CodeImportAcceptance;
 use crate::memory::codebase_doors::types::CodeSnapshotFile;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::code_import_manifest::CodeImportAnchor;

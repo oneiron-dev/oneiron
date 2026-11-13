@@ -1,12 +1,8 @@
 //! Moved from `crates/oneiron/src/authority/step_up/totp.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use zeroize::Zeroize;
-use zeroize::Zeroizing;
 
 /// Owner reset names only the person's TOTP factors, not their passkeys.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

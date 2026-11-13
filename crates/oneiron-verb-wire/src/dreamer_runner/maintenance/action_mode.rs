@@ -3,7 +3,6 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::agent_record::AgentCeiling;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

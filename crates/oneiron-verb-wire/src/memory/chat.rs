@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::memory::*;
-use serde::Deserialize;
-use serde::Serialize;
 
 impl Effort {
     /// The retrieval effort priced by a chat request.

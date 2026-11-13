@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::Read;
 
 /// Public provider metadata. Missing fields do not become package identity.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

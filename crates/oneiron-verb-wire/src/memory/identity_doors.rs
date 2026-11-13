@@ -1,6 +1,8 @@
 //! Moved from `crates/oneiron/src/memory/identity_doors.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use crate::ingest::resolution::EntityResolutionCandidate;
+use crate::ingest::resolution::EntityResolutionWaterfallDecision;
 use oneiron_base::registry::ENTITY_TYPE_ORG;
 use oneiron_base::registry::ENTITY_TYPE_PERSON;
 use oneiron_base::registry::ENTITY_TYPE_PLACE;
@@ -9,7 +11,6 @@ use oneiron_contracts::memory::MemoryResult;
 use oneiron_store::write_envelope::provenance::made_by::MadeBy;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
