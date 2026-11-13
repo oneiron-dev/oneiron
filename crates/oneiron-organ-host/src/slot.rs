@@ -286,13 +286,14 @@ impl Slot {
         true
     }
 
-    /// Lets go of every recycled process with no call in flight on it, or
-    /// whose socket has closed, for the caller to stop.
+    /// Lets go of every recycled process with no call in flight on it, for
+    /// the caller to stop. One that died under a call stays until that call
+    /// returns: the call forgets it and counts the crash ([`Slot::crashed`]).
     pub(crate) fn take_idle_recycled(&self) -> Vec<Arc<OrganProcess>> {
         let mut state = self.lock();
         let (idle, busy): (Vec<_>, Vec<_>) = mem::take(&mut state.recycled)
             .into_iter()
-            .partition(|process| process.idle_for().is_some() || !process.is_alive());
+            .partition(|process| process.idle_for().is_some());
         state.recycled = busy;
         idle
     }
