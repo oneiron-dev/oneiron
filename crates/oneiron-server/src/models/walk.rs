@@ -327,7 +327,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
         LlmError::Fatal(FatalLlmError::InvalidRequestDetail { .. }) => "invalid_request",
         LlmError::Fatal(FatalLlmError::ContextWindowExceeded { .. }) => "context_window_exceeded",
-        LlmError::Fatal(FatalLlmError::Auth) => "auth",
+        LlmError::Fatal(FatalLlmError::Auth | FatalLlmError::SeatSignedOut { .. }) => "auth",
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
         LlmError::Fatal(FatalLlmError::JobLost) => "job_lost",
