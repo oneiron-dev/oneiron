@@ -28,7 +28,7 @@ use oneiron::llm::{
     CallClass, CallEnvelope, CallPurpose, LabelReadFailure, LabelReadModel, LabelReadRequest,
     LabelReadResponse, ModelTierRef, ResponseFormat, Scope, TierPrecedence,
 };
-use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::retrieval_depth::{RetrievalDeadline, still_deadline_clock_for_test};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ContentPart, EntityId, FatalLlmError,
     FinishReason, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmInputUsage,
@@ -45,6 +45,18 @@ const GENERATED_MODEL: &str = "test/generated@r1";
 /// A clock with ample work time: every read here answers at once.
 fn deadline() -> RetrievalDeadline {
     RetrievalDeadline::hard(Instant::now(), Duration::from_secs(60))
+}
+
+/// The still clock's budget. Its work stops at [`WORK`]; the last quarter is the answer's.
+const BUDGET: Duration = Duration::from_millis(1000);
+const WORK: Duration = Duration::from_millis(750);
+
+/// One call's clock, still: it moves only as a read spends it.
+fn still_clock() -> RetrievalDeadline {
+    let was = still_deadline_clock_for_test(true);
+    let clock = RetrievalDeadline::hard(Instant::now(), BUDGET);
+    still_deadline_clock_for_test(was);
+    clock
 }
 
 fn question() -> DecisionQuestion {
@@ -120,16 +132,28 @@ fn rungs(decision: &TypedDecision) -> Vec<DecisionRung> {
 }
 
 /// The house model's reader: it stops at its token cap, or reads every question with
-/// nearly all weight on the first label, its paired reading low.
-struct HouseReader {
+/// nearly all weight on the first label, its paired reading low. With `spends`, each read
+/// first spends that much of the call's clock.
+struct HouseReader<'c> {
     capped: bool,
+    spends: Option<(&'c RetrievalDeadline, Duration)>,
     reads: Mutex<usize>,
 }
 
-impl HouseReader {
+impl<'c> HouseReader<'c> {
     fn new(capped: bool) -> Self {
         Self {
             capped,
+            spends: None,
+            reads: Mutex::new(0),
+        }
+    }
+
+    /// A reader that spends `work` of `clock`, then stops at its token cap.
+    fn capped_after(clock: &'c RetrievalDeadline, work: Duration) -> Self {
+        Self {
+            capped: true,
+            spends: Some((clock, work)),
             reads: Mutex::new(0),
         }
     }
@@ -139,7 +163,7 @@ impl HouseReader {
     }
 }
 
-impl LabelReadModel for HouseReader {
+impl LabelReadModel for HouseReader<'_> {
     fn model(&self) -> &str {
         HOUSE_MODEL
     }
@@ -154,6 +178,9 @@ impl LabelReadModel for HouseReader {
         _lease: &BudgetLease,
     ) -> LlmResult<LabelReadResponse> {
         *self.reads.lock().expect("reads") += 1;
+        if let Some((clock, work)) = self.spends {
+            clock.spend_for_test(work);
+        }
         if self.capped {
             return Err(LlmError::Fatal(FatalLlmError::LabelRead(
                 LabelReadFailure::TokenCap,
@@ -214,12 +241,13 @@ impl HumanDecisionQueue for Queue {
 }
 
 /// One reversible question decided from the house read (the escalation rung) up to
-/// `ceiling`, with `big` in the Big slot when given.
+/// `ceiling` on `clock`, with `big` in the Big slot when given.
 fn decide_from_house(
-    reader: &HouseReader,
+    reader: &HouseReader<'_>,
     big: Option<&dyn DecisionProvider>,
     queue: &Queue,
     ceiling: DecisionRung,
+    clock: &RetrievalDeadline,
 ) -> Result<TypedDecision> {
     let paired = paired_question();
     let guard = guard();
@@ -250,7 +278,7 @@ fn decide_from_house(
         },
         &DecisionBandPolicy::default(),
         Reversibility::ReversibleRead,
-        &deadline(),
+        clock,
     )
 }
 
@@ -261,7 +289,7 @@ fn a_capped_house_read_passes_the_question_to_the_next_rung() {
     let reader = HouseReader::new(true);
     let big = Yes(DecisionRung::Big);
     let queue = Queue::default();
-    let decision = decide_from_house(&reader, Some(&big), &queue, DecisionRung::Big)
+    let decision = decide_from_house(&reader, Some(&big), &queue, DecisionRung::Big, &deadline())
         .expect("a capped read closes on a receipt, not an error");
     assert_eq!(reader.reads(), 1);
     assert_eq!(decision.answer, DecisionAnswer::Noul(true));
@@ -281,7 +309,7 @@ fn a_capped_house_read_passes_the_question_to_the_next_rung() {
 fn a_capped_house_read_at_the_ceiling_abstains_on_a_token_cap_receipt() {
     let reader = HouseReader::new(true);
     let queue = Queue::default();
-    let decision = decide_from_house(&reader, None, &queue, DecisionRung::Escalation)
+    let decision = decide_from_house(&reader, None, &queue, DecisionRung::Escalation, &deadline())
         .expect("a capped read closes on a receipt, not an error");
     assert_eq!(decision.answer, DecisionAnswer::Abstain);
     assert_eq!(decision.probability, None);
@@ -301,7 +329,7 @@ fn a_capped_house_read_at_the_ceiling_abstains_on_a_token_cap_receipt() {
 fn a_capped_house_read_asks_the_person_when_the_dial_reaches_one() {
     let reader = HouseReader::new(true);
     let queue = Queue::default();
-    let decision = decide_from_house(&reader, None, &queue, DecisionRung::Human)
+    let decision = decide_from_house(&reader, None, &queue, DecisionRung::Human, &deadline())
         .expect("a capped read closes on a receipt, not an error");
     assert_eq!(decision.answer, DecisionAnswer::Abstain);
     assert_eq!(
@@ -319,12 +347,33 @@ fn a_capped_house_read_asks_the_person_when_the_dial_reaches_one() {
     );
 }
 
+/// A deadline cut still stops at once (ruling L2-31-ROUTE, unchanged from main): the house
+/// read spends the call's work time and then stops at its token cap, so the read is the
+/// cut, not the cap. No stronger rung starts, and the call abstains on a deadline receipt.
+#[test]
+fn a_capped_house_read_past_the_work_time_is_a_deadline_cut_and_stops_at_once() {
+    let clock = still_clock();
+    let reader = HouseReader::capped_after(&clock, WORK);
+    let big = Yes(DecisionRung::Big);
+    let queue = Queue::default();
+    let decision = decide_from_house(&reader, Some(&big), &queue, DecisionRung::Big, &clock)
+        .expect("a cut read closes on a receipt, not an error");
+    assert_eq!(reader.reads(), 1);
+    assert_eq!(decision.answer, DecisionAnswer::Abstain);
+    assert_eq!(decision.probability, None);
+    assert_eq!(decision.human_ask, Some(HumanAskReason::Deadline));
+    assert_eq!(stop(&decision), "deadline");
+    assert_eq!(answered(&decision), None);
+    assert_eq!(rungs(&decision), vec![DecisionRung::Escalation]);
+    assert!(queue.asks().is_empty());
+}
+
 /// Control: a house read that finishes answers, and the call stops done.
 #[test]
 fn an_uncapped_house_read_still_stops_done() {
     let reader = HouseReader::new(false);
     let queue = Queue::default();
-    let decision = decide_from_house(&reader, None, &queue, DecisionRung::Escalation)
+    let decision = decide_from_house(&reader, None, &queue, DecisionRung::Escalation, &deadline())
         .expect("an answered read closes on a receipt");
     assert_ne!(decision.answer, DecisionAnswer::Abstain);
     assert_eq!(stop(&decision), "done");
