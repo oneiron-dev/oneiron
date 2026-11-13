@@ -377,6 +377,12 @@ impl ConsolidationExecutor<'_> {
                 } else if let Some(usage) = unsaved_usage {
                     charges.record_usage(&usage);
                 }
+                // A spent model seat refused the slice's step: the branch
+                // ends and the try parks on the seat, as the per-slice path
+                // parks it, never a blind Retry (SEAT-PARK-MODEL-STEP-PATH).
+                if crate::dreamer_runner::dreamer_seat_refusal_of_step(&error).is_some() {
+                    return Ok(PortServed::End(PartitionRun::refused_by(error)));
+                }
                 table.refused.get_or_insert_with(|| error.to_string());
                 return Ok(PortServed::Refused(THING_SLICE_REFUSED));
             }
