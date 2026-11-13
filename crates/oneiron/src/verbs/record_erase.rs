@@ -34,6 +34,11 @@ pub struct RecordEraseConfirmRequest {
     pub preview_digest: String,
     #[serde(default)]
     pub also_same_bytes: bool,
+    /// An asker's approved check-in for this erase, 32 hex
+    /// (`record_erase_effect_digest`): the Owner applies it on their own
+    /// proof, and the outcome names its asker.
+    #[serde(default)]
+    pub check_in_ref: Option<String>,
 }
 
 /// One live brief grant the erase revokes.
@@ -99,6 +104,11 @@ pub struct RecordEraseOutcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_act: Option<String>,
     pub same_bytes: Vec<EraseSameBytesRow>,
+    /// The check-in decision the erase ran on (2j; P24-SHAPE Q7 and Q9 = A):
+    /// the Owner on their own proof, and the approved check-in of another
+    /// asker it applied, with its requester.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 fn hex(bytes: &[u8; 32]) -> String {
@@ -267,6 +277,38 @@ pub fn confirm_record_erase(
         ));
     }
     drop(txn);
+    // An asker's approved check-in the Owner applies (2j; P24-SHAPE Q7 = A)
+    // is spent in its own writer, on the Owner's live proof, before the
+    // staged erase's writes: a refusal after it leaves the approval spent,
+    // and the Owner confirms again on their own proof alone. The preview,
+    // the veto window, the legal holds and the Owner proof the erase asks
+    // for all still hold; an answer is no proof of its own.
+    let mut decision = crate::check_in::owner_own_proof_decision(crate::check_in::ActClass::Erase);
+    if let Some(applied) = super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        let effect_digest =
+            crate::check_in::record_erase_effect_digest(&input.record, input.also_same_bytes);
+        let requester = vault
+            .with_write_txn_grouped(|txn| {
+                if owner.revalidate_in_txn(vault, txn)? != memory.actor() {
+                    return Err(crate::Error::InvalidConfig(
+                        "an erase applies a check-in on its caller's own owner proof".into(),
+                    ));
+                }
+                let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+                crate::check_in::spend_applied_check_in_in_txn(
+                    vault,
+                    txn,
+                    &applied,
+                    "vault.records.erase_confirm",
+                    crate::check_in::ActClass::Erase,
+                    &effect_digest,
+                    now,
+                )
+            })
+            .map_err(MemoryError::from)?;
+        decision.check_in = Some(applied.to_hex());
+        decision.requester = Some(requester.to_hex());
+    }
     let outcome = memory.confirm_entity_erase(
         &preview,
         EraseOptions {
@@ -276,6 +318,7 @@ pub fn confirm_record_erase(
         },
     )?;
     Ok(RecordEraseOutcome {
+        check_in: Some(decision),
         first: outcome.first,
         first_act: outcome.first_act,
         same_bytes: outcome
