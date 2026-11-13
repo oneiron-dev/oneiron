@@ -39,7 +39,7 @@ impl Vault {
     /// A store read failure.
     pub fn agent_ai_operations(&self, agent: EntityId) -> crate::error::Result<BTreeSet<String>> {
         let txn = self.store.env.read_txn()?;
-        let now = self.instant_in_txn(&txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(&txn)?;
         let mut operations = BTreeSet::new();
         let mut class_rows: Option<crate::federation::AgentVerbClasses> = None;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(

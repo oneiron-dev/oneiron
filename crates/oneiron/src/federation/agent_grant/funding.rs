@@ -114,7 +114,7 @@ impl Vault {
         let Some(wallet_ref) = grant.wallet_ref.clone() else {
             return Err(refused("the grant names no wallet"));
         };
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let classes = AgentVerbClasses::for_grants_in_txn(&self.store, txn, [grant])?;
         if !standing.stands_in_txn(

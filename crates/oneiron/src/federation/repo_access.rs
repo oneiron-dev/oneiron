@@ -326,7 +326,7 @@ impl Vault {
         if principal_standing_in_txn(self, txn, actor, class, verb)?.is_none() {
             return Ok(Err(RepoAccessRefusal::NoMembership));
         }
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let shared = self
             .shared_vault_creation_in_txn(txn)?
@@ -465,7 +465,7 @@ impl Vault {
         if principal_standing_in_txn(self, txn, actor, class, intent.verb())?.is_none() {
             return Ok(Err(Some(RepoAccessRefusal::NoMembership)));
         }
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let shared = self
             .shared_vault_creation_in_txn(txn)?
@@ -568,7 +568,7 @@ impl Vault {
             Err(NoStanding::PactStandingLapsed) => true,
             Err(NoStanding::NotStanding) => return Ok(Err(QUEUE_REVIEW_POLICY_NOT_GRANTED)),
         };
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let shared = self
             .shared_vault_creation_in_txn(txn)?

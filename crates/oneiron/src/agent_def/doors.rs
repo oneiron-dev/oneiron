@@ -950,7 +950,7 @@ impl Vault {
                     .filter(|standing| standing.grant.member_ref == author)
                     .map(|standing| &standing.grant),
             )?;
-            let now = self.instant_in_txn(txn)?.secs();
+            let now = self.grant_judgement_secs_in_txn(txn)?;
             let owners = crate::policy_model::owners_in_txn(self, txn)?;
             grants.iter().any(|standing| {
                 standing.stands_in_txn(self, txn, author, "read", now, &owners, &classes)

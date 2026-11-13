@@ -284,7 +284,7 @@ impl Vault {
         self.read_agent_definition_in_txn(txn, agent)?;
         let makings = self.makings_in_txn(txn, count)?;
         let queue = AttemptQueue::new(self);
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let grants = self.agent_grants_in_txn(txn)?;
         let mut made = AgentMadeBy {
             agent_def_ref: *agent,

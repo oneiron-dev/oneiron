@@ -65,7 +65,7 @@ fn own_authority_in(
     if crate::authority::principal_standing_in(home, txn, actor, class, "read")?.is_none() {
         return Ok(OwnAuthority::Absent);
     }
-    let now = home.instant_secs_in(txn)?;
+    let now = home.grant_judgement_secs_in(txn)?;
     let owners = home.owners_in(txn)?;
     let grants = crate::federation::agent_grants_for_store_in_txn(home.store(), txn)?;
     // A Grant whose `read` a verb class it names admits reads under its

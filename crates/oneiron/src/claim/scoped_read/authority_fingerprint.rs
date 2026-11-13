@@ -138,7 +138,7 @@ fn fold_reader_grants(
         return Ok(());
     }
     hasher.update([3u8]);
-    let now = vault.instant_in_txn(txn)?.secs();
+    let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let (grants, mut undecoded) = vault.agent_grants_reporting_in_txn(txn)?;
     let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(

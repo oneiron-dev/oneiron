@@ -194,7 +194,7 @@ impl ScopedRead<'_> {
         let delegator = match WEAVE_OWNER_ACK_DELEGATOR {
             AckDelegator::RecipientOwner => owner,
         };
-        let now = vault.instant_in_txn(txn)?.secs();
+        let now = vault.grant_judgement_secs_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(vault, txn)?;
         let (grants, _undecoded) = vault.agent_grants_reporting_in_txn(txn)?;
         let classes = crate::federation::AgentVerbClasses::for_grants_in_txn(

@@ -102,6 +102,18 @@ impl Vault {
             .map(VaultInstant)
     }
 
+    /// The second a grant's owner-set end is judged at: the authority instant,
+    /// or the recording clock when later (DEC-0006; census L7-18).
+    ///
+    /// "A grant confers no earlier than the vault clock: a caller's event time
+    /// can bring an expiry forward, never put it back."
+    pub(crate) fn grant_judgement_secs_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        Ok(self
+            .instant_in_txn(txn)?
+            .secs()
+            .max(crate::ports::job_recorded_at_in_txn(&self.store, txn)?))
+    }
+
     /// [`Self::instant_in_txn`] for a write that stamps the reading into a
     /// row a door later compares against this clock. Commits the reading as
     /// the floor, as [`Vault::authority_fold`] does, because a reopen resumes

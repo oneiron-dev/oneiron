@@ -455,7 +455,7 @@ fn agent_arm(
     let Some(position) = record.position.as_ref() else {
         return Ok(None);
     };
-    let now = vault.instant_in_txn(txn)?.secs();
+    let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let shared = vault.shared_vault_creation_in_txn(txn)?.is_some();
     let grants = live_grants_in(vault, txn)?;

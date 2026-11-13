@@ -119,7 +119,7 @@ impl Vault {
                 .agent_grant_ever_named_in_txn(txn, holder)?
                 .then(Vec::new));
         }
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
         let classes = AgentVerbClasses::for_grants_in_txn(
             &self.store,

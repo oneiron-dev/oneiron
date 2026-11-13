@@ -617,7 +617,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         include_revoked: bool,
     ) -> Result<Vec<crate::consent::ConsentRegistryRow>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let mut rows = Vec::new();
         let mut shown = BTreeSet::new();
         let grants = agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0;

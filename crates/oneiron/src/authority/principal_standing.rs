@@ -91,6 +91,18 @@ impl<'a> StandingHome<'a> {
         }
     }
 
+    /// The grant-judgement clock (`Vault::grant_judgement_secs_in_txn`),
+    /// also read through a materializing batch's store.
+    pub(crate) fn grant_judgement_secs_in(self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        match self {
+            Self::Vault(vault) => vault.grant_judgement_secs_in_txn(txn),
+            Self::Store(store, _) => {
+                Ok(super::authority_instant_secs_for_store_in_txn(store, txn)?
+                    .max(crate::ports::job_recorded_at_in_txn(store, txn)?))
+            }
+        }
+    }
+
     /// The vault's live owners (`policy_model::owners_in_txn`).
     pub(crate) fn owners_in(self, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
         match self {
@@ -246,7 +258,7 @@ fn agent_grant_listing_in(
     agent: EntityId,
     verb: &str,
 ) -> Result<std::result::Result<EntityId, NoStanding>> {
-    let now = home.instant_secs_in(txn)?;
+    let now = home.grant_judgement_secs_in(txn)?;
     let owners = home.owners_in(txn)?;
     let grants = crate::federation::agent_grants_for_store_in_txn(home.store(), txn)?;
     let classes = AgentVerbClasses::for_grants_in_txn(
