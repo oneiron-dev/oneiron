@@ -11,8 +11,11 @@
 //! caller argument).
 //!
 //! Store layout under a proposals root: `<root>/<proposal_id>/held_out.json`,
-//! `sealed.json`, `stamp.json`. Every file is created once with `create_new`
-//! and never rewritten; status is derived from which files exist.
+//! `sealed.json`, `stamp.json`. Every file is published once, whole or not at
+//! all (a synced temporary file moved into place without replacing anything),
+//! and never rewritten; status is derived from which files exist. A crash or a
+//! full disk during a write leaves at most a stray `.<name>.*.tmp` file, which
+//! no read opens, so the write can be retried.
 
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -259,10 +262,11 @@ impl ProposalStore {
             path: dir.clone(),
             source,
         })?;
+        sync_dir(&self.root)?;
         let path = dir.join("held_out.json");
         let mut bytes = serde_json::to_vec_pretty(proposal)?;
         bytes.push(b'\n');
-        if !write_new(&path, &bytes)? {
+        if !write_new(&dir, "held_out.json", &bytes)? {
             return Err(ProposalError::ProposalExists {
                 proposal_id: proposal.proposal_id.clone(),
             });
@@ -316,7 +320,7 @@ impl ProposalStore {
         let path = dir.join("sealed.json");
         let mut bytes = serde_json::to_vec_pretty(outcome)?;
         bytes.push(b'\n');
-        if !write_new(&path, &bytes)? {
+        if !write_new(&dir, "sealed.json", &bytes)? {
             return Err(ProposalError::SealedOutcomeExists {
                 proposal_id: outcome.proposal_id.clone(),
             });
@@ -348,8 +352,8 @@ impl ProposalStore {
         };
         let mut bytes = serde_json::to_vec_pretty(&stamp)?;
         bytes.push(b'\n');
-        let path = self.root.join(proposal_id).join("stamp.json");
-        if !write_new(&path, &bytes)? {
+        let dir = self.root.join(proposal_id);
+        if !write_new(&dir, "stamp.json", &bytes)? {
             return Err(ProposalError::StampExists {
                 proposal_id: proposal_id.to_owned(),
             });
@@ -584,29 +588,56 @@ fn read_optional<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T
     }
 }
 
-/// Creates, writes and syncs one proposal file: Ok(true) when written, Ok(false) when it already existed.
-fn write_new(path: &Path, bytes: &[u8]) -> Result<bool, ProposalError> {
-    let mut file = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(source) if source.kind() == ErrorKind::AlreadyExists => return Ok(false),
-        Err(source) => {
-            return Err(ProposalError::Io {
-                path: path.to_path_buf(),
-                source,
-            });
+/// Publishes one proposal file `<dir>/<name>` once, whole or not at all: Ok(true) when written, Ok(false) when it
+/// already existed.
+///
+/// The bytes go to a new temporary file in `dir`, which is synced and then moved to `name` with `persist_noclobber`
+/// (a rename that refuses an existing target, or a hard link then an unlink): the move never replaces a record. A
+/// failed write drops the temporary file; a crash leaves it as a stray `.<name>.*.tmp` that no read opens. Either
+/// way no truncated record is ever published, and the write can be retried. `dir` is synced after the move so the
+/// new entry survives a power loss.
+fn write_new(dir: &Path, name: &str, bytes: &[u8]) -> Result<bool, ProposalError> {
+    let prefix = format!(".{name}.");
+    let mut temp = tempfile::Builder::new()
+        .prefix(&prefix)
+        .suffix(".tmp")
+        .tempfile_in(dir)
+        .map_err(|source| ProposalError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+    let temp_path = temp.path().to_path_buf();
+    temp.write_all(bytes).map_err(|source| ProposalError::Io {
+        path: temp_path.clone(),
+        source,
+    })?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|source| ProposalError::Io {
+            path: temp_path,
+            source,
+        })?;
+    if let Err(error) = temp.persist_noclobber(dir.join(name)) {
+        if error.error.kind() == ErrorKind::AlreadyExists {
+            return Ok(false);
         }
-    };
-    file.write_all(bytes).map_err(|source| ProposalError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    file.sync_all().map_err(|source| ProposalError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
+        return Err(ProposalError::Io {
+            path: dir.join(name),
+            source: error.error,
+        });
+    }
+    sync_dir(dir)?;
     Ok(true)
+}
+
+/// Syncs a directory, so a new entry in it survives a power loss.
+fn sync_dir(dir: &Path) -> Result<(), ProposalError> {
+    let handle = std::fs::File::open(dir).map_err(|source| ProposalError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    handle.sync_all().map_err(|source| ProposalError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })
 }
