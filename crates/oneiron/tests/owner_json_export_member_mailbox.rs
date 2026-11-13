@@ -6,13 +6,24 @@
 //! mailbox (`vault.mail.export_request`): the member alone answers one Ask,
 //! and an approval carries the mailbox in that Owner's next export only.
 //!
+//! Slice 2: the Owner's whole-vault archive and OKF bundle follow the same
+//! rule, and so does every row whose words came from such a mailbox though
+//! only a side ledger or the row's birth records it: a blob version's
+//! made_by, a born-from Ask, a birth's prompt inputs (fix list rows 22344
+//! and 22345, Engine ruling EXPORT-EDGES = C), over every recorded hop.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_json_export_member_mailbox`.
 #![cfg(feature = "test-support")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read as _;
 
+use oneiron::batch::export::WholeVaultExport;
+use oneiron::blob_artifact::{
+    BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance, BornFromSource,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{InitialSharedMember, SharedVaultPreset};
 use oneiron::inbox::{NotificationBody, decode_notification_body};
@@ -20,17 +31,20 @@ use oneiron::llm::decision::DecisionAnswer;
 use oneiron::mail_pack::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryPage, MailHistoryRead,
     MailIdPage, MailListQuery, MailMessageRef, MailProvider, MailProviderWire,
-    MailSourceConnectRequest, MailSourceKind, MailSyncBudget, MailSyncSource,
+    MailSourceConnectRequest, MailSourceKind, MailSyncBudget, MailSyncSource, MailboxLeftOutReason,
     install_mail_calendar_pack_embedded,
 };
-use oneiron::memory::MemoryResult;
+use oneiron::memory::{ClaimInput, MemoryResult};
 use oneiron::registry::{
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use oneiron::secret_custody::{CustodyTier, SecretBinding};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
+use oneiron::write_envelope::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+};
 use oneiron::{EdgeActorClass, EntityId, Result, Vault, VaultConfig, WriteActor};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use serde_json::{Value, json};
@@ -224,9 +238,27 @@ struct Fixture {
     member_rows: BTreeSet<EntityId>,
 }
 
+/// What a test builds before the vault is shared: the Owner writes as the
+/// vault's one person then, and both mailboxes have landed.
+struct Staged<'a> {
+    vault: &'a Vault,
+    owner: EntityId,
+    owner_rows: &'a BTreeSet<EntityId>,
+    member_rows: &'a BTreeSet<EntityId>,
+}
+
 /// A vault whose Owner and one member each have a personal mailbox with one
 /// message, then shared under `preset`, the member accepted.
 fn fixture(preset: SharedVaultPreset) -> Fixture {
+    fixture_with(preset, |_| ()).0
+}
+
+/// [`fixture`], with `build` run once both mailboxes have landed and before
+/// the vault is shared; answers what `build` answered.
+fn fixture_with<T>(
+    preset: SharedVaultPreset,
+    build: impl FnOnce(&Staged<'_>) -> T,
+) -> (Fixture, T) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("vault");
     let owner = vault
@@ -254,6 +286,12 @@ fn fixture(preset: SharedVaultPreset) -> Fixture {
         MEMBER_SUBJECT,
         MEMBER_BODY,
     );
+    let built = build(&Staged {
+        vault: &vault,
+        owner,
+        owner_rows: &owner_rows,
+        member_rows: &member_rows,
+    });
     vault
         .initialize_shared_vault(
             &proof(&vault, owner),
@@ -276,15 +314,18 @@ fn fixture(preset: SharedVaultPreset) -> Fixture {
     vault
         .accept_shared_invitation(&member_proof, SHARED, &invitation.id)
         .expect("the member accepts");
-    Fixture {
-        _dir: dir,
-        vault,
-        owner,
-        member,
-        member_source,
-        owner_rows,
-        member_rows,
-    }
+    (
+        Fixture {
+            _dir: dir,
+            vault,
+            owner,
+            member,
+            member_source,
+            owner_rows,
+            member_rows,
+        },
+        built,
+    )
 }
 
 /// Every inbox notification addressed to `person`.
@@ -551,5 +592,504 @@ fn a_declined_request_leaves_the_mailbox_out_and_named() {
     assert_ne!(
         renewed["request_ref"], request["request_ref"],
         "after a decline the Owner's request is a new one"
+    );
+}
+
+/// Every member of an export's ZIP, by path, decompressed.
+fn zip_members(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a ZIP archive");
+    let mut members = BTreeMap::new();
+    for index in 0..archive.len() {
+        let mut member = archive.by_index(index).expect("a member");
+        let mut body = Vec::new();
+        member.read_to_end(&mut body).expect("the member's bytes");
+        members.insert(member.name().to_owned(), body);
+    }
+    members
+}
+
+/// Whether any member's path or bytes hold `needle` (a hex id or a word).
+fn mentions(members: &BTreeMap<String, Vec<u8>>, needle: &str) -> bool {
+    members
+        .iter()
+        .any(|(path, body)| path.contains(needle) || String::from_utf8_lossy(body).contains(needle))
+}
+
+/// The ids of the entity rows an archive carries: `records/entity/*.jsonl`,
+/// one JSON object per row with a hex `id` (a SKILL row nests it under
+/// `entity`).
+fn archive_entity_ids(members: &BTreeMap<String, Vec<u8>>) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for (path, body) in members {
+        if !path.starts_with("records/entity/") || !path.ends_with(".jsonl") {
+            continue;
+        }
+        for line in String::from_utf8_lossy(body)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+        {
+            let row: Value = serde_json::from_str(line).expect("a JSONL row");
+            let id = row
+                .get("id")
+                .or_else(|| row.pointer("/entity/id"))
+                .and_then(Value::as_str);
+            ids.extend(id.map(str::to_owned));
+        }
+    }
+    ids
+}
+
+/// The ids of the concepts an OKF bundle carries: `<kind>/<32 hex>.md`.
+fn okf_entity_ids(members: &BTreeMap<String, Vec<u8>>) -> BTreeSet<String> {
+    members
+        .keys()
+        .filter_map(|path| {
+            let id = path.split_once('/')?.1.strip_suffix(".md")?;
+            (id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .then(|| id.to_owned())
+        })
+        .collect()
+}
+
+/// A TURN among `rows`: an Ask trigger names one.
+fn a_turn(vault: &Vault, rows: &BTreeSet<EntityId>) -> EntityId {
+    rows.iter()
+        .copied()
+        .find(|id| vault.get_entity_type(id).expect("a row type") == Some(ENTITY_TYPE_TURN))
+        .expect("FIXTURE: the mailbox landed a TURN")
+}
+
+fn rows_of(vault: &Vault, kind: u8) -> BTreeSet<EntityId> {
+    vault
+        .entities_by_type_page(kind, None, 10_000)
+        .expect("rows")
+        .into_iter()
+        .collect()
+}
+
+/// A made_by naming `inputs` and `trigger`, its process the Owner's, so the
+/// version keeps the inputs exactly as given.
+fn made_by_naming(owner: EntityId, inputs: &[EntityId], trigger: Option<MadeByTrigger>) -> MadeBy {
+    MadeBy {
+        inputs: inputs
+            .iter()
+            .map(|row| MadeByInput {
+                row: *row,
+                role: MadeByInputRole::Input,
+            })
+            .collect(),
+        process: MadeByProcess {
+            actor: owner,
+            class: MadeByClass::Stated,
+            identity: "export-fixture".to_owned(),
+            version: "1".to_owned(),
+            params_hash: "fixture".to_owned(),
+        },
+        at: 1,
+        trigger,
+    }
+}
+
+/// One blob artifact with one version, whose made_by is `made_by`: the
+/// artifact, the version (its ledger claim is `claim_id`) and the ASSET rows
+/// its bytes added.
+struct Made {
+    artifact: EntityId,
+    version: BlobArtifactVersion,
+    assets: BTreeSet<EntityId>,
+}
+
+fn artifact_made_by(
+    vault: &Vault,
+    owner: EntityId,
+    name: &str,
+    bytes: &[u8],
+    made_by: &MadeBy,
+) -> Made {
+    let assets_before = rows_of(vault, ENTITY_TYPE_ASSET);
+    let artifact = EntityId::now();
+    let at = vault.now_recorded_at();
+    let range = TimeRange { start: at, end: at };
+    vault
+        .put_blob_artifact(
+            &artifact,
+            &BlobArtifactBody::new(name, "application/octet-stream"),
+            range,
+            at,
+        )
+        .expect("the artifact");
+    let version = vault
+        .append_blob_artifact_version_made_by(
+            &artifact,
+            None,
+            bytes,
+            &BlobVersionProvenance::UserUpload,
+            made_by,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            range,
+            at,
+        )
+        .expect("the version");
+    let assets = rows_of(vault, ENTITY_TYPE_ASSET)
+        .difference(&assets_before)
+        .copied()
+        .collect();
+    Made {
+        artifact,
+        version,
+        assets,
+    }
+}
+
+/// A raw PERSON a claim is about.
+fn a_person(vault: &Vault) -> EntityId {
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("a PERSON");
+    person
+}
+
+/// A Proposed claim about `about`, born with `producers` as its prompt
+/// inputs: its birth is the only record of what its words came from.
+fn claim_prompted_by(
+    vault: &Vault,
+    owner: EntityId,
+    about: EntityId,
+    predicate: &str,
+    producers: &[EntityId],
+) -> EntityId {
+    let claim = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .claim_propose_prompted(
+            &ClaimInput {
+                id: Some(claim.to_hex()),
+                predicate: predicate.to_owned(),
+                subject_ref: about.to_hex(),
+                value: json!("owen-fixture-words"),
+                confidence: 0.8,
+                source: "inferred".to_owned(),
+                world_ref: None,
+                relationship_ref: None,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: None,
+                learned_at: None,
+                salience: None,
+                confidence_details: None,
+            },
+            "export-fixture",
+            producers,
+            &[b"read bytes".as_slice()],
+        )
+        .expect("a proposal born from its prompt rows");
+    let birth = vault
+        .row_birth(&claim)
+        .expect("a birth read")
+        .expect("FIXTURE: the claim has a birth");
+    for producer in producers {
+        assert!(
+            birth
+                .made_by
+                .inputs
+                .iter()
+                .any(|input| input.row == *producer && input.role == MadeByInputRole::Prompt),
+            "FIXTURE: the birth names {} as a prompt input",
+            producer.to_hex()
+        );
+    }
+    claim
+}
+
+/// Whether an archive or OKF copy's answer names the member's mailbox as
+/// left out.
+fn names_member_mailbox_in(fx: &Fixture, export: &WholeVaultExport) -> bool {
+    export.mailbox_notices().iter().any(|notice| {
+        notice.source_ref.as_deref() == Some(fx.member_source.as_str())
+            && notice.reason == MailboxLeftOutReason::MemberMailbox
+    })
+}
+
+/// The Owner's whole-vault archive, its members and the ids of its entity
+/// rows.
+fn archive_of(
+    vault: &Vault,
+) -> (
+    WholeVaultExport,
+    BTreeMap<String, Vec<u8>>,
+    BTreeSet<String>,
+) {
+    let export = vault.export_whole_vault(true).expect("the Owner's archive");
+    let members = zip_members(export.bytes());
+    let ids = archive_entity_ids(&members);
+    (export, members, ids)
+}
+
+#[test]
+fn owner_archive_and_okf_omit_other_member_mailbox() {
+    // Person-owned; "Owners can export members' mail" never set, so off.
+    let fx = fixture(SharedVaultPreset::Family);
+    let (archive, members, ids) = archive_of(&fx.vault);
+    assert!(
+        fx.owner_rows.iter().any(|id| ids.contains(&id.to_hex())),
+        "FIXTURE: the Owner's own mail is in the archive"
+    );
+    let okf = fx.vault.export_okf().expect("the Owner's OKF bundle");
+    let okf_members = zip_members(okf.bytes());
+    assert!(
+        !okf_entity_ids(&okf_members).is_empty(),
+        "FIXTURE: the OKF bundle holds concepts"
+    );
+    for (what, export, members) in [
+        ("archive", &archive, &members),
+        ("OKF bundle", &okf, &okf_members),
+    ] {
+        for id in &fx.member_rows {
+            assert!(
+                !mentions(members, &id.to_hex()),
+                "a member's mailbox stays home: the {what} carries member row {}",
+                id.to_hex()
+            );
+        }
+        assert!(
+            !mentions(members, MEMBER_BODY) && !mentions(members, MEMBER_SUBJECT),
+            "no word of the member's mail is in the {what}"
+        );
+        assert!(
+            names_member_mailbox_in(&fx, export),
+            "the {what} names the member's mailbox it left out"
+        );
+    }
+}
+
+#[test]
+fn owner_copy_withholds_a_version_made_from_a_member_mailbox() {
+    let (fx, (m, a, b)) = fixture_with(SharedVaultPreset::Family, |s| {
+        let m = a_turn(s.vault, s.member_rows);
+        let o = a_turn(s.vault, s.owner_rows);
+        let a = artifact_made_by(
+            s.vault,
+            s.owner,
+            "a.bin",
+            b"a-bytes",
+            &made_by_naming(s.owner, &[m], None),
+        );
+        let b = artifact_made_by(
+            s.vault,
+            s.owner,
+            "b.bin",
+            b"b-bytes",
+            &made_by_naming(s.owner, &[o], None),
+        );
+        (m, a, b)
+    });
+    assert!(
+        !a.assets.is_empty() && !b.assets.is_empty(),
+        "FIXTURE: each version's bytes are an ASSET row"
+    );
+    let (export, members, ids) = archive_of(&fx.vault);
+    let has = |id: &EntityId| ids.contains(&id.to_hex());
+    assert!(
+        has(&b.artifact) && has(&b.version.claim_id),
+        "control: an artifact made from the Owner's own mail goes, with its version claim"
+    );
+    assert!(
+        !has(&a.artifact) && !has(&a.version.claim_id),
+        "an artifact whose version was made from the member's mail stays home, with its version claim"
+    );
+    assert!(
+        a.assets.iter().all(|asset| !has(asset)),
+        "bytes only that version uses stay home"
+    );
+    assert!(
+        !mentions(&members, &m.to_hex()),
+        "no byte of the member's row"
+    );
+    assert!(names_member_mailbox_in(&fx, &export));
+}
+
+#[test]
+fn owner_copy_keeps_shared_bytes_one_whole_use_carries() {
+    let (fx, (a, b)) = fixture_with(SharedVaultPreset::Family, |s| {
+        let m = a_turn(s.vault, s.member_rows);
+        let o = a_turn(s.vault, s.owner_rows);
+        let a = artifact_made_by(
+            s.vault,
+            s.owner,
+            "a.bin",
+            b"shared-bytes",
+            &made_by_naming(s.owner, &[m], None),
+        );
+        let b = artifact_made_by(
+            s.vault,
+            s.owner,
+            "b.bin",
+            b"shared-bytes",
+            &made_by_naming(s.owner, &[o], None),
+        );
+        (a, b)
+    });
+    assert!(
+        !a.assets.is_empty() && b.assets.is_empty(),
+        "FIXTURE: one ASSET row, added by the first append"
+    );
+    let (_, _, ids) = archive_of(&fx.vault);
+    let has = |id: &EntityId| ids.contains(&id.to_hex());
+    assert!(has(&b.artifact), "control: the Owner-made artifact goes");
+    assert!(
+        !has(&a.artifact) && !has(&a.version.claim_id),
+        "the artifact made from the member's mail stays home"
+    );
+    assert!(
+        a.assets.iter().all(|asset| ids.contains(&asset.to_hex())),
+        "the shared bytes go with the use that goes whole"
+    );
+}
+
+#[test]
+fn owner_copy_withholds_two_hop_side_provenance() {
+    let (fx, (m, s_row, r_row, b_row, c_row)) = fixture_with(SharedVaultPreset::Family, |s| {
+        let m = a_turn(s.vault, s.member_rows);
+        let o = a_turn(s.vault, s.owner_rows);
+        let s_row = artifact_made_by(
+            s.vault,
+            s.owner,
+            "s.bin",
+            b"s-bytes",
+            &made_by_naming(s.owner, &[m], None),
+        )
+        .artifact;
+        let r_row = artifact_made_by(
+            s.vault,
+            s.owner,
+            "r.bin",
+            b"r-bytes",
+            &made_by_naming(s.owner, &[s_row], None),
+        )
+        .artifact;
+        let b_row = artifact_made_by(
+            s.vault,
+            s.owner,
+            "b.bin",
+            b"b-bytes",
+            &made_by_naming(s.owner, &[o], None),
+        )
+        .artifact;
+        let c_row = artifact_made_by(
+            s.vault,
+            s.owner,
+            "c.bin",
+            b"c-bytes",
+            &made_by_naming(s.owner, &[b_row], None),
+        )
+        .artifact;
+        (m, s_row, r_row, b_row, c_row)
+    });
+    let (_, members, ids) = archive_of(&fx.vault);
+    assert!(
+        ids.contains(&b_row.to_hex()) && ids.contains(&c_row.to_hex()),
+        "control: a two-hop chain of the Owner's own rows goes"
+    );
+    assert!(
+        !ids.contains(&s_row.to_hex()),
+        "S, made from the member's mail, stays home"
+    );
+    assert!(
+        !ids.contains(&r_row.to_hex()),
+        "R, made from S, stays home with it"
+    );
+    assert!(
+        !mentions(&members, &m.to_hex()),
+        "no byte of the member's row"
+    );
+}
+
+#[test]
+fn owner_copy_withholds_a_row_whose_birth_names_a_member_mailbox() {
+    let (fx, (m, r_row, control)) = fixture_with(SharedVaultPreset::Family, |s| {
+        let m = a_turn(s.vault, s.member_rows);
+        let o = a_turn(s.vault, s.owner_rows);
+        let about = a_person(s.vault);
+        let r_row = claim_prompted_by(
+            s.vault,
+            s.owner,
+            about,
+            "profile.export_fixture_member",
+            &[m],
+        );
+        let control = claim_prompted_by(
+            s.vault,
+            s.owner,
+            about,
+            "profile.export_fixture_owner",
+            &[o],
+        );
+        (m, r_row, control)
+    });
+    let (_, members, ids) = archive_of(&fx.vault);
+    assert!(
+        ids.contains(&control.to_hex()),
+        "control: a claim born from the Owner's own mail goes"
+    );
+    assert!(
+        !ids.contains(&r_row.to_hex()),
+        "a claim born from the member's mail stays home"
+    );
+    assert!(
+        !mentions(&members, &m.to_hex()),
+        "no byte of the member's row, in a birth, a handle or an edge"
+    );
+}
+
+#[test]
+fn owner_copy_withholds_an_artifact_born_from_a_member_ask() {
+    let (fx, (m, a)) = fixture_with(SharedVaultPreset::Family, |s| {
+        let m = a_turn(s.vault, s.member_rows);
+        // The Ask alone: no input, so no birth; the version, its head, its
+        // born-from row and its ledger claim name the TURN.
+        let a = artifact_made_by(
+            s.vault,
+            s.owner,
+            "a.bin",
+            b"a-bytes",
+            &made_by_naming(s.owner, &[], Some(MadeByTrigger::Ask(m))),
+        );
+        let born = s
+            .vault
+            .artifacts_born_from(&BornFromSource::Trigger(MadeByTrigger::Ask(m)))
+            .expect("a born-from read");
+        assert!(
+            born.iter().any(|row| row.artifact_id == a.artifact),
+            "FIXTURE: the artifact is born from the member's Ask"
+        );
+        assert!(
+            s.vault
+                .row_birth(&a.artifact)
+                .expect("a birth read")
+                .is_none(),
+            "FIXTURE: the artifact has no birth"
+        );
+        (m, a)
+    });
+    let (_, members, ids) = archive_of(&fx.vault);
+    assert!(
+        !ids.contains(&a.artifact.to_hex()) && !ids.contains(&a.version.claim_id.to_hex()),
+        "an artifact born from the member's Ask stays home, with its version claim"
+    );
+    assert!(
+        a.assets.iter().all(|asset| !ids.contains(&asset.to_hex())),
+        "bytes only that version uses stay home"
+    );
+    assert!(
+        !mentions(&members, &m.to_hex()),
+        "no byte of the member's row"
     );
 }
