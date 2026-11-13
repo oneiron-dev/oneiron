@@ -126,6 +126,8 @@ pub use reply::{
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use reply::{mail_reply_draft_as_stored_for_test, reply_draft_manifest_digest_for_test};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use search::{MailSearchReport, MailSourceSearchRequest};
