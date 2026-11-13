@@ -232,4 +232,8 @@ pub(super) struct McpPageDispatchState {
     pub(super) continuation: Option<McpPageCursorState>,
     continuable: bool,
     pub(super) producer_epoch: Option<u64>,
+    /// The vault's authority generation, read before a fresh continuable
+    /// page one's producer ran. `None` for a continuation, a call that is
+    /// not continuable, or a generation that could not be read.
+    pub(super) authority_generation: Option<u64>,
 }

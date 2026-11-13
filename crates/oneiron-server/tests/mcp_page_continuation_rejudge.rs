@@ -7,13 +7,16 @@
 //! reads under a live `RelationshipClaimsRead` Grant. Once the owner revokes
 //! that Grant, page two of the earlier call is refused with the continuation
 //! refusal, and the caller starts over from page one under the read it holds
-//! now. With nothing changed, page two is served.
+//! now. With nothing changed, page two is served. A Grant revoked while page
+//! one is made, after its producer read and before its mint, refuses page two
+//! too (a door runs the revoke at that point).
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
 //! --test mcp_page_continuation_rejudge`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -29,6 +32,7 @@ use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_server::test_doors::mcp_page_mint::before_next_page_mint;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
 };
@@ -388,7 +392,13 @@ fn mcp_page_continuation_served_while_read_unchanged() -> TestResult {
 async fn served_while_read_unchanged() -> TestResult {
     let fixture = Fixture::new()?;
     let version = fixture.connect().await?;
+    let generation = fixture.vault.authority_generation()?;
     let cursor = page_one(&fixture, &version).await?;
+    assert_eq!(
+        fixture.vault.authority_generation()?,
+        generation,
+        "a page one call commits nothing to the authority log, so its mint keeps only the rows its reader read"
+    );
     let (status, second) = fixture
         .receipts(5, &version, Some(json!({ "limit": 1, "cursor": cursor })))
         .await?;
@@ -459,5 +469,71 @@ async fn rejudged_under_current_read() -> TestResult {
         !claim_refs(&again).contains(&in_space),
         "a fresh page one reads under the current read: {again}"
     );
+    Ok(())
+}
+
+#[test]
+fn mcp_page_continuation_rejudged_after_a_revoke_during_page_one() -> TestResult {
+    on_engine_stack(rejudged_after_a_revoke_during_page_one)
+}
+
+/// The owner revokes the reader's Grant while page one is made: after its
+/// producer read both claims, before its mint judged which rows the reader
+/// read. Which rows that read admitted is then unknown, so page two is judged
+/// by every row page one was made from, and refused.
+async fn rejudged_after_a_revoke_during_page_one() -> TestResult {
+    let fixture = Fixture::new()?;
+    let version = fixture.connect().await?;
+    let read = fixture.claims_read_now(3, &version).await?;
+    assert!(
+        read.contains(&fixture.open.to_hex()) && read.contains(&fixture.in_space.to_hex()),
+        "FIXTURE: under its live Grant the reader reads both claims' receipts: {read:?}"
+    );
+    let revoked = Arc::new(AtomicBool::new(false));
+    {
+        let vault = Arc::clone(&fixture.vault);
+        let grant = fixture.grant;
+        let revoked = Arc::clone(&revoked);
+        before_next_page_mint(&fixture.vault, move || {
+            vault
+                .revoke_access_grant(&grant, vault.now_recorded_at())
+                .expect("FIXTURE: the owner revokes the reader's Grant while page one is made");
+            revoked.store(true, Ordering::SeqCst);
+        });
+    }
+    let (status, first) = fixture
+        .receipts(4, &version, Some(json!({ "limit": 1 })))
+        .await?;
+    assert_eq!(status, 200, "{first}");
+    assert!(first.get("error").is_none(), "page one is served: {first}");
+    assert!(
+        revoked.load(Ordering::SeqCst),
+        "FIXTURE: the Grant is revoked between page one's producer and its mint"
+    );
+    let cursor =
+        next_cursor(&first).ok_or_else(|| format!("FIXTURE: page one continues: {first}"))?;
+    let read = fixture.claims_read_now(5, &version).await?;
+    assert!(
+        !read.contains(&fixture.in_space.to_hex()) && read.contains(&fixture.open.to_hex()),
+        "FIXTURE: once its Grant is revoked, a fresh read drops the space's claim only: {read:?}"
+    );
+
+    let (status, second) = fixture
+        .receipts(6, &version, Some(json!({ "limit": 1, "cursor": cursor })))
+        .await?;
+    assert_eq!(status, 200, "{second}");
+    assert_eq!(
+        error_kind(&second),
+        Some(CURSOR_REFUSED),
+        "a page made across a revoke continues only under every row it was made from: {second}"
+    );
+    let text = second.to_string();
+    let in_space = fixture.in_space.to_hex();
+    for withheld in [SPACE_TEXT, in_space.as_str()] {
+        assert!(
+            !text.contains(withheld),
+            "the refusal names {withheld}: {text}"
+        );
+    }
     Ok(())
 }
