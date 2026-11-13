@@ -24,8 +24,10 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
-use oneiron::authority::HostSlipIssuer;
+use oneiron::authority::{HostSlipIssuer, holder_proof_challenge};
+use oneiron::federation::Scope;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
@@ -154,15 +156,34 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn owner_auth(vault: &Vault, issuer: &HostSlipIssuer) -> (String, String) {
-    let slip = vault
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("rerank template owner actor");
+    let root = vault
         .ensure_host_root_slip(issuer)
         .expect("rerank template host root slip");
+    // The served recall reads under the presented slip for the actor it
+    // binds, and the host root's holder is the host, never the owner it
+    // binds (FIX RECALL-HOST-ROOT-READ-REFUSED). So the owner presents a
+    // full slip of his own, held by his own key.
+    let holder_key = SigningKey::from_bytes(&[0x52; 32]);
+    let mut claims = root.claims.clone();
+    claims.slip_id = [0x52; 32];
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.binding_key = holder_key.verifying_key().to_bytes();
+    claims.actor_class = Some("human".to_owned());
+    claims.scope = Scope::top();
+    let slip = vault
+        .mint_capability_slip(issuer, claims)
+        .expect("rerank template owner slip");
     let timestamp = vault.now_recorded_at();
     let nonce = EntityId::now().to_hex();
-    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
-    let proof = issuer
-        .binding_proof(&slip, challenge.as_bytes())
-        .expect("rerank template owner proof");
+    let challenge = holder_proof_challenge(timestamp, &nonce);
+    let transcript = slip
+        .binding_transcript(&challenge)
+        .expect("rerank template owner transcript");
+    let proof = holder_key.sign(&transcript).to_bytes();
     let bearer = slip.to_token().expect("rerank template owner token");
     let binding =
         json!({"timestamp": timestamp, "nonce": nonce, "signature": hex(&proof)}).to_string();
