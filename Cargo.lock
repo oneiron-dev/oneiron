@@ -8805,6 +8805,7 @@ dependencies = [
 name = "oneiron-ruler"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
