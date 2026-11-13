@@ -16,10 +16,7 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test run_revert_unsettled`
 #![cfg(all(oneiron_test_support, feature = "test-support"))]
 
-use oneiron::code_run::{
-    HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemoryPutClaimCall,
-    SelfMemorySupersedeClaimCall,
-};
+use oneiron::code_run::{HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemoryPutClaimCall};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::run_changes::put_claim_asking_auto;
@@ -27,8 +24,8 @@ use oneiron::test_support::{
     bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
 };
 use oneiron::{
-    ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, TimeRange, Vault,
-    VaultConfig, WriteActor,
+    ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EdgeKind, EntityId, TimeRange,
+    Vault, VaultConfig, WriteActor,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -320,31 +317,30 @@ fn revert_all_undoes_an_unsettled_runs_changes() -> TestResult {
 }
 
 /// A run nobody reviewed writes 2 claims that land at Auto. Another run then
-/// supersedes the first with its own claim. Undo-all of the first run takes
-/// back the second claim, keeps the first under the later claim that rests
-/// on it, and reports it as dependent.
+/// writes a claim derived from the first: its `DerivedFrom` edge to the first
+/// is put raw, as a derivation's evidence edge stands. (A later code-mode
+/// supersede of the first pends at the actor ceiling under this fixture's
+/// policy, rg7 13 Nov.) Undo-all of the first run takes back the second
+/// claim, keeps the first under the live claim that rests on it, and reports
+/// it as dependent.
 #[test]
 fn revert_all_keeps_and_reports_a_later_change_on_a_runs_claim() -> TestResult {
     let f = Fixture::open()?;
     let run = f.run("run-revert-kept")?;
     let later = f.run("run-revert-later")?;
-    let subject = f.person()?;
-    let first = f.put(&run, subject, "sencha", 10)?;
+    let first = f.put(&run, f.person()?, "sencha", 10)?;
     let second = f.put(&run, f.person()?, "matcha", 12)?;
-    for id in [first, second] {
+    let derived = f.put(&later, f.person()?, "hojicha", 14)?;
+    for id in [first, second, derived] {
         assert_eq!(
             f.state(id)?,
             ("auto".to_owned(), "active".to_owned()),
             "each run claim lands at Auto"
         );
     }
-    let replacement = f.propose(&later, subject, "hojicha", 14)?;
-    later
-        .dispatch(SelfCall::MemorySupersedeClaim(
-            SelfMemorySupersedeClaimCall::new(replacement, first, 20),
-        ))
-        .map_err(at("the later run's supersede"))?;
-    assert_eq!(f.state(first)?.1, "superseded");
+    f.vault
+        .put_edge(&derived, EdgeKind::DerivedFrom, &first, 1.0)
+        .map_err(at("the later claim's derivation edge"))?;
 
     let outcome = f.revert_all("run-revert-kept")?;
     assert_eq!(
@@ -362,10 +358,10 @@ fn revert_all_keeps_and_reports_a_later_change_on_a_runs_claim() -> TestResult {
     );
     assert_eq!(f.state(second)?.1, "retracted");
     assert_eq!(
-        f.state(first)?.1,
-        "superseded",
+        f.state(first)?,
+        ("auto".to_owned(), "active".to_owned()),
         "the run's first claim is kept"
     );
-    assert_eq!(f.state(replacement)?.1, "active", "the later change stands");
+    assert_eq!(f.state(derived)?.1, "active", "the later change stands");
     Ok(())
 }
