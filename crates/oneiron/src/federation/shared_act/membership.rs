@@ -199,23 +199,26 @@ impl Vault {
         });
         Ok(grants)
     }
-    /// Steward is the owner's to give (ARCH-0043: an Admin "cannot self-grant
-    /// blanket access"; lead 10 Nov 06:5x): a role change or an invitation
-    /// that names it needs an Owner of the vault. An Admin's AssignRole and
-    /// AddMember powers never reach it.
-    fn steward_given_by_owner_in_txn(
+    /// Steward and Deputy are the owner's to give: a role change or an
+    /// invitation that names either needs an Owner of the vault, and an
+    /// Admin's AssignRole and AddMember powers never reach them. Steward:
+    /// ARCH-0043, an Admin "cannot self-grant blanket access" (lead 10 Nov
+    /// 06:5x). Deputy: Admin plus the delegated Owner Grant (ARCH-0082),
+    /// which the house door already refuses an Admin (Engine ruling
+    /// C1-DEPUTY-GIVER, 13 Nov).
+    fn reserved_role_given_by_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
         giver: EntityId,
         role: Role,
     ) -> Result<()> {
-        if role == Role::Steward
+        if matches!(role, Role::Steward | Role::Deputy)
             && self.member_role_in_txn(txn, vault_id, giver)? != Some(Role::Owner)
         {
             return Err(crate::error::Error::Claim(
                 crate::error::ClaimError::ActorLacksClaimAuthority {
-                    reason: "only an owner of the vault gives the Steward role",
+                    reason: "only an owner of the vault gives the Steward or Deputy role",
                 },
             ));
         }
@@ -725,7 +728,7 @@ impl Vault {
                     })
                     .unwrap_or(Role::Member);
                 non_root(Some(role))?;
-                self.steward_given_by_owner_in_txn(txn, vault_id, inviter, role)?;
+                self.reserved_role_given_by_owner_in_txn(txn, vault_id, inviter, role)?;
                 if !crate::consent::person_is_live_in_txn(self, txn, &member)?
                     || self.member_role_in_txn(txn, vault_id, member)?.is_some()
                 {
@@ -766,7 +769,7 @@ impl Vault {
             ask,
             |txn, giver, now, receipt| {
                 non_root(Some(role))?;
-                self.steward_given_by_owner_in_txn(txn, vault_id, giver, role)?;
+                self.reserved_role_given_by_owner_in_txn(txn, vault_id, giver, role)?;
                 let from = self
                     .member_role_in_txn(txn, vault_id, member)?
                     .ok_or_else(invalid)?;
