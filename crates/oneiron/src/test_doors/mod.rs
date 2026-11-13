@@ -40,6 +40,7 @@ pub mod label_writers;
 pub mod learning_claim_value;
 pub mod lifted_text;
 pub mod live_run_claim_put;
+pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
 pub mod model_binding_proposer;
