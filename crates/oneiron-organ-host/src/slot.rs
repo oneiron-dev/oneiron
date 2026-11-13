@@ -287,19 +287,29 @@ impl Slot {
     }
 
     /// Lets go of every recycled process with no call in flight on it, for
-    /// the caller to stop. One that died under a call stays until that call
-    /// returns: the call forgets it and counts the crash ([`Slot::crashed`]).
+    /// the caller to stop. One that ended on its own counts its crash here,
+    /// as the live process does when the next call finds it ended
+    /// ([`Slot::process`]): the call it died under may have freed its seat
+    /// and not yet reached [`Slot::crashed`], which then finds it gone. One
+    /// that died under a call still in flight stays for that call to forget
+    /// and count.
     pub(crate) fn take_idle_recycled(&self) -> Vec<Arc<OrganProcess>> {
         let mut state = self.lock();
         let (idle, busy): (Vec<_>, Vec<_>) = mem::take(&mut state.recycled)
             .into_iter()
             .partition(|process| process.idle_for().is_some());
         state.recycled = busy;
+        for process in &idle {
+            if !process.is_alive() && !process.stopped_by_host() {
+                record_crash(&mut state);
+            }
+        }
         idle
     }
 
     /// The process died under a call: forget it, and count the crash unless
-    /// the host itself stopped it.
+    /// the host itself stopped it, or a sweep let it go first and counted
+    /// it there ([`Slot::take_idle_recycled`]).
     pub(crate) fn crashed(&self, process: &Arc<OrganProcess>) {
         let mut state = self.lock();
         if Self::forget(&mut state, process) && !process.stopped_by_host() {

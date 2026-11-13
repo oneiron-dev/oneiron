@@ -3,7 +3,8 @@
 //! real organ process (the probe). A recycle is the host's own decision: no
 //! crash is counted and no backoff set. A call still in flight on the
 //! recycled process ends as the organ answers it, and the process is
-//! stopped after. Any other answer ends the run.
+//! stopped after. A recycled process that dies on its own still counts its
+//! crash. Any other answer ends the run.
 #![cfg(target_os = "linux")]
 
 use std::sync::{Mutex, mpsc};
@@ -83,6 +84,17 @@ fn failing() -> OrganCall {
     )
 }
 
+/// `probe.ask` that asks [`HOLD`] once: in flight until the hold lets go.
+fn held() -> OrganCall {
+    call(
+        "probe.ask",
+        Value::Map(vec![
+            ("verb".into(), HOLD.into()),
+            ("times".into(), 1_u64.into()),
+        ]),
+    )
+}
+
 fn answers_internal(host: &OrganHost, vault: &Vault) {
     match host.call(vault, failing()) {
         Err(HostError::Organ(error)) => assert_eq!(error.code, ErrorCode::Internal, "{error:?}"),
@@ -108,6 +120,20 @@ fn running(pid: u32) -> bool {
         stat.rsplit(')')
             .next()
             .is_some_and(|rest| !rest.trim_start().starts_with('Z'))
+    })
+}
+
+/// Waits, without sleeping, until `pid` is reaped. The host's reader reaps
+/// an organ that died on its own only after it saw the socket close and
+/// marked the process ended, so a reaped organ is one the host knows ended.
+fn reaped(pid: u32) -> bool {
+    let entry = format!("/proc/{pid}");
+    (0..10_000_000).any(|_| {
+        let gone = !std::path::Path::new(&entry).exists();
+        if !gone {
+            thread::yield_now();
+        }
+        gone
     })
 }
 
@@ -159,17 +185,10 @@ fn a_call_in_flight_on_a_recycled_process_ends_as_the_organ_answers_it() {
         release: Mutex::new(let_go),
     };
     let asks = AskHandlers::none().with(HOLD, &hold);
-    let held = call(
-        "probe.ask",
-        Value::Map(vec![
-            ("verb".into(), HOLD.into()),
-            ("times".into(), 1_u64.into()),
-        ]),
-    );
     // Nothing in the scope asserts before the held call is let go, so a
     // red run fails instead of waiting on the hold.
     let (failed, recycled, still_running, in_flight) = thread::scope(|scope| {
-        let holder = scope.spawn(|| host.call_with(&vault, held, Vec::new(), &asks));
+        let holder = scope.spawn(|| host.call_with(&vault, held(), Vec::new(), &asks));
         let in_flight = was_asked.recv_timeout(Duration::from_secs(10)).is_ok();
         let failed: Vec<_> = (0..3).map(|_| host.call(&vault, failing())).collect();
         let recycled = status(&host);
@@ -207,6 +226,59 @@ fn a_call_in_flight_on_a_recycled_process_ends_as_the_organ_answers_it() {
     let fresh = status(&host);
     assert_ne!(fresh.pid, Some(first));
     assert_eq!((fresh.spawns, fresh.recent_crashes), (2, 0));
+}
+
+/// A recycled process that dies on its own counts its crash when the sweep
+/// lets it go, as the live process's death counts at the next call. Here it
+/// dies once its last call has ended; a sweep that comes between a dying
+/// call's freed seat and that call's crash bookkeeping takes the same branch.
+#[test]
+fn a_recycled_process_that_dies_on_its_own_counts_a_crash() {
+    let (_dir, vault) = vault();
+    let host = host();
+    host.warm("probe").expect("warm");
+    let first = status(&host).pid.expect("a live process");
+    let (asked, was_asked) = mpsc::sync_channel(1);
+    let (release, let_go) = mpsc::channel();
+    let hold = Hold {
+        asked,
+        release: Mutex::new(let_go),
+    };
+    let asks = AskHandlers::none().with(HOLD, &hold);
+    let (recycled, in_flight) = thread::scope(|scope| {
+        let holder = scope.spawn(|| host.call_with(&vault, held(), Vec::new(), &asks));
+        let in_flight = was_asked.recv_timeout(Duration::from_secs(10)).is_ok();
+        for _ in 0..3 {
+            let _ = host.call(&vault, failing());
+        }
+        let recycled = status(&host);
+        let _ = release.send(());
+        assert!(in_flight, "the held call reached its ask");
+        (recycled, holder.join().expect("join"))
+    });
+    assert_eq!(
+        (recycled.state, recycled.pid),
+        (OrganState::Cold, None),
+        "the third internal in a row recycles the live process",
+    );
+    in_flight.expect("the call in flight is answered");
+    // No call has started since the held one ended, so no sweep has
+    // stopped the recycled process.
+    assert!(running(first), "the recycled process {first} still runs");
+    let pid = i32::try_from(first).expect("pid");
+    // SAFETY: kill(2) on the organ this test started, which still runs, so
+    // the host has not reaped it and its pid is not reused.
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+    }
+    assert!(reaped(first), "the host reaps the organ that died");
+    host.unload_idle();
+    let after = status(&host);
+    assert_eq!(
+        (after.spawns, after.recent_crashes),
+        (1, 1),
+        "a recycled process that died on its own counts its crash",
+    );
 }
 
 #[test]
