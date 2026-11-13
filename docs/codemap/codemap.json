@@ -29383,7 +29383,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/derive/link.rs",
@@ -48812,7 +48812,7 @@
      "path": "src/lens/mediation/mediation_backing.rs",
      "purpose": "Backing refs, selection requests, and engine-issued read handles",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 26,
       "struct": 8
@@ -56490,7 +56490,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunChanges",
@@ -56499,7 +56499,7 @@
      "path": "src/memory/run_review/changes.rs",
      "purpose": "A run's own change journal (ARCH-0040 #revert-run, REV-2): each change a run writes is recorded under that…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 2
      }
@@ -65150,7 +65150,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/l2_evidence.rs",
-     "purpose": "Unranked, explicitly addressed L2 subject evidence through the retrieval gates",
+     "purpose": "Unranked, explicitly addressed L2 subject evidence through the retrieval gates: each subject's base-reality…",
      "surface": {
       "crate-vis": 1
      }
@@ -79402,13 +79402,14 @@
       "PolicyPreflight",
       "PolicyPreflightAct",
       "PolicyPreflightRef",
-      "PolicyPreflightRequest"
+      "PolicyPreflightRequest",
+      "PolicyPreflightVerdict"
      ],
      "path": "src/snapshot_read/policy_preflight.rs",
-     "purpose": "`vault.policy.preflight` (primitive A, slice 6.4e): what the caller's own read lets it do with each of a…",
+     "purpose": "`vault.policy.preflight` (primitive A, slices 6.4e and 6.4e-2): what the caller's own read lets it do with…",
      "surface": {
       "const": 1,
-      "enum": 2,
+      "enum": 3,
       "fn": 2,
       "struct": 2
      }
@@ -92461,6 +92462,7 @@
       "Distinct",
       "Evidence",
       "Item",
+      "Merge",
       "Named",
       "PinnedArchive",
       "Profile",
@@ -92474,7 +92476,7 @@
      "surface": {
       "enum": 3,
       "fn": 39,
-      "struct": 14,
+      "struct": 15,
       "type": 1
      }
     },
@@ -92795,7 +92797,7 @@
      "path": "src/test_doors/run_changes.rs",
      "purpose": "Doors for `tests/run_changes_journal_cost.rs` (the stored size of a run's change journal rows…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -94948,7 +94950,7 @@
      "path": "src/vault_shape/member.rs",
      "purpose": "Shared-vault membership as shape rows (ARCH-0043 presets as seeds)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 2,
       "struct": 2
@@ -101392,6 +101394,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/admin_is_not_steward.rs",
+     "purpose": "An Admin never gives the Steward role, to itself or to anyone (lead 10 Nov 06:5x; ARCH-0043's Admin row…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/admin_reads_no_steward_read.rs",
      "purpose": "Steward is a named grant preset, never a rank, and never reachable through Admin (lead 10 Nov 06:5x…",
      "surface": {}
@@ -102014,6 +102024,14 @@
      "notable": [],
      "path": "tests/context_pack_group_split.rs",
      "purpose": "A context pack whose rows fit its token budget keeps every row (FIX [CONTEXT-PACK-GROUP-SPLIT-DROPS-ROW])",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/context_pack_l2_prefix_base_reality.rs",
+     "purpose": "ARCH-0004 #world-scope: \"The context pack MUST partition claims by world - the base-reality section first…",
      "surface": {}
     },
     {
@@ -103222,6 +103240,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/lens_backing_refs_use_engine_short_ids.rs",
+     "purpose": "A framed lens names each row it binds by the row's engine short id (FIX WEAVE-LENS-BACKING-REF-FULL-HEX)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/lfs_build_required_pointer.rs",
      "purpose": "Engine CODECUSTODY-LFS Q2 = A (NO-DOOR REPO-LFS-PATH-POLICY, tests/e2e/code-custody.test.ts…",
      "surface": {}
@@ -103456,6 +103482,14 @@
      "notable": [],
      "path": "tests/primitive_a_policy_preflight.rs",
      "purpose": "Primitive A, slice 6.4e (SLICE6-MAP row A; ENGINE CALL S64-5): `vault.policy.preflight` with the act `read`…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/primitive_a_policy_preflight_derive.rs",
+     "purpose": "Primitive A, slice 6.4e-2 (ENGINE CALL S64E-JUDGE = A; S64-5): `vault.policy.preflight` with the acts…",
      "surface": {}
     },
     {
@@ -103754,6 +103788,14 @@
      "notable": [],
      "path": "tests/run_changes_list.rs",
      "purpose": "L8-48 (ARCH-0040 #revert-run, REV-2): the engine lists a run's changes by itself",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/run_changes_topology.rs",
+     "purpose": "ARCH-0040 #revert-run (REV-2), design RUNCHANGES-3 (Engine 13 Nov 10:30): a run's identity-topology…",
      "surface": {}
     },
     {
@@ -106190,7 +106232,7 @@
    "over_bar": 269,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7482,
-   "test_files": 1178
+   "test_files": 1183
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -147806,6 +147848,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/serve_start_grant_backfill.rs",
+     "purpose": "The shipped `oneiron serve` mints the default read Grant of each named agent paired before Grants, once per…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -147899,6 +147949,14 @@
      "notable": [],
      "path": "tests/media_job_staged_spend.rs",
      "purpose": "[MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1: a media job its run's spend scope funds books its own…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mesh_listener_bind_gate.rs",
+     "purpose": "The shipped server's default features carry `mesh`, and its paired-machine mesh listener still starts only…",
      "surface": {}
     },
     {
@@ -148640,7 +148698,7 @@
    "over_bar": 61,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1852,
-   "test_files": 222
+   "test_files": 224
   },
   "oneiron-skill-attribution": {
    "files": [
