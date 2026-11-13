@@ -34,6 +34,11 @@ impl SyncClient {
         self.sealed_updates.restart();
         // A grant or a replacement on an earlier socket proves nothing on this one (FIX 20202).
         self.promotions_granted.clear();
+        self.follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.follows_refused.clear();
         self.replacements_installed.clear();
     }
 
@@ -245,9 +250,9 @@ impl SyncClient {
                 }
             }
             // A followed world's windows sync in full with no promotion marker:
-            // the home grants each one on this socket (`follows_full_window`).
-            // Only the windows the home's root lists are asked, since the home
-            // closes the socket on a window it does not list.
+            // the home grants each one on this socket (`follows_full_window`),
+            // or refuses it (`FOLLOW_REFUSED`). Only the windows the home's
+            // root lists are asked.
             if self.config.residence_selector.is_some() {
                 for key in crate::sync::schema::read_window_list(&self.root_doc) {
                     if key.world().is_some()
@@ -294,6 +299,18 @@ impl SyncClient {
                 // A home that may not read the window's world is not asked to
                 // promote it, nor for its vector (FIX 922 item 11).
                 if !self.home_may_promote(&key) {
+                    continue;
+                }
+                // A followed world's window this device never promoted is
+                // asked as a follow, and its vector waits for the home's
+                // grant: a home that does not grant the whole window answers
+                // FOLLOW_REFUSED, and nothing of it goes on this socket.
+                if self.follow_only_window_in(&key, &effective_worlds)? {
+                    messages.push(self.follow_request_frame(&key)?);
+                    self.requested_windows
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(key);
                     continue;
                 }
                 messages.push(self.promotion_request_frame(&key)?);
@@ -366,6 +383,31 @@ impl SyncClient {
         &self,
         key: &WindowKey,
     ) -> std::result::Result<Vec<u8>, TransportError> {
+        self.selector_request_frame(key, window_sub_tags::PROMOTION_REQUEST)
+    }
+
+    /// The `FOLLOW_REQUEST` frame for followed window `key`: the same
+    /// selector, which the home grant-checks as a promotion's, but answers a
+    /// refusal with `FOLLOW_REFUSED` and keeps the socket open. Records the
+    /// request for [`Self::unanswered_follow_requests`].
+    fn follow_request_frame(
+        &self,
+        key: &WindowKey,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        let frame = self.selector_request_frame(key, window_sub_tags::FOLLOW_REQUEST)?;
+        self.follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone());
+        Ok(frame)
+    }
+
+    /// The `sub_tag` frame for `key` carrying this lane's residence selector.
+    fn selector_request_frame(
+        &self,
+        key: &WindowKey,
+        sub_tag: u8,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
         let selector =
             self.config
                 .residence_selector
@@ -375,8 +417,7 @@ impl SyncClient {
                 ))?;
         let bytes = crate::sync::encode_sync_selector(selector)
             .map_err(|_| TransportError::InvalidPayload("invalid promotion selector"))?;
-        transport::encode_window_sync(key.as_str(), window_sub_tags::PROMOTION_REQUEST, &bytes)
-            .into_result()
+        transport::encode_window_sync(key.as_str(), sub_tag, &bytes).into_result()
     }
 
     fn selected_discovered_windows(
@@ -435,8 +476,8 @@ impl SyncClient {
                 .cloned(),
         );
         // A followed world's window the root lists now and this connection's
-        // first frames did not ask for: its promotion request goes ahead of
-        // its vector, on the same writer, so the home grants it first.
+        // first frames did not ask for: it is asked as a follow, and its
+        // vector waits for the home's grant.
         let mut late_follows = std::collections::HashSet::new();
         if opened && self.config.residence_selector.is_some() {
             for key in crate::sync::schema::read_window_list(&self.root_doc) {
@@ -448,7 +489,7 @@ impl SyncClient {
                 if key.world().is_some()
                     && !requested
                     && !discovered.contains(&key)
-                    && self.follows_full_window_in(key.as_str(), &effective_worlds)
+                    && self.follow_only_window_in(&key, &effective_worlds)?
                     && self.home_may_promote(&key)
                 {
                     late_follows.insert(key.clone());
@@ -492,7 +533,12 @@ impl SyncClient {
                 continue;
             }
             if late_follows.contains(&key) {
-                frames.push(self.promotion_request_frame(&key)?);
+                frames.push(self.follow_request_frame(&key)?);
+                self.requested_windows
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(key);
+                continue;
             }
             let vv = self
                 .window_vv_for_initial_sync(&key)

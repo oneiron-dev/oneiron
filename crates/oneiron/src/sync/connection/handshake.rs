@@ -631,6 +631,17 @@ impl SyncConnection {
                 })?;
         }
 
+        // A followed world's window asked as a follow waits for the home's
+        // answer before the queue replays: a granted window's queued writes
+        // go now, a refused one's stay owed, and the socket stays open. A home
+        // that answers no follow leaves those windows' writes queued.
+        let asked = client.unanswered_follow_requests();
+        if peer.is_none() && !asked.is_empty() {
+            let answered = |client: &SyncClient, key: &WindowKey| client.follow_answered(key);
+            self.pump_until_each(&mut write, &mut read, client, event_tx, &asked, answered)
+                .await?;
+        }
+
         // Phase 3: Drain offline queue
         let queued = self.queue.drain_updates().map_err(SessionFault::local)?;
         if peer.is_some() {
