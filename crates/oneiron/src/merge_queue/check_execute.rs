@@ -493,10 +493,10 @@ pub(super) fn new_receipt(
 /// forward taint refs, in ONE read transaction: the repo row's actual
 /// raw bytes (an absent row stays `None`, never a refusal),
 /// `scope_for_blob` over present bytes, and the forward taint refs
-/// (`exhaust_taint_refs_in_txn`). Called at the `new_receipt` producer (bound checks and the
-/// baseline init) BEFORE `host.execute`; the values freeze on the
-/// inputs and ride ORIGINAL through finish, where root closes them
-/// into the completion token.
+/// (`exhaust_taint_refs_in_txn`). Called at the `new_receipt` producer
+/// (bound checks and the baseline init) BEFORE `host.execute`; the
+/// values freeze on the inputs and ride ORIGINAL through finish, where
+/// root closes them into the completion token.
 pub(super) fn snapshot_input_scope_taint(
     vault: &Vault,
     repo: crate::EntityId,
