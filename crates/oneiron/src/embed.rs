@@ -14,6 +14,7 @@ mod locality;
 mod media;
 #[cfg(feature = "sync")]
 mod release;
+pub use release::is_device_local_row_refusal;
 mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
@@ -519,14 +520,7 @@ impl PendingEmbeddingReconciler {
             return embedder.embed_marked_measured(inputs);
         }
         embedder.embed_released_measured(inputs, &|rows| {
-            if self.vault.rows_may_leave_for(rows, destination)? {
-                Ok(())
-            } else {
-                Err(Error::UpstreamToolFailure {
-                    tool: "embedder-remote",
-                    code: "device_local_row".to_owned(),
-                })
-            }
+            self.vault.release_embed_rows(rows, destination)
         })
     }
 

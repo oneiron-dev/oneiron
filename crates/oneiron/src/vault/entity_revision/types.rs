@@ -33,8 +33,11 @@ impl IndexedRevisionInput {
 
 /// Caller-owned embedding provider. It runs outside the LMDB transaction.
 /// `InvalidConfig`, `DimensionMismatch` and `InvalidVector` reject only this
-/// input. Other errors abort the pass; check provider-wide configuration before
-/// starting a pass rather than returning it as an input refusal.
+/// input. So does the refusal of [`crate::Vault::release_embed_rows`]: an
+/// embedder off this device asks it before it sends, and a row a device-local
+/// world keeps then publishes with no vector, as with no embedder. Other errors
+/// abort the pass; check provider-wide configuration before starting a pass
+/// rather than returning it as an input refusal.
 pub trait IndexedRevisionEmbedder {
     fn embed_revision(&self, input: &IndexedRevisionInput) -> Result<Vec<f32>>;
     /// The device and runtime that compute what [`Self::embed_revision`]
