@@ -40,7 +40,7 @@ crate::side_table::side_tables! {
     /// the install link's client id and redirect, and the custody the bot token takes. Key: the
     /// install state string.
     SKILL_HUB_PACK_SLACK_INSTALL: VaultMeta b"pack.slack-install.v1/" Named
-        [restore: live] [family: unregistered] [tier: canonical];
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SOURCE_ALIAS: VaultMeta b"pack.source-alias.v1/" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];

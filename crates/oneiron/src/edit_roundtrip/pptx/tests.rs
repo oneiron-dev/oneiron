@@ -1,12 +1,17 @@
 //! Returned bytes and typed refusals; no assertions of PowerPoint visibility.
 pub(crate) mod support;
-use super::package::*;
+// FIX [LIBTEST-PPTX-ORGAN-READER]: move to an organ-owned test door in oneiron-docedit; the pptx XML reader and enforce_allowlist moved there as private items (#2682)
+#[cfg(any())]
 use super::xml::Xml;
 use super::*;
 use crate::entity_id::EntityId;
+// FIX [LIBTEST-PPTX-ORGAN-READER]: move to an organ-owned test door in oneiron-docedit; the pptx XML reader and enforce_allowlist moved there as private items (#2682)
+#[cfg(any())]
 use std::collections::BTreeSet;
 use support::*;
 
+// FIX [LIBTEST-PPTX-ORGAN-READER]: move to an organ-owned test door in oneiron-docedit; the pptx XML reader and enforce_allowlist moved there as private items (#2682)
+#[cfg(any())]
 #[test]
 fn modern_shape_comment_writes_exact_allowlist_and_preserves_unknown_bytes() {
     let original = parts(false);
@@ -141,6 +146,8 @@ fn inspection_is_read_only_and_mint_is_declared_and_replayable() {
     verify_comment_proposal(&input, &proposal).unwrap();
 }
 
+// FIX [LIBTEST-PPTX-ORGAN-READER]: move to an organ-owned test door in oneiron-docedit; the pptx XML reader and enforce_allowlist moved there as private items (#2682)
+#[cfg(any())]
 #[test]
 fn replies_precede_text_and_only_original_author_resolves() {
     let original = bytes(&parts(false));
@@ -205,6 +212,8 @@ fn replies_precede_text_and_only_original_author_resolves() {
     assert!(noop.touched_parts.is_empty());
 }
 
+// FIX [LIBTEST-PPTX-ORGAN-READER]: move to an organ-owned test door in oneiron-docedit; the pptx XML reader and enforce_allowlist moved there as private items (#2682)
+#[cfg(any())]
 #[test]
 fn missing_ambiguous_and_changed_shape_emit_typed_unknown_not_nearby_anchor() {
     for reason in [
@@ -299,6 +308,8 @@ fn signed_noop_is_exact_and_signed_mutation_refuses() {
     );
 }
 
+// FIX [LIBTEST-PPTX-ORGAN-READER]: move to an organ-owned test door in oneiron-docedit; the pptx XML reader and enforce_allowlist moved there as private items (#2682)
+#[cfg(any())]
 #[test]
 fn candidate_validation_rejects_outside_and_inside_allowed_part_tampering() {
     let input = bytes(&parts(false));

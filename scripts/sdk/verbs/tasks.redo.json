@@ -6,6 +6,7 @@
   "mcp_served": "[input.task_ref]",
   "call": "memory.tasks_redo(input)?",
   "scope": "Write",
+  "act_class": "unstated",
   "task_decisions": true,
   "proposes": true,
   "admission": {

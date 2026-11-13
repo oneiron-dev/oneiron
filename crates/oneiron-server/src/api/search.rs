@@ -312,7 +312,7 @@ pub(crate) async fn search_vector(
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
+    let auth = super::scoped_auth::check_legacy_read_auth(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     let filter = super::read_filter_param(params.filter.as_deref())?;
     if let Some(text) = params.query_text.as_deref() {
@@ -515,7 +515,7 @@ pub(crate) async fn search_text(
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = super::scoped_auth::check_search_text_auth(&parts, &server)?.at(locality);
+    let auth = super::scoped_auth::check_legacy_read_auth(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     let filter = super::read_filter_param(params.filter.as_deref())?;
     server.check_retrieval_query(
@@ -753,7 +753,14 @@ pub(crate) fn search_response_with_revisions(
         let mut value = if matches!(view, View::Standard) {
             json!({"id": result.id.to_hex(), "score": result.score})
         } else if decoded {
-            projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view)
+            projection::project_entity_parts(
+                scoped_read.vault(),
+                &result.id,
+                entity_type,
+                learned_at,
+                &body,
+                view,
+            )
         } else {
             bodies.omitted(&result.id, entity_type, learned_at, &body, view, mode)
         };

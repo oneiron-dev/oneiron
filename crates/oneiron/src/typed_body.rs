@@ -718,6 +718,15 @@ pub(crate) fn bind_peer(
     )?;
     body.valid_from = Some(at);
     body.source = Some(ClaimSource::Observed);
+    // Only a PERSON has a substrate facet. Any other actor (a MACHINE such as
+    // a folder's importer or the Dreamer, or an AGENT_DEF) has its binding
+    // born in the vault default facet, as its actor-stamp token is. A
+    // PERSON's stays in its own substrate.
+    if vault.get_entity_type_in_txn(&*txn, &actor.entity_ref())?
+        != Some(crate::registry::ENTITY_TYPE_PERSON)
+    {
+        body.scope_facet = vault.default_facet_in_txn(&*txn)?;
+    }
     vault.put_reserved_claim_in_txn(
         txn,
         &EntityId::now(),

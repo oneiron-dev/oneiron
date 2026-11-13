@@ -5,6 +5,7 @@
   "output": "crate::claim::ScopedReadResult<crate::snapshot_read::EvidenceSpans>",
   "call": "crate::snapshot_read::evidence_spans(memory, &input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "lane_record_scope": true,
     "validate": "crate::snapshot_read::validate_evidence_spans(&input)?;"

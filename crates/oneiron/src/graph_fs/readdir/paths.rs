@@ -29,7 +29,9 @@ pub(super) fn lane_walks_world(
     }
     let mut matched = false;
     for grant in policy.scoped_grants() {
-        if !read_grant_matches_actor(grant, key) {
+        if !read_grant_matches_actor(grant, key)
+            || (key.authority_scope().is_some() && crate::gate::is_shipped_house_read_row(grant))
+        {
             continue;
         }
         matched = true;

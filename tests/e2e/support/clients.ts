@@ -33,10 +33,11 @@ export function credentialParts(credential: string): { bearer: string; seed: str
   redactor.add(credential,bearer,seed,match[1]!);
   return {bearer,seed};
 }
-/** Exact public holder transcript: hash canonical token bytes, not locally reconstructed claims. */
-export function boundHeaders(credential: string): Headers {
+/** Exact public holder transcript: hash canonical token bytes, not locally reconstructed claims.
+ * `timestamp` (unix seconds) signs a chosen time, for skew and replay cases; omitted, the proof is signed now. */
+export function boundHeaders(credential: string, timestamp: number = Math.floor(Date.now()/1000)): Headers {
+  if (!Number.isSafeInteger(timestamp)) throw new TypeError("A binding timestamp is whole unix seconds");
   const {bearer,seed} = credentialParts(credential);
-  const timestamp = Math.floor(Date.now()/1000);
   const nonce = secretHex(16);
   const challenge = Buffer.from(`oneiron-request:${timestamp}:${nonce}`);
   const length = Buffer.alloc(8); length.writeBigUInt64BE(BigInt(challenge.length));
@@ -70,7 +71,8 @@ export class PublicHttpClient {
     const requestSecrets = proofSecrets.filter((value): value is string => value !== null);
     if (body !== undefined && !bound.has("content-type")) bound.set("content-type","application/json");
     const rpc = (url.pathname === "/mcp" || url.pathname === "/mcp/tool-first") && body && typeof body === "object" && "method" in body
-      ? {rpcMethod:body.method} : {};
+      ? {rpcMethod:body.method,...(body.method === "tools/call" && "params" in body && typeof (body.params as {name?:unknown})?.name === "string"
+        ? {tool:(body.params as {name:string}).name} : {})} : {};
     const stepId = await recordStart("http",{method,path:url.pathname,client:this.options.label,...rpc},this.options.artifacts);
     try {
       const requestBody = body === undefined ? undefined : typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body);
@@ -103,17 +105,28 @@ export class PublicHttpClient {
   }
   /** Only catalogued, typed calls. 202 PENDING_ASK is retained as an error, never cast to success. */
   async call<V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<FacadeResult<V>> {
+    return (await this.callWithReceipt(verb,input)).value;
+  }
+  /** call(), keeping the x-oneiron-receipt-ref header the server sets on the reply (null when it sets none). */
+  async callWithReceipt<V extends FacadeVerb>(verb: V, input: FacadeInput<V>): Promise<{ readonly value: FacadeResult<V>; readonly receiptRef: string | null }> {
     const reply = await this.request<FacadeResult<V>>("POST",`/v1/core/facade/${verb}`,input,{"x-oneiron-invocation":secretHex(16)});
     if (reply.status === 202 && typeof reply.body === "object" && reply.body && "error" in reply.body) throw new PublicHttpError(reply);
-    return reply.body;
+    return {value:reply.body,receiptRef:reply.headers.get("x-oneiron-receipt-ref")};
   }
 }
 export interface JsonRpcError { readonly code: number; readonly message: string; readonly data?: unknown }
 export type JsonRpcReply<T> = { readonly jsonrpc:"2.0";readonly id:number;readonly result:T } |
   { readonly jsonrpc:"2.0";readonly id:number;readonly error:JsonRpcError };
+/** The refusal's JSON-RPC code and message, and the engine's error code or kind when it sends one. */
+function refusalText(response: JsonRpcReply<unknown>): string {
+  if (!("error" in response)) return "MCP JSON-RPC refusal";
+  const data = response.error.data && typeof response.error.data === "object" ? response.error.data as Record<string,unknown> : {};
+  const detail = ["error_code","kind","code"].map(key => data[key]).find(value => typeof value === "string");
+  return `MCP JSON-RPC refusal ${response.error.code}${detail ? ` ${String(detail)}` : ""}: ${response.error.message}`.slice(0,400);
+}
 export class McpRpcError extends Error {
   override name = "McpRpcError";
-  constructor(readonly response: JsonRpcReply<unknown>) { super("MCP JSON-RPC refusal") }
+  constructor(readonly response: JsonRpcReply<unknown>) { super(refusalText(response)) }
 }
 export class McpClient {
   private nextId = 1;
@@ -186,6 +199,20 @@ export class WsClient {
         socket.addEventListener("close",event => reject(new Error(`WS upgrade closed ${event.code}`)),{once:true});
       }),timeoutMs,"WS upgrade",() => socket.close());
       socket.send(new Uint8Array([3,8]));
+      // The upgrade admits replication only; app-tier calls need the in-band
+      // auth.bind (handler/app_tier.rs require_bound_app_auth). The upgrade
+      // consumed its proof's nonce, so the bind carries a fresh holder proof.
+      const binding: unknown = JSON.parse(boundHeaders(credential).get("x-oneiron-binding")!);
+      const bindId = 0; // Facade call ids start at 1.
+      client.send(30,{type:"rpc.req",id:bindId,seq:0,last:true,payload:{
+        method:"auth.bind",params:{token:credentialParts(credential).bearer,binding},
+      }});
+      const bound = await client.next(timeoutMs);
+      if (bound.tag !== 30 || bound.envelope.id !== bindId || bound.envelope.type !== "rpc.res"
+        || bound.envelope.seq !== 0 || !bound.envelope.last || !(bound.envelope.payload instanceof Uint8Array)
+        || decode(bound.envelope.payload) !== null) {
+        throw new Error("WS auth.bind did not return its null acknowledgement");
+      }
       return client;
     } catch (error) { client.close(); throw error }
   }
@@ -244,7 +271,8 @@ export class CliClient {
     return this.json(["api","call",verb,"--data","-"],input);
   }
 }
-type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`;
+type CliStage = "cli" | "cli-json" | "vault-init" | "owner-bootstrap" | "actor-pair" | "sdk-pair" | `sdk-${"typescript" | "python" | "napi"}`
+  | "device-peer-init" | "device-pair-link" | "device-enrol";
 export class CliError extends Error {
   override name = "CliError";
   constructor(readonly result: ProcessResult, readonly stage: CliStage = "cli") {
@@ -274,7 +302,8 @@ export type PythonSdkOperation =
   | {readonly verb:"receipts";readonly limit?:number};
 export type SdkTarget = {readonly mode:"remote";readonly url:string;readonly credential:string} |
   {readonly mode:"embedded";readonly path:string;readonly dimensions?:number};
-export interface SdkDriverResult { readonly process:ProcessResult;readonly results:readonly ({ok:true;value:unknown}|{ok:false;error:unknown})[] }
+/** `receiptRef` is the Node SDK handle's `lastReceiptRef()` right after that operation, refusals included; Python rows omit it. */
+export interface SdkDriverResult { readonly process:ProcessResult;readonly results:readonly ({ok:true;value:unknown;receiptRef?:string|null}|{ok:false;error:unknown;receiptRef?:string|null})[] }
 const JS_DRIVER = String.raw`
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
@@ -282,6 +311,7 @@ import {pathToFileURL} from 'node:url';
 const p=JSON.parse(readFileSync(0,'utf8'));
 const {Oneiron}=await import(pathToFileURL(p.module).href);
 function error(e){return {name:e.name,code:e.code,message:e.message,suggestions:e.suggestions,wrongRoot:e.wrongRoot,hook:e.hook}}
+function receiptRef(m){try{return typeof m.lastReceiptRef==='function'?m.lastReceiptRef()??null:null}catch{return null}}
 function facade(m,path,input){
  const names=path.split('.');let parent=m;
  for(const name of names.slice(0,-1))parent=parent==null?undefined:parent[name];
@@ -306,8 +336,8 @@ try {
     case 'recall':value=m.vault.recall(o.query,o.options);break;case 'receipts':value=m.vault.receipts(o.limit);break;
     case 'selfActor':value=m.self.actor({});break;case 'people':value=m.vault.people.list(o.input);break;case 'neighbors':value=m.vault.neighbors(o.input);break;
     case 'get':value=m.vault.get(o.input);break;case 'facade':value=facade(m,o.path,o.input);break;default:throw new Error('Unknown SDK operation')}
-   trace(index,o.verb,'complete');return {ok:true,value};
-  }catch(e){trace(index,o.verb,'error',e.code);return {ok:false,error:error(e)}}});
+   trace(index,o.verb,'complete');return {ok:true,value,receiptRef:receiptRef(m)};
+  }catch(e){trace(index,o.verb,'error',e.code);return {ok:false,error:error(e),receiptRef:receiptRef(m)}}});
   process.stdout.write(JSON.stringify(results));
  }
 }catch(e){const failure=JSON.stringify({error:error(e)});process.stdout.write(failure);process.stderr.write(failure);process.exitCode=1;}

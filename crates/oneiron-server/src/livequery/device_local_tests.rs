@@ -53,6 +53,7 @@ fn put_claim(server: &SyncServer, world: EntityId) -> String {
             occurred_at: Some(AT),
             learned_at: Some(AT),
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     CLAIM.to_owned()
@@ -325,7 +326,7 @@ async fn a_queued_read_result_off_this_device_names_no_row_turned_device_local()
         .commit()
         .unwrap();
     let mut socket = production_socket_tests::connect(&f, "human").await;
-    let search = json!({"requestId":8,"method":"queryBm25",
+    let search = json!({"requestId":8,"method":"vault.search.bm25",
         "params":{"query":"orchid","limit":10}});
     let mut read = async || {
         production_socket_tests::send(&mut socket, TAG_RPC, search.clone()).await;
@@ -337,12 +338,18 @@ async fn a_queued_read_result_off_this_device_names_no_row_turned_device_local()
         Some(1),
         "{portable}"
     );
-    assert!(!portable.to_string().contains(&claim), "{portable}");
+    // 7f203888f4f (#1968, OF-063): a search hit carries its typed record ref
+    // beside the short ref, built from the row this read admitted.
+    let hit = &portable["result"]["value"][0];
+    assert_eq!(hit["record"]["kind"], "CLAIM", "{portable}");
+    assert_eq!(hit["record"]["id"], claim, "{portable}");
+    assert_eq!(hit["record"]["label"], "kept", "{portable}");
 
     release_hook::arm(world);
     let refused = read().await;
     assert_eq!(refused["error"]["code"], "RESULT_CHANGED", "{refused}");
     assert!(refused.get("result").is_none(), "{refused}");
+    assert!(!refused.to_string().contains(&claim), "{refused}");
     let fresh = read().await;
     assert_eq!(fresh["result"]["value"], json!([]), "{fresh}");
 }

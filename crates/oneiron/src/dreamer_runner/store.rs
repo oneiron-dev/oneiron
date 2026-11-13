@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::model_step_context::StepEffectBinding;
 use crate::side_table::{self, Raw, SideTable};
 
+use super::ParkOwnerClass;
 use super::codec::{
     decode_dreamer_attempt_payload, encode_dreamer_attempt_payload, invalid_dreamer_runner,
     validate_attempt_type, validate_park_owner, validate_park_reason,
@@ -24,10 +25,11 @@ use super::constants::{
 };
 use super::types::{
     CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAttemptPayload,
-    DreamerAttemptStatus, DreamerParkedAttemptRecord, DreamerRunTreeRecord, EnqueueDreamerAttempt,
-    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
-    EnqueueDreamerSkillOptimizeAttempt, EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt,
-    FailDreamerAttemptOutcome, ParkDreamerAttempt,
+    DreamerAttemptStatus, DreamerParkWait, DreamerParkedAttemptRecord, DreamerParkedWait,
+    DreamerRunTreeRecord, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, EnqueueDreamerSkillOptimizeAttempt,
+    EnqueueDreamerVaultCleanupAttempt, FailDreamerAttempt, FailDreamerAttemptOutcome,
+    ParkDreamerAttempt,
 };
 use crate::error::MaintenanceError;
 
@@ -35,7 +37,7 @@ use crate::error::MaintenanceError;
 pub(super) const RUN_TREE: SideTable<AttemptId, DreamerRunTreeRecord, Raw> =
     SideTable::new(&side_table::DREAMER_RUN_TREE);
 /// Private paused-attempt row, keyed by attempt id.
-pub(super) const PARKED: SideTable<AttemptId, DreamerParkedAttemptRecord, Raw> =
+pub(crate) const PARKED: SideTable<AttemptId, DreamerParkedAttemptRecord, Raw> =
     SideTable::new(&side_table::DREAMER_PARKED);
 /// Whether a masked copy of a `DREAMER_PARKED` row still decodes as its typed value,
 /// for the historical lift sweep (FIX 2680).
@@ -865,6 +867,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 wtxn,
                 record,
                 super::FreeTimeItemOutcome::Cancelled,
+                None,
                 input.now,
             )?;
             Ok(outcome)
@@ -942,6 +945,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 crate::task_verb::highway_runner::RunnerSettle::Failed {
                     error: input.last_error.as_deref().unwrap_or_default(),
                     retryable: true,
+                    budget_refusal: None,
                 },
                 turn,
             )?;
@@ -993,10 +997,12 @@ impl<'a> DreamerRunnerStore<'a> {
                     crate::task_verb::highway_runner::RunnerSettle::Failed {
                         error: &input.reason,
                         retryable: false,
+                        budget_refusal: input.budget_refusal.as_ref(),
                     },
                     turn.as_ref(),
                 )?;
-                let outcome = crate::ports::JobQueue::port_job_fail(
+                // The typed refusal rides the failed row beside its reason.
+                let outcome = crate::ports::JobQueue::port_job_fail_with_refusal(
                     self.vault,
                     wtxn,
                     FailAttempt {
@@ -1006,6 +1012,7 @@ impl<'a> DreamerRunnerStore<'a> {
                         reason: input.reason,
                         now: input.now,
                     },
+                    input.budget_refusal.clone(),
                 )?;
                 // FIX 1554: as at completion, a failed Coach Issues run's
                 // successor is queued in the commit that settles it.
@@ -1017,6 +1024,7 @@ impl<'a> DreamerRunnerStore<'a> {
                     wtxn,
                     &record,
                     super::FreeTimeItemOutcome::Failed,
+                    input.budget_refusal.as_ref(),
                     input.now,
                 )?;
                 self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
@@ -1140,11 +1148,50 @@ impl<'a> DreamerRunnerStore<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         input: ParkDreamerAttempt,
     ) -> Result<DreamerParkedAttemptRecord> {
+        self.park_attempt_with_wait_in_txn(wtxn, input, None)
+    }
+
+    /// [`Self::park_attempt_in_txn`] with the typed condition that resumes the park.
+    /// Step waits require a trap owner; Seat waits refuse a trap owner. The writer stamps the
+    /// lease fence from the queue row's `attempt_count` in this transaction, never from the caller.
+    pub(crate) fn park_attempt_with_wait_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: ParkDreamerAttempt,
+        wait: Option<DreamerParkWait>,
+    ) -> Result<DreamerParkedAttemptRecord> {
         validate_park_reason(&input.reason)?;
         validate_park_owner(&input.park_owner)?;
+        if let Some(wait) = &wait {
+            let trap = matches!(ParkOwnerClass::of(&input.park_owner), ParkOwnerClass::Trap);
+            if matches!(wait, DreamerParkWait::Seat { .. }) {
+                if trap {
+                    return Err(invalid_dreamer_runner(
+                        "dreamer seat wait needs the driver's park owner, never a trap owner",
+                    ));
+                }
+            } else if !trap {
+                return Err(invalid_dreamer_runner(
+                    "dreamer parked wait needs a trap park owner",
+                ));
+            }
+        }
         if self.status(input.attempt_id)?.is_none() {
             return Err(invalid_dreamer_runner("dreamer parked attempt must exist"));
         }
+        let wait = match wait {
+            Some(wait) => {
+                let row = self
+                    .attempts
+                    .get_in_write_txn(wtxn, input.attempt_id)?
+                    .ok_or(invalid_dreamer_runner("dreamer parked attempt must exist"))?;
+                Some(DreamerParkedWait {
+                    wait,
+                    lease_generation: row.attempt_count,
+                })
+            }
+            None => None,
+        };
 
         let record = DreamerParkedAttemptRecord {
             attempt_id: input.attempt_id,
@@ -1153,6 +1200,7 @@ impl<'a> DreamerRunnerStore<'a> {
             park_owner: input.park_owner,
             carried_spend: input.carried_spend,
             parked_at: input.now,
+            wait,
         };
         let existing = PARKED.get(&self.vault.store, &*wtxn, &record.attempt_id)?;
         if let Some(existing) = &existing
@@ -1165,11 +1213,15 @@ impl<'a> DreamerRunnerStore<'a> {
         if let Some(existing) = &existing {
             super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, existing)?;
             super::program::unindex_program_hold_in_txn(self.vault, wtxn, existing)?;
+            super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, existing)?;
         }
         PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
         super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::index_program_hold_in_txn(self.vault, wtxn, &record)?;
+        super::seat_wait::index_seat_wait_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
+        // WAKE-D1: a park only the owner's release resumes tells the owner, in its own write.
+        super::park_release::raise_park_release_notice_in_txn(self.vault, wtxn, &record);
         // FIX 4747: a parking agent run keeps its executor lease.
         crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, record.attempt_id)?;
         Ok(record)
@@ -1226,6 +1278,7 @@ impl<'a> DreamerRunnerStore<'a> {
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
         super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
+        super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         // FIX 4747: a resuming agent run keeps its executor lease until its
         // next claim takes it.
@@ -1238,6 +1291,36 @@ impl<'a> DreamerRunnerStore<'a> {
                 .release_lease_in_txn(wtxn, attempt_id, lease_owner, at)?;
         }
         Ok(Some(status))
+    }
+
+    /// The settlement of an attempt its owner stopped, in the writer whose
+    /// force-cancel ended it: what [`Self::fail`] gives a try that ends under
+    /// its own lease, and the budget the try still holds. A Coach Issues
+    /// run's successor is queued when a wake landed under its lease (FIX
+    /// 1554), so no report waits on a stopped run; the reservations the try
+    /// retained settle, with any charge still owed on them; a free-time item
+    /// with no receipt ends Cancelled, after its charge, and its cycle
+    /// closes when it was the last open item; its paid-step receipts, pinned
+    /// listing and narrowed hold go last, because the budget settlement
+    /// reads them. Each part is a no-op for a try that holds none of it.
+    /// `record` is the try's queue row.
+    pub(crate) fn settle_stopped_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        now: u64,
+    ) -> Result<()> {
+        self.redrive_coach_issues_in_txn(wtxn, record, now)?;
+        self.settle_ended_budget_in_txn(wtxn, record.id, now)?;
+        super::free_time::end_free_time_item_in_txn(
+            self.vault,
+            wtxn,
+            record,
+            super::FreeTimeItemOutcome::Cancelled,
+            None,
+            now,
+        )?;
+        self.cleanup_step_receipts_in_txn(wtxn, record.id)
     }
 
     /// Reads a private parked-attempt row.
@@ -1290,16 +1373,6 @@ impl<'a> DreamerRunnerStore<'a> {
         attempt_id: AttemptId,
     ) -> Result<bool> {
         Ok(PARKED.get(&self.vault.store, txn, &attempt_id)?.is_some())
-    }
-
-    /// Every attempt that holds a parked row: each keeps its lease until the
-    /// signal it waits on resumes it, so a lease reclaim holds them all.
-    pub(crate) fn parked_ids(&self) -> Result<std::collections::HashSet<AttemptId>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        Ok(PARKED
-            .scan_keys(&self.vault.store, &rtxn, &[])?
-            .into_iter()
-            .collect())
     }
 
     /// The working attempts that hold a parked row, in creation order, each

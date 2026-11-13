@@ -44,10 +44,13 @@ use crate::consent::AuthenticatedOwner;
 use crate::context_board::cancel_task_in_txn;
 use crate::error::Error;
 use crate::llm::run_admission::LeaseUnit;
-use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
+};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::run_tree::{RunAsk, RunBranchSignal, RunTreeStatus};
-use crate::{EntityId, Vault};
+use crate::store::model_step_submission::StepBudgetRefusal;
+use crate::{EntityId, Vault, WriteActor};
 
 /// What a door that names no TASK should name instead.
 const TASK_FIX: &str =
@@ -107,6 +110,10 @@ pub struct RunBranchView {
     pub result_ref: Option<String>,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// The typed refusal of a try a spend scope refused for good, kept on
+    /// the failed row beside `last_error`; `None` for every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_refusal: Option<StepBudgetRefusal>,
     /// Durable ask handles, partial answers included.
     pub asks: Vec<RunAsk>,
     /// The branch's control inbox and settled replay receipts.
@@ -430,6 +437,115 @@ pub fn read_branches_as(
     })
 }
 
+/// `vault.runs.branches.get` for a caller other than the owner (slice 6.5a,
+/// primitive D): the branches of `input.task_ref` the caller is the actor of
+/// (its agent dispatch target, resident, turn-program waker or the Dreamer on
+/// its own stamp). A Steward of this shared vault reads the TASK's other
+/// branches by its role, as it reads a run's steps (slice 6.4f), each without
+/// its text: its last error, asks and signals are withheld, and so are the
+/// words in its cancel state (`without_text`), since a run's words carry no
+/// label for another reader's lane. The view names no TASK content.
+///
+/// The caller's read authority is proved in the snapshot the branches are
+/// read in (`Memory::prove_read_authority_in_txn`): a bound credential that
+/// was revoked or has expired reads nothing.
+///
+/// # Errors
+///
+/// `FORBIDDEN` for a caller whose bound credential grants it no read or no
+/// longer holds, and when the caller reads no branch of the ref: a ref that
+/// names no TASK, a TASK nothing has run, or one whose branches are not the
+/// caller's while it is no Steward; storage errors.
+pub fn read_branches_as_reader(
+    memory: &Memory<'_>,
+    input: RunBranchesRequest,
+) -> MemoryResult<RunBranchesView> {
+    const VERB: &str = "vault.runs.branches.get";
+    let vault = memory.vault();
+    let caller = WriteActor::new(memory.actor(), memory.actor_class());
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    memory.prove_read_authority_in_txn(&txn)?;
+    let steward = crate::snapshot_read::is_steward_in_txn(vault, &txn, caller)?;
+    let records = match task_in(vault, &txn, input.task_ref) {
+        Ok(task) => AttemptQueue::new(vault).list_task_in_txn(&txn, &task)?,
+        Err(refusal)
+            if refusal.code == MEMORY_CODE_NOT_FOUND || refusal.code == MEMORY_CODE_BAD_REQUEST =>
+        {
+            Vec::new()
+        }
+        Err(error) => return Err(error),
+    };
+    let mut read = Vec::with_capacity(records.len());
+    for record in records {
+        let own = crate::snapshot_read::is_attempt_actor_in_txn(vault, &txn, caller, record.id)?;
+        if own || steward {
+            read.push((own, record));
+        }
+    }
+    if read.is_empty() {
+        return Err(crate::snapshot_read::not_the_callers(VERB));
+    }
+    Ok(RunBranchesView {
+        task_ref: input.task_ref,
+        branches: read
+            .into_iter()
+            .map(|(own, record)| {
+                let mut view = branch_view(record);
+                if !own {
+                    view.last_error = None;
+                    view.budget_refusal = None;
+                    view.asks = Vec::new();
+                    view.signals = Vec::new();
+                    view.cancel_state = without_text(view.cancel_state);
+                }
+                view
+            })
+            .collect(),
+    })
+}
+
+/// A branch's cancel state without its words, for a reader the run's text
+/// carries no label for: a landing's status, each cancellation's and each
+/// receipt's reason and status, and the worker's marker of a resume point
+/// (blank, since the field is required). The structured state stays: the
+/// triggers, modes, grounds and standings, the actors, times, sequences and
+/// units, and a resume point's artifact ref.
+fn without_text(mut state: AttemptCancelState) -> AttemptCancelState {
+    if let Some(landing) = &mut state.landing {
+        landing.status = None;
+    }
+    if let Some(point) = &mut state.resume_point {
+        point.marker.clear();
+    }
+    if let Some(cancellation) = &mut state.cancellation {
+        cancellation.reason = None;
+    }
+    for receipt in &mut state.receipts {
+        receipt.status = None;
+        receipt.reason = None;
+        if let Some(point) = &mut receipt.resume_point {
+            point.marker.clear();
+        }
+    }
+    state
+}
+
+/// `vault.runs.branches.get` on an in-process handle: the embedded owner's
+/// read, or [`read_branches_as_reader`] for any other caller.
+///
+/// # Errors
+///
+/// As the read it takes.
+pub fn read_branches_embedded(
+    memory: &Memory<'_>,
+    input: RunBranchesRequest,
+) -> MemoryResult<RunBranchesView> {
+    match memory.embedded_owner("vault.runs.branches.get") {
+        Ok(owner) => read_branches_as(memory.vault(), &owner, input),
+        Err(_) => read_branches_as_reader(memory, input),
+    }
+}
+
 /// Reads, as the vault owner, one consult TASK in one read transaction: its
 /// deadline and its terminal register (disposition, result ref, evidence or
 /// abstention refs, ladder outcome and counter TASK), as stored.
@@ -496,6 +612,7 @@ pub(super) fn branch_view(record: AttemptRecord) -> RunBranchView {
         attempt_count: record.attempt_count,
         result_ref: record.result_ref.map(AttemptResultRef::into_string),
         last_error: record.last_error,
+        budget_refusal: record.budget_refusal,
         asks: record.asks,
         signals: record.signals,
         cancel_state: record.cancel_state,

@@ -5,7 +5,7 @@ use oneiron::memory::ReadMode;
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, entity_type_registry_entry,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
 };
 use oneiron::{EdgeInfo, EntityId, FieldProfile, SKILL_RECORD_BODY_KEYS, Vault};
 use serde::de::{self, Visitor};
@@ -90,6 +90,7 @@ pub fn project_entity(vault: &Vault, id: &EntityId, view: View) -> oneiron::Resu
     let updated_at = vault.get_learned_at(id)?;
 
     Ok(Some(project_entity_parts(
+        vault,
         id,
         entity_type,
         updated_at,
@@ -99,6 +100,7 @@ pub fn project_entity(vault: &Vault, id: &EntityId, view: View) -> oneiron::Resu
 }
 
 pub fn project_entity_parts(
+    vault: &Vault,
     id: &EntityId,
     entity_type: u8,
     updated_at: u64,
@@ -106,6 +108,7 @@ pub fn project_entity_parts(
     view: View,
 ) -> Value {
     project_entity_fields(
+        vault,
         id,
         entity_type,
         updated_at,
@@ -118,6 +121,7 @@ pub fn project_entity_parts(
 /// ImageFormBody's base64 pixels are binary content, not credential text; all
 /// of its other fields still pass through the ordinary release filter.
 pub(crate) fn project_hydrated_asset_parts(
+    vault: &Vault,
     id: &EntityId,
     updated_at: u64,
     asset: &oneiron::memory::HydratedAsset,
@@ -134,8 +138,8 @@ pub(crate) fn project_hydrated_asset_parts(
         _ => None,
     };
     Some(match fields {
-        Some(fields) => project_entity_fields(id, entity_type, updated_at, fields, view),
-        None => project_entity_parts(id, entity_type, updated_at, body, view),
+        Some(fields) => project_entity_fields(vault, id, entity_type, updated_at, fields, view),
+        None => project_entity_parts(vault, id, entity_type, updated_at, body, view),
     })
 }
 
@@ -167,6 +171,7 @@ fn hydrated_image_fields(body: &[u8], view: View) -> Option<Map<String, Value>> 
 }
 
 fn project_entity_fields(
+    vault: &Vault,
     id: &EntityId,
     entity_type: u8,
     updated_at: u64,
@@ -177,11 +182,11 @@ fn project_entity_fields(
     let label = label_from_fields(&fields).unwrap_or_else(|| id_hex.clone());
 
     match view {
-        View::Summary => summary_object(id_hex, entity_type, label, updated_at),
+        View::Summary => summary_object(vault, id_hex, entity_type, label, updated_at),
         View::Standard => Value::Object(select_profile_fields(entity_type, view, &fields)),
         View::Full => {
             let mut object = fields;
-            insert_entity_metadata(&mut object, id_hex, entity_type, label, updated_at);
+            insert_entity_metadata(vault, &mut object, id_hex, entity_type, label, updated_at);
             Value::Object(object)
         }
     }
@@ -260,7 +265,7 @@ impl<'a> BodyBudget<'a> {
         mode: ReadMode,
     ) -> Value {
         if self.admits(body.len()) {
-            project_entity_parts(id, entity_type, updated_at, body, view)
+            project_entity_parts(self.vault, id, entity_type, updated_at, body, view)
         } else {
             self.omitted(id, entity_type, updated_at, body, view, mode)
         }
@@ -336,7 +341,7 @@ impl<'a> BodyBudget<'a> {
         let id_hex = id.to_hex();
         let mut object = match view {
             View::Summary => {
-                match summary_object(id_hex.clone(), entity_type, id_hex, updated_at) {
+                match summary_object(self.vault, id_hex.clone(), entity_type, id_hex, updated_at) {
                     Value::Object(object) => object,
                     _ => Map::new(),
                 }
@@ -344,13 +349,17 @@ impl<'a> BodyBudget<'a> {
             View::Standard => {
                 let mut object = Map::new();
                 object.insert("id".to_owned(), Value::String(id_hex));
-                object.insert("kind".to_owned(), Value::String(entity_kind(entity_type)));
+                object.insert(
+                    "kind".to_owned(),
+                    Value::String(self.vault.entity_kind_name(entity_type)),
+                );
                 object.insert("updatedAt".to_owned(), json!(updated_at));
                 object
             }
             View::Full => {
                 let mut object = Map::new();
                 insert_entity_metadata(
+                    self.vault,
                     &mut object,
                     id_hex.clone(),
                     entity_type,
@@ -464,16 +473,23 @@ pub fn project_edge(edge: &EdgeInfo, view: View) -> Value {
     }
 }
 
-fn summary_object(id_hex: String, entity_type: u8, label: String, updated_at: u64) -> Value {
+fn summary_object(
+    vault: &Vault,
+    id_hex: String,
+    entity_type: u8,
+    label: String,
+    updated_at: u64,
+) -> Value {
     json!({
         "id": id_hex,
-        "kind": entity_kind(entity_type),
+        "kind": vault.entity_kind_name(entity_type),
         "label": label,
         "updatedAt": updated_at,
     })
 }
 
 fn insert_entity_metadata(
+    vault: &Vault,
     object: &mut Map<String, Value>,
     id_hex: String,
     entity_type: u8,
@@ -481,17 +497,13 @@ fn insert_entity_metadata(
     updated_at: u64,
 ) {
     object.insert("id".to_owned(), Value::String(id_hex));
-    object.insert("kind".to_owned(), Value::String(entity_kind(entity_type)));
+    object.insert(
+        "kind".to_owned(),
+        Value::String(vault.entity_kind_name(entity_type)),
+    );
     object.insert("type".to_owned(), json!(entity_type));
     object.insert("label".to_owned(), Value::String(label));
     object.insert("updatedAt".to_owned(), json!(updated_at));
-}
-
-fn entity_kind(entity_type: u8) -> String {
-    entity_type_registry_entry(entity_type).map_or_else(
-        || format!("TYPE_{entity_type}"),
-        |entry| entry.kind.to_owned(),
-    )
 }
 
 fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {

@@ -1,17 +1,18 @@
 {
   "name": "vault.runs.step",
-  "description": "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work.",
+  "description": "Reads one committed model step of an attempt by job reference and step hash, without calling a model or admitting work: the owner reads any attempt, another caller an attempt it is the actor of.",
   "input": "crate::llm::model_step::SettledStepRequest",
   "output": "Option<crate::llm::model_step::SettledStepView>",
-  "call": "crate::llm::model_step::settled_step_as_owner(memory, &memory.embedded_owner(\"vault.runs.step\")?, &input)?",
+  "call": "crate::snapshot_read::settled_step_embedded(memory, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "host_door_caller": true,
   "scope": "Read",
+  "act_class": "read",
   "admission": {
-    "unrestricted_record_scope": true
+    "lane_record_scope": true
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "run_reader"
 }

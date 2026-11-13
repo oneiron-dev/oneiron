@@ -5,6 +5,7 @@
   "output": "Vec<crate::workspace_roster::ProjectCardRecord>",
   "call": "memory.projects_proposals(crate::EntityId::from_hex(&input.conversation_ref)?)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

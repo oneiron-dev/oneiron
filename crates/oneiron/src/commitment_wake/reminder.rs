@@ -25,7 +25,7 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::claim::dispatch_target::AgentDispatchTarget;
-use crate::commitment::{CommitmentObligorKind, CommitmentRecord, CommitmentStatus};
+use crate::commitment::{CommitmentInstanceState, CommitmentObligorKind, CommitmentRecord};
 use crate::config::context_spec::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::consent::AuthenticatedOwner;
 use crate::delivery_window::OutboundScheduleContext;
@@ -191,14 +191,21 @@ impl Vault {
         let Some(reminder) = ReminderRef::parse(content_ref) else {
             return Ok(None);
         };
-        let record = self
-            .get_commitment_claim(&reminder.instance_id)?
-            .ok_or(Error::InvalidClaimBody("reminder's commitment is gone"))?;
-        if record.status != CommitmentStatus::Open {
-            return Err(Error::InvalidClaimBody(
-                "reminder's commitment is no longer open",
-            ));
-        }
+        // A withdrawn promise (its claim retracted while open) is no longer
+        // open either (FIX 22383).
+        let record = match self.commitment_instance_state(&reminder.instance_id)? {
+            CommitmentInstanceState::Open(record) => record,
+            CommitmentInstanceState::Missing => {
+                return Err(Error::InvalidClaimBody("reminder's commitment is gone"));
+            }
+            CommitmentInstanceState::Inert(_)
+            | CommitmentInstanceState::Closed(_)
+            | CommitmentInstanceState::Withdrawn => {
+                return Err(Error::InvalidClaimBody(
+                    "reminder's commitment is no longer open",
+                ));
+            }
+        };
         let worded = match pin {
             Some(pin) => self.pinned_commitment_reminder_wording(content_ref, pin)?,
             None => self.filed_commitment_reminder_wording(content_ref)?,

@@ -28,8 +28,6 @@ fn a_cloud_root_never_vouches_for_a_machine() {
                     AuthorityTier::CloudCustodial,
                 ),
                 genesis_nonce: [82; 32],
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             },
             key.clone(),
@@ -59,11 +57,14 @@ fn a_cloud_root_never_vouches_for_a_machine() {
                     machine,
                     owner: EntityId::now(),
                     machine_key: request.machine_key,
+                    device_class: request.device_class,
                     encryption_key: request.encryption_key,
                     role,
                     revision: 1,
                     machine_proof: request.machine_proof,
                     seen_world_edits: BTreeSet::new(),
+                    carrier: None,
+                    act: None,
                 }),
                 key.clone(),
                 seq as u64 + 2,
@@ -102,7 +103,7 @@ fn a_hosted_host_root_never_vouches_for_a_machine() {
         (&later, MachineRole::ExecutionNode),
     ] {
         host.vault
-            .enroll_machine(&host.issuer, &host.owner, request, role)
+            .enroll_machine(&host.owner, ActSurface::ThisInstall, request, role, None)
             .unwrap();
     }
     let entries: Vec<_> = {
@@ -233,11 +234,14 @@ pub(super) fn profile_op(host: &Host, machine: EntityId, key: &SigningKey) -> Au
         machine,
         owner: host.owner.actor(),
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key,
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
     })
 }
 
@@ -379,85 +383,55 @@ fn entries_of(host: &Host) -> Vec<AuthorityLogEntry> {
 
 /// A removal signed after a mark that one fold refuses still removes there:
 /// a refused grant never shields a withdrawal, nor does a slip minted on top
-/// of it, nor a retired ceiling, which changes nothing (Wonder #1423 r2 W2,
-/// Sol #1423 r9).
+/// of it (Wonder #1423 r2 W2, Sol #1423 r9).
 #[test]
 fn a_removal_crosses_a_refused_mark() {
-    for interposed in ["nothing", "a slip mint", "a retired ceiling"] {
+    for interposed in ["nothing", "a slip mint"] {
         let host = host();
         let node = request_for(host.vault_id, EntityId::now(), &ed_key(92));
         let yours = request_for(host.vault_id, EntityId::now(), &ed_key(93));
         host.vault
-            .enroll_machine(&host.issuer, &host.owner, &node, MachineRole::ExecutionNode)
+            .enroll_machine(
+                &host.owner,
+                ActSurface::ThisInstall,
+                &node,
+                MachineRole::ExecutionNode,
+                None,
+            )
             .unwrap();
         // A hosted fold refuses this mark: there the host's root never answers
         // "yours". The removal below descends from it.
         host.vault
             .enroll_machine(
-                &host.issuer,
                 &host.owner,
+                ActSurface::ThisInstall,
                 &yours,
                 MachineRole::Owned(MachineOwnership::Yours),
+                None,
             )
             .unwrap();
-        let entries = match interposed {
-            "a retired ceiling" => {
-                // The door refuses a new ceiling; signed history still carries one.
-                let fold = host.vault.authority_fold().unwrap();
-                let seq = fold.append_sequences[&host.issuer.public_key()];
-                let ceiling = host_entry(
-                    &host,
-                    seq + 1,
-                    &fold.append_heads,
-                    AuthorityOp::RetiredCeiling {
-                        authority_key: host.issuer.public_key(),
-                        actor_class: "agent".into(),
-                        ceiling: 0,
-                    },
-                    None,
-                );
-                let removal = host_entry(
-                    &host,
-                    seq + 2,
-                    &BTreeSet::from([authority_entry_hash(&ceiling).unwrap()]),
-                    AuthorityOp::MachineProfile(MachineProfile {
-                        role: MachineRole::Removed,
-                        revision: 2,
-                        ..fold
-                            .machine(node.machine)
-                            .unwrap()
-                            .roster_chain()
-                            .profile
-                            .clone()
-                    }),
-                    None,
-                );
-                let mut entries = entries_of(&host);
-                entries.extend([ceiling, removal]);
-                entries
-            }
-            _ => {
-                if interposed == "a slip mint" {
-                    let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
-                    let mut claims = root.claims.clone();
-                    claims.slip_id = [96; 32];
-                    claims.parent_id = Some(root.claims.slip_id);
-                    claims.ttl_secs = 60;
-                    claims.expires_at = claims.issued_at + 60;
-                    host.vault
-                        .mint_capability_slip(&host.issuer, claims)
-                        .unwrap();
-                }
+        let entries = {
+            if interposed == "a slip mint" {
+                let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
+                let mut claims = root.claims.clone();
+                claims.slip_id = [96; 32];
+                claims.parent_id = Some(root.claims.slip_id);
+                claims.ttl_secs = 60;
+                claims.expires_at = claims.issued_at + 60;
                 host.vault
-                    .set_machine_role(
-                        &host.issuer,
-                        &host.owner,
-                        node.machine,
-                        MachineRole::Removed,
-                    )
+                    .mint_capability_slip(&host.issuer, claims)
                     .unwrap();
-                entries_of(&host)
             }
+            host.vault
+                .set_machine_role(
+                    &host.owner,
+                    ActSurface::ThisInstall,
+                    node.machine,
+                    MachineRole::Removed,
+                    None,
+                )
+                .unwrap();
+            entries_of(&host)
         };
         for posture in [
             crate::HostingPrivacyPosture::SelfHostLocal,
@@ -490,10 +464,11 @@ fn a_retired_root_signs_no_machine_standing() {
     let kept = request_for(host.vault_id, EntityId::now(), &ed_key(94));
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &kept,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let before = host.vault.authority_fold().unwrap();
@@ -560,7 +535,7 @@ fn a_retired_root_signs_no_machine_standing() {
 fn an_uncarried_mark_never_outlives_the_stale_window() {
     let old = ed_key(96);
     let next = ed_key(97);
-    let genesis = genesis_entry(96, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(96, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let mark = |parent: &AuthorityLogEntry, signer: &SigningKey, seq, machine, key: u8| {
         let request = request_for(id, machine, &ed_key(key));
@@ -573,11 +548,14 @@ fn an_uncarried_mark_never_outlives_the_stale_window() {
                     machine,
                     owner: EntityId::now(),
                     machine_key: request.machine_key,
+                    device_class: request.device_class,
                     encryption_key: request.encryption_key,
                     role: MachineRole::Owned(MachineOwnership::Yours),
                     revision: 1,
                     machine_proof: request.machine_proof,
                     seen_world_edits: BTreeSet::new(),
+                    carrier: None,
+                    act: None,
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -637,8 +615,6 @@ fn a_custodians_successor_never_vouches_for_a_machine() {
                     AuthorityTier::CloudCustodial,
                 ),
                 genesis_nonce: [105; 32],
-                tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
                 recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
             },
             key,
@@ -683,7 +659,7 @@ fn a_custodians_successor_never_vouches_for_a_machine() {
 #[test]
 fn custody_marked_on_another_branch_reaches_the_successor() {
     let root = ed_key(114);
-    let genesis = genesis_entry(114, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(114, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (custodied, admitted, successor) = (ed_key(115), ed_key(116), ed_key(117));
     let ordinary = |key: &SigningKey| {
@@ -811,11 +787,14 @@ fn owned_mark(
                 machine,
                 owner: EntityId::now(),
                 machine_key: request.machine_key,
+                device_class: request.device_class,
                 encryption_key: request.encryption_key,
                 role: MachineRole::Owned(MachineOwnership::Yours),
                 revision: 1,
                 machine_proof: request.machine_proof,
                 seen_world_edits: BTreeSet::new(),
+                carrier: None,
+                act: None,
             }),
             authority_key_from_ed(signer),
             2,
@@ -831,7 +810,7 @@ fn owned_mark(
 #[test]
 fn a_forked_handoff_leaves_no_machine_standing() {
     let root = ed_key(108);
-    let genesis = genesis_entry(108, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let genesis = genesis_entry(108, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let machine = EntityId::now();
     let mark = owned_mark(id, &genesis, &root, 1, machine, 109);
@@ -885,10 +864,11 @@ fn a_removal_holds_whichever_sibling_arrived_first() {
         let removed = request_for(host.vault_id, EntityId::now(), &ed_key(112));
         host.vault
             .enroll_machine(
-                &host.issuer,
                 &host.owner,
+                ActSurface::ThisInstall,
                 &removed,
                 MachineRole::Owned(MachineOwnership::Yours),
+                None,
             )
             .unwrap();
         let hosted_node = |seq, parents: &BTreeSet<AuthorityEntryHash>, key| {
@@ -992,7 +972,7 @@ fn a_removal_holds_over_a_withdrawal_that_arrived_late() {
             (&node, MachineRole::HostedNode),
         ] {
             host.vault
-                .enroll_machine(&host.issuer, &host.owner, request, role)
+                .enroll_machine(&host.owner, ActSurface::ThisInstall, request, role, None)
                 .unwrap();
         }
         let writer = EntityId::now();
@@ -1105,10 +1085,11 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
     let yours = request_for(host.vault_id, EntityId::now(), &ed_key(116));
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &yours,
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
@@ -1123,7 +1104,11 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
         &host,
         seq + 2,
         &before.append_heads,
-        AuthorityOp::SlipMint(SlipMintAction { claims }),
+        AuthorityOp::SlipMint(SlipMintAction {
+            claims,
+            renews: None,
+            minting_member: None,
+        }),
         None,
     );
     let removal = host_entry(
@@ -1184,14 +1169,21 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
     let host = super::machine_identity::host();
     let node = request_for(host.vault_id, EntityId::now(), &ed_key(118));
     host.vault
-        .enroll_machine(&host.issuer, &host.owner, &node, MachineRole::ExecutionNode)
+        .enroll_machine(
+            &host.owner,
+            ActSurface::ThisInstall,
+            &node,
+            MachineRole::ExecutionNode,
+            None,
+        )
         .unwrap();
     host.vault
         .enroll_machine(
-            &host.issuer,
             &host.owner,
+            ActSurface::ThisInstall,
             &request_for(host.vault_id, EntityId::now(), &ed_key(119)),
             MachineRole::Owned(MachineOwnership::Yours),
+            None,
         )
         .unwrap();
     let fold = host.vault.authority_fold().unwrap();

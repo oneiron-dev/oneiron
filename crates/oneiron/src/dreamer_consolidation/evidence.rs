@@ -296,6 +296,80 @@ impl VerifiedEvidenceSet {
         }
         Ok(Self::from_rows(rows, inherited_meet))
     }
+    /// Binds each of `sources` whole, as `read` reads it in `txn` (untangle
+    /// 6.7a, the derivation commit's evidence item): a TURN by the whole text
+    /// it reads as and the MESSAGE slices that text covers, an admissible
+    /// claim by its body. Each source's trust is read from the row, and the
+    /// meet folds onto `inherited_meet`, so it never rises. A source `read`
+    /// does not read, a generated claim, or a row of any other kind is
+    /// refused.
+    pub(crate) fn verify_whole_in_txn(
+        vault: &Vault,
+        read: &crate::claim::ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        sources: &[EntityId],
+        inherited_meet: ClaimSource,
+    ) -> Result<Self> {
+        if sources.is_empty() {
+            return Err(invalid_consolidation("empty scoped evidence"));
+        }
+        let mut rows = Vec::with_capacity(sources.len());
+        for source in sources {
+            let (kind, _, body) = read
+                .get_entities_parts_in_txn(txn, &[*source])?
+                .pop()
+                .flatten()
+                .ok_or_else(|| invalid_consolidation("evidence is not readable"))?;
+            let (locator, trust, text) = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+                let claim = crate::claim::decode_claim_body(&body, true)?;
+                if !crate::claim::claim_evidence_admissible(&claim) {
+                    return Err(invalid_consolidation("generated claim cannot corroborate"));
+                }
+                (
+                    EvidenceLocator::claim(*source, *source)?,
+                    super::provenance::evidence_source_from_claim(&claim),
+                    None,
+                )
+            } else if kind == crate::registry::ENTITY_TYPE_TURN {
+                let trust = super::resources::native_turn_source(vault, &body)?;
+                let text = super::turn_text::collect_in(read, txn, source, &body, &mut 0)?;
+                let len = text.text().map_or(0, str::len);
+                (
+                    EvidenceLocator::turn_range(*source, 0, len)?,
+                    trust,
+                    Some(text),
+                )
+            } else {
+                return Err(invalid_consolidation(
+                    "evidence is neither a TURN nor a claim",
+                ));
+            };
+            let reference = locator.reference();
+            let verified = super::conflict::verify_swarm_evidence_bytes(
+                reference,
+                kind,
+                &body,
+                text.as_ref().and_then(super::turn_text::TurnText::text),
+                trust,
+            )?;
+            rows.push(VerifiedCitation {
+                locator,
+                hash: verified.content_hash,
+                version: super::resources::document_version(*source, &body),
+                trust,
+                messages: match &text {
+                    Some(text) => text.spans(reference.byte_range)?,
+                    None => Vec::new(),
+                },
+                projection: match &text {
+                    Some(text) => text.projection(),
+                    None => Vec::new(),
+                },
+            });
+        }
+        Ok(Self::from_rows(rows, inherited_meet))
+    }
+
     fn from_rows(rows: Vec<VerifiedCitation>, inherited_meet: ClaimSource) -> Self {
         let collapsed = super::conflict::collapse_verified_evidence(
             rows.iter()

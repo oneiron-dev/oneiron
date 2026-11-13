@@ -222,12 +222,16 @@ fn mint_matches_row(record: &AgentGrantActRecord, standing: &AgentGrantStanding)
         git_push_bounds,
         verb_classes,
         wallet_ref,
+        steward,
+        working_view_bounds,
     } = &record.change
     else {
         return false;
     };
     let grant = &standing.grant;
-    record.act.owner == standing.delegated_by
+    // A Steward grant funds nothing: it is never an owner's Delegate agent grant.
+    !*steward
+        && record.act.owner == standing.delegated_by
         && *member == grant.member_ref
         && *scope == grant.authority_scope
         && *expires_at == grant.expires_at
@@ -237,4 +241,5 @@ fn mint_matches_row(record: &AgentGrantActRecord, standing: &AgentGrantStanding)
         && *verb_classes == grant.verb_classes
         && wallet_ref.is_some()
         && *wallet_ref == grant.wallet_ref
+        && *working_view_bounds == grant.working_view_bounds
 }

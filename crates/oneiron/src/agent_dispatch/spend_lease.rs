@@ -43,9 +43,12 @@ use super::widen_record::invalid;
 mod ancestry;
 mod closed_scope;
 mod funding;
+mod hard_cap_refusal;
 mod late_spend;
+mod pending;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
+pub(crate) use self::hard_cap_refusal::SpendCapRefusal;
 
 impl AgentDispatcher<'_> {
     /// Opens a launch's root scope under the cap the customer set and was
@@ -262,7 +265,18 @@ impl AgentDispatcher<'_> {
         scope.cap_units = maximum.units;
         scope.shown_at_ms = Some(shown.at_ms);
         SCOPE.put(&self.vault.store, &mut txn, &scope.scope.0, &scope)?;
+        let now_ms = self
+            .vault
+            .store
+            .clock
+            .now_recorded_at()
+            .saturating_mul(1000);
+        let resumed = crate::llm::wake_budget_traps_in_txn(self.vault, &mut txn, id, now_ms)?;
         txn.commit()?;
+        if !resumed.is_empty() {
+            self.vault.store.notify_attempt_observers();
+            self.vault.store.notify_proactivity_changes();
+        }
         Ok(scope)
     }
 
@@ -525,6 +539,24 @@ impl AgentDispatcher<'_> {
     pub fn read_spend_scope(&self, scope: &SpendScopeId) -> Result<Option<SpendScope>> {
         let txn = self.vault.store.env.read_txn()?;
         SCOPE.get(&self.vault.store, &txn, &scope.0)
+    }
+
+    /// Sets `scope`'s ceiling to `ceiling_units`, as a launch that states a
+    /// token ceiling does (`launch.rs`), for the integration test doors
+    /// (`test_doors::spend`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn set_scope_ceiling_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        scope: &SpendScopeId,
+        ceiling_units: u64,
+    ) -> Result<SpendScope> {
+        let mut row = SCOPE
+            .get(&self.vault.store, txn, &scope.0)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        row.ceiling_units = Some(ceiling_units);
+        SCOPE.put(&self.vault.store, txn, &row.scope.0, &row)?;
+        Ok(row)
     }
 
     /// The payer consent the root of `scope`'s tree carries (OF-531), with

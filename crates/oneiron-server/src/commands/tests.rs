@@ -612,7 +612,7 @@ fn cli_binding_proof_authenticates_only_its_logged_holder() {
     let vault = std::sync::Arc::new(
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap(),
     );
-    let server = crate::server::SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("cli-slip-issuer".into()),
@@ -638,7 +638,7 @@ fn cli_binding_proof_accepts_the_transferred_current_holder() {
     let vault = std::sync::Arc::new(
         oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap(),
     );
-    let server = crate::server::SyncServer::new(
+    let server = crate::test_credentials::server_with_fixture_keystore(
         vault,
         crate::config::SyncServerConfig {
             auth_secret: Some("cli-transferred-slip-issuer".into()),
@@ -994,10 +994,13 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     let minted = mint_paired_credential(
         &vault,
         &issuer,
+        // The owner makes the agent link, as `pair agent` does (FIX 11713).
+        Some(&owner),
         &principal,
         "agent",
         verbs,
         30 * 24 * 60 * 60,
+        None,
     )
     .unwrap();
     vault

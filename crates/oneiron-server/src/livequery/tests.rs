@@ -215,6 +215,7 @@ fn entity_blob(body: &[u8]) -> Vec<u8> {
     for _ in 0..3 {
         blob.extend_from_slice(&1_772_000_000u64.to_be_bytes());
     }
+    blob.extend_from_slice(&1u64.to_be_bytes());
     blob.extend_from_slice(body);
     blob
 }

@@ -1,15 +1,24 @@
 //! Real marketplace admission for the plugin rendering fixtures.
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::llm::decision::{
+    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionDial, DecisionLadder,
+    DecisionProvider, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
+    ProviderPin, TypedDecision,
+};
+use oneiron::model_decision::DecisionQuestion;
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill::{SkillLifecycle, SkillRecord};
 use oneiron::skill_hub::{
     ForeignSkillPublisher, HubAdmissionDisposition, HubPackage, HubPin, HubRef, HubSyncPolicy,
     SkillHubKind, SkillHubRecord, SkillHubTrustTier,
 };
 use oneiron::skill_optimize::{
-    BlindPreference, HeldOutReplayCase, HeldOutReplayScorer, PreferredResponse,
+    HeldOutReplayCase, HeldOutReplayNotes, SkillOptimizeDecisions, SkillReplayResponses,
 };
 use oneiron::{EntityId, TimeRange, Vault};
+use std::collections::BTreeMap;
+use std::time::Duration;
 
 pub(super) struct Admission {
     owner: AuthenticatedOwner,
@@ -62,8 +71,8 @@ impl Admission {
             .expect("activate native baseline");
         reserve(vault, &baseline, &record.skill_id);
         let configuration = SkillHubRecord::new(
-            SkillHubKind::LocalDir,
-            "/fixture/crm",
+            SkillHubKind::HttpIndex,
+            "https://example.invalid/index.json",
             SkillHubTrustTier::Community,
             HubSyncPolicy::ContentHashFrozen,
         )
@@ -100,8 +109,9 @@ impl Admission {
             self.baseline,
         )?;
         vault.approve_marketplace_activation(&ask, &self.owner)?;
+        let replay = Replay::new(self.owner.actor_for_read(vault)?);
         let HubAdmissionDisposition::Ruled(receipt) =
-            vault.admit_marketplace_skill(&ask, &Replay, at(now), now)?
+            vault.admit_marketplace_skill(&ask, &replay, at(now), now)?
         else {
             panic!("confirmed admission must rule")
         };
@@ -109,66 +119,147 @@ impl Admission {
         Ok(vault.get_skill_record(&skill)?.expect("admitted skill"))
     }
 }
-struct Replay;
-impl HeldOutReplayScorer for Replay {
+/// The marketplace replay judge on the shared decision path (c2a4a506975):
+/// admission asks the `score` question of each version over the reserved
+/// receipts, and this judge's one Local rung scores the CRM pack's
+/// instructions above the baseline's.
+struct Replay {
+    judge: Judge,
+    principal: EntityId,
+    deadline: RetrievalDeadline,
+    wording: BTreeMap<String, String>,
+}
+impl Replay {
+    fn new(principal: EntityId) -> Self {
+        Self {
+            judge: Judge,
+            principal,
+            deadline: RetrievalDeadline::after(Duration::from_secs(3600)),
+            wording: BTreeMap::from([(
+                "score".to_owned(),
+                "How well do these instructions serve the reserved receipts?".to_owned(),
+            )]),
+        }
+    }
+}
+impl HeldOutReplayNotes for Replay {
     fn judge_revision(&self) -> &str {
         "fixture-judge@1"
     }
-    fn score(&self, case: &HeldOutReplayCase<'_>) -> oneiron::error::Result<f32> {
-        assert!(!case.held_out_receipts.is_empty());
-        Ok(if case.instructions.contains("CRM contact") {
-            0.9
-        } else {
-            0.2
-        })
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+        SkillOptimizeDecisions {
+            ladder: DecisionLadder {
+                rule: None,
+                local: Some(&self.judge),
+                system_one: None,
+                escalation: None,
+                big: None,
+                human: &NoPerson,
+                human_pin: ProviderPin {
+                    rung: DecisionRung::Human,
+                    model: "fixture-queue".into(),
+                    version: "1".into(),
+                },
+                ask_to: None,
+                paired: None,
+                person: None,
+                presence: None,
+                correlation: None,
+            },
+            principal: self.principal,
+            dial: DecisionDial {
+                first: DecisionRung::Local,
+                ceiling: DecisionRung::Local,
+                band: DecisionBand::default(),
+            },
+            bands: DecisionBandPolicy::default(),
+            deadline: &self.deadline,
+            wording: &self.wording,
+        }
     }
-    fn structural_audit(&self, _task: &str, _instructions: &str) -> oneiron::error::Result<f32> {
-        Ok(0.5)
-    }
-    fn blind_preference(
-        &self,
-        _task: &str,
-        _receipts: &[String],
-    ) -> oneiron::error::Result<Vec<BlindPreference>> {
-        Ok(vec![BlindPreference {
-            pair_ref: "fixture-pair".to_owned(),
-            preferred: PreferredResponse::First,
-        }])
-    }
-    fn contrastive_audit(
-        &self,
-        _case: &HeldOutReplayCase<'_>,
-        _blind: &[BlindPreference],
-    ) -> oneiron::error::Result<f32> {
-        Ok(0.5)
-    }
-    fn predict_task_success(
+    fn replay_state(
         &self,
         case: &HeldOutReplayCase<'_>,
-    ) -> oneiron::error::Result<Vec<f32>> {
-        Ok(vec![0.5; case.held_out_receipts.len()])
+    ) -> oneiron::error::Result<serde_json::Value> {
+        Ok(serde_json::json!({ "receipts": case.held_out_receipts }))
+    }
+    fn replay_responses(
+        &self,
+        _receipts: &[String],
+    ) -> oneiron::error::Result<SkillReplayResponses> {
+        Ok(SkillReplayResponses {
+            responses: Vec::new(),
+            rubric: None,
+        })
+    }
+    fn record_decision(
+        &self,
+        _question: &DecisionQuestion,
+        _decision: &TypedDecision,
+        _state: &serde_json::Value,
+    ) -> oneiron::error::Result<()> {
+        Ok(())
+    }
+}
+/// The judge's rung: a score per version, read from the instructions the
+/// question's state carries.
+struct Judge;
+impl DecisionProvider for Judge {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Local,
+            model: "fixture-judge".into(),
+            version: "1".into(),
+        }
+    }
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::error::Result<ProviderDecision> {
+        assert!(
+            call.state["held_out_receipts"]
+                .as_array()
+                .is_some_and(|receipts| !receipts.is_empty())
+        );
+        let instructions = call.state["instructions"].as_str().unwrap_or_default();
+        Ok(ProviderDecision {
+            answer: DecisionAnswer::Score(if instructions.contains("CRM contact") {
+                0.9
+            } else {
+                0.2
+            }),
+            probability: Some(1.0),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        })
+    }
+}
+/// No person answers on this path.
+struct NoPerson;
+impl HumanDecisionQueue for NoPerson {
+    fn queue(&self, _request: HumanDecisionRequest) -> oneiron::error::Result<()> {
+        Err(oneiron::Error::InvalidConfig("no person here".into()))
     }
 }
 fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
+    use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
     use oneiron::attempt_queue::{
-        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-        EnqueueOutcome, ManifestEntry, ManifestKind,
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, ManifestEntry,
+        ManifestKind,
     };
     let queue = AttemptQueue::new(vault);
+    let dispatcher = AgentDispatcher::new(vault);
     for index in 0..200 {
         let now = 100 + index * 10;
-        let EnqueueOutcome::Enqueued(attempt) = queue
-            .enqueue(EnqueueAttempt {
-                kind: "hub.fixture".to_owned(),
-                payload: vec![],
-                dedupe_key: None,
-                run_id: None,
-                now,
-            })
-            .expect("enqueue")
+        // An agent dispatch, not a bare queue row: a skill outcome cites a
+        // receipt that carries its task typeRef (OF-184, #1610), and only a
+        // dispatch's terminal receipt is stamped with one (OF-543).
+        let AgentDispatchOutcome::Dispatched(status) = dispatcher
+            .dispatch_default_base(None, None, None, now)
+            .expect("dispatch")
         else {
             panic!("fresh attempt");
         };
+        let attempt = status.attempt;
         queue
             .append_manifest_entry(
                 attempt.id,
@@ -176,10 +267,13 @@ fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
             )
             .expect("manifest");
         let ClaimOutcome::Claimed(leased) = queue
-            .claim(ClaimAttempt {
-                lease_owner: "fixture".to_owned(),
-                now: now + 1,
-            })
+            .claim_kind(
+                oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "fixture".to_owned(),
+                    now: now + 1,
+                },
+            )
             .expect("claim")
         else {
             panic!("claimable attempt");

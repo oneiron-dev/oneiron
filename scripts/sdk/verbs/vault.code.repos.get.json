@@ -5,6 +5,7 @@
   "output": "Option<crate::memory::origin_doors::CodeRepoView>",
   "call": "memory.code_repo_get_as(&memory.embedded_owner(\"vault.code.repos.get\")?, input)?",
   "scope": "Read",
+  "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },

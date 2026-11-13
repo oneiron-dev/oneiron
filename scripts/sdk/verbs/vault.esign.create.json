@@ -3,12 +3,15 @@
   "description": "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act.",
   "refs": [
     "/document_ref",
-    "/draft/items/*/artifact_ref"
+    "/draft/items/*/artifact_ref",
+    "/draft/commitments/*/obligor/entity_ref",
+    "/draft/commitments/*/beneficiary"
   ],
   "input": "crate::blob_artifact::esign::EsignCreateRequest",
   "output": "crate::blob_artifact::esign::EsignDraftView",
   "call": "memory.esign_create(&input)?",
   "scope": "Write",
+  "act_class": "legal_send",
   "admission": {
     "lane_record_scope": true,
     "require_granted_scope": true

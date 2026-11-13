@@ -5,6 +5,7 @@
   "output": "crate::llm::manifest::doors::ModelRouteView",
   "call": "crate::task_verb::sdk::read_model_route(memory, input)?",
   "scope": "Read",
+  "act_class": "read",
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,

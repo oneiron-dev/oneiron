@@ -38,7 +38,9 @@ mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
 mod agent_grant_act;
+mod agent_grant_bound;
 mod agent_principal;
+mod agent_slips;
 mod agent_tier;
 mod agent_world_undo;
 mod ai_grant;
@@ -174,6 +176,8 @@ mod world_privacy;
 mod world_privacy_door;
 mod world_refold;
 mod world_strength;
+#[cfg(oneiron_test_support)]
+pub(crate) mod world_undo_door;
 mod write_authorization;
 
 #[cfg(test)]
@@ -442,6 +446,7 @@ pub(crate) use act_standing::{
 pub(crate) use adopted_evidence::{adopted_evidence_in_txn, carried_residence_rows_in_txn};
 pub(crate) use adopted_fold::proven_residence_result_parents_in_txn;
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
+pub(crate) use agent_slips::{AgentSlipStanding, LiveAgentSlip};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
     AdoptedImageCacheEntry, adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
@@ -471,6 +476,8 @@ pub(crate) use log_budget::{
 };
 pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn, root_work_witness_in_txn};
 pub use owner_work_diagnostics::{OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY, OwnerWorkNoVouchDiagnostic};
+#[cfg(oneiron_test_support)]
+pub(crate) use past_grant_standing::past_standing_history_loads_for_test;
 pub(crate) use past_grant_standing::preserved_topology_act_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
@@ -490,7 +497,6 @@ use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::authority_view_readonly_for_store_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use readonly_fold::folded_vault_id_of_records;
-#[cfg(feature = "sync")]
 pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
@@ -508,11 +514,11 @@ use machine_profile::{
     merge_machine_maps,
 };
 pub(crate) use machine_write::{
-    evidence_without_machine_signature, machine_claim_needs_history,
+    MACHINE_SIGNATURE_KEY, evidence_without_machine_signature, machine_claim_needs_history,
     machine_claim_needs_history_observing, machine_claim_read_admitted,
-    machine_history_authority_descends, machine_history_authority_descends_with_image,
-    machine_history_host_context, resign_machine_claim_after_mask_in_txn,
-    verify_machine_claim_in_txn,
+    machine_claim_signer_bound_in_txn, machine_history_authority_descends,
+    machine_history_authority_descends_with_image, machine_history_host_context,
+    resign_machine_claim_after_mask_in_txn, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
@@ -525,7 +531,6 @@ pub(crate) use world_key_support::{
     standing_rows, unsigned_side_entry,
 };
 pub use world_models::WorldModelRoutes;
-#[cfg(feature = "sync")]
 pub(crate) use world_privacy::side_world;
 pub use world_privacy::{
     Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,

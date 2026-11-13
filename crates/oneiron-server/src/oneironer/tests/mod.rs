@@ -15,8 +15,8 @@ use std::time::Duration;
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder};
 use serde_json::json;
 
+use super::build_slot;
 use super::endpoint::{HttpTagger, ProbeError, ProbeOutcome};
-use super::{TaggerNotBuilt, build_slot};
 use crate::config::{
     EnvConfig, OneironerConfig, OneironerMode, OneironerProvider, ServeArgs,
     resolve_serve_config_with_sources,
@@ -35,6 +35,8 @@ fn input(text: &str) -> EncoderInput {
         context: Vec::new(),
         language: None,
         speaker: None,
+        following: Vec::new(),
+        register: Default::default(),
     }
 }
 
@@ -562,10 +564,12 @@ fn the_local_provider_is_refused_by_name_save_mode_serves_and_none_builds_nothin
         provider: OneironerProvider::Local,
         ..OneironerConfig::default()
     };
+    // The local tagger is built since 68071b65132 (OF-119, OF-539); with no
+    // bundle named, it is refused by name.
     let refused = build_slot(Some(&local)).err().expect("local refused");
-    assert_eq!(
-        refused.downcast_ref::<TaggerNotBuilt>(),
-        Some(&TaggerNotBuilt::LocalProvider)
+    assert!(
+        format!("{refused:#}").contains("local oneironer requires oneironer.model_dir"),
+        "{refused:#}"
     );
     let stub = StubTagger::start(Answer::Good);
     let save = OneironerConfig {
@@ -743,10 +747,12 @@ fn init_writes_the_tagger_serve_reads_and_refuses_one_it_cannot_serve() {
         oneironer: Some(OneironerProvider::Local),
         ..init_args(dir.path())
     };
+    // The local tagger is built since 68071b65132 (OF-119, OF-539); with no
+    // bundle named, init refuses it by name and writes nothing.
     let refused = crate::commands::init(args).expect_err("refused");
-    assert_eq!(
-        refused.downcast_ref::<TaggerNotBuilt>(),
-        Some(&TaggerNotBuilt::LocalProvider)
+    assert!(
+        format!("{refused:#}").contains("--oneironer local requires --oneironer-model-dir"),
+        "{refused:#}"
     );
     assert!(!dir.path().join("oneiron.toml").exists());
     assert!(!dir.path().join("vault").exists());

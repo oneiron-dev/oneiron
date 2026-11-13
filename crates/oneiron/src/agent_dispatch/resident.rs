@@ -26,6 +26,7 @@ mod result;
 mod room_wake;
 mod validation;
 
+pub(super) use self::room_wake::resident_attempt_room_wake_turn;
 pub use self::room_wake::resident_attempt_wakes_for_room;
 
 const PREDICATE: &str = "agent.resident";
@@ -102,7 +103,13 @@ impl Vault {
                 ]))?,
                 ClaimApprovalStatus::Approved,
             );
+            // The owner binds in person, so the binding carries the owner's
+            // proof: its Approved claim lands on any criticality class. A
+            // narrowed or delegated credential has none and is gated as any
+            // other Approved write.
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             self.batch_in()
+                .with_owner_authored(owner_authored)
                 .claim_candidate(
                     &id,
                     ClaimCandidate::new(

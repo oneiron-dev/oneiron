@@ -5,6 +5,7 @@
   "output": "Vec<crate::workspace_roster::ThreadJoinRequestView>",
   "call": "memory.rooms_thread_join_requests(&input)?",
   "scope": "Read",
+  "act_class": "read",
   "mcp_fields": {
     "spec": "$"
   },

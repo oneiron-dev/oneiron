@@ -362,6 +362,9 @@ pub(super) fn load_run_jsonl_dataset(
                     oneiron::ClaimLifecycleStatus::Active,
                 )?;
                 body.source = Some(oneiron::ClaimSource::Observed);
+                // The subject is a corpus TURN, which has no substrate FACET:
+                // the statement is born in the vault default facet.
+                body.scope_facet = vault.default_facet()?;
                 body.evidence = Some(rmpv::Value::Array(vec![rmpv::Value::Binary(
                     subject.as_bytes().to_vec(),
                 )]));

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
+use crate::batch::export::OwnerArchiveRestorePermit;
 use crate::entity_id::EntityId;
 
 use super::ClaimMaterialization;
@@ -57,6 +58,13 @@ pub(crate) struct ApplyOpsGateMode {
     /// candidates, revalidated in the transaction that applies them. Raw puts
     /// never read it.
     pub(super) owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
+    /// The vault owner's in-person approval of ONE stored proposal, bound to
+    /// its claim id and revalidated in the transaction that approves it
+    /// (`ClaimMaterialization::apply_owner_approval`). The raw Put of that
+    /// claim alone reads it; every other Put in the batch reads nothing.
+    pub(super) owner_approval: Option<(EntityId, crate::consent::OwnerAuthoredWrite)>,
+    /// Call-scoped Imported-source permit for one expression batch of the owner's archive restore.
+    pub(super) owner_archive_restore: Option<OwnerArchiveRestorePermit>,
     /// The body file each ASSET put this batch stages as a manifest names,
     /// published before the batch (FIX 3677); consumed by that put.
     pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
@@ -99,6 +107,8 @@ impl ApplyOpsGateMode {
             pre_analyzed_text: HashMap::new(),
             nsw_plans: HashMap::new(),
             owner_authored: None,
+            owner_approval: None,
+            owner_archive_restore: None,
             asset_files: HashMap::new(),
             asset_file_bodies: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
@@ -149,6 +159,21 @@ impl ApplyOpsGateMode {
         owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
     ) -> Self {
         self.owner_authored = owner_authored;
+        self
+    }
+
+    /// Binds the owner's approval proof to the one claim this batch approves.
+    pub(super) fn with_owner_approval(
+        mut self,
+        claim: EntityId,
+        owner_approval: Option<crate::consent::OwnerAuthoredWrite>,
+    ) -> Self {
+        self.owner_approval = owner_approval.map(|proof| (claim, proof));
+        self
+    }
+
+    pub(crate) fn with_owner_archive_restore(mut self, permit: &OwnerArchiveRestorePermit) -> Self {
+        self.owner_archive_restore = Some(permit.clone());
         self
     }
 

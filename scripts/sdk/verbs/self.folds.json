@@ -3,6 +3,7 @@
   "input": "crate::compaction::FoldsInput",
   "output": "crate::compaction::FoldReply<crate::compaction::FoldList>",
   "scope": "Read",
+  "act_class": "read",
   "context": "run",
   "effect": "Fold",
   "host": {

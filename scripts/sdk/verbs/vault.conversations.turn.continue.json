@@ -5,6 +5,7 @@
   "output": "crate::conversation::TurnActionReceipt",
   "call": "memory.conversations_turn_continue(&input)?",
   "scope": "Write",
+  "act_class": "spawn",
   "mcp_fields": {
     "spec": "$"
   },

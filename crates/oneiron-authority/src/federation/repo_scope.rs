@@ -290,11 +290,43 @@ impl Scope {
         if !bounds.admits_ref(&target.git_ref) {
             return Err(RepoAccessRefusal::WrongRef);
         }
+        Self::admit_repo_paths(bounds, &target.paths, intent)
+    }
+
+    /// [`Self::admit_repo_target`] for an edit of an owner working view's
+    /// files under a Grant bound to that view (row 6 WORKING-VIEW-EDIT,
+    /// CODECUSTODY-VIEW-BUILD Q1 = A): the edit verb and the PROJECT
+    /// audience, then the repo and every path against the editable globs. The
+    /// view bound takes the place of the ref, so no ref is judged.
+    ///
+    /// # Errors
+    /// The first [`RepoAccessRefusal`] the edit meets, as
+    /// [`Self::admit_repo_target`] orders them, never
+    /// [`RepoAccessRefusal::WrongRef`].
+    pub fn admit_working_view_edit(
+        &self,
+        bounds: &RepoAccessBounds,
+        repo: EntityId,
+        paths: &BTreeSet<String>,
+    ) -> Result<(), RepoAccessRefusal> {
+        if !self.admits_repo_intent(bounds, RepoAccessIntent::Edit) {
+            return Err(RepoAccessRefusal::NoMembership);
+        }
+        if repo != bounds.repo {
+            return Err(RepoAccessRefusal::WrongRepo);
+        }
+        Self::admit_repo_paths(bounds, paths, RepoAccessIntent::Edit)
+    }
+
+    /// Whether every one of `paths` matches a glob of `intent`'s set, which
+    /// must be nonempty.
+    fn admit_repo_paths(
+        bounds: &RepoAccessBounds,
+        paths: &BTreeSet<String>,
+        intent: RepoAccessIntent,
+    ) -> Result<(), RepoAccessRefusal> {
         if bounds.globs(intent).is_empty()
-            || !target
-                .paths
-                .iter()
-                .all(|path| bounds.admits_path(intent, path))
+            || !paths.iter().all(|path| bounds.admits_path(intent, path))
         {
             return Err(RepoAccessRefusal::PathOutsideScope);
         }

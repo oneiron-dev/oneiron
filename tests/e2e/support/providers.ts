@@ -51,8 +51,14 @@ function subset(expected:Json,actual:unknown):boolean {
   if(expected&&typeof expected==="object") return !!actual&&typeof actual==="object"&&Object.entries(expected).every(([k,v])=>subset(v,(actual as Record<string,unknown>)[k]));
   return Object.is(expected,actual);
 }
+/** A request that names a boolean `stream` gets a reply of the same kind: a buffered reply to a streamed
+ * request (or a stream to a buffered one) never matches, so the miss fails at send time. */
+function streamAgrees(step: ProviderStep, body: unknown): boolean {
+  const stream=(body as {stream?:unknown}|null)?.stream;
+  return typeof stream!=="boolean"||stream===(step.response.kind==="stream");
+}
 function matches(step: ProviderStep, method: string, path: string, body: unknown): boolean {
-  return step.request.method===method&&step.request.path===path&&
+  return step.request.method===method&&step.request.path===path&&streamAgrees(step,body)&&
     (step.request.model===undefined||subset({model:step.request.model},body))&&
     (!step.request.fields||subset(step.request.fields,body))&&
     (step.request.system===undefined||(Array.isArray((body as any)?.messages) && (body as any).messages[0]?.role === "system" && (body as any).messages[0]?.content === step.request.system));
@@ -237,7 +243,8 @@ export class ScriptedProviders {
       const step=this.pending.get(origin)?.shift();
       const accepted=step&&matches(step,request.method,path,body);
       this.seen.push({fixtureId:accepted?step.id:null,origin,sequence:this.seen.length,role:step?.role??null,purpose:step?.purpose??null,method:request.method,path,body});
-      if(!accepted) throw new ProviderScriptError(`Unexpected provider request on ${origin}: ${request.method} ${path}; expected ${step?.id??"no more calls"}`);
+      if(!accepted) throw new ProviderScriptError(`Unexpected provider request on ${origin}: ${request.method} ${path}; expected ${step?.id??"no more calls"}`
+        +(step&&!streamAgrees(step,body)?` (stream mismatch: the request has stream=${String((body as {stream?:unknown}).stream)}, the step answers ${step.response.kind})`:""));
       if(step.barrier) await this.hold(step.barrier);
       const reply=step.response;
       if(reply.kind==="json") return Response.json(reply.body,{status:reply.status??200,...(reply.headers?{headers:reply.headers}:{})});

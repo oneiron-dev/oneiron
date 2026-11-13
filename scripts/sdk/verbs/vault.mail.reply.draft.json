@@ -6,6 +6,7 @@
   "call": "memory.mail_reply_draft(&input)?",
   "mcp_off_runtime": true,
   "scope": "Write",
+  "act_class": "unstated",
   "mcp_fields": {
     "spec": "$"
   },
