@@ -70,7 +70,7 @@ use super::FoldWordRef;
 use super::replay::CodeRunReplayRecord;
 use super::storage::{
     StartCompaction, bind_capsule_answer, finalize_capsule, put_staged_capsule,
-    refresh_staged_request,
+    refresh_staged_request, request_as_stored,
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::output::OutputRef;
@@ -154,8 +154,12 @@ pub(crate) struct CapsuleDraft<'a> {
     pub(crate) capture: &'a StepCapture<'a>,
     pub(crate) attempt: EntityId,
     pub(crate) actor: EntityId,
-    /// The request's canonical bytes as sent.
+    /// The request's canonical bytes as the capsule stores them: as sent,
+    /// with the executor's declarations named by reference (FIX row
+    /// [AGENT-RUN-START-LATENCY-4S]).
     pub(crate) request: Vec<u8>,
+    /// The hash of the request's canonical bytes as sent.
+    pub(crate) request_hash: [u8; 32],
     /// Where the run keeps the capsule's own request body: the manifest of
     /// the request's shared pieces (FIX 4192).
     pub(crate) request_path: String,
@@ -567,8 +571,11 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
     let Some(messages) = messages_digest(&capture.request.messages) else {
         return Ok(None);
     };
-    let request = capture
+    let request_hash = capture
         .request
+        .canonical_hash()
+        .map_err(|error| crate::Error::InvalidConfig(format!("capsule request: {error}")))?;
+    let request = request_as_stored(capture.request)
         .canonical_bytes()
         .map_err(|error| crate::Error::InvalidConfig(format!("capsule request: {error}")))?;
     let draft = CapsuleDraft {
@@ -590,6 +597,7 @@ fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
             .clone()
             .filter(|console| console.locate(capture.request).is_some()),
         request,
+        request_hash,
     };
     if put_staged_capsule(vault, &draft)?.is_none() {
         return Ok(None);

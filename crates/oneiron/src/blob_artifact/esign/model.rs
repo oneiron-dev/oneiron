@@ -33,6 +33,32 @@ pub struct EsignDocument {
     /// owner bind it ([`super::PROJECT_MEMBERS_ONLY`]).
     #[serde(default)]
     pub project: Option<EntityId>,
+    /// The obligations the document names (ARCH-0064 §3). Each is born an
+    /// inert commitment with the draft, at
+    /// [`super::esign_document_commitment_id`] of its index. An uploaded
+    /// paper names none unless its drafter declares them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commitments: Vec<EsignCommitmentTerm>,
+}
+
+/// One obligation a draft names (ARCH-0064 §3, OF-187): an inert commitment
+/// until the document completes, which opens it with the sealed version as
+/// evidence; a decline, void or expiry releases it. A signature binds, so its
+/// strength is `commitment`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignCommitmentTerm {
+    /// Who owes it.
+    pub obligor: crate::memory::commitment_doors::CommitmentObligor,
+    /// Whom it is owed to.
+    pub beneficiary: String,
+    /// What is promised.
+    pub content: crate::memory::commitment_doors::CommitmentContent,
+    /// When it falls due, once the document opens it.
+    pub schedule: crate::memory::commitment_doors::CommitmentSchedule,
+    /// How long before each due instant its reminder leads.
+    #[serde(default)]
+    pub lead_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -182,6 +208,10 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
                 "the law keeps this signature with a natural person",
             ));
         }
+    }
+    for term in &doc.commitments {
+        reference(&term.obligor.entity_ref)?;
+        reference(&term.beneficiary)?;
     }
     let mut fields = BTreeSet::new();
     for f in &doc.fields {

@@ -399,6 +399,12 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         .await
         .unwrap();
     let before = home.oplog_vv();
+    // b7a4b1fe82d (#4221, FIX 3787): a cold open persists each commit of its
+    // recovery as a u:w: row, so the window's own rows exist before the edit.
+    let rows_before = server
+        .vault
+        .sync_state_keys_with_prefix("u:w:1970-01:")
+        .unwrap();
     let device = loro::LoroDoc::from_snapshot(&home.export(ExportMode::Snapshot).unwrap()).unwrap();
     device
         .get_map("entities")
@@ -409,8 +415,17 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         .unwrap();
     device.commit();
     let update = device.export(ExportMode::updates(&before)).unwrap();
-    let mut payload = 1u64.to_be_bytes().to_vec();
-    payload.extend_from_slice(&update);
+    // A residence update travels in a window pad envelope (466c8c1b7d4, #3918).
+    let payload = oneiron::sync::transport::WindowPadEnvelope {
+        kind: oneiron::sync::transport::WindowPadKind::ResidenceUpdate,
+        form: oneiron::sync::transport::WindowPadForm::PadFree,
+        queue_seq: Some(1),
+        payload: update,
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
     state.promoted_windows.insert(
@@ -464,12 +479,13 @@ async fn residence_write_requires_the_authors_scope_write_right() {
             .unwrap()
             .ends_with(b"base")
     );
-    assert!(
+    assert_eq!(
         server
             .vault
             .sync_state_keys_with_prefix("u:w:1970-01:")
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        rows_before,
+        "the denied edit appended no u:w: row"
     );
 }
 
@@ -912,11 +928,11 @@ async fn imported_update_persists_before_broadcast() {
     assert_eq!(
         server
             .vault
-            .sync_state_get(&format!("u:w:{durable_key}:00000001"))
+            .sync_state_get(&format!("u:w:{durable_key}:{:016x}", 1_u64))
             .unwrap()
             .as_deref(),
         Some(update.as_slice()),
-        "the relayed bytes must be durable at the ARCH-0023b u:w: key"
+        "the relayed bytes must be durable at the 16-hex-digit u:w: key (FIX 8883)"
     );
     assert_eq!(
         server
@@ -965,7 +981,7 @@ async fn imported_update_persists_before_broadcast() {
     assert!(
         server
             .vault
-            .sync_state_get(&format!("u:w:{failing_key}:00000001"))
+            .sync_state_get(&format!("u:w:{failing_key}:{:016x}", 1_u64))
             .unwrap()
             .is_none(),
         "the failed append must leave no partial durable row"
@@ -1867,12 +1883,21 @@ async fn frame_is_refused_when_revocation_lands_during_the_capacity_wait() {
     let keep_going = send_racing_a_revocation(&sink, &registry, |r| r.revoke(TEST_JTI)).await;
 
     assert!(!keep_going, "a revoked session must not continue");
-    assert!(
-        sink.written().is_empty(),
-        "a frame awaiting capacity before the revocation still reached the client"
+    // 56494599991 and 9e49d432ae4: the send-side refusal tries one Close that
+    // names the revocation, then drops the transport (no graceful poll_close).
+    assert_eq!(
+        sink.written(),
+        vec![WsMessage::Close(Some(CloseFrame {
+            code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
+            reason: Utf8Bytes::from_static("credential revoked"),
+        }))],
+        "only the revocation Close may reach the client, never the frame awaiting capacity"
     );
     assert!(sink.queued().is_empty(), "the frame never entered the sink");
-    assert!(sink.was_closed(), "the socket must close, not idle");
+    assert!(
+        !sink.was_closed(),
+        "the refusal drops the transport after one best-effort Close; it does not poll_close"
+    );
 }
 
 /// Revoking a SIBLING token must not disturb this session.
@@ -2278,38 +2303,37 @@ async fn real_codec_guarded(
     )
 }
 
-/// A server Close frame with no payload: opcode 0x8, FIN, zero length.
+/// The server's revocation Close frame: opcode 0x8 with FIN, payload length
+/// 20 (the 2-byte code and the 18-byte reason), code 4008
+/// (`CLOSE_RPC_NO_PRINCIPAL`) big-endian, then the reason text.
 ///
-/// A refusal that is caught while nothing is queued closes GRACEFULLY, and a
-/// graceful close is two bytes of control frame — never application data.
-const SERVER_CLOSE_BYTES: [u8; 2] = [0x88, 0x00];
+/// Since 56494599991 and 9e49d432ae4 a send-side refusal no longer closes
+/// gracefully: it tries one Close that names the revocation, so the peer can
+/// tell revocation from a dropped link, and then drops the socket.
+const SERVER_REVOKED_CLOSE_BYTES: [u8; 22] = [
+    0x88, 0x14, 0x0f, 0xa8, b'c', b'r', b'e', b'd', b'e', b'n', b't', b'i', b'a', b'l', b' ', b'r',
+    b'e', b'v', b'o', b'k', b'e', b'd',
+];
 
-/// Asserts the wire holds the automatic Pong, optionally a Close, and no
-/// application byte.
+/// Asserts the wire holds the automatic Pong, then the revocation Close, and
+/// no application byte.
 ///
 /// Byte-level and order-bearing on purpose: message-level `written()` cannot
 /// see a PARTIAL application frame, and a partial frame is precisely what a
-/// write that parked mid-way would leave.
-///
-/// The Close is admitted because the drain-to-empty ordering moves WHERE a
-/// revocation is caught. Draining to completion means the fresh consult that
-/// follows it runs while nothing application-level is queued, so a revocation
-/// landing during the drain takes the graceful-close path rather than the
-/// abort path. That is the better outcome — the peer learns the session ended
-/// instead of seeing a severed socket — and it is still a refusal: a close
-/// frame carries no vault state, and `poll_close` can only flush an out-buffer
-/// the drain already emptied. What must never appear is a payload byte.
-fn assert_wire_is_pong_only(socket: &CapturingSocket) {
+/// write that parked mid-way would leave. A close frame carries no vault
+/// state; what must never appear is a payload byte, so the equality is exact.
+fn assert_wire_is_pong_then_revocation_close(socket: &CapturingSocket) {
     let wire = socket.wire();
-    let acceptable: &[&[u8]] = &[
-        &SERVER_PONG_BYTES,
-        &[SERVER_PONG_BYTES.as_slice(), SERVER_CLOSE_BYTES.as_slice()].concat(),
-    ];
-    assert!(
-        acceptable.iter().any(|expected| wire == *expected),
-        "the wire must hold the automatic Pong (and at most a Close) and NOTHING else — \
+    assert_eq!(
+        wire,
+        [
+            SERVER_PONG_BYTES.as_slice(),
+            SERVER_REVOKED_CLOSE_BYTES.as_slice()
+        ]
+        .concat(),
+        "the wire must hold the automatic Pong and the revocation Close and NOTHING else; \
          extra bytes are application-frame bytes (whole or partial) that escaped before \
-         the consult: {wire:?}"
+         the consult"
     );
 }
 
@@ -2417,7 +2441,7 @@ async fn real_codec_withholds_every_application_byte_when_the_credential_is_revo
         .await;
 
     assert!(!keep_going, "a revoked session must not continue");
-    assert_wire_is_pong_only(&socket);
+    assert_wire_is_pong_then_revocation_close(&socket);
     assert_refusal_is_final(&socket, &mut guarded).await;
 }
 

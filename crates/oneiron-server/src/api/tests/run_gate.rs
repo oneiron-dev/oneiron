@@ -157,8 +157,11 @@ fn dispatched(receipts: &MemoryReceipts) -> usize {
         .count()
 }
 
-/// Each path's call falls through a failing rung to an answering one: two
-/// provider calls, two `Dispatched` rows, each settled.
+/// The first call falls through a failing rung to an answering one: two
+/// provider calls, two `Dispatched` rows, each settled. A 500 is
+/// `provider_down`, so the failing rung then rests for its health
+/// (bf7c0817ad6, #1778, OF-305) and the stream and chat calls go straight to
+/// the answering rung: one call, one `Dispatched` row each.
 #[tokio::test]
 async fn every_server_call_writes_one_dispatched_row_per_provider_call() {
     let failing = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
@@ -180,7 +183,7 @@ async fn every_server_call_writes_one_dispatched_row_per_provider_call() {
             .is_some_and(|line| line["event"] == json!("done")),
         "{streamed:?}"
     );
-    assert_eq!((sent(), dispatched(&receipts)), (4, 4));
+    assert_eq!((sent(), dispatched(&receipts)), (3, 3));
 
     let (status, body) = send(&server, chat()).await;
     assert_eq!(status, StatusCode::OK);
@@ -189,10 +192,11 @@ async fn every_server_call_writes_one_dispatched_row_per_provider_call() {
         turn.iter().any(|line| line["type"] == json!("done")),
         "{turn:?}"
     );
-    assert_eq!((sent(), dispatched(&receipts)), (6, 6));
+    assert_eq!((sent(), dispatched(&receipts)), (4, 4));
+    assert_eq!((failing.seen().len(), answering.seen().len()), (1, 3));
 
     let call = ["admitted", "dispatched", "settled"];
-    assert_eq!(events(&receipts.rows()), [call; 6].concat());
+    assert_eq!(events(&receipts.rows()), [call; 4].concat());
     host.shutdown().await;
 }
 

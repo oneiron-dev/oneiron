@@ -644,7 +644,7 @@ async fn an_mcp_room_speech_wakes_the_dreamer() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "speak",
-            "rooms.speak",
+            "vault.rooms.speak",
             args,
         ),
     )

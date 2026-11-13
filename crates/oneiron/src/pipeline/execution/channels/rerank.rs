@@ -55,8 +55,9 @@ struct BoundWords {
     /// judged and the run serves, not the gate's live body.
     claim: Option<ClaimBody>,
     /// A row with no revision that holds its words: a MESSAGE whose text
-    /// moved into its entity document, a TURN whose messages show none, a
-    /// MESSAGE that folds into such a TURN, or a row with no revision at all;
+    /// moved into an entity document the ledger does not index it at, a TURN
+    /// whose messages show none, a MESSAGE that folds into such a TURN, or a
+    /// row with no revision at all;
     /// or a row with words the write door refuses (stored while the owner's
     /// secret scan was off), a TURN with a message whose body it refuses, or
     /// a claim whose pinned body the run would not serve. Its words would be
@@ -305,15 +306,23 @@ impl PipelineBuilder<'_> {
             Err(Error::EntityNotFound) => None,
             Err(error) => return Err(error),
         };
-        // A streamed or edited MESSAGE holds its words in its entity
-        // document, which its row revision does not pin; a build without
-        // `sync` reads no document, but still sees that it has one. A row the
-        // write door refuses is sent to no model.
+        // A MESSAGE edited after its birth (a continuation of its stream,
+        // the owner moving its text; FIX 4840) holds its words in its entity
+        // document. The revision the ledger indexes it at is a state of that
+        // document, and the read below serves the words it held there, so the
+        // message is scored at them (L9-11). One whose head was written
+        // around the ledger (a `sync` process moving its words, as a build
+        // without `sync` sharing the vault sees it) is indexed at a row kept
+        // from before, which holds other words or none: it is not reranked.
+        // A row the write door refuses is sent to no model.
         let Some(revision) = revision else {
             return Ok(BoundWords::UNSCORED);
         };
         if kind == Some(ENTITY_TYPE_MESSAGE)
             && crate::vault::entity_revision::message_has_document_in_txn(self.vault, rtxn, id)?
+            && !crate::vault::entity_revision::indexed_revision_is_document_state_in_txn(
+                &self.read, rtxn, id,
+            )?
         {
             return Ok(BoundWords::UNSCORED);
         }
