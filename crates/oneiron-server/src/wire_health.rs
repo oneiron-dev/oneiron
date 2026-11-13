@@ -437,7 +437,7 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
 
 /// One pass: fold every new crossing in, ask each held check, and look for
 /// the owner's answers. A check that fails stays as it was for the next pass.
-fn sweep(server: &SyncServer) -> Result<()> {
+pub(crate) fn sweep(server: &SyncServer) -> Result<()> {
     for crossing in unread(server)? {
         fold(server.vault(), crossing)?;
     }
