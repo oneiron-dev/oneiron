@@ -228,7 +228,10 @@ fn g224_the_owners_view_build_is_answered_again_from_the_cache() -> TestResult {
 
 // ── G226, G227: the owner's weave report and lens ───────────────────────
 
-const NOTE_PREDICATE: &str = "report.note";
+/// A predicate the shipped policy manifest names normal (its `profile.`
+/// rule). A predicate no rule names takes the criticality floor, and the
+/// owner's Approved claim on it pends (`gate.pending.criticality_floor`).
+const NOTE_PREDICATE: &str = "profile.note";
 const PLAN_TITLE: &str = "Owen's notes";
 const PLAN_LINE: &str = "yuki noted one thing";
 
