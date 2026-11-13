@@ -1,13 +1,17 @@
 //! Token-first ingress at the public signing doors (FIX 3808, Engine rulings
-//! 10-18 and 10-19). Every ceremony POST carries its recipient link's
-//! capability in the `x-oneiron-esign-capability` header, and the vault
-//! admits it ([`oneiron::Vault::admit_esign_ingress`]) before a byte of the
-//! body is read. A request with no such header, or one the vault does not
-//! admit, is shed with its body unread. An admitted body spools whole to an
+//! 10-18 and 10-19). Every ceremony POST carries its signing session's
+//! cookie (ARCH-0064a [SGN-03], census L3-22, `signing_session`), which
+//! stands for its recipient link's capability, and the vault admits that
+//! capability ([`oneiron::Vault::admit_esign_ingress`]) before a byte of the
+//! body is read. A request with no live session, or one whose capability the
+//! vault does not admit, is shed with its body unread. Only
+//! `POST /sign/exchange` reads the capability itself, from the
+//! `x-oneiron-esign-capability` header. An admitted body spools whole to an
 //! anonymous file the vault stages, under the server's one disk floor; its
 //! size is the `[limits] esign_body_bytes` row, which asks the envelope's
 //! sender past it and never refuses the body. The owner's editor POSTs
 //! (FIX 5618) share this spool under their own admission and rows.
+use super::signing_session::{SessionLifetimes, SigningSessions, session_cookie};
 use super::*;
 use crate::api::transfer::{self, BodyReader};
 use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
@@ -24,9 +28,10 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// The header a public signing door reads its capability from. The
+/// The header `POST /sign/exchange` reads a link's capability from. The
 /// invitation stays `/sign#<capability>`: the page reads the fragment, which
-/// no request target holds, and sends it only here.
+/// no request target holds, and sends it only here, once, for an exchange.
+/// No ceremony door reads it.
 const CAPABILITY_HEADER: &str = "x-oneiron-esign-capability";
 
 /// Bytes the spool reads at a time, and the largest piece the body is fed in.
@@ -41,7 +46,17 @@ const FLOOR_EVERY_BYTES: u64 = 8 * 1024 * 1024;
 /// no longer for memory than its own body may stall.
 pub(super) const MEMORY_WAIT: Duration = Duration::from_secs(60);
 
-/// A signing link a public door admitted, and its capability for the act.
+/// The capability a request's `x-oneiron-esign-capability` header names,
+/// for the exchange door alone.
+pub(super) fn link_capability(headers: &HeaderMap) -> Option<EsignCapability> {
+    headers
+        .get(CAPABILITY_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|raw| EsignCapability::parse(raw).ok())
+}
+
+/// A signing session a public door admitted, and its link's capability for
+/// the act.
 pub(super) struct SigningIngress {
     pub(super) token: EsignCapability,
     pub(super) admitted: EsignIngress,
@@ -51,18 +66,20 @@ impl FromRequestParts<Arc<SyncServer>> for SigningIngress {
     type Rejection = Response;
 
     /// Runs on the request's head alone, before the body extractor: no
-    /// body, digest or decode precedes it. Admission only reads, so a door
-    /// keeps its own turn and terminal answers. A recipient the vault
-    /// admits is no longer a stranger to the listener.
+    /// body, digest or decode precedes it. The session cookie is the only
+    /// carrier read; a capability header here admits nothing. Admission only
+    /// reads, so a door keeps its own turn and terminal answers. A recipient
+    /// the vault admits is no longer a stranger to the listener.
     async fn from_request_parts(
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
+        let lifetimes = SessionLifetimes::from_limits(&server.config.limits);
         let token = parts
-            .headers
-            .get(CAPABILITY_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|raw| EsignCapability::parse(raw).ok())
+            .extensions
+            .get::<SigningSessions>()
+            .zip(session_cookie(&parts.headers))
+            .and_then(|(sessions, id)| sessions.capability(id, lifetimes))
             .ok_or_else(refused)?;
         let admitted = server
             .vault
@@ -73,7 +90,7 @@ impl FromRequestParts<Arc<SyncServer>> for SigningIngress {
     }
 }
 
-/// `POST /sign/action`'s body: the act alone, the capability in the header.
+/// `POST /sign/action`'s body: the act alone, the capability in the session.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ActionBody {

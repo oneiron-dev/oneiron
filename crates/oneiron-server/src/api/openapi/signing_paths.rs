@@ -1,10 +1,14 @@
 //! The public signing ceremony routes (`/sign/*`, DOOR-117): their
 //! payload and answer schemas are the verb table's `vault.esign.signing.*`
 //! types, the bodies the typed facade rows take less their `token`, so the
-//! page, the SDK and this document describe one ceremony. On these routes
-//! the capability rides in the `x-oneiron-esign-capability` header, which
-//! the vault admits before the body is read (FIX 3808); it is never a path
-//! token, a body field or a core credential. A credential a call also
+//! page, the SDK and this document describe one ceremony. The page trades
+//! the link's capability once, at `POST /sign/exchange` (the
+//! `x-oneiron-esign-capability` header), for a single-use exchange that
+//! `POST /sign/session` consumes to open a signing session (ARCH-0064a
+//! [SGN-03]). The ceremony routes carry only that session's cookie, and the
+//! vault admits the capability it stands for before the body is read
+//! (FIX 3808); the capability is never a path token, a body field or a
+//! core credential. A credential a call also
 //! presents only classes the caller, and an agent's Complete is an
 //! automated sign act. The typed facade twins carry the capability in
 //! their input and answer the same acts as base64 JSON views; these public
@@ -15,8 +19,11 @@ use serde_json::{Map, Value, json};
 
 use oneiron::task_verb::sdk::{input_schema, output_schema};
 
-/// The security scheme the ceremony POSTs name.
+/// The security scheme `POST /sign/exchange` names.
 const CAPABILITY_SCHEME: &str = "EsignCapability";
+
+/// The security scheme the ceremony POSTs name.
+const SESSION_SCHEME: &str = "EsignSigningSession";
 
 pub(super) fn merge_signing_paths(spec: &mut Value) {
     add_capability_scheme(spec);
@@ -28,12 +35,72 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
         json!({"get": {
             "tags": ["signing"],
             "operationId": "signing_page",
-            "summary": "The signing page shell. The recipient link is /sign#<capability>; the page scrubs the fragment and sends the capability only in the x-oneiron-esign-capability header of each ceremony POST.",
+            "summary": "The signing page shell. The recipient link is /sign#<capability>; the page scrubs the fragment, trades the capability once at POST /sign/exchange, and opens its signing session at POST /sign/session.",
             "security": [],
             "responses": {
                 "200": {
                     "description": "The signing page, served no-store with a hash-pinned script.",
                     "content": {"text/html": {"schema": {"type": "string"}}}
+                }
+            }
+        }}),
+    );
+    paths.insert(
+        "/sign/exchange".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_exchange",
+            "summary": "Trades a signing link's capability for a single-use exchange that opens its signing session.",
+            "description": "The only door that reads the x-oneiron-esign-capability header. The vault admits the capability; the answer is an exchange that lives [limits] esign_exchange_seconds (120 by default) and replaces any exchange the link had pending. The emailed link stays reusable.",
+            "security": [{ CAPABILITY_SCHEME: [] }],
+            "responses": {
+                "200": {
+                    "description": "The single-use exchange, 64 lowercase hex characters.",
+                    "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "required": ["exchange"],
+                        "properties": {"exchange": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+                    }}}
+                },
+                "403": {
+                    "description": "No x-oneiron-esign-capability header, or one the vault does not admit (signing_unavailable).",
+                    "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "required": ["error"],
+                        "properties": {"error": {
+                            "type": "object",
+                            "required": ["code"],
+                            "properties": {"code": {"type": "string"}}
+                        }}
+                    }}}
+                }
+            }
+        }}),
+    );
+    paths.insert(
+        "/sign/session".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_session",
+            "summary": "Consumes a single-use exchange and opens its link's signing session.",
+            "description": "The signing page's top-level form POST. A live exchange is consumed at once; the session it opens replaces any session the link had open. Its idle and absolute lifetimes are the optional [limits] esign_session_idle_seconds and esign_session_absolute_seconds rows; unset, the session lasts while its link admits. Ending a session never ends the link.",
+            "security": [],
+            "requestBody": {"required": true, "content": {"application/x-www-form-urlencoded": {"schema": {
+                "type": "object",
+                "required": ["exchange"],
+                "properties": {"exchange": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+            }}}},
+            "responses": {
+                "303": {
+                    "description": "The session is open: Set-Cookie oneiron-sign-session (Path=/sign; Secure; HttpOnly; SameSite=Strict) and Location /sign.",
+                    "headers": {
+                        "Set-Cookie": {"schema": {"type": "string"}},
+                        "Location": {"schema": {"type": "string"}}
+                    }
+                },
+                "403": {
+                    "description": "An unknown, used or expired exchange, or a POST a browser marks as sent from another site: no session and no cookie.",
+                    "content": {"text/plain": {"schema": {"type": "string"}}}
                 }
             }
         }}),
@@ -48,7 +115,7 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
                 "tags": ["signing"],
                 "operationId": "signing_action",
                 "summary": "One recipient ceremony act: load, save a field, complete with consent, or reject.",
-                "description": "The capability in the x-oneiron-esign-capability header is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get.",
+                "description": "The link capability the signing session stands for is the authority. A call that also presents a vault credential is classed by it: an agent Complete is an automated sign act, held or refused where the signing dial or a natural-person recipient requires a person. Complete answers awaiting_seal; sealing runs as its own task and is observed through vault.esign.seal.get and vault.esign.get.",
                 "security": capability_security(),
                 "requestBody": {"required": true, "content": {"application/json": {"schema": headerless(request)}}},
                 "responses": ceremony_responses(json!({
@@ -129,8 +196,10 @@ pub(super) fn merge_signing_paths(spec: &mut Value) {
     }
 }
 
-/// Adds the header scheme a ceremony POST names: the recipient link's
-/// capability, the 64 lowercase hex characters after `/sign#`.
+/// Adds the two schemes the signing routes name: the recipient link's
+/// capability, the 64 lowercase hex characters after `/sign#`, which only
+/// the exchange door reads; and the signing session's cookie, which every
+/// ceremony POST carries.
 fn add_capability_scheme(spec: &mut Value) {
     let Some(schemes) = spec
         .get_mut("components")
@@ -150,18 +219,27 @@ fn add_capability_scheme(spec: &mut Value) {
             "type": "apiKey",
             "in": "header",
             "name": "x-oneiron-esign-capability",
-            "description": "The recipient's signing capability from their link (/sign#<capability>). The vault admits it against its envelope before the request body is read; a request without an admitted one is refused with its body unread. It is never a path segment or a body field on these routes."
+            "description": "The recipient's signing capability from their link (/sign#<capability>), read only by POST /sign/exchange. The vault admits it against its envelope. It is never a path segment or a body field on these routes."
+        }),
+    );
+    schemes.insert(
+        SESSION_SCHEME.to_owned(),
+        json!({
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "oneiron-sign-session",
+            "description": "The signing session POST /sign/session opened (Path=/sign; Secure; HttpOnly; SameSite=Strict). The vault admits the link capability it stands for before the request body is read; a request without a live session, or whose capability the vault no longer admits, is refused with its body unread."
         }),
     );
 }
 
-/// The `security` a ceremony POST names: the capability header alone.
+/// The `security` a ceremony POST names: the signing session alone.
 fn capability_security() -> Value {
-    json!([{ CAPABILITY_SCHEME: [] }])
+    json!([{ SESSION_SCHEME: [] }])
 }
 
 /// A facade row's input as its public door takes it: the `token` field
-/// dropped, since the door reads the capability from its header.
+/// dropped, since the door reads the capability from its session.
 fn headerless(schema: &Value) -> Value {
     let mut schema = schema.clone();
     if let Some(schema) = schema.as_object_mut() {
@@ -196,7 +274,7 @@ fn ceremony_responses(ok: Value) -> Value {
         ),
         (
             "403",
-            "No x-oneiron-esign-capability header, or one the vault does not admit, refused with the body unread; or the capability does not admit this act (signing_unavailable).",
+            "No live signing session, or one whose link capability the vault does not admit, refused with the body unread; or the capability does not admit this act (signing_unavailable).",
         ),
         (
             "503",
